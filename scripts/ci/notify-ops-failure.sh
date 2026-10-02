@@ -26,29 +26,49 @@
 # A sink that fails is itself a red step: a dead sink must be visible.
 #
 # The DSN must name a project that exists. On 2026-09-20 the local `.env`
-# SENTRY_DSN pointed at project 4509348818124800, which exists in no
-# organisation: Relay answers 200 on the first envelope (accepted, then
-# dropped) and `403 … with_reason: ProjectId` once its cache is warm, which is
-# exactly the 403 the Actions runs saw. Rotate the secret to the live
-# familiarise_web DSN (project 4511593990914048); see 07-required-secrets.md.
+# SENTRY_DSN named a project that exists in no organisation: Relay answers
+# 200 on the first envelope (accepted, then dropped) and
+# `403 … with_reason: ProjectId` once its cache is warm, which is exactly the
+# 403 the Actions runs saw. Rotate the secret to the live familiarise_web
+# DSN; see 07-required-secrets.md.
 set -euo pipefail
 
-# Positive DSN check, not a blocklist: on 2026-09-20 SENTRY_DSN pointed at
-# project 4509348818124800, which exists in no organisation. Relay answers
-# 200 on the first envelope (accepted, then dropped) and `403 … ProjectId`
-# once warm — so a well-formed but dead DSN looks delivered (delivered=1,
-# exit 0) and every failure goes unpaged. A blocklist of that one id would
-# rot: the next mis-rotation (a different wrong project, a typo) sails
-# through the same trap. This repo has exactly one live project (previews
-# share it per sentry.shared.config.ts #1086), so the check is inverted: a
-# SET SENTRY_DSN must name the live project or the step fails fast, for
-# every job, money-critical or not. Unset keeps the old lenient path below
+# Positive DSN check, not a blocklist: on 2026-09-20 SENTRY_DSN named a
+# project that exists in no organisation. Relay answers 200 on the first
+# envelope (accepted, then dropped) and `403 … ProjectId` once warm — so a
+# well-formed but dead DSN looks delivered (delivered=1, exit 0) and every
+# failure goes unpaged. A blocklist of that one id would rot: the next
+# mis-rotation (a different wrong project, a typo) sails through the same
+# trap. This repo has exactly one live project (previews share it per
+# sentry.shared.config.ts #1086), so the check is inverted: a SET SENTRY_DSN
+# must name the live project or the step fails fast, for every job,
+# money-critical or not. Unset SENTRY_DSN keeps the old lenient path below
 # (forks without secrets).
-LIVE_SENTRY_PROJECT="4511593990914048"
+#
+# The expected project id is deliberately NOT hardcoded here. It is a
+# deployment identifier rather than application configuration, and a copy
+# kept in the repository is exactly how it silently rots against a future
+# project change — it would keep "validating" a project nobody sends to. It
+# comes from EXPECTED_SENTRY_PROJECT_ID, which must be set wherever
+# SENTRY_DSN is set. Unset fails closed rather than skipping, because a
+# skipped check is the silent no-op this guard exists to prevent.
+#
+# Renamed from LIVE_SENTRY_PROJECT to EXPECTED_SENTRY_PROJECT_ID. The old
+# name was ambiguous between "the live project" and "the project id of the
+# live thing", and Sentry's org id and project id are both bare 16-digit
+# numbers that invite exactly the wrong paste: the org id is embedded in the
+# DSN host as o<orgId> and shares its first ten digits with at least one
+# dead project id. The new name states the role — it is the value SENTRY_DSN
+# is CHECKED AGAINST. Behaviour is unchanged by the rename.
+EXPECTED_SENTRY_PROJECT_ID="${EXPECTED_SENTRY_PROJECT_ID:-}"
 if [ -n "${SENTRY_DSN:-}" ]; then
+  if [ -z "$EXPECTED_SENTRY_PROJECT_ID" ]; then
+    echo "::error::EXPECTED_SENTRY_PROJECT_ID is not set, so SENTRY_DSN cannot be verified. Set it to the live familiarise_web PROJECT id — the project id, NOT the organization id (the org id is embedded in the DSN host as o<orgId>); read the project id from Sentry → Settings → Projects → familiarise_web — in this workflow's env. Refusing to skip the check: a well-formed but dead DSN looks delivered, and every cron failure then goes unpaged." >&2
+    exit 1
+  fi
   dsn_project_check="$(echo "$SENTRY_DSN" | sed -E 's#.*/([0-9]+)(\?.*)?$#\1#')"
-  if [ "$dsn_project_check" != "$LIVE_SENTRY_PROJECT" ]; then
-    echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected live familiarise_web project ${LIVE_SENTRY_PROJECT}; rotate the secret (see 07-required-secrets.md)" >&2
+  if [ "$dsn_project_check" != "$EXPECTED_SENTRY_PROJECT_ID" ]; then
+    echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected the live familiarise_web PROJECT id ${EXPECTED_SENTRY_PROJECT_ID}. Note this is the project id, NOT the organization id (the org id is embedded in the DSN host as o<orgId>), and the two are easy to confuse. Read the project id from Sentry → Settings → Projects → familiarise_web, where it also appears as the ?project= query parameter. Rotate the secret (see 07-required-secrets.md)" >&2
     exit 1
   fi
 fi
@@ -69,7 +89,6 @@ reconcile-orphaned-confirmations
 reconcile-pending-refunds
 cascade-refund-earnings
 reconcile-disputes
-handle-lost-disputes
 release-earnings
 sync-payment-earnings
 release-pending-trust-earnings

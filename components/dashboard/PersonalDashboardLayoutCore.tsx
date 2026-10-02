@@ -157,12 +157,22 @@ function DefaultError({ message }: Readonly<{ message: string }>) {
   return (
     <AccessCard Icon={Lock} title="Something went wrong" tone="red">
       <p className="text-zinc-600">{message || "Failed to load dashboard"}</p>
-      <button
-        onClick={() => window.location.reload()}
-        className="mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
-      >
-        Try Again
-      </button>
+      <div className="mt-6 flex flex-col gap-3">
+        <button
+          onClick={() => window.location.reload()}
+          className="w-full px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+        >
+          Try Again
+        </button>
+        <button
+          onClick={() =>
+            void signOutEverywhere("/auth/signin?callbackUrl=/dashboard")
+          }
+          className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"
+        >
+          Sign Out &amp; Re-login
+        </button>
+      </div>
     </AccessCard>
   );
 }

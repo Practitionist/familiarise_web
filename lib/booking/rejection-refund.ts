@@ -35,7 +35,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
@@ -72,7 +72,7 @@ export async function refundRejectedRequest(args: {
   // the actor is checked here as well as at the route — one missed guard on a
   // future caller must not be enough to hand out the platform's money.
   if (args.actor === "CONSULTEE") {
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary:
@@ -81,7 +81,7 @@ export async function refundRejectedRequest(args: {
         `consultant-initiated tier`,
       err: new Error("REJECTION_REFUND_WRONG_ACTOR"),
       context: { ...args },
-    }).catch(() => {});
+    });
     return null;
   }
 

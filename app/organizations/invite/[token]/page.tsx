@@ -19,6 +19,10 @@ import { useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
+  AUTH_ERROR_COPY,
+  normalizeAuthErrorCode,
+} from "@/lib/labels/auth-errors";
+import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
 } from "@/lib/compliance/purpose-codes";
@@ -29,13 +33,109 @@ interface AcceptResponse {
   alreadyMember?: boolean;
 }
 
+/** `"<title>. <description>"` — the one shape a single `<p>` can hold. */
+function joinCopy(copy: { title: string; description: string }): string {
+  return `${copy.title}. ${copy.description}`;
+}
+
+/**
+ * The accept route's real refusals, in the customer's words.
+ *
+ * BEFORE: every non-OK accept became one string — `body.error` fed to
+ * `humanizeOrgError`, which passes unknown input through unchanged. The
+ * route answers *sentences*, not codes (`{ error: "Invitation has expired" }`,
+ * `{ error: "This invitation is not addressed to you" }`), so the invitee saw
+ * server prose — and, on the 403, the organisation's internal status enum —
+ * where a sentence was owed. The codes already existed in the auth catalog
+ * (`INVITATION_EXPIRED`, `INVITATION_NOT_FOR_YOU`, …); nothing was reading
+ * them.
+ *
+ * Resolution order:
+ *   1. A real `code` from the route, if it ever grows one. `normalizeAuthErrorCode`
+ *      narrows it, so a stray string cannot index the catalog.
+ *   2. The status, which is the only machine signal the route currently
+ *      offers, disambiguated by `raw` only where two refusals share a status
+ *      (the two 404s, the two 409s).
+ *   3. `humanizeOrgError` for the app-rail codes the org dashboard mints
+ *      (`NOT_A_CONSULTANT`, `ORG_NOT_VERIFIED`, …), whose whole reason for
+ *      existing is this call site.
+ *
+ * The two sentences below are page-local because the catalog has no entry for
+ * them. Both are deliberate: the route's own sentence for the first embeds the
+ * organisation's internal status enum, and neither says anything an invitee
+ * can act on. The honest long-term fix is an `ORG_*` code in
+ * `lib/labels/org-errors.ts` (not owned here) — flagged in the handoff.
+ */
+function inviteAcceptanceCopy(
+  status: number,
+  code: string | null,
+  raw: string | null,
+): string {
+  const normalized = normalizeAuthErrorCode(code);
+  if (normalized) return joinCopy(AUTH_ERROR_COPY[normalized]);
+
+  // 410 — `inv.expiresAt < Date.now()`.
+  if (status === 410) return joinCopy(AUTH_ERROR_COPY.INVITATION_EXPIRED);
+
+  if (status === 404) {
+    // Two 404s: the invitation row is gone, or the organisation is. The
+    // first is an ordinary dead link; the second means the inviter has
+    // nothing left to invite anyone into.
+    return raw === "Organization no longer exists"
+      ? "This organisation no longer exists, so the invitation can't be accepted. Ask whoever invited you for a new one."
+      : joinCopy(AUTH_ERROR_COPY.INVITATION_NOT_FOUND);
+  }
+
+  if (status === 403) {
+    // `requireApiAuth` — the accepter's own account is suspended. Checked
+    // first because it is not an invitation problem at all.
+    if (raw === "Account suspended") {
+      return joinCopy(AUTH_ERROR_COPY.BANNED_USER);
+    }
+    // `isOnboardingBlocked(org.status)` inside the accept transaction. The
+    // route's sentence is `Organization is <status>; cannot accept new
+    // members` — the status enum is ours, not the invitee's, so it is not
+    // echoed back.
+    if (raw?.startsWith("Organization is ")) {
+      return "This organisation isn't accepting new members right now. Ask an administrator to re-activate it, then use the link in the invitation email again.";
+    }
+    // `inv.email !== session.user.email` — the only 403 left.
+    return joinCopy(AUTH_ERROR_COPY.INVITATION_NOT_FOR_YOU);
+  }
+
+  if (status === 409) {
+    // Two 409s from the accept transaction: the atomic claim lost (this is
+    // the double-click / two-tabs case, and the same answer as a link that
+    // was already redeemed), or the membership row is an `ERASED` tombstone.
+    if (raw?.includes("erased")) {
+      return "This membership was erased, so the invitation can't be accepted. Ask an administrator for a new invitation.";
+    }
+    return joinCopy(AUTH_ERROR_COPY.INVITATION_ALREADY_ACCEPTED);
+  }
+
+  // 401 — the accepter's session is gone (`requireApiAuth`), so the button
+  // can never succeed until they sign in again.
+  if (status === 401) {
+    return "Your session has ended. Sign in again, then reopen the invitation link.";
+  }
+
+  // 503 — the session *lookup* failed, which is not "signed out"
+  // (see `lib/auth-session-lookup.ts`); the catalog's UNREACHABLE entry is
+  // the honest sentence and it explicitly says nothing was changed.
+  if (status === 503) {
+    return joinCopy(AUTH_ERROR_COPY.SESSION_LOOKUP_FAILED);
+  }
+
+  return humanizeOrgError(raw ?? "We could not accept this invitation.");
+}
+
 type PreviewState =
   | { phase: "loading" }
   | { phase: "valid"; orgName: string; orgLogo: string | null; role: string }
   | { phase: "invalid"; message: string };
 
-// The preview API returns `role` as a free-form string (Invitation.role on
-// the BetterAuth table). Narrow it to a MemberRole before label lookup;
+// The preview API returns `role` as a free-form string (Invitation.role).
+// Narrow it to a MemberRole before label lookup;
 // fall back to the raw value when the string doesn't match the enum.
 function roleLabel(role: string): string {
   const parsed = MemberRoleSchema.safeParse(role);
@@ -110,6 +210,28 @@ export default function InviteAcceptPage({
   // can be auto-redirected back here after completing onboarding.
   // This bridges the signup → onboarding → dashboard redirect chain where
   // the callbackUrl would otherwise be lost.
+  //
+  // KNOWN FRAGILITY (reported, deliberately unchanged — this works and the
+  // only consumer, `app/form/onboarding/page.tsx`, already ranks an explicit
+  // `callbackUrl` above this key):
+  //
+  //   - No TTL. The key is written on every render for a signed-out visitor
+  //     and is only removed once onboarding completes, so an abandoned
+  //     invitation link leaves a key that outlives the invitation's own
+  //     14-day life and is then navigated to on an unrelated onboarding.
+  //   - Not tab-scoped. A second tab that finishes onboarding first consumes
+  //     the token, and the invitee lands on the invite page with nothing to
+  //     accept (the atomic claim in the accept route then answers 409).
+  //   - The consumer's `localStorage.getItem` is not wrapped in try/catch
+  //     (the writer here is). Safari private mode can throw on access.
+  //   - The value is interpolated into `/organizations/invite/${pendingToken}`
+  //     on the consumer side, unvalidated. It is an opaque 64-char hex id and
+  //     the page re-encodes it for the preview fetch, so there is no sink
+  //     here today — but the key is untrusted input on a navigation.
+  //
+  // The durable fix is a short-lived, per-tab value (sessionStorage, or a
+  // signed short-TTL cookie) rather than an unbounded localStorage key; that
+  // is a change to the onboarding page too, so it is not made here.
   useEffect(() => {
     if (!isPending && !session?.user?.id) {
       try {
@@ -124,45 +246,59 @@ export default function InviteAcceptPage({
   // Preview only gates the unauthenticated sign-in prompt; authenticated users
   // always attempt accept so the accept API can surface specific, verified errors
   // (e.g. "you're already a member → go to dashboard" vs. generic "no longer valid").
+  //
+  // Flat `async` rather than a promise chain that throws a sentence: the
+  // previous shape stashed the refusal in an `Error`'s message, read it back
+  // out, and fed it to `humanizeOrgError` — which passes an unrecognised
+  // string through untouched. Keying off `res.status` here is what lets
+  // `inviteAcceptanceCopy` answer the 403/409/410s differently.
   const accept = useCallback(
-    (grantConsent: boolean) => {
+    async (grantConsent: boolean) => {
       setStatus("accepting");
-      fetch("/api/organizations/invitations/accept", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invitationId: token,
-          ...(grantConsent && { grantConsent: true }),
-        }),
-      })
-        .then(async (res) => {
-          const body = await res.json();
-          // #1854 — no data-processing consent yet (an SSO-created account):
-          // ask for it here, then accept with it in one request.
-          if (res.status === 403 && body.code === "CONSENT_REQUIRED") {
-            return null;
-          }
-          if (!res.ok) {
-            throw new Error(body.error || "Failed to accept invitation");
-          }
-          return body as AcceptResponse;
-        })
-        .then((body) => {
-          if (!body) {
-            setStatus("consent");
-            return;
-          }
-          setResult(body);
-          setStatus("success");
-        })
-        .catch((err: Error) => {
-          // Accept errors are machine codes (NOT_A_CONSULTANT, ...) — humanize
-          // before display so invitees see the sentence, not the code. Unknown
-          // strings pass through verbatim.
-          setErrorCode(err.message);
-          setError(humanizeOrgError(err.message));
-          setStatus("error");
+      setError(null);
+      setErrorCode(null);
+      let res: Response;
+      try {
+        res = await fetch("/api/organizations/invitations/accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            invitationId: token,
+            ...(grantConsent && { grantConsent: true }),
+          }),
         });
+      } catch {
+        // Never completed, so nothing was written — say that rather than
+        // guessing at a reason.
+        setError(
+          "We couldn't reach the server. Check your connection and try again.",
+        );
+        setStatus("error");
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      // #1854 — no data-processing consent yet (an SSO-created account):
+      // ask for it here, then accept with it in one request.
+      if (res.status === 403 && body.code === "CONSENT_REQUIRED") {
+        setStatus("consent");
+        return;
+      }
+      if (!res.ok) {
+        const raw = typeof body.error === "string" ? body.error : null;
+        const code = typeof body.code === "string" ? body.code : null;
+        // Kept for the one refusal with a next step of its own (the expert
+        // profile wizard). The route sends that one as a bare code, so
+        // `code ?? raw` is what carries it — see the render branch.
+        setErrorCode(code ?? raw);
+        setError(inviteAcceptanceCopy(res.status, code, raw));
+        setStatus("error");
+        return;
+      }
+      setResult(body as unknown as AcceptResponse);
+      setStatus("success");
     },
     [token],
   );

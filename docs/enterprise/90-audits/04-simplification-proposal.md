@@ -31,6 +31,11 @@ toc-depth: 2
 > recommendation no longer applies to live code. This note closes #1373,
 > which tracked the doc drift.
 
+> **Note (PR #1878):** SCIM was then removed entirely before launch (SSO is
+> OIDC-only with JIT membership), so `lib/scim/` and its routes no longer
+> exist. The A2 recipe and the "SCIM shipped" remarks below are history. See
+> [SSO](../../authentication/sso.md).
+
 # Executive Summary
 
 The enterprise subsystem (~614 changed files, ~13,500 LoC of code + 11,141 lines of docs) is **complex but not over-complex** — most of the apparent weight is load-bearing. However, two parallel surveys (one over the 47 enterprise docs, one over the code surface) identified **~2,800 lines of preventable bloat** that can be removed with zero schema changes and zero customer-visible behavior changes.
@@ -74,7 +79,7 @@ What the surveys identified is **incidental complexity** layered on top:
 - **Three docs** explaining the three-ledger discipline (`07-payout-pipeline.md`, `09-wallet-and-ledger.md`, `18-three-ledger-discipline.md`) — they overlap by ~80%
 - **Two payout service files** (`payout-service.ts`, `org-payout-service.ts`) — one of them has zero production callers
 - **Full SCIM 2.0 implementation** (~534 LoC) — zero customers using it yet
-- **Three role-check helpers** (`requireOrgAccess`, `requireOrgOwner`, `requireOrgBillingAdminOrOwner`) — they all answer "can this person do X?" but with different argument shapes
+- **Three role-check helpers** (`requireOrgAccess` with a rank floor, an OWNER-only wrapper, and an OWNER-or-BILLING_ADMIN disjunction helper) — they all answered "can this person do X?" but with different argument shapes, and #1860 has since folded them into the permission matrix
 
 These are the kinds of weight a system accumulates during rapid pre-launch development. Now is the moment to shed it.
 
@@ -223,13 +228,18 @@ The enterprise code surface spans ~13,500 LoC. Three categories of preventable b
 
 ### B1. Three role-check predicates
 
-Currently three helpers answer "can this person do X?":
+> **Status (2026-09-28):** PR #1860 implemented this consolidation as the
+> org permission matrix in `lib/auth/org-permissions.ts`. Every org route
+> now calls `requireOrgAccess(orgId, { permission: "<key>" })`, and the
+> three helpers below no longer exist.
 
-- `requireOrgAccess(orgId, { minimumRole })` — rank-based check
-- `requireOrgOwner(orgId)` — owner-only convenience
-- `requireOrgBillingAdminOrOwner(orgId)` — disjunction (added because rank ladder couldn't express "OWNER or specialized admin")
+When this proposal was written, three helpers answered "can this person do X?":
 
-**Action — UNIFY into capability matrix:**
+- `requireOrgAccess` with a rank-floor option — rank-based check (today the `permission` option)
+- an owner-only convenience wrapper (today OWNER-only keys such as `identity.manage` and `org.delete`)
+- an OWNER-or-BILLING_ADMIN disjunction helper, added because the rank ladder couldn't express "OWNER or specialized admin" (today the `billing.manage`, `purchaseOrders.manage`, `payouts.manage` and `integrations.manage` keys)
+
+**Action — UNIFY into capability matrix (historical proposal; #1860 shipped a different shape, the `OrgSurface` permission matrix, so the sketch and estimates below are kept only as the original proposal):**
 
 ```ts
 // lib/auth/capabilities.ts
@@ -246,9 +256,9 @@ export async function requireCapability(orgId: string, capability: Capability) {
 }
 ```
 
-Then `requireOrgOwner = requireCapability(..., "admin")` and `requireOrgBillingAdminOrOwner = requireCapability(..., "finance")`.
+Then the owner-only wrapper would become `requireCapability(..., "admin")` and the disjunction helper would become `requireCapability(..., "finance")`. As shipped in #1860, the single predicate is `requireOrgAccess(orgId, { permission })` and the matrix is keyed by surface and action rather than by capability.
 
-**Files affected:** `lib/auth-helpers.ts`, `lib/auth/billing-admin-gate.ts`, ~70 route handlers (no logic change, just import swap).
+**Files affected:** `lib/auth-helpers.ts`, the disjunction helper's own file (deleted in #1860), ~70 route handlers (no logic change, just import swap).
 
 **Impact:** -200 LoC, much easier to add new roles (e.g., FINANCE_VIEWER) without helper explosion.
 
@@ -370,12 +380,14 @@ Actions:
 
 ## Phase 2 — Helper consolidation (1 week post-PR)
 
+> **Status (2026-09-28):** The role-predicate part of this phase is complete; PR #1860 replaced the three helpers with the permission matrix, so the effort and line estimates below are historical.
+
 **Effort:** 2 days. **Risk:** Low.
 
 Actions:
 
 1. Introduce `lib/auth/capabilities.ts` with `requireCapability()` + role→capability matrix
-2. Refactor `requireOrgAccess`, `requireOrgOwner`, `requireOrgBillingAdminOrOwner` to thin wrappers
+2. Refactor `requireOrgAccess`, the owner-only wrapper and the disjunction helper to thin wrappers (#1860 went further, deleting the two wrappers and giving `requireOrgAccess` a `permission` option)
 3. Migrate ~70 route handlers (mechanical, no behavior change)
 4. Extract roles gate matrix from `04-roles-and-permissions.md` into `reference/roles-api-matrix.md`
 
@@ -404,7 +416,7 @@ Don't do these speculatively. Wait for a real feature to justify.
 | Merge ledger docs            | ✅ no code change   | N/A                       | None            | -89    | **YES**                  |
 | Delete 7 stale/cosmetic docs | ✅ no code change   | N/A                       | None            | -1,113 | **YES**                  |
 | Trim/archive 4 docs          | ✅ no code change   | N/A                       | None            | -250   | **YES**                  |
-| Unify role predicates        | ✅ no schema change | ✅ refactor               | None            | -200   | Phase 2                  |
+| Unify role predicates        | ✅ no schema change | ✅ refactor               | None            | -200   | Done in #1860            |
 | Split SchedulingService  | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3                  |
 | Modularize checkout.ts       | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3 (defer)          |
 

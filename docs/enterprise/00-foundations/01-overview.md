@@ -141,8 +141,9 @@ the journey — each entry links to the band doc that carries the full story.
 
 - **#655 — enterprise foundation.** The first cut of the org subsystem:
   capability booleans, `Membership`, the role ladder, and the
-  `BILLING_ADMIN` finance role gated by a disjunction (not a rank) —
-  `lib/auth/billing-admin-gate.ts`. See [roles-and-permissions](04-roles-and-permissions.md).
+  `BILLING_ADMIN` finance role gated by a disjunction (not a rank). That
+  disjunction lives on today as the `billing.manage` key of the permission
+  matrix in `lib/auth/org-permissions.ts` (#1860). See [roles-and-permissions](04-roles-and-permissions.md).
 - **#768 — v0 schema freeze + God-model breakup.** The monolithic
   `Organization` row was split into satellites (`OrganizationTaxInfo`,
   `OrgBrandingProfile`, `OrganizationMsmeInfo`), `OrganizationKind` was
@@ -226,7 +227,6 @@ erDiagram
     User ||--o| OrgWorkspaceProfile         : "operator identity"
     User ||--o{ ConsentArtifact             : "DPDP grants"
 
-    Membership ||--o| Member                : "betterAuthMemberId"
     Membership ||--o{ ProgramAssignment     : "entitled to"
     Membership }o--o| RateCard              : "override (optional)"
 
@@ -534,9 +534,8 @@ flowchart TD
     end
     subgraph IAM["Identity & Access"]
         Membership["Membership\nrole · status"]
-        Member["Member (BetterAuth)"]
         Invitation["Invitation"]
-        SSOSettings["OrganizationSSOSettings\nenforceSSO · breakGlassUntil"]
+        SSOSettings["OrganizationSSOSettings\nenforceSSO · defaultRoleForAutoJoin"]
         DomainClaim["OrgDomainClaim"]
         SsoProvider["SsoProvider"]
     end
@@ -637,8 +636,10 @@ Every doc below defers to the following files when the prose drifts:
 - `lib/auth.ts` (the `customSession` hook) — the live session payload;
   also the `databaseHooks.user.create.after` hook, which no longer
   force-creates a `ConsulteeProfile` on signup.
-- `lib/auth-helpers.ts` — `requireOrgAccess`, `requireOrgOwner`,
-  `orgRoleSatisfies`, and `ORG_ROLE_RANK`.
+- `lib/auth-helpers.ts` — `requireOrgAccess`, whose `permission` option
+  names a key of the org permission matrix. `ORG_ROLE_RANK` lives in
+  `lib/auth/role-ranks.ts` and is a display order, never an
+  authorization input.
 - `lib/api/organizations/{wallet,program-helpers,rate-card,hierarchy}.ts`
   — the transactional primitives referenced across the ledger, program,
   rate-card, and hierarchy docs.
@@ -655,8 +656,9 @@ Every doc below defers to the following files when the prose drifts:
   the contract route itself plus the config-lock predicates above.)
 - `lib/enterprise/governance.ts` — `verifiedAt`-gated feature locks
   (SSO, INVOICE billing, unverified-org seat cap) (#675/#687).
-- `lib/auth/billing-admin-gate.ts` — `requireOrgBillingAdminOrOwner`, the
-  field-level RBAC gate behind the org-PATCH allowlists
+- `lib/auth/org-permissions.ts` — the org permission matrix. Its
+  `settings.ownerFields`, `settings.manage` and `billing.manage` keys are
+  the field-level RBAC gate behind the org-PATCH allowlists
   (`MAINTAINER_FIELDS` / `BILLING_ADMIN_FIELDS`). See [roles-and-permissions](04-roles-and-permissions.md).
 - `jobs/contracts/{auto-renew-contracts,expire-contracts}.ts` — the renewal
   (idempotent via `Contract.autoRenewedAt`) and expiry crons. See [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md).

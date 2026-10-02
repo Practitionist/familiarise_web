@@ -1,4 +1,6 @@
 > **⚠️ SUPERSEDED on 2026-04-08.** PR #647 (feature/cleanup) addressed the bulk of this doc's admin/staff findings: the sidebar is unified via `CollapsibleSidebar`, System Jobs + Maintenance are removed from the staff dashboard, ~46 admin/staff API routes use shared `requirePrivilegedAuth` helpers, 5 route pairs use shared `lib/api/operators/*` utilities, and 5–7 dashboard page pairs use shared `components/dashboard/shared/*Page.tsx` components. The enterprise dashboard design section is being rewritten in PR2 as `docs/enterprise/00-canonical-design.md`. Retained for historical context — the admin/staff overlap audit that informed PR #647 is still readable here.
+>
+> **⚠️ FURTHER SUPERSEDED on 2026-09-27.** PR #1842 (part of #1527) merged the admin and staff route trees into one `app/dashboard/(backoffice)/[tree]` tree with a `lib/backoffice/capability.ts` capability context, and replaced every hand-rolled shell (including the admin and staff sidebars) with one `DashboardShell`. It did not collapse the `/api/admin/**` and `/api/staff/**` API namespaces this doc also describes as duplicated: only the two routes that were genuinely identical were deleted, and most remaining routes were kept as-is because staff-facing reads are narrower than their admin equivalents, not copy-pasted. See `docs/dashboard/engineering-log-2026-09-27-dashboard-overhaul.md` and `docs/decisions/2026-09-27-backoffice-single-tree-and-capability.md` for the current architecture; this document remains historical context only.
 
 # Dashboard Architecture Assessment & Enterprise Dashboard Design
 
@@ -675,7 +677,7 @@ This is the pattern used by Slack (workspace switcher), Notion (workspace switch
 ### 9.1 User Roles in the Org Dashboard
 
 ```
-Org Dashboard Users (from BetterAuth Organization plugin):
+Org Dashboard Users (from the typed Membership model, ADR 06):
 
 OWNER       → Full access: billing, settings, team, analytics, SSO config
 ADMIN       → Team management, analytics, content curation. No billing.
@@ -710,7 +712,7 @@ MEMBER      → View-only: own progress, assigned content. No admin features.
 └── settings/           ← Org profile, branding, SSO, integrations
     ├── profile/        ← Name, logo, description, domain
     ├── branding/       ← Colors, custom domain (enterprise plan)
-    ├── sso/            ← SAML/OIDC config (enterprise plan)
+    ├── sso/            ← OIDC config (enterprise plan)
     └── api/            ← API keys (enterprise plan)
 ```
 

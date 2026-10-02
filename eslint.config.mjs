@@ -19,7 +19,6 @@ export default [
       "out/**",
       "coverage/**",
       "public/static/**",
-      "update-postman-collection.ts",
     ],
   },
 
@@ -212,9 +211,10 @@ export default [
       "no-restricted-syntax": [
         "error",
         {
-          selector: "CallExpression[callee.name='getSession'][arguments.length=0]",
+          selector:
+            "CallExpression[callee.name='getSession'][arguments.length=0]",
           message:
-            "Bare getSession() serves the cookie cache (stale role/ban up to ~5 min). Use getSession(true) for force-fresh reads, requireApiAuth()/requireBackofficeSurface() in routes, or the explicit getCachedSession() for hot cosmetic reads. See #1807.",
+            "Bare getSession() is the cookie-cacheable read (stale role/ban whenever the cache is on). Use getSession(true) for force-fresh reads, requireApiAuth()/requireBackofficeSurface() in routes, or the explicit getCachedSession() for hot cosmetic reads. See #1807.",
         },
         {
           // getSession(false) / getSession(undefined) are the same cached

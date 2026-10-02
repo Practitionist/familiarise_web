@@ -162,29 +162,37 @@ export async function sendWelcomeEmail(
   );
 }
 
-/** Password reset link. The token is valid for 30 minutes (lib/auth.ts). */
+/**
+ * Password reset link. The token is valid for 30 minutes (lib/auth.ts).
+ * `invite` words it as a new operator's "set your password" email, which is
+ * the same token and page (lib/auth/operators.ts).
+ */
 export async function sendPasswordResetEmail(
   {
     email,
     name,
     token,
     userId,
+    invite = false,
   }: {
     email: string;
     name: string;
     token: string;
     userId?: string;
+    invite?: boolean;
   },
   opts: SendOptions = {},
 ) {
   const resetLink = `${getAppUrl()}/auth/reset-password?token=${token}`;
   return send(
     "PASSWORD_RESET",
-    PasswordResetEmail({ name, resetLink }),
+    PasswordResetEmail({ name, resetLink, invite }),
     {
       from: SENDERS.security,
       to: email,
-      subject: "Reset your Familiarise password",
+      subject: invite
+        ? "Set your Familiarise staff password"
+        : "Reset your Familiarise password",
     },
     { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
   );

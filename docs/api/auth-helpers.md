@@ -158,15 +158,9 @@ Is the route public (no login required)?
          └─ Any authenticated user → requireApiAuth
 ```
 
-## Future
+## Org-scoped routes
 
-The following helpers will land with the enterprise PR (PR2):
-
-- `requireOrgAccess(orgId, minRole?)` — active membership in an organization with optional minimum role
-- `requireOrgOwner(orgId)` — shorthand wrapper
-- `orgRoleSatisfies(actual, minimum)` — boolean comparator
-
-Those need the `OrganizationProfile` / `OrganizationMemberProfile` schema which lives in PR2, so they aren't in this PR.
+Org-scoped routes use `requireOrgAccess(orgId, { permission: "<key>" })`, which requires an active membership in the organization whose role holds the named key of the org permission matrix in `lib/auth/org-permissions.ts`. There is no rank comparator and no OWNER-only wrapper; an owner-only route names an OWNER-only key such as `org.delete`. See [the authorization guide](../authorization/README.md) for the full option list.
 
 ## See also
 

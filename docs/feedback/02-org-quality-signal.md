@@ -12,7 +12,7 @@ The endpoint reads the rows once and aggregates in application code, because `Ap
 
 ## The grant is `quality.read`
 
-The endpoint is gated on `quality.read`, not on `operations.read`. The roles are the same today (OWNER, MAINTAINER, MANAGER, SUPPORT), so nothing changes about who can read it. The point is that `operations.read` also opens the org-wide appointments feed, the recordings list and the documents list, which are spend-and-utilisation surfaces, while this one is aggregated satisfaction drawn from ratings ADR 20 classifies as content. Sharing one grant means the day somebody widens `operations.read` for an unrelated reason, they widen this too without noticing.
+The endpoint is gated on `quality.read`, not on `operations.read`. The roles are the same today (OWNER, MAINTAINER, MANAGER, SUPPORT), so nothing changes about who can read it. The point is that `operations.read` also opens the org-wide appointments feed and, as of PR #1842 (part of #1527), the `Everyone` scope of the recordings and documents Library pages — every one of them a spend-and-utilisation surface — while this one is aggregated satisfaction drawn from ratings ADR 20 classifies as content. Sharing one grant means the day somebody widens `operations.read` for an unrelated reason, they widen this too without noticing.
 
 ## The floors
 

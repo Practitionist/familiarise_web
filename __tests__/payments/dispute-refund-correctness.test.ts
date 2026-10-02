@@ -21,11 +21,21 @@
 const recordSystemError = jest.fn().mockResolvedValue(undefined);
 const razorpayPaymentsFetch = jest.fn();
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...args: unknown[]) => recordSystemError(...args),
-  recordSystemEvent: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest.fn().mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemError: (...args: unknown[]) => recordSystemError(...args),
+    recordSystemEvent,
+    // Mirrors the real wrapper: it delegates to `recordSystemError` and
+    // swallows a rejection. A bare pass-through here would make the mock
+    // STRICTER than production, so a "caller tolerates a failing recorder"
+    // test would be testing the mock's rejection rather than the call site.
+    recordSystemErrorSafe: (...args: unknown[]) =>
+      recordSystemError(...args).catch(() => undefined),
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 
 jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
@@ -315,5 +325,53 @@ describe("PM-13 — handleRefundCreated drops orphan refund.failed", () => {
     expect(stub.refund.create).toHaveBeenCalledTimes(1);
     expect(store.refunds).toHaveLength(1);
     expect(store.refunds[0].refundId).toBe("rfnd_ok");
+  });
+});
+
+describe("the alert cannot break the dispute path", () => {
+  /**
+   * The whole point of `recordSystemErrorSafe` is that failing to record a
+   * failure never propagates. That matters more here than most: this handler
+   * decides whether a disputed payment gets linked, and the gateway has
+   * usually been acknowledged by the time these run. A rejection escaping would
+   * lose the alert AND the dispute outcome.
+   */
+  beforeEach(() => {
+    recordSystemError.mockReset();
+    recordSystemError.mockResolvedValue(undefined);
+  });
+
+  it("still resolves, with the same outcome, when the recorder rejects", async () => {
+    recordSystemError.mockRejectedValue(new Error("prisma write failed"));
+
+    // The module-level import (line ~196) already holds the real signature;
+    // reuse the same call shape the other cases use rather than inventing one.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      await expect(
+        handleDisputeCreated(
+          "disp_reject",
+          "pay_charge_reject",
+          5000,
+          "INR",
+          "fraudulent",
+          "open",
+          null,
+          true,
+          "RAZORPAY",
+        ),
+      ).resolves.not.toThrow();
+      // Give the microtask queue a turn: an unhandled rejection surfaces on the
+      // next tick, not synchronously.
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    // The rejection must be gone, not merely not-thrown from this call frame.
+    expect(unhandled).toEqual([]);
   });
 });

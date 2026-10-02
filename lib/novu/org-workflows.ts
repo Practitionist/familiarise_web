@@ -44,8 +44,6 @@ import {
   type OrgProgramExhaustedPayload,
   type OrgProgramOverageDueInput,
   type OrgProgramOverageDuePayload,
-  type OrgSsoCertExpiringInput,
-  type OrgSsoCertExpiringPayload,
   type OrgSsoProviderDeletedPayload,
   type OrgWalletLowInput,
   type OrgWalletLowPayload,
@@ -597,31 +595,6 @@ export async function notifyOrgSsoProviderDeleted(
     NOVU_WORKFLOWS.ORG_SSO_PROVIDER_DELETED,
     owners,
     payload,
-    opts,
-  );
-}
-
-/**
- * Fires from the daily SSO-cert-expiry cron at WARN / CRITICAL /
- * EXPIRED thresholds. Delivers in-app to OWNERs so a cert rotation
- * gets on their radar before the IdP breaks.
- */
-export async function notifyOrgSsoCertExpiring(
-  orgId: string,
-  payload: OrgSsoCertExpiringInput,
-  opts?: TriggerOptions,
-): Promise<StagedTrigger[]> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
-  return triggerManyZoned(
-    NOVU_WORKFLOWS.ORG_SSO_CERT_EXPIRING,
-    owners,
-    (timezone): OrgSsoCertExpiringPayload => ({
-      ...payload,
-      notAfter:
-        formatNotificationDateTime(payload.notAfter, timezone) ??
-        payload.notAfter,
-      notAfterIso: payload.notAfter,
-    }),
     opts,
   );
 }

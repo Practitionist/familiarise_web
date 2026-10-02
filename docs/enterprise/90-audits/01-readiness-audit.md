@@ -8,6 +8,8 @@ last-reviewed: 2026-06-11
 
 # Enterprise Subsystem — Production Readiness Checklist
 
+> **Superseded in part (PR #1878):** SSO is OIDC-only. SAML, SSO break-glass, `allowedEmailDomains` and the BetterAuth organization plugin were removed before launch, so the items below that cite them are history. Current design: [SSO](../../authentication/sso.md) and [ADR 36](../70-design-decisions/36-auth-schema-freeze.md).
+
 **Branch:** `feature/enterprise` | **Updated:** 2026-05-02 (Round 2) | **Auditor:** Claude Code (Sonnet 4.6)
 **Verdict:** Design-partner ready (manual-ops). NOT self-serve multi-tenant ready.
 
@@ -27,7 +29,7 @@ last-reviewed: 2026-06-11
 - ✅ **Invoice dunning** — `jobs/billing/dunning.ts` (7-day cadence, max 3 reminders).
 - ✅ **CHARGE_MEMBER timeout** — `timeout-member-overages` cron + `OverageEvent.chargeTimedOutAt`/attempt telemetry; abandoned side-charges fail closed instead of stranding money. (#779 §A)
 - ✅ **Refund-failed notify** — no more silent stuck money on reconcile-pending refunds. (#779 §D)
-- ✅ **Field-level RBAC** — `requireOrgBillingAdminOrOwner` disjunction gate on money-bearing org mutations (not a per-column allowlist). (#779 §A)
+- ✅ **Field-level RBAC** — money-bearing org mutations sit behind the OWNER-or-BILLING_ADMIN gate (today the `billing.manage` matrix key), while `PATCH /api/organizations/[orgId]` checks each touched field against a per-field allowlist. (#779 §A)
 - ✅ **SSO break-glass** — `OrganizationSSOSettings.breakGlassUntil` + `/sso/break-glass` route lets an OWNER reopen password login while `enforceSSO` is on and the IdP is down. (#779 §E)
 - ✅ **Self-serve verification resubmit** — Organization stamps + `/verification/resubmit` route (no `RESUBMIT` enum). (#779 §A)
 - ✅ **Wallet auto-top-up** — `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise, autoTopUpMandateId}` + `wallet-low-balance` cron; surfaced in the Wallet tab. (#777 §C)
@@ -178,7 +180,7 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 - [x] ✅ `customSession` callback injects `orgWorkspaceProfileId` + `organizationMemberships` into every session
 - [x] ✅ `shouldRejectSession` — blocks login for SSO-enforced domain users without enrolled SSO provider
 - [x] ✅ `requireOrgAccess(orgId)` enforced on all 54+ enterprise API routes
-- [x] ✅ `requireOrgOwner` enforced on destructive operations (delete org, SSO config, domain claims, payout account)
+- [x] ✅ An OWNER-only gate enforced on destructive operations (delete org, SSO config, domain claims, payout account); today these are the `org.delete`, `identity.manage` and `payouts.account.manage` matrix keys
 - [x] ✅ Platform ADMIN bypass with synthesized OWNER-rank stub (capability checks preserved)
 - [x] ✅ IDOR guard on OrgWorkspace endpoints (`orgWorkspaceProfileId` match)
 - [x] ✅ Middleware blocks unauthenticated access to `/api/organizations/*` prefix

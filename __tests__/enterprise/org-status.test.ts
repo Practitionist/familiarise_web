@@ -8,9 +8,7 @@
  */
 
 import {
-  ADDRESSABLE_ORG_STATUSES,
   BILLABLE_ORG_STATUSES,
-  OPERATIONAL_ORG_STATUSES,
   isBillable,
   isOnboardingBlocked,
 } from "@/lib/enterprise/org-status";
@@ -18,17 +16,6 @@ import {
 describe("org-status helpers", () => {
   it("BILLABLE only includes ACTIVE — pending/suspended/deactivated do NOT bill", () => {
     expect(BILLABLE_ORG_STATUSES).toEqual(["ACTIVE"]);
-  });
-
-  it("OPERATIONAL allows PENDING_VERIFICATION + ACTIVE — not SUSPENDED/DEACTIVATED", () => {
-    expect(OPERATIONAL_ORG_STATUSES.sort()).toEqual(
-      ["ACTIVE", "PENDING_VERIFICATION"].sort(),
-    );
-  });
-
-  it("ADDRESSABLE includes SUSPENDED so OWNERs can resolve issues", () => {
-    expect(ADDRESSABLE_ORG_STATUSES).toContain("SUSPENDED");
-    expect(ADDRESSABLE_ORG_STATUSES).not.toContain("DEACTIVATED");
   });
 
   it("isOnboardingBlocked: SUSPENDED + DEACTIVATED block, others allow", () => {

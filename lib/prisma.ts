@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 import { moneyResultExtensions } from "./prisma-extensions";
+import { ssoSecretDecryptExtension } from "./prisma-sso-secret-extension";
 
 // A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
 // (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
@@ -126,7 +127,23 @@ function makeClient() {
     }
   });
 
-  return base.$extends({ result: moneyResultExtensions });
+  // Two result extensions, both applying on read:
+  //   - moneyResultExtensions: BigInt money columns -> number (#780).
+  //   - ssoSecretDecryptExtension: `SsoProvider.oidcConfig` envelope -> the
+  //     JSON object BetterAuth's SSO plugin expects. See that module for why
+  //     the Prisma client is the only seam that covers every reader.
+  //
+  // Merged per-model, not with a top-level spread: `$extends` infers each
+  // model's result shape from its own object literal, and a spread widens
+  // `ssoProvider`'s inferred type to a union that Prisma can no longer resolve
+  // per field. `ssoProvider` appears in neither the money map nor anywhere
+  // else, so the key sets are disjoint and this is not a lossy merge.
+  return base.$extends({
+    result: {
+      ...moneyResultExtensions,
+      ssoProvider: ssoSecretDecryptExtension.ssoProvider,
+    },
+  });
 }
 
 // Helper signatures must accept the extended client — a bare PrismaClient

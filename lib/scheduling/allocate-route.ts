@@ -33,7 +33,7 @@ import {
   approvalMintConflict,
   mintApprovalPaymentAfterCommit,
 } from "@/lib/booking/approve-request";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 const LOG_LABEL: Record<EventType, string> = {
   consultation: "[Consultation Allocation]",
@@ -189,14 +189,14 @@ export async function handleAllocate(
           );
         }
         if (mint.status === "mint_failed") {
-          await recordSystemError({
+          await recordSystemErrorSafe({
             organizationId: null,
             category: "PAYMENT",
             summary:
               "Approval pay-link mint failed after allocation — approve again to retry",
             err: mint.error,
             context: { eventType, eventId },
-          }).catch(() => {});
+          });
           return NextResponse.json(
             {
               error:

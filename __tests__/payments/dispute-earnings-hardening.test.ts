@@ -39,18 +39,36 @@ const razorpayPaymentsFetch = jest.fn<
   Promise<{ order_id: string }>,
   [chargeId: string]
 >();
-const applyReversal = jest.fn<Promise<unknown>, [unknown]>().mockResolvedValue({});
+const applyReversal = jest
+  .fn<Promise<unknown>, [unknown]>()
+  .mockResolvedValue({});
 const recordTdsReversal = jest.fn<
   Promise<void>,
-  [{ payoutId: string; consultantProfileId: string; earningsId: string; refundAmountPaise: number; paymentAmountPaise: number }]
+  [
+    {
+      payoutId: string;
+      consultantProfileId: string;
+      earningsId: string;
+      refundAmountPaise: number;
+      paymentAmountPaise: number;
+    },
+  ]
 >();
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...args: Parameters<typeof recordSystemError>) =>
-    recordSystemError(...args),
-  recordSystemEvent: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest
+    .fn<Promise<void>, []>()
+    .mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemError: (...args: Parameters<typeof recordSystemError>) =>
+      recordSystemError(...args),
+    recordSystemEvent,
+    recordSystemErrorSafe: (...args: Parameters<typeof recordSystemError>) =>
+      recordSystemError(...args),
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 // #1221 — the client is lazy-initialized via getRazorpayClient(); the mock
 // hands back an object shaped like the SDK surface the handler touches.
 jest.mock("../../lib/payments/core/razorpay", () => ({
@@ -167,7 +185,9 @@ interface OrgEarningRow {
 interface IncrementOp {
   increment: number;
 }
-type EarningsUpdate = Partial<Omit<ConsultantEarningRow, "refundedShareAmount" | "refundedAmountPaise">> & {
+type EarningsUpdate = Partial<
+  Omit<ConsultantEarningRow, "refundedShareAmount" | "refundedAmountPaise">
+> & {
   refundedShareAmount?: number | IncrementOp;
   refundedAmountPaise?: number | IncrementOp;
 };
@@ -214,7 +234,12 @@ const store: {
   disputes: DisputeRow[];
   consultantEarnings: ConsultantEarningRow[];
   orgEarnings: OrgEarningRow[];
-} = { payments: new Map(), disputes: [], consultantEarnings: [], orgEarnings: [] };
+} = {
+  payments: new Map(),
+  disputes: [],
+  consultantEarnings: [],
+  orgEarnings: [],
+};
 
 function resetStore(): void {
   store.payments.clear();
@@ -223,32 +248,56 @@ function resetStore(): void {
   store.orgEarnings.length = 0;
 }
 
-function inList(status: EarningsLostWhere["status"], actual: EarningStatus): boolean {
+function inList(
+  status: EarningsLostWhere["status"],
+  actual: EarningStatus,
+): boolean {
   return !status || status.in.includes(actual);
 }
 
 interface TxStub {
   payment: {
-    findUnique: (args: { where: { paymentIntent?: string; id?: string } }) => Promise<PaymentRow | null>;
+    findUnique: (args: {
+      where: { paymentIntent?: string; id?: string };
+    }) => Promise<PaymentRow | null>;
     // #1353 — handleDisputeCreated resolves by either id through an `OR`.
     findFirst: (args: {
       where: { OR?: Array<Record<string, string | undefined>> };
     }) => Promise<PaymentRow | null>;
   };
   dispute: {
-    findUnique: (args: { where: { disputeId: string } }) => Promise<(DisputeRow & { payment: PaymentRow | null }) | null>;
+    findUnique: (args: {
+      where: { disputeId: string };
+    }) => Promise<(DisputeRow & { payment: PaymentRow | null }) | null>;
     create: (args: { data: Omit<DisputeRow, "id"> }) => Promise<DisputeRow>;
-    update: (args: { where: { disputeId: string }; data: Partial<DisputeRow> }) => Promise<DisputeRow | null>;
+    update: (args: {
+      where: { disputeId: string };
+      data: Partial<DisputeRow>;
+    }) => Promise<DisputeRow | null>;
   };
   consultantEarnings: {
-    updateMany: (args: { where: EarningsHoldWhere; data: Record<string, unknown> }) => Promise<{ count: number }>;
-    findMany: (args: { where: EarningsLostWhere }) => Promise<ConsultantEarningRow[]>;
-    update: (args: { where: { id: string }; data: EarningsUpdate }) => Promise<ConsultantEarningRow | null>;
+    updateMany: (args: {
+      where: EarningsHoldWhere;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>;
+    findMany: (args: {
+      where: EarningsLostWhere;
+    }) => Promise<ConsultantEarningRow[]>;
+    update: (args: {
+      where: { id: string };
+      data: EarningsUpdate;
+    }) => Promise<ConsultantEarningRow | null>;
   };
   organizationEarnings: {
-    updateMany: (args: { where: EarningsHoldWhere; data: Record<string, unknown> }) => Promise<{ count: number }>;
+    updateMany: (args: {
+      where: EarningsHoldWhere;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>;
     findMany: (args: { where: EarningsLostWhere }) => Promise<OrgEarningRow[]>;
-    update: (args: { where: { id: string }; data: EarningsUpdate }) => Promise<OrgEarningRow | null>;
+    update: (args: {
+      where: { id: string };
+      data: EarningsUpdate;
+    }) => Promise<OrgEarningRow | null>;
   };
   refund: {
     findUnique: () => Promise<null>;
@@ -317,7 +366,10 @@ function makeTxStub(): TxStub {
         return { ...row, payment: store.payments.get(row.paymentId) ?? null };
       },
       create: async ({ data }) => {
-        const created: DisputeRow = { id: `disp_row_${store.disputes.length + 1}`, ...data };
+        const created: DisputeRow = {
+          id: `disp_row_${store.disputes.length + 1}`,
+          ...data,
+        };
         store.disputes.push(created);
         return created;
       },
@@ -350,8 +402,7 @@ function makeTxStub(): TxStub {
         store.consultantEarnings
           .filter(
             (e) =>
-              e.paymentId === where.paymentId &&
-              inList(where.status, e.status),
+              e.paymentId === where.paymentId && inList(where.status, e.status),
           )
           .map((e) => ({ ...e })),
       update: async ({ where, data }) => {
@@ -381,8 +432,7 @@ function makeTxStub(): TxStub {
         store.orgEarnings
           .filter(
             (e) =>
-              e.paymentId === where.paymentId &&
-              inList(where.status, e.status),
+              e.paymentId === where.paymentId && inList(where.status, e.status),
           )
           .map((e) => ({ ...e })),
       update: async ({ where, data }) => {
@@ -416,8 +466,8 @@ beforeEach(() => {
   tx = makeTxStub();
   // handleDispute* passes options ({ isolationLevel, maxWait, timeout }) —
   // ignore them and run the callback against the fresh stub.
-  mockedTransaction.mockImplementation(
-    (fn: (tx: TxStub) => Promise<unknown>) => fn(tx),
+  mockedTransaction.mockImplementation((fn: (tx: TxStub) => Promise<unknown>) =>
+    fn(tx),
   );
   razorpayPaymentsFetch.mockResolvedValue({ order_id: "order_ok" });
 });
@@ -434,7 +484,10 @@ function seedPayment(amountPaise: number): void {
   });
 }
 
-async function openDispute(amountPaise: number, disputeId = "disp_1"): Promise<void> {
+async function openDispute(
+  amountPaise: number,
+  disputeId = "disp_1",
+): Promise<void> {
   await handleDisputeCreated(
     disputeId,
     "pay_charge_1",
@@ -462,17 +515,37 @@ describe("#1020-1 — hold records the pre-dispute status", () => {
   test("tags PENDING and READY rows with their own prior status", async () => {
     seedPayment(10_000);
     store.consultantEarnings.push(
-      { id: "ce_pend", paymentId: "pay_db_1", status: "PENDING", consultantSharePaise: 5_000, refundedShareAmount: 0, consultantProfileId: "cp_1", payoutId: null },
-      { id: "ce_ready", paymentId: "pay_db_1", status: "READY", consultantSharePaise: 5_000, refundedShareAmount: 0, consultantProfileId: "cp_1", payoutId: null },
+      {
+        id: "ce_pend",
+        paymentId: "pay_db_1",
+        status: "PENDING",
+        consultantSharePaise: 5_000,
+        refundedShareAmount: 0,
+        consultantProfileId: "cp_1",
+        payoutId: null,
+      },
+      {
+        id: "ce_ready",
+        paymentId: "pay_db_1",
+        status: "READY",
+        consultantSharePaise: 5_000,
+        refundedShareAmount: 0,
+        consultantProfileId: "cp_1",
+        payoutId: null,
+      },
     );
 
     await openDispute(5_000);
 
-    expect(store.consultantEarnings.find((e) => e.id === "ce_pend")).toMatchObject({
+    expect(
+      store.consultantEarnings.find((e) => e.id === "ce_pend"),
+    ).toMatchObject({
       status: "HELD",
       preDisputeStatus: "PENDING",
     });
-    expect(store.consultantEarnings.find((e) => e.id === "ce_ready")).toMatchObject({
+    expect(
+      store.consultantEarnings.find((e) => e.id === "ce_ready"),
+    ).toMatchObject({
       status: "HELD",
       preDisputeStatus: "READY",
     });
@@ -620,8 +693,24 @@ describe("#1020-2 — already-paid earnings enter the LOST clawback", () => {
   test("PAID consultant earnings flip REFUNDED and page ops ONCE with the total", async () => {
     seedPayment(10_000);
     store.consultantEarnings.push(
-      { id: "ce_paid1", paymentId: "pay_db_1", status: "PAID", consultantSharePaise: 6_000, refundedShareAmount: 0, consultantProfileId: "cp_1", payoutId: "payout_1" },
-      { id: "ce_paid2", paymentId: "pay_db_1", status: "PAID", consultantSharePaise: 2_000, refundedShareAmount: 0, consultantProfileId: "cp_2", payoutId: null },
+      {
+        id: "ce_paid1",
+        paymentId: "pay_db_1",
+        status: "PAID",
+        consultantSharePaise: 6_000,
+        refundedShareAmount: 0,
+        consultantProfileId: "cp_1",
+        payoutId: "payout_1",
+      },
+      {
+        id: "ce_paid2",
+        paymentId: "pay_db_1",
+        status: "PAID",
+        consultantSharePaise: 2_000,
+        refundedShareAmount: 0,
+        consultantProfileId: "cp_2",
+        payoutId: null,
+      },
     );
     await seedOpenDispute(10_000); // full dispute → factor 1
 

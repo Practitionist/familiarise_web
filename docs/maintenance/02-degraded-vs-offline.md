@@ -43,8 +43,8 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | **Documents** (`/api/appointments/[id]/documents`)                              | Allowed                                  | Blocked                    | LOW        |
 | **Consultations** (`/api/bookings/consultations`)                               | GET: Allowed, POST/PATCH: **blocked**    | Blocked                    | HIGH       |
 | **Subscriptions** (`/api/bookings/subscriptions`)                               | GET: Allowed, POST: **blocked**          | Blocked                    | HIGH       |
-| **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST: **blocked**          | Blocked                    | MEDIUM     |
-| **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST: **blocked**          | Blocked                    | MEDIUM     |
+| **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
+| **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
 | **Allocate slots** (`/api/bookings/*/allocate`)                                 | **Writes blocked (503)**                 | Blocked                    | HIGH       |
 | **Validate** (`/api/bookings/*/validate`)                                       | Allowed (read-only)                      | Blocked                    | LOW        |
 | **Trials** (`/api/trials`, `/api/trials/[id]`)                                  | **Writes blocked (503)**                 | Blocked                    | MEDIUM     |
@@ -144,6 +144,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 - `POST /api/checkout` -- Create payment intent + initiate booking
 - `GET /api/checkout/verify` -- Verify payment completion
 - `DELETE /api/checkout/pending/[paymentId]` -- Cancel a PENDING payment and release its tentative slots (#849 cancel-vs-capture guard)
+- `POST /api/bookings/[bookingId]/abandon` -- Walk away from an unpaid booking: expire the caller's PENDING payment and cancel the request or trial, or release the caller's seat hold (#1846)
 
 ### Appointment Management Routes
 
@@ -183,7 +184,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 - `GET /api/bookings/webinars/[id]/validate` -- Validate webinar
 - `GET /api/bookings/webinars/check-duplicate-title` -- Check duplicates
 - `POST /api/bookings/webinars/crud-with-plan` -- Create webinar with plan
-- `PATCH /api/bookings/webinars/crud-with-plan/[id]` -- Update webinar with plan
+- `PATCH /api/bookings/webinars/crud-with-plan` -- Update webinar with plan (the plan id rides in the body)
 
 ### Event Routes (Classes)
 
@@ -194,14 +195,16 @@ The gap they left open was in the error boundary rather than in the gate itself.
 - `GET /api/bookings/classes/[id]/validate` -- Validate class
 - `GET /api/bookings/classes/check-duplicate-title` -- Check duplicates
 - `POST /api/bookings/classes/crud-with-plan` -- Create class with plan
-- `PATCH /api/bookings/classes/crud-with-plan/[id]` -- Update class with plan
+- `PATCH /api/bookings/classes/crud-with-plan` -- Update class with plan (the plan id rides in the body)
 
 ### Trial Routes
 
 - `GET /api/trials` -- List trials
 - `POST /api/trials` -- Create trial
 - `GET /api/trials/[id]` -- Get trial
-- `POST /api/trials/[id]` -- Update trial
+- `PATCH /api/trials/[id]` -- Update trial (a paid trial is not cancelled here)
+- `DELETE /api/trials/[id]` -- Cancel trial and refund the confirmed quote (#1846)
+- `GET /api/trials/[id]/cancel/preview` -- Refund quote for cancelling a trial (#1846)
 - `GET /api/trials/check-eligibility` -- Check eligibility
 - `GET /api/trials/stats` -- Trial statistics
 
@@ -215,6 +218,6 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 ## The appointment freeze follows the cancellation doctrine (2026-08-14, #1162 / #1169 PR 3)
 
-Entering OFFLINE cancels every appointment overlapping the window through the same machinery as an interactive cancellation, because the old implementation predated that machinery and violated it three ways: it hard-deleted appointments whose only payment was PENDING (cascade-destroying the Payment row the capture webhook then needed), refunded gross amounts through a raw gateway call that could not route org-funded or credit-funded intents, and wrote statuses with no compare-and-swap guard, which could resurrect a COMPLETED booking. The rewrite deletes nothing: event statuses move through the `lib/booking/transitions.ts` CAS helpers (an already-terminal booking is skipped and counted, never resurrected), slots soft-cancel to `completionStatus: CANCELLED` exactly like the cancel route, trials tombstone through `softCancelTrialAppointment`, and open reschedule proposals are closed so `openForAppointmentId` frees. Refunds run after the transactions through `refundBookingPayment`, which clamps to the refundable balance and routes every rail — gateway, org-funded, and referral-credit — and a re-run of the freeze is safe end to end: the CAS guards skip what is already cancelled and the balance clamp turns a second refund attempt into a recorded skip.
+Entering OFFLINE cancels every appointment overlapping the window through the same machinery as an interactive cancellation, because the old implementation predated that machinery and violated it three ways: it hard-deleted appointments whose only payment was PENDING (cascade-destroying the Payment row the capture webhook then needed), refunded gross amounts through a raw gateway call that could not route org-funded or credit-funded intents, and wrote statuses with no compare-and-swap guard, which could resurrect a COMPLETED booking. The rewrite deletes nothing: event statuses move through the `lib/booking/transitions.ts` CAS helpers (an already-terminal booking is skipped and counted, never resurrected), slots soft-cancel to `completionStatus: CANCELLED` exactly like the cancel route (since #1846 the same guarded transition also sets `deletedAt`, because the overlap constraint exempts only tombstoned rows and a frozen booking otherwise kept blocking the consultant's time), trials tombstone through `softCancelTrialAppointment`, and open reschedule proposals are closed so `openForAppointmentId` frees. Refunds run after the transactions through `refundBookingPayment`, which clamps to the refundable balance and routes every rail — gateway, org-funded, and referral-credit — and a re-run of the freeze is safe end to end: the CAS guards skip what is already cancelled and the balance clamp turns a second refund attempt into a recorded skip.
 
 Separately, the maintenance-mode Redis keys now carry a 24-hour TTL (#697 INF-1). Every `setMaintenanceState` call refreshes the clock, so a tended window persists, while an OFFLINE flag whose owner disappeared expires back to OFF instead of keeping the platform down indefinitely. Maintenance windows planned to exceed a day must re-assert their phase at least daily; the pre-maintenance checklist carries that rule.

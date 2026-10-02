@@ -396,7 +396,7 @@ export async function triggerWorkflowZoned(
   dedupeKey?: string,
   opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  const zones = await resolveRecipientTimezones([subscriberId]);
+  const zones = await resolveRecipientTimezones([subscriberId], opts?.tx);
   const timezone = zones.get(subscriberId) ?? DEFAULT_NOTIFICATION_TIMEZONE;
   return triggerWorkflow(
     workflowId,

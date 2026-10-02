@@ -52,8 +52,7 @@ flowchart TB
 
   subgraph ACCESS["C · Membership & access"]
     ROLES["Roles · Invitations<br/>Membership.role"]:::wired
-    SSO["SSO + domain claims + break-glass<br/>OrganizationSSOSettings"]:::wired
-    SCIM["SCIM provisioning"]:::wired
+    SSO["SSO + domain claims<br/>OrganizationSSOSettings"]:::wired
   end
 
   subgraph PROG["D · Programs & rate plans"]
@@ -243,7 +242,7 @@ Each section also lists:
 ### C.1 Roles & Permissions — ✅ Wired
 
 - **Schema:** `Membership.role` (7-role ladder: OWNER → MAINTAINER → BILLING_ADMIN → MANAGER → EXPERT → SUPPORT → LEARNER). `MemberRole` enum.
-- **Code paths:** [`lib/auth-helpers.ts:requireOrgAccess`](../../../lib/auth-helpers.ts) + [`lib/auth/billing-admin-gate.ts`](../../../lib/auth/billing-admin-gate.ts). Role-transition reconciliation in [`lib/api/organizations/membership-transitions.ts`](../../../lib/api/organizations/membership-transitions.ts).
+- **Code paths:** [`lib/auth-helpers.ts:requireOrgAccess`](../../../lib/auth-helpers.ts) with a key from the permission matrix in [`lib/auth/org-permissions.ts`](../../../lib/auth/org-permissions.ts). Role-transition reconciliation in [`lib/api/organizations/membership-transitions.ts`](../../../lib/api/organizations/membership-transitions.ts).
 - **Why:** Role rank decides not just permission but profile reconciliation — LEARNER lazy-creates `ConsulteeProfile`, EXPERT lazy-creates `ConsultantProfile`. The bridge ensures consultant earnings and consultee bookings work the moment a role flip commits.
 - **Future work:** none open.
 
@@ -262,13 +261,13 @@ Each section also lists:
 - **Why:** A single human can operate multiple orgs (consultancy with several clients). The workspace profile lets the session carry the operator's preferences across the orgs they have access to, without polluting `Membership` (which is per-org).
 - **Future work:** none open.
 
-### C.4 SSO + Domain Claims + break-glass — ✅ Wired
+### C.4 SSO + Domain Claims — ✅ Wired
 
-- **Schema:** `OrganizationSSOSettings.{enforceSSO, breakGlassUntil}` (#779 §E), `OrgDomainClaim` (DNS TXT verification), SAML provider rows.
-- **Code paths:** [`lib/sso/provider-schemas.ts`](../../../lib/sso/provider-schemas.ts) — `validateSamlCert` PEM check that fails closed before BetterAuth sees a malformed cert. [`app/api/auth/sso/domain-check/route.ts`](../../../app/api/auth/sso/domain-check/route.ts). **Break-glass** (#779 §E): [`app/api/organizations/[orgId]/sso/break-glass/route.ts`](../../../app/api/organizations/[orgId]/sso/break-glass/route.ts) stamps `breakGlassUntil`; [`lib/sso/enforce-session.ts`](../../../lib/sso/enforce-session.ts) skips the `enforceSSO` gate while `breakGlassUntil > now` so a locked-out admin can recover when the IdP is down.
-- **Org dashboard surface:** `/settings/sso`, `/domain-claims`
-- **Why:** Domain verification via TXT + cert PEM validation means the org provisioning surface fails fast and friendly instead of crashing BetterAuth at first assertion. Break-glass closes the "enforced SSO + dead IdP = nobody can log in" trap without disabling enforcement permanently.
-- **Future work:** OIDC live deployment (`#670`/`#672`, deferred); cert auto-rotation runbook.
+- **Schema:** `OrganizationSSOSettings.{enforceSSO, defaultRoleForAutoJoin}`, `OrgDomainClaim` (DNS TXT verification), `SsoProvider` (OIDC only; `domainVerified` is the staff-approval flag).
+- **Code paths:** [`app/api/organizations/[orgId]/sso/providers/route.ts`](../../../app/api/organizations/[orgId]/sso/providers/route.ts) (OIDC discovery at registration, encrypted client secret), [`app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval/route.ts`](../../../app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval/route.ts) (staff approval), [`lib/sso/enforce-session.ts`](../../../lib/sso/enforce-session.ts) (the `enforceSSO` veto at session creation), [`app/api/auth/sso/domain-check/route.ts`](../../../app/api/auth/sso/domain-check/route.ts).
+- **Org dashboard surface:** `/settings/sso` (domains and providers).
+- **Why:** A verified domain plus staff approval means no org can point another org's addresses at its own IdP. See [SSO and authentication](../20-iam-and-security/01-sso-and-authentication.md).
+- **Future work:** none open. SAML and SCIM are not supported.
 
 ### C.6 Org verification resubmit — ✅ Wired
 
@@ -276,12 +275,6 @@ Each section also lists:
 - **Code paths:** [`app/api/organizations/[orgId]/verification/resubmit/route.ts`](../../../app/api/organizations/[orgId]/verification/resubmit/route.ts) (#779 §A) — only a previously-rejected, still-pending org can resubmit (`NOTHING_TO_RESUBMIT` guard otherwise); re-stamps `verificationSubmittedAt` and writes a `VERIFICATION_RESUBMITTED` audit row.
 - **Why:** Self-serve recovery after an admin rejection, instead of forcing a support ticket to re-open the KYB review.
 - **Future work:** none open.
-
-### C.5 SCIM provisioning — ✅ Live
-
-- **Schema:** `ScimToken`, `ScimGroupMapping`.
-- **Code paths:** The SCIM 2.0 endpoints are implemented under `/scim/v2/**`, authenticated by bearer token (`requireScimAuth`, `lib/scim/auth.ts`). Tokens are stored as SHA-256 hashes, scoped to an org, and honour an optional `expiresAt` deadline — an expired token stops authenticating with a 401 while its row stays ACTIVE so an operator can see it lapsed (#789). Earlier docs describing SCIM as "parked / stubbed 501" are stale.
-- **Future work:** Rotation-reminder cron over `ScimToken.expiresAt` (the enforcement read already ships).
 
 ---
 
@@ -444,7 +437,7 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/billing` | Wallet / invoices / Annual License panel (LICENSE only) |
 | `/payouts` | OrganizationPayout list (canHost only) |
 | `/settings` | Org metadata, branding, GSTIN, payment terms |
-| `/settings/sso` | SAML provider + domain claim |
+| `/settings/sso` | Domain claims (DNS TXT verification) + OIDC providers |
 | `/audit` | OrgAuditLog list + CSV export |
 | `/consent` | ConsentArtifact register |
 | `/analytics` | Cross-section aggregates (driven by `/api/organizations/[orgId]/analytics`) |
@@ -452,14 +445,13 @@ Each route lives at `/dashboard/organization/[orgId]/<slug>`. All are MANAGER+ u
 | `/documents` | Bulk-review surface for org-scoped AppointmentDocuments |
 | `/recordings` | Recordings by org, governed by `streamRecordingRetentionDays` |
 | `/reimbursements` | PERSONAL spend dashboard (date filter + CSV export — C.B.4) |
-| `/domain-claims` | DNS TXT verification |
 
 Several routes in earlier revisions of this table no longer exist, and their
 destinations after the ADR 19 consolidation are as follows. `/invitations`,
 `/experts` and `/learners` became `?tab=` panels on `/members`, since all three
 were `?role=` queries against the endpoint the roster already read.
-`/integrations` split into the SCIM, webhooks and data-export panels on
-`/settings`, alongside SSO. `/trials` folded into `/appointments`, a trial being
+`/integrations` split into the webhooks and data-export panels on
+`/settings`, alongside SSO; `/domain-claims` moved into `/settings/sso`. `/trials` folded into `/appointments`, a trial being
 an appointment. `/waitlist` is gone because the waitlist feature is being
 retired rather than relocated.
 
@@ -505,10 +497,10 @@ Numbers are GitHub issues — refer to those for the canonical spec.
 - `#745` — Enterprise simplification flagship (parked)
 - `#746` — Enterprise additions flagship (parked) — most "deferred" items here roll up
 - `#747` — Invitation partial-unique index (blocked on Prisma 7 GA)
-- `#777` / `#778` / `#779` — enterprise v2 mega-audit (cycle engine, contract auto-renew/supersede, overage, dunning, wallet floor, SSO break-glass, verification resubmit, webhook rotation grace) — **landed** (this doc reflects v2)
+- `#777` / `#778` / `#779` — enterprise v2 mega-audit (cycle engine, contract auto-renew/supersede, overage, dunning, wallet floor, SSO break-glass (later removed), verification resubmit, webhook rotation grace) — **landed** (this doc reflects v2)
 
 ---
 
 **Owner:** enterprise platform team
-**Last touched:** 2026-06-05 (post enterprise v2 mega-audit `#777`/`#778`/`#779` — cycle engine, contract lifecycle, overage, dunning, wallet floor, SSO break-glass, verification resubmit, webhook rotation grace).
+**Last touched:** 2026-06-05 (post enterprise v2 mega-audit `#777`/`#778`/`#779` — cycle engine, contract lifecycle, overage, dunning, wallet floor, verification resubmit, webhook rotation grace).
 **Review cadence:** at each major enterprise PR landing.

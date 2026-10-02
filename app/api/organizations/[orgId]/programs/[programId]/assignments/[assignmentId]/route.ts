@@ -360,9 +360,11 @@ export async function DELETE(
         );
       }
       await tx.programAssignment.delete({ where: { id: assignmentId } });
-      // For LICENSED_SEAT programs the seat is freed; for others this is
-      // a no-op and `adjustActiveSeatCount` returns applied:false.
-      await adjustActiveSeatCount(tx, { programId, delta: -1 });
+      // For ACTIVE LICENSED_SEAT assignments the seat is freed; PAUSED or
+      // already-terminated rows do not hold an active seat.
+      if (current.status === "ACTIVE") {
+        await adjustActiveSeatCount(tx, { programId, delta: -1 });
+      }
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,

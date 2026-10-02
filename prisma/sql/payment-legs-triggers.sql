@@ -143,7 +143,7 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS payment_amount_vs_legs ON "Payment";
 -- SPLIT
 CREATE CONSTRAINT TRIGGER payment_amount_vs_legs
-  AFTER UPDATE OF "amount" ON "Payment"
+  AFTER INSERT OR UPDATE OF "amount" ON "Payment"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_payment_legs_on_payment_update();

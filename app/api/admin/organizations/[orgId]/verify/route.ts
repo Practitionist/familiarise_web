@@ -173,6 +173,20 @@ export async function POST(
             },
           },
         });
+
+        if (body.action === "VERIFY") {
+          await tx.organizationEarnings.updateMany({
+            where: { organizationId: orgId, status: "PENDING_TRUST" },
+            data: { status: "PENDING" },
+          });
+          await tx.consultantEarnings?.updateMany({
+            where: {
+              payment: { organizationId: orgId },
+              status: "PENDING_TRUST",
+            },
+            data: { status: "PENDING" },
+          });
+        }
       }
 
       // updateMany returns no row — re-read in-tx for the response body.

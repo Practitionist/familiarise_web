@@ -63,7 +63,7 @@ export type OrgSurface =
   | "org.delete"
   // Domains & SSO / directory-sync reads — never secrets (#1527).
   | "identity.read"
-  // Domain claims, SSO, SCIM and break-glass writes plus their secrets.
+  // Domain claims and SSO writes plus their secrets.
   | "identity.manage"
   // Org chat roster + call metadata compliance reads (Stream).
   | "messaging.read"

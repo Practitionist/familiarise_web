@@ -147,9 +147,15 @@ Three endpoints form the request-poll-download lifecycle of a DPDP §11 export b
 | `GET` | `/api/organizations/[orgId]/data-exports` | Lists this org's jobs from the last 30 days (take 50), newest first. Polling surface for the dashboard. |
 | `GET` | `/api/organizations/[orgId]/data-exports/[exportId]/download` | Resolves the signed URL when `status=READY`. `409 EXPORT_NOT_READY` if not ready; `410 EXPORT_EXPIRED` once past `expiresAt`. Returns `{ url, expiresAt }`. |
 
-All three are gated OWNER + BILLING_ADMIN (`requireOrgBillingAdminOrOwner`)
-— export bundles include financial PII, so the same governance floor as
-billing-account mutations applies.
+All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
+so a caller needs at least one export key. Each bundle has a kind: the
+`people` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
+`finance` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
+because it carries financial PII. A caller may request, list and download
+only the kinds they hold. A legacy `FULL` job, written before the split,
+carries both bundles, so listing or downloading it needs both keys, which
+in practice means an OWNER; a new request accepts only `people` or
+`finance` and can never create a `FULL` job.
 
 The worker logic lives in `scripts/cleanup/process-data-exports.ts`
 (`processDataExports`). It is scheduled as a GitHub Actions cron

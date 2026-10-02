@@ -8,6 +8,21 @@ import * as Sentry from "@sentry/nextjs";
 import type { SeverityLevel } from "@sentry/nextjs";
 import { isPoolExhaustion } from "@/lib/db/pg-errors";
 
+/**
+ * Marker that appears in the message of every event reporting a failed
+ * `SystemEvent` write. It exists so `INFRA_TRANSIENT_PATTERNS` in
+ * `sentry.shared.config.ts` can recognise that ONE call site and trickle it,
+ * without a pattern broad enough to also swallow genuine database faults
+ * elsewhere in the app.
+ *
+ * It lives here, in the reporting vocabulary, rather than next to its only
+ * reporter: the throttle policy in the Sentry config has to be able to key on
+ * it, and importing `lib/enterprise/system-events` to read a string would
+ * drag Prisma into the Sentry initialiser. One constant, two readers, so the
+ * marker and the pattern cannot drift.
+ */
+export const SYSTEM_EVENT_WRITE_FAILURE_MARKER = "[system-events] write failed";
+
 export interface ReportOpts {
   subsystem: string;
   op?: string;

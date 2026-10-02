@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { findUserIssues } from "@/lib/observability/sentry-issues";
 
 /**
  * #1527 Q5 — User 360: one person across every back-office queue. Ten rows
@@ -115,6 +116,13 @@ export async function readUser360(userId: string) {
       })
     : [];
 
+  // Sentry triage. The last thing that asks an external service, and the only
+  // one that can fail, so it runs after every DB section has already resolved
+  // and cannot take the page down with it — `findUserIssues` swallows its own
+  // errors and returns `{ configured: false }`. Answers "which issues is this
+  // person hitting", which is the question the other six sections cannot.
+  const sentryIssues = await findUserIssues({ userId });
+
   // toPlain — money rows carry the result extension's symbols; the page
   // hands this to client components.
   return toPlain({
@@ -124,6 +132,7 @@ export async function readUser360(userId: string) {
     tickets,
     reports,
     verifications,
+    sentryIssues,
   });
 }
 

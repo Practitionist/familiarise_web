@@ -21,11 +21,9 @@ import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-sta
 
 // Refunds
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
-import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
 import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 // Earnings
@@ -33,7 +31,6 @@ import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 // Appointments
-import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appointments/cleanup-invalid-appointments";
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
 import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
@@ -52,7 +49,6 @@ import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status
 // Cleanup
 import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
-import { deactivateExpiredDiscounts } from "@/scripts/cleanup/deactivate-expired-discounts";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
 // Alerts
@@ -129,25 +125,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "handle-lost-disputes": async () => {
-    const result = await handleLostDisputes();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      alreadyPaidCount: result.alreadyPaidCount,
-      errorCount: result.errorCount,
-    };
-  },
-  "cascade-refund-earnings": async () => {
-    const result = await cascadeRefundToEarnings();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      errorCount: result.errorCount,
-    };
-  },
   "sync-payment-earnings": async () => {
     const result = await syncPaymentEarnings();
     return {
@@ -165,21 +142,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       // #1471 — the same run now also releases host-org earnings.
       organizationEarningsReleased: result.organizationEarningsReleased,
       errorCount: result.errorCount,
-    };
-  },
-  "cleanup-invalid-appointments": async () => {
-    const result = await cleanupInvalidAppointments();
-    return {
-      success: result.success,
-      totalProcessed: result.totalCancelled,
-      cleanedCount: result.totalCancelled,
-      duplicateConsultations: result.duplicateConsultationsCancelled,
-      duplicateSubscriptions: result.duplicateSubscriptionsCancelled,
-      invalidDurationConsultations:
-        result.invalidDurationConsultationsCancelled,
-      invalidDurationSubscriptions:
-        result.invalidDurationSubscriptionsCancelled,
-      errorCount: result.errors.length,
     };
   },
   "create-payout-batch": async () => {
@@ -330,17 +292,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       orphanedFilesDeleted: result.orphanedFilesDeleted,
       missingFilesFound: result.missingFilesFound,
       cleanedCount: result.orphanedFilesDeleted,
-      errorCount: result.errors.length,
-    };
-  },
-  "deactivate-expired-discounts": async () => {
-    const result = await deactivateExpiredDiscounts();
-    return {
-      success: result.success,
-      expiredByDateCount: result.expiredByDateCount,
-      maxUsesReachedCount: result.maxUsesReachedCount,
-      totalDeactivated: result.totalDeactivated,
-      cleanedCount: result.totalDeactivated,
       errorCount: result.errors.length,
     };
   },
@@ -534,7 +485,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             extra: { jobId },
           });
         }
-      });
+      }, "admin.system-job.dispatch");
       return NextResponse.json(
         {
           success: true,

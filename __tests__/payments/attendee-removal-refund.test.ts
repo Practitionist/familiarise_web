@@ -66,9 +66,12 @@ jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => mockReportSentryError(...a),

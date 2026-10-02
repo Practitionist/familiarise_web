@@ -44,17 +44,12 @@ import type { PrismaLike } from "@/lib/prisma";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
-  generateEndpointSecret as _unused_re_export,
   SIGNATURE_HEADER,
   signPayload,
   WEBHOOK_ROTATION_GRACE_MS,
 } from "./signing";
 import { assertPublicUrl } from "./ssrf-guard";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-
-// Re-export silenced — the worker doesn't generate secrets; this keeps
-// the module's surface area clean while preventing an unused-import lint.
-void _unused_re_export;
 
 const MAX_BATCH = 50;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -287,7 +282,7 @@ export async function runDispatchTick(params: {
       httpStatusCode >= 200 &&
       httpStatusCode < 300;
     // 4xx that are NOT 408 / 429 are permanent: the receiver told us
-    // the request is malformed. Retrying same body + same signature
+    // the request is malformed. Retrying the same body (freshly signed)
     // won't change the outcome.
     const isPermanentClientError =
       httpStatusCode !== undefined &&

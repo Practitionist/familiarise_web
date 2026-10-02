@@ -147,37 +147,51 @@ enum MemberStatus {
 
 ```mermaid
 stateDiagram-v2
-  [*] --> PENDING: HRIS auto-provision (rare)
+  [*] --> PENDING: HRIS auto-provision / pre-#1854 bulk import
   [*] --> ACTIVE: invite accepted / SSO auto-join
-  PENDING --> ACTIVE: activated
-  ACTIVE --> SUSPENDED: operator suspend / SCIM deprovision
+  PENDING --> ACTIVE: invitation accepted
+  REMOVED --> ACTIVE: new invitation accepted
+  ACTIVE --> SUSPENDED: operator suspend
   SUSPENDED --> ACTIVE: operator reactivate
   ACTIVE --> REMOVED: operator remove
   SUSPENDED --> REMOVED: operator remove
   REMOVED --> ERASED: DPDP erasure pipeline
   ACTIVE --> ERASED: DPDP erasure pipeline
   SUSPENDED --> ERASED: DPDP erasure pipeline
-  REMOVED --> [*]
   ERASED --> [*]
 ```
 
 A membership is born in one of two states. The ordinary invite-accept flow and the
 SSO auto-join flow both create the row directly in `ACTIVE`, so the role is live
 immediately. The rarer `PENDING` entry exists for HRIS auto-provisioning, where a
-directory sync stages the member ahead of activation; the transition to `ACTIVE`
-fires when the membership is activated.
+directory sync stages the member ahead of activation, and for rows that bulk
+import created before #1854, when it still wrote memberships directly. Since
+#1854 joining is invite and accept only: the members POST answers 405, bulk
+import sends LEARNER invitations, and accepting an invitation is the one door
+into `ACTIVE` for a `PENDING` row. The members PATCH refuses `PENDING` to
+`ACTIVE` with `PENDING_REQUIRES_ACCEPT`.
 
-The transition from `ACTIVE` to `SUSPENDED` is triggered either by an operator
-suspending the member or by a SCIM deprovision, which suspends rather than erases so
-the identity stays re-linkable. The reverse, `SUSPENDED` back to `ACTIVE`, is an
+The transition from `ACTIVE` to `SUSPENDED` is triggered by an operator suspending
+the member. The reverse, `SUSPENDED` back to `ACTIVE`, is an
 operator reactivation. While suspended, the member's role is inert and the API
 returns a 403.
 
 The transition to `REMOVED` is triggered by an operator removing the member, and it
-can be reached from either `ACTIVE` or `SUSPENDED`. `REMOVED` is terminal for access
-purposes — the row is kept only for the audit trail — and removing a member
-mid-cycle is what cascades the member's `ACTIVE` program assignments to `CANCELLED`
-(see the `AssignmentStatus` section below).
+can be reached from either `ACTIVE` or `SUSPENDED`. DELETE and a PATCH to
+`REMOVED` share one removal path (`lib/enterprise/member-removal.ts`), which
+refuses a non-OWNER with `MEMBER_HAS_OBLIGATIONS` while the member has upcoming
+org sessions, live program seats or money still moving at this organization,
+and lets an OWNER force the removal. Removing a member mid-cycle is what cascades
+the member's `ACTIVE` program assignments to `CANCELLED` (see the
+`AssignmentStatus` section below).
+
+`REMOVED` is not terminal. The row is kept for the audit trail, and accepting a
+new invitation reactivates the same row to `ACTIVE` with the invited role, which
+keeps its downstream foreign keys intact. That acceptance is the only way out of
+`REMOVED`: the members PATCH refuses any move out of it
+(`REMOVED_REQUIRES_REINVITE`), and SSO JIT leaves an existing `REMOVED` or
+`ERASED` row alone. An `ERASED` person cannot be invited again (`MEMBER_ERASED` at invite
+time), and the accept route refuses an `ERASED` row as well.
 
 The transition to `ERASED` is triggered by the DPDP §12 erasure pipeline when a user
 exercises their right to erasure. It can be reached from `ACTIVE`, `SUSPENDED`, or
@@ -213,8 +227,7 @@ single Prisma transaction that:
 3. If `canSponsor=true`, creates the `BillingAccount` with the chosen
    `fundingSource`. `walletBalance = 0` is set when the source is
    `WALLET`, and `null` otherwise.
-4. Creates an `OWNER` `Membership` row AND a matching BetterAuth `Member`
-   row, bridged via `Membership.betterAuthMemberId`.
+4. Creates an `OWNER` `Membership` row.
 5. Upserts an `OrgWorkspaceProfile` for the creator (one row per user who
    operates an org, shared across multiple orgs) and stamps
    `User.orgWorkspaceProfileId`. The response body includes

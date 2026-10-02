@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
 import { NextRequest, NextResponse } from "next/server";
-import { UserRole, Gender } from "@prisma/client";
+import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
@@ -51,7 +51,10 @@ export async function GET(
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       {
         error:
@@ -76,28 +79,18 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // PRIVILEGE ESCALATION GUARD. The check above admits a user editing
-    // THEMSELVES, and `role` used to flow from the body straight into the
-    // update below — so any consultee could PUT their own id with
-    // {"role":"ADMIN"} and become a platform admin. Only an ADMIN may set a
-    // role, and never on themselves (that would let a compromised admin
-    // session quietly re-grant itself after a demotion).
-    const isAdmin = session.user.role === "ADMIN";
+    // Never `role` or `email`, whatever the body says. A self-edit that set
+    // role made any consultee an ADMIN, and an email rewrite skips
+    // verification (an account-takeover primitive). Operator roles change on
+    // the Team page; onboarding sets the consumer role through
+    // setOnboardingRoleAction (actions/forms/onboarding.action.ts).
     const body = await req.json();
-    if (body.role !== undefined && (!isAdmin || session.user.id === id)) {
-      return NextResponse.json(
-        { error: "Forbidden — role cannot be changed here" },
-        { status: 403 },
-      );
-    }
     const {
       name,
-      email,
       image,
       phone,
       address,
       onboardingCompleted,
-      role,
       currentTimezone,
       // New user fields
       dateOfBirth,
@@ -107,18 +100,6 @@ export async function PUT(
       linkedinUrl,
       bio,
     } = body;
-
-    // Input validation
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json(
-        { error: "Invalid email format" },
-        { status: 400 },
-      );
-    }
-
-    if (role && !Object.values(UserRole).includes(role)) {
-      return NextResponse.json({ error: "Invalid role" }, { status: 400 });
-    }
 
     // Validate bio length if provided
     if (bio && bio.length > 160) {
@@ -132,12 +113,10 @@ export async function PUT(
       where: { id: id },
       data: {
         name: emptyToUndefined(name),
-        email: emptyToUndefined(email),
         image: emptyToUndefined(image),
         phone: emptyToUndefined(phone),
         address: emptyToUndefined(address),
         onboardingCompleted,
-        role: parseEnumOrUndefined(role, UserRole),
         timezone: emptyToUndefined(currentTimezone),
         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
         gender: parseEnumOrUndefined(gender, Gender),
@@ -169,7 +148,10 @@ export async function PUT(
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
     console.error("Error updating user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
       { status: 500 },
@@ -198,7 +180,10 @@ export async function PATCH(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error patching user professional background:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating professional background" },
       { status: 500 },
@@ -247,7 +232,9 @@ export async function DELETE(
       prisma.consultantProfile.findFirst({
         where: { userId: id },
         select: {
-          _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
+          _count: {
+            select: { earnings: true, payouts: true, tdsRecords: true },
+          },
         },
       }),
     ]);
@@ -291,7 +278,10 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while deleting the user" },
       { status: 500 },

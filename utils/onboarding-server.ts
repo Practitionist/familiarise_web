@@ -23,6 +23,8 @@ import {
   AvailabilityContractError,
 } from "@/lib/scheduling/availability-contract";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
+import type { VerificationDocumentRefSchema } from "./onboarding";
+import type { z } from "zod";
 import {
   canAddConsultantIdentity,
   OnboardingRefusedError,
@@ -55,18 +57,15 @@ function toRefusal(error: unknown, field: "weeklySlots" | "customSlots") {
 // TYPES
 // ============================================================================
 
-/** Shape of a verification document as received from the onboarding form */
-interface VerificationDocumentInput {
-  id?: string;
-  isOnboardingUpload?: boolean;
-  fileName?: string;
-  originalName?: string;
-  fileSize?: number;
-  mimeType?: string;
-  fileUrl?: string;
-  storagePath?: string;
-  description?: string;
-}
+/**
+ * Shape of a verification document as received from the onboarding form.
+ *
+ * Derived from the schema rather than hand-written, so it cannot drift from what
+ * the write boundary actually accepts (#1869). `id` is required by the schema,
+ * which is why the cast to `VerificationDocumentInput[]` at the link site is no
+ * longer needed to narrow away `undefined`.
+ */
+type VerificationDocumentInput = z.infer<typeof VerificationDocumentRefSchema>;
 
 /** Verification-related fields extracted from the onboarding body */
 interface VerificationBody {
@@ -586,11 +585,10 @@ async function submitVerificationRequest(
 
   // Every upload has a row since rows-at-upload, so only ids are linked; an
   // id-less entry from an older draft is not persistable and defers instead.
-  const documentIds = (
-    verificationDocuments.filter(
-      isPersistableVerificationDoc,
-    ) as VerificationDocumentInput[]
-  ).map((doc) => doc.id as string);
+  // `id` is required by the schema, so the filter only has to drop drafts.
+  const documentIds = verificationDocuments
+    .filter(isPersistableVerificationDoc)
+    .map((doc) => doc.id);
 
   const outcome = await submitVerificationRequestCore({
     userId,
@@ -846,7 +844,7 @@ export async function processOnboardingData(
       const pendingInvite = await prisma.invitation.findFirst({
         where: {
           email: validatedBody.email.toLowerCase(),
-          status: "pending",
+          status: "PENDING",
           expiresAt: { gt: new Date() },
         },
         select: { role: true },

@@ -79,9 +79,12 @@ jest.mock("../../scripts/payments/cleanup-abandoned-payments", () => ({
     retireOrphanPendingPayment(...a),
 }));
 const recordSystemEvent = jest.fn();
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemEvent: (...a: unknown[]) => recordSystemEvent(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemEvent: (...a: unknown[]) => recordSystemEvent(...a),
+    recordSystemEventSafe: (...a: unknown[]) => recordSystemEvent(...a),
+  };
+});
 
 import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";

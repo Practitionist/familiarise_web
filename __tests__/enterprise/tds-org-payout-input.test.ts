@@ -44,10 +44,14 @@ jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 jest.mock("../../lib/observability/report", () => ({
   __esModule: true,

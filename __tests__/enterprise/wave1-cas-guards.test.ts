@@ -71,7 +71,6 @@ jest.mock("../../lib/api/organizations/membership-transitions", () => ({
     consultantProfileId: null,
     payoutRecipient: null,
   })),
-  bumpUserSessionGeneration: jest.fn(async () => {}),
 }));
 
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
@@ -93,7 +92,13 @@ function ownerAccess() {
     error: null,
     session: { user: { id: "u-owner" } },
     member: { id: "m-owner", role: "OWNER" },
-    org: { id: "org-1", name: "Acme", status: "ACTIVE", canSponsor: true, canHost: false },
+    org: {
+      id: "org-1",
+      name: "Acme",
+      status: "ACTIVE",
+      canSponsor: true,
+      canHost: false,
+    },
   };
 }
 
@@ -128,11 +133,19 @@ describe("PATCH assignments/[assignmentId] — terminal resurrection guard", () 
   function makeReq(body: unknown) {
     return new NextRequest(
       "http://localhost/api/organizations/org-1/programs/p-1/assignments/a-1",
-      { method: "PATCH", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } },
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      },
     );
   }
   const routeParams = {
-    params: Promise.resolve({ orgId: "org-1", programId: "p-1", assignmentId: "a-1" }),
+    params: Promise.resolve({
+      orgId: "org-1",
+      programId: "p-1",
+      assignmentId: "a-1",
+    }),
   };
 
   it("409 ASSIGNMENT_NOT_LIVE when the row is terminal (claim count 0)", async () => {
@@ -197,7 +210,11 @@ describe("POST contracts/[contractId]/supersede — claim-before-repoint", () =>
   function makeReq(body: unknown) {
     return new NextRequest(
       "http://localhost/api/organizations/org-1/contracts/c-1/supersede",
-      { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } },
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      },
     );
   }
   const routeParams = {
@@ -226,7 +243,10 @@ describe("POST contracts/[contractId]/supersede — claim-before-repoint", () =>
     setupOldContract();
     m.contract.updateMany.mockResolvedValue({ count: 0 });
 
-    const res = await supersedeContract(makeReq({ reason: "RENEWAL" }), routeParams);
+    const res = await supersedeContract(
+      makeReq({ reason: "RENEWAL" }),
+      routeParams,
+    );
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.code).toBe("CONTRACT_ALREADY_SUPERSEDED");
@@ -285,7 +305,10 @@ describe("POST contracts/[contractId]/supersede — claim-before-repoint", () =>
     m.contract.updateMany.mockResolvedValue({ count: 1 });
     m.billingSubscription.findUnique.mockResolvedValue(null);
 
-    const res = await supersedeContract(makeReq({ reason: "AMENDMENT" }), routeParams);
+    const res = await supersedeContract(
+      makeReq({ reason: "AMENDMENT" }),
+      routeParams,
+    );
     expect(res.status).toBe(201);
     const claimOrder = m.contract.updateMany.mock.invocationCallOrder[0];
     const repointOrder = m.program.updateMany.mock.invocationCallOrder[0];

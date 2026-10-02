@@ -614,6 +614,37 @@ describe("Entity Channel Creation", () => {
 
       await expect(createWebinarChannel("")).rejects.toThrow();
     });
+
+    it("includes accepted collaborators and falls back to appointment.organizationId (#1911)", async () => {
+      mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+        id: "webinar-collab-org",
+        webinarPlan: {
+          title: "Org Funded Webinar",
+          organizationId: null,
+          consultantProfile: { user: { id: "host-1" } },
+          collaborators: [{ consultantProfile: { userId: "collab-1" } }],
+        },
+        appointment: {
+          organizationId: "org-funded-1",
+          participants: [{ userId: "attendee-1" }],
+        },
+      });
+
+      const { createWebinarChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      const result = await createWebinarChannel("webinar-collab-org");
+
+      expect(result.members).toEqual(["host-1", "collab-1", "attendee-1"]);
+      expect(mockStreamClient.channel).toHaveBeenCalledWith(
+        "team",
+        "webinar-webinar-collab-org",
+        expect.objectContaining({
+          organization_id: "org-funded-1",
+          members: ["host-1", "collab-1", "attendee-1"],
+        }),
+      );
+    });
   });
 
   describe("createClassChannel", () => {
@@ -789,6 +820,23 @@ describe("Entity Channel Creation", () => {
       await expect(
         createSubscriptionChannel("subscription-101"),
       ).rejects.toThrow("Participants not found for subscription");
+    });
+  });
+
+  describe("verifyEventAccess (#1911)", () => {
+    it("returns true when user matches event participant/host/collaborator and false otherwise", async () => {
+      const { verifyEventAccess } =
+        await import("../../lib/stream/chat/access");
+
+      mockPrisma.webinar.findFirst.mockResolvedValueOnce({ id: "web-1" });
+      await expect(
+        verifyEventAccess("user-1", "webinar", "web-1"),
+      ).resolves.toBe(true);
+
+      mockPrisma.webinar.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        verifyEventAccess("stranger", "webinar", "web-1"),
+      ).resolves.toBe(false);
     });
   });
 });

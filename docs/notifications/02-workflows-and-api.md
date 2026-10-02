@@ -89,7 +89,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application no
 | `collaborator`   | collaborator-invited, collaborator-accepted, collaborator-removed, collaborator-declined, collaborator-withdrawn                                                                                                           |
 | `platform`       | general-announcement, maintenance-scheduled, maintenance-started, maintenance-ended                                                                                                                                        |
 | `org-billing`    | org-invoice-issued, org-invoice-paid, org-invoice-overdue, org-wallet-topup-confirmed, org-wallet-low, org-payout-completed, org-payout-failed, org-payout-reversed, org-member-overage-timed-out, org-program-overage-due |
-| `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted, org-sso-cert-expiring                                                                                                                  |
+| `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted                                                                                                                                         |
 | `org-program`    | org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                           |
 
 ---
@@ -128,7 +128,13 @@ That template also ends on "Reason: ", which an absent value left dangling on a 
 
 ### A reschedule sentence always completes
 
-The `appointment-rescheduled` template renders a "from X to Y" sentence, and three of the five reschedule outcomes have no destination time — a plain release hands the slots back to the consultant's queue precisely so that no new time exists yet. `AppointmentRescheduledInput` keeps the discriminated union introduced by #1083, so a caller still cannot construct a `MOVED` or `PROPOSED` outcome without both timestamps. The wire payload, however, declares `newDateTime` as required and the trigger boundary fills it with a phrase when there is no instant to render: "a new time your consultant will confirm" for a release, and "the time it was already booked for" for a declined or withdrawn proposal. The blank-blank sentence is therefore unrepresentable from either direction. Issue #1085 remains open for the template-side branch on `outcome`, which would let the release case read as its own sentence rather than reusing the "from … to …" shape.
+The `appointment-rescheduled` template renders a "from X to Y" sentence, and four of the six reschedule outcomes have no destination time — a plain release hands the slots back to the consultant's queue precisely so that no new time exists yet. `AppointmentRescheduledInput` keeps the discriminated union introduced by #1083, so a caller still cannot construct a `MOVED` or `PROPOSED` outcome without both timestamps. The wire payload, however, declares `newDateTime` as required and the trigger boundary fills it with a phrase when there is no instant to render: "a new time your consultant will confirm" for a release, and "the time it was already booked for" for a declined, withdrawn or expired proposal. The blank-blank sentence is therefore unrepresentable from either direction. The in-app template in `lib/novu/templates/b2c.ts` now branches on `outcome`, so each of the six outcomes (`MOVED`, `PROPOSED`, `RELEASED`, `DECLINED`, `WITHDRAWN` and `EXPIRED`) reads as its own sentence rather than reusing the "from … to …" shape.
+
+### An expired proposal tells both parties the original time stands (#1846)
+
+Since #1846 the reschedule expiry sweep restores the booking when nobody answered a proposal (#1527 decision 9), and it tells both parties through a sixth outcome, `EXPIRED`, on the existing `appointment-rescheduled` event rather than through a new Novu workflow. The in-app body reads "The proposed new time for your {{appointmentType}} for {{planTitle}} expired, so your original time stands", followed by the restored time when `oldDateTime` is present, and the trigger boundary fills `newDateTime` with "the time it was already booked for", as it does for a declined or withdrawn proposal. The email twin, `APPOINTMENT_RESCHEDULED`, uses the subject "Your {type} keeps its original time", where `{type}` is the human session label. Both the bell and the email are sent by `notifyRescheduleRestored` in `lib/booking/reschedule-outcome-notice.ts`, which the withdraw notice also uses; it awaits both triggers, never throws, and sends nothing when no slot actually came back.
+
+Because the family template gained the `EXPIRED` branch, each Novu environment must be re-synced before the notice renders correctly, and until then an `EXPIRED` event falls through to the old else branch and reads as "withdrawn". The Development environment was synced with `npm run novu:sync` on 2026-09-28. The Production sync is owed at release, and it should run `npm run novu:sync -- --dry-run` first and then `npm run novu:sync`.
 
 ## Workflows by Category
 
@@ -163,7 +169,7 @@ sequenceDiagram
 
 **AppointmentCancelledPayload** extends AppointmentPayload with: `reason` (required — a clause, or "No reason given"), `cancelledBy` (a capitalised name, or "The platform"), `cancelledByRole?` (the raw discriminator). Callers pass `AppointmentCancelledInput`, whose `cancelledBy` is still `"consultant" | "consultee" | "system"`.
 
-**AppointmentRescheduledPayload** extends AppointmentPayload with: `outcome`, `oldDateTime?`, `oldDateTimeIso?`, `newDateTime` (required — a phrase when the outcome has no destination time), `newDateTimeIso?`. Callers pass `AppointmentRescheduledInput`, whose `RescheduleOutcomeFields` union still forbids a destination time on the outcomes that have none.
+**AppointmentRescheduledPayload** extends AppointmentPayload with: `outcome` (`MOVED`, `PROPOSED`, `RELEASED`, `DECLINED`, `WITHDRAWN` or, since #1846, `EXPIRED`), `oldDateTime?`, `oldDateTimeIso?`, `newDateTime` (required — a phrase when the outcome has no destination time), `newDateTimeIso?`. Callers pass `AppointmentRescheduledInput`, whose `RescheduleOutcomeFields` union still forbids a destination time on the outcomes that have none.
 
 ---
 

@@ -9,17 +9,70 @@ const withBundleAnalyzer =
     : (config) => config;
 
 /**
- * Content Security Policy — report-only by default.
+ * The app's own origin, resolved at BUILD time.
  *
- * Why report-only first
- * ---------------------
- * A strict CSP can silently break Stream.io's call-widget script
- * injection or a Razorpay popup if any allow-list entry drifts. We
- * land in report-only so the dashboard surface stays functional while
- * we observe `Content-Security-Policy-Report-Only` violations at
- * `/api/csp-report` for a rollout window. Flip `ENABLE_CSP_ENFORCE=true`
- * once telemetry is clean to switch the header name to the enforcing
- * variant.
+ * `NEXT_PUBLIC_APP_URL` is set on Netlify with context `all`, pinned to
+ * https://familiarisenow.com. Because `NEXT_PUBLIC_*` is inlined into the
+ * client bundle, every deploy preview shipped a bundle whose auth client
+ * called PRODUCTION's `/api/auth/*`. The browser blocked it on CORS, which is
+ * the only reason previews failed loudly rather than quietly authenticating
+ * against production and mutating real data.
+ *
+ * Netlify sets `CONTEXT` (production | deploy-preview | branch-deploy) and
+ * `DEPLOY_PRIME_URL` (this deploy's own origin) on every build. Off
+ * production we prefer the per-deploy URL, so a preview talks to itself.
+ *
+ * This has to happen here rather than as an env var: Netlify env values are
+ * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
+ * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
+ * late for the client bundle.
+ */
+const RESOLVED_APP_URL =
+  process.env.CONTEXT && process.env.CONTEXT !== "production"
+    ? (process.env.DEPLOY_PRIME_URL ?? process.env.NEXT_PUBLIC_APP_URL)
+    : process.env.NEXT_PUBLIC_APP_URL;
+
+/**
+ * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
+ * `typescript` keys below.
+ */
+const STRICT_BUILD = process.env.STRICT_BUILD === "true";
+
+/**
+ * CSP violations go straight to Sentry's security-report endpoint, derived
+ * from the DSN (`https://<key>@<host>/<project>` →
+ * `https://<host>/api/<project>/security/?sentry_key=<key>`). Without a DSN
+ * (local dev) the policy simply carries no report directive.
+ */
+function sentryCspReportUrl() {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) return undefined;
+  try {
+    const { username: key, host, pathname } = new URL(dsn);
+    const project = pathname.replace(/^\/+/, "");
+    if (!key || !project) return undefined;
+    const params = new URLSearchParams({ sentry_key: key });
+    if (process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT) {
+      params.set(
+        "sentry_environment",
+        process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+      );
+    }
+    return `https://${host}/api/${project}/security/?${params}`;
+  } catch {
+    return undefined;
+  }
+}
+const CSP_REPORT_URL = sentryCspReportUrl();
+const CSP_REPORT_GROUP = "csp-endpoint";
+
+/**
+ * Content Security Policy.
+ *
+ * Report-only at launch: a drifted allow-list entry would otherwise break
+ * Razorpay checkout or Stream calls for everyone at once. Violations land in
+ * Sentry; once they are triaged, set `ENABLE_CSP_ENFORCE=true` and redeploy
+ * (the value is read at build time).
  *
  * Allow-list rationale
  * --------------------
@@ -35,6 +88,24 @@ const withBundleAnalyzer =
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
  *   - `media-src` is the load-bearing entry for Stream call audio /
  *     video / recording playback.
+ *
+ * `'unsafe-eval'` in `script-src` stays, and is not a pending cleanup. The
+ * Stream background-filter / noise-cancellation add-ons are WASM builds
+ * that `eval` their loader, and the worker-src note below is the companion
+ * half of that same constraint. Removing it would break those add-ons the
+ * day they are switched on, and until then it buys nothing that
+ * `script-src` does not already permit via `'unsafe-inline'`.
+ *
+ * Added without a compatibility cost
+ * ---------------------------------
+ * `object-src 'none'`, `base-uri 'self'` and `form-action 'self'` are the
+ * three directives that were simply absent, and all three are absent-by-
+ * accident rather than by decision — each is an explicit deny/allow that
+ * a real allow-list should have stated. None of them can break a
+ * functioning page here: the app ships no <object>/<embed>, no <base>, and
+ * every form action is same-origin (which is the point — `form-action`
+ * is the directive that makes an injected credential-stealing form
+ * structurally impossible). Each rationale is inline at its entry below.
  *
  * Stream.io does NOT run on getstream.io at runtime
  * -------------------------------------------------
@@ -71,13 +142,38 @@ const CSP_DIRECTIVES = [
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
   "frame-ancestors 'none'",
-  "report-uri /api/csp-report",
+  // No <object>/<embed> anywhere in this app, and none of the allow-listed
+  // origins serve plugin content. `'none'` is a real control here: without
+  // object-src a plugin document inherits `default-src 'self'`, which still
+  // permits same-origin plugin content — and the classic payload for it is
+  // Flash-era, but the directive also covers <embed> and legacy <object>
+  // data: documents. Zero compatibility cost: the payment iframes are
+  // <iframe> (frame-src above), not <object>.
+  "object-src 'none'",
+  // Stops an injected <base href> from re-pointing every relative URL on the
+  // page — including form targets and lazy-loaded chunks — at an attacker's
+  // origin. `default-src 'self'` does NOT cover this: base-uri is one of the
+  // directives that does not fall back to default-src. Every route in this app
+  // uses absolute or root-relative URLs, so nothing here depends on a <base>.
+  "base-uri 'self'",
+  // Where a form without an explicit action may submit. `form-action` is also
+  // NOT covered by default-src. The auth surface is the reason this is not
+  // merely theoretical: the sign-in and SSO forms post to same-origin
+  // /api/auth/*, so 'self' permits every one of them, and the directive
+  // forecloses an injected form exfiltrating credentials to a third party.
+  "form-action 'self'",
+  // Both delivery mechanisms: report-uri is deprecated but is all some
+  // browsers implement; report-to is bound by the Reporting-Endpoints header.
+  ...(CSP_REPORT_URL
+    ? [`report-uri ${CSP_REPORT_URL}`, `report-to ${CSP_REPORT_GROUP}`]
+    : []),
 ].join("; ");
 
-const CSP_HEADER_KEY =
-  process.env.ENABLE_CSP_ENFORCE === "true"
-    ? "Content-Security-Policy"
-    : "Content-Security-Policy-Report-Only";
+const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
+
+const CSP_HEADER_KEY = CSP_ENFORCE
+  ? "Content-Security-Policy"
+  : "Content-Security-Policy-Report-Only";
 
 /** @type {Array<{ key: string; value: string }>} */
 const securityHeaders = [
@@ -102,34 +198,16 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
   },
-  // CSP (report-only by default; flipped to enforce via env flag — see
-  // CSP_HEADER_KEY above). Pre-req for any large-customer security review.
   { key: CSP_HEADER_KEY, value: CSP_DIRECTIVES },
+  ...(CSP_REPORT_URL
+    ? [
+        {
+          key: "Reporting-Endpoints",
+          value: `${CSP_REPORT_GROUP}="${CSP_REPORT_URL}"`,
+        },
+      ]
+    : []),
 ];
-
-/**
- * The app's own origin, resolved at BUILD time.
- *
- * `NEXT_PUBLIC_APP_URL` is set on Netlify with context `all`, pinned to
- * https://familiarisenow.com. Because `NEXT_PUBLIC_*` is inlined into the
- * client bundle, every deploy preview shipped a bundle whose auth client
- * called PRODUCTION's `/api/auth/*`. The browser blocked it on CORS, which is
- * the only reason previews failed loudly rather than quietly authenticating
- * against production and mutating real data.
- *
- * Netlify sets `CONTEXT` (production | deploy-preview | branch-deploy) and
- * `DEPLOY_PRIME_URL` (this deploy's own origin) on every build. Off
- * production we prefer the per-deploy URL, so a preview talks to itself.
- *
- * This has to happen here rather than as an env var: Netlify env values are
- * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
- * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
- * late for the client bundle.
- */
-const RESOLVED_APP_URL =
-  process.env.CONTEXT && process.env.CONTEXT !== "production"
-    ? (process.env.DEPLOY_PRIME_URL ?? process.env.NEXT_PUBLIC_APP_URL)
-    : process.env.NEXT_PUBLIC_APP_URL;
 
 const nextConfig = {
   // Drop the `X-Powered-By: Next.js` fingerprinting header.
@@ -164,13 +242,16 @@ const nextConfig = {
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
   },
-  // Only the Netlify deploy build OOM'd at the 4GB heap re-running ESLint + tsc.
-  // Skip them THERE (NETLIFY=true is set in Netlify's build env) to drop that memory
-  // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +
-  // `npx eslint .` as their own steps). Local `npm run build` and CI's own build keep
-  // the checks on, so nothing loses its safety net off-Netlify. (#932)
-  eslint: { ignoreDuringBuilds: !!process.env.NETLIFY },
-  typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
+  // Skipped on Netlify by default: with them on, the deploy preview was killed
+  // (exit 137) at "Linting and checking validity of types" on the 6144 MB
+  // heap. CI type-checks and lints every PR and every push to dev/staging/prod
+  // instead. STRICT_BUILD=true turns them back on for a Netlify build.
+  eslint: {
+    ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
+  },
+  typescript: {
+    ignoreBuildErrors: process.env.NETLIFY === "true" && !STRICT_BUILD,
+  },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     // #1795 — Netlify deploy-preview OOM'd (exit 137, Killed at static page
@@ -294,7 +375,6 @@ const nextConfig = {
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
-    "libsodium-wrappers",
   ],
 
   images: {
@@ -359,9 +439,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
-  org: "practitionist",
+  // Deployment-specific, read from the environment with the values this repo
+  // has always used as the default. A self-hosted Sentry or a second org in a
+  // different workspace changes these; compiling them in would mean a code
+  // change per environment. The same two names are read at runtime by
+  // `lib/observability/sentry-issues.ts`, so pointing the app at a different
+  // workspace is one env change rather than two that can disagree.
+  org: process.env.SENTRY_ORG || "practitionist",
 
-  project: "familiarise_web",
+  project: process.env.SENTRY_PROJECT || "familiarise_web",
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,

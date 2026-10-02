@@ -86,9 +86,13 @@ The list below is the actual `page.tsx` set under
 /dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
 /dashboard/organization/[orgId]/consent        → ConsentArtifact roster + DPDP
                                                   withdraw/grant (DPDP §6(4))
-/dashboard/organization/[orgId]/settings       → branding + policy, with
-                                                  ?tab=sso | webhooks | scim |
-                                                  data-exports
+/dashboard/organization/[orgId]/settings       → branding + policy, opened
+                                                  from the header avatar menu
+                                                  (PR #1842, part of #1527);
+                                                  /settings/sso | webhooks |
+                                                  data-exports are now
+                                                  section URLs, and the old
+                                                  ?tab= links to them redirect
 ```
 
 ### Surfaces that are tabs, not routes
@@ -108,7 +112,7 @@ adds a level.
 | Page | Tabs | Why they merged |
 |---|---|---|
 | `/members` | `all`, `learners`, `experts`, `invitations` | `learners` and `experts` were `?role=` queries against the same `/api/organizations/[orgId]/members` endpoint the roster already read. `learners` was additionally capped at `perPage=100` with no pagination. |
-| `/settings` | `general`, `sso`, `webhooks`, `scim`, `data-exports` | SSO had no sidebar entry at all and was reachable only from a link inside the settings page. |
+| `/settings` | `general`, `sso`, `webhooks`, `data-exports` | SSO had no sidebar entry at all and was reachable only from a link inside the settings page. |
 | `/billing` | `invoices`, `wallet` | Unchanged — this one predates the consolidation. |
 
 Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
@@ -130,6 +134,30 @@ offer a control that would 403. A non-operator who hand-edits the URL to
 `?scope=everyone` is quietly served their own sessions rather than an error.
 The `mine` scope mounts a video-only `StreamProvider` around its subtree so
 Join works without connecting video on every org route.
+
+Since #1854 (#1852 decision 3) the `everyone` scope of a sponsoring
+organization also lists the webinar and class seats its own members hold, on
+its money, in sessions hosted by someone else. Each such row shows the member,
+the session title, the date and whether they attended, and nothing about the
+other attendees or the host beyond the session title.
+
+### Follow-up surfaces from #1854 and #1860
+
+Three later pages and tabs belong to the same overhaul, and each reads a
+matrix key. Org › Payouts carries an "Experts' payout routing" section, where
+a holder of `payouts.read` sees each EXPERT member's name and current payout
+recipient, and a holder of `members.payoutRecipient.change` (OWNER or BILLING_ADMIN)
+changes it through a confirm dialog backed by
+`/api/organizations/[orgId]/expert-payout-routing`; this is where a
+BILLING_ADMIN, who cannot open the member list, decides where experts are
+paid. Org › Payouts › Runs labels a PENDING batch "Awaiting approval", offers
+an "Awaiting approval (n)" filter, and shows Approve to holders of
+`payouts.approve`, because an org batch is paid only after approval. An
+EXPERT's `/compensation` page shows only the split that applies to that
+expert, resolved as their membership override, else the org default, else the
+platform default, and the offering editor's Materials tab shows the expert a
+"Changed by <Org>" line for every file the organization changed on an
+org-owned plan.
 
 There is **no `/credits` route** — the wallet view is a tab inside `/billing`
 (see "Billing surface" below). The old `/plans` org-catalog page was removed in
@@ -175,8 +203,10 @@ A few additional surfaces are not in the org-scoped tree:
 The bare `/dashboard/organization` URL is now a server-redirect:
 OrgWorkspace → `/dashboard/org-workspace/<id>/home`; non-OrgWorkspace → `/dashboard`.
 The org grid that used to live there is gone — non-OrgWorkspace members
-(LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
-dropdown in the top bar, which never required a list page.
+(LEARNER, EXPERT) navigate between orgs via the `ContextSwitcher`
+(evolved from `OrganizationSwitcher` in PR #1842, part of #1527), anchored at
+the top of every dashboard sidebar and repeated in the mobile Menu sheet,
+which never required a list page.
 
 ## Role-visibility nav-map
 
@@ -193,22 +223,22 @@ flowchart TD
   ENTRY -->|EXPERT| EXP["/compensation only<br/>(own payoutRecipient,<br/>RateCard split, earnings)"]
   ENTRY -->|MANAGER+ / SUPPORT / OWNER| HOME["/home — activation center"]
 
-  subgraph MGR["MANAGER sees (rank 40)"]
+  subgraph MGR["MANAGER sees"]
     direction LR
     M1["/members<br/>(tabs: all · learners · experts · invitations)"]
-    M2["/billing · /payouts · /analytics"]
+    M2["/billing · /analytics<br/>(/payouts needs payouts.read: OWNER, MAINTAINER, BILLING_ADMIN)"]
     M3["/consent · /appointments · /audit"]
   end
-  subgraph MNT["+ MAINTAINER adds (rank 60)"]
+  subgraph MNT["+ MAINTAINER adds"]
     direction LR
     T1["/programs"]
     T2["/contracts · /purchase-orders"]
     T3["/settings"]
   end
-  subgraph OWN["+ OWNER only (rank 70)"]
+  subgraph OWN["+ settings with split holders"]
     direction LR
-    O1["/settings?tab=sso<br/>(policy + providers + domain claims)"]
-    O2["/settings?tab=data-exports<br/>(DPDP §11, OWNER + BILLING_ADMIN)"]
+    O1["/settings/sso<br/>(policy + providers + domain claims; OWNER and MAINTAINER read, only OWNER writes)"]
+    O2["/settings/data-exports<br/>(DPDP §11: people bundle OWNER + MAINTAINER,<br/>finance bundle OWNER + BILLING_ADMIN)"]
   end
   HOME --> MGR --> MNT --> OWN
 
@@ -241,33 +271,40 @@ readable projection of it.
 | `/my-program`  | ✅      | —    | ✅     | `myProgram.read` (LEARNER; page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
 | `/compensation` | —    | ✅   | ✅     | `myArrangement.read` (EXPERT; page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
 | `/members`     | ✅      | ✅   | ✅     | `members.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | BILLING_ADMIN is operator-blind and excluded at sidebar, page, and API. |
-| `/members?tab=experts` | — | ✅ | ✅ | `experts.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canHost`) | Tab on Members. Hidden when `canHost = false`. |
-| `/members?tab=learners` | ✅ | — | ✅ | `learners.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canSponsor`) | Tab on Members. Hidden when `canSponsor = false`. |
+| `/members?tab=experts` | — | ✅ | ✅ | `members.read`, as `/members` | legacy link | Since #1527 the Learners and Experts tabs are folded into one filterable Members list, and this old link redirects to `/members?role=EXPERT`. |
+| `/members?tab=learners` | ✅ | — | ✅ | `members.read`, as `/members` | legacy link | This old link redirects to `/members?role=LEARNER` on the same filterable Members list. |
 | `/members?tab=invitations` | ✅ | ✅ | ✅ | `invitations.manage` (OWNER, MAINTAINER) | tab | Tab on Members. Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
 | `/catalog`     | —       | ✅   | ✅     | `catalog.manage` (OWNER, MAINTAINER, MANAGER) | yes (if `canHost`) | The offerings the org OWNS, distinct from the sponsorship entitlements on `/programs`. Webinar and Class only — `ConsultationPlan` and `SubscriptionPlan` require a `consultantProfileId`, so an org can never solely own one. The named deliverer is re-checked server-side against an ACTIVE EXPERT membership. |
 | `/programs`    | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER) | yes (if `canSponsor`) | The learner-facing catalog GETs stay open to any active member by design. |
 | `/billing`     | ✅      | —    | ✅     | `billing.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `billing.manage` (OWNER, BILLING_ADMIN) | yes (if `canSponsor`) | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface. The former extra `fundingSource=WALLET` sidebar branch was removed as unreachable (a BillingAccount only exists when `canSponsor=true`). |
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
 | `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
-| `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | yes | Branding + policy. |
-| `/settings?tab=sso` | ✅ | ✅ | ✅ | **OWNER** (rank floor — genuine hierarchy) | tab | Tab on Settings. Previously had no sidebar entry at all and was reachable only from a link inside the settings page. |
+| `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | no — avatar menu ("<Org> settings") | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
+| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes need `identity.manage`, which only the **OWNER** holds | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
 | `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
 | `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
-| `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.manage` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
+| `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.requestWithdrawal` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
 
 > The `/plans` page (previous "org catalog" over the removed
 > `OrganizationPlan` model) is gone. Discovery now reads each per-type
 > plan's `OrgPlanVisibility` directly — see
 > [public pages & discovery](05-public-pages-and-discovery.md). The
-> operations surfaces (`/appointments`, `/documents`, `/recordings`)
-> all share the single `operations.read`
-> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API;
+> operations surface `/appointments` uses the single `operations.read`
+> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API.
+> `/documents` and `/recordings` moved out from under that grant in PR #1842
+> (part of #1527): both live in a sidebar Library group open to every
+> ACTIVE or SUSPENDED member for their own sessions (`?scope=mine`), and
+> `operations.read` now gates only the org-wide oversight view
+> (`?scope=everyone`), metadata only per ADR 20 — see
+> `docs/decisions/2026-09-27-org-role-matrix.md`.
 > `/reimbursements` uses `reimbursements.read` plus the
 > `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
-> (OWNER, MAINTAINER, SUPPORT) with the CSV export kept at a MAINTAINER
-> rank floor because bulk export is a governance action; and the
-> the `/settings` integration tabs (`webhooks`, `scim`, `data-exports`)
-> use `integrations.read` (the finance set).
+> (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT, because it is the
+> union of `audit.read.ops` and `audit.read.money`) with the CSV export gated on
+> `dataExports.people` (OWNER, MAINTAINER) because bulk export is a
+> governance action; and the
+> the `/settings` integration tabs (`webhooks`, `data-exports`)
+> use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create was the OWNER-or-BILLING_ADMIN gate (today the `integrations.manage` key itself), and rotate, branding and domains stayed OWNER — replacing the earlier `integrations.read` grant).
 
 ### Billing surface
 
@@ -339,8 +376,10 @@ The UI is convenience; the server is authoritative in both cases.
 
 Two compliance surfaces sit under the org dashboard:
 
-- **`/settings?tab=data-exports`** — DPDP §11 right-to-access. OWNER +
-  BILLING_ADMIN request a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
+- **`/settings/data-exports`** (the retired `/settings?tab=data-exports` link now redirects here) — DPDP §11 right-to-access. OWNER and
+  MAINTAINER request, list and download the people bundle through
+  `dataExports.people`, and OWNER and BILLING_ADMIN do the same for the
+  finance bundle through `dataExports.finance`; each requests a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
   a worker picks up the `OrgDataExportJob` within ~10 min, uploads to Supabase
   Storage, and the page exposes a 7-day signed-URL download. The page polls every
   15s while `PENDING`/`PROCESSING` and stops on terminal states
@@ -357,9 +396,9 @@ The sidebar is built in
 `app/dashboard/organization/[orgId]/layout.tsx` (`sidebarItems`
 memo) from three inputs: the org's `canSponsor` / `canHost` /
 `fundingSource` booleans, and the current user's `MemberRole`
-ranked via the local `isAtLeast()` helper (duplicated narrowly from
-`lib/auth-helpers.ts` because the layout runs before the org query
-cache is warm). The sidebar is cosmetic — it does not re-derive
+checked against the permission matrix through `useOrgRole().can`,
+which reads the same `lib/auth/org-permissions.ts` keys as the API
+routes (the local rank helper `isAtLeast()` was removed in #1860). The sidebar is cosmetic — it does not re-derive
 from `deriveCapabilityKind()` and it does not enforce authorization.
 Every page and API route still calls `requireOrgAccess` / `useRequireOrgAccess`
 independently. Items that would 404/403/501 are simply hidden to

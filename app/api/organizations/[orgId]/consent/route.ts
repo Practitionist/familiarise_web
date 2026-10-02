@@ -18,9 +18,11 @@
  * member reads and withdraws their OWN consent — the Account settings "Data
  * consent" section (#1527 3c), which also lists their open requests.
  *
- * Retention: `auditRetainedUntil` = grantedAt + 7y per DPDP Rules (Nov
- * 2025). A daily cron sweeper (jobs/compliance/consent-retention-sweeper)
- * purges expired rows — this endpoint does NOT delete.
+ * Retention: `auditRetainedUntil` = grant + 7y, restarted to
+ * withdrawal + 7y when the user withdraws, per DPDP Rules (Nov 2025). A
+ * weekly sweeper (jobs/compliance/consent-retention-sweeper) reports rows
+ * past that date and only deletes them when DPDP_SWEEPER_DELETE is set —
+ * this endpoint does NOT delete.
  */
 
 import * as Sentry from "@sentry/nextjs";

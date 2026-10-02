@@ -21,6 +21,9 @@ import { z } from "zod";
 import { OrgAuditCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// #1861 — the shared escaper neutralises spreadsheet formula triggers (= + - @),
+// which matter here: emails, descriptions and details are user-influenced.
+import { escapeCsvField } from "@/lib/csv/keyset-export";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   sanitizeAuditDescription,
@@ -243,11 +246,11 @@ export async function GET(
               row.createdAt.toISOString(),
               row.category,
               row.action,
-              csvEscape(actor?.email ?? ""),
+              escapeCsvField(actor?.email ?? ""),
               actor?.role ?? "",
-              csvEscape(target?.email ?? ""),
-              csvEscape(sanitizeAuditDescription(row.description)),
-              csvEscape(JSON.stringify(sanitizeAuditDetails(row.details) ?? {})),
+              escapeCsvField(target?.email ?? ""),
+              escapeCsvField(sanitizeAuditDescription(row.description)),
+              escapeCsvField(JSON.stringify(sanitizeAuditDetails(row.details) ?? {})),
             ].join(",");
             controller.enqueue(encoder.encode(line + "\n"));
           }
@@ -283,13 +286,3 @@ export async function GET(
   });
 }
 
-/**
- * CSV-escape a field: wrap in double quotes if it contains comma /
- * quote / newline; double-up any embedded quotes.
- */
-function csvEscape(v: string): string {
-  if (v === "" || v === null || v === undefined) return "";
-  const needsQuoting = /[",\n\r]/.test(v);
-  if (!needsQuoting) return v;
-  return `"${v.replace(/"/g, '""')}"`;
-}

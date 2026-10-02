@@ -5,12 +5,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pendingToast, useToast } from "@/hooks/use-toast";
-import { humanizeAuthError } from "@/lib/labels/auth-errors";
+import {
+  humanizeAuthError,
+  type AuthErrorAction,
+} from "@/lib/labels/auth-errors";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { AuthCardSkeleton } from "../AuthCardSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 export default function ResetPasswordPage() {
   return (
@@ -34,6 +46,12 @@ function ResetPasswordContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  // The catalog's "what to do next" for the last failure — on this page it
+  // is almost always `request-new-link`, which the effect below only reaches
+  // after a 3-second auto-redirect; the affordance lets the customer skip
+  // the wait.
+  const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
+  const retryAfter = useRetryAfterCapture();
 
   useEffect(() => {
     if (!token || linkError) {
@@ -41,6 +59,7 @@ function ResetPasswordContent() {
         code: linkError ?? "INVALID_TOKEN",
       });
       setError(copy.description);
+      setErrorAction(copy.action ?? null);
       toast({
         title: copy.title,
         description: copy.description,
@@ -73,16 +92,24 @@ function ResetPasswordContent() {
     setIsLoading(true);
     setMessage("");
     setError("");
+    setErrorAction(null);
+    retryAfter.clear();
     const settle = pendingToast({ title: "Resetting password..." });
 
     try {
       const { error: resetError } = await authClient.resetPassword({
         newPassword: password,
         token,
+        // Reads `Retry-After` off the response — see
+        // `components/auth/useRetryAfterCapture.ts`.
+        ...retryAfter.fetchOptions,
       });
       if (resetError) {
-        const copy = humanizeAuthError("reset", resetError);
+        const copy = humanizeAuthError("reset", resetError, {
+          retryAfterSeconds: retryAfter.take(),
+        });
         setError(copy.description);
+        setErrorAction(copy.action ?? null);
         settle({
           title: copy.title,
           description: copy.description,
@@ -102,6 +129,7 @@ function ResetPasswordContent() {
       console.error("Reset password error:", err);
       const copy = humanizeAuthError("reset", { status: 0 });
       setError(copy.description);
+      setErrorAction(copy.action ?? null);
       settle({
         title: copy.title,
         description: copy.description,
@@ -111,6 +139,27 @@ function ResetPasswordContent() {
       setIsLoading(false);
     }
   };
+
+  /**
+   * Which catalog actions this page can service.
+   *
+   * `request-new-link` is the one that matters — it is the answer to every
+   * `INVALID_TOKEN` / `TOKEN_EXPIRED` / `PASSWORD_ALREADY_SET` on this page,
+   * and pointing it at the forgot-password route is what turns the passive
+   * "Redirecting … in 3 seconds" into something the customer drives.
+   *
+   * `sign-in` is here because a reset link that is already spent is also a
+   * link whose owner may not know they are signed in; the catalog reaches for
+   * it on `EMAIL_ALREADY_VERIFIED` and the session codes. `retry` is never
+   * renderable (see `AuthErrorAffordance`) — the submit button is the retry.
+   */
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "request-new-link": { kind: "link", href: "/auth/forgot-password" },
+    "sign-in": { kind: "link", href: "/auth/signin" },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-950 p-6 text-white">
@@ -158,6 +207,11 @@ function ResetPasswordContent() {
               </Link>{" "}
               in 3 seconds...
             </p>
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+              className="mt-2 inline-block text-sm font-medium text-red-800 underline-offset-4 hover:underline"
+            />
           </div>
         )}
 
@@ -193,6 +247,11 @@ function ResetPasswordContent() {
 
             {error && <p className="text-sm text-red-400">{error}</p>}
             {message && <p className="text-sm text-green-400">{message}</p>}
+
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+            />
 
             <Button
               type="submit"

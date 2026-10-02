@@ -17,7 +17,9 @@
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
  * Functions runtime already provides. The one exception is a lazy
- * `@sentry/node` import on the missing-secret path (#1582 F-P2-02).
+ * `@sentry/node` import, reached from exactly two paths so the happy path
+ * still bundles nothing: the missing-secret fatal (#1582 F-P2-02), and
+ * {@link alertFailedTargets} for a target that could not be delivered.
  *
  * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
  * from a scheduled function costs three invocations and reports nothing.
@@ -28,7 +30,6 @@ export const config = { schedule: "*/5 * * * *" };
 /** Relative to `/api/cleanup/`. Order is cosmetic — every request fires in parallel. */
 const TARGETS = [
   "sweep-stuck-webhook-events",
-  "cascade-refund-earnings",
   "reconcile-refunds",
   "abandoned-payments",
   "reconcile-payment-status",
@@ -37,9 +38,6 @@ const TARGETS = [
   "dispatch-outbound-webhooks",
   "sync-payment-earnings",
   "release-earnings",
-  // #1633 — the backstop for the ledger reconcile driver: one chunk per tick
-  // of whatever full-scope run is in flight, IDLE otherwise.
-  "reconcile-ledgers",
   // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
   "retry-failed-emails",
   // #1654 — the Novu outbox relay, every tick.
@@ -58,6 +56,20 @@ const TARGETS = [
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
   "retry-auto-refunds",
+  // #1868 — the Sentry ingest canary. The failure it detects is SILENT: Sentry
+  // answers 200 for sessions and transactions while discarding error events
+  // once the organisation's error allowance is spent, so nothing else in the
+  // system notices. On 2026-09-22 that condition went live and the error
+  // stream stayed empty for six days.
+  //
+  // It runs on a 30-minute slot, NOT this ticker's five-minute default, and the
+  // reason is quota rather than latency: it posts a real stored event every run,
+  // so five minutes is 8,640 events a month — 173% of the Developer plan's
+  // 5,000 allowance, i.e. the health check would exhaust the budget it exists
+  // to protect. 30 minutes is 1,440/month. See TARGET_EVERY_MINUTES, and
+  // 06-ingest-canary.md. It costs one HTTPS round trip to a vendor and no
+  // Redis, so unlike the other targets it has no per-tick lock cost to amortise.
+  "sentry-ingest-canary",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -69,15 +81,12 @@ const DEFAULT_LIMIT = 50;
  * #1459 — per-target overrides for the batch size. Fifty rows is only the right
  * bite for a sweep whose per-row cost is a database write; `abandoned-payments`
  * also makes a gateway round trip per payment, and at fifty it could not finish
- * inside {@link PER_TARGET_TIMEOUT_MS} on any tick. The unbounded GitHub Actions
- * run is the backstop for whatever a small bite leaves behind.
+ * inside {@link PER_TARGET_TIMEOUT_MS} on any tick.
  */
 const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
-  // null — send no `limit`; a chunk is bounded by the route's own soft deadline.
-  "reconcile-ledgers": null,
   // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
-  // fits its timeout; the Actions run drains the rest unbounded.
+  // fits its timeout.
   "retry-failed-emails": 20,
   // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
   // rows stays inside the target timeout even when Novu is slow.
@@ -95,32 +104,19 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  * entry means every tick. The check is on the wall-clock minute, so a late
  * tick (Netlify fires within the minute) still counts as its slot.
  */
-// #1792 — Upstash REST hit its 500k request cap (2026-09-21: every fail-closed
-// money cron red with CronLockUnavailableError). Per-invocation Redis cost
-// (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
-// batch size — is the burn lever. Targets with an Actions twin at equal or
-// better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
-// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
-  // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
-  "reconcile-ledgers": 15,
+  "sentry-ingest-canary": 30,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
-  "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
-  // #1822 Q-3 — see the block comment above; moved off every-tick.
   "reconcile-payment-status": 15,
   "reconcile-orphaned-confirmations": 15,
-  // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
-  // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
   "expire-unpaid-trials": 15,
   "reschedule-proposals": 15,
   "appointment-reminders": 15,
@@ -140,24 +136,17 @@ export function dueTargets(now: Date): Target[] {
 }
 
 /** Extra query a target needs beyond `limit`. */
-const TARGET_QUERIES: Partial<Record<Target, string>> = {
-  "reconcile-ledgers": "resume=1",
-};
+const TARGET_QUERIES: Partial<Record<Target, string>> = {};
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
 const PER_TARGET_TIMEOUT_MS = 6_000;
 
-/** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */
+/** 20 s still sits under the 30 s scheduled cap for gateway/outbox round-trip sweeps. */
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
-  "reconcile-ledgers": 20_000,
-  // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
+  "abandoned-payments": 20_000,
   "retry-failed-emails": 20_000,
   "drain-notification-outbox": 20_000,
-  // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
   "reconcile-orphaned-confirmations": 20_000,
-  // #1583 E-P0-04 — per-row outbox staging (reminders) and gateway refunds
-  // (stale requests) do not fit 6 s on a cold instance; the cron lock makes
-  // an overlap with the Actions run a 409, not a double run.
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
   "settle-cancelled-sessions": 20_000,
@@ -265,6 +254,26 @@ export function bucketFor(
   return "failed";
 }
 
+/**
+ * #1868 — which failed targets are reported to Sentry itself.
+ *
+ * The Sentry ingest canary is excluded. An unhealthy canary answers 503 with
+ * no `phase`, so `bucketFor` files it under `failed`, and `alertFailedTargets`
+ * reports to Sentry — the very system whose outage the canary just detected.
+ * During a quota outage that is one event per tick that can never arrive; after
+ * recovery, one more per tick spent from the allowance being protected. A
+ * monitor that reports its own failure through the failing system is not a
+ * monitor.
+ *
+ * The canary is still counted as failed: it stays in the HTTP status and the
+ * response body, so a 503 remains visible in the tick's output and the job
+ * history. Only the Sentry report is suppressed, and the email alert — which
+ * fails open, so this same outage cannot silence it — carries the signal.
+ */
+export function reportableToSentry(name: string): boolean {
+  return name !== "sentry-ingest-canary";
+}
+
 /** #1582 F-P2-02 — a missing secret is a silent fleet outage; page Sentry, not just the log. */
 async function alertMissingSecret(error: string): Promise<void> {
   try {
@@ -273,6 +282,89 @@ async function alertMissingSecret(error: string): Promise<void> {
     Sentry.captureMessage(error, "fatal");
     await Sentry.flush(2_000);
   } catch (err) {
+    console.error(JSON.stringify({ event: "cron-tick", sentry: String(err) }));
+  }
+}
+
+/**
+ * The Sentry event for a tick with failing targets, as data.
+ *
+ * FIXED MESSAGE AND FINGERPRINT. Sentry groups by message text, so naming the
+ * failed targets in the message would mint a NEW issue for every distinct
+ * combination of failures and bury the single issue this is meant to be — the
+ * exact opposite of what "one event per tick" is for. The detail rides along as
+ * context instead, and the fingerprint pins the grouping explicitly so a
+ * future edit to the message cannot silently split the issue.
+ *
+ * Exported so a test can pin the shape without standing up the SDK.
+ */
+export function buildFailedTargetsEvent(
+  failed: { name: string; status: number }[],
+) {
+  return {
+    message: "cron-tick: one or more cleanup targets failed",
+    level: "error" as const,
+    fingerprint: ["cron-tick-failed-targets"],
+    tags: { subsystem: "cron", op: "cron-tick" },
+    contexts: {
+      tick: {
+        failedCount: failed.length,
+        targets: failed.map((f) => ({
+          name: f.name,
+          // 0 is this module's "never got an answer" value, not an HTTP
+          // status — see hitTarget.
+          status: f.status,
+          outcome: f.status === 0 ? ("network" as const) : ("http" as const),
+        })),
+      },
+    },
+  };
+}
+
+/**
+ * Report one failing target to Sentry.
+ *
+ * This is the change that makes a persistently-broken sweep visible. Before
+ * it, a target could fail on every five-minute tick for weeks and the only
+ * trace was one JSON line per tick in the Netlify function log: `failed` was
+ * computed, logged, and then thrown away, because {@link statusFor} returns
+ * 200 by design (#1686, so a failing target does not cost three re-invokes).
+ * Neither branch reported to Sentry — the ticker's only Sentry call was the
+ * missing-secret fatal above. A crew reading the Sentry dashboard saw
+ * `CronLockUnavailableError` and `UpstashError` (from the routes themselves)
+ * but nothing that said "the ticker cannot reach sweep X", which is the one
+ * fact that distinguishes a broken sweep from a broken dependency.
+ *
+ * ONE event per tick, never one per target: a total outage would otherwise emit
+ * ~20 identical events every five minutes, and the 2026-09-21 Upstash incident
+ * already showed this project will spend its whole error quota on a single
+ * dependency.
+ */
+async function alertFailedTargets(
+  failed: { name: string; status: number }[],
+): Promise<void> {
+  if (failed.length === 0) return;
+  try {
+    const Sentry = await import("@sentry/node");
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      tracesSampleRate: 0,
+      // Same posture as the app: no IP, no cookies, no headers. The ticker's
+      // only caller is the Netlify scheduler, so there is nothing to collect.
+      dataCollection: {
+        userInfo: false,
+        cookies: false,
+        httpHeaders: { request: false, response: false },
+        queryParams: false,
+        httpBodies: [],
+        stackFrameVariables: false,
+      },
+    });
+    const event = buildFailedTargetsEvent(failed);
+    Sentry.captureMessage(event.message, event);
+    await Sentry.flush(2_000);
+  } catch (err) {
+    // Telemetry must never be the reason a tick throws.
     console.error(JSON.stringify({ event: "cron-tick", sentry: String(err) }));
   }
 }
@@ -404,6 +496,20 @@ export default async function cronTick(_req: Request): Promise<Response> {
     durationMs,
   };
   console.log(JSON.stringify(body));
+  // #1868 — the Sentry ingest canary is deliberately NOT reported here. An
+  // unhealthy canary answers 503 with no `phase`, so `bucketFor` files it
+  // under `failed` — and `alertFailedTargets` reports failures to Sentry, which
+  // is precisely the system whose outage the canary just detected. During a
+  // quota outage that is one Sentry event per tick that can never arrive, and
+  // after recovery one more per tick spent from the allowance we are trying to
+  // protect. A monitor that reports its own failure through the failing system
+  // is not a monitor. The email alert is the canary's channel, and it fails
+  // open, so nothing is lost by excluding it here.
+  //
+  // It stays in `failed` for the HTTP status and the body, so a 503 from the
+  // canary is still visible in the tick's own output and in the job-execution
+  // history — only the Sentry report is suppressed.
+  await alertFailedTargets(failed.filter((f) => reportableToSentry(f.name)));
 
   // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it
   // never delays them. Health follows `failed`, not the (always-200) HTTP

@@ -19,12 +19,16 @@ const read = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8");
 describe("BetterAuth plugin surface (#1132)", () => {
   const authSrc = read("lib/auth.ts");
 
-  // The plugin defaults this to `true` when unset, which let any authenticated
-  // user POST /api/auth/organization/create and own the result — bypassing the
-  // ORG_WORKSPACE/ADMIN gate, ENABLE_HOST_ORGS, slug validation and
-  // BillingAccount creation that POST /api/organizations performs.
-  it("disables the organization plugin's own creation endpoint", () => {
-    expect(authSrc).toMatch(/allowUserToCreateOrganization:\s*false/);
+  // The organization plugin's /api/auth/organization/create let any
+  // authenticated user own a new org, bypassing the ORG_WORKSPACE/ADMIN gate,
+  // ENABLE_HOST_ORGS, slug validation and BillingAccount creation that
+  // POST /api/organizations performs. The plugin is no longer mounted (D11),
+  // so none of its /organization/* endpoints exist.
+  it("does not mount the organization plugin", () => {
+    expect(authSrc).not.toMatch(/\borganization\(/);
+    expect(authSrc).not.toMatch(
+      /\borganization\b[^\n]*from "better-auth\/plugins"/,
+    );
   });
 
   // /admin/set-role authorises on `user:["set-role"]` alone and never compares

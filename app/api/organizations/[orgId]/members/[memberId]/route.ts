@@ -35,7 +35,6 @@ import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
   auditPayoutRecipientChange,
-  bumpUserSessionGeneration,
   recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
 import {
@@ -436,17 +435,6 @@ export async function PATCH(
                   where: { id: memberId },
                 });
 
-          // Role, status and departmentLabel all ride the session payload, so a
-          // change bumps the generation marker instead of waiting up to 24h for
-          // BetterAuth's session rotation (Phase B.5).
-          if (
-            patch.role !== undefined ||
-            patch.status !== undefined ||
-            patch.departmentLabel !== undefined
-          ) {
-            await bumpUserSessionGeneration(tx, current.userId);
-          }
-
           // A4: an EXPERT entering or leaving EXPERT or ACTIVE shifts the
           // consultant's HOST-membership count, which drives
           // ConsultantProfile.isIndependent.
@@ -495,7 +483,10 @@ export async function PATCH(
     // Vendor attempt after the response; the row was written in the tx.
     if (stagedRoleEmail) {
       const staged = stagedRoleEmail;
-      scheduleAfter(() => attemptOnboardingEmail(staged));
+      scheduleAfter(
+        () => attemptOnboardingEmail(staged),
+        "member.onboarding-email",
+      );
     }
 
     return NextResponse.json({ membership: result });

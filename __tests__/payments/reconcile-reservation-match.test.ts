@@ -65,6 +65,10 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundFailed: jest.fn().mockResolvedValue(undefined),
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
+const mockApplyRefundCascade = jest.fn().mockResolvedValue({});
+jest.mock("../../lib/payments/operations/refund", () => ({
+  applyRefundCascade: (...a: unknown[]) => mockApplyRefundCascade(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.

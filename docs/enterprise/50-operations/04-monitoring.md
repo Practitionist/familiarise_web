@@ -107,23 +107,16 @@ per-row log). Know what each prints so you can build the alert:
 | Wallet floor (notify-only) | `wallet-low-balance` | `scanned / notified` | — (finance notify) |
 | Stuck-webhook re-drive | `sweep-stuck-webhook-events` | `scanned / recovered / stillFailing` + `::warning::` | — |
 | Orphaned top-up captures | `sweep-orphaned-topup-captures` | `scanned / recredited / stillFailing` | — |
-| SSO cert expiry | `sso-cert-expiry-alert` | `scanned / alerted / parseFailures` | `SSO_CERT_EXPIRING` audit row |
 | Outbound webhook dispatch | `dispatch-outbound-webhooks` | `scanned / succeeded / retried / failed` | `WEBHOOK`/WARN `SystemEvent` when backlog > 200 |
 
-Two failure surfaces the v2 crons share, neither of which prints a
-distinct `event:` line:
+One failure surface the v2 crons share does not print a distinct
+`event:` line:
 
 - **Webhook secret rotation** is observable via the `WEBHOOK_SECRET_ROTATED`
   audit action + the 24h dual-sign window (`WEBHOOK_ROTATION_GRACE_MS`,
   `lib/enterprise/outbound-webhooks/signing.ts`). Alert on deliveries
   still failing **after** the grace window elapsed (the consumer never
   swapped to the new secret).
-- **SSO break-glass opened** has **no** dedicated event or audit action —
-  it's a `breakGlassUntil` window on `OrganizationSSOSettings`, vetoed in
-  `lib/sso/enforce-session.ts`. To page on it, watch for `SETTINGS_CHANGED`
-  audit rows carrying the break-glass `details`, or query
-  `OrganizationSSOSettings WHERE breakGlassUntil > now()`. See the
-  warning row added below.
 
 ### Stream jobs on the operator surface (#1270)
 
@@ -185,7 +178,6 @@ Each row describes a condition that signals a degraded but not yet broken state 
 | IRP upload failure rate | `invoice.irp.failed` / `invoice.irp.attempted` > 20% rolling 1h (only meaningful when `ENABLE_IRP_UPLOADER=true`; stub returns are expected sub-₹5cr) |
 | Outbound webhook backlog | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries) |
 | Webhook secret rotation not adopted | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed) |
-| SSO break-glass open | `OrganizationSSOSettings.breakGlassUntil > now()` (SSO enforcement is bypassed for that window — confirm it was intentional) |
 | Overage ceiling wedged | `OverageEvent` `chargeStatus=PENDING`, `overageBehavior=CHARGE_MEMBER`, `createdAt < now() - 14d` count > 0 (timeout cron not draining) |
 | Dunning not escalating | `dunning` summary `markedOverdue + remindersSent = 0` for 48h while OVERDUE invoices with `dunningReminderCount < 3` exist |
 | Wallet floor breached | `BillingAccount` `fundingSource=WALLET`, `walletBalance < minBalancePaise` (notify-only cron; no auto-charge — may need manual top-up) |

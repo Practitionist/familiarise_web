@@ -196,7 +196,6 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "org-invite-accepted": "org-membership",
   "org-expert-removed": "org-membership",
   "org-sso-provider-deleted": "org-membership",
-  "org-sso-cert-expiring": "org-membership",
 
   "org-program-exhausted": "org-program",
   "org-program-cap-near": "org-program",
