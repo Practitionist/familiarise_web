@@ -20,8 +20,8 @@
 name: CI
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   # A direct push to a release branch deploys without a PR, so the same checks
@@ -133,6 +133,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Supply-chain security audit
+        # #1885 — fail CI when any production dependency has a high or critical
+        # advisory so vulnerable transitive packages cannot ship to prod.
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env

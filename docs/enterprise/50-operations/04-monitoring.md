@@ -183,6 +183,8 @@ Each row describes a condition that signals a degraded but not yet broken state 
 | Wallet floor breached | `BillingAccount` `fundingSource=WALLET`, `walletBalance < minBalancePaise` (notify-only cron; no auto-charge — may need manual top-up) |
 | DPDP sweeper skipped | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️) |
 | MSME alerts not firing | `msme.alert.logged` count = 0 for 48h |
+| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min |
+| Database pool exhaustion (`#1696`, `#698`, `#1452`) | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min |
 
 ### Info (dashboard only)
 
@@ -192,6 +194,9 @@ These metrics require no immediate action but belong on a live dashboard as lead
 |--------|---------|
 | `webhook.deduplicated` rate | Healthy baseline for vendor retry behaviour |
 | `ledger.transaction.serializable.retry` rate | Rising rate signals contention hotspots |
+| `pg_code:23P01` (`pg_constraint:occurrence_no_confirmed_overlap`) / `pg_code:23505` / `pg_code:40001` Sentry tags (`#1092`) | Tracks slot-overlap exclusion races, unique-constraint races, and serializable retries across booking and finance transactions |
+| `email.outbox.sent` / `retried` / `dead_lettered` / `pending` (`email.outbox.drain` span) | Transactional email & batch outbox relay health (`jobs/email/retry-failed-emails.ts`) |
+| `notifications.outbox.drained` / `retried` / `dead_lettered` / `pending` (`notifications.outbox.drain` span) | Novu notification outbox relay health (`jobs/notifications/drain-notification-outbox.ts`) |
 | MRR / ARPU trends | Business-health dashboard |
 
 ---

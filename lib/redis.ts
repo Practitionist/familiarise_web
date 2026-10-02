@@ -67,15 +67,25 @@ if (USE_MOCK_REDIS) {
 
 interface CircuitBreakerState {
   failures: number;
+  totalRequests: number;
   lastFailure: number;
   state: "CLOSED" | "OPEN" | "HALF_OPEN";
   halfOpenSuccesses: number;
+}
+
+export interface CircuitBreakerOptions {
+  failureThreshold?: number;
+  resetTimeout?: number;
+  halfOpenSuccessThreshold?: number;
+  /** Minimum requests in window before consecutive failures can open the breaker (#1450 §0.4). */
+  minRequests?: number;
 }
 
 const CIRCUIT_CONFIG = {
   failureThreshold: 5, // Open after 5 consecutive failures
   resetTimeout: 30000, // Try again after 30 seconds
   halfOpenSuccessThreshold: 3, // Close after 3 successful half-open requests
+  minRequests: 20, // Minimum sample guard before tripping (#1450 §0.4)
 };
 
 export interface CircuitBreaker {
@@ -90,6 +100,7 @@ export interface CircuitBreaker {
     name: string;
     state: string;
     failures: number;
+    totalRequests?: number;
     lastFailure: number | null;
   };
   /** Force back to CLOSED. Admin escape hatch, not part of normal operation. */
@@ -120,9 +131,23 @@ export interface CircuitBreaker {
  *
  * Each instance owns its own state. Nothing is shared but the config.
  */
-export function createCircuitBreaker(name: string): CircuitBreaker {
+export function createCircuitBreaker(
+  name: string,
+  options: CircuitBreakerOptions = {},
+): CircuitBreaker {
+  const config = {
+    failureThreshold:
+      options.failureThreshold ?? CIRCUIT_CONFIG.failureThreshold,
+    resetTimeout: options.resetTimeout ?? CIRCUIT_CONFIG.resetTimeout,
+    halfOpenSuccessThreshold:
+      options.halfOpenSuccessThreshold ??
+      CIRCUIT_CONFIG.halfOpenSuccessThreshold,
+    minRequests: options.minRequests ?? CIRCUIT_CONFIG.minRequests,
+  };
+
   const circuitBreaker: CircuitBreakerState = {
     failures: 0,
+    totalRequests: 0,
     lastFailure: 0,
     state: "CLOSED",
     halfOpenSuccesses: 0,
@@ -151,7 +176,7 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
     if (circuitBreaker.state !== "OPEN") return false;
 
     const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
-    if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
+    if (timeSinceFailure > config.resetTimeout) {
       circuitBreaker.state = "HALF_OPEN";
       circuitBreaker.halfOpenSuccesses = 0;
       log("log", { event: "circuit_breaker_half_open" });
@@ -160,19 +185,17 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
 
     log("warn", {
       event: "circuit_breaker_rejected",
-      remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
+      remaining_ms: config.resetTimeout - timeSinceFailure,
     });
     return true;
   }
 
   /** Advance the state machine on a successful call. */
   function recordSuccess(): void {
+    circuitBreaker.totalRequests++;
     if (circuitBreaker.state === "HALF_OPEN") {
       circuitBreaker.halfOpenSuccesses++;
-      if (
-        circuitBreaker.halfOpenSuccesses >=
-        CIRCUIT_CONFIG.halfOpenSuccessThreshold
-      ) {
+      if (circuitBreaker.halfOpenSuccesses >= config.halfOpenSuccessThreshold) {
         circuitBreaker.state = "CLOSED";
         circuitBreaker.failures = 0;
         circuitBreaker.halfOpenSuccesses = 0;
@@ -190,6 +213,7 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
 
   /** Advance the state machine on a failure that counts. */
   function recordFailure(): void {
+    circuitBreaker.totalRequests++;
     circuitBreaker.failures++;
     circuitBreaker.lastFailure = Date.now();
 
@@ -202,15 +226,19 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
       });
       return;
     }
-    if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
+    if (
+      circuitBreaker.totalRequests >= config.minRequests &&
+      circuitBreaker.failures >= config.failureThreshold
+    ) {
       circuitBreaker.state = "OPEN";
       log("error", {
         event: "circuit_breaker_opened",
         failures: circuitBreaker.failures,
+        totalRequests: circuitBreaker.totalRequests,
       });
       Sentry.logger.warn(
         Sentry.logger
-          .fmt`${name} circuit breaker: opened after ${circuitBreaker.failures} failures`,
+          .fmt`${name} circuit breaker: opened after ${circuitBreaker.failures} failures (${circuitBreaker.totalRequests} total requests)`,
       );
     }
   }
@@ -246,6 +274,7 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
   function reset(): void {
     circuitBreaker.state = "CLOSED";
     circuitBreaker.failures = 0;
+    circuitBreaker.totalRequests = 0;
     circuitBreaker.lastFailure = 0;
     circuitBreaker.halfOpenSuccesses = 0;
     console.log(
@@ -265,6 +294,7 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
       name,
       state: circuitBreaker.state,
       failures: circuitBreaker.failures,
+      totalRequests: circuitBreaker.totalRequests,
       lastFailure:
         circuitBreaker.lastFailure > 0 ? circuitBreaker.lastFailure : null,
     }),

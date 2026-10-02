@@ -21,6 +21,7 @@ import type { MemberRole } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   NOVU_WORKFLOWS,
+  notificationScope,
   type OrgDataExportReadyInput,
   type OrgDataExportReadyPayload,
   type OrgInviteAcceptedPayload,
@@ -63,6 +64,13 @@ import {
   formatNotificationDateTime,
   formatNotificationMoney,
 } from "./humanize";
+
+/**
+ * What a date field carries when its input does not parse: the dashboard
+ * always shows the real date, so the bell degrades to pointing at it
+ * instead of printing raw ISO (the recording-expiring bell's wording).
+ */
+const DATE_FALLBACK = "the date shown in your dashboard";
 
 // ============================================================================
 // Internal trigger helpers — thin wrappers over the service cores (#691)
@@ -192,12 +200,14 @@ export async function notifyOrgInviteSent(
   // The invitee has no account yet, so there is no recorded zone to render in;
   // the platform default is used and the rendered string names it (#536).
   const wire: OrgInviteSentPayload = {
+    organizationId: payload.organizationId ?? null,
+    scope: "org",
     ...payload,
     expiresAt:
       formatNotificationDateTime(
         payload.expiresAt,
         DEFAULT_NOTIFICATION_TIMEZONE,
-      ) ?? payload.expiresAt,
+      ) ?? DATE_FALLBACK,
     expiresAtIso: payload.expiresAt,
   };
   return triggerOne(NOVU_WORKFLOWS.ORG_INVITE_SENT, inviteeEmail, wire, opts);
@@ -221,7 +231,7 @@ export async function notifyOrgInviteAccepted(
   return triggerMany(
     NOVU_WORKFLOWS.ORG_INVITE_ACCEPTED,
     recipients,
-    payload,
+    { ...notificationScope(orgId, payload.orgName), ...payload },
     opts,
   );
 }
@@ -240,11 +250,11 @@ export async function notifyOrgInvoiceIssued(
     NOVU_WORKFLOWS.ORG_INVOICE_ISSUED,
     owners,
     (timezone): OrgInvoiceIssuedPayload => ({
+      ...notificationScope(orgId, payload.orgName),
       ...payload,
       total: formatNotificationMoney(payload.totalPaise, payload.currency),
       dueDate:
-        formatNotificationDateTime(payload.dueDate, timezone) ??
-        payload.dueDate,
+        formatNotificationDateTime(payload.dueDate, timezone) ?? DATE_FALLBACK,
       dueDateIso: payload.dueDate,
     }),
     opts,
@@ -265,10 +275,11 @@ export async function notifyOrgInvoicePaid(
     NOVU_WORKFLOWS.ORG_INVOICE_PAID,
     owners,
     (timezone): OrgInvoicePaidPayload => ({
+      ...notificationScope(orgId, payload.orgName),
       ...payload,
       total: formatNotificationMoney(payload.totalPaise, payload.currency),
       paidAt:
-        formatNotificationDateTime(payload.paidAt, timezone) ?? payload.paidAt,
+        formatNotificationDateTime(payload.paidAt, timezone) ?? DATE_FALLBACK,
       paidAtIso: payload.paidAt,
     }),
     opts,
@@ -292,6 +303,7 @@ export async function notifyOrgInvoiceOverdue(
     opts?.tx ?? prisma,
   );
   const wire: OrgInvoiceOverduePayload = {
+    ...notificationScope(orgId, payload.orgName),
     ...payload,
     total: formatNotificationMoney(payload.totalPaise, payload.currency),
   };
@@ -315,6 +327,8 @@ export async function notifyMemberOverageTimedOut(
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
   const wire: OrgMemberOverageTimedOutPayload = {
+    organizationId: payload.organizationId ?? null,
+    scope: "org",
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
   };
@@ -342,12 +356,13 @@ export async function notifyOrgLicenseRenewalUpcoming(
     NOVU_WORKFLOWS.ORG_LICENSE_RENEWAL_UPCOMING,
     owners,
     (timezone): OrgLicenseRenewalUpcomingPayload => ({
+      ...notificationScope(orgId, payload.orgName),
       ...payload,
       cycle: payload.cycle.toLowerCase(),
       cycleCode: payload.cycle,
       renewalDate:
         formatNotificationDateTime(payload.renewalDate, timezone) ??
-        payload.renewalDate,
+        DATE_FALLBACK,
       renewalDateIso: payload.renewalDate,
       expectedTotal: formatNotificationMoney(
         payload.expectedTotalPaise,
@@ -375,10 +390,11 @@ export async function notifyOrgDataExportReady(
     NOVU_WORKFLOWS.ORG_DATA_EXPORT_READY,
     owners,
     (timezone): OrgDataExportReadyPayload => ({
+      ...notificationScope(orgId, payload.orgName),
       ...payload,
       expiresAt:
         formatNotificationDateTime(payload.expiresAt, timezone) ??
-        payload.expiresAt,
+        DATE_FALLBACK,
       expiresAtIso: payload.expiresAt,
     }),
     opts,
@@ -398,6 +414,7 @@ export async function notifyOrgWalletTopupConfirmed(
 ): Promise<StagedTrigger[]> {
   const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   const wire: OrgWalletTopupConfirmedPayload = {
+    ...notificationScope(orgId, payload.orgName),
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
     newBalance: formatNotificationMoney(
@@ -430,6 +447,7 @@ export async function notifyOrgWalletLow(
     opts?.tx ?? prisma,
   );
   const wire: OrgWalletLowPayload = {
+    ...notificationScope(orgId, payload.orgName),
     ...payload,
     balance: formatNotificationMoney(payload.balancePaise, payload.currency),
     minimum: formatNotificationMoney(payload.minimumPaise, payload.currency),
@@ -453,6 +471,7 @@ export async function notifyOrgPayoutCompleted(
     opts?.tx ?? prisma,
   );
   const wire: OrgPayoutCompletedPayload = {
+    ...notificationScope(orgId, payload.orgName),
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
     // #1474 — `amount` is the received (post-withholding) figure; surface the
@@ -493,7 +512,11 @@ export async function notifyOrgPayoutFailed(
       ? NOVU_WORKFLOWS.ORG_PAYOUT_REVERSED
       : NOVU_WORKFLOWS.ORG_PAYOUT_FAILED;
   const wire: OrgPayoutFailedPayload = {
+    ...notificationScope(orgId, payload.orgName),
     ...payload,
+    // The template prints the reason ungated after a colon — a blank
+    // gateway string would hang the sentence on it.
+    reason: payload.reason?.trim() ? payload.reason : "no reason was given",
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
     // #1474 — same withheld split as the COMPLETED bell; FAILED carries no
     // withholding so the clause stays absent there.
@@ -526,7 +549,7 @@ export async function notifyOrgProgramExhausted(
   return triggerMany(
     NOVU_WORKFLOWS.ORG_PROGRAM_EXHAUSTED,
     recipients,
-    payload,
+    { ...notificationScope(orgId, payload.orgName), ...payload },
     opts,
   );
 }
@@ -553,7 +576,7 @@ export async function notifyOrgProgramCapNear(
   return triggerMany(
     NOVU_WORKFLOWS.ORG_PROGRAM_CAP_NEAR,
     recipients,
-    payload,
+    { ...notificationScope(orgId, payload.orgName), ...payload },
     opts,
   );
 }
@@ -569,6 +592,8 @@ export async function notifyOrgProgramOverageDue(
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
   const wire: OrgProgramOverageDuePayload = {
+    organizationId: payload.organizationId ?? null,
+    scope: "org",
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, ORG_DEFAULT_CURRENCY),
   };
@@ -594,7 +619,7 @@ export async function notifyOrgSsoProviderDeleted(
   return triggerMany(
     NOVU_WORKFLOWS.ORG_SSO_PROVIDER_DELETED,
     owners,
-    payload,
+    { ...notificationScope(orgId, payload.orgName), ...payload },
     opts,
   );
 }

@@ -18,6 +18,12 @@
  *     row is dead-lettered without a send.
  */
 
+const mockCaptureMessage = jest.fn();
+jest.mock("@sentry/nextjs", () => ({
+  ...jest.requireActual("@sentry/nextjs"),
+  captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+}));
+
 import {
   runEmailRetryTick,
   BACKOFF_MS,
@@ -176,7 +182,8 @@ describe("runEmailRetryTick — backoff schedule", () => {
     },
   );
 
-  it("flips to DEAD_LETTER instead of scheduling a 6th attempt", async () => {
+  it("flips to DEAD_LETTER instead of scheduling a 6th attempt and alerts Sentry (#1926, #531)", async () => {
+    mockCaptureMessage.mockClear();
     const stub = makePrismaStub(makeRow({ attempts: 4, status: "RETRY" }));
     const resend = mockResend(async () => {
       throw new Error("Resend still down");
@@ -194,6 +201,16 @@ describe("runEmailRetryTick — backoff schedule", () => {
       attempts: 5,
       lastError: "Resend still down",
     });
+    expect(mockCaptureMessage).toHaveBeenCalledWith(
+      expect.stringContaining("email retry exhausted 5 attempts"),
+      expect.objectContaining({
+        level: "error",
+        tags: expect.objectContaining({
+          subsystem: "email",
+          outbox_dead_letter: "true",
+        }),
+      }),
+    );
     // No nextRetryAt churn on the terminal state.
     expect(
       (stub.updates[0].data as { nextRetryAt?: Date }).nextRetryAt,

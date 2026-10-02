@@ -57,10 +57,13 @@ import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
+import { assertSeedPasswordSafeForEnv } from "./config";
 
 // Same source-of-truth as 1a-create-users.ts so the tour-owner credential
 // matches every other seed user; tour scripts and docs reference this.
-const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
+const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
+const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -185,7 +188,10 @@ export async function createOrganizations(
 
   // ------------------------------------------------------------------ LEARNPRO
   // consultants[11] is the dedicated LearnPro owner; fallback to consultants[5]
-  await seedLearnPro(consultants[11] ?? consultants[5], consultants.slice(0, 5));
+  await seedLearnPro(
+    consultants[11] ?? consultants[5],
+    consultants.slice(0, 5),
+  );
 
   // --------------------------------------------------------------------- IIT
   await seedIit({
@@ -228,7 +234,10 @@ export async function createOrganizations(
 // Shape 1: Wipro — pure SPONSOR with INVOICE funding + LICENSED_SEAT program
 // ---------------------------------------------------------------------------
 
-async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) {
+async function seedWipro(
+  learners: UserWithProfiles[],
+  owner: UserWithProfiles,
+) {
   const org = await createRootOrg({
     name: "Wipro Limited",
     slug: "wipro",
@@ -431,7 +440,10 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
 // Shape 2: LearnPro Agency — pure HOST with RateCard + payout account
 // ---------------------------------------------------------------------------
 
-async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWithProfiles[]) {
+async function seedLearnPro(
+  owner: UserWithProfiles,
+  agencyConsultants: UserWithProfiles[],
+) {
   const org = await createRootOrg({
     name: "LearnPro Academy",
     slug: "learnpro-academy",
@@ -493,8 +505,7 @@ async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWith
         tdsSection: "194J",
         tdsRateBps: 1000, // 10% (#781 §C — bps)
         msmeStatus: idx < 2 ? MsmeStatus.MICRO : MsmeStatus.NONE,
-        udyamNumber:
-          idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
+        udyamNumber: idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
         writtenAgreementWithFamiliarise: true,
         providerCountry: "IN",
       },
@@ -828,6 +839,11 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
 const TOUR_OWNER_EMAIL = "tour-owner@familiarise.dev";
 
 async function seedTourOwner(): Promise<void> {
+  assertSeedPasswordSafeForEnv(
+    RAW_SEED_PASSWORD,
+    SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
+  );
+
   // Adopt the canonical Wipro org as this owner's primary org. Skip the
   // seed if Wipro didn't materialize (smaller seed mode) — the tour
   // matrix only needs an ORG_WORKSPACE attached to *some* seed org.

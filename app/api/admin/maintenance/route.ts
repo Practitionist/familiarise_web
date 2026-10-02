@@ -16,6 +16,7 @@ import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { notifyMaintenanceScheduled } from "@/lib/novu/service";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
+import { signMaintenanceBypassCookie } from "@/lib/maintenance-edge";
 import prisma from "@/lib/prisma";
 
 // Local wrapper preserves the existing call sites that expect `{ userId }`.
@@ -114,7 +115,15 @@ export async function GET() {
     }),
   ]);
 
-  return NextResponse.json({ state, history: recentWindows });
+  const bypassCookieToken = state.bypassSecret
+    ? await signMaintenanceBypassCookie(state.bypassSecret)
+    : null;
+
+  return NextResponse.json({
+    state: { ...state, bypassCookieToken },
+    bypassCookieToken,
+    history: recentWindows,
+  });
 }
 
 /**
@@ -184,6 +193,7 @@ export async function POST(request: NextRequest) {
     phase === "DEGRADED" ? MaintenancePhase.DEGRADED : MaintenancePhase.OFFLINE;
 
   const bypassSecret = crypto.randomUUID();
+  const bypassCookieToken = await signMaintenanceBypassCookie(bypassSecret);
 
   let betterstackIncidentId: string | null = null;
   if (targetPhase === MaintenancePhase.OFFLINE) {
@@ -208,7 +218,9 @@ export async function POST(request: NextRequest) {
     await notifyMaintenanceScheduled({
       phase: targetPhase,
       ...(reason ? { reason } : {}),
-      ...(estimatedEndDate ? { estimatedEnd: estimatedEndDate.toISOString() } : {}),
+      ...(estimatedEndDate
+        ? { estimatedEnd: estimatedEndDate.toISOString() }
+        : {}),
     });
   } catch (error) {
     reportSentryError(error, {
@@ -226,6 +238,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     phase: targetPhase,
     bypassSecret,
+    bypassCookieToken,
     betterstackIncidentId,
     message: `Maintenance mode set to ${targetPhase}`,
     ...(offlineActivation?.drain !== undefined

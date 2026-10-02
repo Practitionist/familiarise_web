@@ -46,7 +46,8 @@ import {
  * written; the privileged half of the same story is `config.withStaff`.
  */
 const DEFAULT_SEED_PASSWORD = "SeedPass123!";
-const SEED_PASSWORD = process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
+const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
+const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -530,7 +531,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   // the database byte-for-byte as it found it. Two independent reasons, either
   // sufficient; see ./config for the full argument.
   assertSeedPasswordSafeForEnv(
-    process.env.SEED_PASSWORD,
+    RAW_SEED_PASSWORD,
     SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
   );
   assertStaffSeedAllowed(config.withStaff);

@@ -21,6 +21,10 @@ import {
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import {
+  appointmentTypeLabel,
+  collaboratorRoleLabel,
+} from "@/lib/novu/humanize";
 import { goHref } from "@/lib/dashboard/go";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { reportSentryError } from "@/lib/observability/report";
@@ -47,6 +51,15 @@ const MIN_HOST_SHARE = 10; // Host must keep at least 10%
 // only one of them a co-presenter; the host stays the accountable party.
 export const MAX_COLLABORATORS_PER_PLAN = 3;
 export { PRESENTER_ROLES } from "@/lib/collaborators/roles";
+
+/**
+ * Sentence-start fallback when the plan row behind a bell is gone
+ * ("Class", "Webinar") — never the "Unknown Plan" placeholder.
+ */
+const planKindLabel = (planType: string): string => {
+  const label = appointmentTypeLabel(planType);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
 
 // #772 B5 — collaborator shares are stored as basis points (bps) for integer
 // money math. The public API/param surface stays in percent (0–90); convert at
@@ -340,9 +353,12 @@ export async function inviteCollaborator(
 
       if (invitedProfile) {
         await notifyCollaboratorInvited(invitedProfile.userId, {
-          planTitle: planTitle ?? "Unknown Plan",
+          // A missing title still names the kind of plan ("Class"), never
+          // a developer placeholder; the role is Title Case with real
+          // hyphens because the template only downcases ("Co-host").
+          planTitle: planTitle ?? planKindLabel(planType),
           planType,
-          role,
+          role: collaboratorRoleLabel(role),
           revenueSharePercentage,
           ownerName: inviterProfile?.user?.name ?? "Plan Owner",
           // #1527 — the recipient is always a consultant collaborator.
@@ -551,8 +567,8 @@ async function notifyHostOfResponse(
     const payload = {
       planTitle: plan.title,
       planType,
-      collaboratorName: collabProfile?.user?.name ?? "Collaborator",
-      role: updated.role,
+      collaboratorName: collabProfile?.user?.name ?? "A collaborator",
+      role: collaboratorRoleLabel(updated.role),
       // #1527 — the recipient is always a consultant collaborator.
       dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
     };
@@ -733,7 +749,7 @@ export async function revokeCollaboratorAccess(
               select: { title: true },
             });
       await notifyCollaboratorRemoved(userId, {
-        planTitle: plan?.title ?? "Unknown Plan",
+        planTitle: plan?.title ?? planKindLabel(planType),
         planType,
         // #1527 — the recipient is always a consultant collaborator.
         dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,

@@ -1,4 +1,5 @@
 import prisma from "lib/prisma";
+import { UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { notifyFeedbackReceived } from "@/lib/novu";
 import { CreateFeedbackSchema } from "@/schemas/feedbacks";
@@ -79,21 +80,31 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Notify admin users about new feedback
+    // Each recipient gets the feedback queue THEY can open: the admin
+    // tree is ADMIN-only (its layout bounces anyone else), so STAFF go
+    // to their own queue — and the bell names a person, not "User".
     const adminUsers = await prisma.user.findMany({
       where: { role: { in: ["STAFF", "ADMIN"] } },
-      select: { id: true },
+      select: { id: true, role: true },
     });
-    await notifyFeedbackReceived(
-      adminUsers.map((u) => u.id),
-      {
-        feedbackId: feedback.id,
-        userName: session.user.name || "User",
-        category: feedback.category || undefined,
-        message: feedback.description || feedback.title || "New feedback",
-        dashboardUrl: "/dashboard/admin/feedback",
-      },
-    );
+    // One staff tree now ([tree]): role picks the queue, no profile id.
+    // The bell names a person, not "User".
+    const feedbackPayload = {
+      feedbackId: feedback.id,
+      userName: session.user.name || "Someone",
+      category: feedback.category || undefined,
+      message: feedback.description || feedback.title || "New feedback",
+    };
+    for (const u of adminUsers) {
+      const queue =
+        u.role === UserRole.ADMIN
+          ? "/dashboard/admin/feedback"
+          : "/dashboard/staff/feedback";
+      await notifyFeedbackReceived([u.id], {
+        ...feedbackPayload,
+        dashboardUrl: queue,
+      });
+    }
 
     return NextResponse.json(feedback, { status: 201 });
   } catch (error) {

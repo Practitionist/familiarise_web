@@ -7,10 +7,13 @@
  */
 
 import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
-import { format } from "date-fns";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
+import {
+  formatNotificationDateTime,
+  resolveRecipientTimezones,
+} from "@/lib/novu/humanize";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { personalHref } from "@/lib/novu/resolve-href";
 import { getCallPresenceEvidence } from "@/lib/stream/call-presence";
@@ -232,6 +235,13 @@ async function stageNoShowBells(
     shape === "group"
       ? row.participants.filter((seat) => !present.has(seat.userId))
       : row.participants;
+  // One bell per seat, each in its own zone (the house format, like the
+  // class-session bells) — a single UTC stamp was wrong for everyone
+  // outside the platform zone.
+  const zones = await resolveRecipientTimezones(
+    absent.map((seat) => seat.userId),
+    tx,
+  );
   for (const seat of absent) {
     const profileId = seat.user.consulteeProfileId;
     const recordingUrl = profileId
@@ -245,8 +255,9 @@ async function stageNoShowBells(
       recipients: [seat.userId],
       payload: {
         planTitle: plan.title,
-        // Same wording as the class-session bells (class-sessions.ts `when`).
-        dateTime: format(slot.startsAt, "EEE d MMM yyyy, HH:mm 'UTC'"),
+        dateTime:
+          formatNotificationDateTime(slot.startsAt, zones.get(seat.userId)) ??
+          slot.startsAt.toISOString(),
         supportUrl: `${getAppUrl()}/support`,
         ...(recording && { recordingUrl }),
       },

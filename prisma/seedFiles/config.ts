@@ -370,17 +370,50 @@ export function getSeedWithStaff(): boolean {
  * backfill reference data (TDS rates, cancellation policies) that is not
  * derivable, and refusing that would just push them to ad-hoc SQL.
  */
+const LOCAL_DB_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "0.0.0.0",
+  "postgres",
+  "db",
+  "host.docker.internal",
+]);
+
+export function isNonLocalDatabaseUrl(
+  databaseUrl: string | undefined = process.env.DATABASE_URL,
+): boolean {
+  if (!databaseUrl?.trim()) return false;
+  try {
+    const parsed = new URL(databaseUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (!hostname) return false;
+    if (LOCAL_DB_HOSTS.has(hostname) || hostname.endsWith(".local")) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function assertSeedPasswordSafeForEnv(
   seedPassword: string | undefined,
   isDefaultPassword: boolean,
+  databaseUrl: string | undefined = process.env.DATABASE_URL,
 ): void {
-  if (process.env.NODE_ENV !== "production") return;
-  if (isDefaultPassword) {
+  const isProdEnv = process.env.NODE_ENV === "production";
+  const isNonLocalDb = isNonLocalDatabaseUrl(databaseUrl);
+  if (!isProdEnv && !isNonLocalDb) return;
+
+  const trimmed = seedPassword?.trim();
+  if (!trimmed || isDefaultPassword) {
     throw new Error(
-      "Refusing to seed with the default SEED_PASSWORD while NODE_ENV=production — " +
+      "Refusing to seed with an empty or default SEED_PASSWORD when NODE_ENV=production or DATABASE_URL points to a non-local host — " +
         '"SeedPass123!" is committed to this repository, so every seeded account on a ' +
         "live database would be sign-in-able by anyone who has read it. Set an " +
-        "explicit SEED_PASSWORD, or unset NODE_ENV if you are seeding a local database.",
+        "explicit SEED_PASSWORD, or point DATABASE_URL to a local database.",
     );
   }
 }
