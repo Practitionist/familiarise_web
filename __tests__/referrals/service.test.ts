@@ -17,11 +17,12 @@ import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
 const mockTx = {
   referral: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
     updateMany: jest.fn(),
     update: jest.fn(),
   },
   referralCredit: { create: jest.fn(), findMany: jest.fn() },
-  referralCode: { update: jest.fn() },
+  referralCode: { findUnique: jest.fn(), update: jest.fn() },
   referralProgramConfig: { upsert: jest.fn(), update: jest.fn() },
   user: { findUnique: jest.fn() },
 };
@@ -42,6 +43,13 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: (fn: (tx: unknown) => unknown) => fn(mockTx),
+    referralCode: {
+      findUnique: (...args: unknown[]) =>
+        mockTx.referralCode.findUnique(...args),
+    },
+    referral: {
+      findMany: (...args: unknown[]) => mockTx.referral.findMany(...args),
+    },
   },
 }));
 jest.mock("../../lib/db/serializable-retry", () => ({
@@ -49,6 +57,7 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 }));
 
 import {
+  getUserReferrals,
   reverseCreditsForPayment,
   processQualifyingAction,
 } from "@/lib/referrals/service";
@@ -281,3 +290,47 @@ describe("#880 — role weighting, caps and program budget", () => {
     );
   });
 });
+
+describe("getUserReferrals — derives EXPIRED status at read time", () => {
+  it("projects EXPIRED for stale SIGNED_UP/PENDING referrals while keeping fresh or REWARDED rows intact", async () => {
+    mockTx.referralCode.findUnique.mockResolvedValue({ id: "code-1" });
+    const now = Date.now();
+    mockTx.referral.findMany.mockResolvedValue([
+      {
+        id: "ref-stale-window",
+        status: "SIGNED_UP",
+        signedUpAt: new Date(now - (QUALIFICATION_WINDOW_DAYS + 2) * DAY_MS),
+        referredUser: { name: "Stale SignedUp", image: null },
+      },
+      {
+        id: "ref-stale-expires",
+        status: "PENDING",
+        expiresAt: new Date(now - DAY_MS),
+        signedUpAt: new Date(now - 5 * DAY_MS),
+        referredUser: { name: "Stale Pending", image: null },
+      },
+      {
+        id: "ref-fresh",
+        status: "SIGNED_UP",
+        signedUpAt: new Date(now - 2 * DAY_MS),
+        referredUser: { name: "Fresh SignedUp", image: null },
+      },
+      {
+        id: "ref-rewarded",
+        status: "REWARDED",
+        signedUpAt: new Date(now - 60 * DAY_MS),
+        referredUser: { name: "Rewarded", image: null },
+      },
+    ]);
+
+    const result = await getUserReferrals("user-1");
+
+    expect(result.map((r) => ({ id: r.id, status: r.status }))).toEqual([
+      { id: "ref-stale-window", status: "EXPIRED" },
+      { id: "ref-stale-expires", status: "EXPIRED" },
+      { id: "ref-fresh", status: "SIGNED_UP" },
+      { id: "ref-rewarded", status: "REWARDED" },
+    ]);
+  });
+});
+

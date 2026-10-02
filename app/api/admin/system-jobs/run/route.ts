@@ -77,9 +77,7 @@ import {
 } from "@/lib/backoffice/ops-action-log";
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { getMaintenanceState } from "@/lib/maintenance-edge";
-// #1599 F-P1-03 — one money list: the gate below derives from
-// FINANCIAL_JOB_NAMES instead of a second, drifting copy (11 vs 24 names).
+import { getMaintenanceState } from "@/lib/maintenance";
 import { isFinancialJob } from "@/lib/maintenance-cron";
 
 // Job ID to function mapping
