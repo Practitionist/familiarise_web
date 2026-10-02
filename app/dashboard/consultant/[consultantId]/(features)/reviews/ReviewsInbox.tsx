@@ -303,7 +303,11 @@ function ReviewList({
     placeholderData: keepPreviousData,
   });
 
-  if (query.isLoading) {
+  const emptyPlaceholder =
+    query.isPlaceholderData &&
+    !query.data?.pages.some((p) => p.rows.length > 0);
+  // #1928: an empty placeholder is the previous filter's, not this one's empty state.
+  if (query.isLoading || emptyPlaceholder) {
     return (
       <div className="space-y-3">
         {[0, 1, 2].map((i) => (

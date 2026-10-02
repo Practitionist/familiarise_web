@@ -278,7 +278,8 @@ export interface InboxParamsPatch {
 /**
  * The next search string after a tab / chip / sort / page change. A type
  * change clears the chip and page; any other change resets the page; page 1
- * and a cleared chip are absent, not "null". Other keys pass through.
+ * and a cleared chip are absent, not "null". `focus` is dropped; other keys
+ * pass through.
  */
 export function nextInboxSearch(
   current: string,
