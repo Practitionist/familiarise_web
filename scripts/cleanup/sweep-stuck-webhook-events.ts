@@ -114,7 +114,7 @@ async function sweepStuckWebhookEventsUnlocked(
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
       where: {
-        provider: { in: ["razorpay", "stream"] },
+        provider: { in: ["razorpay", "stream", "stripe"] },
         receivedAt: { lt: staleBefore },
         AND: [
           {
@@ -204,42 +204,51 @@ async function sweepStuckWebhookEventsUnlocked(
       }
       passProgress++;
 
-    // WebhookEvent.payload stores only `event.payload`; the per-event schemas
-    // also require the envelope's entity/account_id/contains/created_at, so
-    // supply them — the handlers route on eventType + payload.* and never read
-    // these. `contains` mirrors Razorpay (the payload's top-level entity keys).
-    const payloadKeys = Object.keys(
-      (ev.payload ?? {}) as Record<string, unknown>,
-    );
-    const envelope = {
-      entity: "event",
-      account_id: "swept",
-      event: ev.eventType,
-      contains: payloadKeys,
-      created_at: Math.floor(ev.receivedAt.getTime() / 1000),
-      payload: ev.payload,
-    } as unknown as RazorpayWebhookEnvelope;
+      // WebhookEvent.payload stores only `event.payload`; the per-event schemas
+      // also require the envelope's entity/account_id/contains/created_at, so
+      // supply them — the handlers route on eventType + payload.* and never read
+      // these. `contains` mirrors Razorpay (the payload's top-level entity keys).
+      const payloadKeys = Object.keys(
+        (ev.payload ?? {}) as Record<string, unknown>,
+      );
+      const envelope = {
+        entity: "event",
+        account_id: "swept",
+        event: ev.eventType,
+        contains: payloadKeys,
+        created_at: Math.floor(ev.receivedAt.getTime() / 1000),
+        payload: ev.payload,
+      } as unknown as RazorpayWebhookEnvelope;
 
-    try {
-      if (ev.provider === "stream") {
-        // Stream stores the whole event as the payload, so there is no envelope
-        // to rebuild. processStreamEvent owns its own logWebhookEvent /
-        // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
-        // dispatch below.
-        const streamEvent = ev.payload as { call_cid?: string } | null;
-        await processStreamEvent(
-          ev.payload,
-          ev.eventType,
-          ev.eventId,
-          undefined,
-          { call_cid: streamEvent?.call_cid },
-        );
-      } else {
-        // processRazorpayWebhookEvent catches handler errors and marks the row
-        // processed (stamping error on failure) in its finally — so this both
-        // re-runs the side-effects AND clears the stuck flag.
-        await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
-      }
+      try {
+        if (ev.provider === "stream") {
+          // Stream stores the whole event as the payload, so there is no envelope
+          // to rebuild. processStreamEvent owns its own logWebhookEvent /
+          // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
+          // dispatch below.
+          const streamEvent = ev.payload as { call_cid?: string } | null;
+          await processStreamEvent(
+            ev.payload,
+            ev.eventType,
+            ev.eventId,
+            undefined,
+            { call_cid: streamEvent?.call_cid },
+          );
+        } else if (ev.provider === "stripe") {
+          const { processStripeWebhookEvent } = await import(
+            "@/app/api/webhooks/stripe-dispatch"
+          );
+          await processStripeWebhookEvent(
+            ev.payload,
+            ev.eventType,
+            ev.eventId,
+          );
+        } else {
+          // processRazorpayWebhookEvent catches handler errors and marks the row
+          // processed (stamping error on failure) in its finally — so this both
+          // re-runs the side-effects AND clears the stuck flag.
+          await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
+        }
       const after = await prisma.webhookEvent.findUnique({
         where: { eventId: ev.eventId },
         select: { error: true, processed: true },

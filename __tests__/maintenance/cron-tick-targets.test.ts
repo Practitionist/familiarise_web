@@ -67,10 +67,10 @@ describe("cron-tick targetRequest", () => {
   const { targetRequest } = loadTicker();
   const base = "https://site.test";
 
-  it("leaves release-earnings on the six-second default and gives abandoned-payments 20 s", () => {
+  it("leaves release-earnings on the fifteen-second default and gives abandoned-payments 20 s", () => {
     expect(targetRequest(base, "release-earnings")).toEqual({
       url: "https://site.test/api/cleanup/release-earnings?limit=50",
-      timeoutMs: 6_000,
+      timeoutMs: 15_000,
     });
     expect(targetRequest(base, "abandoned-payments")).toEqual({
       url: "https://site.test/api/cleanup/abandoned-payments?limit=10",
@@ -80,10 +80,10 @@ describe("cron-tick targetRequest", () => {
 
   // #1583 E-P0-04 — the two booking sweeps with per-row outbox staging or
   // gateway refunds get the 20 s tier; the other three keep the default.
-  it("gives the reminders and stale-request sweeps 20 s, the rest 6 s", () => {
+  it("gives the reminders and stale-request sweeps 20 s, the rest 15 s", () => {
     expect(targetRequest(base, "appointment-reminders").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-stale-requests").timeoutMs).toBe(20_000);
-    expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(6_000);
+    expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(15_000);
   });
 
   // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
@@ -103,56 +103,77 @@ describe("cron-tick targetRequest", () => {
 // relay at 10).
 // #1822 Q-3 — the cap was hit again with `reconcile-payment-status` and
 // `reconcile-orphaned-confirmations` still every-tick; both now ride the same
-// 15-minute slot as their siblings (each already has a 30-min Actions twin).
+// 15-minute cadence as their siblings (each already has a 30-min Actions twin).
+// #1926 — phase-stagger 15-minute targets across offsets 0, 5, and 10 so every
+// 5-minute tick fires 6–7 targets instead of 19 simultaneous targets at :00/:15/:30/:45.
 describe("cron-tick dueTargets cadence", () => {
   const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
 
-  it("fires the fifteen-minute sweeps only on a 15-minute slot", () => {
-    const off = dueTargets(at(5));
-    const on = dueTargets(at(15));
-    for (const name of [
-      "sync-payment-earnings",
-      "release-earnings",
-      "reconcile-refunds",
-      "abandoned-payments",
+  it("staggers fifteen-minute sweeps across offsets 0, 5, and 10 so each fires once per 15 minutes", () => {
+    const t0 = dueTargets(at(0));
+    const t5 = dueTargets(at(5));
+    const t10 = dueTargets(at(10));
+    const t15 = dueTargets(at(15));
+
+    const offset0Targets = [
       "sweep-stuck-webhook-events",
       "sweep-orphaned-topup-captures",
       "dispatch-outbound-webhooks",
       "retry-failed-emails",
-      // #1822 Q-3 — moved off every-tick.
+      "sync-payment-earnings",
+    ];
+    const offset5Targets = [
+      "release-earnings",
+      "reconcile-refunds",
+      "abandoned-payments",
       "reconcile-payment-status",
       "reconcile-orphaned-confirmations",
-      // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
       "expire-unpaid-trials",
+    ];
+    const offset10Targets = [
       "reschedule-proposals",
       "appointment-reminders",
       "tentative-occurrences",
       "expire-stale-requests",
-    ]) {
-      expect(off).not.toContain(name);
-      expect(on).toContain(name);
+      "settle-cancelled-sessions",
+      "retry-auto-refunds",
+    ];
+
+    for (const name of offset0Targets) {
+      expect(t0).toContain(name);
+      expect(t15).toContain(name);
+      expect(t5).not.toContain(name);
+      expect(t10).not.toContain(name);
+    }
+    for (const name of offset5Targets) {
+      expect(t5).toContain(name);
+      expect(t0).not.toContain(name);
+      expect(t10).not.toContain(name);
+    }
+    for (const name of offset10Targets) {
+      expect(t10).toContain(name);
+      expect(t0).not.toContain(name);
+      expect(t5).not.toContain(name);
     }
   });
 
-  it("fires the ticker-only Novu relay every 10 minutes", () => {
-    // No Actions twin exists, so 15 would strand bells; 10 halves its burn.
-    expect(dueTargets(at(5))).not.toContain("drain-notification-outbox");
-    expect(dueTargets(at(10))).toContain("drain-notification-outbox");
+  it("caps every 5-minute tick across the hour to 5–7 targets (#1926)", () => {
+    for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
+      const due = dueTargets(at(minute));
+      expect(due.length).toBeGreaterThanOrEqual(5);
+      expect(due.length).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it("fires the ticker-only Novu relay every 10 minutes with a 5-minute phase offset", () => {
+    // Offset 5 on a 10m cadence fires at :05, :15, :25, :35, :45, :55.
+    expect(dueTargets(at(5))).toContain("drain-notification-outbox");
+    expect(dueTargets(at(10))).not.toContain("drain-notification-outbox");
+    expect(dueTargets(at(15))).toContain("drain-notification-outbox");
   });
 
   it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {
-    /**
-     * #1868 — the canary posts a real STORED event on every run, so its
-     * cadence is a direct line item on the Sentry error allowance. On the
-     * 5-minute tick that is 288/day, 8,640/month — 173% of the Developer
-     * plan's 5,000 included errors, i.e. the health check would exhaust the
-     * budget it exists to protect. 30 minutes is 48/day, 1,440/month.
-     *
-     * Losing 25 minutes of detection latency is close to free here: the
-     * canary's alert email fires on the FAILING run, so the healthy runs this
-     * removes were the ones that could not do anything about anything.
-     */
     const name = "sentry-ingest-canary";
 
     for (const minute of [5, 10, 15, 20, 25]) {

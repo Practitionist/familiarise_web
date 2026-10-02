@@ -40,9 +40,10 @@ import {
 import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
+import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 
 export interface SettleCancelledSessionsResult {
   success: boolean;
@@ -561,11 +562,12 @@ async function refundAndTell(
       recipients: [payment.userId],
       payload: {
         planTitle: planTitleOf(session),
-        amount: formatCurrencyAmount(
+        amount: formatNotificationMoney(
           refund.amountRefundedPaise,
           payment.currency,
         ),
-        dashboardUrl: "/dashboard",
+        // The seat holder is always a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       },
       dedupeKey: args.dedupeKey,
     });

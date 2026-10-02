@@ -435,7 +435,9 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
         fileSizeBytes: uploaded.sizeBytes,
         expiresAt: uploaded.expiresAt.toISOString(),
         downloadUrl: uploaded.url,
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/integrations/data-exports`,
+        // The exports panel is a settings section (#1842), not the
+        // long-removed /integrations/data-exports route.
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/settings/data-exports`,
       });
     }
 

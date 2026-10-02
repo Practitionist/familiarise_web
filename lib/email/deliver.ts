@@ -181,7 +181,9 @@ export async function stage(
         textBody: payload.text ?? null,
         emailType,
         status: suppressed ? "DEAD_LETTER" : "PENDING",
-        nextRetryAt: new Date(),
+        // Give the inline/post-commit attempt() a 60s lease window before the
+        // retry relay considers the row eligible for background pickup.
+        nextRetryAt: new Date(Date.now() + 60_000),
         lastError: suppressed ? `suppressed:${suppressed}` : null,
         entityRef: opts.entityRef ?? null,
       },

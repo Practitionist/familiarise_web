@@ -597,7 +597,6 @@ async function submitVerificationRequest(
     linkedinUrl: verificationLinkedinUrl,
     documentIds,
     carryOver: false,
-    adminDashboardUrl: "/dashboard/admin/verification",
   });
   if (!outcome.ok) {
     throw new OnboardingRefusedError(

@@ -2,6 +2,7 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/cron-lock-errors";
+import { isPoolExhaustion, isUniqueViolation } from "@/lib/db/pg-errors";
 
 /**
  * #476 / #1915 — distributed mutual exclusion for cron job entries backed by a
@@ -13,9 +14,9 @@ import {
  * double-run.
  *
  * A job holds the lease while a `SystemJobExecution` row with
- * `jobName, status = "RUNNING", startedAt > now - ttlMs` exists. Acquiring the
- * lock and opening the execution trail are unified into a single Postgres
- * lifecycle with no Upstash Redis dependency.
+ * `jobName, status = "RUNNING", startedAt > now - ttlMs` exists, enforced at
+ * the database level by `SystemJobExecution_running_jobName_key`
+ * (`prisma/sql/partial-indexes.sql`).
  */
 
 export { CronLockHeldError, CronLockUnavailableError };
@@ -41,6 +42,9 @@ export interface CronLockOpts {
 
 /** #697 — errorLog is @db.Text but a stack dump has no business being unbounded. */
 const ERROR_LOG_MAX_CHARS = 8_000;
+
+const LEASE_EXPIRED_SWEEP_MESSAGE =
+  "Lease expired (stale RUNNING row swept)";
 
 type SystemJobExecutionDelegate = {
   findFirst?: (args: {
@@ -71,10 +75,44 @@ type SystemJobExecutionDelegate = {
     };
   }) => Promise<unknown>;
   updateMany?: (args: {
-    where: { id: string; status: "RUNNING" };
-    data: { startedAt: Date };
+    where: {
+      id?: string;
+      jobName?: string;
+      status: "RUNNING";
+      startedAt?: { lte: Date };
+    };
+    data: {
+      startedAt?: Date;
+      status?: "FAILED";
+      endedAt?: Date;
+      errorLog?: string;
+    };
   }) => Promise<{ count: number }>;
 };
+
+const PRISMA_CONNECTION_ERROR_CODES = new Set([
+  "P1001",
+  "P1002",
+  "P1008",
+  "P1017",
+  "P2024",
+]);
+
+function isDbConnectionOrPoolError(error: unknown): boolean {
+  if (isPoolExhaustion(error)) return true;
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && PRISMA_CONNECTION_ERROR_CODES.has(code)) {
+    return true;
+  }
+  const msg = (error as { message?: unknown }).message;
+  return (
+    typeof msg === "string" &&
+    /connection|pool|timeout|unreachable|ECONNREFUSED|ECONNRESET|terminating connection/i.test(
+      msg,
+    )
+  );
+}
 
 async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null> {
   try {
@@ -88,21 +126,41 @@ async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null
   }
 }
 
+async function touchRedisHeartbeat(): Promise<void> {
+  try {
+    const mod = await import("@/lib/redis");
+    const redis = mod.default as
+      | { set?: (key: string, value: string) => Promise<unknown> }
+      | undefined;
+    if (redis && typeof redis.set === "function") {
+      await Promise.resolve(
+        redis.set("cron:heartbeat:last", new Date().toISOString()),
+      ).catch(() => {});
+    }
+  } catch {
+    // Non-fatal: Postgres SystemJobExecution is the authoritative trail.
+  }
+}
+
 async function recordJobFinish(
   jobName: string,
   delegate: SystemJobExecutionDelegate | null,
   executionId: string | null,
-  startedAtMs: number,
+  acquiredAtMs: number,
   error?: unknown,
 ): Promise<void> {
+  if (error === undefined) {
+    await touchRedisHeartbeat();
+  }
   if (!executionId || typeof delegate?.update !== "function") return;
   try {
+    const now = new Date();
     await delegate.update({
       where: { id: executionId },
       data: {
         status: error === undefined ? "COMPLETED" : "FAILED",
-        endedAt: new Date(),
-        durationMs: Date.now() - startedAtMs,
+        endedAt: now,
+        durationMs: Math.max(0, now.getTime() - acquiredAtMs),
         errorLog:
           error === undefined
             ? undefined
@@ -131,8 +189,28 @@ export async function withCronLock<T>(
 
   let executionId: string | null = null;
   try {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - ttlMs);
+
+    // Sweep stale RUNNING rows whose lease has expired before checking or
+    // inserting, so `SystemJobExecution_running_jobName_key` is released for
+    // crashed runs while preserving an explicit audit trail.
+    if (typeof delegate.updateMany === "function") {
+      await delegate.updateMany({
+        where: {
+          jobName,
+          status: "RUNNING",
+          startedAt: { lte: cutoff },
+        },
+        data: {
+          status: "FAILED",
+          endedAt: now,
+          errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
+        },
+      });
+    }
+
     if (typeof delegate.findFirst === "function") {
-      const cutoff = new Date(Date.now() - ttlMs);
       const active = await delegate.findFirst({
         where: {
           jobName,
@@ -151,7 +229,7 @@ export async function withCronLock<T>(
         jobId: jobName,
         jobName,
         status: "RUNNING",
-        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "manual",
+        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "cron",
       },
       select: { id: true },
     });
@@ -163,7 +241,10 @@ export async function withCronLock<T>(
     if (err instanceof CronLockHeldError) {
       throw err;
     }
-    if (opts.failMode === "closed") {
+    if (isUniqueViolation(err)) {
+      throw new CronLockHeldError(jobName);
+    }
+    if (opts.failMode === "closed" || isDbConnectionOrPoolError(err)) {
       throw new CronLockUnavailableError(jobName);
     }
     console.warn(
@@ -173,15 +254,17 @@ export async function withCronLock<T>(
     return fn();
   }
 
-  const startedAtMs = Date.now();
+  // Capture original acquisition timestamp in closure memory so lease renewals
+  // advancing `startedAt` never skew the final `durationMs` calculation.
+  const acquiredAtMs = Date.now();
   const renewal = startLeaseRenewal(jobName, delegate, executionId, ttlMs);
 
   try {
     const result = await fn();
-    await recordJobFinish(jobName, delegate, executionId, startedAtMs);
+    await recordJobFinish(jobName, delegate, executionId, acquiredAtMs);
     return result;
   } catch (err) {
-    await recordJobFinish(jobName, delegate, executionId, startedAtMs, err);
+    await recordJobFinish(jobName, delegate, executionId, acquiredAtMs, err);
     throw err;
   } finally {
     renewal.stop();

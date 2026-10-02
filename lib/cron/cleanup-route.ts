@@ -95,6 +95,15 @@ export function bearerMatches(
   return timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`));
 }
 
+function ingestCanaryEnabled(job: string): boolean {
+  const raw = process.env.SENTRY_INGEST_CANARY_JOBS;
+  if (!raw) return false;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .includes(job);
+}
+
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
  * CRON_SECRET bearer check, a maintenance-phase guard, structured start/finish
@@ -125,7 +134,9 @@ export function cleanupRoute<T extends object>(opts: {
   const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
     opts;
 
-  async function handle(req: NextRequest): Promise<NextResponse> {
+  async function executeCleanupJob(
+    req: NextRequest,
+  ): Promise<{ body: unknown; status: number; ok: boolean }> {
     try {
       const authHeader = req.headers.get("authorization");
       const cronSecret =
@@ -133,12 +144,13 @@ export function cleanupRoute<T extends object>(opts: {
 
       if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
         console.warn(`Unauthorized ${job} attempt`);
-        return NextResponse.json(
-          unauthorizedMessage
+        return {
+          body: unauthorizedMessage
             ? { error: "Unauthorized", message: unauthorizedMessage }
             : { error: "Unauthorized" },
-          { status: 401 },
-        );
+          status: 401,
+          ok: true,
+        };
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
@@ -158,12 +170,16 @@ export function cleanupRoute<T extends object>(opts: {
       const responseStatus = status
         ? status(result)
         : statusFor(result as { success?: boolean });
-      return NextResponse.json(result, { status: responseStatus });
+      return {
+        body: result,
+        status: responseStatus,
+        ok: responseStatus < 500,
+      };
     } catch (error) {
       // #476 — concurrent invocation (schedule overlap / manual re-run)
       // skips with a 409 instead of double-running.
       if (error instanceof CronLockHeldError) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
+        return { body: { error: error.message }, status: 409, ok: true };
       }
       // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
       // 15-min window per instance; the first job to hit it is tagged.
@@ -180,16 +196,17 @@ export function cleanupRoute<T extends object>(opts: {
           },
           LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
         );
-        return NextResponse.json({ error: error.message }, { status: 503 });
+        return { body: { error: error.message }, status: 503, ok: false };
       }
       if (error instanceof InvalidLimitError) {
-        return NextResponse.json({ error: "INVALID_LIMIT" }, { status: 400 });
+        return { body: { error: "INVALID_LIMIT" }, status: 400, ok: true };
       }
       if (error instanceof MaintenanceActiveError) {
-        return NextResponse.json(
-          { error: error.message, phase: error.phase },
-          { status: error.httpStatus },
-        );
+        return {
+          body: { error: error.message, phase: error.phase },
+          status: error.httpStatus,
+          ok: true,
+        };
       }
       // The exception text stays in Sentry and the server log. It used to be
       // echoed to the caller as `details`, which on these 36 endpoints means
@@ -207,11 +224,21 @@ export function cleanupRoute<T extends object>(opts: {
         LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
       );
       console.error(`Error in ${job}:`, error);
-      return NextResponse.json(
-        { error: failureMessage ?? `Failed to run ${job}` },
-        { status: 500 },
-      );
+      return {
+        body: { error: failureMessage ?? `Failed to run ${job}` },
+        status: 500,
+        ok: false,
+      };
     }
+  }
+
+  async function handle(req: NextRequest): Promise<NextResponse> {
+    const canary = ingestCanaryEnabled(job);
+    const outcome = await executeCleanupJob(req);
+    if (canary || !outcome.ok) {
+      await Sentry.flush?.(2_000);
+    }
+    return NextResponse.json(outcome.body, { status: outcome.status });
   }
 
   return { GET: handle, POST: handle };

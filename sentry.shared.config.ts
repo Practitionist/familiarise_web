@@ -9,6 +9,8 @@ import { isExpectedError } from "@/lib/observability/expected";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
+  scrubSentryLog,
+  scrubSentrySpan,
 } from "@/lib/observability/sentry-scrubber";
 import {
   isNotDevelopmentEnvironment,
@@ -16,6 +18,54 @@ import {
 } from "@/utils/env";
 
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
+
+/**
+ * Route-aware trace sampling (#1926):
+ * - Non-production: 100%
+ * - Health probes & static assets (`/api/health`, `/_next/`, `/favicon.ico`, `/robots.txt`): 0%
+ * - Background cleanup cron endpoints (`/api/cleanup/`): 2%
+ * - Critical payment, checkout, and webhook routes (`/api/webhooks/`, `/api/payments/`, `/api/checkout`): 50% (or parent decision)
+ * - Default production baseline: 10% (or parent decision)
+ */
+export function tracesSampler(
+  samplingContext: Parameters<
+    NonNullable<SentryInitOptions["tracesSampler"]>
+  >[0],
+): number {
+  if (!isProductionEnvironment()) return 1;
+  const rawName =
+    samplingContext.name ||
+    (typeof samplingContext.attributes?.["http.target"] === "string"
+      ? samplingContext.attributes["http.target"]
+      : "") ||
+    samplingContext.normalizedRequest?.url ||
+    "";
+  if (
+    rawName.includes("/api/health") ||
+    rawName.includes("/_next/") ||
+    rawName.includes("/favicon.ico") ||
+    rawName.includes("/robots.txt")
+  ) {
+    return 0;
+  }
+  if (rawName.includes("/api/cleanup/")) {
+    return 0.02;
+  }
+  if (
+    rawName.includes("/api/webhooks/") ||
+    rawName.includes("/api/payments/") ||
+    rawName.includes("/api/checkout")
+  ) {
+    if (typeof samplingContext.parentSampled === "boolean") {
+      return samplingContext.parentSampled ? 1 : 0;
+    }
+    return 0.5;
+  }
+  if (typeof samplingContext.parentSampled === "boolean") {
+    return samplingContext.parentSampled ? 1 : 0;
+  }
+  return 0.1;
+}
 
 /**
  * Quota guard: an infra outage must not eat the monthly errors budget to
@@ -203,10 +253,11 @@ export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
  * cuid discussion does not reach, and it was being sent while the disclosure
  * switch was believed to be the only thing leaving.
  *
- * Known residual, stated rather than hidden: this does NOT cover spans. On
- * 10.75.x the span hook needs `beforeSendSpan`, and on v11 its signature
- * changed and could not be characterised reliably. Spans therefore still carry
- * the timezone until that is done. See the handoff issue.
+ * #1916 / #1879: `beforeSendSpan` (`scrubSentrySpan`) now strips `culture.timezone`
+ * and scrubs PII on spans in 10.75.x. `@sentry/nextjs` remains pinned on 10.75.x
+ * rather than 11.x because v11 switches `dataCollection` defaults to permissive
+ * (`userInfo: true`, `urlQueryParams: true` with no `queryParams` fallback) and
+ * alters the span streaming hook contract.
  */
 function stripUngatedPII(event: Sentry.Event): Sentry.Event {
   const culture = event.contexts?.culture as
@@ -292,8 +343,10 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       },
     },
 
-    // Sample 10% of traces in production; everything outside production.
+    // Sample 10% of traces in production (with route-aware overrides via
+    // tracesSampler); everything outside production.
     tracesSampleRate: isProductionEnvironment() ? 0.1 : 1,
+    ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 
     // Send structured logs to Sentry.
     enableLogs: true,
@@ -406,7 +459,19 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // Transactions need their own hook: `beforeSend` is never called for them,
     // and the timezone was measured arriving on both. Same scrubber.
     beforeSendTransaction(event) {
-      return stripUngatedPII(event) as typeof event;
+      return scrubSentryEvent(stripUngatedPII(event)) as typeof event;
+    },
+
+    // #1916 / #1926 — spans carry `culture.timezone` and query/attribute data
+    // outside `beforeSendTransaction`; scrub them before transport.
+    beforeSendSpan(span) {
+      return scrubSentrySpan(span);
+    },
+
+    // #1926 — drop verbose debug/trace logs in production and scrub PII from
+    // structured Sentry logs before transport.
+    beforeSendLog(log) {
+      return scrubSentryLog(log);
     },
 
     // Last, so a caller can narrow a knob it has better information about.

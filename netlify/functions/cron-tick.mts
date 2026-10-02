@@ -126,12 +126,46 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-auto-refunds": 15,
 };
 
+/**
+ * #1926 Action 6 — deterministic phase offsets (in minutes, modulo the
+ * target's interval) so the 17 fifteen-minute targets, 1 ten-minute target,
+ * and 1 thirty-minute target spread evenly across the 5-minute slots instead
+ * of firing all 19 targets simultaneously at `:00`/`:30` and 0 targets at
+ * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 6–7 targets.
+ */
+export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
+  // Phase 0 (:00, :15, :30, :45) — 5 targets + sentry-ingest-canary (:00, :30)
+  "sweep-stuck-webhook-events": 0,
+  "sweep-orphaned-topup-captures": 0,
+  "dispatch-outbound-webhooks": 0,
+  "retry-failed-emails": 0,
+  "sync-payment-earnings": 0,
+  "sentry-ingest-canary": 0,
+  // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
+  "release-earnings": 5,
+  "reconcile-refunds": 5,
+  "abandoned-payments": 5,
+  "reconcile-payment-status": 5,
+  "reconcile-orphaned-confirmations": 5,
+  "expire-unpaid-trials": 5,
+  "drain-notification-outbox": 5,
+  // Phase 10 (:10, :25, :40, :55) — 6 targets
+  "reschedule-proposals": 10,
+  "appointment-reminders": 10,
+  "tentative-occurrences": 10,
+  "expire-stale-requests": 10,
+  "settle-cancelled-sessions": 10,
+  "retry-auto-refunds": 10,
+};
+
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
   const minute = now.getUTCMinutes();
   return TARGETS.filter((name) => {
     const every = TARGET_EVERY_MINUTES[name];
-    return every === undefined || minute % every < 5;
+    if (every === undefined) return true;
+    const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
+    return (((minute - offset) % every) + every) % every < 5;
   });
 }
 
@@ -139,7 +173,7 @@ export function dueTargets(now: Date): Target[] {
 const TARGET_QUERIES: Partial<Record<Target, string>> = {};
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
-const PER_TARGET_TIMEOUT_MS = 6_000;
+const PER_TARGET_TIMEOUT_MS = 15_000;
 
 /** 20 s still sits under the 30 s scheduled cap for gateway/outbox round-trip sweeps. */
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
@@ -278,7 +312,12 @@ export function reportableToSentry(name: string): boolean {
 async function alertMissingSecret(error: string): Promise<void> {
   try {
     const Sentry = await import("@sentry/node");
-    Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0 });
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      tracesSampleRate: 0,
+      tracePropagationTargets: [],
+      registerEsmLoaderHooks: false,
+    });
     Sentry.captureMessage(error, "fatal");
     await Sentry.flush(2_000);
   } catch (err) {
@@ -349,6 +388,8 @@ async function alertFailedTargets(
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 0,
+      tracePropagationTargets: [],
+      registerEsmLoaderHooks: false,
       // Same posture as the app: no IP, no cookies, no headers. The ticker's
       // only caller is the Netlify scheduler, so there is nothing to collect.
       dataCollection: {

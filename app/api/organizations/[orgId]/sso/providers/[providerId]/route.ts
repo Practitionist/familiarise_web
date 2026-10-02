@@ -144,6 +144,9 @@ export async function DELETE(
   if (access.error) return access.error;
 
   try {
+    // The bell below names the domain owners recognize; the slug stays in
+    // the audit row for forensics.
+    let deletedDomain = providerId;
     await prisma.$transaction(async (tx) => {
       const current = await tx.ssoProvider.findFirst({
         where: { providerId, organizationId: orgId },
@@ -153,6 +156,7 @@ export async function DELETE(
           httpStatus: 404,
         });
       }
+      deletedDomain = current.domain;
 
       // Enforcement fails open without an approved provider, so deleting the
       // last one would silently switch it off. Make the owner do that openly.
@@ -204,7 +208,7 @@ export async function DELETE(
     const origin = new URL(req.url).origin;
     notifyOrgSsoProviderDeleted(orgId, {
       orgName: access.org.name,
-      providerId,
+      providerId: deletedDomain,
       deletedByName: access.session.user.name ?? access.session.user.email,
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
     }).catch((err) => {

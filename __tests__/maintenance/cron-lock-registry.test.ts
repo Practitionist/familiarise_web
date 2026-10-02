@@ -58,6 +58,9 @@ const LOCK_EXEMPT: Record<string, string> = {
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
   // Catalog reads only (pg_constraint/pg_enum); a double-run costs nothing.
   "db-live-drift.yml": "deliberately unlocked — read-only catalog check",
+  // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
+  // read-only lockfile audit with no database or external state mutation.
+  "security-audit.yml": "deliberately unlocked — read-only npm audit check",
 };
 
 interface Row {
@@ -104,9 +107,7 @@ function findLock(
 
 function extractImports(src: string): string[] {
   const specs: string[] = [];
-  for (const m of src.matchAll(
-    /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
-  )) {
+  for (const m of src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g)) {
     specs.push(m[1]);
   }
   for (const m of src.matchAll(
@@ -235,8 +236,10 @@ describe("cron lock registry (#1169)", () => {
   });
 
   it("resolves an entrypoint for every scheduled workflow", () => {
+    // CLI-only scheduled checks (e.g. `npm audit`) have no `.ts` entrypoint.
+    const CLI_ONLY_SCHEDULED = new Set(["security-audit.yml"]);
     const unresolved = registry
-      .filter((r) => !r.entrypoint)
+      .filter((r) => !r.entrypoint && !CLI_ONLY_SCHEDULED.has(r.workflow))
       .map((r) => r.workflow);
     expect(unresolved).toEqual([]);
   });

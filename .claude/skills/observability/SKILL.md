@@ -47,6 +47,8 @@ An error must be attributable before it is debuggable, and nothing in this domai
 
 **`SystemEvent` is the row; Sentry is the pager.** For money paths the database row is the truth and survives in `SystemEvent`; Sentry is the notification of it. When they disagree, believe the row. See `/finance`.
 
+**Spans, metrics, and logs go through the shared PII scrubber.** In addition to `beforeSend` and `beforeSendTransaction`, `sentry.shared.config.ts` wires `beforeSendSpan` and `beforeSendLog` through `lib/observability/sentry-scrubber.ts` so span descriptions/attributes and structured `Sentry.logger.*` entries never leak raw PII (emails, phones, tokens, PAN/GSTIN, or gateway secrets). Money/booking/cron critical paths instrument latency and throughput via `Sentry.startSpan` and `Sentry.metrics` (`lib/observability/`). Server-side `console.error`/`console.warn` reach Netlify function logs outside Sentry's scrubber (`#1127`), so never log raw payloads or full Prisma error objects to `console.*`.
+
 ## Error budget guardrails (#1933)
 
 The Sentry Developer plan includes 5,000 errors a month, and on 2026-09-22 that allowance was spent, which left ten days with no error visibility. The guardrails below keep real errors inside it, and every one of them is a drop in `beforeSend` or a rule at the capture site, so a dropped event never counts against quota.

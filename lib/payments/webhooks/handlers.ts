@@ -2837,7 +2837,9 @@ async function stagePaymentFailedEmail(
       appointment.consultation.consultationPlan.consultantProfile.user.name ||
       "Consultant";
     appointmentType = "consultation";
-    retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
+    // No /consultations/*/payment route exists — the retry lives on the
+    // checkout pay page for this payment.
+    retryUrl = `${getAppUrl()}/checkout/pay/${payment.id}`;
   } else if (
     appointment.subscription?.subscriptionPlan?.consultantProfile?.user
   ) {
@@ -2845,7 +2847,7 @@ async function stagePaymentFailedEmail(
       appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
       "Consultant";
     appointmentType = "subscription";
-    retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
+    retryUrl = `${getAppUrl()}/checkout/pay/${payment.id}`;
   }
 
   let message: RenderedEmail;

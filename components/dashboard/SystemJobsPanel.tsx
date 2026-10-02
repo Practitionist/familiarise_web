@@ -84,13 +84,6 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
   // Earnings
   {
-    id: "cascade-refund-earnings",
-    name: "Cascade Refund to Earnings",
-    description: "Mark earnings as REFUNDED when associated refund succeeds",
-    schedule: "Every 15 minutes",
-    category: "Earnings",
-  },
-  {
     id: "sync-payment-earnings",
     name: "Sync Payment to Earnings",
     description: "Create missing earnings records for succeeded payments",
@@ -103,15 +96,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     description: "Move PENDING earnings to READY after hold period",
     schedule: "Hourly",
     category: "Earnings",
-  },
-  // Appointments
-  {
-    id: "cleanup-invalid-appointments",
-    name: "Cleanup Invalid Appointments",
-    description:
-      "Cancel duplicate and invalid-duration consultations/subscriptions",
-    schedule: "Hourly",
-    category: "Appointments",
   },
   // Payouts
   {
