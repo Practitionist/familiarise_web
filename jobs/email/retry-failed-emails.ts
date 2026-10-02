@@ -110,6 +110,7 @@ export interface FailedEmailStore {
   failedEmail: {
     findMany(args: Prisma.FailedEmailFindManyArgs): Promise<FailedEmail[]>;
     update(args: Prisma.FailedEmailUpdateArgs): Promise<FailedEmail>;
+    count?(args?: Prisma.FailedEmailCountArgs): Promise<number>;
   };
   emailSuppression: {
     findMany(
@@ -143,178 +144,254 @@ export async function runEmailRetryTick(params: {
   /// Batch ceiling override; defaults to MAX_BATCH.
   maxBatch?: number;
 }): Promise<EmailRetryRunResult> {
-  const { prisma } = params;
-  const now = params.now ?? (() => Date.now());
-  const batchLimit = params.maxBatch ?? MAX_BATCH;
+  const runBody = async (span?: Sentry.Span): Promise<EmailRetryRunResult> => {
+    const { prisma } = params;
+    const now = params.now ?? (() => Date.now());
+    const batchLimit = params.maxBatch ?? MAX_BATCH;
 
-  const result: EmailRetryRunResult = {
-    scanned: 0,
-    sent: 0,
-    retried: 0,
-    deadLettered: 0,
-    batchesScanned: 0,
-    batchesSent: 0,
-    batchesRetried: 0,
-    batchesDeadLettered: 0,
-    errors: [],
+    const result: EmailRetryRunResult = {
+      scanned: 0,
+      sent: 0,
+      retried: 0,
+      deadLettered: 0,
+      batchesScanned: 0,
+      batchesSent: 0,
+      batchesRetried: 0,
+      batchesDeadLettered: 0,
+      errors: [],
+    };
+
+    // Resolve the sender once. Without a key (and no injected stub) there's
+    // nothing to retry against — bail cleanly so the cron stays green.
+    const sender = params.resend ?? buildResendSender();
+    if (!sender) {
+      result.errors.push("RESEND_API_KEY not configured; skipping email retry");
+      return result;
+    }
+    const { emails } = sender;
+
+    const nowDate = new Date(now());
+    const dueRows = await prisma.failedEmail.findMany({
+      where: {
+        OR: [
+          { status: "PENDING" },
+          { status: "RETRY", nextRetryAt: { lte: nowDate } },
+        ],
+      },
+      orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
+      take: batchLimit,
+    });
+
+    // #1647 — one read for the whole batch; a suppressed recipient is refused
+    // before any pacing or send, and never paged (the refusal is the point).
+    const suppressed = await findSuppressed(
+      dueRows.map((row) => row.recipient),
+      prisma,
+    );
+
+    for (const [index, row] of dueRows.entries()) {
+      result.scanned += 1;
+
+      const suppression = suppressed.get(normaliseEmail(row.recipient));
+      if (suppression) {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "DEAD_LETTER",
+            lastError: `suppressed:${suppression}`,
+          },
+        });
+        result.deadLettered += 1;
+        continue;
+      }
+
+      // #1654 — pace the drain under the provider's rate limit; the first send
+      // goes out at once, every later one waits the gap.
+      if (index > 0) await sleep(SEND_GAP_MS);
+
+      // #1298 — a verification or reset link outlives its token only as spam:
+      // dead-letter it without a send (and without paging) once the TTL passed.
+      if (isExpiredForReplay(row.emailType, row.createdAt, nowDate)) {
+        const minutes = Math.round(EMAIL_TTL_MS[row.emailType] / 60_000);
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "DEAD_LETTER",
+            lastError: `expired before delivery: ${row.emailType} links are valid for ${minutes} minutes`,
+          },
+        });
+        result.deadLettered += 1;
+        continue;
+      }
+
+      let sendError: string | undefined;
+      let resendId: string | null = null;
+      try {
+        // Verbatim re-send of the stored rendered message. No dispatcher, no
+        // re-render: replay exactly what the original sender handed Resend.
+        // #1298 — the same key the sender derived, so a replay of a send whose
+        // response was lost is deduplicated by Resend instead of doubled.
+        // #1654 — bounded by the job budget so one hung call cannot hold the
+        // tick past the function ceiling; the SDK spreads `signal` into fetch.
+        const result = await emails.send(
+          {
+            from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
+            to: row.recipient,
+            subject: row.subject,
+            html: row.htmlBody,
+            text: row.textBody ?? undefined,
+            replyTo: row.replyTo ?? undefined,
+          },
+          {
+            idempotencyKey:
+              idempotencyKeyFor(
+                { to: row.recipient, subject: row.subject, html: row.htmlBody },
+                row.emailType,
+              ) || `failed-email:${row.id}`,
+            signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
+          } as CreateEmailRequestOptions,
+        );
+        // Resend resolves (does not throw) on API-level errors — a non-null
+        // `error` is still a failure, so it must not be mistaken for a success.
+        if (result.error) {
+          sendError = resendErrorText(result.error);
+        } else {
+          resendId = result.data?.id ?? null;
+        }
+      } catch (err) {
+        sendError = err instanceof Error ? err.message : String(err);
+      }
+
+      if (!sendError) {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "SENT",
+            attempts: row.attempts + 1,
+            sentAt: nowDate,
+            lastError: null,
+            // #1654 — the provider id, so support can trace the row to Resend's log.
+            resendId,
+          },
+        });
+        result.sent += 1;
+        continue;
+      }
+
+      const attemptNumber = row.attempts + 1;
+      const nextAttemptNumber = attemptNumber + 1;
+
+      // #1298 — a dead key or unverified domain fails every attempt the same
+      // way: dead-letter now and page once per reason, not once per row.
+      const terminalReason = terminalSendReason(sendError);
+      if (terminalReason) {
+        Sentry.captureMessage(
+          `email retry hit a terminal error: ${sendError}`,
+          {
+            level: "error",
+            fingerprint: ["email-retry-terminal", terminalReason],
+            tags: {
+              subsystem: "email",
+              emailType: row.emailType,
+              outbox_dead_letter: "true",
+            },
+          },
+        );
+      } else if (attemptNumber >= MAX_ATTEMPTS) {
+        // #1926 / #531 — alert when a transient failure exhausts all retries
+        // and transitions the email to DEAD_LETTER.
+        Sentry.captureMessage(
+          `email retry exhausted ${MAX_ATTEMPTS} attempts (${row.emailType}): ${sendError}`,
+          {
+            level: "error",
+            fingerprint: ["email-retry-exhausted", row.emailType],
+            tags: {
+              subsystem: "email",
+              emailType: row.emailType,
+              outbox_dead_letter: "true",
+            },
+            extra: {
+              failedEmailId: row.id,
+              attempts: attemptNumber,
+              lastError: sendError,
+            },
+          },
+        );
+      }
+
+      if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
+        // DEAD_LETTER: retries exhausted, terminal but operator-replayable
+        // (the rendered message is still on the row — see optional replay route).
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "DEAD_LETTER",
+            attempts: attemptNumber,
+            lastError: sendError,
+          },
+        });
+        result.deadLettered += 1;
+      } else {
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: {
+            status: "RETRY",
+            attempts: attemptNumber,
+            nextRetryAt: nextRetryAt(nextAttemptNumber, new Date(now())),
+            lastError: sendError,
+          },
+        });
+        result.retried += 1;
+      }
+    }
+
+    await drainBatches({ prisma, sender, nowDate, result });
+
+    span?.setAttributes?.({
+      "outbox.scanned": result.scanned,
+      "outbox.sent": result.sent,
+      "outbox.retried": result.retried,
+      "outbox.dead_lettered": result.deadLettered,
+      "outbox.batches_scanned": result.batchesScanned,
+      "outbox.batches_sent": result.batchesSent,
+      "outbox.batches_retried": result.batchesRetried,
+      "outbox.batches_dead_lettered": result.batchesDeadLettered,
+    });
+
+    Sentry.metrics?.count?.(
+      "email.outbox.sent",
+      result.sent + result.batchesSent,
+    );
+    Sentry.metrics?.count?.(
+      "email.outbox.retried",
+      result.retried + result.batchesRetried,
+    );
+    Sentry.metrics?.count?.(
+      "email.outbox.dead_lettered",
+      result.deadLettered + result.batchesDeadLettered,
+    );
+
+    if (typeof prisma.failedEmail.count === "function") {
+      try {
+        const pendingCount = await prisma.failedEmail.count({
+          where: { status: { in: ["PENDING", "RETRY"] } },
+        });
+        Sentry.metrics?.gauge?.("email.outbox.pending", pendingCount);
+      } catch {
+        // Best-effort gauge; never fail the drain tick.
+      }
+    }
+
+    return result;
   };
 
-  // Resolve the sender once. Without a key (and no injected stub) there's
-  // nothing to retry against — bail cleanly so the cron stays green.
-  const sender = params.resend ?? buildResendSender();
-  if (!sender) {
-    result.errors.push("RESEND_API_KEY not configured; skipping email retry");
-    return result;
+  if (typeof Sentry.startSpan === "function") {
+    return Sentry.startSpan(
+      { name: "email.outbox.drain", op: "queue.process" },
+      runBody,
+    );
   }
-  const { emails } = sender;
-
-  const nowDate = new Date(now());
-  const dueRows = await prisma.failedEmail.findMany({
-    where: {
-      OR: [
-        { status: "PENDING" },
-        { status: "RETRY", nextRetryAt: { lte: nowDate } },
-      ],
-    },
-    orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
-    take: batchLimit,
-  });
-
-  // #1647 — one read for the whole batch; a suppressed recipient is refused
-  // before any pacing or send, and never paged (the refusal is the point).
-  const suppressed = await findSuppressed(
-    dueRows.map((row) => row.recipient),
-    prisma,
-  );
-
-  for (const [index, row] of dueRows.entries()) {
-    result.scanned += 1;
-
-    const suppression = suppressed.get(normaliseEmail(row.recipient));
-    if (suppression) {
-      await prisma.failedEmail.update({
-        where: { id: row.id },
-        data: { status: "DEAD_LETTER", lastError: `suppressed:${suppression}` },
-      });
-      result.deadLettered += 1;
-      continue;
-    }
-
-    // #1654 — pace the drain under the provider's rate limit; the first send
-    // goes out at once, every later one waits the gap.
-    if (index > 0) await sleep(SEND_GAP_MS);
-
-    // #1298 — a verification or reset link outlives its token only as spam:
-    // dead-letter it without a send (and without paging) once the TTL passed.
-    if (isExpiredForReplay(row.emailType, row.createdAt, nowDate)) {
-      const minutes = Math.round(EMAIL_TTL_MS[row.emailType] / 60_000);
-      await prisma.failedEmail.update({
-        where: { id: row.id },
-        data: {
-          status: "DEAD_LETTER",
-          lastError: `expired before delivery: ${row.emailType} links are valid for ${minutes} minutes`,
-        },
-      });
-      result.deadLettered += 1;
-      continue;
-    }
-
-    let sendError: string | undefined;
-    let resendId: string | null = null;
-    try {
-      // Verbatim re-send of the stored rendered message. No dispatcher, no
-      // re-render: replay exactly what the original sender handed Resend.
-      // #1298 — the same key the sender derived, so a replay of a send whose
-      // response was lost is deduplicated by Resend instead of doubled.
-      // #1654 — bounded by the job budget so one hung call cannot hold the
-      // tick past the function ceiling; the SDK spreads `signal` into fetch.
-      const result = await emails.send(
-        {
-          from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
-          to: row.recipient,
-          subject: row.subject,
-          html: row.htmlBody,
-          text: row.textBody ?? undefined,
-          replyTo: row.replyTo ?? undefined,
-        },
-        {
-          idempotencyKey: idempotencyKeyFor(
-            { to: row.recipient, subject: row.subject, html: row.htmlBody },
-            row.emailType,
-          ),
-          signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
-        } as CreateEmailRequestOptions,
-      );
-      // Resend resolves (does not throw) on API-level errors — a non-null
-      // `error` is still a failure, so it must not be mistaken for a success.
-      if (result.error) {
-        sendError = resendErrorText(result.error);
-      } else {
-        resendId = result.data?.id ?? null;
-      }
-    } catch (err) {
-      sendError = err instanceof Error ? err.message : String(err);
-    }
-
-    if (!sendError) {
-      await prisma.failedEmail.update({
-        where: { id: row.id },
-        data: {
-          status: "SENT",
-          attempts: row.attempts + 1,
-          sentAt: nowDate,
-          lastError: null,
-          // #1654 — the provider id, so support can trace the row to Resend's log.
-          resendId,
-        },
-      });
-      result.sent += 1;
-      continue;
-    }
-
-    const attemptNumber = row.attempts + 1;
-    const nextAttemptNumber = attemptNumber + 1;
-
-    // #1298 — a dead key or unverified domain fails every attempt the same
-    // way: dead-letter now and page once per reason, not once per row.
-    const terminalReason = terminalSendReason(sendError);
-    if (terminalReason) {
-      Sentry.captureMessage(`email retry hit a terminal error: ${sendError}`, {
-        level: "error",
-        fingerprint: ["email-retry-terminal", terminalReason],
-        tags: { subsystem: "email", emailType: row.emailType },
-      });
-    }
-
-    if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
-      // DEAD_LETTER: retries exhausted, terminal but operator-replayable
-      // (the rendered message is still on the row — see optional replay route).
-      await prisma.failedEmail.update({
-        where: { id: row.id },
-        data: {
-          status: "DEAD_LETTER",
-          attempts: attemptNumber,
-          lastError: sendError,
-        },
-      });
-      result.deadLettered += 1;
-    } else {
-      await prisma.failedEmail.update({
-        where: { id: row.id },
-        data: {
-          status: "RETRY",
-          attempts: attemptNumber,
-          nextRetryAt: nextRetryAt(nextAttemptNumber, new Date(now())),
-          lastError: sendError,
-        },
-      });
-      result.retried += 1;
-    }
-  }
-
-  await drainBatches({ prisma, sender, nowDate, result });
-
-  return result;
+  return runBody(undefined);
 }
 
 /**
@@ -350,7 +427,7 @@ async function drainBatches(ctx: {
       const response = await sender.batch.send(
         row.payload as CreateBatchOptions,
         {
-          idempotencyKey: row.idempotencyKey,
+          idempotencyKey: row.idempotencyKey || `failed-email-batch:${row.id}`,
           signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
         } as CreateBatchRequestOptions,
       );
@@ -381,8 +458,30 @@ async function drainBatches(ctx: {
       Sentry.captureMessage(`email retry hit a terminal error: ${sendError}`, {
         level: "error",
         fingerprint: ["email-retry-terminal", terminalReason],
-        tags: { subsystem: "email", emailType: row.emailType },
+        tags: {
+          subsystem: "email",
+          emailType: row.emailType,
+          outbox_dead_letter: "true",
+        },
       });
+    } else if (attemptNumber >= MAX_ATTEMPTS) {
+      Sentry.captureMessage(
+        `email batch retry exhausted ${MAX_ATTEMPTS} attempts (${row.emailType}): ${sendError}`,
+        {
+          level: "error",
+          fingerprint: ["email-batch-retry-exhausted", row.emailType],
+          tags: {
+            subsystem: "email",
+            emailType: row.emailType,
+            outbox_dead_letter: "true",
+          },
+          extra: {
+            failedEmailBatchId: row.id,
+            attempts: attemptNumber,
+            lastError: sendError,
+          },
+        },
+      );
     }
 
     if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
