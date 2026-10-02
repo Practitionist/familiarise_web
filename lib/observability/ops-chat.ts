@@ -2,11 +2,11 @@ const OPS_CHAT_TIMEOUT_MS = 5_000;
 
 /**
  * Posts `text` to the ops chat incoming webhook (Slack format; Discord's /slack
- * and Google Chat accept it too). No-op when OPS_SLACK_WEBHOOK_URL is unset.
+ * and Google Chat accept it too). No-op when SLACK_OPS_WEBHOOK_URL is unset.
  * Never throws and never logs the URL, which is itself the credential.
  */
 export async function postOpsChat(text: string): Promise<boolean> {
-  const url = process.env.OPS_SLACK_WEBHOOK_URL?.trim();
+  const url = process.env.SLACK_OPS_WEBHOOK_URL?.trim();
   if (!url) return false;
   try {
     const res = await fetch(url, {
