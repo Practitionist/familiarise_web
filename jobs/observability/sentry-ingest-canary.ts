@@ -22,11 +22,14 @@ import {
   recordCanaryAlertSent,
   sendSentryIngestAlert,
 } from "@/lib/observability/ingest-alert";
+import { checkSentryQuota } from "@/lib/observability/quota-alert";
 import { runJob } from "@/lib/observability/job-sentry";
 
 export async function runSentryIngestCanary(): Promise<void> {
   const probe = await probeSentryIngest();
   const healthy = isIngestHealthy(probe);
+  // #1933 — 70% quota warning; never throws, so it cannot change the verdict.
+  await checkSentryQuota();
 
   if (healthy) {
     // The one thing worth saying on success: that the canary ran at all. A
