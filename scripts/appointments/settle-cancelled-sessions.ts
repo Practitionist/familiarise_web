@@ -42,6 +42,7 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
 import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
 
@@ -99,17 +100,33 @@ async function settleUnlocked(
   });
   result.scanned = due.length;
 
+  // #1933 — one Sentry event per run, never per row: a systemic fault fails
+  // every row and used to cost one event each.
+  const failedIds: string[] = [];
+  let firstError: unknown;
   for (const session of due) {
     try {
       await settleAndStamp(session, result);
     } catch (error) {
       result.errors += 1;
-      reportSentryError(error, {
-        subsystem: "bookings",
-        op: "settle-cancelled-sessions",
-        extra: { occurrenceId: session.id },
-      });
+      firstError ??= error;
+      failedIds.push(session.id);
+      // #1932: console bypasses the Sentry scrubber, so log a scrubbed message only.
+      console.error(
+        `settle-cancelled-sessions: occurrence ${session.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
+  }
+  if (failedIds.length > 0) {
+    reportSentryError(firstError, {
+      subsystem: "bookings",
+      op: "settle-cancelled-sessions",
+      fingerprint: ["settle-cancelled-sessions"],
+      extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
+    });
   }
   result.success = result.errors === 0;
   return result;

@@ -889,6 +889,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             canaryAlertNeeded,
             recordCanaryAlertSent,
           } = await import("@/lib/observability/ingest-alert");
+          const { checkSentryQuota } = await import(
+            "@/lib/observability/quota-alert"
+          );
           const probe = await probeSentryIngest();
           const healthy = isIngestHealthy(probe);
 
@@ -904,6 +907,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
                 })
               : false;
             if (alerted) await recordCanaryAlertSent(probe.verdict);
+            // #1933 — after the ingest alert: the stats fetch and its email
+            // must not spend the function ceiling ahead of the page.
+            const quota = await checkSentryQuota();
             return {
               healthy,
               verdict: probe.verdict,
@@ -912,15 +918,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
               alerted,
               alertSuppressed: !needed,
               detail: describeIngest(probe),
+              quota,
             };
           }
 
+          // #1933 — 70% quota warning rides the canary; never throws.
+          const quota = await checkSentryQuota();
           return {
             healthy: true,
             verdict: probe.verdict,
             status: probe.status,
             eventId: probe.eventId,
             alerted: false,
+            quota,
           };
         },
         status: (result) => (result.healthy ? 200 : 503),
