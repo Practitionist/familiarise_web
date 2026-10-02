@@ -51,10 +51,48 @@ An error must be attributable before it is debuggable, and nothing in this domai
 
 ## Error budget guardrails (#1933)
 
-The Sentry Developer plan includes 5,000 errors a month, and on 2026-09-22 that allowance was spent, which left ten days with no error visibility. The guardrails below keep real errors inside it, and every one of them is a drop in `beforeSend` or a rule at the capture site, so a dropped event never counts against quota.
+### The incident (2026-09-23 to 2026-10-02)
 
-`sentry.shared.config.ts` applies four limits in its `beforeSend` budget stage. First, a per-key throttle lets the first event for each key through and then at most one per `INFRA_THROTTLE_MS` (ten minutes) per process, where the key is the exception type, the message with ids and numbers normalised away, and the top in-app frame. Second, a per-process circuit breaker allows at most 30 events per rolling hour and logs a console warning when it opens. Third, the Upstash quota, cron lock, Prisma pool exhaustion and `SystemEvent` write failures each get a fixed fingerprint family, so one outage is one issue and one throttle key however many routes hit it. Fourth, an `expected` event at level `info` is dropped, and previews sample at 10% while production samples at 100%. The throttle is in memory on purpose, because Redis is often the thing that is down.
+Sentry ingested zero errors from 2026-09-23 until 2026-10-02 because the free Developer plan (`am3_f`) allows 5,000 errors per billing month and 5,428 had been used by 2026-09-22, mostly from the 2026-09-21 and 2026-09-22 Upstash incident flood. The billing period starts on the 19th, so the current one runs 2026-09-19 to 2026-10-18. Sentry answered every error envelope with HTTP 429 and the header `x-sentry-rate-limits: 60:default;error;security;attachment:organization:error_usage_exceeded`, while transactions, spans and logs kept being accepted, which is why the dashboards looked alive. A real production 500 in the Requests inbox left no Sentry trace at all, and only the Netlify function logs showed it. The diagnosis is the comment on issue #1933.
 
-The rule for new code is to never capture per row. A loop that can fail on many rows must keep its per-row `console.error`, collect the failures, and after the loop emit one `reportSentryError` with a stable `fingerprint` and `extra: { failed, sample }` holding the count and the first ten ids. A repetition of one failure is throttled and a set of distinct failures is aggregated, as the non-negotiables above describe.
+The ingest canary did not alert during the outage because it moved into `lib/cron/cleanup-registry.ts` in #1920 (it was not removed) and first reached production on 2026-10-02 through release #1925.
 
-The ingest canary also warns before the quota is gone. When `SENTRY_STATS_TOKEN` (an `org:read` token) is set, each canary run reads the accepted error count for the current billing period and emails once per period when it reaches 70% of `SENTRY_ERROR_QUOTA` (default 5000). `SENTRY_QUOTA_PERIOD_START_DAY` (default 19) sets the day the period starts, and an unset token skips the check silently.
+### How to diagnose next time
+
+Climb the evidence ladder in this order. First, read the stats API, which separates `rate_limited`, `filtered` and `client_discard` from `accepted`: `/api/0/organizations/practitionist/stats_v2/?field=sum(quantity)&groupBy=outcome&groupBy=category&interval=1d&statsPeriod=14d`. Second, send one labelled probe envelope to the DSN endpoint and read the rate-limit header on the response. Third, read the quota from the organisation subscription. Fourth, confirm that only the error category stopped, because transactions and logs continuing to arrive is the signature of quota exhaustion rather than a broken DSN.
+
+### Volume profile before the outage
+
+The following table shows where the errors of the 30 days before the outage came from, and it is the reason the guardrails target floods rather than individual bugs.
+
+| Source                            | Share of errors |
+| --------------------------------- | --------------- |
+| Upstash and CronLock floods       | 54%             |
+| Prisma pool and connection errors | 10%             |
+| Per-row repeats inside sweeps     | 29%             |
+| Real bugs                         | about 5%        |
+| Browser                           | 2%              |
+
+The preview environment produced 15% of all errors, and a quiet month sits at roughly 1,500 errors.
+
+### The guardrails shipped in #1938
+
+The guardrails below keep real errors inside the allowance, and every one of them is a drop in `beforeSend` or a rule at the capture site, so a dropped event never counts against quota.
+
+`sentry.shared.config.ts` applies its limits in the `beforeSend` budget stage. A per-key throttle lets the first event for each key through and then at most one per `INFRA_THROTTLE_MS` (ten minutes) per process, where the key is the exception type, the message with ids and numbers normalised away, and the top in-app frame. A per-process circuit breaker allows at most 30 events per rolling hour and logs a console warning when it opens; `fatal` events skip the breaker by owner decision, because a `WALLET_BALANCE_DRIFT` page must never lose to noise. The Upstash quota, cron lock (`cron-lock-unavailable`), Prisma pool exhaustion and `SystemEvent` write failures each get a fixed fingerprint family (`upstash-quota`, `prisma-pool-exhaustion`, `system-events-write-failed`), so one outage is one issue however many routes hit it. An `expected` event at level `info` is dropped, and `ignoreErrors` has a few extra entries. The throttle is in memory on purpose, because Redis is often the thing that is down.
+
+The `sampleRate` is `NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" ? 0.1 : 1`, so previews sample errors at 10% and every other environment, including one where the variable is unset (a bare job runner or a test), samples at 100%. An earlier version keyed on "not production" and silently dropped 90% of errors wherever the variable was unset. The variable is read instead of `NODE_ENV` because `NODE_ENV` is `production` on previews too.
+
+Sweeps aggregate once per run in `settle-cancelled-sessions`, `retry-auto-refunds`, `expire-reschedule-proposals` and `reconcile-ledgers`; the freeze behaviour of the reconciler is unchanged, and drift still pages even if the first freeze throws. The cleanup-route catch-all is throttled per job. These guardrails sit next to the span and log scrubbing and the dead-letter alerting added in #1932 and the atomic cron lock added in #1935, and they do not replace either.
+
+The rule for new code is to never capture per row. A loop that can fail on many rows keeps a per-row `console.error` that logs `scrubStringValue(message)` from `lib/observability/sentry-scrubber.ts` rather than the raw error, because console output bypasses Sentry's scrubber. It collects the failures and, after the loop, emits one `reportSentryError` with a stable `fingerprint` and `extra: { failed, sample }` holding the count and the first ten ids. A repetition of one failure is throttled and a set of distinct failures is aggregated, as the non-negotiables above describe.
+
+The ingest canary also warns before the quota is gone, and it runs that check after the urgent ingest-down alert so that alert still fits inside the roughly 26 second function ceiling. When `SENTRY_STATS_TOKEN` (an `org:read` token) is set, each canary run reads the accepted error count for the current billing period and emails once per period when it reaches 70% of `SENTRY_ERROR_QUOTA` (default 5000). `SENTRY_QUOTA_PERIOD_START_DAY` (default 19) sets the day the period starts, and an unset token skips the check silently.
+
+### Sentry-side state on 2026-10-02
+
+The high-priority alert workflow 3606037 now filters on `environment: production`; in the new API it is a workflow at `organizations/practitionist/workflows/3606037/`, not an alert rule. Rule 6031144 (`pool_exhaustion`) is unchanged, spike protection is on, and the inbound filters for browser extensions, web crawlers, React hydration errors, chunk-load errors and legacy browsers are on. A DSN key rate limit of 30 per hour was attempted and is silently ignored on the free plan, because the PUT returns 200 while `rateLimit` stays null. Inbound error-message filters for the flood families were deliberately not added, because they would drop the first event as well and blind a real outage like 2026-09-25.
+
+### Still to do (owner)
+
+The owner still has to create an `org:read` Sentry token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the 10% preview sample should be revisited. Issue #1933 stays open until then.
