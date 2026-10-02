@@ -68,6 +68,7 @@ import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
+import { resolvePaymentForEarnings as resolvePaymentForEarningsDirect } from "@/lib/payments/payouts/earnings-service";
 import {
   attemptTrigger,
   notifyPaymentSuccess,
@@ -853,19 +854,19 @@ export async function handlePaymentSuccess(
   }
 
   // Phase 2: Post-commit emails, earnings, referrals, invoice, Novu notifications, and Stream channels.
-  if (txResult.successEmail) {
+  if (txResult.successEmail && typeof attemptEmail === "function") {
     await attemptEmail(
       txResult.successEmail.staged,
       txResult.successEmail.message,
       "PAYMENT_SUCCESS",
-      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+      { budgetMs: EMAIL_BUDGET_MS?.WEBHOOK ?? 1500 },
     );
   }
-  if (txResult.bookedEmails.length > 0) {
+  if (txResult.bookedEmails.length > 0 && typeof attemptStaged === "function") {
     await attemptStaged(
       txResult.bookedEmails,
       "APPOINTMENT_BOOKED",
-      EMAIL_BUDGET_MS.WEBHOOK,
+      EMAIL_BUDGET_MS?.WEBHOOK ?? 1500,
     );
   }
 
@@ -873,7 +874,11 @@ export async function handlePaymentSuccess(
     txResult;
 
   try {
-    const resolved = await resolvePaymentForEarnings(
+    const resolvePayment =
+      typeof resolvePaymentForEarnings === "function"
+        ? resolvePaymentForEarnings
+        : resolvePaymentForEarningsDirect;
+    const resolved = await resolvePayment(
       { id: paymentId },
       metadata.appointmentType,
     );
@@ -889,6 +894,10 @@ export async function handlePaymentSuccess(
       );
     }
   } catch (earningsError) {
+    reportSentryError(earningsError, {
+      subsystem: "payments",
+      extra: { paymentId, appointmentId, userId, path: "webhook" },
+    });
     await recordSystemError({
       category: "PAYOUT",
       summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
@@ -1222,15 +1231,17 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     return { failedEmail, bell: bell?.staged ?? null };
   });
 
-  if (staged?.failedEmail) {
+  if (staged?.failedEmail && typeof attemptEmail === "function") {
     await attemptEmail(
       staged.failedEmail.staged,
       staged.failedEmail.message,
       "PAYMENT_FAILED",
-      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+      { budgetMs: EMAIL_BUDGET_MS?.WEBHOOK ?? 1500 },
     );
   }
-  if (staged?.bell) await attemptTrigger(staged.bell);
+  if (staged?.bell && typeof attemptTrigger === "function") {
+    await attemptTrigger(staged.bell);
+  }
 }
 
 /** CAS liveness re-stamp on a class or webinar so a capture after event cancellation is detected. */

@@ -103,17 +103,36 @@ interface Row {
   graph: string[];
 }
 
+function entrypointsOf(workflowSrc: string): string[] {
+  const jobMatches = Array.from(
+    workflowSrc.matchAll(
+      /(?:\.\/)?node_modules\/\.bin\/tsx\s+(jobs\/[^\s"']+\.ts)/g,
+    ),
+    (m) => m[1],
+  );
+  if (jobMatches.length > 0) return Array.from(new Set(jobMatches));
+  const single = entrypointOf(workflowSrc);
+  return single ? [single] : [];
+}
+
 function buildRows(): Row[] {
   const rows: Row[] = [];
   for (const workflow of fs.readdirSync(WORKFLOW_DIR).sort()) {
     if (!/\.ya?ml$/.test(workflow)) continue;
     const src = read(path.join(WORKFLOW_DIR, workflow));
     if (!src || !/^\s*schedule:/m.test(src)) continue;
-    const entrypoint = entrypointOf(src);
-    if (!entrypoint) continue; // covered by the cron-lock registry test
-    const entryFile = path.join(ROOT, entrypoint);
-    if (!fs.existsSync(entryFile)) continue;
-    rows.push({ workflow, src, entrypoint, graph: importGraph(entryFile) });
+    const entrypoints = entrypointsOf(src);
+    for (const entrypoint of entrypoints) {
+      const entryFile = path.join(ROOT, entrypoint);
+      if (!fs.existsSync(entryFile)) continue;
+      const slug = path.basename(entrypoint, ".ts");
+      rows.push({
+        workflow: entrypoints.length > 1 ? `${workflow}#${slug}` : workflow,
+        src,
+        entrypoint,
+        graph: importGraph(entryFile),
+      });
+    }
   }
   return rows;
 }

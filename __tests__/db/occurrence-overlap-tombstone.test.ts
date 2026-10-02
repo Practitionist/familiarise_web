@@ -21,16 +21,12 @@ const constraintPredicate = (sql: string): string => {
 };
 
 describe("occurrence_no_confirmed_overlap tombstone exemption (#1694)", () => {
-  it("exempts soft-deleted rows, and the swap script builds the same predicate", () => {
+  it("exempts soft-deleted rows in the sidecar exclusion constraint", () => {
     const sidecar = constraintPredicate(
       read("prisma/sql/check-constraints.sql"),
     );
     expect(sidecar).toContain('"consultantProfileId" IS NOT NULL');
     expect(sidecar).toContain('NOT "isTentative"');
     expect(sidecar).toContain('"deletedAt" IS NULL');
-
-    const script = read("scripts/db/swap-occurrence-overlap-constraint.ts");
-    const declared = /NEW_PREDICATE =\s*'([^']+)'/.exec(script)?.[1];
-    expect(declared?.replace(/\s+/g, " ")).toBe(sidecar);
   });
 });

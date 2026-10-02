@@ -1,0 +1,169 @@
+name: Cron — Intra-Day Fleet
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Every 30 minutes: orphaned meeting sessions reconciliation
+    - cron: "25,55 * * * *"
+    # Hourly: dispute deadlines, DPDP breach deadline alerts, occurrence availability
+    - cron: "17 * * * *"
+    # Every 4 hours: stuck payout recovery
+    - cron: "52 */4 * * *"
+    # Every 6 hours: dispute status sync, payout status sync, expiring recording transfer
+    - cron: "33 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job slug to run (or 'all' to run every intra-day job)"
+        required: false
+        default: "all"
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.schedule || inputs.job || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  intra-day:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
+      STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
+      DATABREACH_ALERT_EMAIL: ${{ secrets.DATABREACH_ALERT_EMAIL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+      NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
+
+      - name: Reconcile orphaned sessions
+        id: reconcile-orphaned-sessions
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '25,55 * * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-orphaned-sessions'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/meetings/reconcile-orphaned-sessions.ts
+
+      - name: Alert dispute deadlines
+        id: alert-dispute-deadlines
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-dispute-deadlines'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/disputes/alert-dispute-deadlines.ts
+
+      - name: Data-breach deadline alerts
+        id: databreach-deadline-alerts
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'databreach-deadline-alerts'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/compliance/databreach-deadline-alerts.ts
+
+      - name: Reconcile occurrence availability
+        id: reconcile-occurrence-availability
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-occurrence-availability'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/appointments/reconcile-occurrence-availability.ts
+
+      - name: Handle stuck payouts
+        id: handle-stuck-payouts
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '52 */4 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'handle-stuck-payouts'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/payouts/handle-stuck-payouts.ts
+
+      - name: Reconcile disputes
+        id: reconcile-disputes
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-disputes'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/disputes/reconcile-disputes.ts
+
+      - name: Reconcile payout status
+        id: reconcile-payout-status
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-payout-status'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/payouts/reconcile-payout-status.ts
+
+      - name: Transfer expiring recordings
+        id: transfer-expiring-recordings
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'transfer-expiring-recordings'))
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/stream/transfer-expiring-recordings.ts
+
+      - name: Check job outcomes and notify on failure
+        if: always()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          failed=0
+          for entry in \
+            "reconcile-orphaned-sessions:${{ steps.reconcile-orphaned-sessions.outcome }}" \
+            "alert-dispute-deadlines:${{ steps.alert-dispute-deadlines.outcome }}" \
+            "databreach-deadline-alerts:${{ steps.databreach-deadline-alerts.outcome }}" \
+            "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}" \
+            "handle-stuck-payouts:${{ steps.handle-stuck-payouts.outcome }}" \
+            "reconcile-disputes:${{ steps.reconcile-disputes.outcome }}" \
+            "reconcile-payout-status:${{ steps.reconcile-payout-status.outcome }}" \
+            "transfer-expiring-recordings:${{ steps.transfer-expiring-recordings.outcome }}"
+          do
+            job_name="${entry%%:*}"
+            outcome="${entry#*:}"
+            if [ "$outcome" = "failure" ]; then
+              echo "::error::Intra-day job ${job_name} failed"
+              bash scripts/ci/notify-ops-failure.sh "${job_name}" || true
+              failed=1
+            fi
+          done
+          if [ "$JOB_STATUS" = "failure" ] && [ "$failed" -eq 0 ]; then
+            bash scripts/ci/notify-ops-failure.sh "cron-intra-day" || true
+            exit 1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi

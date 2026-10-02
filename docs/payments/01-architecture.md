@@ -19,7 +19,7 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway. Stripe is implemented but fenced off, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses both a placeholder and a fenced-off gateway at runtime. The gateway comparison that led here is recorded in [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md).
+The payment system uses **Razorpay** as the sole active payment gateway. Stripe is implemented but fenced off, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses both a placeholder and a fenced-off gateway at runtime.
 
 | Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
 | ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -208,25 +208,29 @@ AppointmentStatus:
 
 ### Webhook Files
 
-| File                                 | Purpose                          | Lines |
-| ------------------------------------ | -------------------------------- | ----- |
-| `app/api/webhooks/stripe/route.ts`   | Stripe webhook endpoint          | ~125  |
-| `app/api/webhooks/razorpay/route.ts` | Razorpay webhook endpoint        | ~147  |
-| `app/api/webhooks/utils.ts`          | Shared webhook utilities         | ~291  |
-| `lib/payments/webhooks/handlers.ts`  | Payment success/failure handlers | ~1021 |
-| `schemas/webhooks/stripe.ts`         | Stripe event schemas             | ~105  |
-| `schemas/webhooks/razorpay.ts`       | Razorpay event schemas           | ~105  |
-| `schemas/webhooks/metadata.ts`       | Appointment metadata validation  | ~115  |
+| File                                                     | Purpose                                                             | Lines |
+| -------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
+| `app/api/webhooks/stripe/route.ts`                       | Stripe webhook endpoint                                             | ~125  |
+| `app/api/webhooks/razorpay/route.ts`                     | Razorpay webhook endpoint                                           | ~147  |
+| `app/api/webhooks/utils.ts`                              | Shared webhook utilities & dispute/org handlers                     | ~2530 |
+| `lib/payments/webhooks/handlers.ts`                      | Payment success/failure state-machine handlers                      | ~1900 |
+| `lib/payments/webhooks/legacy-appointment-creation.ts`   | Legacy webhook fallback appointment creation & slot allocation      | ~810  |
+| `lib/payments/webhooks/staged-emails.ts`                 | Phase 1 transactional email outbox staging & notification context   | ~350  |
+| `schemas/webhooks/stripe.ts`                             | Stripe event schemas                                                | ~105  |
+| `schemas/webhooks/razorpay.ts`                           | Razorpay event schemas                                              | ~105  |
+| `schemas/webhooks/metadata.ts`                           | Appointment metadata validation                                     | ~115  |
 
 ### Refund & Dispute Files
 
-| File                                          | Purpose                               |
-| --------------------------------------------- | ------------------------------------- |
-| `app/api/payments/refunds/route.ts`           | Refund creation & listing             |
-| `app/api/payments/disputes/route.ts`          | Dispute listing & evidence submission |
-| `app/api/admin/refunds/route.ts`              | Admin refund dashboard API            |
-| `app/api/admin/disputes/route.ts`             | Admin dispute dashboard API           |
-| `app/api/admin/disputes/[disputeId]/route.ts` | Dispute detail API                    |
+| File                                          | Purpose                                                                 |
+| --------------------------------------------- | ----------------------------------------------------------------------- |
+| `lib/payments/operations/refund.ts`           | Core refund cascade (`applyRefundCascade`) & credit note minting        |
+| `lib/payments/operations/reversal-engine.ts`  | Unified reversal engine (wallet, unbilled/paid invoice, payout clawback)|
+| `app/api/payments/refunds/route.ts`           | Refund creation & listing                                               |
+| `app/api/payments/disputes/route.ts`          | Dispute listing & evidence submission                                   |
+| `app/api/admin/refunds/route.ts`              | Admin refund dashboard API                                              |
+| `app/api/admin/disputes/route.ts`             | Admin dispute dashboard API                                             |
+| `app/api/admin/disputes/[disputeId]/route.ts` | Dispute detail API                                                      |
 
 ### Reconciliation & Cleanup Files
 
@@ -237,15 +241,21 @@ AppointmentStatus:
 | `app/api/cleanup/abandoned-payments/route.ts` | Cancel stale payment intents | Every 15 min  |
 | `app/api/cleanup/approval-payments/route.ts`  | Expire 48-hour payment links | Every hour    |
 
-### Payment Core Files
+### Payment Core, Payouts & Ledger Files
 
-| File                                         | Purpose                         |
-| -------------------------------------------- | ------------------------------- |
-| `lib/payments/index.ts`                      | Payment library exports         |
-| `lib/payments/core/types.ts`                 | Payment type definitions        |
-| `lib/payments/core/stripe.ts`                | Stripe gateway implementation   |
-| `lib/payments/core/razorpay.ts`              | Razorpay gateway implementation |
-| `utils/appointmentlock.ts`                   | Distributed locking             |
+| File                                           | Purpose                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `lib/payments/index.ts`                        | Payment library exports                                                  |
+| `lib/payments/core/types.ts`                   | Payment type definitions                                                 |
+| `lib/payments/core/stripe.ts`                  | Stripe gateway implementation                                            |
+| `lib/payments/core/razorpay.ts`                | Razorpay gateway implementation                                          |
+| `lib/payments/payouts/earnings-service.ts`     | Consultant & org earnings creation, splits, and hold/refund operations   |
+| `lib/payments/payouts/earning-reversal-cas.ts` | CAS-loop helpers for bounded consultant & org earning reversals          |
+| `lib/payments/payouts/shared-lifecycle.ts`     | Shared payout lifecycle helpers (TDS split, error classification, ledger)|
+| `lib/payments/payouts/payout-service.ts`       | Consultant payout batching, processing, and settlement                   |
+| `lib/payments/payouts/org-payout-service.ts`   | Organization payout batching, processing, and settlement                 |
+| `lib/payments/ledger/post.ts`                  | Double-entry ledger journal writer (`postLedgerTxn`)                     |
+| `utils/appointmentlock.ts`                     | Distributed locking                                                      |
 
 ### Admin Dashboard Pages
 

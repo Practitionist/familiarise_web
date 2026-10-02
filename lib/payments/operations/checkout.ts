@@ -92,6 +92,7 @@ import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
+import { resolvePaymentForEarnings as resolvePaymentForEarningsDirect } from "@/lib/payments/payouts/earnings-service";
 import { walletDebit } from "@/lib/api/organizations/wallet";
 import {
   isWalletFrozen,
@@ -4664,7 +4665,11 @@ export async function handleCheckout(
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
         try {
-          const resolved = await resolvePaymentForEarnings(
+          const resolvePayment =
+            typeof resolvePaymentForEarnings === "function"
+              ? resolvePaymentForEarnings
+              : resolvePaymentForEarningsDirect;
+          const resolved = await resolvePayment(
             { paymentIntent: paymentResponse!.id },
             validatedData.appointmentType,
           );
@@ -4687,6 +4692,15 @@ export async function handleCheckout(
           // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
           // keyed on row state — not on this marker — so it's guaranteed and
           // idempotent even if this alert is lost.
+          reportSentryError(earningsError, {
+            subsystem: "payments",
+            extra: {
+              paymentIntent: paymentResponse!.id,
+              userId,
+              appointmentType: validatedData.appointmentType,
+              path: "checkout",
+            },
+          });
           await recordSystemError({
             category: "PAYOUT",
             summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,

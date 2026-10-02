@@ -39,6 +39,12 @@ jobs:
 
       - run: npx --no-install prisma generate
 
+      - name: Apply preflighted schema and SQL sidecars on dev push
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret missing"; exit 1; }
+          npm run db:push:schema
+
       - name: Sidecar + enum drift guard
         run: |
           test -n "$DATABASE_URL" || { echo "DATABASE_URL secret missing"; exit 1; }

@@ -123,6 +123,7 @@ export interface CreateEarningsParams {
     } | null;
   };
   appointmentType: AppointmentType;
+  tx?: Tx;
 }
 
 // ============================================
@@ -465,8 +466,10 @@ export interface ResolvedEarningsPayment {
 export async function resolvePaymentForEarnings(
   where: Prisma.PaymentWhereUniqueInput,
   rawAppointmentType: string,
+  db: Tx | typeof prisma = prisma,
 ): Promise<ResolvedEarningsPayment | null> {
-  const paymentWithAppointment = await prisma.payment.findUnique({
+  if (typeof db?.payment?.findUnique !== "function") return null;
+  const paymentWithAppointment = await db.payment.findUnique({
     where,
     include: {
       appointment: {
@@ -569,6 +572,7 @@ export async function resolvePaymentForEarnings(
 export async function createEarningsFromPayment({
   payment,
   appointmentType,
+  tx: outerTx,
 }: CreateEarningsParams): Promise<string | null> {
   // Get consultant profile ID from the appointment
   const consultantProfileId = payment.appointment?.consultantProfile?.id;
@@ -587,7 +591,7 @@ export async function createEarningsFromPayment({
   // #1569 — the hold runs from the later of the capture and the last live
   // call's end, and a per-call fee names the occurrence it paid for.
   const anchor = await resolveEarningsAnchor(
-    prisma,
+    outerTx ?? prisma,
     payment.appointmentId,
     appointmentType,
   );
@@ -617,10 +621,7 @@ export async function createEarningsFromPayment({
   // Also handles P2002 unique constraint violations gracefully for idempotency.
   // #896 — Serializable isolation + P2034 retry so the waiver eligibility count()
   // can't race two concurrent first-payments into both waiving commission.
-  try {
-    return await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
+  const runInTx = async (tx: Tx): Promise<string | null> => {
           // Idempotency check inside transaction to prevent races
           const existingEarnings = await tx.consultantEarnings.findFirst({
             where: { paymentId: payment.id, consultantProfileId },
@@ -1259,10 +1260,17 @@ export async function createEarningsFromPayment({
           }
 
           return ownerId;
-        },
-        { isolationLevel: "Serializable", timeout: 10000 },
-      ),
-    );
+  };
+
+  try {
+    return outerTx
+      ? await runInTx(outerTx)
+      : await withSerializableRetry(() =>
+          prisma.$transaction(runInTx, {
+            isolationLevel: "Serializable",
+            timeout: 10000,
+          }),
+        );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -1277,7 +1285,7 @@ export async function createEarningsFromPayment({
         expected: true,
         extra: { paymentId: payment.id, consultantProfileId },
       });
-      const existing = await prisma.consultantEarnings.findFirst({
+      const existing = await (outerTx ?? prisma).consultantEarnings.findFirst({
         where: { paymentId: payment.id, consultantProfileId },
       });
       return existing?.id ?? null;

@@ -95,23 +95,25 @@ export function stripSqlComments(sql: string): string {
   return out;
 }
 
+const CONSTRAINT_RE =
+  /ALTER\s+TABLE\s+"?(\w+)"?\s+ADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?/gi;
+const INDEX_RE =
+  /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi;
+const UNIQUE_INDEX_RE =
+  /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi;
+const TRIGGER_RE = /CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+(\w+)/gi;
+
 /** Every declared object in one sidecar file's text. */
 export function parseSidecarSql(sql: string, source: string): SidecarObject[] {
   const active = stripSqlComments(sql);
   const out: SidecarObject[] = [];
-  for (const m of active.matchAll(
-    /ALTER\s+TABLE\s+"?(\w+)"?\s+ADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?/gi,
-  )) {
+  for (const m of active.matchAll(CONSTRAINT_RE)) {
     out.push({ kind: "constraint", table: m[1], name: m[2], source });
   }
-  for (const m of active.matchAll(
-    /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi,
-  )) {
+  for (const m of active.matchAll(INDEX_RE)) {
     out.push({ kind: "index", name: m[1], source });
   }
-  for (const m of active.matchAll(
-    /CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+(\w+)/gi,
-  )) {
+  for (const m of active.matchAll(TRIGGER_RE)) {
     out.push({ kind: "trigger", name: m[1], source });
   }
   return out;
@@ -143,10 +145,6 @@ export function parseSidecarObjects(sql: string): SidecarObjects {
     constraints: parseSidecarSql(sql, "inline")
       .filter((o) => o.kind === "constraint")
       .map((o) => o.name),
-    indexes: [
-      ...active.matchAll(
-        /CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?/gi,
-      ),
-    ].map((m) => m[1]),
+    indexes: [...active.matchAll(UNIQUE_INDEX_RE)].map((m) => m[1]),
   };
 }

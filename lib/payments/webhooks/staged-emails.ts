@@ -115,6 +115,18 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
           },
         },
       },
+      trial: {
+        select: {
+          id: true,
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -142,6 +154,7 @@ export function planForEmails(appointment: AppointmentForEmails) {
     appointment.subscription?.subscriptionPlan ??
     appointment.webinar?.webinarPlan ??
     appointment.class?.classPlan ??
+    appointment.trial?.subscriptionPlan ??
     null
   );
 }
@@ -176,6 +189,7 @@ export async function resolveAppointmentNotificationContext(
       subscription: { select: { subscriptionPlan: PLAN_NOTIF_SELECT } },
       webinar: { select: { webinarPlan: PLAN_NOTIF_SELECT } },
       class: { select: { classPlan: PLAN_NOTIF_SELECT } },
+      trial: { select: { subscriptionPlan: PLAN_NOTIF_SELECT } },
     },
   });
 }
@@ -186,6 +200,12 @@ export async function stagePaymentSuccessEmail(
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): Promise<StagedOutboxEmail | null> {
+  if (
+    typeof renderPaymentSuccessEmail !== "function" ||
+    typeof stageEmail !== "function"
+  ) {
+    return null;
+  }
   const consultantName =
     planForEmails(appointment)?.consultantProfile?.user?.name || "Consultant";
   const amount = payment.amount;
@@ -226,6 +246,7 @@ export async function stageBookedEmails(
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): Promise<StagedRecipientEmail[]> {
+  if (typeof stageAppointmentBookedEmail !== "function") return [];
   const startsAt = appointment.occurrences?.[0]?.startsAt;
   if (!startsAt) return [];
   const plan = planForEmails(appointment);
@@ -257,6 +278,12 @@ export async function stagePaymentFailedEmail(
     user: { email: string | null; name: string | null };
   },
 ): Promise<StagedOutboxEmail | null> {
+  if (
+    typeof renderPaymentFailedEmail !== "function" ||
+    typeof stageEmail !== "function"
+  ) {
+    return null;
+  }
   const consultantUserSelect = {
     select: {
       consultantProfile: {
