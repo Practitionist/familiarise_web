@@ -118,8 +118,8 @@ All are ADMIN-only (`users.moderate`), take a reason, and write an
 | Reactivate        | Suspended                   | `PATCH /api/admin/team/members/{id}` `reactivate` | Clears the ban                                                                                                                     |
 | Reset 2FA         | Enrolled                    | `DELETE /api/admin/team/members/{id}/two-factor`  | Deletes the TwoFactor row, clears `twoFactorEnabled`, deletes every session, in one transaction                                    |
 
-Runbooks: [staff off-boarding](../enterprise/50-operations/03-runbooks.md#staff-off-boarding)
-and [lost authenticator](../enterprise/50-operations/03-runbooks.md#lost-authenticator-admin-2fa-reset).
+Runbooks: [staff off-boarding](../enterprise/50-operations/02-runbooks.md#staff-off-boarding)
+and [lost authenticator](../enterprise/50-operations/02-runbooks.md#lost-authenticator-admin-2fa-reset).
 
 ## 4. Recovery
 

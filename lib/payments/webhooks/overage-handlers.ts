@@ -26,7 +26,8 @@
  */
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, Prisma } from "@prisma/client";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import {
@@ -43,7 +44,9 @@ import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
 export async function handleOverageMemberSuccess(
   paymentIntentId: string,
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
     const side = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       select: {
@@ -219,7 +222,14 @@ export async function handleOverageMemberSuccess(
         ...invoicedBase,
       });
     }
-  });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
+    ),
+  );
 }
 
 /**

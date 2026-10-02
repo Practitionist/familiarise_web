@@ -32,7 +32,7 @@ A batch can be cancelled only before it is approved, and cancelling it returns i
 
 Real money does not leave the platform today, because the `ENABLE_LIVE_PAYOUTS` flag in `lib/feature-flags.ts` is off and the RazorpayX keys are not set in production. With the flag off, every step above still runs, including batching, approval, tax withholding and the ledger, but approved payouts stay APPROVED and are shown as "pending platform enablement" rather than as a failure.
 
-Turning live payouts on is done in four steps, in this order, and the [live-payout go-live runbook](../../enterprise/50-operations/06-live-payout-go-live-runbook.md) holds the full checklist.
+Turning live payouts on is done in four steps, in this order, and the [live-payout go-live runbook](../../enterprise/50-operations/05-live-payout-go-live-runbook.md) holds the full checklist.
 
 1. **Finish KYC.** Complete the RazorpayX account's KYC and business verification, and fund the RazorpayX balance to cover the first batch.
 2. **Set the keys.** Set `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, `RAZORPAYX_ACCOUNT_NUMBER` and `RAZORPAYX_WEBHOOK_SECRET` in the production environment. While the flag is on, the payout client refuses to start with a RazorpayX test key (`RAZORPAYX_TEST_KEYS_IN_LIVE_MODE`).

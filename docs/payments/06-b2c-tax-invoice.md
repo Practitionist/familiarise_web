@@ -127,6 +127,6 @@ Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's nam
 
 ## Related
 
-- [B2C ↔ B2B funding seam](./05-b2c-b2b-funding-seam.md)
+- [B2C ↔ B2B funding seam](./04-b2c-b2b-funding-seam.md)
 - [Invoicing (B2B)](../enterprise/10-money-and-ledger/08-invoicing.md)
 - [Cron jobs reference](../maintenance/04-cron-jobs-reference.md)

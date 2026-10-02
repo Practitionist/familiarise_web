@@ -67,11 +67,26 @@ jobs:
       - name: Generate Prisma client
         run: npx --no-install prisma generate
 
+      - name: Validate dispatch job slug
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          case "${INPUT_JOB}" in
+            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|cleanup-old-stream-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|mark-expired-recordings|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|reconcile-orphaned-recordings|timeout-member-overages|dunning|wallet-low-balance)
+              ;;
+            *)
+              echo "::error::Unknown daily job slug '${INPUT_JOB}'"
+              exit 1
+              ;;
+          esac
+
       - name: Cleanup auth tokens
         id: cleanup-auth-tokens
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-auth-tokens'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/cleanup-auth-tokens.ts
 
@@ -80,6 +95,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'generate-subscription-invoices'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/generate-subscription-invoices.ts
 
@@ -88,6 +104,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-abandoned-org-top-ups'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/cleanup-abandoned-org-top-ups.ts
 
@@ -96,6 +113,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'advance-program-cycles'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/advance-program-cycles.ts
 
@@ -104,6 +122,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'auto-renew-contracts'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/contracts/auto-renew-contracts.ts
 
@@ -112,6 +131,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-document-storage'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/reconcile-document-storage.ts
 
@@ -120,6 +140,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'irp-uploader'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/compliance/irp-uploader.ts
 
@@ -128,6 +149,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'sweep-abandoned-overage-charges'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/sweep-abandoned-overage-charges.ts
 
@@ -136,6 +158,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-old-stream-recordings'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/cleanup-old-stream-recordings.ts
 
@@ -144,6 +167,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'prune-system-events'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/prune-system-events.ts
 
@@ -152,6 +176,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-contracts'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/contracts/expire-contracts.ts
 
@@ -160,6 +185,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'prune-audit-logs'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/prune-audit-logs.ts
 
@@ -168,6 +194,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'sweep-verification'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/sweep-verification.ts
 
@@ -176,6 +203,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'mark-expired-recordings'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/mark-expired-recordings.ts
 
@@ -184,6 +212,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'prune-system-job-executions'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/prune-system-job-executions.ts
 
@@ -192,6 +221,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-orphaned-payments'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/alerts/alert-orphaned-payments.ts
 
@@ -200,6 +230,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'purge-deleted-documents'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/purge-deleted-documents.ts
 
@@ -208,6 +239,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'stream-sync'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/stream-sync.ts
 
@@ -216,6 +248,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-ledgers'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/reconcile/reconcile-ledgers.ts
 
@@ -224,6 +257,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'msme-payment-alerts'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/compliance/msme-payment-alerts.ts
 
@@ -232,6 +266,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-event-channels'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/expire-event-channels.ts
 
@@ -240,6 +275,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-orphaned-recordings'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/reconcile-orphaned-recordings.ts
 
@@ -248,6 +284,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'timeout-member-overages'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/timeout-member-overages.ts
 
@@ -256,6 +293,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'dunning'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/dunning.ts
 
@@ -264,6 +302,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '30 23 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'wallet-low-balance'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/wallet-low-balance.ts
 
@@ -305,13 +344,13 @@ jobs:
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"
-            if [ "$outcome" = "failure" ]; then
-              echo "::error::Daily job ${job_name} failed"
+            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
+              echo "::error::Daily job ${job_name} ended with ${outcome}"
               bash scripts/ci/notify-ops-failure.sh "${job_name}" || true
               failed=1
             fi
           done
-          if [ "$JOB_STATUS" = "failure" ] && [ "$failed" -eq 0 ]; then
+          if { [ "$JOB_STATUS" = "failure" ] || [ "$JOB_STATUS" = "cancelled" ]; } && [ "$failed" -eq 0 ]; then
             bash scripts/ci/notify-ops-failure.sh "cron-daily" || true
             exit 1
           fi

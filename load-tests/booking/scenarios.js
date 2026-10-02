@@ -1,7 +1,7 @@
 // The composed load gate — chaos scenarios 6, 14c and 17.
 //
 // These three are the ones the chaos runbook lists as never having been run
-// (docs/enterprise/50-operations/07-chaos-test-runbook.md), and together they
+// (docs/enterprise/50-operations/06-chaos-test-runbook.md), and together they
 // are the exit gate for #837 and #1169 tracked on #874.
 //
 //   6    Load ramp to twice the expected peak, with a realistic mix. The four
@@ -23,7 +23,7 @@
 // Run:
 //   k6 run --env SCENARIO=17 --env BASE_URL=... load-tests/booking/scenarios.js
 //
-// Read docs/enterprise/50-operations/08-load-gate-runbook.md first. The target
+// Read docs/enterprise/50-operations/09-load-gate-runbook.md first. The target
 // shares the production database.
 
 import { check, sleep } from "k6";
@@ -121,7 +121,7 @@ function assertFixturesFor(name) {
     .map(([variable]) => variable);
   if (missing.length > 0) {
     throw new Error(
-      `SCENARIO=${name} cannot run: ${missing.join(", ")} not set. Either supply them or dispatch SCENARIO=all, which skips what it cannot execute. See docs/enterprise/50-operations/08-load-gate-runbook.md.`,
+      `SCENARIO=${name} cannot run: ${missing.join(", ")} not set. Either supply them or dispatch SCENARIO=all, which skips what it cannot execute. See docs/enterprise/50-operations/09-load-gate-runbook.md.`,
     );
   }
 }

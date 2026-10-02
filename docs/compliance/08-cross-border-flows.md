@@ -13,7 +13,7 @@ Cross-border = either side of the transaction is non-resident. Two flavours:
 
 Regulations:
 - **IGST Sec 16** — supply to a non-resident outside India is **zero-rated export** of services. No GST charged. Either with payment of IGST + claim refund, OR under **LUT (Letter of Undertaking)** without payment.
-- **RBI PA-CB regime** — the standalone PA-CB circular (31 Oct 2023) has been **consolidated into the Reserve Bank of India (Regulation of Payment Aggregators) Directions, 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025), where PA-CB is one of three formal PA categories. Inward flows route through an **Inward Collection Account (InCA)**, outward through an **Outward Collection Account (OCA)**. Only PAs authorised for PA-CB can collect cross-border. Razorpay holds it; we enable cross-border merchant settings + retain FEMA documentation. *(Verified 2026-06-05 — see [doc 10](./10-rbi-pa-and-payment-architecture.md).)*
+- **RBI PA-CB regime** — the standalone PA-CB circular (31 Oct 2023) has been **consolidated into the Reserve Bank of India (Regulation of Payment Aggregators) Directions, 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025), where PA-CB is one of three formal PA categories. Inward flows route through an **Inward Collection Account (InCA)**, outward through an **Outward Collection Account (OCA)**. Only PAs authorised for PA-CB can collect cross-border. Razorpay holds it; we enable cross-border merchant settings + retain FEMA documentation. *(Verified 2026-06-05 — see [doc 10](./11-rbi-pa-and-payment-architecture.md).)*
 - **FEMA reporting** — outward flow from us to consultant is in INR, no FEMA. Inward flow from foreign consumer to us is in foreign currency; the AD bank issues an inward remittance acknowledgement. For **export of services** the current artifact is the **e-FIRA / e-FIRC** (Electronic Foreign Inward Remittance Advice/Certificate) generated under RBI's **EDPMS** — the physical FIRC has been largely phased out since 2016 and now applies mainly to FDI/VC inflows. The e-FIRA is what unlocks GST export refunds. *(Verified 2026-06-05.)*
 - **Invoice in foreign currency** — must record the FX rate snapshot for INR-equivalent reporting. CGST Rule 34 mandates RBI reference rate at invoice date.
 
@@ -51,7 +51,7 @@ Regulations:
 | Form 15CA / 15CB capture | ✅ schema fields on `OrganizationPayout` | 🔴 schema only — no equivalent on B2C `Payout` | gap |
 | FIRC capture | ✅ schema field | 🔴 no equivalent on B2C | gap |
 | RBI purpose code | ✅ schema field on B2B | 🔴 missing on B2C | gap |
-| 27Q quarterly return | 🔴 see [doc 04](./04-tds-quarterly-filings.md) | 🔴 same | gap |
+| 27Q quarterly return | 🔴 see [doc 04](./05-tds-quarterly-filings.md) | 🔴 same | gap |
 
 ## Gap
 
@@ -68,7 +68,7 @@ Regulations:
 2. **B2C `Payout` schema parity with `OrganizationPayout`**: add `form15caPartCRef`, `form15cbRef`, `firceRef`, `dtaaRateApplied`, `rbiPurposeCode`, `fxRateUsed`.
 3. **Form 15CA filing automation**: integrate with a CA partner (Taxmann / TaxSpanner) to capture 15CB UDIN; auto-file 15CA Part C via the income-tax e-filing API (DSC required).
 4. **TRC / Form 10F capture at consultant onboarding** for non-residents: schema needs `ConsultantProfile.trcRef` + `form10FRef` + `noPeDeclarationRef`. Without these, DTAA rate cannot be applied and we default to 20%.
-5. **27Q quarterly return** — see [doc 04](./04-tds-quarterly-filings.md).
+5. **27Q quarterly return** — see [doc 04](./05-tds-quarterly-filings.md).
 6. **Cross-border payout gateway**: RazorpayX Bulk Payouts is INR-only. Cross-border consultant payouts route via Stripe Connect (already wired) or a dedicated PA-CB partner.
 
 ## Required
@@ -82,7 +82,7 @@ Regulations:
 2. **Checkout**: capture `buyerCountry` from billing form; store on `Payment`.
 3. **GST derivation**: pass `buyerCountry` to `deriveGstBreakdown` (already accepts it). Check LUT presence on a platform-level config; if absent, charge IGST.
 4. **Invoice template**: B2C `ConsumerInvoiceDocument` already shows zero-rated export; add LUT number + foreign-currency totals.
-5. **RBI compliance**: ensure Razorpay PA-CB merchant settings are enabled; document the platform's PA-CB obligations in [doc 10](./10-rbi-pa-and-payment-architecture.md).
+5. **RBI compliance**: ensure Razorpay PA-CB merchant settings are enabled; document the platform's PA-CB obligations in [doc 10](./11-rbi-pa-and-payment-architecture.md).
 
 ### B. Outward — non-resident consultant (B2C)
 
@@ -94,7 +94,7 @@ Regulations:
 4. **Form 15CA filing**: integrate CA partner; capture UDIN; auto-file Part C via income-tax e-filing API.
 5. **Stripe Connect routing**: when consultant is non-resident, skip RazorpayX Bulk Payouts → use Stripe Connect transfer (already supported by `lib/payments/payouts/stripe-connect.ts`).
 
-### C. Cross-border 27Q return — see [doc 04](./04-tds-quarterly-filings.md).
+### C. Cross-border 27Q return — see [doc 04](./05-tds-quarterly-filings.md).
 
 ## Acceptance
 
@@ -125,4 +125,4 @@ Regulations:
 - [RBI (Regulation of Payment Aggregators) Directions, 2025 — PA-CB now consolidated here](https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12896) *(supersedes the standalone 31 Oct 2023 PA-CB circular; verified 2026-06-05)*
 - [e-FIRA / e-FIRC under EDPMS — export-of-services remittance advice](https://razorpay.com/blog/e-fira/) *(verified 2026-06-05)*
 - [RBI purpose-code list (inward/outward remittance)](https://razorpay.com/blog/rbi-purpose-code-remittance-compliance-guide/) *(P0802/P0807/P1006 mapping verified 2026-06-05)*
-- See also: [01](./01-tds-overview.md) (Sec 195), [02](./02-gst-overview.md) (LUT, IGST Sec 16), [04](./04-tds-quarterly-filings.md) (27Q), [10](./10-rbi-pa-and-payment-architecture.md) (PA-CB architecture).
+- See also: [01](./02-tds-overview.md) (Sec 195), [02](./03-gst-overview.md) (LUT, IGST Sec 16), [04](./05-tds-quarterly-filings.md) (27Q), [10](./11-rbi-pa-and-payment-architecture.md) (PA-CB architecture).

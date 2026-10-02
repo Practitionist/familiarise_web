@@ -54,8 +54,7 @@ flowchart LR
     DEV["dev branch"]
   end
   APP["Next.js App Router<br/>AWS Lambda — 60s hard cap<br/>~26s edge cap for a non-streaming Route Handler response"]
-  TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/*"]
-  BG["netlify/functions/reconcile-ledgers-background<br/>never runs on previews or branch deploys"]
+  TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/[job]"]
   DB[("Supabase Postgres — ONE project serves dev AND prod<br/>DATABASE_URL, PG_POOL_MAX=1")]
   REDIS[("Upstash Redis<br/>UPSTASH_REDIS_REST_URL — locks, circuit breaker")]
   RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET")]
@@ -77,24 +76,19 @@ flowchart LR
   APP --> RESEND
   APP --> SENTRY
   TICK --> APP
-  BG -. "202 only; kick never runs off production (unverified there too, #1635)" .-> APP
 ```
 
-Two ceilings bound every request the Lambda serves: a page render is bounded by the 60-second synchronous execution limit because it can stream its shell early, while a Route Handler that awaits everything before returning JSON is bounded by the roughly 26-second, undocumented edge inactivity timeout instead. Because one Supabase project backs both `dev` and production, every script that touches the database — a seed, a one-off backfill, a reconciliation dry run — is a production operation and should be treated with the same care as a change shipped through the app itself.
+Two ceilings bound every request the Lambda serves: a page render is bounded by the 60-second synchronous execution limit because it can stream its shell early, while a Route Handler that awaits everything before returning JSON is bounded by the roughly 26-second edge inactivity timeout instead. Because one Supabase project backs both `dev` and production, every script that touches the database — a seed, a one-off backfill, a reconciliation dry run — is a production operation and should be treated with the same care as a change shipped through the app itself.
 
 ---
 
 ## Platform Limits, Plan, Region and the MCP
 
-The facts below were verified on 2026-09-12 and are kept in full, with sources and the measurements behind them, in `.claude/skills/deployment/netlify/`; this section is the summary that a deploy-time question usually needs.
+The facts below are kept in full, with sources and measurements, in `.claude/skills/deployment/netlify/`; this section is the summary that a deploy-time question usually needs.
 
-Functions run in Singapore (`sin`, `ap-southeast-1`), the closest region Netlify offers to the Supabase project in Mumbai; Netlify has no Mumbai region. The Next.js server handler runs on `@netlify/plugin-nextjs@5.15.13` (runtime API v2) under Node 22 at 1024 MB with streaming invocation, and `cron-tick` is the one scheduled function, every five minutes.
+Functions run in Singapore (`sin`, `ap-southeast-1`), the closest region Netlify offers to the Supabase project in Mumbai; Netlify has no Mumbai region. The Next.js server handler runs on `@netlify/plugin-nextjs@5.15.13` (runtime API v2) under Node 22 at 1024 MB with streaming invocation, and `cron-tick` (`netlify/functions/cron-tick.mts`) is the single scheduled function, firing every five minutes (`*/5 * * * *`) to dispatch bounded cleanup sweeps via `/api/cleanup/[job]`.
 
-A request has two ceilings. The Lambda execution limit is 60 seconds and this site completes 32–39 second invocations, but the edge returns a 504 at roughly 26 seconds to any response that has not started streaming, so a Route Handler that awaits a long query before returning JSON fails at ~26 s while its write lands (#1454). Fit under ~25 s, stream early, or move the work to a Background Function (15 minutes, enabled on this plan, standalone file only); no setting raises the edge cut.
-
-What that means in practice was settled in the week of 2026-09-15 and confirmed by Netlify support on 2026-09-16 (ticket #1112198): an instance created alone serves a page in 1.8–2.7 s, but an instance created while others are being created stalls about 28 s before any application code runs, requests bound for warm instances are held at the edge for the same window, and the edge answers "the edge function timed out" at ~37–38 s from receipt if nothing has started streaming — a deadline Netlify says is not configurable on Pro. No plan offers provisioned concurrency. The proof (a zero-import route that stalls identically), the research that ruled out every application-side cause, Netlify's own words, the interim keep-warm (`netlify/functions/keep-warm.mts`, every four minutes, `KEEP_WARM_CONCURRENCY`, PR #1685), and the hosting decision with its pre-committed rule are in `docs/perf/2026-09-15-cold-start-isolation-results.md`, `docs/perf/2026-09-15-cold-start-research.md`, `.claude/skills/deployment/netlify/platform-limits.md` ("What Netlify said"), and ADR 32.
-
-The per-function `memory`/`vcpu` setting works on this plan when targeted by name in `netlify.toml`, and the 2048 MB A/B of 2026-08-22 showed it does not touch the ~24 s cold-instance stall (#1124); do not re-add it without new evidence. The stall is open with a drafted support ticket at `docs/perf/netlify-stall-ticket-draft.md`.
+A request has two ceilings: the Lambda execution limit is 60 seconds, but the CDN edge returns a 504 at roughly 26–38 seconds to any non-streaming Route Handler response that has not sent its first byte. Keep Route Handlers under ~25 seconds by using bounded `LIMIT` batches or set-based SQL queries. When cold Lambda containers are provisioned concurrently under burst load, AWS Lambda container initialization in `ap-southeast-1` can stall ~28 seconds before handler code executes; Netlify Pro does not offer provisioned concurrency.
 
 The Netlify MCP (`@netlify/mcp`, configured in `.mcp.json.example`) reads projects, deploys, teams, and env vars and writes env vars; it cannot read logs or change limits. Warm its npx cache by hand before the first `/mcp` connect, because a cold install takes ~28 s against a 30 s connect timeout and a timed-out install leaves a torn cache. Function logs come from `netlify logs --url <deploy permalink> --json`; plan capabilities from `netlify api listAccountsForUser`; deploy history with per-function memory and region from `netlify api listSiteDeploys`. The recipes are in `.claude/skills/deployment/netlify/mcp-and-cli.md`.
 
@@ -920,3 +914,14 @@ netlify api listSiteDeploys --data '{"site_id": "$NETLIFY_SITE_ID"}' \
 # Trigger a manual production redeploy
 netlify deploy --build --prod
 ```
+
+---
+
+## Deprecated & Superseded Approaches
+
+The following approaches were previously tested or deployed on Netlify and have been permanently superseded. Do not re-introduce them:
+
+- **Scheduled Keep-Warm Pinger (`netlify/functions/keep-warm.mts` & `KEEP_WARM_CONCURRENCY`)**: Previously ran every 4 minutes to keep multiple Next.js Lambda containers warm. Cold-start isolation testing proved that single-instance cold starts take only ~1.8–2.7 s, whereas firing concurrent synthetic requests triggers an AWS Lambda `ap-southeast-1` container-provisioning stall (~28 s) at the Netlify edge that blocks even warm instances. Retired in favor of natural traffic plus bounded 5-minute staggered `cron-tick.mts` sweeps.
+- **2048 MB Per-Function Memory Overrides in `netlify.toml`**: Tested via A/B deployment to mitigate cold-instance stalls; measurements confirmed that raising Lambda memory above 1024 MB does not reduce the ~28 s concurrent container-provisioning stall on Netlify Pro.
+- **Standalone Background Function for Ledger Reconciliation (`netlify/functions/reconcile-ledgers-background.mts`)**: Previously used a 15-minute Netlify Background Function with multi-step database cursors (`advanceReconcileRun`, `ReconcileCursorState`) because row-by-row JS reconciliation timed out at the ~26 s edge cap. Superseded by rewriting `runLedgerReconciliation` (`scripts/reconcile/reconcile-ledgers.ts`) into 5 set-based SQL `GROUP BY` queries that complete in milliseconds inside standard Route Handlers (`/api/cleanup/reconcile-ledgers` and `/api/admin/reconcile-ledgers`).
+- **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), `netlify/functions/cron-tick.mts` for sub-15-minute sweeps, and 3 tiered GitHub Actions workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`).

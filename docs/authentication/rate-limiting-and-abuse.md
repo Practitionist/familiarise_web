@@ -101,7 +101,7 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
 | Generic sign-in errors                         | [errors.md](./errors.md)                                                                                |
 | 2FA lockout                                    | twoFactor plugin: 10 consecutive wrong codes, 15-minute pause                                           |
 | Hashed tokens at rest                          | Reset and verification identifiers stored as SHA-256                                                    |
-| CSP                                            | Report-only to Sentry, see [security headers](../enterprise/20-iam-and-security/05-security-headers.md) |
+| CSP                                            | Report-only to Sentry, see [security headers](../enterprise/20-iam-and-security/04-security-headers.md) |
 
 ## 6. Deliberately absent
 

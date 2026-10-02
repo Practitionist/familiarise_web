@@ -136,7 +136,7 @@ in Docker or use an Auth0/Okta developer tenant; the steps are in
   design, secret key rotation, failure modes.
 - [jit-and-session-refresh](02-jit-and-session-refresh.md) — JIT sequence and
   how role changes reach live sessions.
-- [rate-limiting](04-rate-limiting.md) — limits on SSO sign-in, callback and
+- [rate-limiting](03-rate-limiting.md) — limits on SSO sign-in, callback and
   the domain-check probe.
 - [organization-lifecycle](../00-foundations/05-organization-lifecycle.md) —
   org states and the verification resubmit loop.

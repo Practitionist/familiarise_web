@@ -14,7 +14,7 @@ last-reviewed: 2026-06-05
 > summary of the payout model and the four go-live steps is
 > [how payouts work](../../payments/payouts/00-how-payouts-work.md). This runbook makes flipping the flag a de-risked,
 > one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md),
-> [runbooks](03-runbooks.md).
+> [runbooks](02-runbooks.md).
 
 The disbursement code is real (`lib/payments/payouts/org-payout-service.ts`
 `submitOrgPayoutToGateway`, `razorpay-payouts.ts` `createPayout` — a live
@@ -147,7 +147,7 @@ step for the ones that need real sandbox creds):
 | Idempotency key never null                      | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
 | Real sandbox submit succeeds                    | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
 | `TDS_ENGINE` is not accidentally `LEGACY`       | inspect the deployed environment: the default is `"194O"` (Section 194-O, the e-commerce-operator posture), `LEGACY` is deprecated and must be an explicit opt-in                        |
-| `ENABLE_TDS_194O_GROSS` is off unless CA-signed | the 194-O gross-base switch stays off in production until chartered-accountant sign-off, per [TDS overview](../../compliance/01-tds-overview.md)                                         |
+| `ENABLE_TDS_194O_GROSS` is off unless CA-signed | the 194-O gross-base switch stays off in production until chartered-accountant sign-off, per [TDS overview](../../compliance/02-tds-overview.md)                                         |
 
 ## Flip procedure
 

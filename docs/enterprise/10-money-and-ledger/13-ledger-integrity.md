@@ -93,8 +93,8 @@ flowchart TD
   RPT --> OK{"findings.length<br/>== 0?"}
   OK -- yes --> CLEAN["exit 0 · ok:true"]
   OK -- no --> PAGE["exit 2 · ok:false"]
-  PAGE --> MON["monitoring alert<br/>(50-operations/04-monitoring.md)"]
-  MON --> ONCALL["on-call → runbook<br/>(50-operations/03-runbooks.md):<br/>inspect the upstream writer,<br/>post a counter-txn — never SQL-patch"]
+  PAGE --> MON["monitoring alert<br/>(50-operations/03-monitoring.md)"]
+  MON --> ONCALL["on-call → runbook<br/>(50-operations/02-runbooks.md):<br/>inspect the upstream writer,<br/>post a counter-txn — never SQL-patch"]
   CLEAN --> AUDIT["history row = integrity proof over time"]
 ```
 
@@ -133,7 +133,7 @@ There is one aggregated report per run, never one per chunk. That is what keeps 
 
 ## 4. When a finding fires
 
-A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../50-operations/03-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
+A finding is an **incident signal, never a thing to hand-patch.** The drift is a symptom; the fix is upstream (the writer that diverged), and the correction — if money is involved — is a **counter-transaction**, not a SQL `UPDATE` on a balance. See [runbooks](../50-operations/02-runbooks.md) for the per-finding triage procedure (which writer to inspect, how to post a correcting entry, when to page).
 
 The cutover (#772) shipped with this auditor returning `ok: true`, **0 findings**, across a full DB reseed — the empirical proof that the double-entry journal and every reconciled cache agree.
 
@@ -157,8 +157,8 @@ The cutover (#772) shipped with this auditor returning `ok: true`, **0 findings*
 - [Money model overview](01-money-model-overview.md) §4 — the reconciled-cache contract.
 - [Ledger & postings](03-ledger-and-postings.md) — the postings these checks re-sum.
 - [Payment legs](09-payment-legs.md) — the leg-sum invariant (`PAYMENT_LEG_SUM_MISMATCH`).
-- [Runbooks](../50-operations/03-runbooks.md) — per-finding incident response.
-- [Monitoring](../50-operations/04-monitoring.md) — alerting on report `ok:false`.
+- [Runbooks](../50-operations/02-runbooks.md) — per-finding incident response.
+- [Monitoring](../50-operations/03-monitoring.md) — alerting on report `ok:false`.
 - Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `jobs/reconcile/reconcile-ledgers.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
 
 ## The known-drift baseline

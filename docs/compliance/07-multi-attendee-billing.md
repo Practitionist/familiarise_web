@@ -13,7 +13,7 @@ A consultant can sell a **WEBINAR** or **CLASS** plan with one session and N att
 |---|---|
 | Consumer pays (B2C) or org pays for a member (B2B) | Separate `Payment` row |
 | Tax invoice issued | Separate `Invoice` (B2C) or `OrganizationInvoice` line item (B2B) |
-| 194O TDS calculated (0.1% — §393(1) Sl.8(v) code 1035 from 1-Apr-2026; see [doc 01](./01-tds-overview.md)) | Separate `TDSRecord` row, against the consultant's per-FY cumulative + ₹5L threshold |
+| 194O TDS calculated (0.1% — §393(1) Sl.8(v) code 1035 from 1-Apr-2026; see [doc 01](./02-tds-overview.md)) | Separate `TDSRecord` row, against the consultant's per-FY cumulative + ₹5L threshold |
 | GST output liability (18%) | Separate per attendee, place-of-supply per attendee's state |
 | GST TCS Sec 52 (B2C, registered consultant) — 0.5% net | Separate per attendee |
 
@@ -23,7 +23,7 @@ This matters because:
 
 - A 50-attendee webinar is 50 separate 194O transactions — each one counts toward the consultant's per-FY threshold.
 - Place of supply varies per attendee — one webinar with attendees in 5 states yields 5 different PoS rows in GSTR-1.
-- Refunding 1 attendee out of 50 needs to issue 1 credit note + reverse 1 TDS line + reduce 1 TCS line — see [doc 05](./05-refund-and-chargeback-tax-adjustments.md).
+- Refunding 1 attendee out of 50 needs to issue 1 credit note + reverse 1 TDS line + reduce 1 TCS line — see [doc 05](./06-refund-and-chargeback-tax-adjustments.md).
 
 ## When it applies
 
@@ -58,7 +58,7 @@ This matters because:
 | Gap | Severity |
 |---|---|
 | Data-path verification: does each WEBINAR/CLASS attendee produce its own Payment + Invoice + earnings record? | 🟠 |
-| Per-attendee place-of-supply capture (each attendee may be in a different state) | 🟠 — depends on [doc 02](./02-gst-overview.md) state-capture work |
+| Per-attendee place-of-supply capture (each attendee may be in a different state) | 🟠 — depends on [doc 02](./03-gst-overview.md) state-capture work |
 | GSTR-8 aggregation: ensure TCS lines are per-Payment, not per-session | 🟠 |
 | Refund of 1 attendee out of N: only that attendee's credit note + TDS / TCS adjustment, not the whole session | 🟠 |
 | Auto-allocate to multiple consultants for the same session: each consultant's TDS calculated separately | 🟡 |
@@ -70,7 +70,7 @@ This matters because:
    - 5 separate `Payment` rows.
    - 5 separate `Invoice` rows (B2C).
    - 5 separate entries in the 194O cumulative for the consultant.
-   - Per-attendee `consumerStateCode` populated (after [doc 02](./02-gst-overview.md) ships).
+   - Per-attendee `consumerStateCode` populated (after [doc 02](./03-gst-overview.md) ships).
 2. **Add an integration test** that seeds a webinar + 5 attendees in 3 different states + runs the GST/TDS aggregators; assert the per-attendee math.
 3. **Refund-of-one-attendee test**: refund attendee #3, verify only attendee #3's credit note + TDS adjustment + TCS adjustment are emitted; the other 4 are untouched.
 4. **GSTR-1 (or GSTR-8) export**: per-Payment lines, not per-Session. Verify in the export builder.
@@ -93,5 +93,5 @@ This matters because:
 ## References
 
 - [Place of supply Sec 12 IGST](https://www.cbic.gov.in/htdocs-cbec/gst/igst-act-2017-amend-finance-act-2024.pdf)
-- *No standalone rate/threshold is asserted in this doc; all figures are cross-references to [doc 01](./01-tds-overview.md) (194O 0.1% / §393) and [doc 02](./02-gst-overview.md) (GST 18% / TCS 0.5%), both web-verified 2026-06-05.*
-- See also: [02](./02-gst-overview.md) (place of supply + TCS), [05](./05-refund-and-chargeback-tax-adjustments.md) (per-attendee refund cascade), [docs/booking/](../booking/) (the booking model).
+- *No standalone rate/threshold is asserted in this doc; all figures are cross-references to [doc 01](./02-tds-overview.md) (194O 0.1% / §393) and [doc 02](./03-gst-overview.md) (GST 18% / TCS 0.5%), both web-verified 2026-06-05.*
+- See also: [02](./03-gst-overview.md) (place of supply + TCS), [05](./06-refund-and-chargeback-tax-adjustments.md) (per-attendee refund cascade), [docs/booking/](../booking/) (the booking model).

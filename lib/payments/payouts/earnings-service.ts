@@ -16,6 +16,7 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
+import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
@@ -438,15 +439,12 @@ async function resolveOrgSplit(
 // Earnings Service Functions
 // ============================================
 
-const EARNINGS_APPOINTMENT_TYPE_MAP: Record<string, AppointmentType> = {
-  CONSULTATION: "CONSULTATION",
-  SUBSCRIPTION: "SUBSCRIPTION",
-  WEBINAR: "WEBINAR",
-  CLASS: "CLASS",
-  // #1775 C-9 — a trial is a taster of its subscription plan: settled on the
-  // subscription rate card, as it is taxed as one (approval-payment.ts).
-  TRIAL: "SUBSCRIPTION",
-};
+const rawEarningsAppointmentTypeSchema = z
+  .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS", "TRIAL"])
+  .transform(
+    (t): AppointmentType => (t === "TRIAL" ? "SUBSCRIPTION" : t),
+  )
+  .catch("CONSULTATION");
 
 export interface ResolvedEarningsPayment {
   paymentForEarnings: CreateEarningsParams["payment"];
@@ -468,7 +466,6 @@ export async function resolvePaymentForEarnings(
   rawAppointmentType: string,
   db: Tx | typeof prisma = prisma,
 ): Promise<ResolvedEarningsPayment | null> {
-  if (typeof db?.payment?.findUnique !== "function") return null;
   const paymentWithAppointment = await db.payment.findUnique({
     where,
     include: {
@@ -534,12 +531,11 @@ export async function resolvePaymentForEarnings(
   if (!consultantProfile) return null;
 
   const earningsAppointmentType =
-    EARNINGS_APPOINTMENT_TYPE_MAP[rawAppointmentType] || "CONSULTATION";
+    rawEarningsAppointmentTypeSchema.parse(rawAppointmentType);
 
-  const paymentForEarnings = {
+  const paymentForEarnings: CreateEarningsParams["payment"] = {
     ...paymentWithAppointment,
     appointment: {
-      ...paymentWithAppointment.appointment,
       consultantProfile: { id: consultantProfile.id },
       webinar: paymentWithAppointment.appointment.webinar
         ? {
@@ -556,7 +552,7 @@ export async function resolvePaymentForEarnings(
         ? { id: paymentWithAppointment.appointment.trial.id }
         : null,
     },
-  } as CreateEarningsParams["payment"];
+  };
 
   return {
     paymentForEarnings,

@@ -3397,7 +3397,7 @@ enum NotificationRoutingMode {
 
 /// Admin-only platform operational events (stack traces, worker errors).
 /// Distinct from OrgAuditLog (org-visible, prose-only).
-/// See docs/enterprise/50-operations/05-system-events.md.
+/// See docs/enterprise/50-operations/04-system-events.md.
 model SystemEvent {
   id String @id @default(uuid())
 

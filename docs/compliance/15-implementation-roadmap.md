@@ -56,7 +56,7 @@ The two TDS bugs and the place-of-supply gap are real production risks today.
 - Builds on PR 1.1; threshold logic keyed off `taxEntityType`.
 - Migrate existing consultants: default `INDIVIDUAL`; ask at next login to confirm.
 
-**Acceptance**: see [doc 01](./01-tds-overview.md) and [doc 02](./02-gst-overview.md).
+**Acceptance**: see [doc 01](./02-tds-overview.md) and [doc 02](./03-gst-overview.md).
 
 ## Phase 2 — Statutory filings + tax adjustments (~3 weeks)
 
@@ -92,7 +92,7 @@ The biggest correctness phase. Refund/chargeback tax cascade is the single large
 - Engage CA + RBI counsel for Path C opinion.
 - File annual self-declaration calendar reminder.
 
-**Acceptance**: see [doc 02](./02-gst-overview.md), [doc 04](./04-tds-quarterly-filings.md), [doc 05](./05-refund-and-chargeback-tax-adjustments.md), [doc 10](./10-rbi-pa-and-payment-architecture.md).
+**Acceptance**: see [doc 02](./03-gst-overview.md), [doc 04](./05-tds-quarterly-filings.md), [doc 05](./06-refund-and-chargeback-tax-adjustments.md), [doc 10](./11-rbi-pa-and-payment-architecture.md).
 
 ## Phase 3 — Consumer Protection (~1 week)
 
@@ -112,7 +112,7 @@ The biggest correctness phase. Refund/chargeback tax cascade is the single large
 - POST to Razorpay / Stripe evidence API.
 - Persist URLs on `Dispute`.
 
-**Acceptance**: see [doc 09](./09-consumer-protection-and-grievance.md).
+**Acceptance**: see [doc 09](./10-consumer-protection-and-grievance.md).
 
 ## Phase 4 — DPDP consumer layer (~3 weeks)
 
@@ -147,7 +147,7 @@ Hard deadline: **13 May 2027** (Phase 3 / substantive obligations of DPDP Rules 
 ### PR 4.7 — `checkConsent` enforcement
 - ~~Replace stub with real lookup~~ — **already real** (fail-closed predicate in `lib/compliance/dpdp.ts`). Remaining work is *wiring*: call it from every data-touching code path (booking, payment, recording, analytics, Stream.io handoff) + seed real artifacts at signup (PR 4.1) so the guard has grants to read.
 
-**Acceptance**: see [doc 08](./08-dpdp-and-privacy.md).
+**Acceptance**: see [doc 08](./09-dpdp-and-privacy.md).
 
 ## Phase 5 — Subscription refund UI (~0.5 days)
 
@@ -177,7 +177,7 @@ Defer if non-resident traffic is < 5% of volume.
 ### PR 6.3 — 27Q quarterly return (extension of PR 2.2)
 - Same cron, separate file generator with DTAA fields.
 
-**Acceptance**: see [doc 07](./07-cross-border-flows.md).
+**Acceptance**: see [doc 07](./08-cross-border-flows.md).
 
 ## Phase 7 — Consultant onboarding (~1 week)
 
@@ -192,7 +192,7 @@ Defer if non-resident traffic is < 5% of volume.
 - Legal name + state + GSTIN (when present).
 - Customer-care channel.
 
-**Acceptance**: see [doc 09](./09-consumer-protection-and-grievance.md), [doc 02](./02-gst-overview.md).
+**Acceptance**: see [doc 09](./10-consumer-protection-and-grievance.md), [doc 02](./03-gst-overview.md).
 
 ## Phase 8 — Architecture memos + cleanup (~1 week)
 
@@ -200,7 +200,7 @@ Defer if non-resident traffic is < 5% of volume.
 - See PR 2.5 above.
 
 ### PR 8.2 — Removed-levies cleanup grep
-- Run the grep from [doc 11](./11-removed-and-deprecated-levies.md). Remove or annotate any stale references.
+- Run the grep from [doc 11](./13-removed-and-deprecated-levies.md). Remove or annotate any stale references.
 
 ### PR 8.3 — Doc drift pass
 - `docs/finances/`, `docs/payments/`, anywhere mentioning Equalisation Levy, 206AB, 206C(1H), ZestMoney, internal IRP — annotate with "removed in 2024–2025" or remove.
@@ -231,14 +231,14 @@ Before declaring B2C compliance "production-grade":
 
 ## Open product / business decisions (block scope, not code)
 
-1. **Consultant GST registration policy** ([doc 02](./02-gst-overview.md)): onboard unregistered + absorb operational complexity, OR block at onboarding?
-2. **Cross-border consumer roadmap** ([doc 07](./07-cross-border-flows.md)): if Phase 6 PR 6.1 wasn't going to be used in v1, scope it down.
-3. **Consultant entity-type self-declaration UX** ([doc 01](./01-tds-overview.md)): force at next login OR progressive disclosure?
+1. **Consultant GST registration policy** ([doc 02](./03-gst-overview.md)): onboard unregistered + absorb operational complexity, OR block at onboarding?
+2. **Cross-border consumer roadmap** ([doc 07](./08-cross-border-flows.md)): if Phase 6 PR 6.1 wasn't going to be used in v1, scope it down.
+3. **Consultant entity-type self-declaration UX** ([doc 01](./02-tds-overview.md)): force at next login OR progressive disclosure?
 4. **TDS back-correction policy** (PR 1.1): refund excess withholding to consultants (apologies + comms) OR grandfather (no comms)?
-5. **Multilingual scope** ([doc 08](./08-dpdp-and-privacy.md)): top 4 languages OR all 22 Schedule VIII?
+5. **Multilingual scope** ([doc 08](./09-dpdp-and-privacy.md)): top 4 languages OR all 22 Schedule VIII?
 
 These are flagged at the top of #738 and need product+legal sign-off before code starts on the affected PRs.
 
 ## References
 
-See [14-references.md](./14-references.md).
+See [16-references.md](./16-references.md).

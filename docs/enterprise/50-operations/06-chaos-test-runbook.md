@@ -221,7 +221,7 @@ storm — needed a load generator that drives the real write paths, and until
 #1319 there was none. That harness now exists under `load-tests/booking/`,
 composed by `scenarios.js` and dispatched by the `Load Gate` workflow, with its
 own operating instructions in
-[08-load-gate-runbook.md](08-load-gate-runbook.md). It is built and has not yet
+[09-load-gate-runbook.md](09-load-gate-runbook.md). It is built and has not yet
 been executed; #874 is closed by running it and recording the numbers.
 
 Two things it discovered are worth reading before planning any run of the

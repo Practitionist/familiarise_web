@@ -21,7 +21,7 @@ The Consumer Protection Act 2019 + Consumer Protection (E-Commerce) Rules 2020 �
 | 6 | **Section 18 CPA + CCPA Dark Patterns Guidelines 2023** | The CCPA's **Guidelines for Prevention and Regulation of Dark Patterns, 2023** (issued 30 Nov 2023 under Sec 18 CPA 2019) list **13 prohibited dark patterns** (false urgency, basket sneaking, confirm shaming, subscription trap, drip pricing, etc.) and bind every e-commerce platform. A June 2025 CCPA advisory directed platforms to self-audit within 3 months. *(Verified 2026-06-05.)* |
 | 7 | **Section 17 CPA** — Consumer grievance | Establishes the Central Consumer Protection Authority (CCPA) as the recourse if our internal grievance flow fails. |
 
-**Note**: this is a SEPARATE grievance flow from DPDP's grievance officer ([doc 08](./08-dpdp-and-privacy.md)). They cover different complaint types:
+**Note**: this is a SEPARATE grievance flow from DPDP's grievance officer ([doc 08](./09-dpdp-and-privacy.md)). They cover different complaint types:
 - Consumer Protection officer: refund delays, service quality, misrepresentation, billing disputes.
 - DPDP officer: data privacy, consent, erasure requests.
 
@@ -164,7 +164,7 @@ On `app/explore/consultants/[slug]/page.tsx` (or wherever the public profile liv
 
 Audit the consumer UX against the **CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023** (13 specified patterns). Highest-risk surfaces for this product:
 1. **Drip pricing / basket sneaking** — show GST, platform fees, and any add-ons up front in the booking flow; no fees that appear only at the final step.
-2. **Subscription trap** — make cancel/auto-renew as easy as sign-up; clear renewal-date + amount disclosure (ties to subscription refund UI, [doc 13](./13-implementation-roadmap.md) Phase 5).
+2. **Subscription trap** — make cancel/auto-renew as easy as sign-up; clear renewal-date + amount disclosure (ties to subscription refund UI, [doc 13](./15-implementation-roadmap.md) Phase 5).
 3. **False urgency / confirm shaming** — no fake "only N slots left" timers; no guilt-worded opt-outs on marketing/consent prompts.
 4. Produce a short self-declaration of compliance (the CCPA has solicited these from e-commerce platforms) and keep it with the grievance/legal pages.
 
@@ -191,4 +191,4 @@ Audit the consumer UX against the **CCPA Guidelines for Prevention and Regulatio
 - [RBI Harmonisation of TAT & Customer Compensation for Failed Transactions (Sep 2019 — T+5 card/merchant auto-reversal)](https://www.rbi.org.in/commonman/English/scripts/Notification.aspx?Id=3074) *(verified 2026-06-05)*
 - [Consumer Helpline (CCPA)](https://consumerhelpline.gov.in/)
 - [E-Commerce Rules summary (IndiaLaw)](https://www.indialaw.in/blog/civil/consumer-protection-e-commerce-rules/)
-- See also: [08](./08-dpdp-and-privacy.md) (DPDP grievance — different officer), [05](./05-refund-and-chargeback-tax-adjustments.md) (refund cascade).
+- See also: [08](./09-dpdp-and-privacy.md) (DPDP grievance — different officer), [05](./06-refund-and-chargeback-tax-adjustments.md) (refund cascade).

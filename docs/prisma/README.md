@@ -14,13 +14,10 @@ runbooks in the order those runbooks actually execute — the reset finalises th
 schema, and the cutover then puts it under versioned migrations — with the
 completed Prisma 7 upgrade last because it is history rather than instruction.
 
-| Document                      | What it is                                                                                                                                                                                                       | Read it when                                                                                 |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `00-schema-map.md`            | Twenty-four domain diagrams of the Prisma schema, plus the enum reference table.                                                                                                                                 | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
-| `01-migrations-guide.md`      | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable. | You need to know what a Prisma command does, or how a class of change is handled in general. |
-| `02-pre-mvp-reset-runbook.md` | The ordered procedure for the one-time reset that finalises the launch schema, and the reasoning behind having no backfill migrations.                                                                           | On reset day, or when asked why a change has no backfill.                                    |
-| `03-cutover-to-migrations.md` | The launch-day runbook that puts this database under versioned migrations, including the sidecar step that a generated baseline would otherwise miss.                                                            | On launch day, or when planning it.                                                          |
-| `04-prisma-7-migration.md`    | The historical record of the Prisma 6 to 7 upgrade — the eight issues hit and how each was resolved. The upgrade is complete; this is kept for reference.                                                        | Debugging something that smells like a Prisma 7 client or adapter problem.                   |
+| Document               | What it is                                                                                                                                                                                                       | Read it when                                                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `00-schema-map.md`     | Twenty-four domain diagrams of the Prisma schema, plus the enum reference table.                                                                                                                                 | Orienting in an unfamiliar part of the schema, or tracing how two models relate.             |
+| `01-migrations-guide.md` | The general-purpose reference for Prisma Migrate — every command, safe and dangerous operations, expand and contract, drift, rollback, troubleshooting. Written against a fictional schema so it stays portable. | You need to know what a Prisma command does, or how a class of change is handled in general. |
 
 ## The one thing to know first
 
@@ -33,12 +30,12 @@ separately from `prisma/sql/` and asserted by `npm run db:assert-sidecars`.
 That means `01-migrations-guide.md` describes the world this repository is moving
 towards rather than the one it is in. Its command reference and its treatment of
 safe and dangerous operations apply in full; its workflow chapters apply after
-the cutover. `03-cutover-to-migrations.md` is the bridge between the two.
+the cutover.
 
 Because one Postgres project serves both development and production, every push,
 seed and data script is a production operation. The current schema is also
 frozen: additive changes only, with renames, drops and type changes deferred to
-reset day. Both rules are stated at the top of `prisma/schema.prisma` and
+launch cutover. Both rules are stated at the top of `prisma/schema.prisma` and
 enforced in review.
 
 ## Related material
@@ -51,3 +48,11 @@ version of this page for an agent that is about to edit the schema.
 Keeping the seed suite in sync with a schema change is covered by the
 `/maintenance` skill. The money invariants that the sidecars enforce, and why
 they cannot live in the Prisma schema, are covered by `/finance`.
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Two-copy SQL sidecar duplication (`apply-sidecars.ts` inline regex arrays + `prisma/sql/*.sql`)**: Previously, sidecar constraint names were hardcoded in multiple verification scripts while SQL definitions lived in `prisma/sql/*.sql`. Superseded by a single parser (`scripts/db/sidecar-objects.ts`) that derives all expected `CHECK` constraints, partial unique indexes, exclusion constraints, and triggers directly from `prisma/sql/*.sql`.
+- **Live-DB CI drift blocking feature PRs**: Running `check-db-drift.ts` against the shared live database inside PR checks blocked unmerged schema/auth PRs whenever a branch added an enum label or column not yet pushed to live Postgres. Superseded by running `prisma db push` + `apply-sidecars.ts` + `check-db-drift.ts` against a hermetic `postgres:17` service container in `ci.yaml` on PRs, while keeping `.github/workflows/db-live-drift.yml` as a read-only live-DB monitor on `dev`/cron.
+- **One-off constraint swap & migration logs (`scripts/db/swap-occurrence-overlap-constraint.ts`, `02-pre-mvp-reset-runbook.md`, `03-cutover-to-migrations.md`, `04-prisma-7-migration.md`)**: Retired after the Prisma 7 adapter cutover (`@prisma/adapter-pg` in `lib/prisma.ts`) and `slot_no_confirmed_overlap` GiST constraint were finalized in `prisma/sql/slot-exclusion.sql`. Do not recreate standalone migration scripts outside `prisma/sql/*.sql`.

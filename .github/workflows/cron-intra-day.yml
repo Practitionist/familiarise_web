@@ -69,11 +69,26 @@ jobs:
       - name: Generate Prisma client
         run: npx --no-install prisma generate
 
+      - name: Validate dispatch job slug
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          case "${INPUT_JOB}" in
+            ""|all|reconcile-orphaned-sessions|alert-dispute-deadlines|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-disputes|reconcile-payout-status|transfer-expiring-recordings)
+              ;;
+            *)
+              echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
+              exit 1
+              ;;
+          esac
+
       - name: Reconcile orphaned sessions
         id: reconcile-orphaned-sessions
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '25,55 * * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-orphaned-sessions'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/meetings/reconcile-orphaned-sessions.ts
 
@@ -82,6 +97,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-dispute-deadlines'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/disputes/alert-dispute-deadlines.ts
 
@@ -90,6 +106,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'databreach-deadline-alerts'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/compliance/databreach-deadline-alerts.ts
 
@@ -98,6 +115,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-occurrence-availability'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/appointments/reconcile-occurrence-availability.ts
 
@@ -106,6 +124,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '52 */4 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'handle-stuck-payouts'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/payouts/handle-stuck-payouts.ts
 
@@ -114,6 +133,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-disputes'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/disputes/reconcile-disputes.ts
 
@@ -122,6 +142,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-payout-status'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/payouts/reconcile-payout-status.ts
 
@@ -130,6 +151,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'transfer-expiring-recordings'))
+        timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/transfer-expiring-recordings.ts
 
@@ -154,13 +176,13 @@ jobs:
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"
-            if [ "$outcome" = "failure" ]; then
-              echo "::error::Intra-day job ${job_name} failed"
+            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
+              echo "::error::Intra-day job ${job_name} ended with ${outcome}"
               bash scripts/ci/notify-ops-failure.sh "${job_name}" || true
               failed=1
             fi
           done
-          if [ "$JOB_STATUS" = "failure" ] && [ "$failed" -eq 0 ]; then
+          if { [ "$JOB_STATUS" = "failure" ] || [ "$JOB_STATUS" = "cancelled" ]; } && [ "$failed" -eq 0 ]; then
             bash scripts/ci/notify-ops-failure.sh "cron-intra-day" || true
             exit 1
           fi

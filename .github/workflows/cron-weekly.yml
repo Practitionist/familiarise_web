@@ -95,11 +95,26 @@ jobs:
       - name: Generate Prisma client
         run: npx --no-install prisma generate
 
+      - name: Validate dispatch job slug
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          case "${INPUT_JOB}" in
+            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|gst-outward-register-export|tds-26q-draft-export|tds-return-draft|gstr8-draft-export)
+              ;;
+            *)
+              echo "::error::Unknown weekly/statutory job slug '${INPUT_JOB}'"
+              exit 1
+              ;;
+          esac
+
       - name: Archive webhook events
         id: archive-webhook-events
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '25 0 * * 0') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'archive-webhook-events'))
+        timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/archive-webhook-events.ts
 
@@ -108,6 +123,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '25 0 * * 0') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'consent-retention-sweeper'))
+        timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/compliance/consent-retention-sweeper.ts
 
@@ -116,6 +132,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 20 * * 1') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'create-payout-batch'))
+        timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/payouts/create-payout-batch.ts
 
@@ -124,6 +141,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 21 * * 1') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'process-payouts'))
+        timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/payouts/process-payouts.ts
 
@@ -132,6 +150,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 4 1 * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'settle-invoice-accruals'))
+        timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/settle-invoice-accruals.ts
 
@@ -140,6 +159,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '40 1 3 * *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'gst-outward-register-export'))
+        timeout-minutes: 10
         continue-on-error: true
         env:
           GST_REGISTER_PERIOD_START: ${{ inputs.period_start }}
@@ -160,6 +180,7 @@ jobs:
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '20 1 5 1,4,7,10 *') ||
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'tds-26q-draft-export' || inputs.job == 'tds-return-draft'))
+        timeout-minutes: 10
         continue-on-error: true
         env:
           TDS_RETURN_FY: ${{ inputs.financialYear }}
@@ -170,6 +191,7 @@ jobs:
         id: gstr8-draft-export
         if: >-
           github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'gstr8-draft-export')
+        timeout-minutes: 10
         continue-on-error: true
         env:
           GSTR8_MONTH_START: ${{ inputs.month_start }}
@@ -196,13 +218,13 @@ jobs:
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"
-            if [ "$outcome" = "failure" ]; then
-              echo "::error::Weekly/statutory job ${job_name} failed"
+            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
+              echo "::error::Weekly/statutory job ${job_name} ended with ${outcome}"
               bash scripts/ci/notify-ops-failure.sh "${job_name}" || true
               failed=1
             fi
           done
-          if [ "$JOB_STATUS" = "failure" ] && [ "$failed" -eq 0 ]; then
+          if { [ "$JOB_STATUS" = "failure" ] || [ "$JOB_STATUS" = "cancelled" ]; } && [ "$failed" -eq 0 ]; then
             bash scripts/ci/notify-ops-failure.sh "cron-weekly" || true
             exit 1
           fi

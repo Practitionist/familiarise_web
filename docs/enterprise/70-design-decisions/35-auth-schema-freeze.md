@@ -69,7 +69,7 @@ this shape (D1–D28 of the #1878 review) are summarized below.
 | Decision              | Outcome                                                                                                                                       |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1–D2                 | BetterAuth 1.7.6; keep the two PRs                                                                                                            |
-| D3–D6, D24            | DB-only sessions, no cap, no device columns, 30-day sliding; operators capped at 12h ([ADR 35](35-user-session-visibility-and-revocation.md)) |
+| D3–D6, D24            | DB-only sessions, no cap, no device columns, 30-day sliding; operators capped at 12h ([ADR 35](34-user-session-visibility-and-revocation.md)) |
 | D7, D25               | Mandatory TOTP for staff/admin only; operators use credential sign-in                                                                         |
 | D8, D23, D26          | Staff created with `createUser` + reset link; ADMIN suspend/reactivate and resend                                                             |
 | D9                    | Impersonation off; `Session.impersonatedBy` kept                                                                                              |

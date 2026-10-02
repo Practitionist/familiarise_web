@@ -148,7 +148,7 @@ The table below maps each concern to its source file.
 | `components/collaborators/`                                      | `CollaboratorsTab`, `InvitationsPanel`, `HostedPlanCard`, `RevenueSplitBar` and friends                                                                                                                   |
 | `actions/stream/chat/channel.action.ts`                          | `createCollaboratorChannel()`                                                                                                                                                                             |
 | `schemas/collaborators.ts`                                       | Zod schemas, including the per-plan-type role subsets                                                                                                                                                     |
-| `prisma/seedFiles/14b-create-collaborators.ts`                   | Seed data                                                                                                                                                                                                 |
+| `prisma/seedFiles/13b-create-collaborators.ts`                   | Seed data                                                                                                                                                                                                 |
 
 ---
 

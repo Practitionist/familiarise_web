@@ -174,7 +174,7 @@ These jobs assemble and submit the weekly payout batch, reconcile in-flight tran
 | Workflow                         | Script                                           | Cron (UTC)            | What it does                                                                                                                                                             |
 | -------------------------------- | ------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `create-payout-batch`            | `jobs/payouts/create-payout-batch.ts`            | `0 20 * * 1` (Mon)    | Assembles the weekly payout batch.                                                                                                                                       |
-| `process-payouts`                | `jobs/payouts/process-payouts.ts`                | `0 21 * * 1` (Mon)    | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`live-payout-go-live-runbook`](06-live-payout-go-live-runbook.md). |
+| `process-payouts`                | `jobs/payouts/process-payouts.ts`                | `0 21 * * 1` (Mon)    | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`live-payout-go-live-runbook`](05-live-payout-go-live-runbook.md). |
 | `handle-stuck-payouts`           | `jobs/payouts/handle-stuck-payouts.ts`           | `0 */4 * * *`         | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack).          |
 | `reconcile-payout-status`        | `jobs/payouts/reconcile-payout-status.ts`        | `0 */6 * * *`         | Pulls gateway truth for in-flight payouts.                                                                                                                               |
 | `release-earnings`               | `jobs/earnings/release-earnings.ts`              | `0 * * * *` (hourly)  | PENDING → READY when `holdUntil` lapses.                                                                                                                                 |
@@ -779,7 +779,7 @@ and redeploy. Re-enable in the same change that fixes the allow-list.
 
 **Never add** `*`, `data:` in `script-src`, or wildcard schemes. The allow-list
 and per-directive rationale:
-[`05-security-headers.md`](../20-iam-and-security/05-security-headers.md).
+[`04-security-headers.md`](../20-iam-and-security/04-security-headers.md).
 
 ## SSO secret key rotation
 

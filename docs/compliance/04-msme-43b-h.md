@@ -85,7 +85,7 @@ So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`m
 
 ## Related disclosure (not 43B(h), but adjacent)
 
-**Form MSME-1** is the half-yearly ROC/MCA return (Companies Act, not Income-tax Act) disclosing payments to Micro & Small suppliers **outstanding beyond 45 days**. Due **31 Oct** (Apr–Sep half) and **30 Apr** (Oct–Mar half). It is a *company-law* obligation that runs parallel to 43B(h); if Practitionist (the company) ever owes an MSE supplier past 45 days it must file MSME-1. Tracked in the [compliance calendar (doc 12)](./12-india-compliance-calendar.md). Penalty: ₹20,000 + ₹1,000/day continuing (cap ₹3 lakh) under Companies Act §405(4).
+**Form MSME-1** is the half-yearly ROC/MCA return (Companies Act, not Income-tax Act) disclosing payments to Micro & Small suppliers **outstanding beyond 45 days**. Due **31 Oct** (Apr–Sep half) and **30 Apr** (Oct–Mar half). It is a *company-law* obligation that runs parallel to 43B(h); if Practitionist (the company) ever owes an MSE supplier past 45 days it must file MSME-1. Tracked in the [compliance calendar (doc 12)](./14-india-compliance-calendar.md). Penalty: ₹20,000 + ₹1,000/day continuing (cap ₹3 lakh) under Companies Act §405(4).
 
 ## References
 
@@ -96,4 +96,4 @@ So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`m
 - [Form MSME-1 half-yearly due dates 31 Oct / 30 Apr (ClearTax)](https://cleartax.in/s/form-msme-1) — *verified 2026-06-05*
 - [Udyam registration portal](https://udyamregistration.gov.in/)
 - [CBDT Circular 1/2024 on 43B(h)](https://incometaxindia.gov.in/communications/circular/circular-no-1-2024.pdf)
-- See also: [04-tds-quarterly-filings.md](./04-tds-quarterly-filings.md) (Form 26Q→140 includes MSME flags), [12-india-compliance-calendar.md](./12-india-compliance-calendar.md) (MSME-1 dates).
+- See also: [05-tds-quarterly-filings.md](./05-tds-quarterly-filings.md) (Form 26Q→140 includes MSME flags), [14-india-compliance-calendar.md](./14-india-compliance-calendar.md) (MSME-1 dates).

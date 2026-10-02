@@ -1,6 +1,6 @@
 # 05 — Refund & chargeback tax adjustments
 
-> **Status:** 🟢 adjustment hooks fully wired; the filing EXPORTS remain deferred (#778 §F). Every statutory adjustment row is now written at event time: the refund cascade mints the Sec 34 `CreditNote`, calls `recordTdsReversal` (negative `TDSRecord` **and** a `TdsAdjustment` filing artifact), and emits `GstTcsAdjustment` when TCS was collected; the lost-chargeback handler has full parity (#738-B) — TDS reversal for paid-out earnings, a credit note idempotent on `CreditNote.disputeId`, and the TCS adjustment. The TCS rows stay inert until Sec 52 collection itself ships (see [doc 02](./02-gst-overview.md)). What remains deferred is reading these rows out: the GSTR-1/3B/8 exports and the Form 140/144 FVU generation.
+> **Status:** 🟢 adjustment hooks fully wired; the filing EXPORTS remain deferred (#778 §F). Every statutory adjustment row is now written at event time: the refund cascade mints the Sec 34 `CreditNote`, calls `recordTdsReversal` (negative `TDSRecord` **and** a `TdsAdjustment` filing artifact), and emits `GstTcsAdjustment` when TCS was collected; the lost-chargeback handler has full parity (#738-B) — TDS reversal for paid-out earnings, a credit note idempotent on `CreditNote.disputeId`, and the TCS adjustment. The TCS rows stay inert until Sec 52 collection itself ships (see [doc 02](./03-gst-overview.md)). What remains deferred is reading these rows out: the GSTR-1/3B/8 exports and the Form 140/144 FVU generation.
 > **Audience:** payment / refund / dispute code; finance ops.
 > **Last reviewed:** 2026-06-10 (chargeback parity + TdsAdjustment/GstTcsAdjustment write hooks wired in the #778 finance-correctness PR; prior review 2026-06-07)
 > **Linked issues:** [#738 Items A, B, H](https://github.com/Practitionist/familiarise_web/issues/738) (this is the largest gap added in #738).
@@ -13,7 +13,7 @@ When a payment is refunded (or a chargeback is lost), the **money already moved*
 |---|---|---|
 | **Income-tax TDS (Sec 194O / 195; §393 under the 2025 Act from 1-Apr-2026)** | Already deposited to govt by 7th of following month | Reverse-credit in **next** 26Q→Form 140 / 27Q→Form 144 quarterly return as a negative adjustment line. **Now wired (#813):** `recordTdsReversal` writes a negative `TDSRecord` capped at the original withholding; if the original record is unfiled the reversal copies its FY/quarter, if already filed it stamps the current IST-reckoned FY/quarter (the adjust-against-future-liability convention). Cross-FY adjustments that exceed the consultant's current-quarter liability still ultimately require an income-tax refund claim by the consultant, and correction statements for already-filed quarters remain a manual CA action; the policy is provisional pending CA sign-off. |
 | **GST output liability** (the GST charged on the original invoice) | Already discharged in GSTR-3B for the month of supply | Issue a **GST credit note** under CGST **Sec 34** (Rule 53 content/format), link to original invoice, and net it off in the next month's GSTR-1 / 3B. *(Sec 34/GSTR mechanics unaffected by GST 2.0 — verified 2026-06-05.)* |
-| **GST TCS (Sec 52)** — B2C only | Already collected from consultant + deposited via GSTR-8 | Reduce the next-month GSTR-8 by the refunded TCS, OR file a GSTR-8 amendment if the supply month already passed. (TCS rate is 0.5% since 10-Jul-2024 — see [doc 02](./02-gst-overview.md).) |
+| **GST TCS (Sec 52)** — B2C only | Already collected from consultant + deposited via GSTR-8 | Reduce the next-month GSTR-8 by the refunded TCS, OR file a GSTR-8 amendment if the supply month already passed. (TCS rate is 0.5% since 10-Jul-2024 — see [doc 02](./03-gst-overview.md).) |
 | **Consultant earnings ledger** | Already credited to consultant's earnings | Reverse via the existing PaymentLeg negative-leg cascade. ✅ already works. |
 | **Org earnings ledger** (B2B) | Already credited to org's earnings + accrued in the next invoice | Reverse via existing cascade. ✅ already works. |
 | **Org payout / consultant payout** (already disbursed) | Money is gone | **Clawback** flow needed — see #715/#716 epics. |
@@ -54,13 +54,13 @@ Of the first three rows, the **GST credit note** and the **income-tax TDS revers
 | `recordTdsReversal` (`lib/payments/tax/tds-service.ts`), called from `refund.ts` + `payouts/earnings-service.ts` | Writes a negative `isReversal` `TDSRecord` on refund (integer-paise proportion, capped at the original, filed-aware FY/quarter) | ✅ TDS reversal wired (#813) |
 | `mintRefundCreditNote` (called from the cascade + the gateway-refund webhook) | Mints the Sec 34 GST credit note, idempotent on `refundId` | ✅ GST credit note wired |
 | `TdsAdjustment` write hook | ✅ wired (#778 §D) — `recordTdsReversal` now also emits a `TdsAdjustment` row (the filing artifact for the Form 140/144 export) alongside the negative `TDSRecord` (which stays the YTD/dedup source) | ✅ |
-| `GstTcsAdjustment` write hook | ✅ wired (#738) — both the refund cascade and the lost-dispute handler emit a signed-negative row when `Payment.gstTcsCollectedPaise` is set; inert until Sec 52 collection ships (see [doc 02](./02-gst-overview.md)) | ✅ |
+| `GstTcsAdjustment` write hook | ✅ wired (#738) — both the refund cascade and the lost-dispute handler emit a signed-negative row when `Payment.gstTcsCollectedPaise` is set; inert until Sec 52 collection ships (see [doc 02](./03-gst-overview.md)) | ✅ |
 | `CreditNote` model (schema) | **Present** — per-org `creditNoteNumber` + `fiscalYear`, `@@unique([organizationId, creditNoteNumber])`, `refundId @unique` (idempotent minting, #776), Sec 34 invoice FK | ✅ schema-final |
 | `TdsAdjustment` model (schema) | **Present** — signed `amountPaise`, `financialYear`/`quarter`, `reportedInForm26Q` | ✅ schema-final |
 | `GstTcsAdjustment` model (schema) | **Present** — signed `amountPaise`, FK to `GstTcsBatch` | ✅ schema-final |
 | GST output reversal in GSTR-1/3B (export reads `CreditNote`) | **Missing** (no GSTR-1 export yet) | 🔴 |
 | 26Q→140 / 27Q→144 negative-adjustment line (FVU reads `TdsAdjustment`) | **Missing** | 🔴 |
-| Monthly GSTR-8 amendment for TCS reversal (reads `GstTcsAdjustment`) | **Missing** (Sec 52 collection itself stubbed — see [doc 02](./02-gst-overview.md)) | 🔴 |
+| Monthly GSTR-8 amendment for TCS reversal (reads `GstTcsAdjustment`) | **Missing** (Sec 52 collection itself stubbed — see [doc 02](./03-gst-overview.md)) | 🔴 |
 | `app/api/webhooks/utils.ts:955–1104` | Dispute auto-hold of consultant earnings | ✅ holds money correctly |
 | Chargeback tax-adjustment trigger on dispute LOST | ✅ wired (#738-B) — the LOST/CHARGE_REFUNDED branch reverses TDS for paid-out earnings via `recordTdsReversal` (the cap prevents double-reversal after a prior refund), mints the Sec 34 credit note idempotently on `CreditNote.disputeId`, and emits `GstTcsAdjustment` when TCS was collected | ✅ |
 
@@ -170,8 +170,8 @@ await applyTaxAdjustments({
 
 ### D. Quarterly / monthly aggregation pickup
 
-- The cron in [doc 04](./04-tds-quarterly-filings.md) (FVU generator) needs to include `TdsAdjustment` rows where `reportedInForm26Q = false` as **negative lines** in the next return.
-- The cron in [doc 02](./02-gst-overview.md) (GSTR-8 batcher) needs to include `GstTcsAdjustment` rows as **negative lines** in the next GSTR-8.
+- The cron in [doc 04](./05-tds-quarterly-filings.md) (FVU generator) needs to include `TdsAdjustment` rows where `reportedInForm26Q = false` as **negative lines** in the next return.
+- The cron in [doc 02](./03-gst-overview.md) (GSTR-8 batcher) needs to include `GstTcsAdjustment` rows as **negative lines** in the next GSTR-8.
 - The GSTR-1 export (not yet built) needs to read `CreditNote WHERE reportedInGstr1 = false` and include them in the credit-notes section.
 
 ### E. Cross-FY edge case
@@ -207,4 +207,4 @@ The criteria below are the target end state for the full consolidation flow. As 
 - [Sec 52 GSTR-8 amendments (TaxGuru)](https://taxguru.in/goods-and-service-tax/gstr-8-amendment-rules.html)
 - [TDS adjustment vs refund-claim guidance (CBDT)](https://www.incometax.gov.in/iec/foportal/help/individual/return-applicable-1)
 - *Schema landed: `CreditNote` / `TdsAdjustment` / `GstTcsAdjustment` verified present in `prisma/schema.prisma`, 2026-06-05; numbering in `lib/payments/billing/credit-note-numbering.ts`.*
-- See also: [04](./04-tds-quarterly-filings.md) (26Q→Form 140 negative lines), [02](./02-gst-overview.md), [#715](https://github.com/Practitionist/familiarise_web/issues/715) (clawback for already-disbursed payouts), [#716](https://github.com/Practitionist/familiarise_web/issues/716) (refund unification epic).
+- See also: [04](./05-tds-quarterly-filings.md) (26Q→Form 140 negative lines), [02](./03-gst-overview.md), [#715](https://github.com/Practitionist/familiarise_web/issues/715) (clawback for already-disbursed payouts), [#716](https://github.com/Practitionist/familiarise_web/issues/716) (refund unification epic).

@@ -3,14 +3,14 @@
 // the workflow without a checked-in fixture file.
 //
 // Read the runbook before setting these:
-// docs/enterprise/50-operations/08-load-gate-runbook.md
+// docs/enterprise/50-operations/09-load-gate-runbook.md
 
 /** Read a required variable, failing loudly in setup() rather than per-VU. */
 export function required(name) {
   const value = __ENV[name];
   if (!value) {
     throw new Error(
-      `${name} is required — see docs/enterprise/50-operations/08-load-gate-runbook.md`,
+      `${name} is required — see docs/enterprise/50-operations/09-load-gate-runbook.md`,
     );
   }
   return value;

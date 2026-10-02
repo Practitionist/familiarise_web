@@ -226,7 +226,7 @@ function mergeUser(
  * so every event is a transfer out of India, which DPDP §16 governs
  * separately from the consent that would justify the processing. Consent and
  * transfer are different gates, and only one of them is ours to set. See
- * docs/compliance/08-dpdp-and-privacy.md and the preconditions in
+ * docs/compliance/09-dpdp-and-privacy.md and the preconditions in
  * docs/observability/sentry/05-identity-and-triage.md.
  *
  * Consequence of off: the back to `Users: 0` on most issues, which is the

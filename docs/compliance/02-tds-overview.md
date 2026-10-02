@@ -39,7 +39,7 @@ Verified old→new mapping (sources: Finpracto / Tax2win / Jurishour concordance
 | 195                            | §393(2) Table Sl.17     | **1057**        | rates-in-force / DTAA |
 | 206AA / 206CC (no-PAN)         | **§397(2)**             | —               | 20% (retained)        |
 
-**Filing impact (verified):** for Q4 FY 2025-26 (up to 31 Mar 2026) returns still use the old section numbers + old form names. For Tax Year 2026-27 onward, a return filed with an old section number (e.g. "194O") **triggers a system-level validation error at upload**. Form names also change — see [doc 04](./04-tds-quarterly-filings.md) (26Q → Form 140, 27Q → Form 144, 16A → Form 131).
+**Filing impact (verified):** for Q4 FY 2025-26 (up to 31 Mar 2026) returns still use the old section numbers + old form names. For Tax Year 2026-27 onward, a return filed with an old section number (e.g. "194O") **triggers a system-level validation error at upload**. Form names also change — see [doc 04](./05-tds-quarterly-filings.md) (26Q → Form 140, 27Q → Form 144, 16A → Form 131).
 
 🟡 **Code-vs-law divergence (verified 2026-06-05):** the code still stores and emits the **old labels** — `lib/compliance/tds.ts` `TDS_SECTION_DEFAULTS` keys (`"194O"`, `"194J"`, `"194C"`), `TDSRecord.tdsSection`, and `OrganizationPayout.tdsSectionApplied` all carry `"194O"`/`"194J"`/`"194C"`. These are correct for _internal classification_ but **must be translated to §393 payment codes before any return upload for FY 2026-27** or the FVU/portal upload will reject. This is a filing-export concern, not a withholding-math concern (the _rates_ are unchanged). Tracked as an engineering follow-up; the FVU generator (doc 04) is the right place to map label → code.
 
@@ -59,7 +59,7 @@ Verified old→new mapping (sources: Finpracto / Tax2win / Jurishour concordance
 
 ### Cross-border
 
-- Non-resident consultant on either rail → **Sec 195**. See [doc 07](./07-cross-border-flows.md) for DTAA, Form 10F, TRC, Form 15CA/CB, FIRC.
+- Non-resident consultant on either rail → **Sec 195**. See [doc 07](./08-cross-border-flows.md) for DTAA, Form 10F, TRC, Form 15CA/CB, FIRC.
 - Non-resident consumer paying a resident consultant → still 194O on the resident consultant.
 
 ## Current code
@@ -88,7 +88,7 @@ Both rails now derive the financial year and the quarter from the **completion i
 
 ### `TDS_ENGINE` — which withholding math runs
 
-`TDS_ENGINE` selects the consultant-payout withholding engine and defaults to `"194O"`: pure Section 194-O semantics, matching the e-commerce-operator posture this document sets out. `TDS_ENGINE=LEGACY` reverts to the older ₹50,000-gate behaviour and is deprecated — it now takes an explicit opt-in rather than being the default (owner decision 2026-09-19, Q4). A second, independent flag, `ENABLE_TDS_194O_GROSS`, switches the 194-O base from the platform's net commission to the full gross sale amount; it only takes effect when `TDS_ENGINE` is not `LEGACY`, and it stays gated behind chartered-accountant sign-off before it is turned on in production — see the flag table in [the payout go-live runbook](../enterprise/50-operations/06-live-payout-go-live-runbook.md).
+`TDS_ENGINE` selects the consultant-payout withholding engine and defaults to `"194O"`: pure Section 194-O semantics, matching the e-commerce-operator posture this document sets out. `TDS_ENGINE=LEGACY` reverts to the older ₹50,000-gate behaviour and is deprecated — it now takes an explicit opt-in rather than being the default (owner decision 2026-09-19, Q4). A second, independent flag, `ENABLE_TDS_194O_GROSS`, switches the 194-O base from the platform's net commission to the full gross sale amount; it only takes effect when `TDS_ENGINE` is not `LEGACY`, and it stays gated behind chartered-accountant sign-off before it is turned on in production — see the flag table in [the payout go-live runbook](../enterprise/50-operations/05-live-payout-go-live-runbook.md).
 
 ## Gap
 
@@ -136,4 +136,4 @@ In commit order:
 - [TDS Rate Chart FY 2026-27 (TaxGarden)](https://taxgarden.in/blog/tds-rate-chart-2026-to-2027) — _194O 0.1%; 194J 10% prof / 2% technical; §393 payment codes_
 - [§194J threshold raised ₹30K → ₹50K w.e.f. FY 2026-27 (Tax2win)](https://tax2win.in/guide/section-194j-under-income-tax-act) — _verified 2026-06-05; ₹50K is per payment-type_
 - [Income-tax Rules 2026 G.S.R. 198(E) — new forms 26Q→140 / 27Q→144 / 16A→131 (TDSMan, Mar 2026)](https://blog.tdsman.com/2026/03/new-tds-tcs-forms-it-act-2025-mapping-with-old-forms/) — _verified 2026-06-05_
-- See also: [02-gst-overview.md](./02-gst-overview.md) (GST TCS Sec 52 is the GST analogue), [04-tds-quarterly-filings.md](./04-tds-quarterly-filings.md) (Form 26Q→140 / 27Q→144), [07-cross-border-flows.md](./07-cross-border-flows.md) (Sec 195 → §393(2)).
+- See also: [03-gst-overview.md](./03-gst-overview.md) (GST TCS Sec 52 is the GST analogue), [05-tds-quarterly-filings.md](./05-tds-quarterly-filings.md) (Form 26Q→140 / 27Q→144), [08-cross-border-flows.md](./08-cross-border-flows.md) (Sec 195 → §393(2)).

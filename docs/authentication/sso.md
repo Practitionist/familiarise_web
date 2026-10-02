@@ -140,7 +140,7 @@ sso:v1:<kid>:<iv>:<tag>:<ciphertext>
   decrypt hook of its own. There is no plaintext fallback.
 - The secret is write-only: no route returns it to any role.
 
-**Rotation** (runbook: [SSO secret key rotation](../enterprise/50-operations/03-runbooks.md#sso-secret-key-rotation)):
+**Rotation** (runbook: [SSO secret key rotation](../enterprise/50-operations/02-runbooks.md#sso-secret-key-rotation)):
 
 1. Set the new key as `AUTH_CONFIG_ENCRYPTION_KEY` and the old one as
    `AUTH_CONFIG_ENCRYPTION_KEY_PREVIOUS`; redeploy. Both keys now decrypt.

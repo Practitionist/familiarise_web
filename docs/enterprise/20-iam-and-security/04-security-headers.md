@@ -178,7 +178,7 @@ payments for every customer at once.
 ## Switching enforcement on, and back off
 
 Step-by-step in the
-[CSP runbook](../50-operations/03-runbooks.md#content-security-policy-csp).
+[CSP runbook](../50-operations/02-runbooks.md#content-security-policy-csp).
 In short: triage the Sentry reports until only noise remains, set
 `ENABLE_CSP_ENFORCE=true` in the production build environment and redeploy. To
 roll back, remove the variable (or set it to anything but `true`) and redeploy.

@@ -68,7 +68,6 @@ import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
-import { resolvePaymentForEarnings as resolvePaymentForEarningsDirect } from "@/lib/payments/payouts/earnings-service";
 import {
   attemptTrigger,
   notifyPaymentSuccess,
@@ -854,19 +853,19 @@ export async function handlePaymentSuccess(
   }
 
   // Phase 2: Post-commit emails, earnings, referrals, invoice, Novu notifications, and Stream channels.
-  if (txResult.successEmail && typeof attemptEmail === "function") {
+  if (txResult.successEmail) {
     await attemptEmail(
       txResult.successEmail.staged,
       txResult.successEmail.message,
       "PAYMENT_SUCCESS",
-      { budgetMs: EMAIL_BUDGET_MS?.WEBHOOK ?? 1500 },
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
     );
   }
-  if (txResult.bookedEmails.length > 0 && typeof attemptStaged === "function") {
+  if (txResult.bookedEmails.length > 0) {
     await attemptStaged(
       txResult.bookedEmails,
       "APPOINTMENT_BOOKED",
-      EMAIL_BUDGET_MS?.WEBHOOK ?? 1500,
+      EMAIL_BUDGET_MS.WEBHOOK,
     );
   }
 
@@ -874,11 +873,7 @@ export async function handlePaymentSuccess(
     txResult;
 
   try {
-    const resolvePayment =
-      typeof resolvePaymentForEarnings === "function"
-        ? resolvePaymentForEarnings
-        : resolvePaymentForEarningsDirect;
-    const resolved = await resolvePayment(
+    const resolved = await resolvePaymentForEarnings(
       { id: paymentId },
       metadata.appointmentType,
     );
@@ -956,7 +951,8 @@ export async function handlePaymentSuccess(
       appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
       appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
-      appointmentForNotif?.class?.classPlan?.consultantProfile;
+      appointmentForNotif?.class?.classPlan?.consultantProfile ||
+      appointmentForNotif?.trial?.subscriptionPlan?.consultantProfile;
 
     const consultantNameForNotif =
       consultantProfileData?.user?.name || "Consultant";
@@ -970,6 +966,7 @@ export async function handlePaymentSuccess(
               appointmentForNotif?.subscription?.subscriptionPlan?.title ??
               appointmentForNotif?.webinar?.webinarPlan?.title ??
               appointmentForNotif?.class?.classPlan?.title ??
+              appointmentForNotif?.trial?.subscriptionPlan?.title ??
               null,
             metadata.appointmentType,
           );
@@ -1231,17 +1228,15 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     return { failedEmail, bell: bell?.staged ?? null };
   });
 
-  if (staged?.failedEmail && typeof attemptEmail === "function") {
+  if (staged?.failedEmail) {
     await attemptEmail(
       staged.failedEmail.staged,
       staged.failedEmail.message,
       "PAYMENT_FAILED",
-      { budgetMs: EMAIL_BUDGET_MS?.WEBHOOK ?? 1500 },
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
     );
   }
-  if (staged?.bell && typeof attemptTrigger === "function") {
-    await attemptTrigger(staged.bell);
-  }
+  if (staged?.bell) await attemptTrigger(staged.bell);
 }
 
 /** CAS liveness re-stamp on a class or webinar so a capture after event cancellation is detected. */

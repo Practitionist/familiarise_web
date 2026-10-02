@@ -24,7 +24,7 @@ Plus the orthogonal obligations:
 - **HSN/SAC codes** — mandatory on invoice; B2C reporting in GSTR-1 Table 12 is optional below ₹5 cr AATO. ⚠️ **SAC correction (verified 2026-06-05): `999293` is _commercial training & coaching_ (an education code under group 9992), NOT consulting. Management consulting is `998311`. All of 998311 / 999293 / 999294 / 999299 carry 18% GST, so the _rate_ is unaffected — but the doc's old "999293 (consulting)" labelling and the code's 999293 catch-all are a classification (ITC-trail) inaccuracy, not a tax-amount error.**
 - **LUT (Letter of Undertaking)** — for zero-rated exports without IGST payment.
 - **Reverse charge (RCM)** — for imports of services and notified categories.
-- **GST credit note (Sec 34)** — required on refund / cancellation / discount post-invoice. See [doc 05](./05-refund-and-chargeback-tax-adjustments.md).
+- **GST credit note (Sec 34)** — required on refund / cancellation / discount post-invoice. See [doc 05](./06-refund-and-chargeback-tax-adjustments.md).
 
 ## When it applies
 
@@ -69,7 +69,7 @@ Plus the orthogonal obligations:
 
 1. **TCS Sec 52 entirely missing** — see `02-gst-tcs-section-52` walkthrough below.
 2. **Place-of-supply state capture missing on B2C checkout** (CBIC Notification 02/2023-IT mandates it).
-3. **GST credit notes on refunds missing** (handled in [doc 05](./05-refund-and-chargeback-tax-adjustments.md)).
+3. **GST credit notes on refunds missing** (handled in [doc 05](./06-refund-and-chargeback-tax-adjustments.md)).
 4. **GSTIN live registry verification missing** — only format check today.
 5. **HSN selection static** — should pick **998311** (management consulting, group 9983) for CONSULTATION; **999293** (commercial training & coaching, group 9992) for WEBINAR / CLASS / SUBSCRIPTION on educational content. _(See header SAC correction — 999293 is training, NOT consulting; both 18%, so this is a classification/ITC-trail fix, not a rate fix.)_
 6. **LUT enforcement** — invoice generator doesn't gate on `lutNumber` for non-resident purchases.
@@ -107,7 +107,7 @@ Phased — TCS first because it has a deadline (monthly):
 
 1. **Schema**: add `Payment.consumerStateCode` (2-char), `Payment.gstTcsCollectedPaise` (Int), `ConsultantEarnings.gstTcsAccruedPaise` (Int), `GstTcsBatch` model (id, monthYear, consultantProfileId, totalSuppliesPaise, tcsCollectedPaise, gstr8Filed Boolean, filedAt). Migrate via Supabase MCP.
 2. **`lib/payments/operations/checkout.ts`**: capture `consumerStateCode` from billing address; pass to `deriveGstBreakdown` for B2C path; emit `Payment.gstTcsCollectedPaise` when `consultant.gstin` is set.
-3. **`lib/payments/operations/refund.ts`**: emit GST credit note (see [doc 05](./05-refund-and-chargeback-tax-adjustments.md)) and reduce TCS collected for the affected month's batch.
+3. **`lib/payments/operations/refund.ts`**: emit GST credit note (see [doc 05](./06-refund-and-chargeback-tax-adjustments.md)) and reduce TCS collected for the affected month's batch.
 4. **Cron `jobs/gst/aggregate-tcs-batches.ts`**: run on 1st of each month for the prior month — group `Payment.gstTcsCollectedPaise` by consultant, write `GstTcsBatch` rows.
 5. **GSTR-8 CSV export**: `app/api/admin/gst/gstr8/[monthYear]/route.ts` returning the filing-ready CSV.
 6. **HSN selection logic**: read appointment type → pick **998311** (consulting) vs **999293** (training/coaching). Update `lib/pdf/invoice-renderer.tsx`.
@@ -141,4 +141,4 @@ Phased — TCS first because it has a deadline (monthly):
 - [SAC 998311 = management consulting; 999293 = commercial training & coaching, both 18% (ClearTax SAC 9983)](https://cleartax.in/s/other-professional-services-gst-rates-sac-code-9983) — _verified 2026-06-05_
 - [GST TCS §52 halved 1% → 0.5% by Notif 15/2024-CT, w.e.f. 10-Jul-2024 (GST Safar)](https://gstsafar.com/tcs-rate-for-e-commerce-operator/) — _verified 2026-06-05_
 - [E-invoice AATO ≥ ₹5 cr unchanged; 30-day IRP reporting at ₹10 cr since 1-Apr-2025 (Tally)](https://tallysolutions.com/accounting/e-invoicing-rules-in-india/) — _verified 2026-06-05_
-- See also: [05](./05-refund-and-chargeback-tax-adjustments.md) (credit notes), [07](./07-cross-border-flows.md) (LUT, RCM, IGST Sec 16).
+- See also: [05](./06-refund-and-chargeback-tax-adjustments.md) (credit notes), [07](./08-cross-border-flows.md) (LUT, RCM, IGST Sec 16).

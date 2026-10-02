@@ -61,12 +61,12 @@ Even on Path C, the direction imposes:
 | #   | Requirement                                            | Status                                                                                                       |
 | --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
 | 1   | **Marketplace declaration** to Razorpay                | Done at PA onboarding; sign annual self-declaration                                                          |
-| 2   | **Refund SLA** to consumers (RBI-prescribed timelines) | Implementation pending — see [doc 09](./09-consumer-protection-and-grievance.md)                             |
+| 2   | **Refund SLA** to consumers (RBI-prescribed timelines) | Implementation pending — see [doc 09](./10-consumer-protection-and-grievance.md)                             |
 | 3   | **Prohibited categories monitoring**                   | Active — Razorpay flags + we add platform-level ToS                                                          |
 | 4   | **Data localisation** of payment data                  | Already enforced — RBI "Storage of Payment System Data" directive, 6 Apr 2018; Razorpay infra is India-based |
 | 5   | **PCI-DSS** — never store card numbers / CVV / etc.    | Already compliant — we use Razorpay tokens                                                                   |
-| 6   | **Chargeback handling** within 7-day evidence window   | Implementation pending — see [doc 09](./09-consumer-protection-and-grievance.md)                             |
-| 7   | **PA-CB approval** for cross-border collections        | Razorpay holds it; we enable cross-border settings — see [doc 07](./07-cross-border-flows.md)                |
+| 6   | **Chargeback handling** within 7-day evidence window   | Implementation pending — see [doc 09](./10-consumer-protection-and-grievance.md)                             |
+| 7   | **PA-CB approval** for cross-border collections        | Razorpay holds it; we enable cross-border settings — see [doc 07](./08-cross-border-flows.md)                |
 
 ## Wallet auto-top-up and the e-mandate framework
 
@@ -95,7 +95,7 @@ This is a forward-looking note: the auto-top-up cron exists in schema, but live 
 
 ### Cross-border
 
-- See [doc 07](./07-cross-border-flows.md). PA-CB (previously the 31 Oct 2023 circular) is now folded into the 2025 Directions as one of the three PA categories.
+- See [doc 07](./08-cross-border-flows.md). PA-CB (previously the 31 Oct 2023 circular) is now folded into the 2025 Directions as one of the three PA categories.
 
 ## Current code
 
@@ -112,7 +112,7 @@ This is a forward-looking note: the auto-top-up cron exists in schema, but live 
 
 | Gap                                                                                | Severity                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No memo at `docs/payments/` documenting the architecture vs the Sep 2025 direction | ✅ **Written (2026-09-03)** — this document (`docs/compliance/10-rbi-pa-and-payment-architecture.md`), together with `docs/enterprise/70-design-decisions/26-gst-principal-model.md` and `docs/payments/audits/2026-09-03-finance-verdicts.md`, is the architecture memo this row asked for; the fact-specific risk paragraph in §A above stays the operative text. |
+| No memo at `docs/payments/` documenting the architecture vs the Sep 2025 direction | ✅ **Written (2026-09-03)** — this document (`docs/compliance/11-rbi-pa-and-payment-architecture.md`), together with `docs/enterprise/70-design-decisions/26-gst-principal-model.md` and `docs/payments/audits/2026-09-03-finance-verdicts.md`, is the architecture memo this row asked for; the fact-specific risk paragraph in §A above stays the operative text. |
 | No CA / RBI-compliance opinion validating Path C for our specific facts            | 🟡 still open — see the CA action list below                                                                                                                                                                                                                                                                                                                        |
 | No annual Razorpay marketplace self-declaration captured + filed                   | 🟢 (assumed Razorpay does this; verify)                                                                                                                                                                                                                                                                                                                             |
 | No prohibited-categories monitoring at platform-ToS level (Razorpay flags only)    | 🟢                                                                                                                                                                                                                                                                                                                                                                  |
@@ -172,7 +172,7 @@ The migration cost (per-consultant V-CIP for Path A, or nodal-account governance
 - Legal opinion sourced and filed (or "deferred until first regulator inquiry" decision noted).
 - Annual self-declaration calendared.
 - Prohibited categories ToS published.
-- Per-doc inheritance: refund SLA ([doc 09](./09-consumer-protection-and-grievance.md)) + chargeback evidence UI + cross-border PA-CB enablement ([doc 07](./07-cross-border-flows.md)) all closed independently.
+- Per-doc inheritance: refund SLA ([doc 09](./10-consumer-protection-and-grievance.md)) + chargeback evidence UI + cross-border PA-CB enablement ([doc 07](./08-cross-border-flows.md)) all closed independently.
 
 ## Don't build
 
@@ -190,4 +190,4 @@ The migration cost (per-consultant V-CIP for Path A, or nodal-account governance
 - [RBI Digital Payments — E-mandate Framework, 2026 (issued 21 Apr 2026) — coverage](https://www.businesstoday.in/personal-finance/news/story/rbi-caps-recurring-payments-at-rs15000-without-otp-under-new-e-mandate-framework-526759-2026-04-21) _(₹15,000 no-AFA cap verified 2026-06-05; replace with the RBI primary circular URL when indexed)_
 - [Razorpay Payment Gateway Compliance 2026](https://razorpay.com/blog/payment-gateway-compliance/)
 - [Razorpay KYC Onboarding Guide 2026](https://razorpay.com/blog/payment-gateway-kyc-onboarding-india)
-- See also: [07](./07-cross-border-flows.md) (PA-CB), [09](./09-consumer-protection-and-grievance.md) (refund SLA, chargeback handling).
+- See also: [07](./08-cross-border-flows.md) (PA-CB), [09](./10-consumer-protection-and-grievance.md) (refund SLA, chargeback handling).

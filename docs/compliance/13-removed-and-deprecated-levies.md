@@ -47,7 +47,7 @@ Tax provisions that were live in past financial years and are now **abolished or
 **Still live in substance; the citation moved.**
 
 - Old Sec 206AA applied a **20% (or actual rate, whichever higher)** fallback when the payee fails to provide PAN. From 1-Apr-2026 this lives in **Section 397(2)** of the Income-tax Act 2025, which retains the 20% default and carries an explicit **5% carve-out for e-commerce (old 194-O)** payouts.
-- The original audit found code using 20% even for 194-O; that bug is fixed — `lib/compliance/tds.ts` applies `NO_PAN_RATE_194O = 0.05` for 194-O and the 20% fallback for 194J/194C. See [doc 01](./01-tds-overview.md).
+- The original audit found code using 20% even for 194-O; that bug is fixed — `lib/compliance/tds.ts` applies `NO_PAN_RATE_194O = 0.05` for 194-O and the 20% fallback for 194J/194C. See [doc 01](./02-tds-overview.md).
 
 **Action**: none — rate fixed (#771 P0-1); cite §397(2), not 206AA, in any new code or filing artifact.
 
@@ -64,7 +64,7 @@ Tax provisions that were live in past financial years and are now **abolished or
 **Status: not viable for our scale.**
 
 - RBI Payment Aggregator authorisation requires ₹15 cr net worth + 24-month track record + governance overhead.
-- Practical alternative: route via RazorpayX / Cashfree (already done; see [doc 10](./10-rbi-pa-and-payment-architecture.md)).
+- Practical alternative: route via RazorpayX / Cashfree (already done; see [doc 10](./11-rbi-pa-and-payment-architecture.md)).
 
 ## Internal IRP integration
 
@@ -124,4 +124,4 @@ If anything surfaces in docs (especially old planning docs in `docs/finances/`),
 - [Finance Act 2025 changes (ClearTax)](https://cleartax.in/s/tds-and-tcs-changes-from-april-2025)
 - [Equalisation Levy abolition (IndiaFilings)](https://www.indiafilings.com/income-tax/equalisation-levy-abolished)
 - [TCS 206C(1H) removal (TaxGuru)](https://taxguru.in/income-tax/tcs-sale-goods-removed-april-1-2025-faqs.html)
-- See also: [01](./01-tds-overview.md) (Sec 206AA carve-out), [10](./10-rbi-pa-and-payment-architecture.md) (escrow path).
+- See also: [01](./02-tds-overview.md) (Sec 206AA carve-out), [10](./11-rbi-pa-and-payment-architecture.md) (escrow path).

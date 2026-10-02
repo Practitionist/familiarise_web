@@ -11,7 +11,7 @@ last-reviewed: 2026-09-03
 This runbook covers the k6 harness under `load-tests/booking/`, which is the
 exit gate for the B2C hardening train (#837) and the booking-journey train
 (#1169), tracked on #874. The chaos test runbook
-(`07-chaos-test-runbook.md`) lists seventeen scenarios and records three of
+(`06-chaos-test-runbook.md`) lists seventeen scenarios and records three of
 them as never having been executed: scenario 6, the load ramp to twice the
 expected peak; scenario 14c, the enterprise allocation races; and scenario 17,
 the flash-sale hot-slot and hot-event storm. This harness exists to run those

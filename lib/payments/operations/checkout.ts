@@ -92,7 +92,6 @@ import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
-import { resolvePaymentForEarnings as resolvePaymentForEarningsDirect } from "@/lib/payments/payouts/earnings-service";
 import { walletDebit } from "@/lib/api/organizations/wallet";
 import {
   isWalletFrozen,
@@ -4665,11 +4664,7 @@ export async function handleCheckout(
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
         try {
-          const resolvePayment =
-            typeof resolvePaymentForEarnings === "function"
-              ? resolvePaymentForEarnings
-              : resolvePaymentForEarningsDirect;
-          const resolved = await resolvePayment(
+          const resolved = await resolvePaymentForEarnings(
             { paymentIntent: paymentResponse!.id },
             validatedData.appointmentType,
           );

@@ -7,6 +7,7 @@
  */
 
 import { AppointmentsType, type Prisma } from "@prisma/client";
+import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { goHref } from "@/lib/dashboard/go";
@@ -194,18 +195,16 @@ export async function resolveAppointmentNotificationContext(
   });
 }
 
+const emailAppointmentTypeSchema = z
+  .enum(["consultation", "subscription", "webinar", "class"])
+  .catch("consultation");
+
 export async function stagePaymentSuccessEmail(
   tx: Tx,
   payment: PaymentWithUser,
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): Promise<StagedOutboxEmail | null> {
-  if (
-    typeof renderPaymentSuccessEmail !== "function" ||
-    typeof stageEmail !== "function"
-  ) {
-    return null;
-  }
   const consultantName =
     planForEmails(appointment)?.consultantProfile?.user?.name || "Consultant";
   const amount = payment.amount;
@@ -217,11 +216,9 @@ export async function stagePaymentSuccessEmail(
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
-      appointmentType: appointmentType.toLowerCase() as
-        | "consultation"
-        | "subscription"
-        | "webinar"
-        | "class",
+      appointmentType: emailAppointmentTypeSchema.parse(
+        appointmentType.toLowerCase(),
+      ),
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}${goHref("client", "appointments")}`,
@@ -246,7 +243,6 @@ export async function stageBookedEmails(
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): Promise<StagedRecipientEmail[]> {
-  if (typeof stageAppointmentBookedEmail !== "function") return [];
   const startsAt = appointment.occurrences?.[0]?.startsAt;
   if (!startsAt) return [];
   const plan = planForEmails(appointment);
@@ -278,12 +274,6 @@ export async function stagePaymentFailedEmail(
     user: { email: string | null; name: string | null };
   },
 ): Promise<StagedOutboxEmail | null> {
-  if (
-    typeof renderPaymentFailedEmail !== "function" ||
-    typeof stageEmail !== "function"
-  ) {
-    return null;
-  }
   const consultantUserSelect = {
     select: {
       consultantProfile: {
