@@ -24,9 +24,15 @@
  * simple as possible.
  */
 
-import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "@/lib/email/config";
+import {
+  EMAIL_BUDGET_MS,
+  OPS_EMAIL,
+  SENDERS,
+  supportEmail,
+} from "@/lib/email/config";
 import { deliver } from "@/lib/email/deliver";
 import { describeIngest, type IngestProbeResult } from "./ingest-canary";
+import { postOpsChat } from "./ops-chat";
 import redis from "@/lib/redis";
 
 /**
@@ -333,8 +339,16 @@ export async function recordCanaryAlertSent(
   }
 }
 
+/** The one-paragraph ops chat twin of the alert email: verdict, cause, remedy. */
+export function buildAlertChatText(r: IngestProbeResult): string {
+  const { subject } = buildAlertEmail(r);
+  const remedy = remedyFor(r).replace(/\s+/g, " ").trim();
+  return `${subject}. ${describeIngest(r)} ${remedy}`;
+}
+
 /**
- * Send the alert. Returns whether the provider took it.
+ * Send the alert, and mirror it to ops chat once the email is sent. Returns
+ * whether the provider took the email.
  *
  * Never throws: the caller is a canary whose job is to report a verdict, and
  * the verdict has to survive the alert channel being down as well.
@@ -345,8 +359,9 @@ export async function sendSentryIngestAlert(
   const { subject, text, html } = buildAlertEmail(r);
   const result = await deliver(
     {
-      from: SENDERS.system,
+      from: SENDERS.ops,
       to: canaryAlertRecipient(),
+      replyTo: OPS_EMAIL,
       subject,
       text,
       html,
@@ -359,5 +374,6 @@ export async function sendSentryIngestAlert(
       budgetMs: EMAIL_BUDGET_MS.JOB,
     },
   );
+  if (result.success) await postOpsChat(buildAlertChatText(r));
   return result.success;
 }

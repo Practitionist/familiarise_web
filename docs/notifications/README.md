@@ -243,5 +243,6 @@ The table below lists the ten React Email templates plus the one sender that bui
 | Understand the outbox and Resend-event tables                       | [06-schema-reference.md](./06-schema-reference.md)                                                                         |
 | Gate a lifecycle email on preferences, or add one-click unsubscribe | [01-architecture.md § Email gating and one-click unsubscribe](./01-architecture.md#email-gating-and-one-click-unsubscribe) |
 | Read how outbox-first delivery and the email core were built        | [08-engineering-log-2026-09-15-outbox-first.md](./08-engineering-log-2026-09-15-outbox-first.md)                           |
+| See the whole email map, the pre-launch guard and ops routing       | [../email/README.md](../email/README.md)                                                                                   |
 | Understand the payment system                                       | [../payments/architecture.md](../payments/architecture.md)                                                                 |
 | Check the database schema                                           | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                                   |

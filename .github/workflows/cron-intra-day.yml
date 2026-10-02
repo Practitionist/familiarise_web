@@ -48,6 +48,11 @@ jobs:
       RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
       DATABREACH_ALERT_EMAIL: ${{ secrets.DATABREACH_ALERT_EMAIL }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      # Pre-launch delivery guard: unset means allowlist; set the repo variable to "live" at launch.
+      EMAIL_DELIVERY_MODE: ${{ vars.EMAIL_DELIVERY_MODE }}
+      EMAIL_ALLOWLIST: ${{ vars.EMAIL_ALLOWLIST }}
+      # Best-effort ops chat mirror of a sent breach alert; no-op when unset.
+      SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
       NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
       NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
 

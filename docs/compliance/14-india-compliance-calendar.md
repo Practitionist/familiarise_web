@@ -103,12 +103,12 @@ Source: `.github/workflows/`. Times in **UTC** (add 5h 30m for IST).
 
 | Cadence | Time | Workflow | Doc |
 |---|---|---|---|
-| Hourly :15 | every hour | `databreach-deadline-alerts.yml` | [08](./09-dpdp-and-privacy.md) |
+| Hourly :17 | every hour | `cron-intra-day.yml` → `databreach-deadline-alerts` | [08](./09-dpdp-and-privacy.md) |
 | Daily | 02:00 | `cleanup-abandoned-org-top-ups.yml` | (ops) |
 | Daily | 02:30 | `irp-uploader.yml` | [02](./03-gst-overview.md) |
 | Daily | 03:00 | `expire-contracts.yml` | (ops) |
 | Daily | 03:00 | `mark-expired-recordings.yml` | (ops) |
-| Daily | 04:30 | `msme-payment-alerts.yml` | [03](./04-msme-43b-h.md) |
+| Daily | 03:00 | `cron-daily.yml` → `msme-payment-alerts` | [03](./04-msme-43b-h.md) |
 | Weekly | Mon 20:00 | `create-payout-batch.yml` | (payouts) |
 | Weekly | Mon 21:00 | `process-payouts.yml` | (payouts) |
 | Daily | 01:00 | `generate-subscription-invoices.yml` | (B2B billing) |

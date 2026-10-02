@@ -63,6 +63,12 @@ import {
 } from "@/lib/email/classify";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
+import {
+  HELD_PRE_LAUNCH,
+  heldRecipientDomain,
+  logHeld,
+  recipientsOf,
+} from "@/lib/email/delivery-guard";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -191,6 +197,18 @@ export async function runEmailRetryTick(params: {
 
     for (const [index, row] of dueRows.entries()) {
       result.scanned += 1;
+
+      // The pre-launch guard is terminal: a held row is never sent or retried.
+      const heldDomain = heldRecipientDomain(row.recipient);
+      if (heldDomain) {
+        logHeld(row.emailType, heldDomain);
+        await prisma.failedEmail.update({
+          where: { id: row.id },
+          data: { status: "DEAD_LETTER", lastError: HELD_PRE_LAUNCH },
+        });
+        result.deadLettered += 1;
+        continue;
+      }
 
       const suppression = suppressed.get(normaliseEmail(row.recipient));
       if (suppression) {
@@ -420,6 +438,25 @@ async function drainBatches(ctx: {
 
   for (const [index, row] of dueBatches.entries()) {
     result.batchesScanned += 1;
+
+    const messages: Prisma.JsonValue[] = Array.isArray(row.payload)
+      ? row.payload
+      : [];
+    const heldDomain = heldRecipientDomain(
+      messages.flatMap((m) =>
+        m && typeof m === "object" && !Array.isArray(m) ? recipientsOf(m) : [],
+      ),
+    );
+    if (heldDomain) {
+      logHeld(row.emailType, heldDomain);
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: { status: "DEAD_LETTER", lastError: HELD_PRE_LAUNCH },
+      });
+      result.batchesDeadLettered += 1;
+      continue;
+    }
+
     if (index > 0) await sleep(SEND_GAP_MS);
 
     let sendError: string | undefined;

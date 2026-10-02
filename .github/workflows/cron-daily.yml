@@ -46,6 +46,9 @@ jobs:
       CLEARTAX_GSTIN: ${{ secrets.CLEARTAX_GSTIN }}
       MSME_ALERT_EMAIL: ${{ secrets.MSME_ALERT_EMAIL }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      # Pre-launch delivery guard: unset means allowlist; set the repo variable to "live" at launch.
+      EMAIL_DELIVERY_MODE: ${{ vars.EMAIL_DELIVERY_MODE }}
+      EMAIL_ALLOWLIST: ${{ vars.EMAIL_ALLOWLIST }}
       NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
       NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 

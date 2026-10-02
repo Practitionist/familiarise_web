@@ -51,7 +51,7 @@ So 43B(h) is effectively a **B2B-only** compliance — but the schema fields (`m
 | `OrganizationPayout.mustPayByDate` (schema) | Stamped at payout creation from `computeMsmePaymentDeadline` | ✅ schema-final |
 | `ConsultantProfile.msmeStatus`, `udyamNumber`, `writtenAgreementWithFamiliarise` | Schema fields | ✅ |
 | `jobs/compliance/msme-payment-alerts.ts` | Sweeps payouts within 5 days of `mustPayByDate`; emails finance via Resend | ✅ live |
-| `.github/workflows/msme-payment-alerts.yml` | Daily 04:30 UTC | ✅ wired (Round 2) |
+| `.github/workflows/cron-daily.yml` (step `msme-payment-alerts`) | Daily 03:00 UTC | ✅ wired (Round 2) |
 | Consultant onboarding form | Captures `msmeStatus` + Udyam number + written-agreement toggle | 🟡 status unknown — verify on next walkthrough |
 
 ## Gap

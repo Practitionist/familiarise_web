@@ -63,3 +63,5 @@
    - Whenever a numbered file, folder, subfolder, seed phase, or index table entry (`x, x+1, x+2`) is deleted or inserted, immediately renumber all subsequent items (`x+2` -> `x+1`, etc.) and update all imports and cross-references in the same commit so numbering remains strictly contiguous with zero gaps or duplicates.
 5. **CodeRabbit CLI & PR Comment Triage**:
    - Use the `coderabbit` CLI (`~/.local/bin/coderabbit review --plain`) for local review checks and follow `.claude/skills/workflow/references/pr-comment-triage.md` to classify and resolve every PR review comment before merging.
+6. **Email Delivery Guard**:
+   - Every send goes through `deliver()`, or for the waitlist broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.
