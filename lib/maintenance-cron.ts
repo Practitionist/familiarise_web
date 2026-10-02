@@ -38,12 +38,18 @@ let phaseCacheHasValue = false;
 
 /**
  * Read `maintenance:phase` from Redis with a 60s success cache (5s failure cache).
+ * Pass `{ bypassCache: true }` for uncached reads on admin/money-gate paths.
  */
 export async function readMaintenancePhase(
   jobName = "maintenance",
+  options?: { bypassCache?: boolean },
 ): Promise<string | null> {
   const now = Date.now();
-  if (phaseCacheHasValue && now - phaseCachedAt < phaseCacheTtlMs) {
+  if (
+    !options?.bypassCache &&
+    phaseCacheHasValue &&
+    now - phaseCachedAt < phaseCacheTtlMs
+  ) {
     return phaseCachedValue;
   }
 
@@ -73,12 +79,15 @@ export async function readMaintenancePhase(
   }
 }
 
-export function resetMaintenancePhaseCacheForTesting(): void {
+export function invalidateMaintenancePhaseCache(): void {
   phaseCachedAt = 0;
   phaseCachedValue = null;
   phaseCacheHasValue = false;
   phaseCacheTtlMs = PHASE_CACHE_MS;
 }
+
+export const resetMaintenancePhaseCacheForTesting =
+  invalidateMaintenancePhaseCache;
 
 function blockingPhaseFor(
   phase: string | null,

@@ -184,22 +184,7 @@ export type GatewaySubmissionFailureClass =
 export function classifyGatewaySubmissionError(
   err: unknown,
 ): GatewaySubmissionFailureClass {
-  if (
-    typeof isDefinitiveGatewayRejection === "function" &&
-    isDefinitiveGatewayRejection(err)
-  ) {
-    return "PERMANENT_4XX";
-  }
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  if (
-    msg.includes("400") ||
-    msg.includes("401") ||
-    msg.includes("403") ||
-    msg.includes("422") ||
-    msg.includes("invalid") ||
-    msg.includes("bad request")
-  ) {
-    return "PERMANENT_4XX";
-  }
-  return "TRANSIENT_OR_UNKNOWN";
+  return isDefinitiveGatewayRejection(err)
+    ? "PERMANENT_4XX"
+    : "TRANSIENT_OR_UNKNOWN";
 }

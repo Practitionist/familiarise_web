@@ -8,11 +8,16 @@ import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
 import {
+  invalidateMaintenancePhaseCache,
   readMaintenancePhase,
   resetMaintenancePhaseCacheForTesting,
 } from "@/lib/maintenance-cron";
 
-export { readMaintenancePhase, resetMaintenancePhaseCacheForTesting };
+export {
+  invalidateMaintenancePhaseCache,
+  readMaintenancePhase,
+  resetMaintenancePhaseCacheForTesting,
+};
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -31,13 +36,16 @@ const OFF_STATE: MaintenanceState = {
 };
 
 /**
- * Read current maintenance state from Redis using the shared cached phase reader.
+ * Read current maintenance state directly from Redis (uncached on entry so
+ * cross-instance admin/money-gate reads never observe a stale 60s cached OFF).
  * Fail-open: returns OFF if Redis is unreachable.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   return withCircuitBreaker(
     async () => {
-      const phase = await readMaintenancePhase("maintenance");
+      const phase = await readMaintenancePhase("maintenance", {
+        bypassCache: true,
+      });
       if (!phase || phase === "OFF") return OFF_STATE;
 
       const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
@@ -91,7 +99,7 @@ export async function setMaintenanceState(
       { ex: MAINTENANCE_KEY_TTL_SECONDS },
     ),
   ]);
-  resetMaintenancePhaseCacheForTesting();
+  invalidateMaintenancePhaseCache();
 
   const estimatedEndDate =
     config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())

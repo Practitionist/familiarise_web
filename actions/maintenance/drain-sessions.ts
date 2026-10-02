@@ -110,6 +110,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
   }
 
   const allUserIds = new Set<string>();
+  const drainedSessions: typeof activeSessions = [];
 
   for (const session of activeSessions) {
     for (const seat of session.occurrence.appointment.participants) {
@@ -182,6 +183,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         });
       });
       result.drained++;
+      drainedSessions.push(session);
     } catch (err) {
       result.errors.push(
         `Record drained session ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -189,7 +191,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     }
   }
 
-  await freezeChannelsForSessions(activeSessions, result);
+  await freezeChannelsForSessions(drainedSessions, result);
 
   if (allUserIds.size > 0) {
     try {
@@ -312,11 +314,20 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
 }
 
 async function deriveChannelsToUnfreeze(): Promise<string[]> {
+  const latestWindow = await prisma.maintenanceWindow?.findFirst?.({
+    where: { organizationId: null },
+    orderBy: { startedAt: "desc" },
+    select: { startedAt: true },
+  });
+  const since =
+    latestWindow?.startedAt ?? new Date(Date.now() - LIVE_SESSION_WINDOW_MS);
+
   const drained = await prisma.meeting.findMany({
     where: {
       endedReason: "maintenance",
-      endedAt: { gte: new Date(Date.now() - LIVE_SESSION_WINDOW_MS) },
+      endedAt: { gte: since },
     },
+    orderBy: { endedAt: "desc" },
     take: MAX_DRAIN_BATCH,
     select: { occurrence: { select: { appointmentId: true } } },
   });

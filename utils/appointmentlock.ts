@@ -239,7 +239,7 @@ async function acquireGuarded(
 async function releaseLock(lock: ApprovalLock): Promise<void> {
   try {
     const result = await lock.client.eval(
-      RELEASE_LOCK_SCRIPT ?? 'redis.call("del", KEYS[1])',
+      RELEASE_LOCK_SCRIPT,
       [lock.key],
       [lock.value],
     );
@@ -284,8 +284,7 @@ export async function extendLock(
 ): Promise<boolean> {
   try {
     const result = await lock.client.eval(
-      RENEW_LOCK_SCRIPT ??
-        'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end',
+      RENEW_LOCK_SCRIPT,
       [lock.key],
       [lock.value, additionalTtl.toString()],
     );
