@@ -27,6 +27,7 @@ import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { OPS_EMAIL } from "@/lib/email/config";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -153,8 +154,9 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       // #1298 — through deliver() so a failed alert dead-letters and replays.
       const outcome = await deliver(
         {
-          from: SENDERS.finance,
+          from: SENDERS.ops,
           to,
+          replyTo: OPS_EMAIL,
           subject: `[MSME 43B(h)] ${atRisk} payouts approaching deadline`,
           html:
             `<p>The MSME alert cron found <strong>${atRisk}</strong> payouts ` +

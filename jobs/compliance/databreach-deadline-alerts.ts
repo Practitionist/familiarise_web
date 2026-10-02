@@ -38,6 +38,8 @@ import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { OPS_EMAIL } from "@/lib/email/config";
+import { postOpsChat } from "@/lib/observability/ops-chat";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -143,8 +145,9 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       // #1298 — through deliver() so a failed alert dead-letters and replays.
       const outcome = await deliver(
         {
-          from: SENDERS.dpdp,
+          from: SENDERS.ops,
           to,
+          replyTo: OPS_EMAIL,
           subject: `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdue > 0 ? ` — ${overdue} OVERDUE` : ""}`,
           html:
             `<p>The DPDP DataBreach cron found <strong>${atRisk}</strong> ` +
@@ -166,6 +169,12 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       if (!outcome.success) throw outcome.error;
       emailSent = true;
       console.log(`[DataBreach] alert email sent to ${to}`);
+      await postOpsChat(
+        `[DPDP] ${atRisk} unreported data breach(es) are approaching or past the 72-hour DPB reporting deadline` +
+          `${overdue > 0 ? `, ${overdue} of them OVERDUE` : ""}. ` +
+          `Report each one to the Data Protection Board under Section 8(6) of the DPDP Act and record its DPB reference: ` +
+          `${appUrl}/dashboard/admin/compliance?tab=breaches`,
+      );
     } catch (err) {
       Sentry.captureException(err, {
         tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
