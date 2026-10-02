@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -22,10 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useListParams } from "@/hooks/useListParams";
-import type {
-  OwnReviewRow,
-  OwnReviewsPage,
-} from "@/lib/reviews-inbox";
+import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
 
@@ -302,9 +300,14 @@ function ReviewList({
       return fetchReviews(params);
     },
     getNextPageParam: (last) => last.nextCursor,
+    placeholderData: keepPreviousData,
   });
 
-  if (query.isLoading) {
+  const emptyPlaceholder =
+    query.isPlaceholderData &&
+    !query.data?.pages.some((p) => p.rows.length > 0);
+  // #1928: an empty placeholder is the previous filter's, not this one's empty state.
+  if (query.isLoading || emptyPlaceholder) {
     return (
       <div className="space-y-3">
         {[0, 1, 2].map((i) => (
@@ -323,6 +326,16 @@ function ReviewList({
   }
   const rows = query.data?.pages.flatMap((p) => p.rows) ?? [];
   if (rows.length === 0) {
+    // #1928: a filtered-empty list is not the never-reviewed state.
+    if (rating && !needsReply) {
+      return (
+        <EmptyState
+          icon={MessageSquareQuote}
+          title={`No ${rating}★ reviews`}
+          description="Try another rating, or clear the filter."
+        />
+      );
+    }
     return (
       <EmptyState
         icon={MessageSquareQuote}

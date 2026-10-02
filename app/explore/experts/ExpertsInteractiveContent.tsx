@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
+import { pushUrl } from "@/lib/navigation/history";
 import SectionHeader from "@/app/explore/components/SectionHeader";
 import {
   useConsultants,
@@ -88,17 +89,13 @@ export default function ExpertsInteractiveContent({
     setSelectedId(consultant.id);
     const url = new URL(window.location.href);
     url.searchParams.set("expert", consultant.id);
-    window.history.pushState(window.history.state, "", url.toString());
+    pushUrl(url.toString());
   }, []);
   const closeDetails = useCallback(() => {
     setSelectedId(null);
     const url = new URL(window.location.href);
     url.searchParams.delete("expert");
-    window.history.pushState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
-    );
+    pushUrl(`${url.pathname}${url.search}${url.hash}`);
   }, []);
 
   // Scroll to the browse section, optionally setting a sort first.

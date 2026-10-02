@@ -130,7 +130,9 @@ export function MobileNav({
               {badge && (
                 <span className="absolute -right-2.5 -top-1.5 min-w-[16px] rounded-full bg-red-500 px-1 text-center text-[9px] font-semibold leading-4 text-white">
                   {badge}
-                  <span className="sr-only"> new</span>
+                  <span className="sr-only">
+                    {item.badgeKey === "requests" ? " to answer" : " new"}
+                  </span>
                 </span>
               )}
             </span>

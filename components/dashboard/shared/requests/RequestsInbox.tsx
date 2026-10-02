@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
@@ -43,6 +50,7 @@ import {
 import { requestsFreshnessBadge } from "@/lib/scheduling/requestsFreshness";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { cn } from "@/utils/tailwind";
+import { replaceUrl } from "@/lib/navigation/history";
 
 import { BatchApproveBar } from "./BatchApproveBar";
 import { InboxBuckets } from "./InboxBuckets";
@@ -132,10 +140,10 @@ const requestPath = (row: InboxRowInput) =>
   }/${encodeURIComponent(row.id)}`;
 
 /**
- * Tabs, chips, sort and page live in the URL. Writes go through the native
- * history API, which the App Router syncs into `useSearchParams` (Next 14.1+):
- * the URL changes synchronously and no server round trip re-renders the page
- * for a filter click (QA #1783 case 3 — `router.replace` left the URL behind).
+ * Tabs, chips, sort and page live in the URL. Writes go through `replaceUrl`,
+ * which the App Router syncs into `useSearchParams`: the URL changes
+ * synchronously and no server round trip re-renders the page for a filter
+ * click (QA #1783 case 3 — `router.replace` left the URL behind).
  */
 function useInboxUrlState() {
   const pathname = usePathname();
@@ -146,14 +154,12 @@ function useInboxUrlState() {
   );
   const setParams = useCallback(
     (patch: InboxParamsPatch) => {
-      const qs = nextInboxSearch(searchParams.toString(), patch);
-      window.history.replaceState(
-        window.history.state,
-        "",
-        qs ? `${pathname}?${qs}` : pathname,
-      );
+      // The live URL, not the `searchParams` closure: two writes before the
+      // router sync lands would otherwise both start from the same value.
+      const qs = nextInboxSearch(window.location.search, patch);
+      replaceUrl(qs ? `${pathname}?${qs}` : pathname);
     },
-    [pathname, searchParams],
+    [pathname],
   );
   return { params, setParams };
 }
@@ -199,6 +205,9 @@ export function RequestsInbox({
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
+    // #1928: a failing tab should show its error in seconds, not after the
+    // provider's two retries.
+    retry: 1,
   });
   const { data, dataUpdatedAt, isPlaceholderData } = query;
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -595,23 +604,18 @@ export function RequestsInbox({
 
   const loading = query.isPending && !data;
   const refreshing = query.isFetching;
-  const counts = data?.meta.counts;
+  // #1928: the error card must not also blank the tab counts.
+  const lastCountsRef = useRef<
+    NonNullable<typeof data>["meta"]["counts"] | undefined
+  >(undefined);
+  if (data?.meta.counts) lastCountsRef.current = data.meta.counts;
+  const counts = data?.meta.counts ?? lastCountsRef.current;
   const totalPages = data
     ? Math.max(1, Math.ceil(data.meta.total / data.meta.limit))
     : 1;
 
   const renderBody = () => {
-    if (loading) {
-      return (
-        <div role="status" aria-live="polite" className="space-y-3">
-          <span className="sr-only">Loading requests</span>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-lg" />
-          ))}
-        </div>
-      );
-    }
-    if (query.isError && !data) {
+    if (query.isError && (!data || isPlaceholderData)) {
       const message =
         query.error instanceof Error
           ? query.error.message
@@ -628,6 +632,18 @@ export function RequestsInbox({
         </div>
       );
     }
+    // #1928: placeholder rows belong to the previous tab, so an empty
+    // placeholder must not render this tab's empty state.
+    if (loading || (isPlaceholderData && rows.length === 0)) {
+      return (
+        <div role="status" aria-live="polite" className="space-y-3">
+          <span className="sr-only">Loading requests</span>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      );
+    }
     if (rows.length === 0) {
       return (
         <EmptyState
@@ -638,7 +654,13 @@ export function RequestsInbox({
       );
     }
     return (
-      <>
+      <div
+        aria-busy={isPlaceholderData}
+        className={cn(
+          "space-y-4",
+          isPlaceholderData && "opacity-60 transition-opacity",
+        )}
+      >
         <InboxBuckets
           rows={rows}
           flat={chip === "declined"}
@@ -712,7 +734,7 @@ export function RequestsInbox({
             invalidate();
           }}
         />
-      </>
+      </div>
     );
   };
 
