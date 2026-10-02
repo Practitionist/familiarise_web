@@ -18,7 +18,7 @@ s.194-O. ~90% of customers are Indian. Reach for GDPR/CCPA only for the foreign
 slice, and label it as such.
 
 Full reference, including the staged commencement dates and what is enforceable
-_today_ versus in 2027: **`docs/compliance/00-india-first-posture.md`**.
+_today_ versus in 2027: **`docs/compliance/01-india-first-posture.md`**.
 
 | Reference                          | Purpose                                                                                                                                                                                         | Read it when                                   |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |

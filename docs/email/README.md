@@ -159,7 +159,7 @@ The rules, exactly as implemented, are as follows.
 - **Never retried**: the retry job re-checks the guard first and dead-letters any pending held row, so a held row is terminal. Switching to `live` later does not release old held rows, so a held message that matters must be re-triggered by its business flow.
 - **Logging**: each hold logs `event: "email.held_pre_launch"` with the email type and the recipient domain only, never the address.
 - **Waitlist broadcast**: subscribers outside the allowlist are filtered out before sending and counted in the response field `skippedHeld`, next to `skippedSuppressed`.
-- **GitHub Actions**: the three workflows that send email (`databreach-deadline-alerts.yml`, `msme-payment-alerts.yml`, `sweep-verification.yml`) read the repository variables `EMAIL_DELIVERY_MODE` and `EMAIL_ALLOWLIST`. Unset variables mean allowlist mode.
+- **GitHub Actions**: the two consolidated cron workflows that send email (`cron-intra-day.yml`, which runs `databreach-deadline-alerts`, and `cron-daily.yml`, which runs `msme-payment-alerts` and `sweep-verification`) read the repository variables `EMAIL_DELIVERY_MODE` and `EMAIL_ALLOWLIST` at job level, so every email-sending step in them is guarded. Unset variables mean allowlist mode.
 - **Tests**: `jest.setup.ts` defaults `EMAIL_DELIVERY_MODE` to `live` so suites that send to example addresses are unaffected; `__tests__/email/delivery-guard.test.ts` unsets it to pin the guard.
 
 **Launch step: set `EMAIL_DELIVERY_MODE=live` on Netlify production AND as the GitHub repository variable before opening signups.** Setting only one leaves either the website or the scheduled jobs holding mail.

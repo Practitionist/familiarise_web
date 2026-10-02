@@ -20,7 +20,7 @@
  * crossing the cutoff between runs. The query is cheap (indexed on
  * `detectedAt` and `reportedAt`).
  *
- * GH Actions: `.github/workflows/databreach-deadline-alerts.yml`.
+ * GH Actions: `.github/workflows/cron-intra-day.yml` (hourly at :17).
  *
  * NOTE: this is the alert pipeline only. The actual breach intake form,
  * incident response playbook, and post-72h escalation policy belong to
@@ -32,7 +32,7 @@
 // Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
 // PrismaClient throws on the first query. GitHub Actions loads env via
 // repo secrets, but local + emergency manual runs would fail. See
-// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";

@@ -221,7 +221,7 @@ The workflows are no longer created by hand. `lib/novu/templates/` is the source
 
 ### 3. Preference categories and step conditions
 
-Nothing to configure by hand. Each family carries its opt-out category as a tag and as a step condition (`subscriber.data.<categoryFlag> != false`, plus `routingBell != false`), both written by the sync from `FAMILIES` and `inAppSkipRule` in `lib/novu/templates/`. The family-to-category map is the table in `03-novu-template-specs.md`, and the runbook in `docs/enterprise/50-operations/09-novu-console-conditions.md` describes what the sync writes and how to verify it.
+Nothing to configure by hand. Each family carries its opt-out category as a tag and as a step condition (`subscriber.data.<categoryFlag> != false`, plus `routingBell != false`), both written by the sync from `FAMILIES` and `inAppSkipRule` in `lib/novu/templates/`. The family-to-category map is the table in `03-novu-template-specs.md`, and the runbook in `docs/enterprise/50-operations/10-novu-console-conditions.md` describes what the sync writes and how to verify it.
 
 ### 4. Gate the production deploy on the sync
 

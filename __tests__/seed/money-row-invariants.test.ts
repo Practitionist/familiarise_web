@@ -36,13 +36,13 @@ import {
   SEED_PAYMENT_STATUS_WEIGHTS,
   buildSeedPaymentLegs,
 } from "../../prisma/seedFiles/8b-create-payments";
-import { seedRefundStatus } from "../../prisma/seedFiles/12a-create-refunds";
-import { seedDisputeDueBy } from "../../prisma/seedFiles/12b-create-disputes";
+import { seedRefundStatus } from "../../prisma/seedFiles/11a-create-refunds";
+import { seedDisputeDueBy } from "../../prisma/seedFiles/11b-create-disputes";
 import {
   SEED_PAYOUT_STATUS_WEIGHTS,
   buildSeedPayoutPostings,
   seedEarningStatusForPayout,
-} from "../../prisma/seedFiles/13c-create-payouts";
+} from "../../prisma/seedFiles/12c-create-payouts";
 
 const DAY = 24 * 60 * 60 * 1000;
 

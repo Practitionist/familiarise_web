@@ -7,7 +7,7 @@
 # seats on real events, and real earnings lines. A gate that fired on its own
 # would be a recurring production incident.
 #
-# Read docs/enterprise/50-operations/08-load-gate-runbook.md before dispatching.
+# Read docs/enterprise/50-operations/09-load-gate-runbook.md before dispatching.
 # The cleanup job runs after every scenario and its failure fails the workflow.
 
 name: Load Gate (chaos 6 / 14c / 17)
@@ -306,7 +306,7 @@ jobs:
 
             echo ""
             echo "Record these numbers on #874 using the table in"
-            echo "\`docs/enterprise/50-operations/08-load-gate-runbook.md\`."
+            echo "\`docs/enterprise/50-operations/09-load-gate-runbook.md\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts

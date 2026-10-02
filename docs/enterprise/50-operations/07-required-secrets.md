@@ -106,7 +106,7 @@ provisioned before launch, in roughly this order.
 
 These are only required once `ENABLE_LIVE_PAYOUTS` is turned on. Until then their
 absence is correct, because no money leaves the gateway. See
-[the live-payout go-live runbook](./06-live-payout-go-live-runbook.md).
+[the live-payout go-live runbook](./05-live-payout-go-live-runbook.md).
 
 | Secret                     | Consumers                | What is broken without it                                                                                     |
 | -------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |

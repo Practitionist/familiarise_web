@@ -196,6 +196,7 @@ export async function refundWholeEventPayments(
         paymentId: p.id,
         reason,
         initiatedByUserId,
+        dedupeKey: `event-cancel:${eventId}:pay:${p.id}`,
       });
       summary.refundsIssued += 1;
       summary.childRefundIds.push(r.refundId);

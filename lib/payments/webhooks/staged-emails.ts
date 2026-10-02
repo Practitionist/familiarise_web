@@ -7,6 +7,7 @@
  */
 
 import { AppointmentsType, type Prisma } from "@prisma/client";
+import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { goHref } from "@/lib/dashboard/go";
@@ -115,6 +116,18 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
           },
         },
       },
+      trial: {
+        select: {
+          id: true,
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -142,6 +155,7 @@ export function planForEmails(appointment: AppointmentForEmails) {
     appointment.subscription?.subscriptionPlan ??
     appointment.webinar?.webinarPlan ??
     appointment.class?.classPlan ??
+    appointment.trial?.subscriptionPlan ??
     null
   );
 }
@@ -176,9 +190,14 @@ export async function resolveAppointmentNotificationContext(
       subscription: { select: { subscriptionPlan: PLAN_NOTIF_SELECT } },
       webinar: { select: { webinarPlan: PLAN_NOTIF_SELECT } },
       class: { select: { classPlan: PLAN_NOTIF_SELECT } },
+      trial: { select: { subscriptionPlan: PLAN_NOTIF_SELECT } },
     },
   });
 }
+
+const emailAppointmentTypeSchema = z
+  .enum(["consultation", "subscription", "webinar", "class"])
+  .catch("consultation");
 
 export async function stagePaymentSuccessEmail(
   tx: Tx,
@@ -197,11 +216,9 @@ export async function stagePaymentSuccessEmail(
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
-      appointmentType: appointmentType.toLowerCase() as
-        | "consultation"
-        | "subscription"
-        | "webinar"
-        | "class",
+      appointmentType: emailAppointmentTypeSchema.parse(
+        appointmentType.toLowerCase(),
+      ),
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}${goHref("client", "appointments")}`,

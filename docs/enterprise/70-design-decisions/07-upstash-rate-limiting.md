@@ -15,7 +15,7 @@ last-reviewed: 2026-06-05
 > below. `authLimiter`, `scimLimiter` and the edge rules for BetterAuth paths
 > are gone. Upstash sliding windows via `makeLimiter` still cover every
 > non-auth route as described here. Current matrix:
-> [rate-limiting](../20-iam-and-security/04-rate-limiting.md) and
+> [rate-limiting](../20-iam-and-security/03-rate-limiting.md) and
 > [authentication/rate-limiting-and-abuse.md](../../authentication/rate-limiting-and-abuse.md).
 
 ## Context
@@ -50,7 +50,7 @@ after the route resolves. `applyRateLimit` returns a 429 with
 `X-RateLimit-Remaining` on exceed and **fails open** if Redis is
 unreachable, so a Redis outage degrades to "no rate limit" rather than
 "site down" (see
-[rate-limiting](../20-iam-and-security/04-rate-limiting.md)).
+[rate-limiting](../20-iam-and-security/03-rate-limiting.md)).
 
 The real reason BetterAuth's limiter is off, verified against both the doc
 (§1) and the comment block above `rateLimit: { enabled: false }` in

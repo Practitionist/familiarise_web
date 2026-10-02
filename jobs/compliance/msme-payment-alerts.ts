@@ -15,13 +15,13 @@
  *      #finance-alerts channel via its built-in sink.
  *
  * Schedule: daily at 04:30 UTC (10:00 IST).
- * GH Actions: `.github/workflows/msme-payment-alerts.yml`.
+ * GH Actions: `.github/workflows/cron-daily.yml` (daily 03:00 UTC).
  */
 
 // Why: tsx does not auto-load .env when this script runs outside the
 // Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
 // PrismaClient throws on the first query. See
-// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";

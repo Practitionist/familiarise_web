@@ -889,6 +889,10 @@ export async function handlePaymentSuccess(
       );
     }
   } catch (earningsError) {
+    reportSentryError(earningsError, {
+      subsystem: "payments",
+      extra: { paymentId, appointmentId, userId, path: "webhook" },
+    });
     await recordSystemError({
       category: "PAYOUT",
       summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
@@ -947,7 +951,8 @@ export async function handlePaymentSuccess(
       appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
       appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
-      appointmentForNotif?.class?.classPlan?.consultantProfile;
+      appointmentForNotif?.class?.classPlan?.consultantProfile ||
+      appointmentForNotif?.trial?.subscriptionPlan?.consultantProfile;
 
     const consultantNameForNotif =
       consultantProfileData?.user?.name || "Consultant";
@@ -961,6 +966,7 @@ export async function handlePaymentSuccess(
               appointmentForNotif?.subscription?.subscriptionPlan?.title ??
               appointmentForNotif?.webinar?.webinarPlan?.title ??
               appointmentForNotif?.class?.classPlan?.title ??
+              appointmentForNotif?.trial?.subscriptionPlan?.title ??
               null,
             metadata.appointmentType,
           );

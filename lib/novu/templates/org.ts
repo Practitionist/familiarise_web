@@ -1,6 +1,6 @@
 /**
  * In-app copy for the organisation workflows (ADR 23). Categories follow the
- * audience, per docs/enterprise/50-operations/09-novu-console-conditions.md:
+ * audience, per docs/enterprise/50-operations/10-novu-console-conditions.md:
  * an operator who wants invoices but not roster churn, and an expert who
  * wants the reverse, are the two cases the split serves.
  */

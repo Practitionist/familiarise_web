@@ -4124,7 +4124,8 @@ export async function handleCheckout(
                 // #828 — unique; a concurrent duplicate attempt dies on P2002
                 // and the route replays this payment's original response.
                 clientIdempotencyKey:
-                  validatedData.clientIdempotencyKey ?? null,
+                  validatedData.clientIdempotencyKey ??
+                  globalThis.crypto.randomUUID(),
                 paymentGateway: validatedData.paymentGateway,
                 // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
                 paymentStatus: skipPayment
@@ -4687,6 +4688,15 @@ export async function handleCheckout(
           // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
           // keyed on row state — not on this marker — so it's guaranteed and
           // idempotent even if this alert is lost.
+          reportSentryError(earningsError, {
+            subsystem: "payments",
+            extra: {
+              paymentIntent: paymentResponse!.id,
+              userId,
+              appointmentType: validatedData.appointmentType,
+              path: "checkout",
+            },
+          });
           await recordSystemError({
             category: "PAYOUT",
             summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,

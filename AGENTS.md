@@ -48,9 +48,20 @@
    - Format check: `npm run format:check`
    - Targeted Jest test: `npx jest path/to/test.ts` (never run `next dev`, `next build`, or `db:push` unless instructed).
 
-## 4. Engineering Practices
+## 4. Engineering, Documentation & Review Practices
 
-1. Never add `eslint-disable*`, `@ts-ignore`, `@ts-expect-error` or `@ts-nocheck`; fix the code. If a rule is wrong for a path, turn it off for that path in `eslint.config.mjs` with a one-line reason.
-2. List every effect dependency; never suppress `react-hooks/exhaustive-deps`. Never write `ref.current` during render — React is 18.3 (no `useEffectEvent`), so sync latest-value refs in an effect declared before the one that reads them.
-3. Never capture to Sentry per row inside a loop or sweep; collect failures and report once per run. All errors share the free plan's 5,000/month quota.
-4. Email: every send goes through `deliver()`, or for the waitlist broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.
+1. **Strict TypeScript & Zod Boundary Validation**:
+   - Never add `eslint-disable*`, `@ts-ignore`, `@ts-expect-error`, or `@ts-nocheck`; fix the underlying type. If a lint rule is wrong for a path, disable it for that path in `eslint.config.mjs` with a one-line reason.
+   - Parse untrusted payloads, webhook bodies, and raw string enums through Zod schemas (`schemas/**` or `z.enum(...)`) and derive types with `z.infer<typeof schema>`. Do not use unsafe `as` casts or runtime `typeof fn === "function"` duck-typing on typed module imports.
+2. **React & Sentry Discipline**:
+   - List every effect dependency; never suppress `react-hooks/exhaustive-deps`. Never write `ref.current` during render — React is 18.3 (no `useEffectEvent`), so sync latest-value refs in an effect declared before the one that reads them.
+   - Never capture to Sentry per row inside a loop or sweep; collect failures and report once per run. All errors share the free plan's 5,000/month quota.
+3. **80–85% Current Architecture / 10–15% Deprecated Documentation Discipline**:
+   - **80–85%** of every documentation file must focus on the **currently implemented architecture**, active workflows, state diagrams, sequence diagrams, and engineering invariants.
+   - Reserve **10–15% at the bottom** of architecture/domain docs (`## Deprecated & Superseded Approaches`) to briefly record what was previously implemented and why it was superseded. This lets AI agents and engineers recognize and delete residual artifacts from older implementations instead of rediscovering or re-implementing them, without bloating docs with standalone historical investigation logs.
+4. **Contiguous Numbering Discipline**:
+   - Whenever a numbered file, folder, subfolder, seed phase, or index table entry (`x, x+1, x+2`) is deleted or inserted, immediately renumber all subsequent items (`x+2` -> `x+1`, etc.) and update all imports and cross-references in the same commit so numbering remains strictly contiguous with zero gaps or duplicates.
+5. **CodeRabbit CLI & PR Comment Triage**:
+   - Use the `coderabbit` CLI (`~/.local/bin/coderabbit review --plain`) for local review checks and follow `.claude/skills/workflow/references/pr-comment-triage.md` to classify and resolve every PR review comment before merging.
+6. **Email Delivery Guard**:
+   - Every send goes through `deliver()`, or for the waitlist broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.

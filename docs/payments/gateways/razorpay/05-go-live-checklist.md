@@ -8,7 +8,7 @@
 
 ## How to read this page
 
-This checklist covers the payments product only. Consultant and organisation disbursement through RazorpayX is gated separately by `ENABLE_LIVE_PAYOUTS` and has its own runbook at [docs/enterprise/50-operations/06-live-payout-go-live-runbook.md](../../../enterprise/50-operations/06-live-payout-go-live-runbook.md); do not treat the two as one cutover, because accepting money and disbursing money can safely go live weeks apart.
+This checklist covers the payments product only. Consultant and organisation disbursement through RazorpayX is gated separately by `ENABLE_LIVE_PAYOUTS` and has its own runbook at [docs/enterprise/50-operations/05-live-payout-go-live-runbook.md](../../../enterprise/50-operations/05-live-payout-go-live-runbook.md); do not treat the two as one cutover, because accepting money and disbursing money can safely go live weeks apart.
 
 Several items below cannot be verified from the codebase at all. Auto-capture, the settlement cycle and the uncaptured-payment refund window are account settings that live in the Razorpay dashboard, and no amount of reading `lib/payments/core/razorpay.ts` will tell you how they are configured. Those items are marked as dashboard checks, and they need a screenshot or a dashboard link recorded against the issue rather than a code reference.
 
@@ -20,7 +20,7 @@ The account has to be activated before live keys do anything at all, and activat
 
 - [ ] KYC is submitted and approved, and the dashboard shows the account as activated. Razorpay quotes one to three business days for this, and a rejection restarts the clock.
 - [ ] The settlement bank account on the Razorpay account is the platform's current account, and the account holder name matches the registered business name exactly.
-- [ ] GSTIN is recorded on the Razorpay account. This is what lets Razorpay issue us a compliant invoice for its own fees, which we need for input tax credit; it is unrelated to the tax invoices this platform issues to consumers, which are minted in-house (see [../../07-b2c-tax-invoice.md](../../07-b2c-tax-invoice.md)).
+- [ ] GSTIN is recorded on the Razorpay account. This is what lets Razorpay issue us a compliant invoice for its own fees, which we need for input tax credit; it is unrelated to the tax invoices this platform issues to consumers, which are minted in-house (see [../../06-b2c-tax-invoice.md](../../06-b2c-tax-invoice.md)).
 - [ ] If international cards are ever to be accepted, domestic acceptance is activated first and video KYC is complete. International acceptance is a separate approval, not a toggle.
 
 ---
@@ -111,5 +111,5 @@ Razorpay caps order `notes` at **15 key-value pairs of at most 256 characters ea
 - [02-architecture-and-flow.md](./02-architecture-and-flow.md) — Payment flow and revenue split
 - [03-payout-flow.md](./03-payout-flow.md) — RazorpayX payout system and status mapping
 - [04-kyc-and-onboarding.md](./04-kyc-and-onboarding.md) — KYC requirements and timelines
-- [docs/payments/06-high-level-design.md](../../06-high-level-design.md) — Where money truth is written and which sweep closes each gap
+- [docs/payments/05-high-level-design.md](../../05-high-level-design.md) — Where money truth is written and which sweep closes each gap
 - [docs/enterprise/50-operations/07-required-secrets.md](../../../enterprise/50-operations/07-required-secrets.md) — The full secrets manifest and what breaks when each one is missing
