@@ -112,9 +112,10 @@ export async function checkSentryQuota(
       return { status: "ok", accepted, quota, ratio, alerted: false };
     }
 
-    // One alert per period and threshold. Unlike the canary's own gate this
-    // fails CLOSED on a store error: the check runs every 30 minutes, so
-    // failing open would send 48 emails a day while Redis is down.
+    // One alert per period and threshold. Unlike the canary's own gate a
+    // failed read sends nothing: the check runs every 30 minutes, so failing
+    // open would send 48 emails a day while Redis is down. A failed write
+    // after a successful send can repeat the alert on a later run.
     const key = `observability:sentry-quota:${start.toISOString().slice(0, 10)}:70`;
     if ((await store.get(key)) !== null) {
       return { status: "ok", accepted, quota, ratio, alerted: false };

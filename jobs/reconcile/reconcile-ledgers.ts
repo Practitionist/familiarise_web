@@ -135,10 +135,12 @@ async function main(): Promise<void> {
           });
         }
       } finally {
-        if (frozenWallets.length > 0) {
+        // Keyed on detected drift, not completed freezes: a first freeze that
+        // throws must still page.
+        if (walletDrift.length > 0) {
           Sentry.captureException(
             new Error(
-              `WALLET_BALANCE_DRIFT — wallet spend frozen for ${frozenWallets.length} billing account(s)`,
+              `WALLET_BALANCE_DRIFT — ${walletDrift.length} billing account(s) drifting, spend frozen for ${frozenWallets.length}`,
             ),
             {
               level: "fatal",

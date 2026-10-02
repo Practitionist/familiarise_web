@@ -66,6 +66,13 @@ describe("applyErrorBudget", () => {
     }
     expect(passed).toBe(30);
     expect(console.warn).toHaveBeenCalledTimes(1);
+    // A fatal skips the open breaker but keeps its per-key throttle.
+    const fatal = {
+      ...thrown("WALLET_BALANCE_DRIFT"),
+      level: "fatal" as const,
+    };
+    expect(applyErrorBudget(fatal)).not.toBeNull();
+    expect(applyErrorBudget({ ...fatal })).toBeNull();
     jest.advanceTimersByTime(60 * 60 * 1000 + 1);
     expect(applyErrorBudget(thrown("after the hour"))).not.toBeNull();
   });

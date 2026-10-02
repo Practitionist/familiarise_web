@@ -28,10 +28,10 @@ import { runJob } from "@/lib/observability/job-sentry";
 export async function runSentryIngestCanary(): Promise<void> {
   const probe = await probeSentryIngest();
   const healthy = isIngestHealthy(probe);
-  // #1933 — 70% quota warning; never throws, so it cannot change the verdict.
-  await checkSentryQuota();
 
   if (healthy) {
+    // #1933 — 70% quota warning; never throws, so it cannot change the verdict.
+    await checkSentryQuota();
     // The one thing worth saying on success: that the canary ran at all. A
     // canary that is only ever heard from when it fails is indistinguishable
     // from one that is broken.
@@ -58,6 +58,8 @@ export async function runSentryIngestCanary(): Promise<void> {
       })
     : false;
   if (alerted) await recordCanaryAlertSent(probe.verdict);
+  // #1933 — after the ingest alert, so its fetch and email never delay the page.
+  await checkSentryQuota();
   console.error(
     `[sentry-ingest-canary] verdict=${probe.verdict} status=${probe.status} alerted=${alerted} eventId=${probe.eventId}`,
   );

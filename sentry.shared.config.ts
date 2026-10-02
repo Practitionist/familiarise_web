@@ -134,13 +134,20 @@ function budgetKey(event: Sentry.Event, family: string | null): string {
  * INFRA_THROTTLE_MS per key; and at most BUDGET_BREAKER_MAX events an hour per
  * process get through whatever their key. Throttled events do not feed the
  * breaker, so a flood of one class cannot starve a different real fault.
+ * `fatal` events skip the breaker (owner decision on #1938): a money page like
+ * WALLET_BALANCE_DRIFT must not lose to an hour of unrelated noise; the per-key
+ * throttle still bounds a fatal flood.
  */
-function exceedsErrorBudget(key: string, now = Date.now()): boolean {
+function exceedsErrorBudget(
+  key: string,
+  fatal: boolean,
+  now = Date.now(),
+): boolean {
   const last = budgetLastSent.get(key);
   if (last !== undefined && now - last < INFRA_THROTTLE_MS) return true;
 
   breakerSent = breakerSent.filter((t) => now - t < BUDGET_BREAKER_WINDOW_MS);
-  if (breakerSent.length >= BUDGET_BREAKER_MAX) {
+  if (!fatal && breakerSent.length >= BUDGET_BREAKER_MAX) {
     if (breakerDropped === 0) {
       console.warn(
         `[sentry] per-process breaker open: >${BUDGET_BREAKER_MAX} events/hour, dropping the rest (#1933)`,
@@ -156,7 +163,7 @@ function exceedsErrorBudget(key: string, now = Date.now()): boolean {
     breakerDropped = 0;
   }
 
-  breakerSent.push(now);
+  if (!fatal) breakerSent.push(now);
   budgetLastSent.delete(key); // re-insert so Map order stays oldest-first
   budgetLastSent.set(key, now);
   if (budgetLastSent.size > BUDGET_MAX_KEYS) {
@@ -172,7 +179,9 @@ export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
   if (event.tags?.expected === "true" && event.level === "info") return null;
   const family = fingerprintFamily(event);
   if (family) event.fingerprint = [family];
-  return exceedsErrorBudget(budgetKey(event, family)) ? null : event;
+  return exceedsErrorBudget(budgetKey(event, family), event.level === "fatal")
+    ? null
+    : event;
 }
 
 /**
