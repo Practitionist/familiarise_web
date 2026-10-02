@@ -932,8 +932,13 @@ export function useCalendarData(
   // effect's own fetch, so they must be read without being effect triggers —
   // listing them would re-fire it every time the fetch it just ran completes,
   // a self-triggering refetch loop on every week navigation.
+  // Synced in an effect declared before the fetch effect (effects run in
+  // order), not during render (react.dev: refs are not written while rendering).
   const hasLoadedDataRef = useRef(false);
-  hasLoadedDataRef.current = Boolean(consultantDetails) || weeklySlotCount > 0;
+  useEffect(() => {
+    hasLoadedDataRef.current =
+      Boolean(consultantDetails) || weeklySlotCount > 0;
+  }, [consultantDetails, weeklySlotCount]);
   useEffect(() => {
     if (autoLoad && consultantId) {
       // Only show loading spinner on initial load, not on background refetches

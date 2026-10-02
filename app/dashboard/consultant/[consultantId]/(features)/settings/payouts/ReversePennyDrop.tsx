@@ -57,14 +57,17 @@ export function ReversePennyDrop({
   const invalidate = usePayoutSetupInvalidation(consultantId);
   const refusalToast = useRefusalToast();
   const { toast } = useToast();
-  const onVerifiedRef = useRef(onVerified);
-  onVerifiedRef.current = onVerified;
   // Latest-value refs: the poll effect must not restart (and re-arm its timer)
-  // when `invalidate`/`toast` change identity between renders.
+  // when these change identity. Synced in an effect declared before the poll,
+  // not during render (react.dev: refs are not read or written while rendering).
+  const onVerifiedRef = useRef(onVerified);
   const invalidateRef = useRef(invalidate);
-  invalidateRef.current = invalidate;
   const toastRef = useRef(toast);
-  toastRef.current = toast;
+  useEffect(() => {
+    onVerifiedRef.current = onVerified;
+    invalidateRef.current = invalidate;
+    toastRef.current = toast;
+  });
 
   const start = useMutation({
     mutationFn: startReversePennyDrop,
