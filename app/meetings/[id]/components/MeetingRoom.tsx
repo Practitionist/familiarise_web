@@ -36,6 +36,8 @@ import {
 import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
+import { StageControls } from "./StageControls";
+import { OverrunBanner } from "./OverrunBanner";
 import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
 import { ConnectionStateScreen } from "./ConnectionStateScreen";
 import { IncomingVideoQualityMenu } from "./IncomingVideoQualityMenu";
@@ -52,6 +54,10 @@ import {
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
+
+import { isInCallChatAllowed } from "@/lib/meetings/room-ready";
+
+export { isInCallChatAllowed };
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
@@ -76,14 +82,7 @@ const layoutOptions = [
   { value: "speaker-right", label: "Speaker (Right)", icon: Monitor },
 ];
 
-/**
- * The clock pill, isolated.
- *
- * `useSessionClock` ticks once a second for the whole session. Called from the
- * top of MeetingRoom it re-rendered the entire video layout on every tick,
- * including the many ticks whose output is identical. Only these twenty-odd
- * nodes actually change, so only they subscribe.
- */
+/** Isolated clock pill that subscribes to per-second ticks without re-rendering the video stage. */
 function SessionClockPill({
   startsAt,
   endsAt,
@@ -111,9 +110,6 @@ function SessionClockPill({
             : "animate-pulse bg-white",
         )}
       />
-      {/* What remains leads; the clock since the start is context
-                beneath it and now says which one it is. Two unlabelled
-                durations side by side read as contradicting each other. */}
       <span
         className={cn(
           "text-sm font-medium",
@@ -135,10 +131,6 @@ function SessionClockPill({
 }
 
 interface MeetingRoomProps {
-  /**
-   * Recovery from a terminal connection state. Re-creating the call is the
-   * SDK's documented requirement — see useGetCallById.
-   */
   onRejoin: () => void;
 }
 
@@ -147,46 +139,33 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
-  // How THIS client is on its way out, set before the request that ends or
-  // leaves, so the `call.ended`/LEFT that follow are not screens for them.
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
-  // Stable: it sits in EndCallButton's hold-timer effect deps.
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
   const { useCallCallingState, useCallEndedAt, useParticipantCount } =
     useCallStateHooks();
 
-  // Get recording info for this meeting
   const { meetingId, recordingEnabled } = useMeetingRecording(call?.id);
 
   const callingState = useCallCallingState();
   const callEndedAt = useCallEndedAt();
   const participantCount = useParticipantCount();
 
-  // #1134 — Stream's default disconnection timeout is 0, i.e. a participant
-  // whose connection dies stays in the call indefinitely and never emits
-  // `call.session_participant_left`. That is where the 1,417 Meeting
-  // rows that never closed came from, and why attendance cannot be trusted.
+  // Set Stream disconnection timeout so dropped connections emit participant_left events.
   useEffect(() => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
 
-  const { useCallCustomData } = useCallStateHooks();
-  const custom = useCallCustomData();
-
   const info = useSessionInfo();
-
-  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is
-  // on. `isHost` comes from useSessionInfo, which owns the one definition.
-  const consulteeUserId = custom?.consulteeUserId as string | undefined;
   const isHost = info.isHost;
-  const isGuest = consulteeUserId
-    ? session?.user?.id === consulteeUserId
-    : session?.user?.role === "CONSULTEE";
+  const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
 
-  // Get proper dashboard URL based on user role and profile
   const getDashboardUrl = () => {
     if (!session?.user) return "/";
+
+    if (info.organizationId) {
+      return `/dashboard/organization/${info.organizationId}/appointments`;
+    }
 
     const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
       session.user;
@@ -198,39 +177,27 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
       return `/dashboard/consultee/${consulteeProfileId}/home`;
     }
     if (role === "STAFF" && staffProfileId) {
-      return "/dashboard/staff/support"; // #1527 Q12
+      return "/dashboard/staff/support";
     }
 
     return "/";
   };
 
-  // Release the hardware before navigating. The teardown is shared with the
-  // page unmount and the end-call path so every exit behaves the same way, and
-  // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
-    // A deliberate exit passes through LEFT on its way out. Without this it
-    // would flash "You have left this session — Rejoin?" at someone who just
-    // pressed Leave and is already being navigated away.
     setExit("leaving");
     try {
       await leaveCallAndReleaseMedia(call);
     } catch (error) {
       console.error("Error releasing media while leaving call:", error);
     } finally {
-      // In `finally`: a teardown that rejects must not be the reason the user
-      // is left sitting on the call screen.
       router.push(targetUrl);
     }
   };
 
-  // Handle return to home with proper cleanup
   const handleReturnHome = async () => {
     await cleanupAndNavigate(getDashboardUrl());
   };
 
-  // An ended call is over for EVERYONE here. Exempting the host left a co-host
-  // (#1580), a second tab or an SFU max-duration end on a LEFT call with an
-  // empty stage; the one client on its way out has `exit` set instead.
   if (callEndedAt && !exit) {
     return (
       <CallEnded
@@ -243,10 +210,6 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
     );
   }
 
-  // #1134 — everything that was not JOINED used to collapse into one
-  // unexplained spinner, so a network blip, an SFU migration and a connection
-  // the SDK had permanently given up on all looked identical, and the terminal
-  // one had no way out. `describeCallingState` owns which is which.
   const advice = exit
     ? {
         tone: "loading" as const,
@@ -271,20 +234,19 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
 
   return (
     <StreamVideoErrorBoundary>
-      <section className="relative h-screen w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
-        {/* Background pattern */}
+      <section
+        data-in-call-chat-blocked={inCallChatAllowed ? "false" : "true"}
+        className="relative h-screen w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950"
+      >
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMiI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
-        {/* Main content area */}
         <div className="relative flex h-full w-full">
-          {/* Video Grid Area - Centered with proper padding for controls */}
           <div className="flex-1 flex items-center justify-center px-6 pt-16 pb-24">
             <div className="w-full h-full max-w-6xl flex items-center justify-center">
               <CallLayout layout={layout} />
             </div>
           </div>
 
-          {/* Participants Sidebar */}
           <div
             className={cn(
               "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
@@ -313,7 +275,6 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
             </div>
           </div>
 
-          {/* Overlay when sidebar is open on mobile */}
           {showParticipants && (
             <div
               className="fixed inset-0 bg-black/50 z-30 lg:hidden"
@@ -322,40 +283,28 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
           )}
         </div>
 
-        {/* Bottom Control Bar */}
         <div className="fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
             <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
-              {/* Custom Call Controls - Replaces default CallControls */}
-              {/* Audio Toggle. The notification came free with the SDK's
-                  `CallControls` and was lost when these buttons were
-                  hand-rolled — so someone talking into a muted mic got no hint
-                  at all, which on a paid consultation is minutes of a session
-                  spent unheard. */}
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
               </SpeakingWhileMutedNotification>
 
-              {/* Video Toggle */}
               <ToggleVideoPublishingButton />
 
-              {/* Reactions */}
               <ReactionsButton />
 
-              {/* Screen Share */}
               <ScreenShareButton />
 
-              {/* Recording BUTTON for the host - Left of Leave Call (only if recording enabled) */}
               {isHost && recordingEnabled && meetingId && (
                 <RecordingControls
                   meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyButton={true}
+                  isHost={isHost}
                 />
               )}
 
-              {/* Leave — the only red control in the bar, and the only exit
-                  reachable in one click. */}
               <button
                 onClick={async () => {
                   await cleanupAndNavigate(getDashboardUrl());
@@ -366,10 +315,8 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 <Phone className="w-5 h-5 rotate-[135deg] text-white" />
               </button>
 
-              {/* Divider */}
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
-              {/* Layout Selector */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">
@@ -404,14 +351,10 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* Incoming video quality — the bandwidth escape hatch, and the
-                  single largest cost lever in the video subsystem. */}
               <IncomingVideoQualityMenu />
 
-              {/* Stats Button */}
               <CallStatsButton />
 
-              {/* Participants Toggle */}
               <button
                 onClick={() => setShowParticipants((prev) => !prev)}
                 className={cn(
@@ -429,25 +372,17 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 )}
               </button>
 
-              {/* Divider */}
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
-              {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
               {isHost && meetingId && recordingEnabled && (
                 <RecordingControls
                   meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyIndicator={true}
+                  isHost={isHost}
                 />
               )}
 
-              {/* Ending for EVERYONE lives behind this menu, and nowhere in
-                  the bar itself. It used to be the widest, highest-contrast
-                  element on the screen, sitting beside the ordinary hang-up —
-                  two destructive actions a thumb's width apart, one of which
-                  cannot be undone by the people it happens to. Reaching it now
-                  takes a deliberate second step, and it still needs the
-                  press-and-hold inside. */}
               {isHost && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -475,25 +410,18 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 </DropdownMenu>
               )}
 
-              {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
-              {isGuest && meetingId && recordingEnabled && (
+              {!isHost && meetingId && recordingEnabled && (
                 <RecordingControls
                   meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyIndicator={true}
+                  isHost={false}
                 />
               )}
             </div>
           </div>
         </div>
 
-        {/* Header. The title was the appointment type in caps repeated from
-            the lobby; it now names the person, with the type demoted to the
-            supporting line. The session clock sits opposite it, because until
-            now nothing on this screen said how long was left. */}
-        {/* Below the participants sidebar (z-40) and its backdrop (z-30): the
-            header sits later in the DOM, so at equal stacking it painted over
-            the panel's own heading and close control. */}
         <div className="pointer-events-none fixed inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
           <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
             <div className="min-w-0">
@@ -511,14 +439,24 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
             </div>
           </div>
 
-          <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
+          <div className="flex flex-col items-end gap-2">
+            <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
+            <OverrunBanner
+              callId={call?.id ?? null}
+              startsAt={info.startsAt}
+              endsAt={info.endsAt}
+              extendedSeconds={info.extendedSeconds}
+              extensionsUsed={info.extensionsUsed}
+              isHost={isHost}
+            />
+          </div>
         </div>
 
-        {/* Connection notices sit under the header, out of the video's way,
-            and only appear when there is something the person cannot otherwise
-            explain — their own link degrading, or the server pausing incoming
-            video to protect it. */}
-        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex justify-center">
+        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex flex-col items-center gap-2">
+          <StageControls
+            appointmentType={info.appointmentType}
+            isHost={isHost}
+          />
           <ConnectionQualityNotice />
         </div>
       </section>

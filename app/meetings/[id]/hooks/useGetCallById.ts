@@ -58,7 +58,9 @@ export const useGetCallById = (callId: string) => {
   const [isCallLoading, setIsCallLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [access, setAccess] = useState<MeetingAccessResult | null>(null);
+  const [consentRequired, setConsentRequired] = useState(false);
   const [rejoinKey, setRejoinKey] = useState(0);
+  const [retryKey, setRetryKey] = useState(0);
   const client = useStreamVideoClient();
 
   // The call being replaced, and the devices it was using. Refs rather than
@@ -78,6 +80,11 @@ export const useGetCallById = (callId: string) => {
       };
     }
     setRejoinKey((key) => key + 1);
+  }, []);
+
+  const retryJoin = useCallback(() => {
+    setConsentRequired(false);
+    setRetryKey((key) => key + 1);
   }, []);
 
   /**
@@ -143,6 +150,7 @@ export const useGetCallById = (callId: string) => {
     const run = async () => {
       setIsCallLoading(true);
       setError(null);
+      setConsentRequired(false);
 
       const isRejoin = rejoinKey > 0;
 
@@ -178,6 +186,11 @@ export const useGetCallById = (callId: string) => {
             response.status === 404;
 
           if (refused) {
+            const isConsentRefusal =
+              response.status === 403 &&
+              (body?.code === "CONSENT_REQUIRED" ||
+                /consent for live video|consent.*required/i.test(message));
+            setConsentRequired(isConsentRefusal);
             setAccess({ hasAccess: false, role: null, message });
             setCall(null);
             previousCall.current = null;
@@ -248,9 +261,17 @@ export const useGetCallById = (callId: string) => {
       // capture — the user has already navigated away.
       void releaseIfUnadopted();
     };
-  }, [client, callId, rejoinKey]);
+  }, [client, callId, rejoinKey, retryKey]);
 
-  return { call, isCallLoading, error, access, rejoin };
+  return {
+    call,
+    isCallLoading,
+    error,
+    access,
+    consentRequired,
+    rejoin,
+    retryJoin,
+  };
 };
 
 /**

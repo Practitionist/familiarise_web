@@ -43,8 +43,10 @@ describe("recomputeEarningsHold", () => {
   function db(opts: {
     lastEnd: Date | null;
     earnings: { id: string; createdAt: Date; holdUntil: Date }[];
+    orgEarnings?: { id: string; createdAt: Date; holdUntil: Date }[];
   }) {
-    const update = jest.fn(async () => ({}));
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const orgUpdateMany = jest.fn(async () => ({ count: 1 }));
     const client = {
       appointment: {
         findUnique: jest.fn(async () => ({
@@ -59,17 +61,26 @@ describe("recomputeEarningsHold", () => {
       },
       consultantEarnings: {
         findMany: jest.fn(async () => opts.earnings),
-        update,
+        updateMany,
+      },
+      organizationEarnings: {
+        findMany: jest.fn(async () => opts.orgEarnings ?? []),
+        updateMany: orgUpdateMany,
       },
     };
-    return { update, client: client as unknown as never, mocks: client };
+    return {
+      update: updateMany,
+      orgUpdate: orgUpdateMany,
+      client: client as unknown as never,
+      mocks: client,
+    };
   }
 
   it("extends a PENDING hold to the last live call's end plus the hold hours", async () => {
     // A subscription captured on 1 Sep with its first allocation landing a
     // call on 20 Sep: the capture-time hold (7 days) would release the money
     // before any call was held.
-    const { client, update } = db({
+    const { client, update, orgUpdate } = db({
       lastEnd: at("2026-09-20T11:00:00Z"),
       earnings: [
         {
@@ -78,11 +89,30 @@ describe("recomputeEarningsHold", () => {
           holdUntil: at("2026-09-08T10:00:00Z"),
         },
       ],
+      orgEarnings: [
+        {
+          id: "org-earn-1",
+          createdAt: at("2026-09-01T10:00:00Z"),
+          holdUntil: at("2026-09-08T10:00:00Z"),
+        },
+      ],
     });
 
-    expect(await recomputeEarningsHold(client, "appt-1")).toBe(1);
+    expect(await recomputeEarningsHold(client, "appt-1")).toBe(2);
     expect(update).toHaveBeenCalledWith({
-      where: { id: "earn-1" },
+      where: {
+        id: "earn-1",
+        status: "PENDING",
+        holdUntil: { lt: at("2026-09-27T11:00:00Z") },
+      },
+      data: { holdUntil: at("2026-09-27T11:00:00Z") },
+    });
+    expect(orgUpdate).toHaveBeenCalledWith({
+      where: {
+        id: "org-earn-1",
+        status: "PENDING",
+        holdUntil: { lt: at("2026-09-27T11:00:00Z") },
+      },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
     });
   });

@@ -216,34 +216,27 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User
+    participant Dashboard
+    participant MeetingAction as provisionAppointmentMeeting
     participant MeetingPage
-    participant Hook
-    participant VideoClient
+    participant JoinRoute as POST /api/meetings/[id]/join
     participant Database
     participant StreamCloud
 
-    User->>MeetingPage: Navigate to /meetings/{slotId}
-    MeetingPage->>Hook: useGetCallById(callId)
+    User->>Dashboard: Click Join Session
+    Dashboard->>MeetingAction: provisionAppointmentMeeting(slot)
+    MeetingAction->>Database: Verify entitlement & booking status
+    MeetingAction->>StreamCloud: call.getOrCreate (author=host, settings_override)
+    MeetingAction->>Database: Persist Meeting (streamCallId: occurrence-<slotId>)
+    MeetingAction-->>Dashboard: { ok: true, streamCallId }
 
-    Hook->>VideoClient: queryCalls({id: callId})
-    VideoClient->>StreamCloud: Query for call
-
-    alt Call exists
-        StreamCloud-->>VideoClient: Return call
-    else Call not found
-        VideoClient->>StreamCloud: Create call
-        StreamCloud-->>VideoClient: New call created
-        Hook->>Database: Save Meeting
-    end
-
-    VideoClient-->>Hook: Call object
-    Hook-->>MeetingPage: Call ready
-    MeetingPage-->>User: Show MeetingSetup
-
-    User->>MeetingPage: Join meeting
-    MeetingPage->>VideoClient: call.join()
-    VideoClient->>StreamCloud: Join call
-    StreamCloud-->>User: In meeting
+    User->>MeetingPage: Navigate to /meetings/{streamCallId}
+    MeetingPage->>JoinRoute: POST /api/meetings/{streamCallId}/join
+    JoinRoute->>Database: resolveMeetingAccess + DPDP checkConsent
+    JoinRoute->>StreamCloud: upsertUsersToStream + call.getOrCreate + updateCallMembers(call_member)
+    JoinRoute-->>MeetingPage: { callType: "default", callId, role }
+    MeetingPage-->>User: Show MeetingSetup -> MeetingRoom
+    StreamCloud-->>Database: Webhooks (participant_joined/left, call.ended) write attendance, presence & endedAt
 ```
 
 ### 3. Channel Creation Flow
@@ -437,9 +430,7 @@ for (let attempt = 0; attempt < 5; attempt++) {
 // Create channel AND add members in one operation
 await channel.create({
   members: [consultant, consultee],
-  data: {
-    /* channel metadata */
-  },
+  data: {/* channel metadata */},
 });
 ```
 
@@ -652,6 +643,14 @@ Promise.all([
 **For troubleshooting:**
 
 - [Troubleshooting](./troubleshooting.md) - Common problems and known issues
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **NextAuth (`getServerSession`, `authOptions`)**: Replaced across all client and server boundaries by Better Auth (`auth.api.getSession` on the server and `useSession` from `@/lib/auth-client` on the client).
+- **Synchronous `StreamProvider` wrapping `children`**: Superseded by the SDK-free shell `providers/StreamProvider.tsx` + `next/dynamic(..., { ssr: false })` `StreamProviderImpl` publishing into `lib/stream/connection-store.ts` so server-rendered HTML is never stripped from dashboard routes.
+- **Browser-initiated `call.getOrCreate()` in `useGetCallById`**: Superseded by server-side `provisionAppointmentMeeting` and `POST /api/meetings/[meetingId]/join`.
 
 ---
 

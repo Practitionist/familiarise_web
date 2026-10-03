@@ -55,6 +55,7 @@ subsystem. The unnumbered ones are references.
 | [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)             | The cost model in detail, with worked figures.                    |
 | [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md) | Plan tiers and what the Maker account includes.                   |
 | [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)   | Stream's own product vocabulary and its paid add-ons.             |
+| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                       | Chat channel provisioning, dormancy, and lifecycle transitions.   |
 | [troubleshooting.md](./troubleshooting.md)                                 | Symptoms and their causes, kept current.                          |
 | [stream-ecosystem.mmd](./stream-ecosystem.mmd)                             | A diagram of the whole subsystem.                                 |
 
@@ -75,11 +76,12 @@ and the ceiling is 64 characters.
 as invalid once `revoke_tokens_issued_before` is set for that user, so a token
 minted without one plus a single ban equals a permanent lockout.
 
-**Webhooks must be acknowledged first.** Stream retries within a fifteen-second
-total budget and then drops the event permanently. Verify the signature,
-persist the receipt, acknowledge, and do the work afterwards. Use the
-`X-Webhook-ID` header for idempotency, because a key built from `created_at`
-collides.
+**Webhooks must be acknowledged first, and deduplicated on `sha256(body)`.**
+Stream retries within a fifteen-second total budget and then drops the event
+permanently. Verify the signature with `verifySignature(body, signature, secret)`
+using `STREAM_API_SECRET`, persist the receipt keyed on `sha256(body)`,
+acknowledge, and process in `after()`. Do not deduplicate on `X-Webhook-ID`
+because Stream signs the body only.
 
 **Never await a Stream call inside a database transaction**, and never leave
 channel provisioning as a floating promise. The function can freeze before it
@@ -90,7 +92,7 @@ is why a bad channel-identifier derivation is unrecoverable data loss rather
 than a bug you can migrate your way out of.
 
 **Development, preview and production currently share one Stream application.**
-A test deletion is a real deletion.
+A test deletion is a real deletion. Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
 
 ## Related
 
@@ -100,4 +102,9 @@ A test deletion is a real deletion.
   them.
 - [ADR: `resolveMeetingAccess` returns what it loaded](../decisions/2026-08-13-meeting-access-returns-what-it-loaded.md)
 - `.claude/skills/stream/SKILL.md` — the working reference, kept in step
-  with the code more actively than these pages.
+  with the code.
+
+## Deprecated & Superseded Approaches
+
+- **Header-based webhook deduplication (`X-Webhook-ID`) and `STREAM_WEBHOOK_SECRET`**: Superseded by `sha256(rawBody)` deduplication and `verifySignature(rawBody, signature, STREAM_API_SECRET)` in `app/api/stream/webhooks/route.ts`. Stream signs only the payload body with the app's `STREAM_API_SECRET`.
+- **Client-side `call.getOrCreate()` and `user`/`guest` `join-call` grants**: Superseded by server-only provisioning (`provisionAppointmentMeeting` in `actions/stream/meetings/meeting.action.ts`) and `POST /api/meetings/[meetingId]/join`, which verifies access and DPDP `STREAM_DATA_PROCESSING` consent before assigning `call_member`.

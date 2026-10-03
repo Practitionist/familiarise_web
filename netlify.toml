@@ -69,3 +69,19 @@
     # Continue with normal build for non-Dependabot PRs
     exit 1
   """
+
+# Serve immutable static assets directly from Netlify Edge CDN cache
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/avif/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

@@ -1,10 +1,13 @@
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import type { MeetingAccess } from "@/lib/meetings/access";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+
+const meetingIdParamSchema = z.string().trim().min(1).max(128);
 
 /**
  * The five questions every meeting route asks before it touches Stream.
@@ -45,10 +48,12 @@ export async function guardMeetingRoute(
   }
   const { session } = authResult;
 
-  const { meetingId } = await params;
-  if (!meetingId) {
+  const { meetingId: rawMeetingId } = await params;
+  const parsedMeetingId = meetingIdParamSchema.safeParse(rawMeetingId);
+  if (!parsedMeetingId.success) {
     return refuse({ error: "Meeting ID is required" }, 400);
   }
+  const meetingId = parsedMeetingId.data;
 
   if (!isStreamConfigured()) {
     streamLogger.error(`Stream not configured — cannot ${op} meeting`);
@@ -67,7 +72,11 @@ export async function guardMeetingRoute(
       reason: access.reason,
     });
     return refuse(
-      { error: access.message, reason: access.reason },
+      {
+        error: access.message,
+        reason: access.reason,
+        ...("code" in access && access.code ? { code: access.code } : {}),
+      },
       access.reason === "not_found" ? 404 : 403,
     );
   }

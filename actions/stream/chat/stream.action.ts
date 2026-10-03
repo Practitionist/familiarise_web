@@ -9,6 +9,8 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { checkConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
   okResult,
   refusalResult,
@@ -20,6 +22,9 @@ import * as Sentry from "@sentry/nextjs";
 
 // Input validation
 const userIdSchema = z.string().min(1, "User ID is required");
+
+const STREAM_CONSENT_REFUSAL =
+  "Chat and video are unavailable because data-processing consent for real-time communication has not been granted.";
 
 /**
  * Tokens may only be minted for the caller's own userId (staff/admin may mint
@@ -50,6 +55,23 @@ async function assertCanMintToken(
   }
   if (session.user.id !== forUserId && !isPrivileged(session.user.role)) {
     throw new Error("Forbidden: cannot mint a token for another user");
+  }
+  const hasStreamConsent = await checkConsent({
+    userId: forUserId,
+    purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
+  });
+  if (!hasStreamConsent) {
+    streamLogger.warn(
+      "Refusing Stream token mint — STREAM_DATA_PROCESSING consent not granted",
+      { userId: forUserId },
+    );
+    return new Refusal({
+      code: "CONSENT_REQUIRED",
+      httpStatus: 403,
+      userMessage: STREAM_CONSENT_REFUSAL,
+      devMessage: `Consent required for purpose: ${PURPOSE_CODES.STREAM_DATA_PROCESSING}`,
+      context: { purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING },
+    });
   }
   return undefined;
 }

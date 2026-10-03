@@ -9,11 +9,7 @@ import type { TAppointment } from "@/types/appointment";
  */
 
 export type AppointmentKind =
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "WEBINAR"
-  | "CLASS"
-  | "TRIAL";
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS" | "TRIAL";
 
 /**
  * `waiting` (consultee: awaiting the expert's approval) and `inRequests`
@@ -21,18 +17,10 @@ export type AppointmentKind =
  * per-viewer splits of what used to be "Needs action".
  */
 export type AppointmentBucket =
-  | "upcoming"
-  | "needsAction"
-  | "waiting"
-  | "inRequests"
-  | "past"
-  | "cancelled";
+  "upcoming" | "needsAction" | "waiting" | "inRequests" | "past" | "cancelled";
 
 export type NeedsActionReason =
-  | "PAY_NOW"
-  | "PENDING_APPROVAL"
-  | "UNSCHEDULED"
-  | "TENTATIVE";
+  "PAY_NOW" | "PENDING_APPROVAL" | "UNSCHEDULED" | "TENTATIVE";
 
 /**
  * Minimal structural occurrence shape. Both Prisma's bare AppointmentOccurrence
@@ -46,6 +34,7 @@ export interface OccurrenceLike {
   endsAt?: Date | string | null;
   isTentative: boolean;
   completionStatus?: string | null;
+  outcome?: string | null;
   /** A10 soft-delete tombstone (#676) — a set value means the row is gone. */
   deletedAt?: Date | string | null;
   meeting?: {
@@ -88,6 +77,8 @@ export interface OccurrenceVM {
   isTentative: boolean;
   /** Raw OccurrenceCompletionStatus (CANCELLED/RESCHEDULED mark a dead call). */
   completionStatus: string | null;
+  /** Persisted OccurrenceOutcome (DELIVERED, CUT_SHORT, *_NO_SHOW, INCONCLUSIVE). */
+  outcome?: string | null;
   /** Meeting ended early by the host — the call is over regardless of endsAt. */
   meetingEndedAt: Date | null;
   /**
@@ -176,6 +167,7 @@ export function toOccurrenceVM(row: OccurrenceLike): OccurrenceVM {
     endsAt: toDateOrNull(row.endsAt),
     isTentative: row.isTentative,
     completionStatus: row.completionStatus ?? null,
+    outcome: row.outcome ?? null,
     meetingEndedAt: toDateOrNull(row.meeting?.endedAt),
     meetingEndedReason: row.meeting?.endedReason ?? null,
   };

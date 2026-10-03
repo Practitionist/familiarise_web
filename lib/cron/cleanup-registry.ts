@@ -1203,6 +1203,28 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         status: () => 200,
         failureMessage: "Cron job failed",
       }),
+
+    // @cleanup-twin wind-down-deactivated-orgs
+    "wind-down-deactivated-orgs": () =>
+      cleanupRoute({
+        job: "wind-down-deactivated-orgs",
+        run: async () => {
+          const { windDownDeactivatedOrgs } =
+            await import("@/jobs/stream/wind-down-deactivated-orgs");
+          return windDownDeactivatedOrgs();
+        },
+        summarize: (r) => ({
+          orgsScanned: r.orgsScanned,
+          callsEnded: r.callsEnded,
+          eventChannelsFrozen: r.eventChannelsFrozen,
+          dmChannelsFrozen: r.dmChannelsFrozen,
+          tokensRevoked: r.tokensRevoked,
+          recordingsUnpublished: r.recordingsUnpublished,
+          recordingsPurged: r.recordingsPurged,
+          removedMembersDrained: r.removedMembersDrained,
+        }),
+        failureMessage: "Failed to wind down deactivated organizations",
+      }),
   };
 
 const handlerCache = new Map<string, CleanupRouteHandlers>();

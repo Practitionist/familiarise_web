@@ -63,8 +63,11 @@ import {
 } from "@/lib/enterprise/suspended-member-sessions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
+import type { AppointmentType } from "@/lib/payments/payouts/constants";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
+const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Which side is asking. Null for a privileged ADMIN/STAFF bypass, which is
@@ -472,6 +475,42 @@ export async function POST(
           } else {
             // Whole booking: every live row of the one wrapper.
             await releaseSlots({ appointmentId });
+          }
+
+          if (slotsToReschedule.length > 0) {
+            const holdHours = holdHoursFor(
+              (derivedType ??
+                appointment.appointmentType ??
+                "CONSULTATION") as AppointmentType,
+            );
+            const maxReleasedEnd = slotsToReschedule.reduce(
+              (max, s) => Math.max(max, new Date(s.endsAt).getTime()),
+              now.getTime(),
+            );
+            const maxProposedEnd = (proposedSlots ?? []).reduce(
+              (max, s) => Math.max(max, s.endsAt.getTime()),
+              0,
+            );
+            const anchorMs = Math.max(
+              maxReleasedEnd + RESCHEDULE_REALLOCATION_BUFFER_MS,
+              maxProposedEnd,
+            );
+            const rescheduledHoldUntil = new Date(
+              anchorMs + holdHours * 60 * 60 * 1000,
+            );
+            const pendingEarningsWhere = {
+              status: "PENDING" as const,
+              holdUntil: { not: null, lt: rescheduledHoldUntil },
+              payment: { appointmentId },
+            };
+            await tx.consultantEarnings?.updateMany?.({
+              where: pendingEarningsWhere,
+              data: { holdUntil: rescheduledHoldUntil },
+            });
+            await tx.organizationEarnings?.updateMany?.({
+              where: pendingEarningsWhere,
+              data: { holdUntil: rescheduledHoldUntil },
+            });
           }
 
           // Update status based on appointment type — through the CAS helpers
