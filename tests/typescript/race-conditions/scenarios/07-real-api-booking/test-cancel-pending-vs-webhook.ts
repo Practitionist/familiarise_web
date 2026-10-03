@@ -250,77 +250,80 @@ async function run() {
 
       const leg1Processed = await pollWebhookProcessed(expectedEventId);
       check(
-        "Leg 1 webhook processed before cleanup",
+        "Leg 1 webhook settled before cleanup",
         leg1Processed,
         `orderId=${leg1.paymentIntent}`,
       );
-      const finalStatus = await pollPaymentTerminal(leg1.paymentId);
-      check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
-        finalStatus,
-      });
+      if (leg1Processed) {
+        const finalStatus = await pollPaymentTerminal(leg1.paymentId);
+        check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
+          finalStatus,
+        });
 
-      const tentativeLeft = await prisma.appointmentOccurrence.count({
-        where: {
-          appointmentId: appointment.id,
-          isTentative: true,
-          deletedAt: null,
-        },
-      });
-      const parent = await prisma.consultation.findUniqueOrThrow({
-        where: { id: consultation.id },
-        select: { status: true },
-      });
-      const cancelWon = cancelRes.status === 200;
+        const tentativeLeft = await prisma.appointmentOccurrence.count({
+          where: {
+            appointmentId: appointment.id,
+            isTentative: true,
+            deletedAt: null,
+          },
+        });
+        const parent = await prisma.consultation.findUniqueOrThrow({
+          where: { id: consultation.id },
+          select: { status: true },
+        });
+        const cancelWon = cancelRes.status === 200;
 
-      if (finalStatus === "EXPIRED") {
-        // Outcome A — cancel won cleanly.
-        check("leg1/A: cancel reported the win", cancelWon, { cancelRes });
-        check("leg1/A: tentative slots released", tentativeLeft === 0, {
-          tentativeLeft,
-        });
-        // Released by status, never by delete: every slot of the cancelled
-        // booking is still stored, CANCELLED and tombstoned.
-        const releasedSlots = await prisma.appointmentOccurrence.findMany({
-          where: { appointmentId: appointment.id },
-          select: { completionStatus: true, deletedAt: true },
-        });
-        check(
-          "leg1/A: released slots are stored as CANCELLED tombstones",
-          releasedSlots.length > 0 &&
-            releasedSlots.every(
-              (s) => s.completionStatus === "CANCELLED" && s.deletedAt !== null,
-            ),
-          releasedSlots,
-        );
-        check(
-          "leg1/A: parent CANCELLED",
-          parent.status === "CANCELLED",
-          parent,
-        );
-      } else {
-        // Outcome B (webhook won: cancel 409, slots confirmed) or the
-        // documented late-capture orphan C (cancel 200, slots deleted,
-        // parent CANCELLED, reconciler refunds). Never a half-state.
-        const confirmed = await prisma.appointmentOccurrence.count({
-          where: { appointmentId: appointment.id, isTentative: false },
-        });
-        if (cancelWon) {
+        if (finalStatus === "EXPIRED") {
+          // Outcome A — cancel won cleanly.
+          check("leg1/A: cancel reported the win", cancelWon, { cancelRes });
+          check("leg1/A: tentative slots released", tentativeLeft === 0, {
+            tentativeLeft,
+          });
+          // Released by status, never by delete: every slot of the cancelled
+          // booking is still stored, CANCELLED and tombstoned.
+          const releasedSlots = await prisma.appointmentOccurrence.findMany({
+            where: { appointmentId: appointment.id },
+            select: { completionStatus: true, deletedAt: true },
+          });
           check(
-            "leg1/C: late capture left no half-confirmed booking (slots released, parent CANCELLED)",
-            confirmed === 0 && parent.status === "CANCELLED",
-            { confirmed, parent },
-          );
-        } else {
-          check(
-            "leg1/B: webhook win confirmed the booking (no tentative residue)",
-            tentativeLeft === 0,
-            { tentativeLeft, confirmed, parent },
+            "leg1/A: released slots are stored as CANCELLED tombstones",
+            releasedSlots.length > 0 &&
+              releasedSlots.every(
+                (s) =>
+                  s.completionStatus === "CANCELLED" && s.deletedAt !== null,
+              ),
+            releasedSlots,
           );
           check(
-            "leg1/B: webhook win left the parent un-cancelled",
-            parent.status !== "CANCELLED",
+            "leg1/A: parent CANCELLED",
+            parent.status === "CANCELLED",
             parent,
           );
+        } else {
+          // Outcome B (webhook won: cancel 409, slots confirmed) or the
+          // documented late-capture orphan C (cancel 200, slots deleted,
+          // parent CANCELLED, reconciler refunds). Never a half-state.
+          const confirmed = await prisma.appointmentOccurrence.count({
+            where: { appointmentId: appointment.id, isTentative: false },
+          });
+          if (cancelWon) {
+            check(
+              "leg1/C: late capture left no half-confirmed booking (slots released, parent CANCELLED)",
+              confirmed === 0 && parent.status === "CANCELLED",
+              { confirmed, parent },
+            );
+          } else {
+            check(
+              "leg1/B: webhook win confirmed the booking (no tentative residue)",
+              tentativeLeft === 0,
+              { tentativeLeft, confirmed, parent },
+            );
+            check(
+              "leg1/B: webhook win left the parent un-cancelled",
+              parent.status !== "CANCELLED",
+              parent,
+            );
+          }
         }
       }
     } else {

@@ -216,6 +216,16 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.SCHEDULED,
 ];
 
+/**
+ * #1743 — only an active or completed subscription may be renewed; a PENDING /
+ * APPROVED_PENDING_PAYMENT / SCHEDULED request has not run yet and cannot
+ * anchor a successor cycle.
+ */
+const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlyArray<AppointmentStatus> = [
+  AppointmentStatus.APPROVED,
+  AppointmentStatus.COMPLETED,
+];
+
 /** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
 const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
@@ -641,26 +651,14 @@ async function releaseSupersededHolds(params: {
       paymentStatus: PaymentStatus.EXPIRED,
       expiresAt: new Date(),
     };
-    let claimed: Array<{ id: string; appointmentId: string | null }> = [];
-    if (typeof tx.payment?.updateManyAndReturn === "function") {
-      claimed =
-        (await tx.payment.updateManyAndReturn({
-          where: claimWhere,
-          data: claimData,
-          select: { id: true, appointmentId: true },
-        })) ?? [];
-    } else {
-      const pendingRows =
-        (await tx.payment?.findMany?.({
-          where: claimWhere,
-          select: { id: true, appointmentId: true },
-        })) ?? [];
-      await tx.payment?.updateMany?.({
-        where: claimWhere,
-        data: claimData,
-      });
-      claimed = pendingRows;
-    }
+    const claimed =
+      typeof tx.payment?.updateManyAndReturn === "function"
+        ? ((await tx.payment.updateManyAndReturn({
+            where: claimWhere,
+            data: claimData,
+            select: { id: true, appointmentId: true },
+          })) ?? [])
+        : [];
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
@@ -963,17 +961,12 @@ export async function calculateAmountAndValidate(
           validatedData.schedulingPeriodStartsAt ||
           validatedData.renewsSubscriptionId
         ) {
-          let priorEndsAt: Date | null = null;
-          if (
-            validatedData.renewsSubscriptionId &&
-            typeof tx.subscription?.findUnique === "function"
-          ) {
-            const priorSub = await tx.subscription.findUnique({
-              where: { id: validatedData.renewsSubscriptionId },
-              select: { schedulingPeriodEndsAt: true },
-            });
-            priorEndsAt = priorSub?.schedulingPeriodEndsAt ?? null;
-          }
+          const priorEndsAt = await resolvePriorRenewalEndsAt(
+            tx,
+            validatedData.renewsSubscriptionId,
+            user.consulteeProfile.id,
+            plan.id,
+          );
           const schedulingTimezone = resolveSchedulingTimezone(
             plan.consultantProfile?.user?.timezone,
           );
@@ -2783,6 +2776,168 @@ export async function handleConsultationCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
+async function resolvePriorRenewalEndsAt(
+  tx: Tx,
+  renewsSubscriptionId: string | undefined,
+  consulteeProfileId: string,
+  planId: string,
+): Promise<Date | null> {
+  if (
+    !renewsSubscriptionId ||
+    typeof tx.subscription?.findUnique !== "function"
+  ) {
+    return null;
+  }
+  const priorSub = await tx.subscription.findUnique({
+    where: { id: renewsSubscriptionId },
+    select: {
+      schedulingPeriodEndsAt: true,
+      status: true,
+      deletedAt: true,
+      requestedById: true,
+      subscriptionPlanId: true,
+    },
+  });
+  if (
+    !priorSub ||
+    priorSub?.deletedAt !== null ||
+    priorSub.requestedById !== consulteeProfileId ||
+    priorSub.subscriptionPlanId !== planId ||
+    !RENEWABLE_SUBSCRIPTION_STATUSES.includes(priorSub.status)
+  ) {
+    return null;
+  }
+  return priorSub.schedulingPeriodEndsAt;
+}
+
+async function resolvePriorSubscriptionForRenewal(
+  tx: Tx,
+  renewsSubscriptionId: string | undefined,
+  consulteeProfileId: string,
+  planId: string,
+) {
+  if (!renewsSubscriptionId) return null;
+
+  const priorSubscription = await tx.subscription.findUnique({
+    where: { id: renewsSubscriptionId },
+    select: {
+      id: true,
+      subscriptionPlanId: true,
+      requestedById: true,
+      status: true,
+      schedulingPeriodEndsAt: true,
+      deletedAt: true,
+      renewal: {
+        select: { id: true, status: true, deletedAt: true },
+      },
+    },
+  });
+
+  if (
+    !priorSubscription ||
+    priorSubscription?.deletedAt !== null ||
+    priorSubscription.requestedById !== consulteeProfileId ||
+    priorSubscription.subscriptionPlanId !== planId ||
+    !RENEWABLE_SUBSCRIPTION_STATUSES.includes(priorSubscription.status)
+  ) {
+    throw Object.assign(
+      new Error(
+        "The subscription being renewed was not found or cannot be renewed.",
+      ),
+      { httpStatus: 400, code: "INVALID_RENEWAL_SOURCE" },
+    );
+  }
+
+  if (priorSubscription.renewal) {
+    const child = priorSubscription.renewal;
+    const isChildDead =
+      child?.deletedAt !== null ||
+      child.status === AppointmentStatus.CANCELLED ||
+      child.status === AppointmentStatus.REJECTED ||
+      child.status === AppointmentStatus.EXPIRED;
+    if (!isChildDead) {
+      throw Object.assign(
+        new Error("This subscription has already been renewed."),
+        { httpStatus: 409, code: "ALREADY_RENEWED" },
+      );
+    }
+    // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
+    // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
+    const cleared =
+      typeof tx.subscription.updateMany === "function"
+        ? await tx.subscription.updateMany({
+            where: {
+              id: child.id,
+              OR: [
+                { deletedAt: { not: null } },
+                {
+                  status: {
+                    in: [
+                      AppointmentStatus.CANCELLED,
+                      AppointmentStatus.REJECTED,
+                      AppointmentStatus.EXPIRED,
+                    ],
+                  },
+                },
+              ],
+            },
+            data: { renewedFromSubscriptionId: null },
+          })
+        : await tx.subscription
+            .update({
+              where: { id: child.id },
+              data: { renewedFromSubscriptionId: null },
+            })
+            .then(() => ({ count: 1 }));
+    if (cleared.count !== 1) {
+      throw Object.assign(
+        new PaymentError(
+          "This subscription has already been renewed.",
+          "ALREADY_RENEWED",
+        ),
+        { httpStatus: 409 },
+      );
+    }
+  }
+
+  return priorSubscription;
+}
+
+async function linkCompletedTrialToSubscription(
+  tx: Tx,
+  consulteeProfileId: string,
+  consultantProfileId: string,
+  subscriptionId: string,
+): Promise<void> {
+  const completedTrial = await tx.trial.findFirst({
+    where: {
+      consulteeProfileId,
+      consultantProfileId,
+      status: TrialStatus.COMPLETED,
+      convertedToSubscriptionId: null,
+    },
+  });
+
+  if (!completedTrial) return;
+
+  await transitionTrial(tx, {
+    where: { id: completedTrial.id },
+    to: TrialStatus.CONVERTED,
+    data: { convertedToSubscriptionId: subscriptionId },
+  });
+
+  console.log(
+    JSON.stringify({
+      event: "trial_converted",
+      trialId: completedTrial.id,
+      subscriptionId,
+      consulteeProfileId,
+      consultantProfileId,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
 export async function handleSubscriptionCheckout(
   tx: Tx,
   data: CheckoutInput,
@@ -2792,6 +2947,7 @@ export async function handleSubscriptionCheckout(
   organizationId: string | null,
   /** #1499 — see handleConsultationCheckout. */
   cancellationPolicyId: string,
+  precomputedSchedulingPeriod?: { startsAt: Date; endsAt: Date } | null,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -2807,105 +2963,12 @@ export async function handleSubscriptionCheckout(
   }
 
   // #1743 — validate renewal source when renewsSubscriptionId is provided.
-  let priorSubscription: {
-    id: string;
-    subscriptionPlanId: string;
-    requestedById: string;
-    status: AppointmentStatus;
-    schedulingPeriodEndsAt: Date;
-    deletedAt: Date | null;
-    renewal: {
-      id: string;
-      status: AppointmentStatus;
-      deletedAt: Date | null;
-    } | null;
-  } | null = null;
-
-  if (data.renewsSubscriptionId) {
-    priorSubscription = await tx.subscription.findUnique({
-      where: { id: data.renewsSubscriptionId },
-      select: {
-        id: true,
-        subscriptionPlanId: true,
-        requestedById: true,
-        status: true,
-        schedulingPeriodEndsAt: true,
-        deletedAt: true,
-        renewal: {
-          select: { id: true, status: true, deletedAt: true },
-        },
-      },
-    });
-
-    if (
-      !priorSubscription ||
-      priorSubscription.deletedAt !== null ||
-      priorSubscription.requestedById !== consulteeProfileId ||
-      priorSubscription.subscriptionPlanId !== plan.id ||
-      priorSubscription.status === AppointmentStatus.CANCELLED ||
-      priorSubscription.status === AppointmentStatus.REJECTED ||
-      priorSubscription.status === AppointmentStatus.EXPIRED
-    ) {
-      throw Object.assign(
-        new Error(
-          "The subscription being renewed was not found or cannot be renewed.",
-        ),
-        { httpStatus: 400, code: "INVALID_RENEWAL_SOURCE" },
-      );
-    }
-
-    if (priorSubscription.renewal) {
-      const child = priorSubscription.renewal;
-      const isChildDead =
-        child.deletedAt !== null ||
-        child.status === AppointmentStatus.CANCELLED ||
-        child.status === AppointmentStatus.REJECTED ||
-        child.status === AppointmentStatus.EXPIRED;
-      if (!isChildDead) {
-        throw Object.assign(
-          new Error("This subscription has already been renewed."),
-          { httpStatus: 409, code: "ALREADY_RENEWED" },
-        );
-      }
-      // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
-      // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
-      const cleared =
-        typeof tx.subscription.updateMany === "function"
-          ? await tx.subscription.updateMany({
-              where: {
-                id: child.id,
-                OR: [
-                  { deletedAt: { not: null } },
-                  {
-                    status: {
-                      in: [
-                        AppointmentStatus.CANCELLED,
-                        AppointmentStatus.REJECTED,
-                        AppointmentStatus.EXPIRED,
-                      ],
-                    },
-                  },
-                ],
-              },
-              data: { renewedFromSubscriptionId: null },
-            })
-          : await tx.subscription
-              .update({
-                where: { id: child.id },
-                data: { renewedFromSubscriptionId: null },
-              })
-              .then(() => ({ count: 1 }));
-      if (cleared.count !== 1) {
-        throw Object.assign(
-          new PaymentError(
-            "This subscription has already been renewed.",
-            "ALREADY_RENEWED",
-          ),
-          { httpStatus: 409 },
-        );
-      }
-    }
-  }
+  const priorSubscription = await resolvePriorSubscriptionForRenewal(
+    tx,
+    data.renewsSubscriptionId,
+    consulteeProfileId,
+    plan.id,
+  );
 
   const isSchedulingPeriodRequest = Boolean(
     data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
@@ -2931,11 +2994,16 @@ export async function handleSubscriptionCheckout(
         ),
       )
     : requestedStart;
-  const { start: startDate, end: endDate } = firstCycleWindow(
-    plan,
-    effectiveStart,
-    schedulingTimezone,
-  );
+  const { start: startDate, end: endDate } =
+    precomputedSchedulingPeriod &&
+    (!priorSubscription ||
+      precomputedSchedulingPeriod.startsAt >=
+        priorSubscription.schedulingPeriodEndsAt)
+      ? {
+          start: precomputedSchedulingPeriod.startsAt,
+          end: precomputedSchedulingPeriod.endsAt,
+        }
+      : firstCycleWindow(plan, effectiveStart, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -3033,37 +3101,12 @@ export async function handleSubscriptionCheckout(
   }
 
   // Link any completed trial to this subscription (trial conversion tracking)
-  // Find a completed trial from the same consultee for this consultant
-  const completedTrial = await tx.trial.findFirst({
-    where: {
-      consulteeProfileId,
-      consultantProfileId: plan.consultantProfileId,
-      status: TrialStatus.COMPLETED, // Only link completed trials, not pending/scheduled
-      convertedToSubscriptionId: null, // Not already linked to another subscription
-    },
-  });
-
-  if (completedTrial) {
-    // Mark the trial as converted and link to this subscription
-    // CAS (#1319): the findFirst above filtered COMPLETED; the WHERE here is
-    // what makes that hold at write time.
-    await transitionTrial(tx, {
-      where: { id: completedTrial.id },
-      to: TrialStatus.CONVERTED,
-      data: { convertedToSubscriptionId: subscription.id },
-    });
-
-    console.log(
-      JSON.stringify({
-        event: "trial_converted",
-        trialId: completedTrial.id,
-        subscriptionId: subscription.id,
-        consulteeProfileId,
-        consultantProfileId: plan.consultantProfileId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  }
+  await linkCompletedTrialToSubscription(
+    tx,
+    consulteeProfileId,
+    plan.consultantProfileId,
+    subscription.id,
+  );
 
   // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -4286,6 +4329,7 @@ export async function handleCheckout(
                   skipPayment,
                   appointmentOrganizationId,
                   cancellationPolicyId,
+                  subscriptionSchedulingPeriod,
                 );
                 // Use placeholder appointment for payment linkage
                 // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)

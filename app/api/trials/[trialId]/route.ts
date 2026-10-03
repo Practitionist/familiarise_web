@@ -261,6 +261,10 @@ async function validateSlotAvailability(
       appointment: {
         deletedAt: null,
         participants: { some: liveParticipant(consulteeUserId) },
+        AND: [
+          { OR: buildOccupiedAppointmentFilter() },
+          { NOT: buildDeadHoldFilter(new Date()) },
+        ],
       },
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },

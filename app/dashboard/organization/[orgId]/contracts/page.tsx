@@ -346,9 +346,9 @@ type ContractFinancialPayload = {
   licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
 };
 
-function buildContractFinancialPayload(
-  draft: ContractFinancialDraft,
-): { payload: ContractFinancialPayload } | { error: string } {
+function parseContractTermWindow(
+  draft: Pick<ContractFinancialDraft, "effectiveFrom" | "effectiveTo">,
+): { fromDate: Date; toDate: Date | null } | { error: string } {
   const fromDate = new Date(draft.effectiveFrom);
   if (!draft.effectiveFrom || Number.isNaN(fromDate.getTime())) {
     return { error: "Start date is required." };
@@ -360,36 +360,77 @@ function buildContractFinancialPayload(
   if (toDate && toDate <= fromDate) {
     return { error: "End date must be after the start date." };
   }
+  return { fromDate, toDate };
+}
+
+function parsePositiveInrToPaise(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return null;
+  }
+  const [wholePart, fracPart = ""] = trimmed.split(".");
+  const paise =
+    Number.parseInt(wholePart, 10) * 100 +
+    Number.parseInt(fracPart.padEnd(2, "0"), 10);
+  return Number.isSafeInteger(paise) && paise > 0 ? paise : null;
+}
+
+function parseLicensePricingOverride(
+  draft: Pick<
+    ContractFinancialDraft,
+    "isLicense" | "licenseModel" | "licenseFeeINR" | "ratePerSeatINR"
+  >,
+):
+  | { licenseFeePaise?: number; licenseRatePerSeatPaise?: number }
+  | { error: string } {
+  if (!draft.isLicense) {
+    return {};
+  }
+  if (draft.licenseModel === "FLAT_FEE" && draft.licenseFeeINR.trim() !== "") {
+    const licenseFeePaise = parsePositiveInrToPaise(draft.licenseFeeINR);
+    if (licenseFeePaise === null) {
+      return { error: "License fee must be a positive number (₹)." };
+    }
+    return { licenseFeePaise };
+  }
+  if (
+    draft.licenseModel === "PER_SEAT" &&
+    draft.ratePerSeatINR.trim() !== ""
+  ) {
+    const licenseRatePerSeatPaise = parsePositiveInrToPaise(
+      draft.ratePerSeatINR,
+    );
+    if (licenseRatePerSeatPaise === null) {
+      return { error: "Rate per seat must be a positive number (₹)." };
+    }
+    return { licenseRatePerSeatPaise };
+  }
+  return {};
+}
+
+function buildContractFinancialPayload(
+  draft: ContractFinancialDraft,
+): { payload: ContractFinancialPayload } | { error: string } {
+  const windowResult = parseContractTermWindow(draft);
+  if ("error" in windowResult) {
+    return windowResult;
+  }
+  const { fromDate, toDate } = windowResult;
 
   let terms: number | undefined;
   if (!draft.isLicense) {
-    const parsed = parseInt(draft.paymentTermsDays, 10);
+    const parsed = Number.parseInt(draft.paymentTermsDays, 10);
     if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
       return { error: "Payment terms must be between 1 and 120 days." };
     }
     terms = parsed;
   }
 
-  let licenseFeePaise: number | undefined;
-  let licenseRatePerSeatPaise: number | undefined;
-  if (draft.isLicense) {
-    if (draft.licenseModel === "FLAT_FEE" && draft.licenseFeeINR.trim() !== "") {
-      const inr = parseFloat(draft.licenseFeeINR);
-      if (!Number.isFinite(inr) || inr <= 0) {
-        return { error: "License fee must be a positive number (₹)." };
-      }
-      licenseFeePaise = Math.round(inr * 100);
-    } else if (
-      draft.licenseModel === "PER_SEAT" &&
-      draft.ratePerSeatINR.trim() !== ""
-    ) {
-      const inr = parseFloat(draft.ratePerSeatINR);
-      if (!Number.isFinite(inr) || inr <= 0) {
-        return { error: "Rate per seat must be a positive number (₹)." };
-      }
-      licenseRatePerSeatPaise = Math.round(inr * 100);
-    }
+  const licenseResult = parseLicensePricingOverride(draft);
+  if ("error" in licenseResult) {
+    return licenseResult;
   }
+  const { licenseFeePaise, licenseRatePerSeatPaise } = licenseResult;
 
   return {
     payload: {
@@ -435,7 +476,7 @@ function ContractFinancialTermsFields({
   autoRenew,
   onAutoRenewChange,
   children,
-}: {
+}: Readonly<{
   idPrefix: string;
   effectiveFrom: string;
   onEffectiveFromChange: (v: string) => void;
@@ -455,7 +496,7 @@ function ContractFinancialTermsFields({
   autoRenew: boolean;
   onAutoRenewChange: (v: boolean) => void;
   children?: ReactNode;
-}) {
+}>) {
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
@@ -608,13 +649,13 @@ function CreateContractDialog({
   fundingSource,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   billingAccountId: string;
   fundingSource?: FundingSource | string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
 
   const today = new Date().toISOString().slice(0, 10);
@@ -781,12 +822,12 @@ function SupersedeContractDialog({
   contract,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   contract: ContractItem;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const isLicense = contract.billingAccount?.fundingSource === "LICENSE";
   const today = new Date().toISOString().slice(0, 10);
@@ -821,7 +862,9 @@ function SupersedeContractDialog({
   const [error, setError] = useState<string | null>(null);
 
   const contractRef = useRef(contract);
-  contractRef.current = contract;
+  useEffect(() => {
+    contractRef.current = contract;
+  }, [contract]);
 
   useEffect(() => {
     if (!open) return;
@@ -868,6 +911,22 @@ function SupersedeContractDialog({
 
   const handleSubmit = () => {
     setError(null);
+    if (isLicense) {
+      const origModel = contract.subscription?.model ?? "FLAT_FEE";
+      const origCycle = contract.subscription?.cycle ?? "ANNUAL";
+      const modelOrCycleChanged =
+        licenseModel !== origModel || licenseCycle !== origCycle;
+      const activeFeeBlank =
+        licenseModel === "FLAT_FEE"
+          ? licenseFeeINR.trim() === ""
+          : ratePerSeatINR.trim() === "";
+      if (modelOrCycleChanged && activeFeeBlank) {
+        setError(
+          "Enter the license fee or rate per seat when changing the license model or billing cycle.",
+        );
+        return;
+      }
+    }
     const built = buildContractFinancialPayload({
       effectiveFrom,
       effectiveTo,
@@ -918,11 +977,31 @@ function SupersedeContractDialog({
                   type="button"
                   onClick={() => {
                     setReason(r.value);
-                    setEffectiveFrom(
-                      r.value === "RENEWAL" && contract.effectiveTo
-                        ? contract.effectiveTo.slice(0, 10)
-                        : today,
-                    );
+                    if (r.value === "RENEWAL" && contract.effectiveTo) {
+                      const nextStartIso = contract.effectiveTo.slice(0, 10);
+                      setEffectiveFrom(nextStartIso);
+                      const oldFromMs = new Date(
+                        contract.effectiveFrom,
+                      ).getTime();
+                      const oldToMs = new Date(contract.effectiveTo).getTime();
+                      const durationMs = Math.max(
+                        86_400_000,
+                        Number.isFinite(oldToMs - oldFromMs)
+                          ? oldToMs - oldFromMs
+                          : 365 * 86_400_000,
+                      );
+                      const nextEnd = new Date(
+                        new Date(nextStartIso).getTime() + durationMs,
+                      );
+                      setEffectiveTo(nextEnd.toISOString().slice(0, 10));
+                    } else {
+                      setEffectiveFrom(today);
+                      setEffectiveTo(
+                        contract.effectiveTo
+                          ? contract.effectiveTo.slice(0, 10)
+                          : "",
+                      );
+                    }
                   }}
                   className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                     reason === r.value
@@ -997,6 +1076,20 @@ function fmtPaymentTerms(
   return `NET-${c.paymentTermsDays}`;
 }
 
+function formatContractTermsCell(c: ContractItem): string {
+  if (c.billingAccount?.fundingSource !== "LICENSE") {
+    return `NET-${c.paymentTermsDays}`;
+  }
+  if (
+    c.subscription &&
+    (c.subscription.flatFeePaise !== null ||
+      c.subscription.ratePerSeatPaise !== null)
+  ) {
+    return fmtSubscription(c.subscription);
+  }
+  return "—";
+}
+
 function DetailRow({
   label,
   children,
@@ -1017,12 +1110,12 @@ function ContractDetailDialog({
   contractId,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   contractId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const detail = useQuery({
     queryKey: ["org-contract", orgId, contractId],
     queryFn: () => fetchContract(orgId, contractId),
@@ -1135,12 +1228,12 @@ function EditContractDialog({
   contractId,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   contractId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const detail = useQuery({
     queryKey: ["org-contract", orgId, contractId],
@@ -1209,7 +1302,7 @@ function EditContractDialog({
       body.effectiveTo = toDate ? toDate.toISOString() : null;
       // LICENSE terms are prepaid — don't send paymentTermsDays for them.
       if (!isLicense) {
-        const parsed = parseInt(paymentTermsDays, 10);
+        const parsed = Number.parseInt(paymentTermsDays, 10);
         if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
           setError("Payment terms must be between 1 and 120 days.");
           return;
@@ -1331,9 +1424,9 @@ function EditContractDialog({
 
 export default function OrgContractsPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ orgId: string }>;
-}) {
+}>) {
   const { orgId } = use(params);
   const { can } = useOrgRole(orgId);
   // contracts.read now includes BILLING_ADMIN (reconciliation, #1527);
@@ -1442,13 +1535,7 @@ export default function OrgContractsPage({
       className: "text-sm text-muted-foreground",
       cell: (c) => (
         <>
-          {c.billingAccount?.fundingSource === "LICENSE"
-            ? c.subscription &&
-              (c.subscription.flatFeePaise !== null ||
-                c.subscription.ratePerSeatPaise !== null)
-              ? fmtSubscription(c.subscription)
-              : "—"
-            : `NET-${c.paymentTermsDays}`}
+          {formatContractTermsCell(c)}
           {c.autoRenew && (
             <span className="ml-1 text-xs text-muted-foreground/70">
               (auto-renew)

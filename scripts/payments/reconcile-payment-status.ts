@@ -147,8 +147,8 @@ async function getStripePaymentStatus(
           ? await stripe.paymentIntents.retrieve(intentRef)
           : intentRef;
       const mergedMetadata = {
-        ...(session.metadata ?? {}),
-        ...(pi.metadata ?? {}),
+        ...session.metadata,
+        ...pi.metadata,
       };
       const sessionNotes = Object.fromEntries(
         Object.entries(mergedMetadata)
@@ -388,7 +388,7 @@ async function reconcilePaymentStatusUnlocked(
     },
     include: {
       user: { select: { email: true, name: true } },
-      appointment: { select: { id: true } },
+      appointment: { select: { id: true, appointmentType: true } },
     },
     orderBy: { createdAt: "asc" },
     take: opts.limit,
@@ -405,7 +405,7 @@ async function reconcilePaymentStatusUnlocked(
     },
     include: {
       user: { select: { email: true, name: true } },
-      appointment: { select: { id: true } },
+      appointment: { select: { id: true, appointmentType: true } },
     },
     orderBy: { createdAt: "asc" },
     take: opts.limit,
@@ -580,7 +580,17 @@ async function reconcilePaymentStatusUnlocked(
       // routeCapturedPayment so appointment confirmation, earnings, and ledger
       // journaling are never bypassed by a raw paymentStatus=SUCCEEDED write.
       if (mappedStatus === PaymentStatus.SUCCEEDED) {
-        const notes = gatewayStatus.notes ?? {};
+        const notes: Record<string, string> = {
+          ...(gatewayStatus.notes ?? {}),
+        };
+        if (payment.appointment?.id) {
+          if (!notes.userId && payment.userId) {
+            notes.userId = payment.userId;
+          }
+          if (!notes.appointmentType && payment.appointment.appointmentType) {
+            notes.appointmentType = payment.appointment.appointmentType;
+          }
+        }
         const isStandaloneFlow =
           notes.type === "credit_purchase" ||
           notes.type === "invoice_payment" ||

@@ -18,6 +18,7 @@ import {
   type AvailabilityGridEtagKey,
   type AvailabilityGridMarker,
 } from "@/lib/scheduling/availabilityGridMarker";
+import { getSlotLimits } from "@/lib/scheduling/intervalSelectionValidation";
 import { checkoutSchema } from "@/schemas/checkout";
 import { allocationRequestSchema } from "@/schemas/slotAllocation/validationSchemas";
 import { THIRTY_MIN_MS } from "@/utils/scheduling-engine/intervals";
@@ -50,11 +51,11 @@ describe("#1688 — buildConsultantOccupancyWhere includes co-host commitments",
     expect(Array.isArray(where.AND)).toBe(true);
     const reachesConsultant = where.AND[1]?.OR ?? [];
     // 1 participant branch + 1 primary host OR branch + 1 cohost commitment OR branch = 3
-    expect(reachesConsultant.length).toBe(3);
+    expect(reachesConsultant).toHaveLength(3);
     const cohostOr =
       (reachesConsultant[2] as { OR?: Array<Record<string, unknown>> })?.OR ??
       [];
-    expect(cohostOr.length).toBe(2);
+    expect(cohostOr).toHaveLength(2);
     expect(
       cohostOr.some(
         (branch) =>
@@ -400,3 +401,22 @@ describe("#1743 — Subscription renewal schema and error classification", () =>
     expect(classifyError(invalidSourceErr).httpStatus).toBe(400);
   });
 });
+
+describe("#1715 Bug 4 — Subscription slot limits use 30-min slots and totalSessions", () => {
+  it("computes minSlots and maxSlots in 30-min slots while preserving totalSessions as call count", () => {
+    const limits = getSlotLimits("subscription", {
+      sessionDurationInHours: 1.5,
+      sessionsPerWeek: 1,
+      durationInMonths: 1,
+      maxTotalCalls: 4,
+      startDate: new Date("2025-01-05T00:00:00.000Z"),
+      endDate: new Date("2025-02-01T00:00:00.000Z"),
+    });
+
+    expect(limits.slotsPerSession).toBe(3);
+    expect(limits.totalSessions).toBe(4);
+    expect(limits.minSlots).toBe(12);
+    expect(limits.maxSlots).toBe(12);
+  });
+});
+

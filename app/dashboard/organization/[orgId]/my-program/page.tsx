@@ -238,6 +238,13 @@ export default async function MyProgramPage({
               const unitLabel =
                 a.program.type === "CREDIT_POOL" ? "credits" : "sessions";
               const overagePaise = overagePaiseByAssignment[a.id] ?? 0;
+              const poolRateNote = isPool ? " (1 credit = ₹1)" : "";
+              const remainingWord =
+                a.program.type === "CREDIT_POOL" ? "remaining" : "left";
+              const availabilitySummary =
+                cap === null
+                  ? `${unitLabel} available — no cap this cycle${poolRateNote}`
+                  : `${unitLabel} ${remainingWord} this cycle${poolRateNote}`;
 
               return (
                 <div key={a.id} className="rounded-lg border bg-card p-5">
@@ -276,9 +283,7 @@ export default async function MyProgramPage({
                         : `${remaining!.toLocaleString("en-IN")} of ${cap.toLocaleString("en-IN")}`}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {cap === null
-                        ? `${unitLabel} available — no cap this cycle${isPool ? " (1 credit = ₹1)" : ""}`
-                        : `${unitLabel} ${a.program.type === "CREDIT_POOL" ? "remaining" : "left"} this cycle${isPool ? " (1 credit = ₹1)" : ""}`}
+                      {availabilitySummary}
                     </p>
                   </div>
 

@@ -187,6 +187,95 @@ async function fetchReferralCredits(params: {
   return res.json();
 }
 
+function parseInrInputToPaise(rawInr: string): number | null {
+  const trimmed = rawInr.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return null;
+  }
+  const [wholePart, fracPart = ""] = trimmed.split(".");
+  const rupees = Number.parseInt(wholePart, 10);
+  const paise = Number.parseInt(fracPart.padEnd(2, "0"), 10);
+  if (!Number.isSafeInteger(rupees) || !Number.isSafeInteger(paise)) {
+    return null;
+  }
+  const totalPaise = rupees * 100 + paise;
+  if (!Number.isSafeInteger(totalPaise) || totalPaise <= 0) {
+    return null;
+  }
+  return totalPaise;
+}
+
+const REFERRAL_CREDIT_COLUMNS: ResponsiveColumn<ReferralCreditItem>[] = [
+  {
+    key: "user",
+    header: "User",
+    primary: true,
+    cell: (c) => (
+      <div>
+        <p className="font-medium text-foreground">
+          {c.user.name || c.user.email || c.userId}
+        </p>
+        {c.user.email && c.user.name && (
+          <p className="text-xs text-muted-foreground">{c.user.email}</p>
+        )}
+        {c.user.referralCode?.code && (
+          <p className="text-xs font-mono text-muted-foreground">
+            Code: {c.user.referralCode.customCode || c.user.referralCode.code}
+          </p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "source",
+    header: "Source",
+    cell: (c) => (
+      <Badge variant="outline" className="text-xs">
+        {humanizeEnum(c.source)}
+      </Badge>
+    ),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (c) => <StatusBadge {...deriveCreditState(c)} />,
+  },
+  {
+    key: "balance",
+    header: "Remaining / Total",
+    cell: (c) => (
+      <div>
+        <span className="font-semibold text-foreground">
+          {formatCurrencyAmount(c.remainingAmount, c.currency)}
+        </span>{" "}
+        <span className="text-xs text-muted-foreground">
+          / {formatCurrencyAmount(c.amount, c.currency)}
+        </span>
+      </div>
+    ),
+  },
+  {
+    key: "usages",
+    header: "Usages",
+    className: "text-sm",
+    cell: (c) =>
+      c.usages.length > 0 ? (
+        <span>
+          {c.usages.length} (
+          {formatCurrencyAmount(c.usedAmount, c.currency)})
+        </span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
+  {
+    key: "created",
+    header: "Issued",
+    className: "text-sm text-muted-foreground whitespace-nowrap",
+    cell: (c) => fmtDate(c.createdAt),
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Issue Goodwill Credit Dialog (Admin only)
 // ---------------------------------------------------------------------------
@@ -194,10 +283,10 @@ async function fetchReferralCredits(params: {
 function IssueGoodwillCreditDialog({
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [userId, setUserId] = useState("");
   const [amountINR, setAmountINR] = useState("");
@@ -206,6 +295,9 @@ function IssueGoodwillCreditDialog({
   );
   const [expiresAt, setExpiresAt] = useState("");
   const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
@@ -214,6 +306,7 @@ function IssueGoodwillCreditDialog({
     setSource("COMPENSATION");
     setExpiresAt("");
     setReason("");
+    setIdempotencyKey(crypto.randomUUID());
     setError(null);
   };
 
@@ -224,6 +317,7 @@ function IssueGoodwillCreditDialog({
       source: "COMPENSATION" | "MANUAL";
       expiresAt: string | null;
       reason: string;
+      idempotencyKey: string;
     }) => {
       const res = await fetch("/api/admin/referrals/credits", {
         method: "POST",
@@ -253,12 +347,11 @@ function IssueGoodwillCreditDialog({
       setError("User ID or email is required.");
       return;
     }
-    const inr = parseFloat(amountINR);
-    if (!Number.isFinite(inr) || inr <= 0) {
-      setError("Amount (₹) must be a positive number.");
+    const amountPaise = parseInrInputToPaise(amountINR);
+    if (amountPaise === null) {
+      setError("Amount (₹) must be a positive number with up to 2 decimal places.");
       return;
     }
-    const amountPaise = Math.round(inr * 100);
     const trimmedReason = reason.trim();
     if (trimmedReason.length < 5) {
       setError("Reason must be at least 5 characters for the audit log.");
@@ -280,6 +373,7 @@ function IssueGoodwillCreditDialog({
       source,
       expiresAt: expiresIso,
       reason: trimmedReason,
+      idempotencyKey,
     });
   };
 
@@ -302,7 +396,10 @@ function IssueGoodwillCreditDialog({
             <Input
               id="issue-user-id"
               value={userId}
-              onChange={(e) => setUserId(e.target.value)}
+              onChange={(e) => {
+                setUserId(e.target.value);
+                setIdempotencyKey(crypto.randomUUID());
+              }}
               placeholder="user_123 or learner@example.com"
             />
           </div>
@@ -316,7 +413,10 @@ function IssueGoodwillCreditDialog({
                 min={1}
                 step="1"
                 value={amountINR}
-                onChange={(e) => setAmountINR(e.target.value)}
+                onChange={(e) => {
+                  setAmountINR(e.target.value);
+                  setIdempotencyKey(crypto.randomUUID());
+                }}
                 placeholder="e.g. 500"
               />
             </div>
@@ -326,9 +426,10 @@ function IssueGoodwillCreditDialog({
                 id="issue-source"
                 className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                 value={source}
-                onChange={(e) =>
-                  setSource(e.target.value as "COMPENSATION" | "MANUAL")
-                }
+                onChange={(e) => {
+                  setSource(e.target.value as "COMPENSATION" | "MANUAL");
+                  setIdempotencyKey(crypto.randomUUID());
+                }}
               >
                 <option value="COMPENSATION">Compensation</option>
                 <option value="MANUAL">Manual</option>
@@ -342,7 +443,10 @@ function IssueGoodwillCreditDialog({
               id="issue-expires-at"
               type="date"
               value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
+              onChange={(e) => {
+                setExpiresAt(e.target.value);
+                setIdempotencyKey(crypto.randomUUID());
+              }}
             />
           </div>
 
@@ -395,11 +499,11 @@ function ReverseCreditDialog({
   credit,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   credit: ReferralCreditItem;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -507,11 +611,11 @@ function CreditDetailDialog({
   credit,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   credit: ReferralCreditItem;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const state = deriveCreditState(credit);
   return (
     <ResponsiveModal open={open} onOpenChange={onOpenChange}>
@@ -679,76 +783,10 @@ export default function AdminReferralCreditsPage() {
   const total = creditsQuery.data?.total ?? 0;
   const totalPages = creditsQuery.data?.totalPages ?? 1;
 
-  const columns: ResponsiveColumn<ReferralCreditItem>[] = [
-    {
-      key: "user",
-      header: "User",
-      primary: true,
-      cell: (c) => (
-        <div>
-          <p className="font-medium text-foreground">
-            {c.user.name || c.user.email || c.userId}
-          </p>
-          {c.user.email && c.user.name && (
-            <p className="text-xs text-muted-foreground">{c.user.email}</p>
-          )}
-          {c.user.referralCode?.code && (
-            <p className="text-xs font-mono text-muted-foreground">
-              Code: {c.user.referralCode.customCode || c.user.referralCode.code}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "source",
-      header: "Source",
-      cell: (c) => (
-        <Badge variant="outline" className="text-xs">
-          {humanizeEnum(c.source)}
-        </Badge>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (c) => <StatusBadge {...deriveCreditState(c)} />,
-    },
-    {
-      key: "balance",
-      header: "Remaining / Total",
-      cell: (c) => (
-        <div>
-          <span className="font-semibold text-foreground">
-            {formatCurrencyAmount(c.remainingAmount, c.currency)}
-          </span>{" "}
-          <span className="text-xs text-muted-foreground">
-            / {formatCurrencyAmount(c.amount, c.currency)}
-          </span>
-        </div>
-      ),
-    },
-    {
-      key: "usages",
-      header: "Usages",
-      className: "text-sm",
-      cell: (c) =>
-        c.usages.length > 0 ? (
-          <span>
-            {c.usages.length} (
-            {formatCurrencyAmount(c.usedAmount, c.currency)})
-          </span>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
-    },
-    {
-      key: "created",
-      header: "Issued",
-      className: "text-sm text-muted-foreground whitespace-nowrap",
-      cell: (c) => fmtDate(c.createdAt),
-    },
-  ];
+  const creditSuffix = total === 1 ? "" : "s";
+  const creditCountLabel = creditsQuery.isLoading
+    ? "Loading…"
+    : `${total} credit${creditSuffix}`;
 
   const renderRowActions = (c: ReferralCreditItem) => {
     const canReverse =
@@ -777,6 +815,59 @@ export default function AdminReferralCreditsPage() {
     );
   };
 
+  const renderCreditsList = () => {
+    if (creditsQuery.isLoading) {
+      return (
+        <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading credits…
+        </div>
+      );
+    }
+    if (rows.length === 0) {
+      return (
+        <div className="py-12 text-center text-muted-foreground">
+          <Gift className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+          <p className="text-sm">No referral credits match the filter.</p>
+        </div>
+      );
+    }
+    return (
+      <>
+        <ResponsiveTable<ReferralCreditItem>
+          columns={REFERRAL_CREDIT_COLUMNS}
+          rows={rows}
+          getRowId={(c) => c.id}
+          rowActions={renderRowActions}
+        />
+        {totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              Page {page} of {totalPages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
+
   return (
     <>
       <DashboardHeader
@@ -796,11 +887,7 @@ export default function AdminReferralCreditsPage() {
           <CardHeader className="space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <CardTitle className="text-base">
-                  {creditsQuery.isLoading
-                    ? "Loading…"
-                    : `${total} credit${total === 1 ? "" : "s"}`}
-                </CardTitle>
+                <CardTitle className="text-base">{creditCountLabel}</CardTitle>
                 <CardDescription>
                   Staff can inspect balances and payment redemptions. Admins can
                   issue goodwill credits or reverse unused balances.
@@ -858,54 +945,7 @@ export default function AdminReferralCreditsPage() {
             </div>
           </CardHeader>
 
-          <CardContent>
-            {creditsQuery.isLoading ? (
-              <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading credits…
-              </div>
-            ) : rows.length === 0 ? (
-              <div className="py-12 text-center text-muted-foreground">
-                <Gift className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
-                <p className="text-sm">No referral credits match the filter.</p>
-              </div>
-            ) : (
-              <>
-                <ResponsiveTable<ReferralCreditItem>
-                  columns={columns}
-                  rows={rows}
-                  getRowId={(c) => c.id}
-                  rowActions={renderRowActions}
-                />
-                {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      Page {page} of {totalPages}
-                    </span>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={page <= 1}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={page >= totalPages}
-                        onClick={() =>
-                          setPage((p) => Math.min(totalPages, p + 1))
-                        }
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
+          <CardContent>{renderCreditsList()}</CardContent>
         </Card>
       </DashboardContent>
 

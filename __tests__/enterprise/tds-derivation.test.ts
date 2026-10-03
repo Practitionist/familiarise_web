@@ -215,6 +215,82 @@ describe("Integer basis-point math & resolveEffectiveTdsRate (#1368, #1367)", ()
       thresholdPaise: BigInt(50_000_000),
       source: "default",
     });
+
+    const fallback194J = await resolveEffectiveTdsRate(
+      null,
+      "194J",
+      new Date("2025-12-01T00:00:00Z"),
+    );
+    expect(fallback194J).toMatchObject({
+      section: "194J",
+      lawCode: "IT1961",
+      rateBps: 1000,
+      noPanRateBps: 2000,
+      thresholdPaise: BigInt(3_000_000),
+      source: "default",
+    });
+
+    const fallback194C = await resolveEffectiveTdsRate(
+      null,
+      "194C",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fallback194C).toMatchObject({
+      section: "194C",
+      lawCode: "IT2025",
+      rateBps: 200,
+      thresholdPaise: null,
+      source: "default",
+    });
+  });
+
+  it("rethrows serialization/aborted-tx errors (P2034 / 25P02) and live-client DB failures while falling back on non-client mock errors", async () => {
+    const p2034Err = Object.assign(new Error("Serialization failure"), {
+      code: "P2034",
+    });
+    await expect(
+      resolveEffectiveTdsRate(
+        { tdsRate: { findFirst: jest.fn().mockRejectedValueOnce(p2034Err) } },
+        "194O",
+      ),
+    ).rejects.toThrow("Serialization failure");
+
+    const abortedTxErr = new Error(
+      "current transaction is aborted, commands ignored until end of transaction block (25P02)",
+    );
+    await expect(
+      resolveEffectiveTdsRate(
+        {
+          tdsRate: { findFirst: jest.fn().mockRejectedValueOnce(abortedTxErr) },
+        },
+        "194O",
+      ),
+    ).rejects.toThrow("25P02");
+
+    const liveClientErr = new Error("connection reset");
+    await expect(
+      resolveEffectiveTdsRate(
+        {
+          $executeRawUnsafe: jest.fn(),
+          tdsRate: {
+            findFirst: jest.fn().mockRejectedValueOnce(liveClientErr),
+          },
+        } as unknown as Parameters<typeof resolveEffectiveTdsRate>[0],
+        "194O",
+      ),
+    ).rejects.toThrow("connection reset");
+
+    const mockFallback = await resolveEffectiveTdsRate(
+      {
+        tdsRate: {
+          findFirst: jest.fn().mockRejectedValueOnce(new Error("stub error")),
+        },
+      },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(mockFallback.source).toBe("default");
+    expect(mockFallback.rateBps).toBe(10);
   });
 });
 

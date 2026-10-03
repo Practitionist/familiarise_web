@@ -12,7 +12,7 @@ import {
   recordSystemEvent,
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   PayoutStatus,
   PayoutMethod,
@@ -305,6 +305,32 @@ interface ConsultantPayoutDraft {
  * Atomically sums a consultant's READY earnings, creates the payout row, and
  * claims the earnings READY → BATCHED inside a single transaction.
  */
+function resolvePayoutMethodFromAccountType(
+  accountType: string,
+): PayoutMethod {
+  switch (accountType) {
+    case "UPI":
+      return PayoutMethod.UPI;
+    case "STRIPE_CONNECT":
+      return PayoutMethod.STRIPE_TRANSFER;
+    default:
+      return PayoutMethod.BANK_TRANSFER;
+  }
+}
+
+function resolveMintedPayoutCreator(
+  draft: ConsultantPayoutDraft,
+  msmeUserId: string | null | undefined,
+): string {
+  if (draft.createdBy) {
+    return draft.createdBy;
+  }
+  if (draft.kind === "INSTANT") {
+    return msmeUserId ?? "CONSULTANT_SELF";
+  }
+  return "SYSTEM_CRON";
+}
+
 async function mintConsultantPayout(
   draft: ConsultantPayoutDraft,
 ): Promise<{ id: string; amount: number; status: PayoutStatus } | null> {
@@ -334,17 +360,7 @@ async function mintConsultantPayout(
     return null;
   }
 
-  let method: PayoutMethod;
-  switch (account.accountType) {
-    case "UPI":
-      method = PayoutMethod.UPI;
-      break;
-    case "STRIPE_CONNECT":
-      method = PayoutMethod.STRIPE_TRANSFER;
-      break;
-    default:
-      method = PayoutMethod.BANK_TRANSFER;
-  }
+  const method = resolvePayoutMethodFromAccountType(account.accountType);
 
   const msmeProfile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
@@ -355,11 +371,10 @@ async function mintConsultantPayout(
     },
   });
 
-  const resolvedCreatedBy =
-    draft.createdBy ??
-    (draft.kind === "INSTANT"
-      ? (msmeProfile?.userId ?? "CONSULTANT_SELF")
-      : "SYSTEM_CRON");
+  const resolvedCreatedBy = resolveMintedPayoutCreator(
+    draft,
+    msmeProfile?.userId,
+  );
 
   return prisma.$transaction(async (tx) => {
     const readyEarnings = await tx.consultantEarnings.findMany({
@@ -865,6 +880,466 @@ export async function previewInstantPayout(
   };
 }
 
+function subtractProportionalGrossRefund(
+  grossPaise: number,
+  sharePaise: number,
+  refundedSharePaise: number,
+): number {
+  if (grossPaise <= 0 || refundedSharePaise <= 0) {
+    return Math.max(0, grossPaise);
+  }
+  if (sharePaise > 0) {
+    const proportionalGrossRefund = Math.round(
+      (grossPaise * refundedSharePaise) / sharePaise,
+    );
+    return Math.max(0, grossPaise - proportionalGrossRefund);
+  }
+  return Math.max(0, grossPaise - refundedSharePaise);
+}
+
+function resolveTdsRateAppliedBps(tds: {
+  rateAppliedBps?: number;
+  tdsRate?: number | null;
+}): number | null {
+  if (tds.rateAppliedBps !== undefined) {
+    return tds.rateAppliedBps;
+  }
+  if (tds.tdsRate !== null && tds.tdsRate !== undefined) {
+    return tdsRateToBps(tds.tdsRate);
+  }
+  return null;
+}
+
+async function isMakerCheckerDisbursementBlocked(
+  payoutId: string,
+  approvedByValue: unknown,
+  triggeredByUserId?: string,
+): Promise<boolean> {
+  const approvedBy =
+    typeof approvedByValue === "string" ? approvedByValue : null;
+  if (
+    !triggeredByUserId ||
+    !approvedBy ||
+    approvedBy !== triggeredByUserId ||
+    approvedBy === "SYSTEM_AUTO_APPROVE"
+  ) {
+    return false;
+  }
+  const makerCheckerRequired =
+    process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
+  const activeAdminCount =
+    typeof (
+      prisma as { user?: { count?: (args: unknown) => Promise<number> } }
+    ).user?.count === "function"
+      ? await prisma.user.count({ where: { role: "ADMIN" } })
+      : 2;
+  if (!makerCheckerRequired || activeAdminCount <= 1) {
+    return false;
+  }
+  console.warn(
+    `[Payouts] Payout ${payoutId} skipped — triggered by the same admin (${triggeredByUserId}) who approved it`,
+  );
+  await recordSystemEventSafe({
+    category: "PAYOUT",
+    severity: "WARN",
+    message: `PAYOUT_MAKER_CHECKER_DISBURSEMENT_SKIPPED: Payout ${payoutId} approved by ${approvedBy} cannot be disbursed by the same admin`,
+    context: { payoutId, approvedBy, triggeredByUserId },
+  });
+  return true;
+}
+
+type ClaimGateOutcome =
+  | { kind: "dispute_blocked" }
+  | { kind: "refund_blocked" }
+  | { kind: "shortfall"; owedPaise: number; shortfallReason: string }
+  | { kind: "already_claimed" }
+  | { kind: "claimed" };
+
+async function runConsultantPayoutClaimGate(
+  db: Pick<typeof prisma, "consultantEarnings" | "consultantPayout">,
+  payoutId: string,
+  amount: number,
+): Promise<ClaimGateOutcome> {
+  const disputedEarning = await db.consultantEarnings.findFirst({
+    where: {
+      payoutId,
+      payment: DISPUTE_GATED_PAYMENT_WHERE,
+    },
+    select: { id: true },
+  });
+  if (disputedEarning) {
+    return { kind: "dispute_blocked" };
+  }
+
+  const refundPendingEarning = await db.consultantEarnings.findFirst({
+    where: {
+      payoutId,
+      payment: {
+        refunds: {
+          some: {
+            status: { notIn: REFUND_INACTIVE_FOR_GATING },
+            OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+          },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  if (refundPendingEarning) {
+    return { kind: "refund_blocked" };
+  }
+
+  const owedAgg = await db.consultantEarnings.aggregate({
+    where: { payoutId },
+    _sum: { consultantSharePaise: true, refundedShareAmount: true },
+  });
+  const owedPaise =
+    sumPaise(owedAgg._sum.consultantSharePaise) -
+    sumPaise(owedAgg._sum.refundedShareAmount);
+  if (owedPaise < amount) {
+    const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${amount}p`;
+    const failed = await db.consultantPayout.updateMany({
+      where: { id: payoutId, status: PayoutStatus.APPROVED },
+      data: {
+        status: PayoutStatus.FAILED,
+        failureReason: shortfallReason.slice(0, 500),
+        tdsDeducted: 0,
+        netAmount: null,
+        tdsRateAppliedBps: null,
+        tdsFinancialYear: null,
+      },
+    });
+    if (failed.count > 0) {
+      await db.consultantEarnings.updateMany({
+        where: { payoutId, status: EarningStatus.BATCHED },
+        data: { payoutId: null, status: EarningStatus.READY },
+      });
+    }
+    return { kind: "shortfall", owedPaise, shortfallReason };
+  }
+
+  const claimed = await db.consultantPayout.updateMany({
+    where: { id: payoutId, status: PayoutStatus.APPROVED },
+    data: { status: PayoutStatus.PROCESSING },
+  });
+  if (claimed.count === 0) {
+    return { kind: "already_claimed" };
+  }
+  return { kind: "claimed" };
+}
+
+async function claimConsultantPayoutForDisbursement(
+  payoutId: string,
+  amount: number,
+): Promise<PayoutResult | null> {
+  const claimOutcome =
+    typeof prisma.$transaction === "function"
+      ? await withSerializableRetry(
+          () =>
+            prisma.$transaction(
+              (tx) => runConsultantPayoutClaimGate(tx, payoutId, amount),
+              {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              },
+            ),
+          1,
+        )
+      : await runConsultantPayoutClaimGate(prisma, payoutId, amount);
+
+  if (claimOutcome.kind === "dispute_blocked") {
+    console.warn(
+      `[Payouts] Payout ${payoutId} blocked — an earning's payment has a live dispute`,
+    );
+    reportSentryMessage("Payout blocked by live dispute", {
+      subsystem: "payments",
+      expected: true,
+      extra: { payoutId },
+    });
+    return { payoutId, success: false, skipped: true };
+  }
+  if (claimOutcome.kind === "refund_blocked") {
+    console.warn(
+      `[Payouts] Payout ${payoutId} blocked — an earning's payment has an uncascaded refund`,
+    );
+    reportSentryMessage("Payout blocked by an uncascaded refund", {
+      subsystem: "payments",
+      expected: true,
+      extra: { payoutId },
+    });
+    return { payoutId, success: false, skipped: true };
+  }
+  if (claimOutcome.kind === "shortfall") {
+    console.warn(
+      `[Payouts] Payout ${payoutId} failed — ${claimOutcome.shortfallReason}`,
+    );
+    reportSentryMessage("payout-batch-earnings-shortfall", {
+      subsystem: "payments",
+      level: "error",
+      extra: {
+        payoutId,
+        owedPaise: claimOutcome.owedPaise,
+        amount,
+      },
+    });
+    return {
+      payoutId,
+      success: false,
+      error: claimOutcome.shortfallReason,
+    };
+  }
+  if (claimOutcome.kind === "already_claimed") {
+    console.warn(
+      `[Payouts] Payout ${payoutId} already claimed by a concurrent run — skipping`,
+    );
+    reportSentryMessage("Payout CAS claim lost to a concurrent runner", {
+      subsystem: "payments",
+      expected: true,
+      extra: { payoutId },
+    });
+    return { payoutId, success: false, skipped: true };
+  }
+  return null;
+}
+
+async function computeConsultantPayoutTaxableBase(
+  payout: { id: string; consultantProfileId: string; amount: number },
+  cumulativeBeforePayout: number,
+  financialYear: string,
+  consultantTaxInfo: {
+    taxEntityType?: string | null;
+    panEncrypted?: unknown;
+  } | null,
+): Promise<{ taxablePaise: number; thresholdReason: string | null }> {
+  const engine = process.env.TDS_ENGINE ?? "194O";
+  const pure194O = engine !== "LEGACY";
+  const gross194OEnabled =
+    ENABLE_TDS_194O_GROSS && process.env.ENABLE_TDS_194O_GROSS !== "false";
+  const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
+
+  if (!pure194O) {
+    if (cumulativeAfterPayout <= TDS_THRESHOLD_PAISE) {
+      return { taxablePaise: 0, thresholdReason: null };
+    }
+    const taxablePaise =
+      cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
+        ? payout.amount
+        : cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
+    return { taxablePaise, thresholdReason: null };
+  }
+
+  // #1901 — Always compute Section 194-O gross sale receipts (with the ₹5L
+  // FY exemption for individuals/HUFs with PAN). When ENABLE_TDS_194O_GROSS
+  // is explicitly "false", emit a shadow-diff SystemEvent if the gross base
+  // differs from `payout.amount`.
+  const grossAgg = await prisma.consultantEarnings.aggregate({
+    where: { payoutId: payout.id },
+    _sum: {
+      grossAmount: true,
+      consultantSharePaise: true,
+      refundedShareAmount: true,
+    },
+  });
+  const rawGrossThisPayout = sumPaise(grossAgg?._sum?.grossAmount);
+  const grossThisPayoutPaise =
+    rawGrossThisPayout > 0
+      ? subtractProportionalGrossRefund(
+          rawGrossThisPayout,
+          sumPaise(grossAgg?._sum?.consultantSharePaise),
+          sumPaise(grossAgg?._sum?.refundedShareAmount),
+        )
+      : payout.amount;
+
+  // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
+  const fyRange =
+    typeof getFYDateRange === "function"
+      ? getFYDateRange(financialYear)
+      : undefined;
+  let grossBeforePaise = cumulativeBeforePayout;
+  if (fyRange?.start && fyRange?.end) {
+    const priorGrossAgg = await prisma.consultantEarnings.aggregate({
+      where: {
+        consultantProfileId: payout.consultantProfileId,
+        payoutId: { not: payout.id },
+        OR: [
+          {
+            status: EarningStatus.PAID,
+            paidAt: { gte: fyRange.start, lt: fyRange.end },
+          },
+          {
+            status: EarningStatus.BATCHED,
+            payout: {
+              createdAt: { gte: fyRange.start, lt: fyRange.end },
+              status: {
+                notIn: [
+                  PayoutStatus.FAILED,
+                  PayoutStatus.CANCELLED,
+                  PayoutStatus.REVERSED,
+                ],
+              },
+            },
+          },
+        ],
+      },
+      _sum: {
+        grossAmount: true,
+        consultantSharePaise: true,
+        refundedShareAmount: true,
+      },
+    });
+    grossBeforePaise = subtractProportionalGrossRefund(
+      sumPaise(priorGrossAgg?._sum?.grossAmount),
+      sumPaise(priorGrossAgg?._sum?.consultantSharePaise),
+      sumPaise(priorGrossAgg?._sum?.refundedShareAmount),
+    );
+  }
+
+  const resolved =
+    typeof resolve194OTaxablePaise === "function"
+      ? resolve194OTaxablePaise({
+          grossBeforePaise,
+          grossThisPayoutPaise,
+          entityType: consultantTaxInfo?.taxEntityType ?? null,
+          panOnFile: !!consultantTaxInfo?.panEncrypted,
+        })
+      : { taxablePaise: payout.amount, reason: null };
+
+  if (gross194OEnabled) {
+    return {
+      taxablePaise: resolved.taxablePaise,
+      thresholdReason: resolved.reason,
+    };
+  }
+
+  if (resolved.taxablePaise !== payout.amount) {
+    await recordSystemEventSafe({
+      category: "PAYOUT",
+      severity: "INFO",
+      message: `TDS_194O_GROSS_SHADOW_DIFF: payout ${payout.id} grossTaxablePaise=${resolved.taxablePaise} differs from netSharePaise=${payout.amount}`,
+      context: {
+        payoutId: payout.id,
+        consultantProfileId: payout.consultantProfileId,
+        grossTaxablePaise: resolved.taxablePaise,
+        netSharePaise: payout.amount,
+        reason: resolved.reason,
+      },
+    });
+  }
+  return { taxablePaise: payout.amount, thresholdReason: null };
+}
+
+async function handleProcessSinglePayoutError(
+  payoutId: string,
+  error: unknown,
+  providerPayoutId: string | undefined,
+  submittedToGateway: boolean,
+): Promise<PayoutResult> {
+  const errorMessage =
+    error instanceof Error ? error.message : "Unknown error";
+
+  // If the gateway already accepted the transfer, quarantine in PROCESSING with earnings linked to prevent double-disbursement.
+  if (providerPayoutId) {
+    try {
+      await prisma.consultantPayout.updateMany({
+        where: { id: payoutId, providerPayoutId: null },
+        data: {
+          providerPayoutId,
+          failureReason:
+            `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
+              0,
+              500,
+            ),
+        },
+      });
+    } catch (persistErr) {
+      console.error(
+        `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payoutId}; manual reconcile required`,
+        persistErr,
+      );
+      reportSentryError(persistErr, {
+        subsystem: "payments",
+        level: "fatal",
+        contexts: { payout: { payoutId, providerPayoutId } },
+      });
+    }
+    console.error(
+      `⚠️ Payout ${payoutId}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
+    );
+    reportSentryError(
+      new Error(`gateway-accepted-db-write-failed: payout ${payoutId}`),
+      {
+        subsystem: "payments",
+        contexts: { payout: { payoutId, providerPayoutId } },
+      },
+    );
+    return {
+      payoutId,
+      success: false,
+      providerPayoutId,
+      error: `gateway-accepted-db-write-failed: ${errorMessage}`,
+    };
+  }
+
+  // If the request left and the error is not a definitive 4xx rejection, stay PROCESSING for reference-id reconciliation.
+  if (submittedToGateway && !isDefinitiveGatewayRejection(error)) {
+    try {
+      await prisma.consultantPayout.updateMany({
+        where: {
+          id: payoutId,
+          status: PayoutStatus.PROCESSING,
+          providerPayoutId: null,
+        },
+        data: {
+          failureReason:
+            `Gateway outcome unknown; awaiting reconcile by reference id: ${errorMessage}`.slice(
+              0,
+              500,
+            ),
+        },
+      });
+    } catch (noteErr) {
+      reportSentryError(noteErr, { subsystem: "payments", level: "warning" });
+    }
+    reportSentryError(error, {
+      subsystem: "payments",
+      level: "warning",
+      contexts: { payout: { payoutId } },
+    });
+    return {
+      payoutId,
+      success: false,
+      error: `gateway-outcome-unknown: ${errorMessage}`,
+    };
+  }
+
+  // Never submitted or definitively rejected: CAS transition PROCESSING → FAILED and release BATCHED earnings back to READY.
+  await prisma.$transaction(async (tx) => {
+    const failed = await tx.consultantPayout.updateMany({
+      where: { id: payoutId, status: PayoutStatus.PROCESSING },
+      data: {
+        status: PayoutStatus.FAILED,
+        failureReason: errorMessage.slice(0, 500),
+        retryCount: { increment: 1 },
+        tdsDeducted: 0,
+        netAmount: null,
+        tdsRateAppliedBps: null,
+        tdsFinancialYear: null,
+      },
+    });
+    if (failed.count === 0) return;
+
+    await tx.consultantEarnings.updateMany({
+      where: { payoutId, status: EarningStatus.BATCHED },
+      data: { payoutId: null, status: EarningStatus.READY },
+    });
+  });
+
+  return {
+    payoutId,
+    success: false,
+    error: errorMessage,
+  };
+}
+
 async function processSinglePayout(
   payout: {
     id: string;
@@ -899,188 +1374,22 @@ async function processSinglePayout(
   };
   const financialYear = getIndianFinancialYear();
   try {
-    // #1902 — Maker-checker disbursement check: an admin who approved a payout
-    // cannot manually trigger its disbursement when multiple admins exist.
-    const approvedBy =
-      typeof payout.approvedBy === "string" ? payout.approvedBy : null;
     if (
-      triggeredByUserId &&
-      approvedBy &&
-      approvedBy === triggeredByUserId &&
-      approvedBy !== "SYSTEM_AUTO_APPROVE"
+      await isMakerCheckerDisbursementBlocked(
+        payout.id,
+        payout.approvedBy,
+        triggeredByUserId,
+      )
     ) {
-      const makerCheckerRequired =
-        process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
-      const activeAdminCount =
-        typeof (
-          prisma as { user?: { count?: (args: unknown) => Promise<number> } }
-        ).user?.count === "function"
-          ? await prisma.user.count({ where: { role: "ADMIN" } })
-          : 2;
-      if (makerCheckerRequired && activeAdminCount > 1) {
-        console.warn(
-          `[Payouts] Payout ${payout.id} skipped — triggered by the same admin (${triggeredByUserId}) who approved it`,
-        );
-        await recordSystemEventSafe({
-          category: "PAYOUT",
-          severity: "WARN",
-          message: `PAYOUT_MAKER_CHECKER_DISBURSEMENT_SKIPPED: Payout ${payout.id} approved by ${approvedBy} cannot be disbursed by the same admin`,
-          context: { payoutId: payout.id, approvedBy, triggeredByUserId },
-        });
-        return { payoutId: payout.id, success: false, skipped: true };
-      }
-    }
-
-    // #1898 — Wrap the dispute check, uncascaded/PENDING refund check,
-    // post-batch shortfall check, AND the APPROVED -> PROCESSING claim inside
-    // a single Serializable transaction so a concurrent refund/dispute cannot
-    // commit between the pre-claim read and the APPROVED -> PROCESSING transition.
-    type ClaimGateOutcome =
-      | { kind: "dispute_blocked" }
-      | { kind: "refund_blocked" }
-      | { kind: "shortfall"; owedPaise: number; shortfallReason: string }
-      | { kind: "already_claimed" }
-      | { kind: "claimed" };
-
-    const runClaimGate = async (
-      db: Pick<typeof prisma, "consultantEarnings" | "consultantPayout">,
-    ): Promise<ClaimGateOutcome> => {
-      // Block disbursement if any underlying payment has an active dispute.
-      const disputedEarning = await db.consultantEarnings.findFirst({
-        where: {
-          payoutId: payout.id,
-          payment: DISPUTE_GATED_PAYMENT_WHERE,
-        },
-        select: { id: true },
-      });
-      if (disputedEarning) {
-        return { kind: "dispute_blocked" };
-      }
-
-      // A refund that is PENDING or not yet cascaded onto the earning would be
-      // paid to the consultant AND returned to the buyer. Block until it lands.
-      const refundPendingEarning = await db.consultantEarnings.findFirst({
-        where: {
-          payoutId: payout.id,
-          payment: {
-            refunds: {
-              some: {
-                status: { notIn: REFUND_INACTIVE_FOR_GATING },
-                OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
-              },
-            },
-          },
-        },
-        select: { id: true },
-      });
-      if (refundPendingEarning) {
-        return { kind: "refund_blocked" };
-      }
-
-      // `payout.amount` is frozen at batch time; a reversal landing on a BATCHED
-      // earning afterwards lowers what is owed. Never disburse more than that.
-      const owedAgg = await db.consultantEarnings.aggregate({
-        where: { payoutId: payout.id },
-        _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      });
-      const owedPaise =
-        sumPaise(owedAgg._sum.consultantSharePaise) -
-        sumPaise(owedAgg._sum.refundedShareAmount);
-      if (owedPaise < payout.amount) {
-        const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${payout.amount}p`;
-        const failed = await db.consultantPayout.updateMany({
-          where: { id: payout.id, status: PayoutStatus.APPROVED },
-          data: {
-            status: PayoutStatus.FAILED,
-            failureReason: shortfallReason.slice(0, 500),
-            tdsDeducted: 0,
-            netAmount: null,
-            tdsRateAppliedBps: null,
-            tdsFinancialYear: null,
-          },
-        });
-        if (failed.count > 0) {
-          await db.consultantEarnings.updateMany({
-            where: { payoutId: payout.id, status: EarningStatus.BATCHED },
-            data: { payoutId: null, status: EarningStatus.READY },
-          });
-        }
-        return { kind: "shortfall", owedPaise, shortfallReason };
-      }
-
-      // Atomic CAS claim APPROVED → PROCESSING so concurrent runners cannot double-submit.
-      const claimed = await db.consultantPayout.updateMany({
-        where: { id: payout.id, status: PayoutStatus.APPROVED },
-        data: { status: PayoutStatus.PROCESSING },
-      });
-      if (claimed.count === 0) {
-        return { kind: "already_claimed" };
-      }
-      return { kind: "claimed" };
-    };
-
-    const claimOutcome =
-      typeof prisma.$transaction === "function"
-        ? await withSerializableRetry(
-            () =>
-              prisma.$transaction((tx) => runClaimGate(tx), {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-              }),
-            1,
-          )
-        : await runClaimGate(prisma);
-
-    if (claimOutcome.kind === "dispute_blocked") {
-      console.warn(
-        `[Payouts] Payout ${payout.id} blocked — an earning's payment has a live dispute`,
-      );
-      reportSentryMessage("Payout blocked by live dispute", {
-        subsystem: "payments",
-        expected: true,
-        extra: { payoutId: payout.id },
-      });
       return { payoutId: payout.id, success: false, skipped: true };
     }
-    if (claimOutcome.kind === "refund_blocked") {
-      console.warn(
-        `[Payouts] Payout ${payout.id} blocked — an earning's payment has an uncascaded refund`,
-      );
-      reportSentryMessage("Payout blocked by an uncascaded refund", {
-        subsystem: "payments",
-        expected: true,
-        extra: { payoutId: payout.id },
-      });
-      return { payoutId: payout.id, success: false, skipped: true };
-    }
-    if (claimOutcome.kind === "shortfall") {
-      console.warn(
-        `[Payouts] Payout ${payout.id} failed — ${claimOutcome.shortfallReason}`,
-      );
-      reportSentryMessage("payout-batch-earnings-shortfall", {
-        subsystem: "payments",
-        level: "error",
-        extra: {
-          payoutId: payout.id,
-          owedPaise: claimOutcome.owedPaise,
-          amount: payout.amount,
-        },
-      });
-      return {
-        payoutId: payout.id,
-        success: false,
-        error: claimOutcome.shortfallReason,
-      };
-    }
-    if (claimOutcome.kind === "already_claimed") {
-      console.warn(
-        `[Payouts] Payout ${payout.id} already claimed by a concurrent run — skipping`,
-      );
-      reportSentryMessage("Payout CAS claim lost to a concurrent runner", {
-        subsystem: "payments",
-        expected: true,
-        extra: { payoutId: payout.id },
-      });
-      return { payoutId: payout.id, success: false, skipped: true };
+
+    const blockedResult = await claimConsultantPayoutForDisbursement(
+      payout.id,
+      payout.amount,
+    );
+    if (blockedResult) {
+      return blockedResult;
     }
 
     const account = payout.consultantProfile.payoutAccounts[0];
@@ -1098,107 +1407,18 @@ async function processSinglePayout(
       );
     }
 
-    const engine = process.env.TDS_ENGINE ?? "194O";
-    const pure194O = engine !== "LEGACY";
-    const gross194OEnabled =
-      ENABLE_TDS_194O_GROSS && process.env.ENABLE_TDS_194O_GROSS !== "false";
     const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
       payout.consultantProfileId,
       financialYear,
     );
     const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
-    let taxablePaise = 0;
-    let thresholdReason: string | null = null;
-
-    if (pure194O) {
-      // #1901 — Always compute Section 194-O gross sale receipts (with the ₹5L
-      // FY exemption for individuals/HUFs with PAN). When ENABLE_TDS_194O_GROSS
-      // is explicitly "false", emit a shadow-diff SystemEvent if the gross base
-      // differs from `payout.amount`.
-      const grossAgg = await prisma.consultantEarnings.aggregate({
-        where: { payoutId: payout.id },
-        _sum: { grossAmount: true, refundedShareAmount: true },
-      });
-      const rawGrossThisPayout = sumPaise(grossAgg?._sum?.grossAmount);
-      const grossThisPayoutPaise =
-        rawGrossThisPayout > 0
-          ? rawGrossThisPayout - sumPaise(grossAgg?._sum?.refundedShareAmount)
-          : payout.amount;
-
-      // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
-      const fyRange =
-        typeof getFYDateRange === "function"
-          ? getFYDateRange(financialYear)
-          : undefined;
-      let grossBeforePaise = cumulativeBeforePayout;
-      if (fyRange?.start && fyRange?.end) {
-        const priorGrossAgg = await prisma.consultantEarnings.aggregate({
-          where: {
-            consultantProfileId: payout.consultantProfileId,
-            payoutId: { not: payout.id },
-            OR: [
-              {
-                status: EarningStatus.PAID,
-                paidAt: { gte: fyRange.start, lt: fyRange.end },
-              },
-              {
-                status: EarningStatus.BATCHED,
-                payout: {
-                  createdAt: { gte: fyRange.start, lt: fyRange.end },
-                  status: {
-                    notIn: [
-                      PayoutStatus.FAILED,
-                      PayoutStatus.CANCELLED,
-                      PayoutStatus.REVERSED,
-                    ],
-                  },
-                },
-              },
-            ],
-          },
-          _sum: { grossAmount: true, refundedShareAmount: true },
-        });
-        grossBeforePaise =
-          sumPaise(priorGrossAgg?._sum?.grossAmount) -
-          sumPaise(priorGrossAgg?._sum?.refundedShareAmount);
-      }
-
-      const resolved =
-        typeof resolve194OTaxablePaise === "function"
-          ? resolve194OTaxablePaise({
-              grossBeforePaise,
-              grossThisPayoutPaise,
-              entityType: consultantTaxInfo?.taxEntityType ?? null,
-              panOnFile: !!consultantTaxInfo?.panEncrypted,
-            })
-          : { taxablePaise: payout.amount, reason: null };
-
-      if (gross194OEnabled) {
-        taxablePaise = resolved.taxablePaise;
-        thresholdReason = resolved.reason;
-      } else {
-        taxablePaise = payout.amount;
-        if (resolved.taxablePaise !== payout.amount) {
-          await recordSystemEventSafe({
-            category: "PAYOUT",
-            severity: "INFO",
-            message: `TDS_194O_GROSS_SHADOW_DIFF: payout ${payout.id} grossTaxablePaise=${resolved.taxablePaise} differs from netSharePaise=${payout.amount}`,
-            context: {
-              payoutId: payout.id,
-              consultantProfileId: payout.consultantProfileId,
-              grossTaxablePaise: resolved.taxablePaise,
-              netSharePaise: payout.amount,
-              reason: resolved.reason,
-            },
-          });
-        }
-      }
-    } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
-      taxablePaise =
-        cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
-          ? payout.amount
-          : cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
-    }
+    const { taxablePaise, thresholdReason } =
+      await computeConsultantPayoutTaxableBase(
+        payout,
+        cumulativeBeforePayout,
+        financialYear,
+        consultantTaxInfo,
+      );
 
     const resolvedTdsRate = await resolveEffectiveTdsRate(
       prisma,
@@ -1226,12 +1446,7 @@ async function processSinglePayout(
           };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
-    const tdsRateAppliedBps =
-      tds.rateAppliedBps !== undefined
-        ? tds.rateAppliedBps
-        : tds.tdsRate !== null && tds.tdsRate !== undefined
-          ? tdsRateToBps(tds.tdsRate)
-          : null;
+    const tdsRateAppliedBps = resolveTdsRateAppliedBps(tds);
 
     if (tds.tdsAmountPaise > 0) {
       console.log(
@@ -1305,111 +1520,12 @@ async function processSinglePayout(
       providerPayoutId,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-
-    // If the gateway already accepted the transfer, quarantine in PROCESSING with earnings linked to prevent double-disbursement.
-    if (providerPayoutId) {
-      try {
-        await prisma.consultantPayout.updateMany({
-          where: { id: payout.id, providerPayoutId: null },
-          data: {
-            providerPayoutId,
-            failureReason:
-              `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
-                0,
-                500,
-              ),
-          },
-        });
-      } catch (persistErr) {
-        console.error(
-          `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
-          persistErr,
-        );
-        reportSentryError(persistErr, {
-          subsystem: "payments",
-          level: "fatal",
-          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-        });
-      }
-      console.error(
-        `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
-      );
-      reportSentryError(
-        new Error(`gateway-accepted-db-write-failed: payout ${payout.id}`),
-        {
-          subsystem: "payments",
-          contexts: { payout: { payoutId: payout.id, providerPayoutId } },
-        },
-      );
-      return {
-        payoutId: payout.id,
-        success: false,
-        providerPayoutId,
-        error: `gateway-accepted-db-write-failed: ${errorMessage}`,
-      };
-    }
-
-    // If the request left and the error is not a definitive 4xx rejection, stay PROCESSING for reference-id reconciliation.
-    if (submittedToGateway && !isDefinitiveGatewayRejection(error)) {
-      try {
-        await prisma.consultantPayout.updateMany({
-          where: {
-            id: payout.id,
-            status: PayoutStatus.PROCESSING,
-            providerPayoutId: null,
-          },
-          data: {
-            failureReason:
-              `Gateway outcome unknown; awaiting reconcile by reference id: ${errorMessage}`.slice(
-                0,
-                500,
-              ),
-          },
-        });
-      } catch (noteErr) {
-        reportSentryError(noteErr, { subsystem: "payments", level: "warning" });
-      }
-      reportSentryError(error, {
-        subsystem: "payments",
-        level: "warning",
-        contexts: { payout: { payoutId: payout.id } },
-      });
-      return {
-        payoutId: payout.id,
-        success: false,
-        error: `gateway-outcome-unknown: ${errorMessage}`,
-      };
-    }
-
-    // Never submitted or definitively rejected: CAS transition PROCESSING → FAILED and release BATCHED earnings back to READY.
-    await prisma.$transaction(async (tx) => {
-      const failed = await tx.consultantPayout.updateMany({
-        where: { id: payout.id, status: PayoutStatus.PROCESSING },
-        data: {
-          status: PayoutStatus.FAILED,
-          failureReason: errorMessage.slice(0, 500),
-          retryCount: { increment: 1 },
-          tdsDeducted: 0,
-          netAmount: null,
-          tdsRateAppliedBps: null,
-          tdsFinancialYear: null,
-        },
-      });
-      if (failed.count === 0) return;
-
-      await tx.consultantEarnings.updateMany({
-        where: { payoutId: payout.id, status: EarningStatus.BATCHED },
-        data: { payoutId: null, status: EarningStatus.READY },
-      });
-    });
-
-    return {
-      payoutId: payout.id,
-      success: false,
-      error: errorMessage,
-    };
+    return handleProcessSinglePayoutError(
+      payout.id,
+      error,
+      providerPayoutId,
+      submittedToGateway,
+    );
   }
 }
 
@@ -1527,6 +1643,245 @@ export async function reportUnknownPayoutStatus(input: {
   });
 }
 
+function mapWebhookPayoutStatus(status: string): PayoutStatus | null {
+  switch (status) {
+    case "COMPLETED":
+      return PayoutStatus.COMPLETED;
+    case "FAILED":
+      return PayoutStatus.FAILED;
+    case "CANCELLED":
+      return PayoutStatus.CANCELLED;
+    case "PROCESSING":
+      return PayoutStatus.PROCESSING;
+    case "PENDING":
+      return PayoutStatus.PENDING;
+    default:
+      return null;
+  }
+}
+
+async function loadCompletionEarningsForShortfall(
+  tx: Tx,
+  payoutId: string,
+  fallbackEarnings: unknown,
+): Promise<
+  Array<{ consultantSharePaise: number; refundedShareAmount?: number | null }>
+> {
+  if (typeof tx.consultantEarnings.findMany === "function") {
+    return tx.consultantEarnings.findMany({
+      where: { payoutId },
+      select: {
+        consultantSharePaise: true,
+        refundedShareAmount: true,
+      },
+    });
+  }
+  if (
+    Array.isArray(fallbackEarnings) &&
+    fallbackEarnings.length > 0 &&
+    typeof (fallbackEarnings[0] as { consultantSharePaise?: unknown })
+      ?.consultantSharePaise === "number"
+  ) {
+    return fallbackEarnings as Array<{
+      consultantSharePaise: number;
+      refundedShareAmount?: number | null;
+    }>;
+  }
+  return [];
+}
+
+async function completeConsultantPayoutInTx(
+  tx: Tx,
+  matched: {
+    id: string;
+    consultantProfileId: string;
+    amount: number;
+    tdsDeducted: number;
+    tdsRateAppliedBps: number | null;
+    earnings?: unknown;
+  },
+): Promise<void> {
+  const { financialYear, quarter, start, end } = resolveCompletionTdsWindow();
+  const previousCompletedPayouts = await tx.consultantPayout.aggregate({
+    where: {
+      consultantProfileId: matched.consultantProfileId,
+      status: PayoutStatus.COMPLETED,
+      processedAt: { gte: start, lt: end },
+      id: { not: matched.id },
+    },
+    _sum: { amount: true },
+  });
+  const cumulativeCreditedPayments =
+    sumPaise(previousCompletedPayouts._sum.amount) + matched.amount;
+
+  await tx.consultantEarnings.updateMany({
+    where: { payoutId: matched.id, status: EarningStatus.BATCHED },
+    data: {
+      status: EarningStatus.PAID,
+      paidAt: new Date(),
+    },
+  });
+
+  // #1898 — Re-verify sum(consultantSharePaise - refundedShareAmount) across
+  // the batch's earnings at completion time. If a late refund cascaded while
+  // the payout was in flight at the gateway, accrue the shortfall into
+  // clawbackAmountPaise and emit a WARN SystemEvent.
+  const completionEarnings = await loadCompletionEarningsForShortfall(
+    tx,
+    matched.id,
+    matched.earnings,
+  );
+  if (completionEarnings.length > 0) {
+    const owedPaise = completionEarnings.reduce(
+      (sum, e) =>
+        sum +
+        Math.max(0, e.consultantSharePaise - (e.refundedShareAmount ?? 0)),
+      0,
+    );
+    if (owedPaise < matched.amount) {
+      const shortfallPaise = matched.amount - owedPaise;
+      if (typeof tx.consultantPayout.update === "function") {
+        await tx.consultantPayout.update({
+          where: { id: matched.id },
+          data: { clawbackAmountPaise: { increment: shortfallPaise } },
+        });
+      } else {
+        await tx.consultantPayout.updateMany({
+          where: { id: matched.id },
+          data: { clawbackAmountPaise: { increment: shortfallPaise } },
+        });
+      }
+      await recordSystemEventSafe({
+        db: tx,
+        category: "PAYOUT",
+        severity: "WARN",
+        message: `PAYOUT_COMPLETION_EARNINGS_SHORTFALL: payout ${matched.id} completed for ${matched.amount}p while earnings owe ${owedPaise}p (clawback +${shortfallPaise}p)`,
+        context: {
+          payoutId: matched.id,
+          consultantProfileId: matched.consultantProfileId,
+          disbursedPaise: matched.amount,
+          owedPaise,
+          shortfallPaise,
+        },
+      });
+    }
+  }
+
+  if (matched.amount > 0) {
+    const tdsPaise = matched.tdsDeducted ?? 0;
+    const cashPaise = matched.amount - tdsPaise;
+    await postLedgerTxn(tx, {
+      idempotencyKey: `payout:${matched.id}`,
+      kind: "PAYOUT",
+      payoutId: matched.id,
+      postings: buildPayoutCompletionPostings({
+        payableAccount: {
+          kind: "CONSULTANT_PAYABLE",
+          consultantProfileId: matched.consultantProfileId,
+        },
+        grossPayablePaise: matched.amount,
+        netCashPaise: cashPaise,
+        tdsPaise,
+      }),
+    });
+  }
+
+  if (matched.tdsDeducted > 0 && matched.tdsRateAppliedBps) {
+    await tx.tDSRecord.deleteMany({
+      where: { payoutId: matched.id, isReversal: false },
+    });
+
+    await recordTDSDeduction({
+      consultantProfileId: matched.consultantProfileId,
+      financialYear,
+      quarter,
+      tdsDeducted: matched.tdsDeducted,
+      tdsRateBps: matched.tdsRateAppliedBps,
+      cumulativeAmountCredited: cumulativeCreditedPayments,
+      payoutId: matched.id,
+      tdsSection: "194O",
+      db: tx,
+    });
+  }
+}
+
+async function failOrCancelConsultantPayoutInTx(
+  tx: Tx,
+  payoutId: string,
+): Promise<void> {
+  await tx.consultantEarnings.updateMany({
+    where: { payoutId, status: EarningStatus.BATCHED },
+    data: {
+      payoutId: null,
+      status: EarningStatus.READY,
+    },
+  });
+
+  await tx.tDSRecord.deleteMany({
+    where: { payoutId },
+  });
+
+  await tx.consultantPayout.update({
+    where: { id: payoutId },
+    data: {
+      tdsDeducted: 0,
+      netAmount: null,
+      tdsRateAppliedBps: null,
+      tdsFinancialYear: null,
+    },
+  });
+}
+
+async function notifyConsultantPayoutWebhookOutcome(
+  payoutStatus: PayoutStatus,
+  matched: {
+    id: string;
+    consultantProfileId: string;
+    amount: number;
+    currency: string;
+  },
+): Promise<void> {
+  if (payoutStatus === PayoutStatus.COMPLETED) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { id: matched.consultantProfileId },
+      select: { userId: true },
+    });
+    if (profile?.userId) {
+      await notifyPayoutProcessed(profile.userId, {
+        amount: Number(matched.amount),
+        currency: matched.currency,
+        payoutId: matched.id,
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
+      }).catch((error) => {
+        console.error("[payouts] Failed to send payout notification:", error);
+        reportSentryError(error, { subsystem: "payments", level: "warning" });
+      });
+    }
+    return;
+  }
+
+  if (
+    payoutStatus === PayoutStatus.FAILED ||
+    payoutStatus === PayoutStatus.CANCELLED
+  ) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { id: matched.consultantProfileId },
+      select: { userId: true },
+    });
+    if (profile?.userId) {
+      await notifyPayoutFailed(profile.userId, {
+        amount: Number(matched.amount),
+        currency: matched.currency,
+        payoutId: matched.id,
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
+      }).catch((error) => {
+        console.error("[payouts] Failed to send payout-failed notice:", error);
+        reportSentryError(error, { subsystem: "payments", level: "warning" });
+      });
+    }
+  }
+}
+
 export async function handlePayoutWebhook(
   _provider: PaymentGateway,
   providerPayoutId: string,
@@ -1565,36 +1920,20 @@ export async function handlePayoutWebhook(
   }
   const matched = payout;
 
-  let payoutStatus: PayoutStatus;
-  switch (status) {
-    case "COMPLETED":
-      payoutStatus = PayoutStatus.COMPLETED;
-      break;
-    case "FAILED":
-      payoutStatus = PayoutStatus.FAILED;
-      break;
-    case "CANCELLED":
-      payoutStatus = PayoutStatus.CANCELLED;
-      break;
-    case "PROCESSING":
-      payoutStatus = PayoutStatus.PROCESSING;
-      break;
-    case "PENDING":
-      payoutStatus = PayoutStatus.PENDING;
-      break;
-    default:
-      await reportUnknownPayoutStatus({
-        provider: _provider,
-        providerPayoutId,
-        status: String(status),
-      });
-      return;
+  const payoutStatus = mapWebhookPayoutStatus(status);
+  if (!payoutStatus) {
+    await reportUnknownPayoutStatus({
+      provider: _provider,
+      providerPayoutId,
+      status: String(status),
+    });
+    return;
   }
 
   const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
   const stampData = stampProviderId ? { providerPayoutId } : {};
 
-  await prisma.$transaction(async (tx) => {
+  const didTransition = await prisma.$transaction(async (tx) => {
     // Terminal events claim any non-terminal row; non-terminal events only update PROCESSING rows.
     const terminalIncoming =
       payoutStatus === PayoutStatus.COMPLETED ||
@@ -1636,192 +1975,25 @@ export async function handlePayoutWebhook(
         expected: true,
         extra: { payoutId: matched.id, status },
       });
-      return;
+      return false;
     }
 
     if (payoutStatus === PayoutStatus.COMPLETED) {
-      const { financialYear, quarter, start, end } =
-        resolveCompletionTdsWindow();
-      const previousCompletedPayouts = await tx.consultantPayout.aggregate({
-        where: {
-          consultantProfileId: matched.consultantProfileId,
-          status: PayoutStatus.COMPLETED,
-          processedAt: { gte: start, lt: end },
-          id: { not: matched.id },
-        },
-        _sum: { amount: true },
-      });
-      const cumulativeCreditedPayments =
-        sumPaise(previousCompletedPayouts._sum.amount) + matched.amount;
-
-      await tx.consultantEarnings.updateMany({
-        where: { payoutId: matched.id, status: EarningStatus.BATCHED },
-        data: {
-          status: EarningStatus.PAID,
-          paidAt: new Date(),
-        },
-      });
-
-      // #1898 — Re-verify sum(consultantSharePaise - refundedShareAmount) across
-      // the batch's earnings at completion time. If a late refund cascaded while
-      // the payout was in flight at the gateway, accrue the shortfall into
-      // clawbackAmountPaise and emit a WARN SystemEvent.
-      const completionEarnings =
-        typeof tx.consultantEarnings.findMany === "function"
-          ? await tx.consultantEarnings.findMany({
-              where: { payoutId: matched.id },
-              select: {
-                consultantSharePaise: true,
-                refundedShareAmount: true,
-              },
-            })
-          : Array.isArray(matched.earnings) &&
-              matched.earnings.length > 0 &&
-              typeof matched.earnings[0]?.consultantSharePaise === "number"
-            ? matched.earnings
-            : [];
-      if (completionEarnings.length > 0) {
-        const owedPaise = completionEarnings.reduce(
-          (sum, e) =>
-            sum +
-            Math.max(
-              0,
-              e.consultantSharePaise - (e.refundedShareAmount ?? 0),
-            ),
-          0,
-        );
-        if (owedPaise < matched.amount) {
-          const shortfallPaise = matched.amount - owedPaise;
-          if (typeof tx.consultantPayout.update === "function") {
-            await tx.consultantPayout.update({
-              where: { id: matched.id },
-              data: { clawbackAmountPaise: { increment: shortfallPaise } },
-            });
-          } else {
-            await tx.consultantPayout.updateMany({
-              where: { id: matched.id },
-              data: { clawbackAmountPaise: { increment: shortfallPaise } },
-            });
-          }
-          await recordSystemEventSafe({
-            db: tx,
-            category: "PAYOUT",
-            severity: "WARN",
-            message: `PAYOUT_COMPLETION_EARNINGS_SHORTFALL: payout ${matched.id} completed for ${matched.amount}p while earnings owe ${owedPaise}p (clawback +${shortfallPaise}p)`,
-            context: {
-              payoutId: matched.id,
-              consultantProfileId: matched.consultantProfileId,
-              disbursedPaise: matched.amount,
-              owedPaise,
-              shortfallPaise,
-            },
-          });
-        }
-      }
-
-      if (matched.amount > 0) {
-        const tdsPaise = matched.tdsDeducted ?? 0;
-        const cashPaise = matched.amount - tdsPaise;
-        await postLedgerTxn(tx, {
-          idempotencyKey: `payout:${matched.id}`,
-          kind: "PAYOUT",
-          payoutId: matched.id,
-          postings: buildPayoutCompletionPostings({
-            payableAccount: {
-              kind: "CONSULTANT_PAYABLE",
-              consultantProfileId: matched.consultantProfileId,
-            },
-            grossPayablePaise: matched.amount,
-            netCashPaise: cashPaise,
-            tdsPaise,
-          }),
-        });
-      }
-
-      if (matched.tdsDeducted > 0 && matched.tdsRateAppliedBps) {
-        await tx.tDSRecord.deleteMany({
-          where: { payoutId: matched.id, isReversal: false },
-        });
-
-        await recordTDSDeduction({
-          consultantProfileId: matched.consultantProfileId,
-          financialYear,
-          quarter,
-          tdsDeducted: matched.tdsDeducted,
-          tdsRateBps: matched.tdsRateAppliedBps,
-          cumulativeAmountCredited: cumulativeCreditedPayments,
-          payoutId: matched.id,
-          tdsSection: "194O",
-          db: tx,
-        });
-      }
+      await completeConsultantPayoutInTx(tx, matched);
+      return true;
     }
 
     if (
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED
     ) {
-      await tx.consultantEarnings.updateMany({
-        where: { payoutId: matched.id, status: EarningStatus.BATCHED },
-        data: {
-          payoutId: null,
-          status: EarningStatus.READY,
-        },
-      });
-
-      await tx.tDSRecord.deleteMany({
-        where: { payoutId: matched.id },
-      });
-
-      await tx.consultantPayout.update({
-        where: { id: matched.id },
-        data: {
-          tdsDeducted: 0,
-          netAmount: null,
-          tdsRateAppliedBps: null,
-          tdsFinancialYear: null,
-        },
-      });
+      await failOrCancelConsultantPayoutInTx(tx, matched.id);
     }
+    return true;
   });
 
-  if (payoutStatus === PayoutStatus.COMPLETED) {
-    const profile = await prisma.consultantProfile.findUnique({
-      where: { id: matched.consultantProfileId },
-      select: { userId: true },
-    });
-    if (profile?.userId) {
-      await notifyPayoutProcessed(profile.userId, {
-        amount: Number(matched.amount),
-        currency: matched.currency,
-        payoutId: matched.id,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
-      }).catch((error) => {
-        console.error("[payouts] Failed to send payout notification:", error);
-        reportSentryError(error, { subsystem: "payments", level: "warning" });
-      });
-    }
-  }
-
-  if (
-    payoutStatus === PayoutStatus.FAILED ||
-    payoutStatus === PayoutStatus.CANCELLED
-  ) {
-    const profile = await prisma.consultantProfile.findUnique({
-      where: { id: matched.consultantProfileId },
-      select: { userId: true },
-    });
-    if (profile?.userId) {
-      await notifyPayoutFailed(profile.userId, {
-        amount: Number(matched.amount),
-        currency: matched.currency,
-        payoutId: matched.id,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
-      }).catch((error) => {
-        console.error("[payouts] Failed to send payout-failed notice:", error);
-        reportSentryError(error, { subsystem: "payments", level: "warning" });
-      });
-    }
+  if (didTransition) {
+    await notifyConsultantPayoutWebhookOutcome(payoutStatus, matched);
   }
 }
 

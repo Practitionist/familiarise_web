@@ -183,12 +183,43 @@ const IssueCreditShape = {
     .string()
     .trim()
     .toUpperCase()
-    .pipe(z.enum(["INR", "USD", "EUR", "GBP"]))
+    .pipe(z.literal("INR"))
     .default("INR"),
   source: z.enum(["COMPENSATION", "MANUAL"]).default("COMPENSATION"),
   expiresAt: z.string().datetime().nullable().optional(),
   idempotencyKey: z.string().trim().min(1).max(160).optional(),
 };
+
+function matchesIdempotentCreditReplay(
+  existing: {
+    userId: string;
+    amount: number | bigint;
+    currency: string;
+    source: string;
+    expiresAt?: Date | string | null;
+  },
+  userId: string,
+  body: {
+    amountPaise: number;
+    currency: string;
+    source: string;
+    expiresAt?: string | null;
+  },
+): boolean {
+  const existingExpiryMs = existing.expiresAt
+    ? new Date(existing.expiresAt).getTime()
+    : null;
+  const requestedExpiryMs = body.expiresAt
+    ? new Date(body.expiresAt).getTime()
+    : null;
+  return (
+    existing.userId === userId &&
+    Number(existing.amount) === body.amountPaise &&
+    existing.currency === body.currency &&
+    existing.source === body.source &&
+    existingExpiryMs === requestedExpiryMs
+  );
+}
 
 export const POST = withOpsAction(
   "referrals.manage",
@@ -217,11 +248,37 @@ export const POST = withOpsAction(
       const idempotencyKey = body.idempotencyKey ?? `ops:${opsActionId}`;
       const existing = await tx.referralCredit.findUnique({
         where: { idempotencyKey },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          usages: true,
+        },
       });
       if (existing) {
+        if (matchesIdempotentCreditReplay(existing, user.id, body)) {
+          return {
+            target: { kind: "ReferralCredit", id: existing.id },
+            status: 200,
+            response: { credit: existing, replayed: true },
+            after: {
+              userId: existing.userId,
+              amountPaise: Number(existing.amount),
+              currency: existing.currency,
+              source: existing.source,
+              expiresAt: existing.expiresAt?.toISOString() ?? null,
+              idempotencyKey,
+              replayed: true,
+            },
+          };
+        }
         throw new OpsRefusal(
           "DUPLICATE_IDEMPOTENCY_KEY",
-          "A referral credit with this idempotency key has already been issued.",
+          "A referral credit with this idempotency key already exists with a different payload.",
           409,
         );
       }
@@ -263,6 +320,35 @@ export const POST = withOpsAction(
         });
       } catch (err) {
         if (isUniqueViolationOn(err, "idempotencyKey")) {
+          const raced = await tx.referralCredit.findUnique({
+            where: { idempotencyKey },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              usages: true,
+            },
+          });
+          if (raced && matchesIdempotentCreditReplay(raced, user.id, body)) {
+            return {
+              target: { kind: "ReferralCredit", id: raced.id },
+              status: 200,
+              response: { credit: raced, replayed: true },
+              after: {
+                userId: raced.userId,
+                amountPaise: Number(raced.amount),
+                currency: raced.currency,
+                source: raced.source,
+                expiresAt: raced.expiresAt?.toISOString() ?? null,
+                idempotencyKey,
+                replayed: true,
+              },
+            };
+          }
           throw new OpsRefusal(
             "DUPLICATE_IDEMPOTENCY_KEY",
             "A referral credit with this idempotency key already exists.",

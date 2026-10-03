@@ -15,7 +15,6 @@
  *   atomic `OpsActionLog` row in the same transaction.
  */
 
-import prisma from "@/lib/prisma";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 
@@ -137,6 +136,3 @@ export const POST = withOpsAction(
     },
   },
 );
-
-// Prevent unused-import lint warning while keeping prisma available for module mocks.
-void prisma;

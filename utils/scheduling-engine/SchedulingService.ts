@@ -7,6 +7,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   liveParticipant,
   recordParticipants,
@@ -1118,6 +1119,41 @@ export class SchedulingService {
   ): Promise<AllocationResult | null> {
     if (!idempotencyKey) return null;
 
+    const batch = await this.loadIdempotentBatchAppointments(
+      db,
+      eventType,
+      eventId,
+      idempotencyKey,
+    );
+    if (!batch) return null;
+
+    const { stamped, appointments } = batch;
+    if (expectedSlotStarts) {
+      this.assertIdempotentPayloadMatches(
+        eventType,
+        idempotencyKey,
+        stamped.id,
+        appointments,
+        expectedSlotStarts,
+      );
+    }
+
+    return {
+      success: true,
+      appointments,
+      ...(await this.replayPartialCounts(eventType, eventId, appointments, db)),
+    };
+  }
+
+  private static async loadIdempotentBatchAppointments(
+    db: PrismaLike,
+    eventType: EventType,
+    eventId: string,
+    idempotencyKey: string,
+  ): Promise<{
+    stamped: { id: string };
+    appointments: AppointmentWithSlots[];
+  } | null> {
     const stamped = await db.appointment.findUnique({
       where: { allocationIdempotencyKey: idempotencyKey },
       select: {
@@ -1152,123 +1188,168 @@ export class SchedulingService {
       include: { occurrences: true },
     });
 
-    if (expectedSlotStarts) {
-      // Compared against the batch's live FUTURE rows only: an in-progress
-      // recurring manual submit carries future slots while deliberately
-      // preserved past rows stay stamped, so testing the whole cohort would
-      // 422 a legitimate double-submit instead of replaying it.
-      //
-      // Expanded to interval starts before comparing: one occurrence covers
-      // one whole call with its real end ("the 30-minute intervals stay the
-      // unit of arithmetic, not the persisted shape"), while the attempt
-      // carries every 30-minute atom — an exact retry of a multi-slot
-      // session would otherwise mismatch on row count alone.
-      const now = new Date();
-      const allLiveOccurrences = appointments
-        .flatMap((a) => a.occurrences ?? [])
-        .filter((o) => !o.deletedAt && !isDeadOccurrence(o));
-      const liveFutureOccurrences = allLiveOccurrences.filter(
-        (o) => o.endsAt > now,
+    return { stamped, appointments };
+  }
+
+  private static startsOfOccurrences(rows: AppointmentOccurrence[]): number[] {
+    return rows
+      .flatMap((o) => intervalStartsOf(o))
+      .map((start) => start.getTime())
+      .sort((a, b) => a - b);
+  }
+
+  private static numberArraysEqual(a: number[], b: number[]): boolean {
+    return a.length === b.length && a.every((t, i) => t === b[i]);
+  }
+
+  private static assertIdempotentPayloadMatches(
+    eventType: EventType,
+    idempotencyKey: string,
+    stampedId: string | undefined,
+    appointments: AppointmentWithSlots[],
+    expectedSlotStarts: string[],
+  ): void {
+    // Compared against the batch's live FUTURE rows only: an in-progress
+    // recurring manual submit carries future slots while deliberately
+    // preserved past rows stay stamped, so testing the whole cohort would
+    // 422 a legitimate double-submit instead of replaying it.
+    //
+    // Expanded to interval starts before comparing: one occurrence covers
+    // one whole call with its real end ("the 30-minute intervals stay the
+    // unit of arithmetic, not the persisted shape"), while the attempt
+    // carries every 30-minute atom — an exact retry of a multi-slot
+    // session would otherwise mismatch on row count alone.
+    const now = new Date();
+    const allLiveOccurrences = appointments
+      .flatMap((a) => a.occurrences ?? [])
+      .filter((o) => !o.deletedAt && !isDeadOccurrence(o));
+    const liveFutureOccurrences = allLiveOccurrences.filter(
+      (o) => o.endsAt > now,
+    );
+    const candidateOccurrences =
+      liveFutureOccurrences.length > 0
+        ? liveFutureOccurrences
+        : allLiveOccurrences;
+
+    const stampedStarts = this.startsOfOccurrences(liveFutureOccurrences);
+    const allStampedStarts = this.startsOfOccurrences(allLiveOccurrences);
+    const attemptedStarts = expectedSlotStarts
+      .map((s) => new Date(s).getTime())
+      .sort((a, b) => a - b);
+
+    const samePayload =
+      this.numberArraysEqual(stampedStarts, attemptedStarts) ||
+      this.numberArraysEqual(allStampedStarts, attemptedStarts) ||
+      this.matchesRecurringBatchSubset({
+        eventType,
+        idempotencyKey,
+        stampedId,
+        appointments,
+        candidateOccurrences,
+        hasLiveFuture: liveFutureOccurrences.length > 0,
+        now,
+        attemptedStarts,
+      });
+
+    if (!samePayload) {
+      throw new AllocationIdempotencyMismatchError(
+        "This idempotency key was already used with different slots. " +
+          "Reload and submit as a new allocation.",
       );
-      const candidateOccurrences =
-        liveFutureOccurrences.length > 0
-          ? liveFutureOccurrences
-          : allLiveOccurrences;
-      const startsOfOccurrences = (
-        rows: typeof allLiveOccurrences,
-      ): number[] =>
-        rows
-          .flatMap((o) => intervalStartsOf(o))
-          .map((start) => start.getTime())
-          .sort((a, b) => a - b);
+    }
+  }
 
-      const stampedStarts = startsOfOccurrences(liveFutureOccurrences);
-      const allStampedStarts = startsOfOccurrences(allLiveOccurrences);
-      const attemptedStarts = expectedSlotStarts
-        .map((s) => new Date(s).getTime())
-        .sort((a, b) => a - b);
-      const arraysEqual = (a: number[], b: number[]) =>
-        a.length === b.length && a.every((t, i) => t === b[i]);
+  /**
+   * #1692 Item 6 — On a multi-batch recurring event (top-up cycle or partial
+   * reschedule), the wrapper (or sibling wrappers) also holds pre-existing
+   * confirmed future occurrences from earlier cycles. Match against the
+   * stamped appointment's occurrences or the latest batch's whole occurrences
+   * when multiple recurring occurrences exist.
+   */
+  private static matchesRecurringBatchSubset(params: {
+    eventType: EventType;
+    idempotencyKey: string;
+    stampedId: string | undefined;
+    appointments: AppointmentWithSlots[];
+    candidateOccurrences: AppointmentOccurrence[];
+    hasLiveFuture: boolean;
+    now: Date;
+    attemptedStarts: number[];
+  }): boolean {
+    const {
+      eventType,
+      idempotencyKey,
+      stampedId,
+      appointments,
+      candidateOccurrences,
+      hasLiveFuture,
+      now,
+      attemptedStarts,
+    } = params;
+    if (!isRecurringEventType(eventType) || candidateOccurrences.length <= 1) {
+      return false;
+    }
 
-      let samePayload =
-        arraysEqual(stampedStarts, attemptedStarts) ||
-        arraysEqual(allStampedStarts, attemptedStarts);
-
-      // #1692 Item 6 — On a multi-batch recurring event (top-up cycle or
-      // partial reschedule), the wrapper (or sibling wrappers) also holds
-      // pre-existing confirmed future occurrences from earlier cycles. Match
-      // against the stamped appointment's occurrences or the latest batch's
-      // whole occurrences when multiple recurring occurrences exist.
+    const stampedAppt = appointments.find(
+      (a) =>
+        (stampedId && a.id === stampedId) ||
+        a.allocationIdempotencyKey === idempotencyKey,
+    );
+    if (stampedAppt && appointments.length > 1) {
+      const apptOccurrences = (stampedAppt.occurrences ?? []).filter(
+        (o) =>
+          !o.deletedAt &&
+          !isDeadOccurrence(o) &&
+          (!hasLiveFuture || o.endsAt > now),
+      );
       if (
-        !samePayload &&
-        isRecurringEventType(eventType) &&
-        candidateOccurrences.length > 1
+        this.numberArraysEqual(
+          this.startsOfOccurrences(apptOccurrences),
+          attemptedStarts,
+        )
       ) {
-        const stampedAppt = appointments.find(
-          (a) =>
-            (stamped.id && a.id === stamped.id) ||
-            a.allocationIdempotencyKey === idempotencyKey,
-        );
-        if (stampedAppt && appointments.length > 1) {
-          const apptOccurrences = (stampedAppt.occurrences ?? []).filter(
-            (o) =>
-              !o.deletedAt &&
-              !isDeadOccurrence(o) &&
-              (liveFutureOccurrences.length === 0 || o.endsAt > now),
-          );
-          if (
-            arraysEqual(startsOfOccurrences(apptOccurrences), attemptedStarts)
-          ) {
-            samePayload = true;
-          }
-        }
-        if (!samePayload) {
-          const movedRows = candidateOccurrences.filter(
-            (o) => (o as { movedAt?: Date | null }).movedAt != null,
-          );
-          if (
-            movedRows.length > 0 &&
-            arraysEqual(startsOfOccurrences(movedRows), attemptedStarts)
-          ) {
-            samePayload = true;
-          }
-        }
-        if (!samePayload) {
-          const withOrdinals = candidateOccurrences.filter(
-            (o) => typeof (o as { ordinal?: number }).ordinal === "number",
-          );
-          if (withOrdinals.length === candidateOccurrences.length) {
-            const byOrdinal = [...candidateOccurrences].sort(
-              (a, b) =>
-                ((a as { ordinal?: number }).ordinal ?? 0) -
-                ((b as { ordinal?: number }).ordinal ?? 0),
-            );
-            for (let startIdx = 1; startIdx < byOrdinal.length; startIdx++) {
-              const suffixStarts = startsOfOccurrences(
-                byOrdinal.slice(startIdx),
-              );
-              if (arraysEqual(suffixStarts, attemptedStarts)) {
-                samePayload = true;
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      if (!samePayload) {
-        throw new AllocationIdempotencyMismatchError(
-          "This idempotency key was already used with different slots. " +
-            "Reload and submit as a new allocation.",
-        );
+        return true;
       }
     }
 
-    return {
-      success: true,
-      appointments,
-      ...(await this.replayPartialCounts(eventType, eventId, appointments, db)),
-    };
+    const movedRows = candidateOccurrences.filter(
+      (o) => (o as { movedAt?: Date | null }).movedAt != null,
+    );
+    if (
+      movedRows.length > 0 &&
+      this.numberArraysEqual(
+        this.startsOfOccurrences(movedRows),
+        attemptedStarts,
+      )
+    ) {
+      return true;
+    }
+
+    return this.matchesOrdinalSuffix(candidateOccurrences, attemptedStarts);
+  }
+
+  private static matchesOrdinalSuffix(
+    candidateOccurrences: AppointmentOccurrence[],
+    attemptedStarts: number[],
+  ): boolean {
+    const withOrdinals = candidateOccurrences.filter(
+      (o) => typeof (o as { ordinal?: number }).ordinal === "number",
+    );
+    if (withOrdinals.length !== candidateOccurrences.length) {
+      return false;
+    }
+    const byOrdinal = [...candidateOccurrences].sort(
+      (a, b) =>
+        ((a as { ordinal?: number }).ordinal ?? 0) -
+        ((b as { ordinal?: number }).ordinal ?? 0),
+    );
+    for (let startIdx = 1; startIdx < byOrdinal.length; startIdx++) {
+      const suffixStarts = this.startsOfOccurrences(byOrdinal.slice(startIdx));
+      if (this.numberArraysEqual(suffixStarts, attemptedStarts)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -2794,7 +2875,7 @@ export class SchedulingService {
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
-            ...(manualPartialInfo ?? {}),
+            ...manualPartialInfo,
             stagedNotices: await SchedulingService.stageAllocationNotices(
               tx,
               eventType,
@@ -4653,7 +4734,7 @@ export class SchedulingService {
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
-        subscriptionPlan: { select: { totalSessions: true } },
+        subscriptionPlan: { select: { totalSessions: true, price: true } },
         appointment: {
           include: {
             payment: true,
@@ -4718,7 +4799,17 @@ export class SchedulingService {
         },
       },
       orderBy: { periodEnd: "desc" },
-      select: { id: true, program: { select: { type: true } } },
+      select: {
+        id: true,
+        program: {
+          select: {
+            type: true,
+            licensedSeatConfig: {
+              select: { priceCapPerEngagementPaise: true },
+            },
+          },
+        },
+      },
     });
     if (!assignment) return;
 
@@ -4801,49 +4892,144 @@ export class SchedulingService {
     // #1895 — Trigger overage billing when a lazily allocated subscription
     // session exceeds the program cap.
     if (utilResult?.wasOverage) {
-      const totalPlanSessions = Math.max(
-        1,
-        subscription?.subscriptionPlan?.totalSessions ??
-          subscription?.sessionsTotal ??
-          1,
-      );
-      const unitSessionPricePaise = Math.round(
-        orgPayment.amount / totalPlanSessions,
-      );
-      const overageBookingPricePaise =
-        idsToDebit.length * unitSessionPricePaise;
-      const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
-        await import("@/lib/payments/billing/overage-settlement");
-      const resolvedProgramType =
-        assignment.program?.type ??
-        utilResult.programType ??
-        "LICENSED_SEAT";
-      const effectiveConsumedPaiseAfter =
-        resolvedProgramType === "CREDIT_POOL"
-          ? utilResult.consumedPaiseAfter +
-            (existingUtil ? overageBookingPricePaise : 0)
-          : utilResult.consumedPaiseAfter;
-      const pendingNotify = await recordOverageAtCheckout({
+      await this.settleSubscriptionAllocationOverage({
         tx,
-        programAssignmentId: assignment.id,
-        utilization: {
-          programType: resolvedProgramType,
-          engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
-          engagementsUsedAfter: utilResult.engagementsUsedAfter,
-          consumedPaiseAfter: effectiveConsumedPaiseAfter,
-          creditBudgetPaise: utilResult.creditBudgetPaise,
-        },
-        bookingPricePaise: overageBookingPricePaise,
-        currency: orgPayment.currency ?? "INR",
-        paymentId: orgPayment.id,
-        userId: consulteeUserId,
-        organizationId: orgPayment.organizationId,
-        paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
-        isLazyAllocation: existingUtil !== null,
+        subscriptionId,
+        subscription,
+        orgPayment,
+        assignment,
+        existingUtil,
+        idsToDebit,
+        utilResult,
+        consulteeUserId,
       });
-      if (pendingNotify) {
-        notifyOverageDueAfterCommit(pendingNotify);
+    }
+  }
+
+  private static async settleSubscriptionAllocationOverage(params: {
+    tx: Tx;
+    subscriptionId: string;
+    subscription: {
+      subscriptionPlanId?: string;
+      sessionsTotal?: number | null;
+      subscriptionPlan?: {
+        totalSessions?: number | null;
+        price?: number | null;
+      } | null;
+    } | null;
+    orgPayment: {
+      id: string;
+      amount: number;
+      originalAmount?: number | null;
+      currency?: Prisma.PaymentCreateInput["currency"] | null;
+      organizationId: string | null;
+      paymentGateway?: Prisma.PaymentCreateInput["paymentGateway"] | null;
+    };
+    assignment: {
+      id: string;
+      program?: {
+        type?: "LICENSED_SEAT" | "CREDIT_POOL" | null;
+        licensedSeatConfig?: {
+          priceCapPerEngagementPaise?: number | null;
+        } | null;
+      } | null;
+    };
+    existingUtil: { id: string } | null;
+    idsToDebit: string[];
+    utilResult: Awaited<ReturnType<typeof recordBookingUtilization>>;
+    consulteeUserId: string;
+  }): Promise<void> {
+    const {
+      tx,
+      subscriptionId,
+      subscription,
+      orgPayment,
+      assignment,
+      existingUtil,
+      idsToDebit,
+      utilResult,
+      consulteeUserId,
+    } = params;
+    if (!orgPayment.organizationId) return;
+
+    const totalPlanSessions = Math.max(
+      1,
+      subscription?.sessionsTotal ??
+        subscription?.subscriptionPlan?.totalSessions ??
+        1,
+    );
+    const basePaymentAmount = orgPayment.originalAmount ?? orgPayment.amount;
+    let unitSessionPricePaise = Math.round(
+      basePaymentAmount / totalPlanSessions,
+    );
+    if (unitSessionPricePaise <= 0) {
+      const planPricePaise =
+        subscription?.subscriptionPlan?.price ??
+        (subscription?.subscriptionPlanId
+          ? (
+              await tx.subscriptionPlan?.findUnique?.({
+                where: { id: subscription.subscriptionPlanId },
+                select: { price: true },
+              })
+            )?.price
+          : undefined);
+      if (typeof planPricePaise === "number" && planPricePaise > 0) {
+        unitSessionPricePaise = Math.round(planPricePaise / totalPlanSessions);
       }
+    }
+
+    const programPriceCapPaise =
+      assignment.program?.licensedSeatConfig?.priceCapPerEngagementPaise;
+    if (unitSessionPricePaise <= 0 && (programPriceCapPaise ?? 0) <= 0) {
+      await recordSystemErrorSafe({
+        organizationId: orgPayment.organizationId,
+        category: "OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE",
+        summary:
+          "Subscription overage allocation resolved zero unit session price with no program price cap",
+        err: new Error(
+          `OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE for subscription=${subscriptionId} payment=${orgPayment.id}`,
+        ),
+        db: tx,
+        context: {
+          subscriptionId,
+          paymentId: orgPayment.id,
+          programAssignmentId: assignment.id,
+          basePaymentAmount,
+          totalPlanSessions,
+        },
+      });
+    }
+
+    const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;
+    const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
+      await import("@/lib/payments/billing/overage-settlement");
+    const resolvedProgramType =
+      assignment.program?.type ?? utilResult.programType ?? "LICENSED_SEAT";
+    const lazyCreditDelta = existingUtil ? overageBookingPricePaise : 0;
+    const effectiveConsumedPaiseAfter =
+      resolvedProgramType === "CREDIT_POOL"
+        ? utilResult.consumedPaiseAfter + lazyCreditDelta
+        : utilResult.consumedPaiseAfter;
+    const pendingNotify = await recordOverageAtCheckout({
+      tx,
+      programAssignmentId: assignment.id,
+      utilization: {
+        programType: resolvedProgramType,
+        engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
+        engagementsUsedAfter: utilResult.engagementsUsedAfter,
+        consumedPaiseAfter: effectiveConsumedPaiseAfter,
+        creditBudgetPaise: utilResult.creditBudgetPaise,
+      },
+      bookingPricePaise: overageBookingPricePaise,
+      currency: orgPayment.currency ?? "INR",
+      paymentId: orgPayment.id,
+      userId: consulteeUserId,
+      organizationId: orgPayment.organizationId,
+      paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
+      isLazyAllocation: existingUtil !== null,
+    });
+    if (pendingNotify) {
+      notifyOverageDueAfterCommit(pendingNotify);
     }
   }
 
@@ -5196,22 +5382,53 @@ export class SchedulingService {
           enrolledUserIdSet.add(seat.userId);
         }
       }
-      // Every sessionless row below is deleted whichever arm runs; a
-      // held-session row survives and keeps its ordinal.
+      // Every replaceable sessionless row below is deleted whichever arm runs;
+      // a held-session or completed/past history row survives and keeps its ordinal.
+      const now = new Date();
+      const isProtectedSessionlessSlot = (
+        slot: (typeof existingAppointments)[number]["occurrences"][number],
+      ): boolean =>
+        slot.completionStatus === "COMPLETED" ||
+        (slot.completionStatus !== undefined &&
+          !slot.isTentative &&
+          new Date(slot.endsAt) <= now);
       const freed = existingAppointments.flatMap((appointment) =>
-        appointment.occurrences.filter((slot) => slot.meeting === null),
+        appointment.occurrences.filter(
+          (slot) => slot.meeting === null && !isProtectedSessionlessSlot(slot),
+        ),
       );
 
       await Promise.all(
         existingAppointments.map(async (appointment) => {
-          // #1169 PR 1 — a slot whose Meeting already happened is
-          // history, not availability: deleting it cascades Meeting →
-          // Recording. Preserve the appointment and every held-session slot;
-          // only sessionless slots are freed.
+          // #1169 PR 1 & #1692 Item 6 — a slot whose Meeting already happened
+          // or that is already COMPLETED / in the past is history, not
+          // availability: deleting it cascades Meeting → Recording or destroys
+          // completed occurrence history. Preserve the appointment and every
+          // held/completed/past slot; only replaceable future sessionless slots
+          // are freed.
           const hasHeldSession = appointment.occurrences.some(
             (slot) => slot.meeting !== null,
           );
-          if ((appointment._count?.payment ?? 0) > 0 || hasHeldSession) {
+          const hasProtectedSessionless = appointment.occurrences.some(
+            isProtectedSessionlessSlot,
+          );
+          const occurrenceDeleteWhere: Prisma.AppointmentOccurrenceWhereInput =
+            hasProtectedSessionless
+              ? {
+                  appointmentId: appointment.id,
+                  meeting: { is: null },
+                  endsAt: { gt: now },
+                  completionStatus: { not: "COMPLETED" },
+                }
+              : {
+                  appointmentId: appointment.id,
+                  meeting: { is: null },
+                };
+          if (
+            (appointment._count?.payment ?? 0) > 0 ||
+            hasHeldSession ||
+            hasProtectedSessionless
+          ) {
             // Keep the Appointment (and its Payment + ConsultantEarnings audit
             // trail); strip its slots. No-op for the slot-less subscription
             // placeholder, but frees slots for any other payment-bearing case.
@@ -5222,10 +5439,7 @@ export class SchedulingService {
               reusableAppointmentId = appointment.id;
             }
             return tx.appointmentOccurrence.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                meeting: { is: null },
-              },
+              where: occurrenceDeleteWhere,
             });
           }
           // B-P1-05 (#1189 audit) — atomic payment guard, same as the
@@ -5242,10 +5456,7 @@ export class SchedulingService {
               reusableAppointmentId = appointment.id;
             }
             return tx.appointmentOccurrence.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                meeting: { is: null },
-              },
+              where: occurrenceDeleteWhere,
             });
           }
           return deletedAppointment;

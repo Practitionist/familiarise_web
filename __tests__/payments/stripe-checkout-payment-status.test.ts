@@ -28,87 +28,106 @@
  * graph are mocked, matching capture-amount-parity-plumbing.test.ts.
  */
 
-const captureException = jest.fn((..._a: unknown[]): unknown => undefined);
-const captureMessage = jest.fn((..._a: unknown[]): unknown => undefined);
-jest.mock("@sentry/nextjs", () => ({
-  __esModule: true,
-  setTag: jest.fn(),
-  captureException: (...a: unknown[]) => captureException(...a),
-  captureMessage: (...a: unknown[]) => captureMessage(...a),
-  logger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    fmt: (strings: TemplateStringsArray) => strings.join(""),
+const mockCheckoutHarness = {
+  rawPayload: "{}",
+  routerInvocations: [] as Array<Record<string, unknown>>,
+  sentryCaptureException: jest.fn((..._args: unknown[]): unknown => undefined),
+  sentryCaptureMessage: jest.fn((..._args: unknown[]): unknown => undefined),
+  casPaymentStamp: jest.fn(
+    async (_payload: {
+      where: { paymentStatus?: string };
+      data: {
+        paymentStatus?: string;
+        description?: string;
+        gatewayPaymentId?: string | null;
+      };
+    }) => ({ count: 1 }),
+  ),
+  lookupPaymentByIntent: jest.fn(
+    (..._args: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  lookupAppointmentById: jest.fn(
+    (..._args: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  updatePaymentInTx: jest.fn(async (..._args: unknown[]) => ({})),
+  updateTrialsInTx: jest.fn(async (..._args: unknown[]) => ({ count: 1 })),
+  findTrialInTx: jest.fn((..._args: unknown[]): unknown => undefined),
+  findOccurrencesInTx: jest.fn(),
+  updatePaymentOutsideTx: jest.fn(async (..._args: unknown[]) => ({})),
+  preplanEarnings: jest.fn(
+    (..._args: unknown[]): Promise<unknown> => Promise.resolve(null),
+  ),
+  bookEarnings: jest.fn(),
+  triggerRefund: jest.fn(
+    (..._args: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  emitSystemEvent: jest.fn(async (..._args: unknown[]) => undefined),
+  checkWebhookMetadata: jest.fn((..._args: unknown[]): unknown => undefined),
+  markProcessed: jest.fn(async (..._args: unknown[]) => undefined),
+};
+
+const mockSessionTx = {
+  payment: {
+    findUnique: mockCheckoutHarness.lookupPaymentByIntent,
+    updateMany: mockCheckoutHarness.casPaymentStamp,
+    update: mockCheckoutHarness.updatePaymentInTx,
   },
-  getCurrentScope: () => ({ setTag: jest.fn() }),
-}));
+  appointment: { findUnique: mockCheckoutHarness.lookupAppointmentById },
+  trial: {
+    updateMany: mockCheckoutHarness.updateTrialsInTx,
+    findUnique: mockCheckoutHarness.findTrialInTx,
+  },
+  appointmentOccurrence: { findMany: mockCheckoutHarness.findOccurrencesInTx },
+};
+
+jest.mock("@sentry/nextjs", () => {
+  const nop = jest.fn();
+  return {
+    __esModule: true,
+    setTag: nop,
+    captureException: (...args: unknown[]) =>
+      mockCheckoutHarness.sentryCaptureException(...args),
+    captureMessage: (...args: unknown[]) =>
+      mockCheckoutHarness.sentryCaptureMessage(...args),
+    logger: {
+      info: nop,
+      warn: nop,
+      error: nop,
+      fmt: (parts: TemplateStringsArray) => parts.join(""),
+    },
+    getCurrentScope: () => ({ setTag: nop }),
+  };
+});
 
 jest.mock("../../lib/db/serializable-retry", () => ({
   __esModule: true,
-  withSerializableRetry: async (fn: () => unknown) => fn(),
+  withSerializableRetry: (op: () => unknown) => Promise.resolve(op()),
 }));
 
-// #1439 — every in-tx status stamp is a CAS, so the writer is `updateMany`
-// and its count decides whether the flow continues.
-const paymentUpdateMany = jest.fn(
-  async (_args: {
-    where: { paymentStatus?: string };
-    data: {
-      paymentStatus?: string;
-      description?: string;
-      gatewayPaymentId?: string | null;
-    };
-  }) => ({ count: 1 }),
-);
-const paymentFindUnique = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
-const appointmentFindUnique = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
-const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
-const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
-const trialFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
-const occurrenceFindMany = jest.fn();
-const txStub = {
-  payment: {
-    findUnique: paymentFindUnique,
-    updateMany: paymentUpdateMany,
-    update: txPaymentUpdate,
-  },
-  appointment: { findUnique: appointmentFindUnique },
-  trial: { updateMany: trialUpdateMany, findUnique: trialFindUnique },
-  appointmentOccurrence: { findMany: occurrenceFindMany },
-};
-const prismaPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: async (fn: (tx: unknown) => unknown) => fn(txStub),
+    $transaction: (cb: (db: unknown) => unknown) =>
+      Promise.resolve(cb(mockSessionTx)),
     payment: {
-      update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
+      update: (...args: unknown[]) =>
+        mockCheckoutHarness.updatePaymentOutsideTx(...(args as [never])),
     },
     webhookEvent: {
-      updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      updateMany: jest.fn(() => Promise.resolve({ count: 1 })),
     },
   },
 }));
 
-const planEarningsForPayment = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(null),
-);
-const createEarningsFromPayment = jest.fn();
 jest.mock("../../lib/payments/payouts", () => ({
-  planEarningsForPayment: (...a: unknown[]) => planEarningsForPayment(...a),
-  createEarningsFromPayment: (...a: unknown[]) =>
-    createEarningsFromPayment(...a),
+  planEarningsForPayment: (...args: unknown[]) =>
+    mockCheckoutHarness.preplanEarnings(...args),
+  createEarningsFromPayment: (...args: unknown[]) =>
+    mockCheckoutHarness.bookEarnings(...args),
 }));
-const refundPayment = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
 jest.mock("../../lib/payments/operations/refund", () => ({
-  refundPayment: (...a: unknown[]) => refundPayment(...a),
+  refundPayment: (...args: unknown[]) =>
+    mockCheckoutHarness.triggerRefund(...args),
 }));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
@@ -135,22 +154,20 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-const recordSystemEvent = jest.fn(async (..._a: unknown[]) => undefined);
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => recordSystemEvent(...(a as [never])),
-  recordSystemErrorSafe: (...a: unknown[]) =>
-    recordSystemEvent(...(a as [never])),
-  recordSystemEventSafe: (...a: unknown[]) =>
-    recordSystemEvent(...(a as [never])),
-}));
-const validateWebhookMetadata = jest.fn(
-  (..._a: unknown[]): unknown => undefined,
-);
+jest.mock("../../lib/enterprise/system-events", () => {
+  const forward = (...args: unknown[]) =>
+    mockCheckoutHarness.emitSystemEvent(...(args as [never]));
+  return {
+    recordSystemError: forward,
+    recordSystemErrorSafe: forward,
+    recordSystemEventSafe: forward,
+  };
+});
 jest.mock("../../schemas/webhooks/metadata", () => ({
-  normalizeLegacySlotKeys: (m: unknown) => m,
-  validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
+  normalizeLegacySlotKeys: <T>(meta: T) => meta,
+  validateWebhookMetadata: (...args: unknown[]) =>
+    mockCheckoutHarness.checkWebhookMetadata(...args),
 }));
-
 jest.mock("../../lib/payments/core/razorpay", () => ({}));
 jest.mock("../../lib/payments/webhooks/overage-handlers", () => ({
   handleOverageMemberSuccess: jest.fn(),
@@ -161,78 +178,79 @@ jest.mock("../../lib/payments/webhooks/recording-purchase", () => ({
   handleRecordingPurchaseFailure: jest.fn(),
 }));
 
-/**
- * Record the door's arguments to the router, then call through to the real one.
- * Spreading is deliberate: the withheld-amount assertion asks whether the
- * `amountPaise` KEY is present at all, which a call-through wrapper can only see
- * if it copies the caller's own object rather than a normalised one.
- */
-const mockRouterCalls: Array<Record<string, unknown>> = [];
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => {
-  const real = jest.requireActual("../../app/api/webhooks/razorpay-dispatch");
+  const actualDispatch = jest.requireActual(
+    "../../app/api/webhooks/razorpay-dispatch",
+  );
   return {
     __esModule: true,
     routeCapturedPayment: async (params: Record<string, unknown>) => {
-      mockRouterCalls.push({ ...params });
+      mockCheckoutHarness.routerInvocations.push({ ...params });
       return (
-        real.routeCapturedPayment as unknown as (
+        actualDispatch.routeCapturedPayment as (
           p: Record<string, unknown>,
         ) => Promise<void>
       )(params);
     },
-    processRazorpayWebhookEvent: real.processRazorpayWebhookEvent,
+    processRazorpayWebhookEvent: actualDispatch.processRazorpayWebhookEvent,
   };
 });
 
-// The webhook transport edges. handlePaymentSuccess is deliberately the REAL
-// one: stubbing it would let a door confirm without the router and still look
-// fine. `mock` prefix is required — jest.mock factories may only close over
-// variables whose names begin with `mock`.
-let mockWebhookBody = "{}";
-// Typed with its real arity: the route calls it `(eventId, processingError,
-// claim)`, and a zero-arg `jest.fn` types `mock.calls[0]` as `[]`, which makes
-// reading `processingError` off it a compile error.
-const mockMarkWebhookEventProcessed = jest.fn(
-  async (..._a: unknown[]) => undefined,
-);
 jest.mock("../../app/api/webhooks/utils", () => {
-  const real = jest.requireActual("../../lib/payments/webhooks/handlers");
+  const actualHandlers = jest.requireActual(
+    "../../lib/payments/webhooks/handlers",
+  );
+  const asyncStub = () => jest.fn(() => Promise.resolve(undefined));
   return {
     __esModule: true,
-    handlePaymentSuccess: real.handlePaymentSuccess,
-    handlePaymentFailure: jest.fn(async () => undefined),
-    handleOrgPaymentSuccess: jest.fn(async () => undefined),
-    handleOrgPaymentFailure: jest.fn(async () => undefined),
-    handleRefundCreated: jest.fn(async () => undefined),
-    handleDisputeCreated: jest.fn(async () => undefined),
-    handleDisputeUpdated: jest.fn(async () => undefined),
-    handleRazorpayPayoutWebhook: jest.fn(async () => undefined),
-    handleStripePayoutWebhook: jest.fn(async () => undefined),
+    handlePaymentSuccess: actualHandlers.handlePaymentSuccess,
+    handlePaymentFailure: asyncStub(),
+    handleOrgPaymentSuccess: asyncStub(),
+    handleOrgPaymentFailure: asyncStub(),
+    handleRefundCreated: asyncStub(),
+    handleDisputeCreated: asyncStub(),
+    handleDisputeUpdated: asyncStub(),
+    handleRazorpayPayoutWebhook: asyncStub(),
+    handleStripePayoutWebhook: asyncStub(),
     DeferSignal: class DeferSignal {},
-    isDbHealthy: jest.fn(async () => true),
-    verifyWebhookSignature: jest.fn(async () => ({
-      isValid: true,
-      body: mockWebhookBody,
-      oversized: false,
-    })),
-    logWebhookEvent: jest.fn(async () => ({
-      isNew: true,
-      claim: { id: "we1" },
-    })),
-    markWebhookEventProcessed: (...a: unknown[]) =>
-      mockMarkWebhookEventProcessed(...a),
+    isDbHealthy: jest.fn(() => Promise.resolve(true)),
+    verifyWebhookSignature: jest.fn(() =>
+      Promise.resolve({
+        isValid: true,
+        body: mockCheckoutHarness.rawPayload,
+        oversized: false,
+      }),
+    ),
+    logWebhookEvent: jest.fn(() =>
+      Promise.resolve({
+        isNew: true,
+        claim: { id: "we1" },
+      }),
+    ),
+    markWebhookEventProcessed: (...args: unknown[]) =>
+      mockCheckoutHarness.markProcessed(...args),
   };
 });
 
 import { NextRequest } from "next/server";
 import { POST as stripeWebhook } from "../../app/api/webhooks/stripe/route";
 
-/** The Payment row a paid session resolves to: 10000p, held not yet confirmed. */
-const pendingPayment = {
+const {
+  routerInvocations: mockRouterCalls,
+  sentryCaptureException: captureException,
+  casPaymentStamp: paymentUpdateMany,
+  lookupPaymentByIntent: paymentFindUnique,
+  lookupAppointmentById: appointmentFindUnique,
+  findOccurrencesInTx: occurrenceFindMany,
+  preplanEarnings: planEarningsForPayment,
+  bookEarnings: createEarningsFromPayment,
+  triggerRefund: refundPayment,
+  checkWebhookMetadata: validateWebhookMetadata,
+  markProcessed: mockMarkWebhookEventProcessed,
+} = mockCheckoutHarness;
+
+const pendingSessionPayment = {
   id: "pay1",
-  // createStripeCheckoutSession returns session.id, so THIS is the cs_… —
-  // which is exactly why the payment_intent.succeeded door (pi_…) cannot
-  // resolve this row.
   paymentIntent: "cs_test_1",
   amount: 10000,
   paymentStatus: "PENDING",
@@ -242,7 +260,7 @@ const pendingPayment = {
   user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
 };
 
-function sessionCompletedEvent(session: Record<string, unknown> = {}) {
+function sessionCompletedEvent(sessionOverrides: Record<string, unknown> = {}) {
   return {
     id: "evt_cs_1",
     object: "event",
@@ -262,21 +280,26 @@ function sessionCompletedEvent(session: Record<string, unknown> = {}) {
         metadata: { appointmentType: "CONSULTATION" },
         amount_total: 10000,
         currency: "inr",
-        ...session,
+        ...sessionOverrides,
       },
     },
   };
 }
 
-async function postStripe(event: unknown) {
-  mockWebhookBody = JSON.stringify(event);
+async function sendStripeSessionWebhook(payload: unknown) {
+  mockCheckoutHarness.rawPayload = JSON.stringify(payload);
   return stripeWebhook(
     new NextRequest("http://localhost/api/webhooks/stripe", {
       method: "POST",
       headers: { "stripe-signature": "t=1,v1=deadbeef" },
-      body: mockWebhookBody,
+      body: mockCheckoutHarness.rawPayload,
     }),
   );
+}
+
+function expectSessionNotRouted() {
+  expect(mockRouterCalls).toHaveLength(0);
+  expect(paymentFindUnique).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -287,29 +310,17 @@ beforeEach(() => {
   validateWebhookMetadata.mockImplementation(() => undefined);
   refundPayment.mockResolvedValue({ id: "rfnd1" });
   appointmentFindUnique.mockResolvedValue(null);
-  paymentFindUnique.mockResolvedValue(pendingPayment);
+  paymentFindUnique.mockResolvedValue(pendingSessionPayment);
 });
 
 describe("a session with no collected money must not confirm a booking", () => {
   it("does not route an `unpaid` session into the confirmation router at all", async () => {
-    // The 3DS/async case: checkout complete, payment not collected.
-    const res = await postStripe(
+    const res = await sendStripeSessionWebhook(
       sessionCompletedEvent({ payment_status: "unpaid" }),
     );
 
-    // 200, not 500: the event is durably recorded, Stripe will not re-fire a
-    // completed session, and logWebhookEvent short-circuits a retry of the same
-    // evt_… as a duplicate — so a 500 would burn the retry schedule on a payload
-    // that can never succeed. Same shape as an unhandled event.
     expect(res.status).toBe(200);
-
-    // The router is the seam the gap lived at, so assert it was never entered.
-    expect(mockRouterCalls).toHaveLength(0);
-
-    // …and through the real confirmation graph, nothing read, nothing stamped:
-    // no booking, no earnings, no status write. A `paymentStatus` write here
-    // would be the other half of the same bug.
-    expect(paymentFindUnique).not.toHaveBeenCalled();
+    expectSessionNotRouted();
     expect(appointmentFindUnique).not.toHaveBeenCalled();
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
     expect(paymentUpdateMany).not.toHaveBeenCalled();
@@ -319,12 +330,11 @@ describe("a session with no collected money must not confirm a booking", () => {
     const warn = jest
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
-    // Read the calls BEFORE restoring: `mockRestore()` resets the recorded
-    // calls along with the implementation, so restoring in a `finally` and
-    // asserting after it saw an empty array.
     let line = "";
     try {
-      await postStripe(sessionCompletedEvent({ payment_status: "unpaid" }));
+      await sendStripeSessionWebhook(
+        sessionCompletedEvent({ payment_status: "unpaid" }),
+      );
       line = warn.mock.calls.map((c) => String(c[0])).join("\n");
     } finally {
       warn.mockRestore();
@@ -332,18 +342,11 @@ describe("a session with no collected money must not confirm a booking", () => {
     expect(line).toContain("cs_test_1");
     expect(line).toContain('payment_status="unpaid"');
     expect(line).toContain("NOT confirming a booking");
-    // The log must point at the durable park, or the next reader assumes the
-    // booking is simply lost.
     expect(line).toContain("reconcile-payment-status");
   });
 
   it("refuses `no_payment_required` too, rather than treating it as free money", async () => {
-    // A zero-total session cannot be this rail's PENDING B2C row: a
-    // zero-amount checkout is confirmed synchronously in
-    // lib/payments/operations/checkout.ts and createStripeCheckoutSession
-    // throws on amount <= 0. So there is nothing to confirm here, and allowing
-    // the value would open the door to a zero-money booking.
-    const res = await postStripe(
+    const res = await sendStripeSessionWebhook(
       sessionCompletedEvent({
         payment_status: "no_payment_required",
         amount_total: 0,
@@ -351,44 +354,31 @@ describe("a session with no collected money must not confirm a booking", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockRouterCalls).toHaveLength(0);
-    expect(paymentFindUnique).not.toHaveBeenCalled();
+    expectSessionNotRouted();
   });
 
   it("fails closed on an unrecognised future payment_status value", async () => {
-    // The guard is an allow-list, not a deny-list of the two known-bad values:
-    // a value this build has never seen must not confirm a booking.
-    const res = await postStripe(
+    const res = await sendStripeSessionWebhook(
       sessionCompletedEvent({ payment_status: "partially_refunded" }),
     );
 
     expect(res.status).toBe(200);
-    expect(mockRouterCalls).toHaveLength(0);
-    expect(paymentFindUnique).not.toHaveBeenCalled();
+    expectSessionNotRouted();
   });
 });
 
 describe("a paid session still confirms, and still withholds the amount", () => {
   it("routes a `paid` session and passes NO amountPaise", async () => {
-    // NOT asserting on the response status: this suite runs the real router into
-    // a stub graph that stops in Phase 2 ("Failed to create or find
-    // appointment"), and the route turns that into a 500 for a reason that has
-    // nothing to do with this door. What matters is the flow MOVED — see
-    // appointmentFindUnique below.
-    await postStripe(sessionCompletedEvent({ payment_status: "paid" }));
+    await sendStripeSessionWebhook(
+      sessionCompletedEvent({ payment_status: "paid" }),
+    );
 
     expect(mockRouterCalls).toHaveLength(1);
     const call = mockRouterCalls[0];
     expect(call.orderId).toBe("cs_test_1");
-    // #1353 — the pi_… is this rail's `pay_…`, so a later refund or dispute
-    // resolves against the right gateway object.
     expect(call.gatewayPaymentId).toBe("pi_capture_1");
     expect(call.notes).toEqual({ appointmentType: "CONSULTATION" });
 
-    // The withheld-amount behaviour, pinned as ABSENCE OF THE KEY rather than
-    // `toBeUndefined()`. `amount_total` is 10000 and Payment.amount is 10000,
-    // so a door that passed it would produce an identical booking — the only
-    // way to tell the two apart is whether the key exists at all.
     expect("amountPaise" in call).toBe(false);
     expect(Object.keys(call).sort()).toEqual([
       "gatewayPaymentId",
@@ -396,11 +386,6 @@ describe("a paid session still confirms, and still withholds the amount", () => 
       "orderId",
     ]);
 
-    // Consequence of withholding: the parity check is skipped by construction,
-    // so no remediation ran and the flow proceeded past the guard into Phase 2
-    // (which is what appointmentFindUnique being called proves). This suite's
-    // stub graph does not complete Phase 2, so the route reports a 500 for an
-    // unrelated reason — assert the flow MOVED, not the status.
     expect(
       captureException.mock.calls.some((c) =>
         String(c[0]).includes("Capture amount mismatch"),
@@ -418,27 +403,17 @@ describe("a paid session still confirms, and still withholds the amount", () => 
 
 describe("a missing payment_status is refused by the schema, not assumed paid", () => {
   it("refuses without routing and records a permanent schema failure on the webhook event row", async () => {
-    // `payment_status` is REQUIRED by
-    // stripeCheckoutSessionCompletedEventSchema (schemas/webhooks/stripe.ts),
-    // so a payload without it cannot parse. That is the whole deliberate
-    // handling: the schema is the fail-closed default, and the route must not
-    // add a permissive fallback on top of it — an absent signal about money is
-    // not evidence of money.
     const event = sessionCompletedEvent();
     delete (event.data.object as Record<string, unknown>).payment_status;
 
-    const res = await postStripe(event);
+    const res = await sendStripeSessionWebhook(event);
 
-    // ZodError answers 200 `{ status: "ignored", reason: "invalid_payload" }`
-    // (#1935) so Stripe does not burn its retry schedule on a structurally
-    // invalid event payload, while recording the failure on the event row.
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       status: "ignored",
       reason: "invalid_payload",
     });
-    expect(mockRouterCalls).toHaveLength(0);
-    expect(paymentFindUnique).not.toHaveBeenCalled();
+    expectSessionNotRouted();
     expect(appointmentFindUnique).not.toHaveBeenCalled();
     expect(paymentUpdateMany).not.toHaveBeenCalled();
 
@@ -462,34 +437,36 @@ describe("Phase-1 atomic earnings creation (#1758) & Razorpay nested envelope fi
       ],
     });
     occurrenceFindMany.mockResolvedValue([]);
-    (txStub.appointmentOccurrence as Record<string, unknown>).updateMany =
+    (mockSessionTx.appointmentOccurrence as Record<string, unknown>).updateMany =
       jest.fn(async () => ({ count: 1 }));
-    (txStub as Record<string, unknown>).appointmentParticipant = {
+    (mockSessionTx as Record<string, unknown>).appointmentParticipant = {
       updateMany: jest.fn(async () => ({ count: 1 })),
     };
     planEarningsForPayment.mockResolvedValueOnce({
       resolvedPayment: {
-        paymentForEarnings: pendingPayment,
+        paymentForEarnings: pendingSessionPayment,
         earningsAppointmentType: "CONSULTATION",
         consultantProfileId: "cp1",
       },
     });
 
     try {
-      await postStripe(sessionCompletedEvent({ payment_status: "paid" }));
+      await sendStripeSessionWebhook(
+        sessionCompletedEvent({ payment_status: "paid" }),
+      );
 
       expect(createEarningsFromPayment).toHaveBeenCalledTimes(1);
       expect(createEarningsFromPayment).toHaveBeenCalledWith(
         expect.objectContaining({
-          payment: pendingPayment,
+          payment: pendingSessionPayment,
           appointmentType: "CONSULTATION",
-          tx: txStub,
+          tx: mockSessionTx,
         }),
       );
     } finally {
-      delete (txStub.appointmentOccurrence as Record<string, unknown>)
+      delete (mockSessionTx.appointmentOccurrence as Record<string, unknown>)
         .updateMany;
-      delete (txStub as Record<string, unknown>).appointmentParticipant;
+      delete (mockSessionTx as Record<string, unknown>).appointmentParticipant;
     }
   });
 
