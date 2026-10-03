@@ -344,9 +344,13 @@ export class StripeConnectService {
     payoutId: string,
     accountId: string,
   ): Promise<StripePayout> {
-    const payout = await this.stripe.payouts.retrieve(payoutId, {
-      stripeAccount: accountId,
-    });
+    const payout = await this.stripe.payouts.retrieve(
+      payoutId,
+      {},
+      {
+        stripeAccount: accountId,
+      },
+    );
     return this.mapPayout(payout);
   }
 
@@ -356,10 +360,16 @@ export class StripeConnectService {
   async cancelPayout(
     payoutId: string,
     accountId: string,
+    idempotencyKey = `cancel-payout-${payoutId}`,
   ): Promise<StripePayout> {
-    const payout = await this.stripe.payouts.cancel(payoutId, {
-      stripeAccount: accountId,
-    });
+    const payout = await this.stripe.payouts.cancel(
+      payoutId,
+      {},
+      {
+        stripeAccount: accountId,
+        idempotencyKey,
+      },
+    );
     return this.mapPayout(payout);
   }
 
@@ -370,9 +380,12 @@ export class StripeConnectService {
     available: Array<{ amount: number; currency: string }>;
     pending: Array<{ amount: number; currency: string }>;
   }> {
-    const balance = await this.stripe.balance.retrieve({
-      stripeAccount: accountId,
-    });
+    const balance = await this.stripe.balance.retrieve(
+      {},
+      {
+        stripeAccount: accountId,
+      },
+    );
 
     return {
       available: balance.available.map((b) => ({

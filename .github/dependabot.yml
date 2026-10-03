@@ -46,7 +46,6 @@ updates:
           - "@types/react"
           - "@types/react-dom"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -82,7 +81,6 @@ updates:
           - "@stripe/*"
           - "razorpay"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -92,7 +90,6 @@ updates:
           - "@stream-io/*"
           - "stream-chat*"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
