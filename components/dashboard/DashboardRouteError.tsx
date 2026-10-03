@@ -17,7 +17,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { useEffect, startTransition } from "react";
+import { useEffect, useState, startTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -68,6 +68,7 @@ export function DashboardRouteError({
   escape,
 }: DashboardRouteErrorProps) {
   const router = useRouter();
+  const [eventId, setEventId] = useState<string | undefined>(undefined);
 
   // Read on every render, not decided once per mount: a failed retry can come
   // back as an update of this same instance, and it must then show the card.
@@ -95,16 +96,26 @@ export function DashboardRouteError({
   // A self-healed blip must not spend Sentry quota.
   useEffect(() => {
     if (autoRetrying) return;
-    Sentry.captureException(
+    const capturedId = Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "client" } },
+      {
+        tags: {
+          subsystem: "client",
+          scope,
+          ...(error.digest ? { digest: error.digest } : {}),
+        },
+      },
     );
+    if (typeof capturedId === "string" && capturedId) {
+      setEventId(capturedId);
+    }
     console.error(
       JSON.stringify({
         event,
         scope,
         [entityKey]: entityId,
         digest: error.digest ?? null,
+        sentryEventId: capturedId ?? null,
         message: error.message,
       }),
     );
@@ -130,7 +141,7 @@ export function DashboardRouteError({
       title={title}
       description="An unexpected error occurred. Please try again."
       error={error.message ? error : devFallbackMessage}
-      digest={error.digest}
+      digest={error.digest ?? eventId}
       onRetry={() => refreshAndReset(router, reset)}
       action={
         <Button variant="outline" size="sm" asChild>

@@ -256,6 +256,51 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
       cell: (v) => (v.reviewedAt ? day(v.reviewedAt) : "Not yet"),
     },
   ];
+  const sentryIssueColumns: ResponsiveColumn<
+    NonNullable<User360["sentryIssues"]["issues"]>[number]
+  >[] = [
+    {
+      key: "issue",
+      header: "Issue",
+      primary: true,
+      cell: (i) => (
+        <a
+          href={i.permalink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium underline-offset-4 hover:underline"
+        >
+          {i.shortId} · {i.title}
+        </a>
+      ),
+    },
+    {
+      key: "culprit",
+      header: "Where",
+      cell: (i) => i.culprit ?? "—",
+    },
+    {
+      key: "level",
+      header: "Level",
+      cell: (i) => (
+        <StatusBadge
+          label={humanizeEnum(i.level ?? "error")}
+          tone={
+            i.level === "fatal" || i.level === "error"
+              ? "critical"
+              : i.level === "warning"
+                ? "warning"
+                : "neutral"
+          }
+        />
+      ),
+    },
+    {
+      key: "lastSeen",
+      header: "Last seen",
+      cell: (i) => (i.lastSeen ? day(i.lastSeen) : "—"),
+    },
+  ];
 
   const banned = profile.banned === true;
   let accountState: ReactNode = <StatusBadge label="Active" tone="success" />;
@@ -368,6 +413,22 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
             getRowHref={(t) => `${basePath}/support/t_${t.id}`}
             empty={<Empty>No tickets.</Empty>}
           />
+        </Section>
+
+        <Section
+          title="Recent errors"
+          description="Unresolved Sentry issues attributed to this user in the last 14 days."
+        >
+          {data.sentryIssues.configured ? (
+            <ResponsiveTable
+              columns={sentryIssueColumns}
+              rows={data.sentryIssues.issues ?? []}
+              getRowId={(i) => i.shortId}
+              empty={<Empty>No unresolved errors in the last 14 days.</Empty>}
+            />
+          ) : (
+            <Empty>Error triage is not configured.</Empty>
+          )}
         </Section>
 
         <Section title="Reports and bans">
