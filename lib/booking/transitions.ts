@@ -229,8 +229,12 @@ export async function transitionConsultationRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0)
-    throw new IllegalTransitionError("Consultation", args.to);
+  if (res.count === 0) {
+    throw new IllegalTransitionError("Consultation", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
+  }
   await appendHistory(
     tx,
     "CONSULTATION",
@@ -272,8 +276,12 @@ export async function transitionSubscriptionRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0)
-    throw new IllegalTransitionError("Subscription", args.to);
+  if (res.count === 0) {
+    throw new IllegalTransitionError("Subscription", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
+  }
   await appendHistory(
     tx,
     "SUBSCRIPTION",
@@ -335,7 +343,12 @@ export async function transitionWebinarEvent(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Webinar", args.to);
+  if (res.count === 0) {
+    throw new IllegalTransitionError("Webinar", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
+  }
   await appendHistory(tx, "WEBINAR", args.where.id, before?.status, args.to, {
     ...args,
     appointmentId: args.appointmentId ?? before?.appointment?.id ?? null,
@@ -367,7 +380,12 @@ export async function transitionClassEvent(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
+  if (res.count === 0) {
+    throw new IllegalTransitionError("Class", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
+  }
   await appendHistory(tx, "CLASS", args.where.id, before?.status, args.to, {
     ...args,
     appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
@@ -455,7 +473,13 @@ export async function transitionOccurrenceCompletion(
     select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
-    throw new IllegalTransitionError("AppointmentOccurrence", args.to);
+    const entityId =
+      typeof args.where.id === "string" ? args.where.id : undefined;
+    throw new IllegalTransitionError(
+      "AppointmentOccurrence",
+      args.to,
+      entityId ? { entityId } : undefined,
+    );
   }
   const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
   for (const row of moved) {
@@ -524,7 +548,12 @@ export async function transitionTrial(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Trial", args.to);
+  if (res.count === 0) {
+    throw new IllegalTransitionError("Trial", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
+  }
   // A PENDING trial has no appointment yet, so the id is null until acceptance
   // places the session — the scalar is nullable for exactly that reason.
   await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {
@@ -612,7 +641,10 @@ export async function transitionRescheduleRequest(
     },
   });
   if (res.count === 0) {
-    throw new IllegalTransitionError("RescheduleRequest", args.to);
+    throw new IllegalTransitionError("RescheduleRequest", args.to, {
+      entityId: args.where.id,
+      from: before?.status ?? null,
+    });
   }
   await appendHistory(
     tx,

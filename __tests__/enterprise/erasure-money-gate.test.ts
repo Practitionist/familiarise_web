@@ -44,6 +44,7 @@ const tx = {
   consultation: { updateMany: jest.fn(async () => ({ count: 1 })) },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  consentArtifact: { updateMany: jest.fn(async () => ({ count: 0 })) },
   erasureRequest: { findFirst: jest.fn(async () => null) },
 };
 jest.mock("../../lib/prisma", () => ({

@@ -39,6 +39,10 @@ import {
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
+import {
+  isSentryIdentityEnabled,
+  resolveSentryUserId,
+} from "@/lib/observability/identity";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
 // defaultAc so statements line up. No `session:*`: the plugin's session
@@ -814,6 +818,9 @@ export const auth = betterAuth({
       return {
         user: {
           ...user,
+          sentryUserId: isSentryIdentityEnabled()
+            ? resolveSentryUserId(user.id)
+            : undefined,
           role: user.role ?? "CONSULTEE",
           onboardingCompleted: user.onboardingCompleted ?? false,
           phone: user.phone ?? undefined,

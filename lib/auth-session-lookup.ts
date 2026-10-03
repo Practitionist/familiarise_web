@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { markExpected } from "@/lib/observability/expected";
@@ -167,6 +168,17 @@ export async function lookupSession(
           new Error("session row is live but the session lookup answered null"),
         ),
       };
+    }
+    try {
+      const reason = row ? "expired" : "missing";
+      Sentry.metrics?.count("auth.stale_session_evicted", 1, {
+        attributes: { reason },
+      });
+      Sentry.logger?.warn("stale session cookie encountered", {
+        reason,
+      });
+    } catch {
+      // Telemetry must never fail session lookup.
     }
     return { kind: "none" };
   } catch (cause) {

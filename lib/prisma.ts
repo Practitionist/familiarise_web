@@ -86,6 +86,21 @@ export const ALLOCATION_TX_TIMEOUT_MS = pgTimeoutMs(
   30000,
 );
 
+/**
+ * Extracts only the SQL verb (SELECT/INSERT/UPDATE/DELETE) and target table
+ * name from a raw Prisma SQL string — never any parameter values or WHERE
+ * literals — so slow-query alerts identify the bottleneck table safely.
+ */
+function summarizeSlowSql(sql: string): { operation: string; table: string } {
+  const trimmed = sql.trim();
+  const verbMatch = /^([A-Za-z]+)/.exec(trimmed);
+  const operation = verbMatch ? verbMatch[1].toUpperCase() : "QUERY";
+  const tableMatch =
+    /\b(?:FROM|INTO|UPDATE)\s+(?:"[^"]+"\.)?"?([A-Za-z0-9_]+)"?/i.exec(trimmed);
+  const table = tableMatch ? tableMatch[1] : "unknown";
+  return { operation, table };
+}
+
 function makeClient() {
   // Emit the `query` event everywhere so the slow-query hook fires in prod too;
   // keep the verbose error/warn → stdout fan-out gated to development.
@@ -120,9 +135,10 @@ function makeClient() {
   // that production silently deleted anyway. See #1122.
   base.$on("query", (e) => {
     if (e.duration > SLOW_QUERY_MS) {
+      const { operation, table } = summarizeSlowSql(e.query ?? "");
       Sentry.logger.warn(
         Sentry.logger
-          .fmt`[Prisma:SLOW_QUERY] ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms)`,
+          .fmt`[Prisma:SLOW_QUERY] ${operation} ${table} ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms)`,
       );
     }
   });
