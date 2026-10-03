@@ -576,6 +576,129 @@ function isWebinarOrClassPastRetention(
 
 const openableStatusSet = new Set<string>(OPENABLE_EVENT_STATUSES);
 
+const eventPlanRetentionSelect = {
+  select: {
+    organizationId: true,
+    consultantProfile: { select: { user: { select: { id: true } } } },
+    organization: {
+      select: {
+        chatRetentionDays: true,
+        streamRecordingRetentionDays: true,
+      },
+    },
+  },
+};
+
+const eventAppointmentRetentionSelect = {
+  select: {
+    organizationId: true,
+    organization: {
+      select: {
+        chatRetentionDays: true,
+        streamRecordingRetentionDays: true,
+      },
+    },
+    participants: {
+      where: liveParticipant(),
+      select: { userId: true },
+    },
+    occurrences: {
+      select: { endsAt: true },
+      orderBy: { endsAt: "desc" as const },
+      take: 1,
+    },
+  },
+};
+
+type EventOrgRetentionShape = {
+  chatRetentionDays?: number | null;
+  streamRecordingRetentionDays?: number | null;
+} | null;
+
+type EventPlanRetentionShape = {
+  organizationId: string | null;
+  consultantProfile?: { user?: { id?: string } | null } | null;
+  organization?: EventOrgRetentionShape;
+} | null;
+
+type EventAppointmentRetentionShape = {
+  organizationId: string | null;
+  organization?: EventOrgRetentionShape;
+  participants?: { userId: string }[];
+  occurrences?: { endsAt: Date }[];
+} | null;
+
+type NormalizedEventRow = {
+  id: string;
+  status?: string;
+  fallbackEndsAt?: Date | null;
+  plan?: EventPlanRetentionShape;
+  appointment?: EventAppointmentRetentionShape;
+};
+
+function isNormalizedEventActive(row: NormalizedEventRow): boolean {
+  const endsAt =
+    row.appointment?.occurrences?.[0]?.endsAt ?? row.fallbackEndsAt ?? null;
+  const retention = resolveEventRetentionDays(
+    row.plan?.organization,
+    row.appointment?.organization,
+  );
+  return !isWebinarOrClassPastRetention(endsAt, retention);
+}
+
+function collectNormalizedEventData(
+  userId: string,
+  hostedRows: NormalizedEventRow[],
+  collaboratorRows: NormalizedEventRow[],
+  attendedRows: NormalizedEventRow[],
+  requireConsulteeSeatCheck: boolean,
+): { ids: string[]; dmPairs: DmPair[] } {
+  const ids = new Set<string>();
+  const dmPairs: DmPair[] = [];
+
+  for (const row of hostedRows.filter(isNormalizedEventActive)) {
+    ids.add(row.id);
+    if (row.status && !openableStatusSet.has(row.status)) continue;
+    const orgId =
+      row.appointment?.organizationId ?? row.plan?.organizationId ?? null;
+    for (const p of row.appointment?.participants ?? []) {
+      if (p.userId && p.userId !== userId) {
+        dmPairs.push({
+          consultantUserId: userId,
+          consulteeUserId: p.userId,
+          organizationId: orgId,
+        });
+      }
+    }
+  }
+
+  for (const row of collaboratorRows.filter(isNormalizedEventActive)) {
+    ids.add(row.id);
+  }
+
+  for (const row of attendedRows.filter(isNormalizedEventActive)) {
+    ids.add(row.id);
+    if (row.status && !openableStatusSet.has(row.status)) continue;
+    const consultantUserId = row.plan?.consultantProfile?.user?.id;
+    if (!consultantUserId || consultantUserId === userId) continue;
+    if (
+      requireConsulteeSeatCheck &&
+      !(row.appointment?.participants ?? []).some((p) => p.userId === userId)
+    ) {
+      continue;
+    }
+    const orgId =
+      row.appointment?.organizationId ?? row.plan?.organizationId ?? null;
+    dmPairs.push({
+      consultantUserId,
+      consulteeUserId: userId,
+      organizationId: orgId,
+    });
+  }
+
+  return { ids: Array.from(ids), dmPairs };
+}
+
 async function getWebinarDataForUser(
   userId: string,
   user: {
@@ -583,152 +706,70 @@ async function getWebinarDataForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<{ ids: string[]; dmPairs: DmPair[] }> {
-  const webinarIds = new Set<string>();
-  const dmPairs: DmPair[] = [];
-
   const webinarRetentionSelect = {
     id: true,
     status: true,
-    webinarPlan: {
-      select: {
-        organizationId: true,
-        consultantProfile: { select: { user: { select: { id: true } } } },
-        organization: {
-          select: {
-            chatRetentionDays: true,
-            streamRecordingRetentionDays: true,
-          },
-        },
-      },
-    },
-    appointment: {
-      select: {
-        organizationId: true,
-        organization: {
-          select: {
-            chatRetentionDays: true,
-            streamRecordingRetentionDays: true,
-          },
-        },
-        participants: {
-          where: liveParticipant(),
-          select: { userId: true },
-        },
-        occurrences: {
-          select: { endsAt: true },
-          orderBy: { endsAt: "desc" as const },
-          take: 1,
-        },
-      },
-    },
+    webinarPlan: eventPlanRetentionSelect,
+    appointment: eventAppointmentRetentionSelect,
   };
 
-  type WebinarRow = {
+  type RawWebinarRow = {
     id: string;
     status?: string;
-    webinarPlan?: {
-      organizationId: string | null;
-      consultantProfile?: { user?: { id?: string } | null } | null;
-      organization?: {
-        chatRetentionDays?: number | null;
-        streamRecordingRetentionDays?: number | null;
-      } | null;
-    } | null;
-    appointment?: {
-      organizationId: string | null;
-      organization?: {
-        chatRetentionDays?: number | null;
-        streamRecordingRetentionDays?: number | null;
-      } | null;
-      participants?: { userId: string }[];
-      occurrences?: { endsAt: Date }[];
-    } | null;
+    webinarPlan?: EventPlanRetentionShape;
+    appointment?: EventAppointmentRetentionShape;
   };
 
-  const keepIfActive = (w: WebinarRow): boolean => {
-    const endsAt = w.appointment?.occurrences?.[0]?.endsAt;
-    const retention = resolveEventRetentionDays(
-      w.webinarPlan?.organization,
-      w.appointment?.organization,
-    );
-    return !isWebinarOrClassPastRetention(endsAt, retention);
-  };
+  const toNormalized = (w: RawWebinarRow): NormalizedEventRow => ({
+    id: w.id,
+    status: w.status,
+    plan: w.webinarPlan,
+    appointment: w.appointment,
+  });
 
-  if (user.consultantProfileId) {
-    const [hostedWebinars, collaboratorWebinars] = await Promise.all([
-      prisma.webinar.findMany({
-        where: {
-          webinarPlan: { consultantProfileId: user.consultantProfileId },
-        },
-        select: webinarRetentionSelect,
-      }),
-      prisma.webinar.findMany({
-        where: {
-          webinarPlan: {
-            collaborators: {
-              some: {
-                consultantProfileId: user.consultantProfileId,
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
+  const [hostedWebinars, collaboratorWebinars] = user.consultantProfileId
+    ? await Promise.all([
+        prisma.webinar.findMany({
+          where: {
+            webinarPlan: { consultantProfileId: user.consultantProfileId },
+          },
+          select: webinarRetentionSelect,
+        }),
+        prisma.webinar.findMany({
+          where: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: user.consultantProfileId,
+                  status: "ACCEPTED",
+                  consultantProfile: { deletedAt: null },
+                },
               },
             },
           },
+          select: webinarRetentionSelect,
+        }),
+      ])
+    : [[], []];
+
+  const attendedWebinars = user.consulteeProfileId
+    ? await prisma.webinar.findMany({
+        where: {
+          appointment: {
+            participants: { some: liveParticipant(userId) },
+          },
         },
         select: webinarRetentionSelect,
-      }),
-    ]);
+      })
+    : [];
 
-    (hostedWebinars ?? []).filter(keepIfActive).forEach((w: WebinarRow) => {
-      webinarIds.add(w.id);
-      if (w.status && !openableStatusSet.has(w.status)) return;
-      const orgId = bookingOrgId({
-        webinarPlan: w.webinarPlan,
-        appointment: w.appointment,
-      });
-      for (const p of w.appointment?.participants ?? []) {
-        if (p.userId && p.userId !== userId) {
-          dmPairs.push({
-            consultantUserId: userId,
-            consulteeUserId: p.userId,
-            organizationId: orgId,
-          });
-        }
-      }
-    });
-
-    (collaboratorWebinars ?? [])
-      .filter(keepIfActive)
-      .forEach((w: WebinarRow) => webinarIds.add(w.id));
-  }
-
-  if (user.consulteeProfileId) {
-    const attendedWebinars = await prisma.webinar.findMany({
-      where: {
-        appointment: {
-          participants: { some: liveParticipant(userId) },
-        },
-      },
-      select: webinarRetentionSelect,
-    });
-    (attendedWebinars ?? []).filter(keepIfActive).forEach((w: WebinarRow) => {
-      webinarIds.add(w.id);
-      if (w.status && !openableStatusSet.has(w.status)) return;
-      const consultantUserId = w.webinarPlan?.consultantProfile?.user?.id;
-      if (consultantUserId && consultantUserId !== userId) {
-        const orgId = bookingOrgId({
-          webinarPlan: w.webinarPlan,
-          appointment: w.appointment,
-        });
-        dmPairs.push({
-          consultantUserId,
-          consulteeUserId: userId,
-          organizationId: orgId,
-        });
-      }
-    });
-  }
-
-  return { ids: Array.from(webinarIds), dmPairs };
+  return collectNormalizedEventData(
+    userId,
+    (hostedWebinars ?? []).map(toNormalized),
+    (collaboratorWebinars ?? []).map(toNormalized),
+    (attendedWebinars ?? []).map(toNormalized),
+    false,
+  );
 }
 
 async function getClassDataForUser(
@@ -738,154 +779,71 @@ async function getClassDataForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<{ ids: string[]; dmPairs: DmPair[] }> {
-  const classIds = new Set<string>();
-  const dmPairs: DmPair[] = [];
-
   const classRetentionSelect = {
     id: true,
     status: true,
     schedulingPeriodEndsAt: true,
-    classPlan: {
-      select: {
-        organizationId: true,
-        consultantProfile: { select: { user: { select: { id: true } } } },
-        organization: {
-          select: {
-            chatRetentionDays: true,
-            streamRecordingRetentionDays: true,
-          },
-        },
-      },
-    },
-    appointment: {
-      select: {
-        organizationId: true,
-        organization: {
-          select: {
-            chatRetentionDays: true,
-            streamRecordingRetentionDays: true,
-          },
-        },
-        participants: {
-          where: liveParticipant(),
-          select: { userId: true },
-        },
-        occurrences: {
-          select: { endsAt: true },
-          orderBy: { endsAt: "desc" as const },
-          take: 1,
-        },
-      },
-    },
+    classPlan: eventPlanRetentionSelect,
+    appointment: eventAppointmentRetentionSelect,
   };
 
-  type ClassRow = {
+  type RawClassRow = {
     id: string;
     status?: string;
     schedulingPeriodEndsAt?: Date | null;
-    classPlan?: {
-      organizationId: string | null;
-      consultantProfile?: { user?: { id?: string } | null } | null;
-      organization?: {
-        chatRetentionDays?: number | null;
-        streamRecordingRetentionDays?: number | null;
-      } | null;
-    } | null;
-    appointment?: {
-      organizationId: string | null;
-      organization?: {
-        chatRetentionDays?: number | null;
-        streamRecordingRetentionDays?: number | null;
-      } | null;
-      participants?: { userId: string }[];
-      occurrences?: { endsAt: Date }[];
-    } | null;
+    classPlan?: EventPlanRetentionShape;
+    appointment?: EventAppointmentRetentionShape;
   };
 
-  const keepIfActive = (c: ClassRow): boolean => {
-    const slotEnd = c.appointment?.occurrences?.[0]?.endsAt ?? null;
-    const endsAt = slotEnd ?? c.schedulingPeriodEndsAt;
-    const retention = resolveEventRetentionDays(
-      c.classPlan?.organization,
-      c.appointment?.organization,
-    );
-    return !isWebinarOrClassPastRetention(endsAt, retention);
-  };
+  const toNormalized = (c: RawClassRow): NormalizedEventRow => ({
+    id: c.id,
+    status: c.status,
+    fallbackEndsAt: c.schedulingPeriodEndsAt,
+    plan: c.classPlan,
+    appointment: c.appointment,
+  });
 
-  if (user.consultantProfileId) {
-    const [hostedClasses, collaboratorClasses] = await Promise.all([
-      prisma.class.findMany({
-        where: { classPlan: { consultantProfileId: user.consultantProfileId } },
-        select: classRetentionSelect,
-      }),
-      prisma.class.findMany({
-        where: {
-          classPlan: {
-            collaborators: {
-              some: {
-                consultantProfileId: user.consultantProfileId,
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
+  const [hostedClasses, collaboratorClasses] = user.consultantProfileId
+    ? await Promise.all([
+        prisma.class.findMany({
+          where: {
+            classPlan: { consultantProfileId: user.consultantProfileId },
+          },
+          select: classRetentionSelect,
+        }),
+        prisma.class.findMany({
+          where: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: user.consultantProfileId,
+                  status: "ACCEPTED",
+                  consultantProfile: { deletedAt: null },
+                },
               },
             },
           },
+          select: classRetentionSelect,
+        }),
+      ])
+    : [[], []];
+
+  const attendedClasses = user.consulteeProfileId
+    ? await prisma.class.findMany({
+        where: {
+          appointment: {
+            participants: { some: liveParticipant(userId) },
+          },
         },
         select: classRetentionSelect,
-      }),
-    ]);
+      })
+    : [];
 
-    (hostedClasses ?? []).filter(keepIfActive).forEach((c: ClassRow) => {
-      classIds.add(c.id);
-      if (c.status && !openableStatusSet.has(c.status)) return;
-      const orgId = bookingOrgId({
-        classPlan: c.classPlan,
-        appointment: c.appointment,
-      });
-      for (const p of c.appointment?.participants ?? []) {
-        if (p.userId && p.userId !== userId) {
-          dmPairs.push({
-            consultantUserId: userId,
-            consulteeUserId: p.userId,
-            organizationId: orgId,
-          });
-        }
-      }
-    });
-
-    (collaboratorClasses ?? [])
-      .filter(keepIfActive)
-      .forEach((c: ClassRow) => classIds.add(c.id));
-  }
-
-  if (user.consulteeProfileId) {
-    const attendedClasses = await prisma.class.findMany({
-      where: {
-        appointment: {
-          participants: { some: liveParticipant(userId) },
-        },
-      },
-      select: classRetentionSelect,
-    });
-    (attendedClasses ?? []).filter(keepIfActive).forEach((c: ClassRow) => {
-      classIds.add(c.id);
-      if (c.status && !openableStatusSet.has(c.status)) return;
-      const consultantUserId = c.classPlan?.consultantProfile?.user?.id;
-      if (!consultantUserId || consultantUserId === userId) return;
-      const holdsSeat = (c.appointment?.participants ?? []).some(
-        (p) => p.userId === userId,
-      );
-      if (!holdsSeat) return;
-      const orgId = bookingOrgId({
-        classPlan: c.classPlan,
-        appointment: c.appointment,
-      });
-      dmPairs.push({
-        consultantUserId,
-        consulteeUserId: userId,
-        organizationId: orgId,
-      });
-    });
-  }
-
-  return { ids: Array.from(classIds), dmPairs };
+  return collectNormalizedEventData(
+    userId,
+    (hostedClasses ?? []).map(toNormalized),
+    (collaboratorClasses ?? []).map(toNormalized),
+    (attendedClasses ?? []).map(toNormalized),
+    true,
+  );
 }

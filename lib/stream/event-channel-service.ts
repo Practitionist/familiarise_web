@@ -328,112 +328,81 @@ export async function removeUserFromEventChannel(
   }
 }
 
+const groupEventPlanInclude = {
+  consultantProfile: {
+    include: { user: { select: { id: true } } },
+  },
+  collaborators: {
+    where: {
+      status: "ACCEPTED" as const,
+      consultantProfile: { deletedAt: null },
+    },
+    select: { consultantProfile: { select: { userId: true } } },
+  },
+};
+
+const groupEventAppointmentInclude = {
+  participants: {
+    where: liveParticipant(),
+    select: { userId: true },
+  },
+};
+
+function buildGroupEventData(
+  plan: {
+    title: string;
+    organizationId: string | null;
+    consultantProfile?: { user?: { id: string } | null } | null;
+    collaborators?: { consultantProfile: { userId: string } }[];
+  },
+  appointment: {
+    organizationId: string | null;
+    participants: { userId: string }[];
+  } | null,
+) {
+  const consultantId = plan.consultantProfile?.user?.id;
+  if (!consultantId) return null;
+
+  const members = [
+    ...(plan.collaborators ?? []).map((c) => c.consultantProfile.userId),
+    ...(appointment?.participants.map((p) => p.userId) || []),
+  ];
+
+  const organizationId =
+    appointment?.organizationId ?? plan.organizationId ?? null;
+
+  return {
+    consultantId,
+    members,
+    name: plan.title,
+    organizationId,
+  };
+}
+
 export async function getEventData(eventType: EventType, eventId: string) {
   switch (eventType) {
     case "webinar": {
       const webinar = await prisma.webinar.findUnique({
         where: { id: eventId },
         include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-              collaborators: {
-                where: {
-                  status: "ACCEPTED" as const,
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfile: { select: { userId: true } } },
-              },
-            },
-          },
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
+          webinarPlan: { include: groupEventPlanInclude },
+          appointment: { include: groupEventAppointmentInclude },
         },
       });
       if (!webinar) return null;
-
-      const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
-      if (!consultantId) return null;
-
-      const members = [
-        ...(webinar.webinarPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
-        ...(webinar.appointment?.participants.map((p) => p.userId) || []),
-      ];
-
-      const organizationId = bookingOrgId({
-        webinarPlan: webinar.webinarPlan,
-        appointment: webinar.appointment,
-      });
-
-      return {
-        consultantId,
-        members,
-        name: webinar.webinarPlan.title,
-        organizationId,
-      };
+      return buildGroupEventData(webinar.webinarPlan, webinar.appointment);
     }
 
     case "class": {
       const classData = await prisma.class.findUnique({
         where: { id: eventId },
         include: {
-          classPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-              collaborators: {
-                where: {
-                  status: "ACCEPTED" as const,
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfile: { select: { userId: true } } },
-              },
-            },
-          },
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
+          classPlan: { include: groupEventPlanInclude },
+          appointment: { include: groupEventAppointmentInclude },
         },
       });
       if (!classData) return null;
-
-      const consultantId = classData.classPlan.consultantProfile?.user?.id;
-      if (!consultantId) return null;
-
-      const members = [
-        ...(classData.classPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
-        ...(classData.appointment?.participants.map((p) => p.userId) || []),
-      ];
-
-      const organizationId = bookingOrgId({
-        classPlan: classData.classPlan,
-        appointment: classData.appointment,
-      });
-
-      return {
-        consultantId,
-        members,
-        name: classData.classPlan.title,
-        organizationId,
-      };
+      return buildGroupEventData(classData.classPlan, classData.appointment);
     }
 
     case "consultation": {
