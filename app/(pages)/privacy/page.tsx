@@ -167,6 +167,140 @@ export default function PrivacyPolicyPage() {
                 <li>Notify you about platform changes and new features</li>
               </ul>
 
+              <h3 className="text-xl font-semibold mt-6 mb-2">
+                3.5 Itemised Purpose &amp; Retention Schedule (DPDP Act 2023 &amp; Rule 3)
+              </h3>
+              <p>
+                In accordance with Section 5 of the Digital Personal Data
+                Protection Act, 2023 (&ldquo;DPDP Act&rdquo;) and Rule 3 of the
+                Digital Personal Data Protection Rules, 2025, the table below
+                itemises the personal data we process, the specific purpose and
+                canonical purpose code, and the applicable retention period:
+              </p>
+              <div className="overflow-x-auto my-4">
+                <table className="min-w-full text-sm border border-border">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 text-left border-b border-border">
+                        Data Category
+                      </th>
+                      <th className="p-2 text-left border-b border-border">
+                        Specific Purpose &amp; Code
+                      </th>
+                      <th className="p-2 text-left border-b border-border">
+                        Tier &amp; Retention Period
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Account &amp; Identity</strong> (name, email,
+                        phone, timezone, role, professional bio/credentials, date
+                        of birth for 18+ age verification under DPDP &sect;9 /
+                        Fourth Schedule Part B Item 6)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Service &amp; Account</strong> (
+                        <code>PRIMARY_PROCESSING</code>) — Create and operate
+                        your account, authenticate sessions, and verify adult
+                        eligibility.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Core (Required)</strong> — Retained while
+                        account is active; scrubbed on account erasure (&sect;12).
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Bookings &amp; Scheduling</strong> (selected
+                        slots, consultation/subscription/class/webinar bookings,
+                        request notes)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Session Booking</strong> (
+                        <code>SESSION_BOOKING</code>) — Schedule, manage, and
+                        deliver 1:1 consultations, subscriptions, webinars, and
+                        classes.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Core (Required)</strong> — Free-text notes
+                        scrubbed on erasure; appointment delivery records linked
+                        to tax invoices retained per statutory tax law.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Live Video &amp; Chat</strong> (user ID, display
+                        name, avatar, session room participation)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Video &amp; Chat</strong> (
+                        <code>STREAM_DATA_PROCESSING</code>) — Real-time video
+                        calls and messaging via GetStream.io.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Core (Required)</strong> — Active account
+                        lifetime; access and tokens revoked upon erasure.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Payments, Payouts &amp; Tax Records</strong>{" "}
+                        (Razorpay order/payment IDs, invoices, consultant
+                        earnings, payouts, PAN/TDS &amp; GST ledger rows)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Financial Settlement &amp; Statutory Tax</strong>{" "}
+                        (<code>PRIMARY_PROCESSING</code> &amp; DPDP
+                        &sect;12(3)/&sect;8(7)(b))
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Statutory Retention</strong> — Retained for 7–8
+                        years under the Income Tax Act, 1961 (&sect;44AA / Rule
+                        6F) and CGST Act, 2017 (&sect;36) with profile identity
+                        tombstoned to a pseudonymous hash after erasure.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Security &amp; Error Diagnostics</strong>{" "}
+                        (one-way HMAC-SHA256 virtual token{" "}
+                        <code>ust_&lt;hash&gt;</code>, trace IDs, error stack
+                        traces, security audit logs)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Security Safeguards &amp; Support</strong> (DPDP
+                        &sect;8(4)–(5) &amp; Rule 6) — Detect deadlocks, failed
+                        checkouts, and security incidents without exposing raw
+                        PII.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Statutory Security</strong> — 30–90 days in
+                        Sentry; 1 year minimum for security/processing logs
+                        under DPDP Rule 8(3).
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 align-top">
+                        <strong>Marketing &amp; Product Analytics</strong>{" "}
+                        (promotional email preferences, product interaction
+                        telemetry)
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Marketing &amp; Analytics</strong> (
+                        <code>MARKETING_COMMS</code>, <code>ANALYTICS</code>) —
+                        Send product updates/offers and measure feature usage.
+                      </td>
+                      <td className="p-2 align-top">
+                        <strong>Optional</strong> — Until withdrawn via 1-click
+                        toggle in Settings &rarr; Account.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
@@ -188,31 +322,46 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                4.2 With Service Providers
+                4.2 With Service Providers (Data Processors)
               </h3>
               <p>
-                We share information with trusted third-party service providers:
+                We share limited data with trusted third-party Data Processors
+                under contractual data-processing and confidentiality
+                obligations:
               </p>
               <ul>
                 <li>
-                  <strong>Razorpay:</strong> Payment processing and transaction
-                  management
+                  <strong>Razorpay / Stripe:</strong> Payment processing,
+                  refunds, consultant payouts, and transaction management
                 </li>
                 <li>
-                  <strong>GetStream:</strong> Video conferencing and real-time
-                  communication
+                  <strong>GetStream.io:</strong> Video conferencing and
+                  real-time chat communication (<code>STREAM_DATA_PROCESSING</code>)
                 </li>
                 <li>
-                  <strong>Cloud Storage Providers:</strong> Secure data storage
-                  and backup
+                  <strong>Cloud Database &amp; Storage (Supabase / Neon):</strong>{" "}
+                  Encrypted database hosting, verification document storage, and
+                  backups
                 </li>
                 <li>
-                  <strong>Email Service Providers:</strong> Transactional and
-                  marketing emails
+                  <strong>Email &amp; Notification Providers (Resend / Novu):</strong>{" "}
+                  Transactional booking notifications and consented marketing
+                  emails
                 </li>
                 <li>
-                  <strong>Analytics Providers:</strong> Platform usage analysis
-                  and improvement
+                  <strong>
+                    Sentry (Functional Software, Inc. — United States,{" "}
+                    <code>us.sentry.io</code>):
+                  </strong>{" "}
+                  Application error monitoring, distributed tracing, and
+                  reliability diagnostics. Under DPDP Rule 6(1)(a)
+                  de-identification safeguards, Familiarise configures{" "}
+                  <code>sendDefaultPii: false</code> and never transmits your
+                  name, email, phone number, or unmasked page text to Sentry;
+                  events are tagged solely with a one-way salted HMAC-SHA256
+                  virtual token (<code>ust_&lt;24-hex-chars&gt;</code>) and
+                  retained for 30–90 days to help our support and engineering
+                  teams diagnose technical issues you report.
                 </li>
               </ul>
 
@@ -367,13 +516,74 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                7.4 Data Portability
+                7.4 Data Portability &amp; Summary of Personal Data (DPDP &sect;11)
               </h3>
               <ul>
-                <li>Request your data in a machine-readable format</li>
+                <li>
+                  Download a machine-readable JSON summary of your personal
+                  data, booking history, payment records, consent artifacts, and
+                  the list of Data Processors with whom your data has been
+                  shared directly from <strong>Settings &rarr; Account</strong>{" "}
+                  (&ldquo;Download my data &amp; processor summary&rdquo;)
+                </li>
                 <li>
                   Transfer your data to another service (where technically
                   feasible)
+                </li>
+              </ul>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                7.5 Consent Withdrawal, Grievance Redressal &amp; Data Protection Board of India (DPDP &sect;6, &sect;12, &sect;13 &amp; &sect;14)
+              </h3>
+              <ul>
+                <li>
+                  <strong>Withdraw Optional Consents Anytime:</strong> You can
+                  grant or withdraw optional consents (Marketing Communications{" "}
+                  <code>MARKETING_COMMS</code> and Analytics{" "}
+                  <code>ANALYTICS</code>) with one click in{" "}
+                  <strong>Dashboard &rarr; Settings &rarr; Account</strong>{" "}
+                  (&ldquo;Data consent&rdquo;) without affecting your core
+                  account access.
+                </li>
+                <li>
+                  <strong>Withdraw Core Consent &amp; Erase Account:</strong>{" "}
+                  Core platform consents (<code>PRIMARY_PROCESSING</code>,{" "}
+                  <code>SESSION_BOOKING</code>,{" "}
+                  <code>STREAM_DATA_PROCESSING</code>) are required to operate
+                  your account and deliver bookings. Under DPDP &sect;6(4)–(6)
+                  and &sect;12, you may withdraw core consent at any time by
+                  selecting{" "}
+                  <strong>
+                    Withdraw core consent &amp; delete account
+                  </strong>{" "}
+                  in <strong>Settings &rarr; Account</strong>. If you have active
+                  upcoming sessions or unsettled payouts/disputes, we will guide
+                  you to complete or cancel them first; upon erasure, your
+                  personal identifiers are permanently scrubbed while statutory
+                  tax and financial records are retained under Indian tax law.
+                </li>
+                <li>
+                  <strong>Grievance Officer &amp; 90-Day SLA:</strong> You may
+                  file a data protection grievance directly in{" "}
+                  <strong>Settings &rarr; Account</strong> (&ldquo;Data
+                  protection grievance&rdquo;) or by emailing{" "}
+                  <a
+                    href={getMailtoLink()}
+                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                  >
+                    {COMPANY_INFO.email}
+                  </a>
+                  . Grievances receive an immediate ticket reference and are
+                  resolved within 90 days in accordance with Rule 14(3) of the
+                  DPDP Rules, 2025.
+                </li>
+                <li>
+                  <strong>Right to Approach the Data Protection Board:</strong>{" "}
+                  If your grievance is not resolved within the statutory period
+                  or you are dissatisfied with the resolution, you have the
+                  right under Section 13(3) and Section 27 of the DPDP Act, 2023
+                  to make a complaint to the{" "}
+                  <strong>Data Protection Board of India (DPBI)</strong>.
                 </li>
               </ul>
 

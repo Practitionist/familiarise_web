@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -43,8 +44,7 @@ export interface CronLockOpts {
 /** #697 — errorLog is @db.Text but a stack dump has no business being unbounded. */
 const ERROR_LOG_MAX_CHARS = 8_000;
 
-const LEASE_EXPIRED_SWEEP_MESSAGE =
-  "Lease expired (stale RUNNING row swept)";
+const LEASE_EXPIRED_SWEEP_MESSAGE = "Lease expired (stale RUNNING row swept)";
 
 type SystemJobExecutionDelegate = {
   findFirst?: (args: {
@@ -294,6 +294,17 @@ function startLeaseRenewal(
           console.warn(
             `[${jobName}] cron lock renewal failed — ownership lost`,
           );
+          try {
+            Sentry.logger?.warn("cron lock renewal failed — ownership lost", {
+              jobName,
+              executionId,
+            });
+            Sentry.metrics?.count("cron.lock_ownership_lost", 1, {
+              attributes: { job_name: jobName },
+            });
+          } catch {
+            // Telemetry must never break cron execution.
+          }
         }
       } catch (err) {
         console.warn(`[${jobName}] cron lock renewal error:`, err);

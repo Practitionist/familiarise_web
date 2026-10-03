@@ -1,8 +1,39 @@
+import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 
 import { isDeadlock } from "@/lib/db/pg-errors";
 
 const SERIALIZABLE_MAX_RETRIES = 3;
+
+function reportSerializableRetry(
+  reason: "40001" | "40P01",
+  attempt: number,
+  maxRetries: number,
+  exhausted: boolean,
+): void {
+  try {
+    Sentry.metrics?.count?.("db.serializable_retry", 1, {
+      attributes: {
+        reason,
+        attempt: String(attempt),
+        exhausted: String(exhausted),
+      },
+    });
+    Sentry.logger?.warn?.(
+      exhausted
+        ? "serializable transaction retries exhausted"
+        : "retrying serializable transaction after conflict",
+      {
+        reason,
+        attempt,
+        maxRetries,
+        exhausted,
+      },
+    );
+  } catch {
+    // Telemetry must never mask or alter transaction retry behavior.
+  }
+}
 
 /**
  * Retries a function that may fail because Postgres rolled its transaction
@@ -36,13 +67,19 @@ export async function withSerializableRetry<T>(
       const isSerializationFailure =
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2034";
+      const deadlock = !isSerializationFailure && isDeadlock(error);
 
-      if (
-        (!isSerializationFailure && !isDeadlock(error)) ||
-        attempt === maxRetries
-      ) {
+      if (!isSerializationFailure && !deadlock) {
         throw error;
       }
+
+      const reason = isSerializationFailure ? "40001" : "40P01";
+      if (attempt === maxRetries) {
+        reportSerializableRetry(reason, attempt + 1, maxRetries, true);
+        throw error;
+      }
+
+      reportSerializableRetry(reason, attempt + 1, maxRetries, false);
 
       // 50/100/200ms + jitter so two retrying writers don't re-collide in step.
       const backoffMs = 50 * 2 ** attempt + Math.random() * 25;

@@ -406,6 +406,17 @@ export async function scrubUser(
     await tx.session.deleteMany({ where: { userId } });
     await tx.account.deleteMany({ where: { userId } });
 
+    // Withdraw all active DPDP ConsentArtifact rows while preserving their
+    // 7-year audit retention window (DPDP §6(4)-(6) + §12).
+    const consentRetainedUntil = new Date(now);
+    consentRetainedUntil.setUTCFullYear(
+      consentRetainedUntil.getUTCFullYear() + 7,
+    );
+    await tx.consentArtifact?.updateMany({
+      where: { userId, withdrawnAt: null },
+      data: { withdrawnAt: now, auditRetainedUntil: consentRetainedUntil },
+    });
+
     // Audit row (under SYSTEM — the actor is the platform, the target
     // is the user). One row per affected org so per-org audit pulls
     // see the event.
