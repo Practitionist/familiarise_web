@@ -16,7 +16,10 @@ import {
 } from "@/lib/novu/humanize";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { personalHref } from "@/lib/novu/resolve-href";
-import { getCallPresenceEvidence } from "@/lib/stream/call-presence";
+import {
+  getCallParticipantSessionsFromStream,
+  getCallPresenceEvidence,
+} from "@/lib/stream/call-presence";
 import { getAppUrl } from "@/lib/url";
 import { isPastNoShowHandoff } from "./attendance";
 import {
@@ -106,21 +109,79 @@ export async function decideSlotOutcome(
   if (meeting && !meeting.endedAt && slot.presences.some((p) => !p.leftAt)) {
     return { kind: "deferred", reason: "live-overrun" };
   }
+
+  let presences = slot.presences;
+  if (presences.some((p) => p.leftAt === null)) {
+    const capAt = meeting?.endedAt ?? slot.endsAt;
+    await prisma.meetingPresence?.updateMany?.({
+      where: { appointmentOccurrenceId: slot.id, leftAt: null },
+      data: { leftAt: capAt },
+    });
+    presences = presences.map((p) =>
+      p.leftAt === null ? { ...p, leftAt: capAt } : p,
+    );
+  }
+
   const feedGap =
     !!meeting?.endedAt &&
     FEED_EXPECTED_REASONS.has(meeting.endedReason ?? "") &&
-    slot.presences.length === 0;
+    presences.length === 0;
   const report =
-    meeting && (slot.presences.length > 0 || feedGap)
+    meeting && (presences.length > 0 || feedGap)
       ? await getCallPresenceEvidence(meeting.streamCallId)
       : null;
   if (feedGap && (report?.unique ?? 0) > 0) ctx.onFeedGap?.();
+
+  const seen = new Set(presences.map((p) => p.userId));
+  if (meeting && report && report.unique > seen.size) {
+    const backfilled =
+      report.intervals ??
+      (await getCallParticipantSessionsFromStream?.(
+        meeting.streamCallId,
+        report.sessionId,
+      )) ??
+      [];
+    if (backfilled.length > 0) {
+      const capAt = meeting.endedAt ?? slot.endsAt;
+      const resolved = backfilled.map((b) => ({
+        userId: b.userId,
+        userSessionId: b.userSessionId,
+        joinedAt: b.joinedAt,
+        leftAt: b.leftAt ?? capAt,
+      }));
+      const meetingRow = await prisma.meeting?.findUnique?.({
+        where: { streamCallId: meeting.streamCallId },
+        select: { id: true },
+      });
+      if (meetingRow?.id) {
+        await prisma.meetingPresence?.createMany?.({
+          data: resolved.map((r) => ({
+            meetingId: meetingRow.id,
+            appointmentOccurrenceId: slot.id,
+            userId: r.userId,
+            userSessionId: r.userSessionId,
+            joinedAt: r.joinedAt,
+            leftAt: r.leftAt,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      presences = [
+        ...presences,
+        ...resolved.map((r) => ({
+          userId: r.userId,
+          joinedAt: r.joinedAt,
+          leftAt: r.leftAt,
+        })),
+      ];
+    }
+  }
 
   const verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
     endsAt: slot.endsAt,
     hostUserIds: sessionHostUserIds(slot.appointment),
-    intervals: slot.presences,
+    intervals: presences,
     meeting: meeting
       ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
       : null,

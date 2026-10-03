@@ -11,6 +11,7 @@ import { REDIS_KEYS } from "./maintenance-keys";
 
 const EXEMPT_PREFIXES = [
   "/api/webhooks/",
+  "/api/stream/webhooks",
   "/api/health",
   "/api/auth/",
   "/api/admin/maintenance",
@@ -126,7 +127,10 @@ export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 export function isMaintenanceExempt(pathname: string): boolean {
   if (HAS_FILE_EXTENSION.test(pathname)) return true;
-  return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return EXEMPT_PREFIXES.some((prefix) => {
+    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+    return pathname === base || pathname.startsWith(`${base}/`);
+  });
 }
 
 const WRITE_BLOCKED_IN_DEGRADED = [

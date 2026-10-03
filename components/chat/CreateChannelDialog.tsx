@@ -61,18 +61,21 @@ export const CreateChannelDialog = ({
   } = useEventsByUser(client?.userID || "");
 
   // Prepare events for dropdown
-  const events = useMemo(() => [
-    ...webinars.map((webinar) => ({
-      id: `webinar-${webinar.id}`,
-      name: webinar.webinarPlan.title,
-      type: "webinar",
-    })),
-    ...classes.map((classItem) => ({
-      id: `class-${classItem.id}`,
-      name: classItem.classPlan.title,
-      type: "class",
-    })),
-  ], [webinars, classes]);
+  const events = useMemo(
+    () => [
+      ...webinars.map((webinar) => ({
+        id: `webinar-${webinar.id}`,
+        name: webinar.webinarPlan.title,
+        type: "webinar",
+      })),
+      ...classes.map((classItem) => ({
+        id: `class-${classItem.id}`,
+        name: classItem.classPlan.title,
+        type: "class",
+      })),
+    ],
+    [webinars, classes],
+  );
 
   // Update channel name when event is selected
   useEffect(() => {
@@ -136,7 +139,13 @@ export const CreateChannelDialog = ({
 
       if (selectedEvent !== "custom") {
         // Event-linked channel creation - use server-side API with full participant lists
-        const [eventType, eventId] = selectedEvent.split("-");
+        const separatorIndex = selectedEvent.indexOf("-");
+        const eventType =
+          separatorIndex >= 0
+            ? selectedEvent.slice(0, separatorIndex)
+            : selectedEvent;
+        const eventId =
+          separatorIndex >= 0 ? selectedEvent.slice(separatorIndex + 1) : "";
 
         const response = await fetch("/api/stream/channels/create", {
           method: "POST",
@@ -182,7 +191,8 @@ export const CreateChannelDialog = ({
         // reach the route and come back 403 with no explanation.
         toast({
           title: "Not allowed",
-          description: "Only staff can create channels that aren't tied to an event",
+          description:
+            "Only staff can create channels that aren't tied to an event",
           variant: "destructive",
         });
         return;

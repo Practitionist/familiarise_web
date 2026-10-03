@@ -20,6 +20,7 @@ import {
   hiddenFromLateJoiner,
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
@@ -67,7 +68,59 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Check access permissions
-    const appointment = recording.meeting.occurrence.appointment;
+    const baseAppointment = recording.meeting.occurrence.appointment;
+    type ExtendedAppointment = typeof baseAppointment & {
+      participants?: Array<{ userId: string; role?: string }> | null;
+      consultation?: {
+        requestedById?: string | null;
+        consultationPlan?: {
+          id?: string;
+          consultantProfileId?: string | null;
+        } | null;
+      } | null;
+      subscription?: {
+        requestedById?: string | null;
+        subscriptionPlan?: {
+          id?: string;
+          consultantProfileId?: string | null;
+        } | null;
+      } | null;
+      trial?: {
+        consulteeProfileId?: string | null;
+        status?: string | null;
+        subscriptionPlan?: {
+          id?: string;
+          consultantProfileId?: string | null;
+        } | null;
+      } | null;
+    };
+    let appointment = baseAppointment as ExtendedAppointment | null;
+    if (
+      appointment?.id &&
+      !appointment.webinar &&
+      !appointment.class &&
+      !appointment.consultation &&
+      !appointment.subscription &&
+      !appointment.trial
+    ) {
+      const hydrated = await prisma.appointment?.findUnique?.({
+        where: { id: appointment.id },
+        include: {
+          webinar: { include: { webinarPlan: true } },
+          class: { include: { classPlan: true } },
+          consultation: { include: { consultationPlan: true } },
+          subscription: { include: { subscriptionPlan: true } },
+          trial: { include: { subscriptionPlan: true } },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true, role: true },
+          },
+        },
+      });
+      if (hydrated) {
+        appointment = hydrated as ExtendedAppointment;
+      }
+    }
 
     let hasAccess = false;
     // True when the ONLY thing letting this caller through is their platform
@@ -116,14 +169,23 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           });
           hasAccess = !!collab;
         }
+      } else if (appointment?.consultation?.consultationPlan) {
+        hasAccess =
+          appointment.consultation.consultationPlan.consultantProfileId ===
+          consultantProfileId;
+      } else if (appointment?.subscription?.subscriptionPlan) {
+        hasAccess =
+          appointment.subscription.subscriptionPlan.consultantProfileId ===
+          consultantProfileId;
+      } else if (appointment?.trial?.subscriptionPlan) {
+        hasAccess =
+          appointment.trial.subscriptionPlan.consultantProfileId ===
+          consultantProfileId;
       }
     }
 
     // Attendee path: consultee entitlement, gated on capability not role.
     if (!hasAccess) {
-      // Consultee can access recordings for sessions they participated in.
-      // Use plan-level entitlement: the recording's appointment is the consultant's
-      // allocation slot, not the attendee's enrollment slot, so we check by plan ID.
       const planFilter = appointment?.webinar?.webinarPlan?.id
         ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
         : appointment?.class?.classPlan?.id
@@ -141,18 +203,66 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             refunds: { select: { amountPaise: true, status: true } },
           },
         });
-        // #689 — a SUCCEEDED payment fully reversed by refunds is no longer an
-        // entitlement; access needs at least one net-positive purchase for the plan.
         hasAccess = payments.some(isPaymentEntitled);
-        // #1819 — a late joiner's seat hides the sessions before it (host toggle).
+        if (!hasAccess && prisma.appointmentParticipant) {
+          const seat = await prisma.appointmentParticipant.findFirst({
+            where: {
+              userId: session.user.id,
+              ...liveParticipant(),
+              appointment: planFilter,
+            },
+            select: { id: true },
+          });
+          hasAccess = Boolean(seat);
+        }
         if (hasAccess && appointment?.class) {
           const lateJoin = await lateJoinRecordingAccess(session.user.id);
           hasAccess = !hiddenFromLateJoiner(recording, lateJoin);
         }
+      } else if (appointment?.id) {
+        const payments = await prisma.payment.findMany({
+          where: {
+            userId: session.user.id,
+            paymentStatus: "SUCCEEDED",
+            appointmentId: appointment.id,
+          },
+          select: {
+            amount: true,
+            refunds: { select: { amountPaise: true, status: true } },
+          },
+        });
+        hasAccess = payments.some(isPaymentEntitled);
+        if (!hasAccess) {
+          hasAccess = Boolean(
+            appointment.participants?.some((p) => p.userId === session.user.id),
+          );
+        }
+        if (!hasAccess && prisma.appointmentParticipant) {
+          const seat = await prisma.appointmentParticipant.findFirst({
+            where: {
+              userId: session.user.id,
+              appointmentId: appointment.id,
+              ...liveParticipant(),
+            },
+            select: { id: true },
+          });
+          hasAccess = Boolean(seat);
+        }
+        if (!hasAccess && session.user.consulteeProfileId) {
+          const cpId = session.user.consulteeProfileId;
+          if (
+            appointment.consultation?.requestedById === cpId ||
+            appointment.subscription?.requestedById === cpId ||
+            (appointment.trial?.consulteeProfileId === cpId &&
+              !["CANCELLED", "REJECTED", "EXPIRED"].includes(
+                appointment.trial?.status ?? "",
+              ))
+          ) {
+            hasAccess = true;
+          }
+        }
       }
 
-      // #366 — standalone replay purchase (marketplace buyers hold no booking
-      // on the parent plan, so the payment path above can't see them).
       if (!hasAccess) {
         hasAccess = await hasReplayPurchase(session.user.id, recordingId);
       }

@@ -12,6 +12,7 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import { toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -81,8 +82,7 @@ export async function handleSessionEnded(
 ): Promise<void> {
   const { call_cid, created_at } = event;
 
-  // Extract call ID from call_cid (format: "default:callId")
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Session ended", {
     streamCallId,
@@ -171,6 +171,8 @@ export async function handleSessionEnded(
   }
 }
 
+export const handleCallSessionEnded = handleSessionEnded;
+
 /**
  * Handle call.ended event
  * Triggered when a call is explicitly ended (not just session timeout)
@@ -185,8 +187,7 @@ export async function handleCallEnded(
 ): Promise<void> {
   const { call_cid, created_at, ended_by_user_id } = event;
 
-  // Extract call ID from call_cid (format: "default:callId")
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Call ended", {
     streamCallId,
@@ -294,16 +295,30 @@ async function stampEnd(
   endedAt: Date,
   endedReason: string,
 ): Promise<boolean> {
-  const { count } = await prisma.meeting.updateMany({
-    where: { id: meeting.id, endedAt: meeting.endedAt },
-    data: { endedAt, endedReason, isRecording: false },
-  });
-  if (count === 0) {
-    streamLogger.info("End not stamped — the room's end changed concurrently", {
-      sessionId: meeting.id,
+  return prisma.$transaction(async (tx) => {
+    const { count } = await tx.meeting.updateMany({
+      where: { id: meeting.id, endedAt: meeting.endedAt },
+      data: { endedAt, endedReason, isRecording: false },
     });
-  }
-  return count > 0;
+    if (count === 0) {
+      streamLogger.info(
+        "End not stamped — the room's end changed concurrently",
+        {
+          sessionId: meeting.id,
+        },
+      );
+      return false;
+    }
+    await tx.meetingPresence?.updateMany?.({
+      where: { meetingId: meeting.id, leftAt: null },
+      data: { leftAt: endedAt },
+    });
+    await tx.meetingAttendance?.updateMany?.({
+      where: { meetingId: meeting.id, lastLeftAt: null },
+      data: { lastLeftAt: endedAt },
+    });
+    return true;
+  });
 }
 
 /** #1607 — the last end wins; a replayed or older event never moves endedAt backwards. */
@@ -321,7 +336,7 @@ export async function handleSessionParticipantJoined(
   event: StreamSessionParticipantJoinedEvent,
 ): Promise<void> {
   const { call_cid, created_at, participant } = event;
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
   const userId = participant?.user?.id;
 
   if (!userId) {
@@ -418,7 +433,7 @@ export async function handleSessionParticipantLeft(
   event: StreamSessionParticipantLeftEvent,
 ): Promise<void> {
   const { call_cid, created_at, participant } = event;
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
   const userId = participant?.user?.id;
 
   if (!userId) {
@@ -469,6 +484,13 @@ export async function handleSessionParticipantLeft(
         },
         data: { leftAt },
       });
+      const existingAttendance = await tx.meetingAttendance.findUnique?.({
+        where: { meetingId_userId: { meetingId, userId } },
+        select: { lastLeftAt: true },
+      });
+      const canAdvanceLastLeft =
+        !existingAttendance?.lastLeftAt ||
+        leftAt.getTime() > existingAttendance.lastLeftAt.getTime();
       // upsert (not update) — a leave arriving without a recorded join still
       // creates the row, with firstJoinedAt rebuilt from the leave's duration.
       await tx.meetingAttendance.upsert({
@@ -483,9 +505,17 @@ export async function handleSessionParticipantLeft(
           lastLeftAt: leftAt,
         },
         update: {
-          lastLeftAt: leftAt,
+          ...(canAdvanceLastLeft && { lastLeftAt: leftAt }),
           ...(newSessions > 0 && { joinCount: { increment: newSessions } }),
         },
+      });
+      await tx.meetingAttendance.updateMany?.({
+        where: {
+          meetingId,
+          userId,
+          OR: [{ lastLeftAt: null }, { lastLeftAt: { lt: leftAt } }],
+        },
+        data: { lastLeftAt: leftAt },
       });
     });
 

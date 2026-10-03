@@ -27,11 +27,22 @@ import {
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
+export interface StreamParticipantSessionInterval {
+  userId: string;
+  userSessionId: string;
+  joinedAt: Date;
+  leftAt: Date | null;
+}
+
 export interface CallPresenceEvidence {
   /** Distinct participants Stream saw in the session. */
   unique: number;
   /** Most participants present at the same moment, when Stream reports it. */
   maxConcurrent: number | null;
+  /** Stream session ID when available from the call report. */
+  sessionId?: string | null;
+  /** Optional participant intervals returned by Stream. */
+  intervals?: StreamParticipantSessionInterval[];
 }
 
 /**
@@ -54,6 +65,7 @@ export async function getCallPresenceEvidence(
     return {
       unique: participants.unique,
       maxConcurrent: participants.max_concurrent ?? null,
+      ...(response.session_id ? { sessionId: response.session_id } : {}),
     };
   } catch (error) {
     // A missing report and a Stream outage are indistinguishable here, and both
@@ -63,5 +75,61 @@ export async function getCallPresenceEvidence(
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
+  }
+}
+
+/**
+ * Fetch per-participant session intervals from Stream when webhook deliveries
+ * missed a participant that `getCallReport` saw.
+ */
+export async function getCallParticipantSessionsFromStream(
+  streamCallId: string,
+  sessionId?: string | null,
+): Promise<StreamParticipantSessionInterval[]> {
+  try {
+    const client = getStreamVideoClient();
+    const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
+    let resolvedSessionId = sessionId ?? null;
+    if (!resolvedSessionId) {
+      const report = await withStreamCircuitBreaker(() => call.getCallReport());
+      resolvedSessionId = report.session_id ?? report.session?.id ?? null;
+    }
+    if (
+      !resolvedSessionId ||
+      typeof call.queryCallParticipantSessions !== "function"
+    ) {
+      return [];
+    }
+    const response = await withStreamCircuitBreaker(() =>
+      call.queryCallParticipantSessions({ session: resolvedSessionId }),
+    );
+    const rows = response.participants_sessions ?? [];
+    const intervals: StreamParticipantSessionInterval[] = [];
+    for (const row of rows) {
+      if (!row.user_id) continue;
+      const leftAt = row.left_at ? new Date(row.left_at) : null;
+      const joinedAt = row.joined_at
+        ? new Date(row.joined_at)
+        : leftAt && typeof row.duration_in_seconds === "number"
+          ? new Date(
+              leftAt.getTime() - Math.max(0, row.duration_in_seconds) * 1000,
+            )
+          : null;
+      if (!joinedAt) continue;
+      intervals.push({
+        userId: row.user_id,
+        userSessionId:
+          row.user_session_id || `${resolvedSessionId}:${row.user_id}`,
+        joinedAt,
+        leftAt,
+      });
+    }
+    return intervals;
+  } catch (error) {
+    streamLogger.warn("Failed to query Stream participant sessions", {
+      streamCallId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
   }
 }

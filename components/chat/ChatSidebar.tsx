@@ -192,7 +192,12 @@ export const ChatSidebar = () => {
   const { data: session } = useSession();
   const serverFacts = useServerSessionFacts();
   const appRole = session?.user?.role ?? serverFacts.role;
-  const isConsultant = appRole === "CONSULTANT";
+  const isConsultant =
+    appRole === "CONSULTANT" ||
+    Boolean(
+      (session?.user as { consultantProfileId?: string | null } | undefined)
+        ?.consultantProfileId,
+    );
   // Channels can only be created against a webinar or class the viewer hosts,
   // so a consultee's dropdown had exactly one entry: "No events found".
   const canCreateChannels =
@@ -204,6 +209,8 @@ export const ChatSidebar = () => {
   // `first-org` (which silently hid a member's B2C threads behind whichever org
   // happened to be first, and hid a second org's entirely).
   const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -504,11 +511,9 @@ export const ChatSidebar = () => {
     if (!client?.userID) return;
 
     try {
-      // Only query for channels that might have been just created
-      // Use a more recent timestamp filter to avoid loading all channels
       const recentFilter = {
         members: { $in: [client.userID] },
-        // created_at: { $gte: new Date(Date.now() - 60000) } // Last minute
+        ...buildOrgChannelFilter(scope),
       };
 
       const [recentTeamChannels, recentDMChannels] = await Promise.all([
@@ -551,7 +556,7 @@ export const ChatSidebar = () => {
       // Fallback to full refresh if individual handling fails
       fetchChannels();
     }
-  }, [client, fetchChannels]);
+  }, [client, scope, fetchChannels]);
 
   // Manual refresh function
   const handleRefresh = () => {
@@ -591,6 +596,21 @@ export const ChatSidebar = () => {
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (client) {
+      const channelMatchesScope = (ch: unknown): boolean => {
+        if (!ch || typeof ch !== "object") return false;
+        const record = ch as {
+          organization_id?: unknown;
+          data?: Record<string, unknown>;
+        };
+        const rawOrgId = record.data?.organization_id ?? record.organization_id;
+        const currentScope = scopeRef.current;
+        if (currentScope.kind === "personal") {
+          return rawOrgId === undefined || rawOrgId === null;
+        }
+        const pinnedOrgId = scopeOrgId(currentScope);
+        return pinnedOrgId ? rawOrgId === pinnedOrgId : true;
+      };
+
       // Listener for events that might require a channel list update.
       // Nothing is logged here on purpose: this is bound to `*.**`, so the
       // line that used to sit at the top printed EVERY Stream event payload —
@@ -608,10 +628,26 @@ export const ChatSidebar = () => {
             event.channel.type,
             event.channel.id,
           );
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) => [newChannel, ...prev]);
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) => [newChannel, ...prev]);
+          if (
+            channelMatchesScope(event.channel) &&
+            channelMatchesScope(newChannel)
+          ) {
+            if (event.channel.type === "team") {
+              setTeamChannels((prev) =>
+                prev.some((ch) => ch.cid === newChannel.cid)
+                  ? prev
+                  : [newChannel, ...prev],
+              );
+            } else if (
+              event.channel.type === "messaging" &&
+              isUsableDmChannel(newChannel)
+            ) {
+              setDirectMessages((prev) =>
+                prev.some((ch) => ch.cid === newChannel.cid)
+                  ? prev
+                  : [newChannel, ...prev],
+              );
+            }
           }
           channelUpdated = true;
         } else if (
@@ -627,7 +663,6 @@ export const ChatSidebar = () => {
         }
 
         // Refresh channel object in state if it was updated (e.g., new message, read status)
-        // This relies on the channel object reference changing or having updated state
         if (
           event.channel &&
           !channelUpdated &&
@@ -636,20 +671,47 @@ export const ChatSidebar = () => {
             event.type === "message.read" ||
             event.type === "channel.updated")
         ) {
+          const targetCid =
+            event.channel.cid || `${event.channel.type}:${event.channel.id}`;
           const updatedChannel = client.channel(
             event.channel.type,
             event.channel.id,
           );
+          const isNewMessage =
+            event.type === "message.new" ||
+            event.type === "notification.message_new";
+          const sortChannels = (channels: Channel[]): Channel[] => {
+            if (!isNewMessage) return channels;
+            return [...channels].sort((a, b) => {
+              const aLast =
+                a.cid === targetCid && event.message?.created_at
+                  ? new Date(event.message.created_at).getTime()
+                  : new Date(
+                      (a.state?.last_message_at as string | Date | undefined) ||
+                        (a.data?.last_message_at as string | undefined) ||
+                        0,
+                    ).getTime();
+              const bLast =
+                b.cid === targetCid && event.message?.created_at
+                  ? new Date(event.message.created_at).getTime()
+                  : new Date(
+                      (b.state?.last_message_at as string | Date | undefined) ||
+                        (b.data?.last_message_at as string | undefined) ||
+                        0,
+                    ).getTime();
+              return bLast - aLast;
+            });
+          };
           if (event.channel.type === "team") {
             setTeamChannels((prev) =>
-              prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+              sortChannels(
+                prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
               ),
             );
           } else if (event.channel.type === "messaging") {
             setDirectMessages((prev) =>
-              prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+              sortChannels(
+                prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
               ),
             );
           }

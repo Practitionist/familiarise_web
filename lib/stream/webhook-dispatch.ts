@@ -188,29 +188,44 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
  * Checked once, at the boundary, so a type added later cannot reintroduce it by
  * forgetting one of the eight call sites.
  */
-function isOwnCallType(callCid: string | undefined): boolean {
-  return !callCid || callTypeFromCid(callCid) === STREAM_CALL_TYPE;
+export const OWNED_CALL_TYPES = new Set([STREAM_CALL_TYPE, "livestream"]);
+
+export function isOwnCallType(callCid: string | undefined): boolean {
+  return !callCid || OWNED_CALL_TYPES.has(callTypeFromCid(callCid));
 }
 
-/**
- * Write the delivery down, and nothing else.
- *
- * Split out of `processStreamEvent` so the route can call it BEFORE it
- * acknowledges. Everything the sweeper needs to re-drive an event later is this
- * row; the handler work is what does not fit in Stream's six-second budget, not
- * the insert. Deliberately does no DB-health probe and no handler dispatch —
- * this is the part that must be cheap enough to run on the request path.
- *
- * Throws on failure. The caller turns that into a non-2xx so Stream redelivers,
- * which is correct precisely because nothing was recorded.
- */
-export async function recordStreamEventReceipt(
+export {
+  recordStreamEventReceipt,
+  reclaimStaleProcessingWebhookEvent,
+} from "@/lib/stream/webhook-receipt";
+
+export const STREAM_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const STREAM_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+export function classifyStreamDeliveryAge(
+  createdAt: Date,
+  now: number = Date.now(),
+): string | null {
+  const age = now - createdAt.getTime();
+  if (age > STREAM_REPLAY_WINDOW_MS) {
+    return `permanent: replay_window_exceeded (age ${Math.round(age / 3_600_000)}h)`;
+  }
+  if (age < -STREAM_CLOCK_SKEW_MS) {
+    return `permanent: created_at_in_future (${Math.round(-age / 1000)}s ahead)`;
+  }
+  return null;
+}
+
+export async function markWebhookEventFailed(
   eventId: string,
-  eventType: string,
-  event: unknown,
-  signature: string | undefined,
+  error: string,
+  claim?: WebhookClaim,
 ): Promise<void> {
-  await logWebhookEvent("stream", eventId, eventType, event, signature);
+  await markWebhookEventProcessed(
+    eventId,
+    error || "unknown handler error",
+    claim,
+  );
 }
 
 /**
@@ -291,17 +306,10 @@ export async function processStreamEvent(
      * concurrency guard meaningful for the caller that actually competes.
      */
     claimAlreadyHeld?: boolean;
+    claim?: WebhookClaim;
   } = {},
 ): Promise<void> {
   try {
-    // The health probe moved here from the request path: it is a real signal
-    // worth acting on, but not worth spending the acknowledgement budget on.
-    //
-    // Returning here is now safe ONLY because the route persists the receipt
-    // before acknowledging. It was not before: this branch returned without
-    // writing anything, so a DB blip on a first delivery left no row, and
-    // "deferring to the sweeper" deferred to a sweeper that had nothing to find.
-    // The sweeper genuinely owns it now.
     if (!(await isDbHealthy())) {
       streamLogger.warn(
         `DB unhealthy — deferring Stream event ${eventId} to the sweeper`,
@@ -309,9 +317,7 @@ export async function processStreamEvent(
       return;
     }
 
-    // The live route's claim on the row; the sweeper holds its own and passes
-    // none, so its completion stays unfenced.
-    let claim: WebhookClaim | undefined;
+    let claim: WebhookClaim | undefined = opts.claim;
     if (!opts.claimAlreadyHeld) {
       const logged = await logWebhookEvent(
         "stream",
@@ -334,10 +340,6 @@ export async function processStreamEvent(
 
     let processingError: string | undefined;
 
-    // Narrow here so the `never` in the default branch is a real exhaustiveness
-    // proof rather than a cast. Both callers hand us a string off the wire, and
-    // asserting `as never` in the default would have compiled unconditionally —
-    // a check that reads as protection and verifies nothing.
     if (!isHandledEventType(eventType)) {
       streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
       await markWebhookEventProcessed(eventId, undefined, claim);
@@ -349,31 +351,16 @@ export async function processStreamEvent(
         eventId,
         eventType,
         call_cid: baseEvent.call_cid,
-        expected: STREAM_CALL_TYPE,
+        expected: Array.from(OWNED_CALL_TYPES),
       });
       await markWebhookEventProcessed(eventId, undefined, claim);
       return;
     }
 
-    // #1280 — one `safeParse` at a choke point, not eight `.parse()` calls.
-    //
-    // Each case used to `.parse()` its own payload. A ZodError landed in the
-    // handler catch below, was stamped on the row as an ordinary failure, and
-    // the sweeper then re-drove it every ten minutes for its 168-hour give-up
-    // window — roughly a thousand attempts at a payload that cannot become
-    // valid. Schema mismatch is not a transient failure; treating it as one
-    // burns the sweeper's budget on a row no retry can help while hiding a real
-    // contract break behind noise that ages out on its own.
-    //
-    // Parsing in one place also means adding an event type cannot reintroduce a
-    // bare `.parse()`: the schema comes from the table below, which the
-    // exhaustiveness proof in `dispatch` keeps honest.
     const { schema, handle } = EVENT_HANDLERS[eventType];
     const parsed = schema.safeParse(event);
 
     if (!parsed.success) {
-      // Terminal. `markWebhookEventProcessed` in the `finally` stamps this, and
-      // the prefix keeps the sweeper away from it for good.
       const detail = parsed.error.issues
         .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
         .join("; ");
@@ -384,10 +371,6 @@ export async function processStreamEvent(
         `Stream webhook ${eventId} is permanently unprocessable`,
         { eventType, detail },
       );
-      // Paged, because a schema that stops matching means Stream changed a
-      // contract we depend on. That is the opposite of the churn this replaces:
-      // one alert with the field names in it, rather than a thousand silent
-      // retries.
       Sentry.captureException(
         new Error(`Stream ${eventType} payload failed schema validation`),
         {
@@ -396,7 +379,7 @@ export async function processStreamEvent(
           level: "error",
         },
       );
-      await markWebhookEventProcessed(eventId, processingError, claim);
+      await markWebhookEventFailed(eventId, processingError, claim);
       return;
     }
 
@@ -414,11 +397,12 @@ export async function processStreamEvent(
           : new Error(String(handlerError)),
         { tags: { subsystem: "stream" } },
       );
-      // Deliberately NOT rethrown. The response has already been sent, so there
-      // is nothing to signal to Stream; the error is stamped on the row below
-      // and the sweeper owns the retry.
     } finally {
-      await markWebhookEventProcessed(eventId, processingError, claim);
+      if (processingError !== undefined) {
+        await markWebhookEventFailed(eventId, processingError, claim);
+      } else {
+        await markWebhookEventProcessed(eventId, undefined, claim);
+      }
     }
   } catch (error) {
     // Reaching here means the bookkeeping itself failed. That used to be the one

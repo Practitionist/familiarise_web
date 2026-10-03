@@ -48,7 +48,11 @@ jest.mock("../../lib/supabase-storage-core", () => ({
 
 import prisma from "../../lib/prisma";
 import { recordSystemError } from "../../lib/enterprise/system-events";
-import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
+import {
+  RecordingTransferService,
+  isAllowedStreamRecordingUrl,
+  resolveAppointmentStoragePolicy,
+} from "../../lib/stream/recording-transfer-service";
 
 const mockFindUnique = (
   prisma as unknown as { recording: { findUnique: jest.Mock } }
@@ -72,7 +76,7 @@ describe("transfer failure tracking (STR-2/3)", () => {
   it("increments transferAttempts and sets lastTransferError on failure", async () => {
     mockFindUnique.mockResolvedValue({
       id: "rec_1",
-      recordingUrl: "https://stream.example/rec_1.mp4",
+      recordingUrl: "https://us-east.stream-io-cdn.com/rec_1.mp4",
     });
     // The failure-tracking update returns the post-increment counters.
     mockUpdate.mockImplementation(
@@ -108,7 +112,7 @@ describe("transfer failure tracking (STR-2/3)", () => {
   it("pages once when attempts cross the threshold and stamps the dedupe marker", async () => {
     mockFindUnique.mockResolvedValue({
       id: "rec_1",
-      recordingUrl: "https://stream.example/rec_1.mp4",
+      recordingUrl: "https://us-east.stream-io-cdn.com/rec_1.mp4",
     });
     mockUpdate.mockImplementation(
       ({ data }: { data: Record<string, unknown> }) => {
@@ -143,7 +147,7 @@ describe("transfer failure tracking (STR-2/3)", () => {
   it("does NOT re-page when already alerted (dedupe)", async () => {
     mockFindUnique.mockResolvedValue({
       id: "rec_1",
-      recordingUrl: "https://stream.example/rec_1.mp4",
+      recordingUrl: "https://us-east.stream-io-cdn.com/rec_1.mp4",
     });
     mockUpdate.mockImplementation(
       ({ data }: { data: Record<string, unknown> }) => {
@@ -161,5 +165,89 @@ describe("transfer failure tracking (STR-2/3)", () => {
     await RecordingTransferService.transferRecordingToSupabase("rec_1");
 
     expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("marks oversized recordings as terminal FAILED with MAX_TRANSFER_ATTEMPTS", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "rec_big",
+      recordingUrl: "https://us-east.stream-io-cdn.com/rec_big.mp4",
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (header: string) => {
+          if (header === "content-type") return "video/mp4";
+          if (header === "content-length")
+            return String(10 * 1024 * 1024 * 1024);
+          return null;
+        },
+      },
+    }) as unknown as typeof fetch;
+
+    mockUpdate.mockResolvedValue({
+      organizationId: "org_1",
+      transferAttempts: 5,
+      transferFailureAlertedAt: null,
+    });
+
+    const res =
+      await RecordingTransferService.transferRecordingToSupabase("rec_big");
+
+    expect(res.success).toBe(false);
+    const terminalCall = mockUpdate.mock.calls.find(
+      ([arg]) => arg.data.status === "FAILED",
+    );
+    expect(terminalCall).toBeDefined();
+    expect(terminalCall![0].data).toMatchObject({
+      status: "FAILED",
+      transferAttempts: 5,
+    });
+  });
+
+  it("validates Stream recording URLs against SSRF host allowlist", () => {
+    expect(
+      isAllowedStreamRecordingUrl(
+        "https://us-east.stream-io-cdn.com/rec_1.mp4",
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedStreamRecordingUrl("https://video.getstream.io/rec_1.mp4"),
+    ).toBe(true);
+    expect(
+      isAllowedStreamRecordingUrl("http://us-east.stream-io-cdn.com/rec_1.mp4"),
+    ).toBe(false);
+    expect(
+      isAllowedStreamRecordingUrl("https://169.254.169.254/latest/meta-data/"),
+    ).toBe(false);
+  });
+
+  it("resolves appointment storage policy for 1:1 subscriptions and group plans", () => {
+    expect(
+      resolveAppointmentStoragePolicy({
+        subscription: {
+          subscriptionPlan: { recordingStoragePolicy: "SUPABASE_PERMANENT" },
+        },
+      }),
+    ).toBe("SUPABASE_PERMANENT");
+    expect(
+      resolveAppointmentStoragePolicy({
+        consultation: {
+          consultationPlan: { recordingStoragePolicy: "STREAM_ONLY" },
+        },
+      }),
+    ).toBe("STREAM_ONLY");
+    expect(
+      resolveAppointmentStoragePolicy({
+        webinar: {
+          webinarPlan: { recordingStoragePolicy: "SUPABASE_PERMANENT" },
+        },
+      }),
+    ).toBe("SUPABASE_PERMANENT");
+    expect(
+      resolveAppointmentStoragePolicy({
+        class: { classPlan: { recordingStoragePolicy: "STREAM_ONLY" } },
+      }),
+    ).toBe("STREAM_ONLY");
   });
 });

@@ -69,12 +69,11 @@ async function main(): Promise<void> {
       // #899 — 14-day window = every READY permanent recording (Stream URLs
       // live exactly 14d), so the sweep starts transfers near-ready and
       // backstops ready-time webhook kicks that died, not just near-expiry.
-      const result =
-        await RecordingTransferService.processExpiringRecordings(
-          14,
-          10,
-          "PERMANENT",
-        );
+      const result = await RecordingTransferService.processExpiringRecordings(
+        14,
+        10,
+        "PERMANENT",
+      );
 
       // Find STREAM_ONLY recordings expiring in 3 days (for warnings)
       const expiringStreamOnly =
@@ -97,14 +96,11 @@ async function main(): Promise<void> {
     console.warn(
       `⚠️ ${atRisk} permanent recording(s) <72h from Stream expiry, still untransferred`,
     );
-    Sentry.captureMessage(
-      "Permanent recordings at risk of Stream URL expiry",
-      {
-        level: "warning",
-        tags: { subsystem: "jobs", job: "transfer-expiring-recordings" },
-        extra: { atRisk },
-      },
-    );
+    Sentry.captureMessage("Permanent recordings at risk of Stream URL expiry", {
+      level: "warning",
+      tags: { subsystem: "jobs", job: "transfer-expiring-recordings" },
+      extra: { atRisk },
+    });
   }
 
   const duration = (Date.now() - startTime) / 1000;
@@ -139,4 +135,8 @@ async function main(): Promise<void> {
   console.log("🎉 Job completed successfully");
 }
 
-runJob("transfer-expiring-recordings", main);
+export const runTransferExpiringRecordings = main;
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runJob("transfer-expiring-recordings", main);
+}
