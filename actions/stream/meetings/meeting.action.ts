@@ -791,14 +791,11 @@ export async function provisionAppointmentMeeting(
     (anchorSlot.startsAt
       ? new Date(anchorSlot.startsAt)
       : authorized.slot.startsAt);
-  const endsAt =
-    callProfile?.endsAt ??
-    (anchorSlot.endsAt ? new Date(anchorSlot.endsAt) : authorized.slot.endsAt);
 
   const authorUserId = callProfile?.hostUserIds[0] ?? authorized.userId;
 
   const maxDurationSeconds = resolveMaxCallDurationSeconds(
-    callProfile ?? (endsAt ? { endsAt } : null),
+    callProfile,
     startsAt,
   );
   if (!callProfile?.hostUserIds.length) {
