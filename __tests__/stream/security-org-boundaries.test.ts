@@ -344,4 +344,33 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       expect(DELETE_USERS_PACING_MS).toBe(10_000);
     });
   });
+
+  describe("Enterprise org scoping for chat search routes", () => {
+    it("builds org-scoped and personal-scoped Prisma filters from searchParams", async () => {
+      const { buildBookingOrgScopeWhere } =
+        await import("../../lib/stream/event-channel-service");
+
+      const orgParams = new URLSearchParams("q=test&scope=org:org-acme");
+      expect(buildBookingOrgScopeWhere(orgParams, "consultationPlan")).toEqual({
+        OR: [
+          { appointment: { organizationId: "org-acme" } },
+          { consultationPlan: { organizationId: "org-acme" } },
+        ],
+      });
+
+      const personalParams = new URLSearchParams("q=test&scope=personal");
+      expect(buildBookingOrgScopeWhere(personalParams, "webinarPlan")).toEqual({
+        webinarPlan: { organizationId: null },
+        OR: [
+          { appointment: { is: null } },
+          { appointment: { organizationId: null } },
+        ],
+      });
+
+      const defaultParams = new URLSearchParams("q=test");
+      expect(
+        buildBookingOrgScopeWhere(defaultParams, "subscriptionPlan"),
+      ).toBeUndefined();
+    });
+  });
 });

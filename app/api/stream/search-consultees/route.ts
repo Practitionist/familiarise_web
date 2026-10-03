@@ -5,6 +5,7 @@ import { liveParticipant } from "@/lib/booking/participants";
 
 import { getSession } from "@/lib/auth-server";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
+import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
 // See schemas/stream-search.ts for why the shape does not live here.
 import {
   ConsulteeSearchResultSchema,
@@ -39,9 +40,26 @@ export async function GET(req: NextRequest) {
     }
 
     const consultantProfileId = session.user.consultantProfileId;
-    const url = new URL(req.url);
-    const searchTerm = url.searchParams.get("term")?.trim().toLowerCase() || "";
-    const excludeIds = url.searchParams.get("exclude")?.split(",") || [];
+    const searchParams =
+      req.nextUrl?.searchParams ?? new URL(req.url).searchParams;
+    const searchTerm = searchParams.get("term")?.trim().toLowerCase() || "";
+    const excludeIds = searchParams.get("exclude")?.split(",") || [];
+    const consultationScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "consultationPlan",
+    );
+    const subscriptionScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "subscriptionPlan",
+    );
+    const webinarScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "webinarPlan",
+    );
+    const classScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "classPlan",
+    );
 
     // Get all consultees from different relationship types
     const results: ConsulteeSearchResult[] = [];
@@ -77,6 +95,7 @@ export async function GET(req: NextRequest) {
           ...dmEligibleStatusFilter(),
         },
         ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
+        ...(consultationScopeWhere ? { AND: [consultationScopeWhere] } : {}),
       },
       orderBy: deterministicOrderBy,
       take: 100,
@@ -126,6 +145,7 @@ export async function GET(req: NextRequest) {
           ...dmEligibleStatusFilter(),
         },
         ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
+        ...(subscriptionScopeWhere ? { AND: [subscriptionScopeWhere] } : {}),
       },
       orderBy: deterministicOrderBy,
       take: 100,
@@ -231,6 +251,7 @@ export async function GET(req: NextRequest) {
         ...(userSearchWhere
           ? { appointment: { participants: { some: participantFilter } } }
           : {}),
+        ...(webinarScopeWhere ? { AND: [webinarScopeWhere] } : {}),
       },
       orderBy: deterministicOrderBy,
       take: 100,
@@ -246,6 +267,7 @@ export async function GET(req: NextRequest) {
         ...(userSearchWhere
           ? { appointment: { participants: { some: participantFilter } } }
           : {}),
+        ...(classScopeWhere ? { AND: [classScopeWhere] } : {}),
       },
       orderBy: deterministicOrderBy,
       take: 100,

@@ -157,4 +157,57 @@ describe("DPDP erasure Stream principal leg", () => {
       eraseStreamPrincipalFootprint("u-erased-1"),
     ).resolves.toBeUndefined();
   });
+
+  it("purges 1:1 recordings, unpublishes host group recordings, and withdraws RecordingConsent on scrubUser", async () => {
+    const mockRecordingFindMany = jest.fn(async () => [
+      {
+        id: "rec-1on1",
+        storagePath: null,
+        previewClipStoragePath: null,
+      },
+    ]);
+    const mockRecordingUpdate = jest.fn(async () => ({}));
+    const mockRecordingUpdateMany = jest.fn(async () => ({ count: 1 }));
+    const mockRecordingConsentUpdateMany = jest.fn(async () => ({ count: 1 }));
+
+    const dbWithRecordings = {
+      ...db,
+      recording: {
+        findMany: mockRecordingFindMany,
+        update: mockRecordingUpdate,
+        updateMany: mockRecordingUpdateMany,
+      },
+      recordingConsent: {
+        updateMany: mockRecordingConsentUpdateMany,
+      },
+    };
+
+    await scrubUser(dbWithRecordings as never, "u-erased-1");
+
+    expect(mockRecordingFindMany).toHaveBeenCalled();
+    expect(mockRecordingUpdate).toHaveBeenCalledWith({
+      where: { id: "rec-1on1" },
+      data: {
+        status: "EXPIRED",
+        recordingUrl: "",
+        storageUrl: null,
+        storagePath: null,
+        previewClipUrl: null,
+        previewClipStoragePath: null,
+      },
+    });
+    expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ listingStatus: "PUBLISHED" }),
+        data: {
+          listingStatus: "UNPUBLISHED",
+          unpublishedAt: expect.any(Date),
+        },
+      }),
+    );
+    expect(mockRecordingConsentUpdateMany).toHaveBeenCalledWith({
+      where: { userId: "u-erased-1", decision: "GRANTED" },
+      data: { decision: "DECLINED", decidedAt: expect.any(Date) },
+    });
+  });
 });

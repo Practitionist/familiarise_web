@@ -666,3 +666,52 @@ export async function endActiveStreamVideoCalls(
 
   return { callsEnded, errors };
 }
+
+export function resolveStreamScopeFilter(searchParams: URLSearchParams): {
+  mode: "all" | "personal" | "org";
+  organizationId: string | null;
+} {
+  const explicitOrgId = searchParams.get("organizationId")?.trim() || null;
+  const scope = searchParams.get("scope")?.trim() || null;
+  if (explicitOrgId) {
+    return { mode: "org", organizationId: explicitOrgId };
+  }
+  if (scope?.startsWith("org:")) {
+    const parsedOrgId = scope.slice("org:".length).trim();
+    if (parsedOrgId) {
+      return { mode: "org", organizationId: parsedOrgId };
+    }
+  }
+  if (scope === "personal") {
+    return { mode: "personal", organizationId: null };
+  }
+  return { mode: "all", organizationId: null };
+}
+
+export function buildBookingOrgScopeWhere<
+  K extends
+    "consultationPlan" | "subscriptionPlan" | "webinarPlan" | "classPlan",
+>(
+  searchParams: URLSearchParams,
+  planKey: K,
+): Record<string, unknown> | undefined {
+  const resolved = resolveStreamScopeFilter(searchParams);
+  if (resolved.mode === "org" && resolved.organizationId) {
+    return {
+      OR: [
+        { appointment: { organizationId: resolved.organizationId } },
+        { [planKey]: { organizationId: resolved.organizationId } },
+      ],
+    };
+  }
+  if (resolved.mode === "personal") {
+    return {
+      [planKey]: { organizationId: null },
+      OR: [
+        { appointment: { is: null } },
+        { appointment: { organizationId: null } },
+      ],
+    };
+  }
+  return undefined;
+}

@@ -218,7 +218,7 @@ export async function eraseStreamPrincipalFootprint(
 ): Promise<void> {
   const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
     await import("@/lib/stream-client");
-  if (!isStreamConfigured()) return;
+  if (typeof isStreamConfigured === "function" && !isStreamConfigured()) return;
 
   const chat = getStreamChatClient();
   try {
@@ -231,6 +231,147 @@ export async function eraseStreamPrincipalFootprint(
     await chat.deleteUsers([userId], { user: "hard", messages: "hard" });
   } catch (err) {
     if (!isExpectedStreamError(err)) throw err;
+  }
+}
+
+async function cleanupUserRecordingsOnErasure(
+  db: Db,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  try {
+    if (db.recording?.findMany) {
+      const oneToOneRecordings = await db.recording.findMany({
+        where: {
+          status: { notIn: ["EXPIRED", "FAILED"] },
+          meeting: {
+            occurrence: {
+              appointment: {
+                appointmentType: {
+                  in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
+                },
+                OR: [
+                  { participants: { some: { userId } } },
+                  {
+                    consultation: {
+                      OR: [
+                        { requestedBy: { userId } },
+                        { consultationPlan: { consultantProfile: { userId } } },
+                      ],
+                    },
+                  },
+                  {
+                    subscription: {
+                      OR: [
+                        { requestedBy: { userId } },
+                        { subscriptionPlan: { consultantProfile: { userId } } },
+                      ],
+                    },
+                  },
+                  {
+                    trial: {
+                      OR: [
+                        { consulteeProfile: { userId } },
+                        { consultantProfile: { userId } },
+                        { subscriptionPlan: { consultantProfile: { userId } } },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          storagePath: true,
+          previewClipStoragePath: true,
+        },
+      });
+
+      if (oneToOneRecordings.length > 0) {
+        const { deleteRecordingObject } =
+          await import("@/lib/stream/recording-storage");
+        for (const rec of oneToOneRecordings) {
+          if (rec.storagePath) {
+            await deleteRecordingObject(rec.storagePath);
+          }
+          if (rec.previewClipStoragePath) {
+            try {
+              const { default: storageClient } =
+                await import("@/lib/supabase-storage-core");
+              await storageClient.storage
+                .from("recordings-previews")
+                .remove([rec.previewClipStoragePath]);
+            } catch {
+              // Best-effort preview clip deletion
+            }
+          }
+          const expiredData = {
+            status: "EXPIRED" as const,
+            recordingUrl: "",
+            storageUrl: null,
+            storagePath: null,
+            previewClipUrl: null,
+            previewClipStoragePath: null,
+          };
+          if (db.recording.update) {
+            await db.recording.update({
+              where: { id: rec.id },
+              data: expiredData,
+            });
+          } else if (db.recording.updateMany) {
+            await db.recording.updateMany({
+              where: { id: rec.id },
+              data: expiredData,
+            });
+          }
+        }
+      }
+    }
+
+    if (db.recording?.updateMany) {
+      await db.recording.updateMany({
+        where: {
+          listingStatus: "PUBLISHED",
+          meeting: {
+            occurrence: {
+              appointment: {
+                OR: [
+                  {
+                    webinar: {
+                      webinarPlan: { consultantProfile: { userId } },
+                    },
+                  },
+                  {
+                    class: {
+                      classPlan: { consultantProfile: { userId } },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        data: {
+          listingStatus: "UNPUBLISHED",
+          unpublishedAt: now,
+        },
+      });
+    }
+
+    if (db.recordingConsent?.updateMany) {
+      await db.recordingConsent.updateMany({
+        where: { userId, decision: "GRANTED" },
+        data: { decision: "DECLINED", decidedAt: now },
+      });
+    }
+  } catch (caught) {
+    reportSentryError(caught, {
+      subsystem: "compliance",
+      op: "scrubUser.cleanupUserRecordingsOnErasure",
+      extra: { userId },
+    });
   }
 }
 
@@ -285,6 +426,7 @@ export async function scrubUser(
         "stream: principal deletion not confirmed — re-run required",
       );
     }
+    await cleanupUserRecordingsOnErasure(prisma, userId, new Date());
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
@@ -431,8 +573,7 @@ export async function scrubUser(
           ...collaborationsRemoved.map(({ planType, planId }) => ({
             erasureRequestId: erasureRequestId as string,
             planType: (planType === "webinar" ? "WEBINAR" : "CLASS") as
-              | "WEBINAR"
-              | "CLASS",
+              "WEBINAR" | "CLASS",
             planId,
           })),
           {
@@ -582,6 +723,8 @@ export async function scrubUser(
         }),
       );
   }
+
+  await cleanupUserRecordingsOnErasure(prisma, userId, now);
 
   const vendorFailures = await offboardPaymentVendors(prisma, {
     userId,
