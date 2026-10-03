@@ -480,8 +480,8 @@ async function settlePrincipalStreamErasure(
   let principalError: string | null = null;
   try {
     await eraseStreamPrincipalFootprint(userId);
-  } catch (caught) {
-    principalError = caught instanceof Error ? caught.message : String(caught);
+  } catch (error_) {
+    principalError = error_ instanceof Error ? error_.message : String(error_);
   }
   if (principalError) {
     reportSentryError(new Error(`${principalError} on erasure`), {
@@ -509,8 +509,8 @@ async function settlePrincipalStreamErasure(
             }
           : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
       })
-      .catch((caught) =>
-        reportSentryError(caught, {
+      .catch((error_) =>
+        reportSentryError(error_, {
           subsystem: "compliance",
           op: "scrubUser.settlePrincipalRevocationOutbox",
           extra: { userId },

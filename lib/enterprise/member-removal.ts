@@ -426,55 +426,13 @@ export interface RevokeMemberStreamResult {
   failures: string[];
 }
 
-export async function revokeMemberStreamAccess(input: {
-  userId: string;
-  orgId: string;
-}): Promise<RevokeMemberStreamResult> {
-  const { userId, orgId } = input;
-  if (!isStreamConfigured()) {
-    return {
-      channelsRemoved: 0,
-      tokenRevoked: false,
-      complete: true,
-      failures: [],
-    };
-  }
-
-  const chat = getStreamChatClient();
-  const failures: string[] = [];
-  const tokenRevoked = false;
-  let channelsRemoved = 0;
-
-  let surfaces: OrgStreamSurfaces;
-  try {
-    surfaces = await loadOrgStreamSurfaces(orgId, { userId });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    failures.push(`loadOrgStreamSurfaces:${msg}`);
-    streamLogger.error(
-      "Failed to load org Stream surfaces for member removal",
-      err,
-      { userId, orgId },
-    );
-    return {
-      channelsRemoved: 0,
-      tokenRevoked,
-      complete: false,
-      failures,
-    };
-  }
-
-  const targets = new Map<string, "team" | "messaging">();
-  for (const id of surfaces.webinarIds) {
-    targets.set(`${WEBINAR_PREFIX}${id}`, "team");
-  }
-  for (const id of surfaces.classIds) {
-    targets.set(`${CLASS_PREFIX}${id}`, "team");
-  }
-  for (const cid of surfaces.dmChannelIds) {
-    targets.set(cid, "messaging");
-  }
-
+async function populateOrgTaggedMemberTargets(
+  chat: ReturnType<typeof getStreamChatClient>,
+  orgId: string,
+  userId: string,
+  targets: Map<string, "team" | "messaging">,
+  failures: string[],
+): Promise<void> {
   try {
     const { channels: taggedChannels, truncated } =
       await queryOrgTaggedChannels(chat, orgId, {
@@ -506,7 +464,16 @@ export async function revokeMemberStreamAccess(input: {
       );
     }
   }
+}
 
+async function removeMemberFromTargetChannels(
+  chat: ReturnType<typeof getStreamChatClient>,
+  orgId: string,
+  userId: string,
+  targets: Map<string, "team" | "messaging">,
+  failures: string[],
+): Promise<number> {
+  let channelsRemoved = 0;
   for (const [cid, type] of targets) {
     try {
       await chat.channel(type, cid).removeMembers([userId]);
@@ -525,6 +492,65 @@ export async function revokeMemberStreamAccess(input: {
       });
     }
   }
+  return channelsRemoved;
+}
+
+export async function revokeMemberStreamAccess(input: {
+  userId: string;
+  orgId: string;
+}): Promise<RevokeMemberStreamResult> {
+  const { userId, orgId } = input;
+  if (!isStreamConfigured()) {
+    return {
+      channelsRemoved: 0,
+      tokenRevoked: false,
+      complete: true,
+      failures: [],
+    };
+  }
+
+  const chat = getStreamChatClient();
+  const failures: string[] = [];
+  const tokenRevoked = false;
+
+  let surfaces: OrgStreamSurfaces;
+  try {
+    surfaces = await loadOrgStreamSurfaces(orgId, { userId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    failures.push(`loadOrgStreamSurfaces:${msg}`);
+    streamLogger.error(
+      "Failed to load org Stream surfaces for member removal",
+      err,
+      { userId, orgId },
+    );
+    return {
+      channelsRemoved: 0,
+      tokenRevoked,
+      complete: false,
+      failures,
+    };
+  }
+
+  const targets = new Map<string, "team" | "messaging">();
+  for (const id of surfaces.webinarIds) {
+    targets.set(`${WEBINAR_PREFIX}${id}`, "team");
+  }
+  for (const id of surfaces.classIds) {
+    targets.set(`${CLASS_PREFIX}${id}`, "team");
+  }
+  for (const cid of surfaces.dmChannelIds) {
+    targets.set(cid, "messaging");
+  }
+
+  await populateOrgTaggedMemberTargets(chat, orgId, userId, targets, failures);
+  const channelsRemoved = await removeMemberFromTargetChannels(
+    chat,
+    orgId,
+    userId,
+    targets,
+    failures,
+  );
 
   return {
     channelsRemoved,

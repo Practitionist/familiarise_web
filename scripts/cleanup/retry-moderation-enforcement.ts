@@ -231,6 +231,45 @@ async function retryModerationEnforcementUnlocked(
   return result;
 }
 
+async function executeErasureRevocationRow(
+  row: {
+    planType: string;
+    planId: string;
+    erasureRequest: { userId: string };
+  },
+  deps: {
+    principalPrefix: string;
+    eraseStreamPrincipalFootprint: (userId: string) => Promise<void>;
+    revokeCollaboratorAccess: (
+      planType: "webinar" | "class",
+      planId: string,
+      userId: string,
+      opts: { notify: boolean },
+    ) => Promise<{ success: boolean }>;
+  },
+): Promise<string | null> {
+  if (row.planId.startsWith(deps.principalPrefix)) {
+    try {
+      await deps.eraseStreamPrincipalFootprint(row.erasureRequest.userId);
+      return null;
+    } catch (error_) {
+      return errMsg(error_);
+    }
+  }
+  const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+  try {
+    const { success } = await deps.revokeCollaboratorAccess(
+      planType,
+      row.planId,
+      row.erasureRequest.userId,
+      { notify: false },
+    );
+    return success ? null : "Collaborator Stream access not fully revoked";
+  } catch (error_) {
+    return errMsg(error_);
+  }
+}
+
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
@@ -260,27 +299,11 @@ async function drainErasureRevocations(
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
   for (const row of rows) {
-    let error: string | null = null;
-    if (row.planId.startsWith(STREAM_PRINCIPAL_PLAN_ID_PREFIX)) {
-      try {
-        await eraseStreamPrincipalFootprint(row.erasureRequest.userId);
-      } catch (caught) {
-        error = errMsg(caught);
-      }
-    } else {
-      const planType = row.planType === "WEBINAR" ? "webinar" : "class";
-      try {
-        const { success } = await revokeCollaboratorAccess(
-          planType,
-          row.planId,
-          row.erasureRequest.userId,
-          { notify: false },
-        );
-        if (!success) error = "Collaborator Stream access not fully revoked";
-      } catch (caught) {
-        error = errMsg(caught);
-      }
-    }
+    const error = await executeErasureRevocationRow(row, {
+      principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
+      eraseStreamPrincipalFootprint,
+      revokeCollaboratorAccess,
+    });
     const attempts = row.attempts + 1;
     await prisma.streamRevocationRetry.update({
       where: { id: row.id },

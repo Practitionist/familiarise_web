@@ -13,6 +13,66 @@ export interface EnsureChannelsResult {
   skipped?: string;
 }
 
+function resolveBuyerIds(
+  paidBuyerIds: string[],
+  buyerUserIds?: string[],
+): string[] {
+  if (!buyerUserIds || buyerUserIds.length === 0) {
+    return paidBuyerIds;
+  }
+  const paidBuyerSet = new Set(paidBuyerIds);
+  return buyerUserIds.filter((id) => paidBuyerSet.has(id));
+}
+
+async function ensureChannelsForBuyers(args: {
+  eventType: string;
+  consultantUserId: string;
+  dmOrgId: string | null;
+  buyerIds: string[];
+  consultationId?: string;
+  subscriptionId?: string;
+  webinarId?: string;
+  classId?: string;
+}): Promise<boolean> {
+  const {
+    eventType,
+    consultantUserId,
+    dmOrgId,
+    buyerIds,
+    consultationId,
+    subscriptionId,
+    webinarId,
+    classId,
+  } = args;
+  const isOneToOne =
+    (eventType === "CONSULTATION" && Boolean(consultationId)) ||
+    (eventType === "SUBSCRIPTION" && Boolean(subscriptionId));
+  const eventChannelSpec =
+    eventType === "WEBINAR" && webinarId
+      ? { kind: "webinar" as const, id: webinarId }
+      : eventType === "CLASS" && classId
+        ? { kind: "class" as const, id: classId }
+        : null;
+
+  if (!isOneToOne && !eventChannelSpec) {
+    return false;
+  }
+
+  for (const userId of buyerIds) {
+    if (eventChannelSpec) {
+      await addUserToEventChannel(
+        eventChannelSpec.kind,
+        eventChannelSpec.id,
+        userId,
+      );
+    }
+    if (consultantUserId !== userId) {
+      await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
+    }
+  }
+  return true;
+}
+
 /**
  * Ensures Stream chat channels for a confirmed, paid appointment and stamps
  * `Appointment.chatChannelEnsuredAt` once complete.
@@ -113,49 +173,31 @@ export async function ensureChannelsForAppointment(
   }
 
   const paidBuyerIds = appointment.payment?.map((p) => p.userId) ?? [];
-  const paidBuyerSet = new Set(paidBuyerIds);
-  const buyerIds =
-    buyerUserIds && buyerUserIds.length > 0
-      ? buyerUserIds.filter((id) => paidBuyerSet.has(id))
-      : paidBuyerIds;
+  const buyerIds = resolveBuyerIds(paidBuyerIds, buyerUserIds);
   if (buyerIds.length === 0) {
     return { ensured: false, reason: "no_succeeded_payment" };
   }
 
-  const consultation = appointment.consultation;
-  const subscription = appointment.subscription;
-  const webinar = appointment.webinar;
-  const classEvent = appointment.class;
-
   const dmOrgId = bookingOrgId({
-    consultationPlan: consultation?.consultationPlan,
-    subscriptionPlan: subscription?.subscriptionPlan,
-    webinarPlan: webinar?.webinarPlan,
-    classPlan: classEvent?.classPlan,
+    consultationPlan: appointment.consultation?.consultationPlan,
+    subscriptionPlan: appointment.subscription?.subscriptionPlan,
+    webinarPlan: appointment.webinar?.webinarPlan,
+    classPlan: appointment.class?.classPlan,
     appointment,
   });
 
-  for (const userId of buyerIds) {
-    if (
-      (eventType === "CONSULTATION" && consultation) ||
-      (eventType === "SUBSCRIPTION" && subscription)
-    ) {
-      if (consultantUserId !== userId) {
-        await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
-      }
-    } else if (eventType === "WEBINAR" && webinar) {
-      await addUserToEventChannel("webinar", webinar.id, userId);
-      if (consultantUserId !== userId) {
-        await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
-      }
-    } else if (eventType === "CLASS" && classEvent) {
-      await addUserToEventChannel("class", classEvent.id, userId);
-      if (consultantUserId !== userId) {
-        await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
-      }
-    } else {
-      return { ensured: false, reason: "no_channel_branch_for_appointment" };
-    }
+  const matched = await ensureChannelsForBuyers({
+    eventType,
+    consultantUserId,
+    dmOrgId,
+    buyerIds,
+    consultationId: appointment.consultation?.id,
+    subscriptionId: appointment.subscription?.id,
+    webinarId: appointment.webinar?.id,
+    classId: appointment.class?.id,
+  });
+  if (!matched) {
+    return { ensured: false, reason: "no_channel_branch_for_appointment" };
   }
 
   // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
