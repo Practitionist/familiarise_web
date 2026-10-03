@@ -97,6 +97,15 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
+                trial: {
+                  include: {
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfileId: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -117,8 +126,26 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
+    const normalizedMeeting =
+      meeting.occurrence?.appointment?.trial &&
+      !meeting.occurrence.appointment.subscription
+        ? {
+            ...meeting,
+            occurrence: {
+              ...meeting.occurrence,
+              appointment: {
+                ...meeting.occurrence.appointment,
+                subscription: meeting.occurrence.appointment.trial,
+              },
+            },
+          }
+        : meeting;
+
     // Verify the consultant owns this appointment using helper function
-    const { isOwner } = getMeetingOwnershipInfo(meeting, consultantProfile?.id);
+    const { isOwner } = getMeetingOwnershipInfo(
+      normalizedMeeting,
+      consultantProfile?.id,
+    );
 
     if (!isOwner) {
       return NextResponse.json(

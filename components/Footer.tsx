@@ -253,7 +253,7 @@ const Footer: React.FC = () => {
             <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
               Stay in the <span className="silver-text">loop</span>
             </h2>
-            <p className="text-lg text-zinc-500 mb-8">
+            <p className="text-lg text-zinc-400 mb-8">
               Get expert tips, career advice, and exclusive offers delivered to
               your inbox weekly.
             </p>
@@ -267,7 +267,7 @@ const Footer: React.FC = () => {
                 placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
+                className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-400 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
               />
               <Button
                 type="submit"
@@ -287,11 +287,11 @@ const Footer: React.FC = () => {
               </p>
             )}
 
-            <p className="text-sm text-zinc-600 mt-4">
+            <p className="text-sm text-zinc-400 mt-4">
               No spam, unsubscribe anytime.{" "}
               <Link
                 href="/privacy"
-                className="underline hover:text-zinc-400 transition-colors"
+                className="underline hover:text-zinc-200 transition-colors"
               >
                 Privacy Policy
               </Link>
@@ -362,7 +362,7 @@ const Footer: React.FC = () => {
 
         {/* Expertise band — deep links into the catalog */}
         <div className="mt-12 pt-8 border-t border-zinc-800">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 mb-3">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-3">
             Find an expert in
           </h3>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
@@ -383,7 +383,7 @@ const Footer: React.FC = () => {
           only the copyright line. */}
       <div className="border-t border-zinc-800 relative z-10">
         <div className="container mx-auto px-4 md:px-6 py-6">
-          <p className="text-sm text-zinc-500 text-center md:text-left">
+          <p className="text-sm text-zinc-400 text-center md:text-left">
             © {new Date().getFullYear()} Familiarise. All rights reserved.
           </p>
         </div>

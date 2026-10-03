@@ -1,5 +1,7 @@
 import "server-only";
 
+import { checkConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
   generateChatToken,
   generateVideoToken,
@@ -24,21 +26,29 @@ export interface StreamInitialTokens {
 }
 
 /**
- * `null` when Stream is unconfigured or minting fails; never throws, because
- * the client falls back to the token action either way (FAMILIARISE_WEB-4A).
+ * `null` when Stream is unconfigured, DPDP consent is absent, or minting fails;
+ * never throws, because the client falls back to the token action either way (FAMILIARISE_WEB-4A).
  */
-export function mintInitialStreamTokens(
+export async function mintInitialStreamTokens(
   userId: string,
-  opts: { chat: boolean; video: boolean },
-): StreamInitialTokens | null {
+  opts?: { chat?: boolean; video?: boolean },
+): Promise<StreamInitialTokens | null> {
   if (!isStreamConfigured()) return null;
+  const includeChat = opts?.chat ?? true;
+  const includeVideo = opts?.video ?? true;
   try {
+    const hasConsent = await checkConsent({
+      userId,
+      purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
+    });
+    if (!hasConsent) return null;
+
     return {
       userId,
-      chatToken: opts.chat
+      chatToken: includeChat
         ? generateChatToken(userId, STREAM_TOKEN_TTL_SECONDS)
         : undefined,
-      videoToken: opts.video
+      videoToken: includeVideo
         ? generateVideoToken(userId, STREAM_TOKEN_TTL_SECONDS)
         : undefined,
       expiresAt: Date.now() + STREAM_TOKEN_CACHE_MS,

@@ -23,6 +23,8 @@ import { PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import { scopeOrgId } from "@/lib/api/scope/parse";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;
@@ -51,6 +53,7 @@ export const CreateChannelDialog = ({
   // conversation pane stays hidden until this runs, so without it the new
   // channel opens behind the list the dialog just closed over.
   const { openConversation } = useChatPane();
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const { toast } = useToast();
 
   // Fetch user's events
@@ -61,18 +64,21 @@ export const CreateChannelDialog = ({
   } = useEventsByUser(client?.userID || "");
 
   // Prepare events for dropdown
-  const events = useMemo(() => [
-    ...webinars.map((webinar) => ({
-      id: `webinar-${webinar.id}`,
-      name: webinar.webinarPlan.title,
-      type: "webinar",
-    })),
-    ...classes.map((classItem) => ({
-      id: `class-${classItem.id}`,
-      name: classItem.classPlan.title,
-      type: "class",
-    })),
-  ], [webinars, classes]);
+  const events = useMemo(
+    () => [
+      ...webinars.map((webinar) => ({
+        id: `webinar-${webinar.id}`,
+        name: webinar.webinarPlan.title,
+        type: "webinar",
+      })),
+      ...classes.map((classItem) => ({
+        id: `class-${classItem.id}`,
+        name: classItem.classPlan.title,
+        type: "class",
+      })),
+    ],
+    [webinars, classes],
+  );
 
   // Update channel name when event is selected
   useEffect(() => {
@@ -94,6 +100,94 @@ export const CreateChannelDialog = ({
       // setChannelName(""); // Optional: Clear name if needed
     }
   }, [selectedEvent, events]);
+
+  const createEventLinkedChannel = async (
+    eventSelection: string,
+    currentUserId: string,
+    organizationId: string | null,
+  ) => {
+    if (!client) return;
+    const separatorIndex = eventSelection.indexOf("-");
+    const eventType =
+      separatorIndex >= 0
+        ? eventSelection.slice(0, separatorIndex)
+        : eventSelection;
+    const eventId =
+      separatorIndex >= 0 ? eventSelection.slice(separatorIndex + 1) : "";
+
+    const response = await fetch("/api/stream/channels/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channelType: "team",
+        eventType,
+        eventId,
+        createdById: currentUserId,
+        organizationId,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || "Failed to create channel");
+    }
+
+    const channelId = `${eventType}-${eventId}`;
+    const channel = client.channel("team", channelId);
+
+    try {
+      await channel.query();
+      setActiveChannel(channel);
+      openConversation();
+    } catch (queryError) {
+      console.error("Error querying created channel:", queryError);
+    }
+
+    toast({
+      title: "Success",
+      description:
+        result.message || `Channel "${channelName}" created successfully`,
+    });
+  };
+
+  const createCustomTeamChannel = async (
+    currentUserId: string,
+    organizationId: string | null,
+  ) => {
+    if (!client) return;
+    const response = await fetch("/api/stream/channels/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channelType: "team",
+        channelName,
+        createdById: currentUserId,
+        organizationId,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Failed to create channel");
+    }
+
+    const channel = client.channel("team", result.data.channelId);
+    await channel.watch();
+
+    setActiveChannel(channel);
+    openConversation();
+
+    toast({
+      title: "Success",
+      description: `Channel "${channelName}" created successfully`,
+    });
+  };
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,12 +213,9 @@ export const CreateChannelDialog = ({
     }
 
     setIsLoading(true);
+    const organizationId = scopeOrgId(scope);
 
     try {
-      // Three states, not two. `selectedEvent` initialises to `null`, so an
-      // `if (event) … else custom` split sent "nothing chosen" down the custom
-      // branch — which for a consultant is a request the route answers 403.
-      // Each state is now named.
       if (!selectedEvent) {
         toast({
           title: "Error",
@@ -135,98 +226,21 @@ export const CreateChannelDialog = ({
       }
 
       if (selectedEvent !== "custom") {
-        // Event-linked channel creation - use server-side API with full participant lists
-        const [eventType, eventId] = selectedEvent.split("-");
-
-        const response = await fetch("/api/stream/channels/create", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            channelType: "team",
-            eventType,
-            eventId,
-            createdById: currentUserId,
-          }),
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-          throw new Error(result.error || "Failed to create channel");
-        }
-
-        // Find the created channel and set it as active
-        const channelId = `${eventType}-${eventId}`;
-        const channel = client.channel("team", channelId);
-
-        // Query the channel to ensure it's loaded and properly synchronized
-        try {
-          await channel.query();
-          setActiveChannel(channel);
-          openConversation();
-        } catch (queryError) {
-          console.error("Error querying created channel:", queryError);
-          // Still show success but mention refresh might be needed
-        }
-
-        toast({
-          title: "Success",
-          description:
-            result.message || `Channel "${channelName}" created successfully`,
-        });
+        await createEventLinkedChannel(
+          selectedEvent,
+          currentUserId,
+          organizationId,
+        );
       } else if (!canCreateCustomChannel) {
-        // Belt and braces: the option is hidden for callers who cannot use it,
-        // but a stale `selectedEvent` from before a role change would otherwise
-        // reach the route and come back 403 with no explanation.
         toast({
           title: "Not allowed",
-          description: "Only staff can create channels that aren't tied to an event",
+          description:
+            "Only staff can create channels that aren't tied to an event",
           variant: "destructive",
         });
         return;
       } else {
-        // Custom channel creation — server-side, same as the event branch.
-        //
-        // This used to mint the channel straight from the browser with
-        // `client.channel("team", crypto.randomUUID(), …).create()`. That
-        // bypassed the admin/staff-only gate in
-        // `app/api/stream/channels/create/route.ts`, so anyone the sidebar
-        // considers able to create channels — every consultant — could create
-        // custom `team` channels that no server-side rule had approved. The
-        // route enforces the gate; the client asks it to.
-        const response = await fetch("/api/stream/channels/create", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            channelType: "team",
-            channelName,
-            createdById: currentUserId,
-          }),
-        });
-
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-          throw new Error(result.error || "Failed to create channel");
-        }
-
-        // `createChannel` returns `{ channelId, members, channelData }` and the
-        // route wraps it in `data`.
-        const channel = client.channel("team", result.data.channelId);
-        await channel.watch();
-
-        // Set the new channel as active
-        setActiveChannel(channel);
-        openConversation();
-
-        toast({
-          title: "Success",
-          description: `Channel "${channelName}" created successfully`,
-        });
+        await createCustomTeamChannel(currentUserId, organizationId);
       }
 
       // Call the onChannelCreated callback if provided (this should trigger sidebar refresh for just this channel)

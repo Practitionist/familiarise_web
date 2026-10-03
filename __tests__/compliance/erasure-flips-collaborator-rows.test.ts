@@ -20,6 +20,14 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
+jest.mock("../../lib/stream-client", () => ({
+  isStreamConfigured: jest.fn(() => true),
+  isExpectedStreamError: jest.fn(() => false),
+  getStreamChatClient: jest.fn(() => ({
+    revokeUserToken: jest.fn(async () => ({})),
+    deleteUsers: jest.fn(async () => ({})),
+  })),
+}));
 
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
@@ -94,7 +102,14 @@ describe("DPDP erasure flips collaborator rows", () => {
     await scrubUser(db as never, "u1");
 
     expect(tx.streamRevocationRetry.createMany).toHaveBeenCalledWith({
-      data: [{ erasureRequestId: "er-1", planType: "WEBINAR", planId: "wp-1" }],
+      data: [
+        { erasureRequestId: "er-1", planType: "WEBINAR", planId: "wp-1" },
+        {
+          erasureRequestId: "er-1",
+          planType: "WEBINAR",
+          planId: "principal:u1",
+        },
+      ],
       skipDuplicates: true,
     });
     expect(db.streamRevocationRetry.update).toHaveBeenCalledWith(
