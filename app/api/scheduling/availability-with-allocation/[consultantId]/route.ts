@@ -373,13 +373,19 @@ export async function GET(
       ],
     };
 
+    // #1691 Item 2 — When the ETag marker probe already returned the primary
+    // consultant's `scheduleType`, only fetch the active availability window
+    // relation (`WEEKLY` or `CUSTOM`) instead of loading both tables.
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
       include: {
-        availabilityWindowsWeekly: true,
-        availabilityWindowsCustom: {
-          where: customWindowOverlapWhere,
-        },
+        availabilityWindowsWeekly: marker?.scheduleType
+          ? marker.scheduleType === "WEEKLY"
+          : true,
+        availabilityWindowsCustom:
+          !marker?.scheduleType || marker.scheduleType === "CUSTOM"
+            ? { where: customWindowOverlapWhere }
+            : false,
       },
     });
 
@@ -388,6 +394,28 @@ export async function GET(
         { error: "Consultant not found" },
         { status: 404 },
       );
+    }
+
+    if (
+      marker?.scheduleType &&
+      consultant.scheduleType !== marker.scheduleType
+    ) {
+      const refetched = await prisma.consultantProfile.findUnique({
+        where: { id: consultantId },
+        include: {
+          availabilityWindowsWeekly: consultant.scheduleType === "WEEKLY",
+          availabilityWindowsCustom:
+            consultant.scheduleType === "CUSTOM"
+              ? { where: customWindowOverlapWhere }
+              : false,
+        },
+      });
+      if (refetched) {
+        consultant.availabilityWindowsWeekly =
+          refetched.availabilityWindowsWeekly;
+        consultant.availabilityWindowsCustom =
+          refetched.availabilityWindowsCustom;
+      }
     }
 
     // #1689 — When allocating a webinar or class, load ACCEPTED co-hosts so the
@@ -740,7 +768,9 @@ export async function GET(
 
     // Convert to utility interfaces with defensive validation
     // Weekly slots now use Int (minutes since midnight UTC 0-1439) instead of DateTime
-    const weeklySlots: WeeklySlot[] = consultant.availabilityWindowsWeekly
+    const weeklySlots: WeeklySlot[] = (
+      consultant.availabilityWindowsWeekly ?? []
+    )
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (
@@ -808,7 +838,9 @@ export async function GET(
         utcOffsetMinutes: slot.utcOffsetMinutes,
       }));
 
-    const customSlots: CustomSlot[] = consultant.availabilityWindowsCustom
+    const customSlots: CustomSlot[] = (
+      consultant.availabilityWindowsCustom ?? []
+    )
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (!slot.startsAt || !slot.endsAt) {

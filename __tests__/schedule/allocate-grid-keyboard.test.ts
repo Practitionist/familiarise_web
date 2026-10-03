@@ -186,7 +186,7 @@ describe("SlotStatusLegend ARIA & UnifiedCalendar keyboard navigation (#1715)", 
     });
 
     const items = host.querySelectorAll('li[role="img"]');
-    expect(items.length).toBe(5);
+    expect(items).toHaveLength(5);
     const labels = Array.from(items).map((el) =>
       el.getAttribute("aria-label"),
     );
@@ -198,9 +198,9 @@ describe("SlotStatusLegend ARIA & UnifiedCalendar keyboard navigation (#1715)", 
       "Past: Already gone; shown so the day reads whole.",
     ]);
     // Inner swatch spans are aria-hidden="true" and do not carry a nested role="img"
-    expect(host.querySelectorAll('span[role="img"]').length).toBe(0);
+    expect(host.querySelectorAll('span[role="img"]')).toHaveLength(0);
     const swatches = host.querySelectorAll('li[role="img"] > span:first-child');
-    expect(swatches.length).toBe(5);
+    expect(swatches).toHaveLength(5);
     swatches.forEach((swatch) => {
       expect(swatch.getAttribute("aria-hidden")).toBe("true");
     });
@@ -226,10 +226,10 @@ describe("SlotStatusLegend ARIA & UnifiedCalendar keyboard navigation (#1715)", 
     expect(grid?.getAttribute("aria-label")).toBe("Availability slot grid");
 
     const rows = host.querySelectorAll('[role="row"]');
-    expect(rows.length).toBe(48);
+    expect(rows).toHaveLength(48);
 
     const gridcells = host.querySelectorAll('[role="gridcell"]');
-    expect(gridcells.length).toBe(48 * 7);
+    expect(gridcells).toHaveLength(48 * 7);
     expect(gridcells[0]?.getAttribute("aria-selected")).toBe("false");
 
     // Live status region announces selected slot count
@@ -257,6 +257,8 @@ describe("SlotStatusLegend ARIA & UnifiedCalendar keyboard navigation (#1715)", 
       'button[data-day-index="1"][data-slot-index="1"]',
     ) as HTMLButtonElement | null;
 
+    expect(cell00?.tagName).toBe("BUTTON");
+    expect(cell00?.getAttribute("aria-disabled")).toBe("false");
     expect(cell00?.getAttribute("tabindex")).toBe("0");
     expect(cell00?.getAttribute("aria-pressed")).toBe("false");
     expect(cell00?.getAttribute("aria-selected")).toBeNull();
@@ -286,5 +288,35 @@ describe("SlotStatusLegend ARIA & UnifiedCalendar keyboard navigation (#1715)", 
       );
     });
     expect(toggleSlotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders fast-exit unavailable cells as native buttons with aria-disabled='true'", () => {
+    calendarData.getSlotStatusForInterval = (
+      interval: { hour: number; minute: number },
+      date: Date,
+    ) => ({
+      ...slotStatus(interval, date),
+      isAvailable: false,
+    });
+
+    act(() => {
+      root.render(
+        React.createElement(UnifiedCalendar, {
+          consultantId: "consultant-1",
+          eventType: "subscription",
+          eventId: "sub-1",
+          mode: "allocate",
+          durationInHours: 1,
+        }),
+      );
+    });
+
+    const cell00 = host.querySelector(
+      'button[data-day-index="0"][data-slot-index="0"]',
+    ) as HTMLButtonElement | null;
+    expect(cell00).not.toBeNull();
+    expect(cell00?.tagName).toBe("BUTTON");
+    expect(cell00?.getAttribute("aria-disabled")).toBe("true");
+    expect(cell00?.getAttribute("tabindex")).toBe("0");
   });
 });

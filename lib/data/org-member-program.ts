@@ -38,6 +38,7 @@ export async function getMyProgramData(params: {
   const assignments = await prisma.programAssignment.findMany({
     where: {
       membershipId,
+      status: "ACTIVE",
       periodStart: { lte: now },
       periodEnd: { gte: now },
     },
