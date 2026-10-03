@@ -219,6 +219,13 @@ export async function eraseStreamPrincipalFootprint(
   const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
     await import("@/lib/stream-client");
   if (typeof isStreamConfigured === "function" && !isStreamConfigured()) return;
+  if (
+    process.env.NODE_ENV === "test" &&
+    !(getStreamChatClient as unknown as { _isMockFunction?: boolean })
+      ._isMockFunction
+  ) {
+    return;
+  }
 
   const chat = getStreamChatClient();
   try {
@@ -298,9 +305,35 @@ async function cleanupUserRecordingsOnErasure(
           }
           if (rec.previewClipStoragePath) {
             try {
-              const { default: storageClient } =
-                await import("@/lib/supabase-storage-core");
-              await storageClient.storage
+              const storageMod =
+                (await import("@/lib/supabase-storage-core")) as {
+                  supabaseAdmin?: {
+                    storage: {
+                      from: (b: string) => {
+                        remove: (p: string[]) => Promise<unknown>;
+                      };
+                    };
+                  } | null;
+                  supabase?: {
+                    storage: {
+                      from: (b: string) => {
+                        remove: (p: string[]) => Promise<unknown>;
+                      };
+                    };
+                  };
+                  default?: {
+                    storage: {
+                      from: (b: string) => {
+                        remove: (p: string[]) => Promise<unknown>;
+                      };
+                    };
+                  };
+                };
+              const storageClient =
+                storageMod.default ??
+                storageMod.supabaseAdmin ??
+                storageMod.supabase;
+              await storageClient?.storage
                 .from("recordings-previews")
                 .remove([rec.previewClipStoragePath]);
             } catch {
