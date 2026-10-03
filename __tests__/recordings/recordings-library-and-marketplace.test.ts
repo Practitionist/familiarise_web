@@ -589,7 +589,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         id: "vm-1",
         appointmentId: "apt-1",
         kind: "CONSULTATION",
-        status: "APPROVED_PENDING_PAYMENT",
+        status: "APPROVED",
         raw: {
           appointment: {
             consultation: {
@@ -602,7 +602,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         },
       } as unknown as AppointmentVM;
 
-      // APPROVED_PENDING_PAYMENT is in DM_ELIGIBLE_STATUSES for both consultee and consultant
+      // APPROVED is in DM_ELIGIBLE_STATUSES for both consultee and consultant
       const consulteeDmItems = chatAffordancesForVm({
         vm: baseConsultationVm,
         messagesBasePath: "/dashboard/consultee/ce-1/messages",
