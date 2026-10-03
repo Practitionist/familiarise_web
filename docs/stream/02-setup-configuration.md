@@ -109,10 +109,22 @@ DATABASE_URL=""
 DIRECT_URL=""
 
 # Better Auth
-NEXTAUTH_SECRET=""
-NEXTAUTH_URL=""
+BETTER_AUTH_SECRET=""
+BETTER_AUTH_URL=""
 
 # Other services...
+```
+
+### Unified Stream App & Call-Type Provisioning (`scripts/stream/ensure.ts`)
+
+Run the idempotent orchestrator to verify or apply app settings (`guest_user_creation_disabled: true`, `enable_hook_payload_compression: false`), `default` call-type role grants (`call_member` admission only), unused call-type hardening (`livestream`, `audio_room`, `development`), and `default` call-type `session.inactivity_timeout_seconds = 300`:
+
+```bash
+# Dry run (inspects current state and prints pending diffs)
+npx tsx scripts/stream/ensure.ts
+
+# Apply changes
+npx tsx scripts/stream/ensure.ts --apply --confirm-join-route-deployed
 ```
 
 ---
@@ -1086,6 +1098,13 @@ railway variables set STREAM_API_SECRET=xxx
 5. **Recording & Webhooks:** [13. Recording & Webhooks](./13-recording-webhooks.md)
 
 **Troubleshooting:** [Troubleshooting Guide](./troubleshooting.md)
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
+- **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts`, `ensure-call-type-grants.ts`, `harden-unused-call-types.ts`), which writes pre-image backups to `.stream-backups/` and verifies post-write state against drift.
 
 ---
 

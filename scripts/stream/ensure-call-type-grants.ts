@@ -1,6 +1,8 @@
 /**
- * #1134 P0-1 — move `join-call`, `end-call`, and recording permissions off
- * client roles on `STREAM_CALL_TYPE`.
+ * Enforces least-privilege role grants on `STREAM_CALL_TYPE` (`default`),
+ * revoking unguarded join, end-call, join-ended-call, update-call-permissions,
+ * and all 18 billable permissions (including `-owner` and `-any-team` variants)
+ * from client roles.
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
@@ -20,21 +22,39 @@ import {
   anyOpenCallMemberHolds,
   MEMBER_ROLE,
 } from "./backfill-call-member-role";
+import {
+  BILLABLE_PERMISSIONS,
+  matchesPermissionWithScope,
+} from "./harden-unused-call-types";
 
 const JOIN_CALL = "join-call";
 const JOIN_REVOKED_ROLES = ["user", "guest"];
-const RECORDING_PERMISSIONS = ["start-recording", "stop-recording"];
 const END_CALL = "end-call";
+const CALL_CONTROL_REVOKED_PERMISSIONS = [
+  END_CALL,
+  "join-ended-call",
+  "update-call-permissions",
+];
+export const DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS = [
+  ...BILLABLE_PERMISSIONS,
+  ...CALL_CONTROL_REVOKED_PERMISSIONS,
+];
 const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
-const END_CALL_REVOKED_ROLES = RECORDING_REVOKED_ROLES;
 
-interface Options {
+export function isRevokedClientPermission(perm: string): boolean {
+  return matchesPermissionWithScope(
+    perm,
+    DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS,
+  );
+}
+
+export interface EnsureCallTypeGrantsOptions {
   apply: boolean;
   restore: boolean;
   deployConfirmed: boolean;
 }
 
-function parseArgs(argv: string[]): Options {
+function parseArgs(argv: string[]): EnsureCallTypeGrantsOptions {
   return {
     apply: argv.includes("--apply"),
     restore: argv.includes("--restore-user-join"),
@@ -44,7 +64,7 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
-function requireDeployConfirmation(opts: Options): boolean {
+function requireDeployConfirmation(opts: EnsureCallTypeGrantsOptions): boolean {
   if (!opts.apply || opts.restore || opts.deployConfirmed) return true;
 
   console.error(
@@ -60,7 +80,7 @@ function requireDeployConfirmation(opts: Options): boolean {
 
 async function requireSomeoneHoldsMemberRole(
   client: ReturnType<typeof getStreamVideoClient>,
-  opts: Options,
+  opts: EnsureCallTypeGrantsOptions,
 ): Promise<boolean> {
   if (!opts.apply || opts.restore) return true;
 
@@ -100,7 +120,9 @@ async function requireSomeoneHoldsMemberRole(
   return false;
 }
 
-export async function ensureCallTypeGrants(opts: Options): Promise<number> {
+export async function ensureCallTypeGrants(
+  opts: EnsureCallTypeGrantsOptions,
+): Promise<number> {
   if (!requireDeployConfirmation(opts)) return 1;
 
   if (!isStreamConfigured()) {
@@ -135,9 +157,8 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
       if (roleGrants) {
         grants[role] = roleGrants.filter(
           (g) =>
-            g !== JOIN_CALL &&
-            g !== END_CALL &&
-            !RECORDING_PERMISSIONS.includes(g),
+            !matchesPermissionWithScope(g, [JOIN_CALL]) &&
+            !isRevokedClientPermission(g),
         );
       }
     }
@@ -145,16 +166,7 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     for (const role of RECORDING_REVOKED_ROLES) {
       const roleGrants = grants[role];
       if (roleGrants) {
-        grants[role] = roleGrants.filter(
-          (g) => !RECORDING_PERMISSIONS.includes(g),
-        );
-      }
-    }
-
-    for (const role of END_CALL_REVOKED_ROLES) {
-      const roleGrants = grants[role];
-      if (roleGrants) {
-        grants[role] = roleGrants.filter((g) => g !== END_CALL);
+        grants[role] = roleGrants.filter((g) => !isRevokedClientPermission(g));
       }
     }
 
@@ -183,11 +195,11 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     );
   }
   for (const role of RECORDING_REVOKED_ROLES) {
-    for (const perm of [...RECORDING_PERMISSIONS, END_CALL]) {
+    for (const perm of DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS) {
       const had = (existing.grants[role] ?? []).includes(perm);
       const now = (grants[role] ?? []).includes(perm);
       if (had === now && !had) continue;
-      console.log(`  ${role.padEnd(12)} ${perm.padEnd(16)}: ${had} → ${now}`);
+      console.log(`  ${role.padEnd(12)} ${perm.padEnd(28)}: ${had} → ${now}`);
     }
   }
 
@@ -215,9 +227,12 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     return 1;
   }
 
-  if (!opts.restore && (verify.grants[MEMBER_ROLE] ?? []).includes(END_CALL)) {
+  if (
+    !opts.restore &&
+    (verify.grants[MEMBER_ROLE] ?? []).some((g) => isRevokedClientPermission(g))
+  ) {
     console.error(
-      `\n🚨 ${MEMBER_ROLE} still holds ${END_CALL} on Stream after this write.`,
+      `\n🚨 ${MEMBER_ROLE} still holds a revoked control or billable permission on Stream after this write.`,
     );
     return 1;
   }

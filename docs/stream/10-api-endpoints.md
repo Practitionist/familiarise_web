@@ -6,17 +6,19 @@ This document provides a comprehensive reference for all Stream-related API endp
 
 - [Overview](#overview)
 - [Authentication](#authentication)
+- [Meeting Lifecycle Endpoints](#meeting-lifecycle-endpoints)
 - [Channel Management](#channel-management)
 - [User Search](#user-search)
 - [Debug and Monitoring](#debug-and-monitoring)
 - [Synchronization](#synchronization)
 - [Error Handling](#error-handling)
+- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
 
 ## Overview
 
-All Stream API endpoints are located under the `/api/stream/*` path and follow REST conventions.
+Stream and meeting API endpoints are located under `/api/stream/*` and `/api/meetings/[meetingId]/*` and follow REST conventions.
 
 ### Base URL
 
@@ -64,6 +66,7 @@ https://your-domain.com/api/stream
 | 401  | Unauthorized          | Missing or invalid authentication |
 | 403  | Forbidden             | Insufficient permissions          |
 | 404  | Not Found             | Resource doesn't exist            |
+| 409  | Conflict              | Ceiling reached / invalid state   |
 | 500  | Internal Server Error | Server-side error                 |
 
 ---
@@ -80,7 +83,6 @@ Most endpoints require an authenticated Better Auth session.
 import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 // In API route
 const session = await auth.api.getSession({ headers: await headers() });
@@ -118,6 +120,81 @@ if (secret !== process.env.STREAM_SYNC_SECRET) {
 ```bash
 curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-secret-here"
 ```
+
+---
+
+## Meeting Lifecycle Endpoints
+
+All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate `meetingId` via `guardMeetingRoute`, and resolve caller entitlement via `resolveMeetingAccess`.
+
+### POST /api/meetings/[meetingId]/join
+
+Admits an entitled participant to a Stream call (`call_member`), upserts the caller and host to Stream before `call.getOrCreate`, and synchronously records `MeetingAttendance`, `MeetingPresence`, and `ATTENDED` slot status in the database.
+
+**Location:** `/app/api/meetings/[meetingId]/join/route.ts`
+
+**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + booking entitlement)
+
+**Response (Success - 200):**
+
+```json
+{
+  "callType": "default",
+  "callId": "slot-occ-1"
+}
+```
+
+### POST /api/meetings/[meetingId]/end
+
+Ends a Stream call for everyone (host-only) and synchronously stamps `Meeting.endedAt` and `Meeting.endedReason` (`ended_early` before `startsAt`, or `call_ended` with `AppointmentOccurrence.status = "COMPLETED"` at/after `startsAt`).
+
+**Location:** `/app/api/meetings/[meetingId]/end/route.ts`
+
+**Authentication:** Required (Host only — plan owner or accepted collaborator)
+
+**Response (Success - 200):**
+
+```json
+{
+  "ended": true
+}
+```
+
+### POST /api/meetings/[meetingId]/live
+
+Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `call.goLive()` so waiting attendees can enter the room.
+
+**Location:** `/app/api/meetings/[meetingId]/live/route.ts`
+
+**Authentication:** Required (Host only)
+
+**Response (Success - 200):**
+
+```json
+{
+  "live": true
+}
+```
+
+### POST /api/meetings/[meetingId]/extend
+
+Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge, bounded by `MAX_CALL_DURATION_MS` (`12 hours`).
+
+**Location:** `/app/api/meetings/[meetingId]/extend/route.ts`
+
+**Authentication:** Required (Host only)
+
+**Response (Success - 200):**
+
+```json
+{
+  "extended": true,
+  "maxDurationSeconds": 6300,
+  "addedSeconds": 900
+}
+```
+
+**Response (Conflict - 409):** Returned when the call has ended (`call_ended`) or has already reached the 12-hour ceiling (`max_duration_reached`).
 
 ---
 
@@ -1153,6 +1230,13 @@ const results = await Promise.all(
   ),
 );
 ```
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **NextAuth `authOptions` / `getServerSession`**: Replaced by `auth.api.getSession({ headers: await headers() })` from `@/lib/auth`.
+- **Direct client-side call lifecycle (`call.endCall()`, `call.goLive()`, client-side `call.getOrCreate()`)**: Replaced by `/api/meetings/[meetingId]/{join,end,live,extend}`.
 
 ---
 

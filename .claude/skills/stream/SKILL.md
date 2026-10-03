@@ -92,7 +92,11 @@ under `script-src`.
 | Channel create / membership                            | `actions/stream/chat/channel.action.ts`                                                                                                                                                                                            |
 | Lazy channel sync + reconcile                          | `actions/stream/chat/event-channel.action.ts`                                                                                                                                                                                      |
 | Channel ID derivation                                  | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`                                                                                                                                                                                 |
-| Call creation                                          | `lib/meeting.ts`, `actions/stream/meetings/meeting.action.ts`                                                                                                                                                                      |
+| Call creation & elastic duration cap                   | `lib/meeting.ts`, `actions/stream/meetings/meeting.action.ts`, `lib/meetings/duration-cap.ts`, `lib/meetings/room-ready.ts`                                                                                                        |
+| Meeting routes (join, end, live, extend)               | `app/api/meetings/[meetingId]/{join,end,live,extend}/route.ts`, `lib/meetings/access.ts`                                                                                                                                           |
+| Meeting room UI (backstage, stage moderation, overrun) | `app/meetings/[id]/components/{MeetingRoom,StageControls,OverrunBanner,RecordingControls}.tsx`, `app/meetings/[id]/session-info.ts`                                                                                                |
+| Orphaned session reconciler                            | `lib/meetings/reconcile-orphaned-sessions.ts`, `jobs/meetings/reconcile-orphaned-sessions.ts`                                                                                                                                      |
+| Stream config & call-type hardening                    | `scripts/stream/ensure.ts`, `scripts/stream/{ensure-app-settings,ensure-call-type-grants,harden-unused-call-types}.ts`                                                                                                             |
 | Client connection (store, not wrapper)                 | `providers/StreamProviderImpl.tsx`, `lib/stream/connection-store.ts`                                                                                                                                                               |
 | Webhooks                                               | `app/api/stream/webhooks/route.ts` → `lib/stream/webhook-dispatch.ts` → `lib/stream/{session,recording}-handlers.ts`                                                                                                               |
 | Recordings                                             | `lib/stream/recording-service.ts`, `recording-transfer-service.ts`                                                                                                                                                                 |
@@ -101,7 +105,7 @@ under `script-src`.
 | Crons                                                  | `.github/workflows/stream-sync.yml`, `mark-expired-recordings.yml`, `transfer-expiring-recordings.yml`, `cleanup-old-stream-recordings.yml`                                                                                        |
 
 Prisma: `Meeting` (1:1 with `AppointmentOccurrence`, `streamCallId` unique),
-`MeetingAttendance` (unique on session+user), `Recording`. **No chat state is stored in Postgres** —
+`MeetingAttendance` (unique on session+user), `MeetingPresence` (per-device stay), `Recording`. **No chat state is stored in Postgres** —
 channels live only on Stream, which is why a bad channel-ID derivation is unrecoverable data loss.
 
 ## Traps that have bitten before
@@ -126,10 +130,8 @@ channels live only on Stream, which is why a bad channel-ID derivation is unreco
 - **`upsertUsers` and `channel.create()` take the whole member array in one request.** Chunk them
   before a 100+ attendee webinar.
 - Test with `mcp__streamio__*` against the shared app carefully — **dev, preview and prod currently
-  share one Stream app**, so a "test" deletion is a real deletion.
+  share one Stream app**, so a "test" deletion is a real deletion. Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
 
 ## Docs
 
-`docs/stream/` — 19 files. `03-provider-authentication.md` and `troubleshooting.md` are the freshest
-and most reliable. Several others still describe NextAuth and a `streamCallId` format that has not
-been used for months; #1134 PR J fixes them. Trust the code over the docs until then.
+`docs/stream/` — covers architecture, setup (`scripts/stream/ensure.ts`), Better Auth + `StreamProvider` connection store, chat channel lifecycle, video elastic session envelope (`POST /api/meetings/[meetingId]/{join,end,live,extend}`), recording webhooks, and troubleshooting.
