@@ -144,55 +144,96 @@ type ContextAppointmentRow = {
   } | null;
 };
 
+function resolveDirectAppointmentTitle(
+  status: string,
+  hostId: string | undefined,
+  clientId: string | undefined,
+  title: string | undefined,
+  fallbackTitle: string,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (!ELIGIBLE_STATUS_SET.has(status)) return null;
+  if (!isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)) {
+    return null;
+  }
+  return title ?? fallbackTitle;
+}
+
+function resolveEventAppointmentTitle(
+  status: string,
+  hostId: string | undefined,
+  title: string | undefined,
+  fallbackTitle: string,
+  userId: string,
+  counterpartyUserId: string,
+  participantIds: Set<string>,
+): string | null {
+  if (!EVENT_ELIGIBLE_STATUS_SET.has(status)) return null;
+  if (
+    !isMatchingHostAndAttendee(
+      userId,
+      counterpartyUserId,
+      hostId,
+      participantIds,
+    )
+  ) {
+    return null;
+  }
+  return title ?? fallbackTitle;
+}
+
 function resolveVerifiedBookingContextTitle(
   appt: ContextAppointmentRow,
   userId: string,
   counterpartyUserId: string,
 ): string | null {
   if (appt.consultation) {
-    if (!ELIGIBLE_STATUS_SET.has(appt.consultation.status)) return null;
-    const hostId =
-      appt.consultation.consultationPlan?.consultantProfile?.userId;
-    const clientId = appt.consultation.requestedBy?.userId;
-    return isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)
-      ? (appt.consultation.consultationPlan?.title ?? "Consultation")
-      : null;
+    return resolveDirectAppointmentTitle(
+      appt.consultation.status,
+      appt.consultation.consultationPlan?.consultantProfile?.userId,
+      appt.consultation.requestedBy?.userId,
+      appt.consultation.consultationPlan?.title,
+      "Consultation",
+      userId,
+      counterpartyUserId,
+    );
   }
   if (appt.subscription) {
-    if (!ELIGIBLE_STATUS_SET.has(appt.subscription.status)) return null;
-    const hostId =
-      appt.subscription.subscriptionPlan?.consultantProfile?.userId;
-    const clientId = appt.subscription.requestedBy?.userId;
-    return isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)
-      ? (appt.subscription.subscriptionPlan?.title ?? "Subscription")
-      : null;
+    return resolveDirectAppointmentTitle(
+      appt.subscription.status,
+      appt.subscription.subscriptionPlan?.consultantProfile?.userId,
+      appt.subscription.requestedBy?.userId,
+      appt.subscription.subscriptionPlan?.title,
+      "Subscription",
+      userId,
+      counterpartyUserId,
+    );
   }
   const participantIds = new Set(
     (appt.participants ?? []).map((p) => p.userId),
   );
   if (appt.webinar) {
-    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.webinar.status)) return null;
-    const hostId = appt.webinar.webinarPlan?.consultantProfile?.userId;
-    return isMatchingHostAndAttendee(
+    return resolveEventAppointmentTitle(
+      appt.webinar.status,
+      appt.webinar.webinarPlan?.consultantProfile?.userId,
+      appt.webinar.webinarPlan?.title,
+      "Webinar",
       userId,
       counterpartyUserId,
-      hostId,
       participantIds,
-    )
-      ? (appt.webinar.webinarPlan?.title ?? "Webinar")
-      : null;
+    );
   }
   if (appt.class) {
-    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.class.status)) return null;
-    const hostId = appt.class.classPlan?.consultantProfile?.userId;
-    return isMatchingHostAndAttendee(
+    return resolveEventAppointmentTitle(
+      appt.class.status,
+      appt.class.classPlan?.consultantProfile?.userId,
+      appt.class.classPlan?.title,
+      "Class",
       userId,
       counterpartyUserId,
-      hostId,
       participantIds,
-    )
-      ? (appt.class.classPlan?.title ?? "Class")
-      : null;
+    );
   }
   return null;
 }

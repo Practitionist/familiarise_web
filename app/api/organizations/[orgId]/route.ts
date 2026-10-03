@@ -374,7 +374,7 @@ function buildTaxInfoUpsert(
 
   return {
     upsert: {
-      create: { ...baseFields, ...(encryptedPan ?? {}) },
+      create: { ...baseFields, ...encryptedPan },
       update: { ...baseFields, ...updatePanFields },
     },
   };
@@ -428,28 +428,24 @@ function buildOrganizationUpdateData(
   };
 }
 
+function buildTaggedErrorPayload(
+  err: Error & Record<string, unknown>,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { error: err.message };
+  if (typeof err.code === "string") payload.code = err.code;
+  if (err.counts && typeof err.counts === "object") payload.counts = err.counts;
+  if (typeof err.currentVersion === "number") {
+    payload.currentVersion = err.currentVersion;
+  }
+  return payload;
+}
+
 function formatPatchErrorResponse(err: unknown): NextResponse | null {
   if (err instanceof Error && "httpStatus" in err) {
-    const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-    const code =
-      "code" in err && typeof err.code === "string" ? err.code : undefined;
-    const counts =
-      "counts" in err && err.counts && typeof err.counts === "object"
-        ? err.counts
-        : undefined;
-    const currentVersion =
-      "currentVersion" in err && typeof err.currentVersion === "number"
-        ? err.currentVersion
-        : undefined;
-    return NextResponse.json(
-      {
-        error: err.message,
-        ...(code && { code }),
-        ...(counts && { counts }),
-        ...(currentVersion !== undefined && { currentVersion }),
-      },
-      { status },
-    );
+    const tagged = err as Error & Record<string, unknown>;
+    const status =
+      typeof tagged.httpStatus === "number" ? tagged.httpStatus : 500;
+    return NextResponse.json(buildTaggedErrorPayload(tagged), { status });
   }
   if (
     err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -489,7 +485,9 @@ export async function PATCH(
   // Field-level gate: settings.ownerFields passes everything; otherwise every
   // touched field must be inside the caller's remit. 403 names the offending
   // fields so the dashboard can explain instead of a silent failure.
-  const rbacError = checkFieldRbac(access.member.role, body);
+  const rbacError = hasOrgPermission(access.member.role, "settings.ownerFields")
+    ? null
+    : checkFieldRbac(access.member.role, body);
   if (rbacError) return rbacError;
 
   // Captured inside the transaction so a slug rename can purge the OLD public

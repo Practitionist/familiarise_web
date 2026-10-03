@@ -473,13 +473,13 @@ export async function respondToInvitation(
   return updated;
 }
 
-async function fetchActivePlanEvents(
+function fetchActivePlanEvents(
   planType: PlanType,
   planId: string,
 ): Promise<{ id: string }[]> {
   const activeStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] as const;
   if (planType === "webinar") {
-    if (!prisma.webinar?.findMany) return [];
+    if (!prisma.webinar?.findMany) return Promise.resolve([]);
     return prisma.webinar.findMany({
       where: {
         webinarPlanId: planId,
@@ -489,7 +489,7 @@ async function fetchActivePlanEvents(
       select: { id: true },
     });
   }
-  if (!prisma.class?.findMany) return [];
+  if (!prisma.class?.findMany) return Promise.resolve([]);
   return prisma.class.findMany({
     where: {
       classPlanId: planId,
