@@ -323,6 +323,285 @@ function fmtSubscription(sub: {
 // Create dialog
 // ---------------------------------------------------------------------------
 
+type ContractFinancialDraft = {
+  effectiveFrom: string;
+  effectiveTo: string;
+  isLicense: boolean;
+  paymentTermsDays: string;
+  autoRenew: boolean;
+  licenseModel: "FLAT_FEE" | "PER_SEAT";
+  licenseCycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  licenseFeeINR: string;
+  ratePerSeatINR: string;
+};
+
+type ContractFinancialPayload = {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  paymentTermsDays?: number;
+  autoRenew: boolean;
+  licenseModel?: "FLAT_FEE" | "PER_SEAT";
+  licenseFeePaise?: number;
+  licenseRatePerSeatPaise?: number;
+  licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+};
+
+function buildContractFinancialPayload(
+  draft: ContractFinancialDraft,
+): { payload: ContractFinancialPayload } | { error: string } {
+  const fromDate = new Date(draft.effectiveFrom);
+  if (!draft.effectiveFrom || Number.isNaN(fromDate.getTime())) {
+    return { error: "Start date is required." };
+  }
+  const toDate = draft.effectiveTo ? new Date(draft.effectiveTo) : null;
+  if (toDate && Number.isNaN(toDate.getTime())) {
+    return { error: "End date is invalid." };
+  }
+  if (toDate && toDate <= fromDate) {
+    return { error: "End date must be after the start date." };
+  }
+
+  let terms: number | undefined;
+  if (!draft.isLicense) {
+    const parsed = parseInt(draft.paymentTermsDays, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
+      return { error: "Payment terms must be between 1 and 120 days." };
+    }
+    terms = parsed;
+  }
+
+  let licenseFeePaise: number | undefined;
+  let licenseRatePerSeatPaise: number | undefined;
+  if (draft.isLicense) {
+    if (draft.licenseModel === "FLAT_FEE" && draft.licenseFeeINR.trim() !== "") {
+      const inr = parseFloat(draft.licenseFeeINR);
+      if (!Number.isFinite(inr) || inr <= 0) {
+        return { error: "License fee must be a positive number (₹)." };
+      }
+      licenseFeePaise = Math.round(inr * 100);
+    } else if (
+      draft.licenseModel === "PER_SEAT" &&
+      draft.ratePerSeatINR.trim() !== ""
+    ) {
+      const inr = parseFloat(draft.ratePerSeatINR);
+      if (!Number.isFinite(inr) || inr <= 0) {
+        return { error: "Rate per seat must be a positive number (₹)." };
+      }
+      licenseRatePerSeatPaise = Math.round(inr * 100);
+    }
+  }
+
+  return {
+    payload: {
+      effectiveFrom: fromDate.toISOString(),
+      effectiveTo: toDate ? toDate.toISOString() : null,
+      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
+      autoRenew: draft.autoRenew,
+      ...(licenseFeePaise !== undefined
+        ? {
+            licenseModel: "FLAT_FEE",
+            licenseFeePaise,
+            licenseCycle: draft.licenseCycle,
+          }
+        : {}),
+      ...(licenseRatePerSeatPaise !== undefined
+        ? {
+            licenseModel: "PER_SEAT",
+            licenseRatePerSeatPaise,
+            licenseCycle: draft.licenseCycle,
+          }
+        : {}),
+    },
+  };
+}
+
+function ContractFinancialTermsFields({
+  idPrefix,
+  effectiveFrom,
+  onEffectiveFromChange,
+  effectiveTo,
+  onEffectiveToChange,
+  isLicense,
+  paymentTermsDays,
+  onPaymentTermsDaysChange,
+  licenseModel,
+  onLicenseModelChange,
+  licenseCycle,
+  onLicenseCycleChange,
+  licenseFeeINR,
+  onLicenseFeeINRChange,
+  ratePerSeatINR,
+  onRatePerSeatINRChange,
+  autoRenew,
+  onAutoRenewChange,
+  children,
+}: {
+  idPrefix: string;
+  effectiveFrom: string;
+  onEffectiveFromChange: (v: string) => void;
+  effectiveTo: string;
+  onEffectiveToChange: (v: string) => void;
+  isLicense: boolean;
+  paymentTermsDays: string;
+  onPaymentTermsDaysChange: (v: string) => void;
+  licenseModel: "FLAT_FEE" | "PER_SEAT";
+  onLicenseModelChange: (v: "FLAT_FEE" | "PER_SEAT") => void;
+  licenseCycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  onLicenseCycleChange: (v: "MONTHLY" | "QUARTERLY" | "ANNUAL") => void;
+  licenseFeeINR: string;
+  onLicenseFeeINRChange: (v: string) => void;
+  ratePerSeatINR: string;
+  onRatePerSeatINRChange: (v: string) => void;
+  autoRenew: boolean;
+  onAutoRenewChange: (v: boolean) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-effective-from`}>Effective from *</Label>
+          <Input
+            id={`${idPrefix}-effective-from`}
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => onEffectiveFromChange(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-effective-to`}>Effective to</Label>
+          <Input
+            id={`${idPrefix}-effective-to`}
+            type="date"
+            value={effectiveTo}
+            onChange={(e) => onEffectiveToChange(e.target.value)}
+            placeholder="Open-ended"
+          />
+          <p className="text-xs text-muted-foreground">
+            Leave blank for open-ended
+          </p>
+        </div>
+      </div>
+
+      {!isLicense && (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-payment-terms`}>
+            Payment terms (days) *
+          </Label>
+          <Input
+            id={`${idPrefix}-payment-terms`}
+            type="number"
+            min={1}
+            max={120}
+            value={paymentTermsDays}
+            onChange={(e) => onPaymentTermsDaysChange(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            NET-{paymentTermsDays || "?"} — how many days after invoice date the
+            org must pay.
+          </p>
+        </div>
+      )}
+
+      {isLicense && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>License model</Label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { value: "FLAT_FEE", label: "Flat fee" },
+                  { value: "PER_SEAT", label: "Per seat" },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => onLicenseModelChange(m.value)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                    licenseModel === m.value
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {licenseModel === "FLAT_FEE" ? (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${idPrefix}-license-fee`}>
+                  Flat license fee (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
+                </Label>
+                <Input
+                  id={`${idPrefix}-license-fee`}
+                  type="number"
+                  min={1}
+                  step="1"
+                  placeholder="e.g. 750000"
+                  value={licenseFeeINR}
+                  onChange={(e) => onLicenseFeeINRChange(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional. Enables renewal billing and dashboard display.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${idPrefix}-rate-per-seat`}>
+                  Rate per seat (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
+                </Label>
+                <Input
+                  id={`${idPrefix}-rate-per-seat`}
+                  type="number"
+                  min={1}
+                  step="1"
+                  placeholder="e.g. 1500"
+                  value={ratePerSeatINR}
+                  onChange={(e) => onRatePerSeatINRChange(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Billed per active learner seat each cycle.
+                </p>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor={`${idPrefix}-license-cycle`}>Billing cycle</Label>
+              <select
+                id={`${idPrefix}-license-cycle`}
+                className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+                value={licenseCycle}
+                onChange={(e) =>
+                  onLicenseCycleChange(
+                    e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
+                  )
+                }
+              >
+                <option value="ANNUAL">Annual</option>
+                <option value="QUARTERLY">Quarterly</option>
+                <option value="MONTHLY">Monthly</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {children}
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <Checkbox
+          checked={autoRenew}
+          onCheckedChange={(v) => onAutoRenewChange(v === true)}
+        />
+        <span className="text-sm">Auto-renew when effective-to date passes</span>
+      </label>
+    </>
+  );
+}
+
 function CreateContractDialog({
   orgId,
   billingAccountId,
@@ -332,11 +611,12 @@ function CreateContractDialog({
 }: {
   orgId: string;
   billingAccountId: string;
-  fundingSource: string | undefined;
+  fundingSource?: FundingSource | string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+
   const today = new Date().toISOString().slice(0, 10);
   const [effectiveFrom, setEffectiveFrom] = useState(today);
   const [effectiveTo, setEffectiveTo] = useState("");
@@ -383,61 +663,25 @@ function CreateContractDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const isLicense = fundingSource === "LICENSE";
-    // LICENSE-funded orgs don't see the payment-terms field (annual fee
-    // is paid upfront, not on net-X terms). Skip validation and omit
-    // the field from the payload so the server's default(60) applies —
-    // otherwise stale text typed before switching to LICENSE would fire
-    // a hidden-field error.
-    let terms: number | undefined;
-    if (!isLicense) {
-      const parsed = parseInt(paymentTermsDays, 10);
-      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
-        setError("Payment terms must be between 1 and 120 days.");
-        return;
-      }
-      terms = parsed;
-    }
-    if (effectiveTo && new Date(effectiveTo) <= new Date(effectiveFrom)) {
-      setError("End date must be after the start date.");
+    const built = buildContractFinancialPayload({
+      effectiveFrom,
+      effectiveTo,
+      isLicense: fundingSource === "LICENSE",
+      paymentTermsDays,
+      autoRenew,
+      licenseModel,
+      licenseCycle,
+      licenseFeeINR,
+      ratePerSeatINR,
+    });
+    if ("error" in built) {
+      setError(built.error);
       return;
-    }
-    let licenseFeePaise: number | undefined;
-    let licenseRatePerSeatPaise: number | undefined;
-    if (isLicense) {
-      if (licenseModel === "FLAT_FEE" && licenseFeeINR.trim() !== "") {
-        const inr = parseFloat(licenseFeeINR);
-        if (!Number.isFinite(inr) || inr <= 0) {
-          setError("License fee must be a positive number (₹).");
-          return;
-        }
-        licenseFeePaise = Math.round(inr * 100);
-      } else if (licenseModel === "PER_SEAT" && ratePerSeatINR.trim() !== "") {
-        const inr = parseFloat(ratePerSeatINR);
-        if (!Number.isFinite(inr) || inr <= 0) {
-          setError("Rate per seat must be a positive number (₹).");
-          return;
-        }
-        licenseRatePerSeatPaise = Math.round(inr * 100);
-      }
     }
     createMutation.mutate({
       billingAccountId,
-      effectiveFrom: new Date(effectiveFrom).toISOString(),
-      effectiveTo: effectiveTo ? new Date(effectiveTo).toISOString() : null,
-      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
-      autoRenew,
       status,
-      ...(licenseFeePaise !== undefined
-        ? { licenseModel: "FLAT_FEE", licenseFeePaise, licenseCycle }
-        : {}),
-      ...(licenseRatePerSeatPaise !== undefined
-        ? {
-            licenseModel: "PER_SEAT",
-            licenseRatePerSeatPaise,
-            licenseCycle,
-          }
-        : {}),
+      ...built.payload,
     });
   };
 
@@ -455,168 +699,50 @@ function CreateContractDialog({
         </ResponsiveModalHeader>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="effective-from">Effective from *</Label>
-              <Input
-                id="effective-from"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="effective-to">Effective to</Label>
-              <Input
-                id="effective-to"
-                type="date"
-                value={effectiveTo}
-                onChange={(e) => setEffectiveTo(e.target.value)}
-                placeholder="Open-ended"
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave blank for open-ended
-              </p>
-            </div>
-          </div>
-
-          {fundingSource !== "LICENSE" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="payment-terms">Payment terms (days) *</Label>
-              <Input
-                id="payment-terms"
-                type="number"
-                min={1}
-                max={120}
-                value={paymentTermsDays}
-                onChange={(e) => setPaymentTermsDays(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                NET-{paymentTermsDays || "?"} — how many days after invoice date
-                the org must pay.
-              </p>
-            </div>
-          )}
-
-          {fundingSource === "LICENSE" && (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label>License model</Label>
-                <div className="flex gap-2">
-                  {(
-                    [
-                      { value: "FLAT_FEE", label: "Flat fee" },
-                      { value: "PER_SEAT", label: "Per seat" },
-                    ] as const
-                  ).map((m) => (
-                    <button
-                      key={m.value}
-                      type="button"
-                      onClick={() => setLicenseModel(m.value)}
-                      className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                        licenseModel === m.value
-                          ? "border-foreground bg-foreground text-background"
-                          : "border-border hover:border-foreground/40"
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                {licenseModel === "FLAT_FEE" ? (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="license-fee">
-                      Flat license fee (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
-                    </Label>
-                    <Input
-                      id="license-fee"
-                      type="number"
-                      min={1}
-                      step="1"
-                      placeholder="e.g. 750000"
-                      value={licenseFeeINR}
-                      onChange={(e) => setLicenseFeeINR(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Optional. Enables renewal billing and dashboard display.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="rate-per-seat">
-                      Rate per seat (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
-                    </Label>
-                    <Input
-                      id="rate-per-seat"
-                      type="number"
-                      min={1}
-                      step="1"
-                      placeholder="e.g. 1500"
-                      value={ratePerSeatINR}
-                      onChange={(e) => setRatePerSeatINR(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Billed per active learner seat each cycle.
-                    </p>
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label htmlFor="license-cycle">Billing cycle</Label>
-                  <select
-                    id="license-cycle"
-                    className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
-                    value={licenseCycle}
-                    onChange={(e) =>
-                      setLicenseCycle(
-                        e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
-                      )
-                    }
+          <ContractFinancialTermsFields
+            idPrefix="create"
+            effectiveFrom={effectiveFrom}
+            onEffectiveFromChange={setEffectiveFrom}
+            effectiveTo={effectiveTo}
+            onEffectiveToChange={setEffectiveTo}
+            isLicense={fundingSource === "LICENSE"}
+            paymentTermsDays={paymentTermsDays}
+            onPaymentTermsDaysChange={setPaymentTermsDays}
+            licenseModel={licenseModel}
+            onLicenseModelChange={setLicenseModel}
+            licenseCycle={licenseCycle}
+            onLicenseCycleChange={setLicenseCycle}
+            licenseFeeINR={licenseFeeINR}
+            onLicenseFeeINRChange={setLicenseFeeINR}
+            ratePerSeatINR={ratePerSeatINR}
+            onRatePerSeatINRChange={setRatePerSeatINR}
+            autoRenew={autoRenew}
+            onAutoRenewChange={setAutoRenew}
+          >
+            <div className="space-y-2">
+              <Label>Initial status</Label>
+              <div className="flex gap-2">
+                {(["ACTIVE", "DRAFT"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatus(s)}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      status === s
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border hover:border-foreground/40"
+                    }`}
                   >
-                    <option value="ANNUAL">Annual</option>
-                    <option value="QUARTERLY">Quarterly</option>
-                    <option value="MONTHLY">Monthly</option>
-                  </select>
-                </div>
+                    {s}
+                  </button>
+                ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                ACTIVE contracts can immediately attach Programs. DRAFT
+                contracts need to be activated first.
+              </p>
             </div>
-          )}
-
-          <div className="space-y-2">
-            <Label>Initial status</Label>
-            <div className="flex gap-2">
-              {(["ACTIVE", "DRAFT"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatus(s)}
-                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                    status === s
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border hover:border-foreground/40"
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              ACTIVE contracts can immediately attach Programs. DRAFT contracts
-              need to be activated first.
-            </p>
-          </div>
-
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox
-              checked={autoRenew}
-              onCheckedChange={(v) => setAutoRenew(v === true)}
-            />
-            <span className="text-sm">
-              Auto-renew when effective-to date passes
-            </span>
-          </label>
+          </ContractFinancialTermsFields>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
@@ -742,67 +868,25 @@ function SupersedeContractDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const fromDate = new Date(effectiveFrom);
-    if (!effectiveFrom || Number.isNaN(fromDate.getTime())) {
-      setError("Start date is required.");
+    const built = buildContractFinancialPayload({
+      effectiveFrom,
+      effectiveTo,
+      isLicense,
+      paymentTermsDays,
+      autoRenew,
+      licenseModel,
+      licenseCycle,
+      licenseFeeINR,
+      ratePerSeatINR,
+    });
+    if ("error" in built) {
+      setError(built.error);
       return;
-    }
-    const toDate = effectiveTo ? new Date(effectiveTo) : null;
-    if (toDate && Number.isNaN(toDate.getTime())) {
-      setError("End date is invalid.");
-      return;
-    }
-    if (toDate && toDate <= fromDate) {
-      setError("End date must be after the start date.");
-      return;
-    }
-
-    let terms: number | undefined;
-    if (!isLicense) {
-      const parsed = parseInt(paymentTermsDays, 10);
-      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
-        setError("Payment terms must be between 1 and 120 days.");
-        return;
-      }
-      terms = parsed;
-    }
-
-    let licenseFeePaise: number | undefined;
-    let licenseRatePerSeatPaise: number | undefined;
-    if (isLicense) {
-      if (licenseModel === "FLAT_FEE" && licenseFeeINR.trim() !== "") {
-        const inr = parseFloat(licenseFeeINR);
-        if (!Number.isFinite(inr) || inr <= 0) {
-          setError("License fee must be a positive number (₹).");
-          return;
-        }
-        licenseFeePaise = Math.round(inr * 100);
-      } else if (licenseModel === "PER_SEAT" && ratePerSeatINR.trim() !== "") {
-        const inr = parseFloat(ratePerSeatINR);
-        if (!Number.isFinite(inr) || inr <= 0) {
-          setError("Rate per seat must be a positive number (₹).");
-          return;
-        }
-        licenseRatePerSeatPaise = Math.round(inr * 100);
-      }
     }
 
     supersedeMutation.mutate({
       reason,
-      effectiveFrom: fromDate.toISOString(),
-      effectiveTo: toDate ? toDate.toISOString() : null,
-      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
-      autoRenew,
-      ...(licenseFeePaise !== undefined
-        ? { licenseModel: "FLAT_FEE", licenseFeePaise, licenseCycle }
-        : {}),
-      ...(licenseRatePerSeatPaise !== undefined
-        ? {
-            licenseModel: "PER_SEAT",
-            licenseRatePerSeatPaise,
-            licenseCycle,
-          }
-        : {}),
+      ...built.payload,
     });
   };
 
@@ -852,131 +936,26 @@ function SupersedeContractDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="supersede-effective-from">Effective from *</Label>
-              <Input
-                id="supersede-effective-from"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="supersede-effective-to">Effective to</Label>
-              <Input
-                id="supersede-effective-to"
-                type="date"
-                value={effectiveTo}
-                onChange={(e) => setEffectiveTo(e.target.value)}
-                placeholder="Open-ended"
-              />
-            </div>
-          </div>
-
-          {!isLicense && (
-            <div className="space-y-1.5">
-              <Label htmlFor="supersede-payment-terms">
-                Payment terms (days) *
-              </Label>
-              <Input
-                id="supersede-payment-terms"
-                type="number"
-                min={1}
-                max={120}
-                value={paymentTermsDays}
-                onChange={(e) => setPaymentTermsDays(e.target.value)}
-              />
-            </div>
-          )}
-
-          {isLicense && (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label>License model</Label>
-                <div className="flex gap-2">
-                  {(
-                    [
-                      { value: "FLAT_FEE", label: "Flat fee" },
-                      { value: "PER_SEAT", label: "Per seat" },
-                    ] as const
-                  ).map((m) => (
-                    <button
-                      key={m.value}
-                      type="button"
-                      onClick={() => setLicenseModel(m.value)}
-                      className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                        licenseModel === m.value
-                          ? "border-foreground bg-foreground text-background"
-                          : "border-border hover:border-foreground/40"
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                {licenseModel === "FLAT_FEE" ? (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="supersede-license-fee">
-                      Flat license fee (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
-                    </Label>
-                    <Input
-                      id="supersede-license-fee"
-                      type="number"
-                      min={1}
-                      step="1"
-                      value={licenseFeeINR}
-                      onChange={(e) => setLicenseFeeINR(e.target.value)}
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="supersede-rate-per-seat">
-                      Rate per seat (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
-                    </Label>
-                    <Input
-                      id="supersede-rate-per-seat"
-                      type="number"
-                      min={1}
-                      step="1"
-                      value={ratePerSeatINR}
-                      onChange={(e) => setRatePerSeatINR(e.target.value)}
-                    />
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label htmlFor="supersede-license-cycle">Billing cycle</Label>
-                  <select
-                    id="supersede-license-cycle"
-                    className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
-                    value={licenseCycle}
-                    onChange={(e) =>
-                      setLicenseCycle(
-                        e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
-                      )
-                    }
-                  >
-                    <option value="ANNUAL">Annual</option>
-                    <option value="QUARTERLY">Quarterly</option>
-                    <option value="MONTHLY">Monthly</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox
-              checked={autoRenew}
-              onCheckedChange={(v) => setAutoRenew(v === true)}
-            />
-            <span className="text-sm">
-              Auto-renew when effective-to date passes
-            </span>
-          </label>
+          <ContractFinancialTermsFields
+            idPrefix="supersede"
+            effectiveFrom={effectiveFrom}
+            onEffectiveFromChange={setEffectiveFrom}
+            effectiveTo={effectiveTo}
+            onEffectiveToChange={setEffectiveTo}
+            isLicense={isLicense}
+            paymentTermsDays={paymentTermsDays}
+            onPaymentTermsDaysChange={setPaymentTermsDays}
+            licenseModel={licenseModel}
+            onLicenseModelChange={setLicenseModel}
+            licenseCycle={licenseCycle}
+            onLicenseCycleChange={setLicenseCycle}
+            licenseFeeINR={licenseFeeINR}
+            onLicenseFeeINRChange={setLicenseFeeINR}
+            ratePerSeatINR={ratePerSeatINR}
+            onRatePerSeatINRChange={setRatePerSeatINR}
+            autoRenew={autoRenew}
+            onAutoRenewChange={setAutoRenew}
+          />
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
