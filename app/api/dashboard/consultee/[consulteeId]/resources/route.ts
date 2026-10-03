@@ -3,14 +3,13 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import {
+  auditOperatorRecordingAccess,
+  resolveOperatorRecordingAccess,
+} from "@/lib/stream/recording-operator-access";
 import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
 import { extractRecordings } from "@/lib/stream/session-recordings";
-import {
-  requireApiAuth,
-  isPrivileged,
-  forbiddenResponse,
-} from "@/lib/auth-helpers";
+import { requireApiAuth, forbiddenResponse } from "@/lib/auth-helpers";
 import { liveParticipant } from "@/lib/booking/participants";
 
 const planMaterialSelect = {
@@ -164,7 +163,7 @@ type TrialWithResources = Prisma.Result<
 >;
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
 ) {
   const authResult = await requireApiAuth();
@@ -174,19 +173,27 @@ export async function GET(
   try {
     const { consulteeId } = await params;
 
-    if (
-      !isPrivileged(session.user.role) &&
-      session.user.consulteeProfileId !== consulteeId
-    ) {
-      return forbiddenResponse("You can only access your own resources");
-    }
-
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
         { status: 400 },
       );
     }
+
+    const viaOperatorGrant = session.user.consulteeProfileId !== consulteeId;
+    const operator = resolveOperatorRecordingAccess(session.user.role);
+    if (viaOperatorGrant && !operator.canRead) {
+      return forbiddenResponse("You can only access your own resources");
+    }
+    if (viaOperatorGrant) {
+      await auditOperatorRecordingAccess({
+        actorUserId: session.user.id,
+        actorRole: session.user.role ?? "UNKNOWN",
+        surface: "GET /api/dashboard/consultee/[consulteeId]/resources",
+        played: operator.canPlay,
+      });
+    }
+    const includeMediaUrls = !viaOperatorGrant || operator.canPlay;
 
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeId },
@@ -326,43 +333,43 @@ export async function GET(
         }),
       ]);
 
-    const purchasedRecordings = prisma.recordingPurchase?.findMany
-      ? await prisma.recordingPurchase.findMany({
-          where: {
-            buyerId: userId,
-            status: "SUCCEEDED",
-          },
+    const purchasedRecordings = await prisma.recordingPurchase.findMany({
+      where: {
+        buyerId: userId,
+        status: "SUCCEEDED",
+        recording: {
+          status: { in: ["READY", "AVAILABLE"] },
+        },
+      },
+      include: {
+        recording: {
           include: {
-            recording: {
+            meeting: {
               include: {
-                meeting: {
+                occurrence: {
                   include: {
-                    occurrence: {
+                    appointment: {
                       include: {
-                        appointment: {
+                        webinar: {
                           include: {
-                            webinar: {
+                            webinarPlan: {
                               include: {
-                                webinarPlan: {
+                                consultantProfile: {
                                   include: {
-                                    consultantProfile: {
-                                      include: {
-                                        user: { select: consultantUserSelect },
-                                      },
-                                    },
+                                    user: { select: consultantUserSelect },
                                   },
                                 },
                               },
                             },
-                            class: {
+                          },
+                        },
+                        class: {
+                          include: {
+                            classPlan: {
                               include: {
-                                classPlan: {
+                                consultantProfile: {
                                   include: {
-                                    consultantProfile: {
-                                      include: {
-                                        user: { select: consultantUserSelect },
-                                      },
-                                    },
+                                    user: { select: consultantUserSelect },
                                   },
                                 },
                               },
@@ -376,9 +383,24 @@ export async function GET(
               },
             },
           },
-          orderBy: { createdAt: "desc" },
-        })
-      : [];
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    const applyMediaRedaction = <
+      T extends { playbackUrl?: string | null; thumbnailUrl?: string | null },
+    >(
+      items: T[],
+    ): T[] =>
+      includeMediaUrls
+        ? items
+        : items.map((item) => ({
+            ...item,
+            playbackUrl: null,
+            thumbnailUrl: null,
+          }));
 
     // Include if COMPLETED or has at least 1 material/recording
     type TransformedEvent = {
@@ -402,8 +424,8 @@ export async function GET(
             status: c.status,
             date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
-            recordings: await extractRecordings(
-              c.appointment ? [c.appointment] : [],
+            recordings: applyMediaRedaction(
+              await extractRecordings(c.appointment ? [c.appointment] : []),
             ),
           })),
         )
@@ -418,8 +440,8 @@ export async function GET(
             status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
-            recordings: await extractRecordings(
-              s.appointment ? [s.appointment] : [],
+            recordings: applyMediaRedaction(
+              await extractRecordings(s.appointment ? [s.appointment] : []),
             ),
           })),
         )
@@ -435,8 +457,8 @@ export async function GET(
             status: w.status,
             date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
             materials: w.webinarPlan.materials,
-            recordings: await extractRecordings(
-              w.appointment ? [w.appointment] : [],
+            recordings: applyMediaRedaction(
+              await extractRecordings(w.appointment ? [w.appointment] : []),
             ),
           })),
         )
@@ -454,9 +476,12 @@ export async function GET(
               cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
-            recordings: await extractRecordings(
-              cl.appointment ? [cl.appointment] : [],
-              { access: lateJoin, classId: cl.id, classPlanId: cl.classPlanId },
+            recordings: applyMediaRedaction(
+              await extractRecordings(cl.appointment ? [cl.appointment] : [], {
+                access: lateJoin,
+                classId: cl.id,
+                classPlanId: cl.classPlanId,
+              }),
             ),
           })),
         )
@@ -473,43 +498,39 @@ export async function GET(
             status: t.status,
             date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
             materials: t.subscriptionPlan.materials,
-            recordings: await extractRecordings(
-              t.appointment ? [t.appointment] : [],
+            recordings: applyMediaRedaction(
+              await extractRecordings(t.appointment ? [t.appointment] : []),
             ),
           })),
         )
       ).filter(shouldInclude),
-      purchased: await Promise.all(
-        purchasedRecordings.map(async (p) => {
-          const rec = p.recording;
-          const apt = rec.meeting?.occurrence?.appointment;
-          const plan =
-            apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
-          const consultantUser = plan?.consultantProfile?.user;
-          const playbackUrl = await getBestRecordingUrl(rec);
-          return {
-            id: `purchased-${p.id}`,
-            planTitle: rec.listingTitle || plan?.title || rec.title,
-            consultantName: consultantUser?.name ?? null,
-            consultantImage: consultantUser?.image ?? null,
-            status: "COMPLETED",
-            date: rec.recordedAt,
-            eventType: "purchased" as const,
-            materials: [],
-            recordings: [
-              {
-                id: rec.id,
-                title: rec.listingTitle || rec.title,
-                durationInMinutes: rec.durationInMinutes,
-                recordedAt: rec.recordedAt,
-                playbackUrl,
-                thumbnailUrl: rec.thumbnailUrl,
-                status: rec.status,
-              },
-            ],
-          };
-        }),
-      ),
+      purchased: purchasedRecordings.map((p) => {
+        const rec = p.recording;
+        const apt = rec.meeting?.occurrence?.appointment;
+        const plan = apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
+        const consultantUser = plan?.consultantProfile?.user;
+        return {
+          id: `purchased-${p.id}`,
+          planTitle: rec.listingTitle || plan?.title || rec.title,
+          consultantName: consultantUser?.name ?? null,
+          consultantImage: consultantUser?.image ?? null,
+          status: "COMPLETED",
+          date: rec.recordedAt,
+          eventType: "purchased" as const,
+          materials: [],
+          recordings: [
+            {
+              id: rec.id,
+              title: rec.listingTitle || rec.title,
+              durationInMinutes: rec.durationInMinutes,
+              recordedAt: rec.recordedAt,
+              playbackUrl: null,
+              thumbnailUrl: includeMediaUrls ? rec.thumbnailUrl : null,
+              status: rec.status,
+            },
+          ],
+        };
+      }),
     };
 
     return NextResponse.json({ data: transform, success: true });

@@ -2,8 +2,6 @@
  * @jest-environment node
  */
 
-import { readFileSync } from "fs";
-import { join } from "path";
 import { NextRequest } from "next/server";
 
 const mockGetSession = jest.fn();
@@ -24,6 +22,14 @@ const mockGetPaidPlanIds = jest.fn();
 const mockGetBestRecordingUrl = jest.fn();
 const mockRecordingFindUnique = jest.fn();
 const mockGetPublicRecordingBySlug = jest.fn();
+const mockLateJoinRecordingAccess = jest.fn();
+const mockAuditOperatorRecordingAccess = jest.fn();
+
+jest.mock("../../lib/auth-client", () => ({
+  __esModule: true,
+  useSession: jest.fn(),
+  getSession: jest.fn(),
+}));
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
@@ -79,15 +85,37 @@ jest.mock("../../lib/stream/recording-service", () => ({
   },
 }));
 
-jest.mock("../../lib/stream/recording-storage", () => ({
-  __esModule: true,
-  getBestRecordingUrl: (...args: unknown[]) => mockGetBestRecordingUrl(...args),
-}));
+jest.mock("../../lib/stream/recording-storage", () => {
+  const actual = jest.requireActual("../../lib/stream/recording-storage");
+  return {
+    __esModule: true,
+    ...actual,
+    getBestRecordingUrl: (...args: unknown[]) =>
+      mockGetBestRecordingUrl(...args),
+  };
+});
 
-jest.mock("../../lib/stream/late-join-recordings", () => ({
-  __esModule: true,
-  lateJoinRecordingAccess: jest.fn().mockResolvedValue(new Map()),
-}));
+jest.mock("../../lib/stream/late-join-recordings", () => {
+  const actual = jest.requireActual("../../lib/stream/late-join-recordings");
+  return {
+    __esModule: true,
+    ...actual,
+    lateJoinRecordingAccess: (...args: unknown[]) =>
+      mockLateJoinRecordingAccess(...args),
+  };
+});
+
+jest.mock("../../lib/stream/recording-operator-access", () => {
+  const actual = jest.requireActual(
+    "../../lib/stream/recording-operator-access",
+  );
+  return {
+    __esModule: true,
+    ...actual,
+    auditOperatorRecordingAccess: (...args: unknown[]) =>
+      mockAuditOperatorRecordingAccess(...args),
+  };
+});
 
 jest.mock("../../lib/stream/session-recordings", () => ({
   __esModule: true,
@@ -108,10 +136,15 @@ jest.mock("../../lib/auth-server", () => ({
 import { GET as getConsultantRecordings } from "@/app/api/consultants/[consultantId]/recordings/route";
 import { GET as getConsulteeResources } from "@/app/api/dashboard/consultee/[consulteeId]/resources/route";
 import RecordingDetailPage from "@/app/explore/recordings/[slug]/page";
+import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { EVENT_TYPE_LABELS } from "@/components/dashboard/library/LibraryBrowser";
+import {
+  ClientPublishSchema,
+  canDeleteRecording,
+} from "@/components/recordings/RecordingManageSheet";
+import { resolveActivePlaybackUrl } from "@/components/recordings/RecordingPlayerModal";
+import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { RecordingListing } from "@/lib/data/recordings-explore";
-
-const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat", () => {
   beforeEach(() => {
@@ -123,10 +156,15 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       webinarPlanIds: [],
       classPlanIds: [],
     });
+    mockLateJoinRecordingAccess.mockResolvedValue({
+      floors: new Map(),
+      lateSeatBatches: new Map(),
+    });
+    mockAuditOperatorRecordingAccess.mockResolvedValue(undefined);
   });
 
   describe("GET /api/consultants/[consultantId]/recordings", () => {
-    it("supports consultation and subscription type filters and returns marketplace listing fields", async () => {
+    it("supports consultation and subscription type filters and returns capability and buyer flags without eager playback URL signing", async () => {
       mockGetSession.mockResolvedValue({
         user: { id: "u-consultant", role: "CONSULTANT" },
       });
@@ -147,7 +185,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           fileSize: 52428800,
           streamUrlExpiresAt: null,
           transferredAt: new Date("2026-10-01T11:00:00Z"),
-          listingStatus: "PUBLISHED",
+          listingStatus: "UNPUBLISHED",
           listPricePaise: 49900,
           listingTitle: "Masterclass Replay",
           listingDescription: "Full session recording",
@@ -157,6 +195,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           previewTranscript: "Welcome to the session.",
           consentAttestedAt: new Date("2026-10-01T12:00:00Z"),
           createdAt: new Date("2026-10-01T10:00:00Z"),
+          purchases: [{ id: "pur-buyer-1" }],
           meeting: {
             occurrence: {
               startsAt: new Date("2026-10-01T10:00:00Z"),
@@ -168,6 +207,8 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
                   consultationPlan: {
                     id: "cplan-1",
                     title: "Architecture Consultation",
+                    consultantProfileId: "cp-1",
+                    recordingStoragePolicy: "STREAM_ONLY",
                   },
                 },
                 subscription: null,
@@ -193,19 +234,25 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         planType: "consultation",
         planId: "cplan-1",
         planTitle: "Architecture Consultation",
-        listingStatus: "PUBLISHED",
+        playbackUrl: null,
+        listingStatus: "UNPUBLISHED",
         listPricePaise: 49900,
         listingTitle: "Masterclass Replay",
         slug: "masterclass-replay",
         tags: ["system-design", "architecture"],
         previewClipUrl: "https://cdn.example.com/preview.mp4",
         previewTranscript: "Welcome to the session.",
+        hasBuyers: true,
+        canManage: true,
+        canTransfer: false,
+        canPublish: false,
       });
+      expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
     });
   });
 
   describe("GET /api/dashboard/consultee/[consulteeId]/resources", () => {
-    it("includes SUCCEEDED RecordingPurchase items under data.purchased", async () => {
+    it("includes SUCCEEDED RecordingPurchase items under data.purchased with READY/AVAILABLE filter and take: 50 without eager URL signing", async () => {
       mockRequireApiAuth.mockResolvedValue({
         session: {
           user: {
@@ -269,6 +316,18 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
 
       expect(res.status).toBe(200);
+      expect(mockRecordingPurchaseFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            buyerId: "u-buyer",
+            status: "SUCCEEDED",
+            recording: {
+              status: { in: ["READY", "AVAILABLE"] },
+            },
+          },
+          take: 50,
+        }),
+      );
       const body = await res.json();
       expect(body.data.purchased).toHaveLength(1);
       expect(body.data.purchased[0]).toMatchObject({
@@ -278,9 +337,8 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         eventType: "purchased",
         status: "COMPLETED",
       });
-      expect(body.data.purchased[0].recordings[0].playbackUrl).toBe(
-        "https://signed.example.com/rec.mp4",
-      );
+      expect(body.data.purchased[0].recordings[0].playbackUrl).toBeNull();
+      expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
     });
   });
 
@@ -310,12 +368,21 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       },
     };
 
-    it("grants unlocked playback to owning consultant, SUCCEEDED replay buyer, and paid plan enrollee while gating strangers", async () => {
+    it("grants unlocked playback to owning consultant, SUCCEEDED replay buyer, and paid plan enrollee while gating strangers and late joiners", async () => {
       mockGetPublicRecordingBySlug.mockResolvedValue(sampleListing);
       mockRecordingFindUnique.mockResolvedValue({
         status: "AVAILABLE",
         storagePath: "recordings/rec-100.mp4",
         recordingUrl: null,
+        meeting: {
+          occurrence: {
+            startsAt: new Date("2026-09-01T10:00:00Z"),
+            appointment: {
+              classId: null,
+              class: null,
+            },
+          },
+        },
       });
 
       // 1. Owning consultant
@@ -353,7 +420,45 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       expect(mockGetBestRecordingUrl).toHaveBeenCalledTimes(1);
 
-      // 4. Unentitled user
+      // 4. Class late joiner whose floor is AFTER the session startsAt is denied free unlock
+      mockGetBestRecordingUrl.mockClear();
+      mockGetPublicRecordingBySlug.mockResolvedValueOnce({
+        ...sampleListing,
+        planType: "CLASS",
+        planId: "cplan-late",
+      });
+      mockRecordingFindUnique.mockResolvedValueOnce({
+        status: "AVAILABLE",
+        storagePath: "recordings/rec-100.mp4",
+        recordingUrl: null,
+        meeting: {
+          occurrence: {
+            startsAt: new Date("2026-09-01T10:00:00Z"),
+            appointment: {
+              classId: "class-late-1",
+              class: { classPlanId: "cplan-late" },
+            },
+          },
+        },
+      });
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "u-late-joiner", consultantProfileId: null },
+      });
+      mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
+      mockGetPaidPlanIds.mockResolvedValueOnce({
+        webinarPlanIds: [],
+        classPlanIds: ["cplan-late"],
+      });
+      mockLateJoinRecordingAccess.mockResolvedValueOnce({
+        floors: new Map([["class-late-1", new Date("2026-09-05T00:00:00Z")]]),
+        lateSeatBatches: new Map(),
+      });
+      await RecordingDetailPage({
+        params: Promise.resolve({ slug: "system-design-live" }),
+      });
+      expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
+
+      // 5. Unentitled user
       mockGetBestRecordingUrl.mockClear();
       mockGetSession.mockResolvedValueOnce({
         user: { id: "u-stranger", consultantProfileId: null },
@@ -370,35 +475,157 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
     });
   });
 
-  describe("LibraryBrowser EVENT_TYPE_LABELS & Appointment Chat Policy", () => {
+  describe("Delete guard, Player race guard & Contextual Appointment Chat", () => {
     it("maps consultation and subscription in EVENT_TYPE_LABELS", () => {
       expect(EVENT_TYPE_LABELS.consultation).toBe("Consultation");
       expect(EVENT_TYPE_LABELS.subscription).toBe("Subscription");
     });
 
-    it("wires contextual Message Consultee / Message Consultant / Open Event Chat and trial chat guard", () => {
-      const consultantAdapter = read(
-        "app/dashboard/consultant/[consultantId]/(features)/appointments/ConsultantAppointmentsAdapter.tsx",
+    it("refuses deletion when a recording has buyers (including after unpublish) or when caller is not primary owner", () => {
+      expect(canDeleteRecording({ canManage: true, hasBuyers: false })).toBe(
+        true,
       );
-      expect(consultantAdapter).toContain("Message Consultee");
-      expect(consultantAdapter).toContain("Open Event Chat");
-      expect(consultantAdapter).toContain("contextAppointmentId=");
-
-      const consulteeAdapter = read(
-        "components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx",
+      expect(canDeleteRecording({ canManage: true, hasBuyers: true })).toBe(
+        false,
       );
-      expect(consulteeAdapter).toContain("Message Consultant");
-      expect(consulteeAdapter).toContain("Open Event Chat");
-      expect(consulteeAdapter).toContain("contextAppointmentId=");
-
-      const sheet = read("components/appointments/AppointmentSheet.tsx");
-      expect(sheet).toContain("Chat unavailable for trials");
-
-      const detail = read(
-        "components/appointments/detail/AppointmentDetailClient.tsx",
+      expect(canDeleteRecording({ canManage: false, hasBuyers: false })).toBe(
+        false,
       );
-      expect(detail).toContain("Chat unavailable for trials");
-      expect(detail).toContain("RecordingPlayerModal");
+
+      // ClientPublishSchema enforces server-matching slug, tag count, and price bounds
+      expect(
+        ClientPublishSchema.safeParse({
+          listingTitle: "Valid Replay Title",
+          listPricePaise: 49900,
+          slug: "INVALID SLUG!",
+          consentAttested: true,
+        }).success,
+      ).toBe(false);
+    });
+
+    it("ignores a stale presigned URL response for recording A after switching to recording B", () => {
+      const recordingB = { id: "rec-B", playbackUrl: null };
+      const lateResponseFromA = {
+        recordingId: "rec-A",
+        url: "https://signed.example.com/rec-A.mp4",
+      };
+      expect(
+        resolveActivePlaybackUrl(recordingB, lateResponseFromA),
+      ).toBeNull();
+
+      const matchingResponseForB = {
+        recordingId: "rec-B",
+        url: "https://signed.example.com/rec-B.mp4",
+      };
+      expect(resolveActivePlaybackUrl(recordingB, matchingResponseForB)).toBe(
+        "https://signed.example.com/rec-B.mp4",
+      );
+    });
+
+    it("builds contextual DM and Event Chat affordances across DM_ELIGIBLE_STATUSES and OPENABLE_EVENT_STATUSES while requiring counterpartyUserId and excluding trials", () => {
+      const baseConsultationVm = {
+        id: "vm-1",
+        appointmentId: "apt-1",
+        kind: "CONSULTATION",
+        status: "APPROVED_PENDING_PAYMENT",
+        raw: {
+          appointment: {
+            consultation: {
+              requestedBy: { user: { id: "u-consultee-1" } },
+              consultationPlan: {
+                consultantProfile: { user: { id: "u-consultant-1" } },
+              },
+            },
+          },
+        },
+      } as unknown as AppointmentVM;
+
+      // APPROVED_PENDING_PAYMENT is in DM_ELIGIBLE_STATUSES for both consultee and consultant
+      const consulteeDmItems = chatAffordancesForVm({
+        vm: baseConsultationVm,
+        messagesBasePath: "/dashboard/consultee/ce-1/messages",
+        role: "consultee",
+        push: jest.fn(),
+      });
+      expect(consulteeDmItems).toEqual([
+        expect.objectContaining({
+          key: "message",
+          label: "Message Consultant",
+          href: "/dashboard/consultee/ce-1/messages?contextAppointmentId=apt-1&counterpartyUserId=u-consultant-1",
+        }),
+      ]);
+
+      const consultantDmItems = chatAffordancesForVm({
+        vm: baseConsultationVm,
+        messagesBasePath: "/dashboard/consultant/cp-1/messages",
+        role: "consultant",
+        push: jest.fn(),
+      });
+      expect(consultantDmItems).toEqual([
+        expect.objectContaining({
+          key: "message",
+          label: "Message Consultee",
+          href: "/dashboard/consultant/cp-1/messages?contextAppointmentId=apt-1&counterpartyUserId=u-consultee-1",
+        }),
+      ]);
+
+      // Missing counterpartyUserId omits the DM link instead of emitting a broken link
+      const missingCounterpartyVm = {
+        ...baseConsultationVm,
+        raw: { appointment: {} },
+      } as unknown as AppointmentVM;
+      expect(
+        chatAffordancesForVm({
+          vm: missingCounterpartyVm,
+          messagesBasePath: "/dashboard/consultee/ce-1/messages",
+          role: "consultee",
+          push: jest.fn(),
+        }),
+      ).toEqual([]);
+
+      // Group webinar in SCHEDULED status offers Open Event Chat + Message Consultant when host userId is resolved
+      const webinarVm = {
+        id: "vm-web-1",
+        appointmentId: "apt-web-1",
+        kind: "WEBINAR",
+        status: "SCHEDULED",
+        raw: {
+          appointment: {
+            webinarId: "web-1",
+            webinar: {
+              id: "web-1",
+              webinarPlan: {
+                consultantProfile: { user: { id: "u-host-1" } },
+              },
+            },
+          },
+        },
+      } as unknown as AppointmentVM;
+      const webinarItems = chatAffordancesForVm({
+        vm: webinarVm,
+        messagesBasePath: "/dashboard/consultee/ce-1/messages",
+        role: "consultee",
+        push: jest.fn(),
+      });
+      expect(webinarItems.map((i) => i.label)).toEqual([
+        "Open Event Chat",
+        "Message Consultant",
+      ]);
+
+      // Trial bookings never emit direct chat or event chat items
+      const trialVm = {
+        ...baseConsultationVm,
+        kind: "TRIAL",
+        status: "SCHEDULED",
+      } as unknown as AppointmentVM;
+      expect(
+        chatAffordancesForVm({
+          vm: trialVm,
+          messagesBasePath: "/dashboard/consultee/ce-1/messages",
+          role: "consultee",
+          push: jest.fn(),
+        }),
+      ).toEqual([]);
     });
   });
 });

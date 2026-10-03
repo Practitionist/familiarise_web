@@ -1,5 +1,6 @@
 "use client";
 
+import type { RecordingListingStatus } from "@prisma/client";
 import type { RecordingData } from "@/types/recording";
 
 import { useState } from "react";
@@ -34,7 +35,7 @@ import { cn } from "@/utils/tailwind";
 export type ExtendedRecordingData = Omit<RecordingData, "planType"> & {
   planType:
     "webinar" | "class" | "consultation" | "subscription" | "trial" | null;
-  listingStatus?: "UNLISTED" | "PUBLISHED" | "ARCHIVED";
+  listingStatus?: RecordingListingStatus | null;
   listPricePaise?: number | null;
   listingTitle?: string | null;
   listingDescription?: string | null;
@@ -43,6 +44,10 @@ export type ExtendedRecordingData = Omit<RecordingData, "planType"> & {
   previewClipUrl?: string | null;
   previewTranscript?: string | null;
   consentAttestedAt?: string | null;
+  hasBuyers?: boolean;
+  canManage?: boolean;
+  canTransfer?: boolean;
+  canPublish?: boolean;
 };
 
 function formatFileSize(bytes: number): string {
@@ -53,10 +58,10 @@ function formatFileSize(bytes: number): string {
 }
 
 interface RecordingCardProps {
-  recording: ExtendedRecordingData;
-  onTransfer?: (recordingId: string) => Promise<void>;
-  onWatch?: (recording: ExtendedRecordingData) => void;
-  onManage?: (recording: ExtendedRecordingData) => void;
+  readonly recording: ExtendedRecordingData;
+  readonly onTransfer?: (recordingId: string) => Promise<void>;
+  readonly onWatch?: (recording: ExtendedRecordingData) => void;
+  readonly onManage?: (recording: ExtendedRecordingData) => void;
 }
 
 export function RecordingCard({
@@ -64,7 +69,7 @@ export function RecordingCard({
   onTransfer,
   onWatch,
   onManage,
-}: RecordingCardProps) {
+}: Readonly<RecordingCardProps>) {
   const { toast } = useToast();
   const [isTransferring, setIsTransferring] = useState(false);
 
@@ -101,8 +106,10 @@ export function RecordingCard({
     }
   };
 
+  const canManage = recording.canManage ?? true;
   const canTransfer =
-    recording.status === "READY" && recording.storageType === "STREAM_S3";
+    recording.canTransfer ??
+    (recording.status === "READY" && recording.storageType === "STREAM_S3");
 
   const isExpiringSoon =
     recording.streamUrlExpiresAt &&
@@ -223,7 +230,11 @@ export function RecordingCard({
                 if (onWatch) {
                   onWatch(recording);
                 } else if (recording.playbackUrl) {
-                  window.open(recording.playbackUrl, "_blank");
+                  window.open(
+                    recording.playbackUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
                 }
               }}
             >
@@ -232,7 +243,7 @@ export function RecordingCard({
             </Button>
           )}
 
-          {onManage && (
+          {canManage && onManage && (
             <Button
               variant="outline"
               size="sm"

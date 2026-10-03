@@ -113,7 +113,7 @@ export function AppointmentSheet({
             )}
             {vm.kind === "TRIAL" && (
               <span className="rounded bg-muted text-muted-foreground px-1.5 py-px text-[10px] font-medium">
-                Chat unavailable for trials
+                Trial booking — direct chat requires a paid plan
               </span>
             )}
           </div>

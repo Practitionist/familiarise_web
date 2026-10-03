@@ -27,6 +27,7 @@ import { cn } from "@/utils/tailwind";
 
 export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
+export type DateOrIsoString = string | Date | null;
 
 export interface RecordingPlayerItem {
   id: string;
@@ -34,19 +35,35 @@ export interface RecordingPlayerItem {
   playbackUrl?: string | null;
   durationMinutes?: number | null;
   durationInMinutes?: number | null;
-  recordedAt?: string | Date | null;
+  recordedAt?: DateOrIsoString;
   resolution?: string | null;
   storageType?: string | null;
-  streamUrlExpiresAt?: string | Date | null;
+  streamUrlExpiresAt?: DateOrIsoString;
   previewTranscript?: string | null;
   planType?: string | null;
   planTitle?: string | null;
 }
 
+export interface ResolvedPlaybackState {
+  recordingId: string;
+  url: string;
+}
+
 export interface RecordingPlayerModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  recording: RecordingPlayerItem | null;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly recording: RecordingPlayerItem | null;
+}
+
+export function resolveActivePlaybackUrl(
+  recording: Pick<RecordingPlayerItem, "id" | "playbackUrl"> | null,
+  resolvedPlayback: ResolvedPlaybackState | null,
+): string | null {
+  if (!recording) return null;
+  if (resolvedPlayback && resolvedPlayback.recordingId === recording.id) {
+    return resolvedPlayback.url;
+  }
+  return recording.playbackUrl ?? null;
 }
 
 function formatDuration(minutes: number | null | undefined): string | null {
@@ -58,9 +75,9 @@ function formatDuration(minutes: number | null | undefined): string | null {
 
 function computeStorageBadge(
   storageType?: string | null,
-  streamUrlExpiresAt?: string | Date | null,
+  streamUrlExpiresAt?: DateOrIsoString,
 ): { label: string; permanent: boolean } | null {
-  if (storageType === "PLATFORM" || storageType === "SUPABASE") {
+  if (storageType === "PLATFORM") {
     return { label: "Permanent Cloud Storage", permanent: true };
   }
   if (streamUrlExpiresAt) {
@@ -77,14 +94,100 @@ function computeStorageBadge(
   return null;
 }
 
+function buildCaptionTrackDataUri(transcriptText: string | null): string {
+  const cueBody = transcriptText?.trim() || "Session recording";
+  const vtt = `WEBVTT\n\n00:00:00.000 --> 99:59:59.000\n${cueBody}\n`;
+  return `data:text/vtt;charset=utf-8,${encodeURIComponent(vtt)}`;
+}
+
+interface PlayerViewportProps {
+  readonly isLoadingUrl: boolean;
+  readonly fetchError: string | null;
+  readonly activePlaybackUrl: string | null;
+  readonly captionTrackSrc: string;
+  readonly videoRef: React.RefObject<HTMLVideoElement>;
+  readonly playbackSpeed: PlaybackSpeed;
+  readonly onRetry: () => void;
+  readonly onVideoError: () => void;
+}
+
+function PlayerViewport({
+  isLoadingUrl,
+  fetchError,
+  activePlaybackUrl,
+  captionTrackSrc,
+  videoRef,
+  playbackSpeed,
+  onRetry,
+  onVideoError,
+}: Readonly<PlayerViewportProps>) {
+  if (isLoadingUrl) {
+    return (
+      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg bg-black text-white">
+        <Loader2 className="h-8 w-8 animate-spin text-white/80" />
+        <p className="text-xs text-white/70">
+          Preparing secure video stream...
+        </p>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
+        <AlertCircle className="h-8 w-8 text-destructive" />
+        <p className="text-sm font-medium text-foreground">{fetchError}</p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (activePlaybackUrl) {
+    return (
+      <video
+        ref={videoRef}
+        src={activePlaybackUrl}
+        controls
+        autoPlay
+        preload="metadata"
+        controlsList="nodownload"
+        className="w-full rounded-lg bg-black aspect-video"
+        onLoadedMetadata={() => {
+          if (videoRef.current) {
+            videoRef.current.playbackRate = playbackSpeed;
+          }
+        }}
+        onError={onVideoError}
+      >
+        <track
+          kind="captions"
+          srcLang="en"
+          label="Transcript"
+          src={captionTrackSrc}
+        />
+      </video>
+    );
+  }
+
+  return (
+    <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-muted text-sm text-muted-foreground">
+      Playback URL unavailable.
+    </div>
+  );
+}
+
 export function RecordingPlayerModal({
   open,
   onOpenChange,
   recording,
 }: Readonly<RecordingPlayerModalProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [freshUrl, setFreshUrl] = useState<string | null>(null);
-  const [freshTranscript, setFreshTranscript] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const [resolvedPlayback, setResolvedPlayback] =
+    useState<ResolvedPlaybackState | null>(null);
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
@@ -95,53 +198,76 @@ export function RecordingPlayerModal({
   const initialPlaybackUrl = recording?.playbackUrl ?? null;
 
   const fetchPresignedUrl = useCallback(async (id: string) => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoadingUrl(true);
     setFetchError(null);
     try {
-      const response = await fetch(`/api/stream/recordings/${id}`);
+      const response = await fetch(`/api/stream/recordings/${id}`, {
+        signal: controller.signal,
+      });
       const payload = (await response.json().catch(() => ({}))) as {
         recording?: {
           playbackUrl?: string | null;
-          previewTranscript?: string | null;
+        };
+        access?: {
+          level?: string;
+          reason?: string;
         };
         error?: string;
       };
+      if (controller.signal.aborted) return;
+
       if (!response.ok) {
         throw new Error(payload.error || "Unable to load recording playback");
       }
       const nextUrl = payload.recording?.playbackUrl ?? null;
       if (!nextUrl) {
+        const operatorReason =
+          payload.access?.level === "METADATA_ONLY"
+            ? payload.access.reason
+            : null;
         throw new Error(
-          "Playback URL is not available for this recording yet.",
+          operatorReason ||
+            "Playback URL is not available for this recording yet.",
         );
       }
-      setFreshUrl(nextUrl);
-      if (payload.recording?.previewTranscript) {
-        setFreshTranscript(payload.recording.previewTranscript);
-      }
+      setResolvedPlayback({ recordingId: id, url: nextUrl });
     } catch (err) {
+      if (controller.signal.aborted) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setFetchError(
         err instanceof Error ? err.message : "Failed to load recording",
       );
     } finally {
-      setIsLoadingUrl(false);
+      if (abortControllerRef.current === controller) {
+        setIsLoadingUrl(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    abortControllerRef.current?.abort();
+    setResolvedPlayback(null);
+    setFetchError(null);
+    setPlaybackSpeed(1);
+    setTranscriptOpen(false);
+    setRetriedOnError(false);
+
     if (!open || !recordingId) {
-      setFreshUrl(null);
-      setFreshTranscript(null);
-      setFetchError(null);
-      setPlaybackSpeed(1);
-      setTranscriptOpen(false);
-      setRetriedOnError(false);
+      setIsLoadingUrl(false);
       return;
     }
 
     if (!initialPlaybackUrl) {
       void fetchPresignedUrl(recordingId);
     }
+
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [open, recordingId, initialPlaybackUrl, fetchPresignedUrl]);
 
   const handleSpeedChange = (speed: PlaybackSpeed) => {
@@ -153,7 +279,10 @@ export function RecordingPlayerModal({
 
   if (!recording) return null;
 
-  const activePlaybackUrl = freshUrl ?? recording.playbackUrl ?? null;
+  const activePlaybackUrl = resolveActivePlaybackUrl(
+    recording,
+    resolvedPlayback,
+  );
   const durationMins =
     recording.durationMinutes ?? recording.durationInMinutes ?? null;
   const formattedDuration = formatDuration(durationMins);
@@ -161,7 +290,8 @@ export function RecordingPlayerModal({
     recording.storageType,
     recording.streamUrlExpiresAt,
   );
-  const transcriptText = freshTranscript ?? recording.previewTranscript ?? null;
+  const transcriptText = recording.previewTranscript ?? null;
+  const captionTrackSrc = buildCaptionTrackDataUri(transcriptText);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,63 +343,28 @@ export function RecordingPlayerModal({
         </DialogHeader>
 
         <div className="space-y-4">
-          {isLoadingUrl ? (
-            <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg bg-black text-white">
-              <Loader2 className="h-8 w-8 animate-spin text-white/80" />
-              <p className="text-xs text-white/70">
-                Preparing secure video stream...
-              </p>
-            </div>
-          ) : fetchError ? (
-            <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
-              <AlertCircle className="h-8 w-8 text-destructive" />
-              <p className="text-sm font-medium text-foreground">
-                {fetchError}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void fetchPresignedUrl(recording.id)}
-              >
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                Retry
-              </Button>
-            </div>
-          ) : activePlaybackUrl ? (
-            <video
-              ref={videoRef}
-              src={activePlaybackUrl}
-              controls
-              autoPlay
-              preload="metadata"
-              controlsList="nodownload"
-              className="w-full rounded-lg bg-black aspect-video"
-              onLoadedMetadata={() => {
-                if (videoRef.current) {
-                  videoRef.current.playbackRate = playbackSpeed;
-                }
-              }}
-              onError={() => {
-                if (!retriedOnError) {
-                  setRetriedOnError(true);
-                  void fetchPresignedUrl(recording.id);
-                }
-              }}
-            />
-          ) : (
-            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-muted text-sm text-muted-foreground">
-              Playback URL unavailable.
-            </div>
-          )}
+          <PlayerViewport
+            isLoadingUrl={isLoadingUrl}
+            fetchError={fetchError}
+            activePlaybackUrl={activePlaybackUrl}
+            captionTrackSrc={captionTrackSrc}
+            videoRef={videoRef}
+            playbackSpeed={playbackSpeed}
+            onRetry={() => void fetchPresignedUrl(recording.id)}
+            onVideoError={() => {
+              if (!retriedOnError) {
+                setRetriedOnError(true);
+                void fetchPresignedUrl(recording.id);
+              }
+            }}
+          />
 
-          {/* Controls row: Playback Speed selector + Open in New Tab fallback */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div
-              className="flex flex-wrap items-center gap-1.5"
-              role="group"
+            <fieldset
               aria-label="Playback speed"
+              className="m-0 flex flex-wrap items-center gap-1.5 border-0 p-0"
             >
-              <span className=" mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
                 <Gauge className="h-3.5 w-3.5" />
                 Speed:
               </span>
@@ -285,7 +380,7 @@ export function RecordingPlayerModal({
                   {speed}x
                 </Button>
               ))}
-            </div>
+            </fieldset>
 
             {activePlaybackUrl && (
               <Button
@@ -306,7 +401,6 @@ export function RecordingPlayerModal({
             )}
           </div>
 
-          {/* Collapsible Transcript / Notes panel */}
           {transcriptText && (
             <div className="rounded-lg border border-border bg-muted/40">
               <button

@@ -16,16 +16,16 @@ import { OFFERING_ADAPTERS } from "@/components/offerings/editor/adapters";
 import type { WebinarEvent, ClassEvent } from "@/types/planner-events";
 
 describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", () => {
-  it("defaults webinar and class offering adapters to PERMANENT recordingStoragePolicy", () => {
+  it("defaults webinar and class offering adapters to STREAM_ONLY recordingStoragePolicy so permanent storage is an explicit opt-in", () => {
     expect(OFFERING_ADAPTERS.webinar.defaults.recordingStoragePolicy).toBe(
-      "PERMANENT",
+      "STREAM_ONLY",
     );
     expect(OFFERING_ADAPTERS.class.defaults.recordingStoragePolicy).toBe(
-      "PERMANENT",
+      "STREAM_ONLY",
     );
   });
 
-  it("forwards recordingEnabled and recordingStoragePolicy in WebinarService.buildRequestBody", () => {
+  it("forwards recordingEnabled and recordingStoragePolicy in WebinarService.buildRequestBody and omits them on partial updates when undefined", () => {
     const bodyPermanent = WebinarService.buildRequestBody(
       {
         webinarPlan: {
@@ -50,17 +50,14 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
     expect(bodyPermanent.recordingEnabled).toBe(true);
     expect(bodyPermanent.recordingStoragePolicy).toBe("PERMANENT");
 
-    const bodyStreamOnly = WebinarService.buildRequestBody(
+    const partialUpdate = WebinarService.buildRequestBody(
       {
         webinarPlan: {
-          title: "Quick Q&A Webinar",
-          description: "Live Q&A",
+          id: "plan-1",
+          title: "Rescheduled Webinar",
           price: 500,
-          priceCurrency: "INR",
           durationInHours: 1,
           maxParticipants: 100,
-          recordingEnabled: false,
-          recordingStoragePolicy: "STREAM_ONLY",
         } as unknown as WebinarEvent["webinarPlan"],
       },
       "cp-1",
@@ -71,11 +68,11 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
       "web-1",
     );
 
-    expect(bodyStreamOnly.recordingEnabled).toBe(false);
-    expect(bodyStreamOnly.recordingStoragePolicy).toBe("STREAM_ONLY");
+    expect(partialUpdate.recordingEnabled).toBeUndefined();
+    expect(partialUpdate.recordingStoragePolicy).toBeUndefined();
   });
 
-  it("forwards recordingEnabled, recordingStoragePolicy, and sessionDurationInHours in ClassService.buildRequestBody", () => {
+  it("forwards recordingEnabled, recordingStoragePolicy, and sessionDurationInHours in ClassService.buildRequestBody and preserves them on partial updates", () => {
     const body = ClassService.buildRequestBody(
       {
         classPlan: {
@@ -103,5 +100,28 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
     expect(body.recordingEnabled).toBe(true);
     expect(body.recordingStoragePolicy).toBe("PERMANENT");
     expect(body.sessionDurationInHours).toBe(1.5);
+
+    const partialClassUpdate = ClassService.buildRequestBody(
+      {
+        classPlan: {
+          id: "cplan-1",
+          title: "Updated Cohort",
+          description: "8-week cohort",
+          price: 12000,
+          durationInMonths: 2,
+          maxParticipants: 25,
+          sessionsPerWeek: 2,
+        } as unknown as ClassEvent["classPlan"],
+      },
+      "cp-1",
+      ["Full-Stack"],
+      true,
+      "cplan-1",
+      "cls-1",
+      null,
+    );
+
+    expect(partialClassUpdate.recordingEnabled).toBeUndefined();
+    expect(partialClassUpdate.recordingStoragePolicy).toBeUndefined();
   });
 });

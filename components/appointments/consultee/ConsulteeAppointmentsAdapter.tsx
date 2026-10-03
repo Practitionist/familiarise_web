@@ -43,8 +43,15 @@ import { useEventActions } from "@/components/appointments/consultee/useEventAct
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import {
+  DM_ELIGIBLE_STATUSES,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
 
 type DialogKind = "cancel" | "leave" | "documents";
+
+const DM_ELIGIBLE_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const OPENABLE_EVENT_SET = new Set<string>(OPENABLE_EVENT_STATUSES);
 
 /**
  * Event id for leave / cancel-trial API paths.
@@ -92,7 +99,7 @@ function sourceId(vm: AppointmentVM): string | null {
   }
 }
 
-function consultantUserIdOf(vm: AppointmentVM): string | null {
+export function consultantUserIdOf(vm: AppointmentVM): string | null {
   const src = vm.raw.source as
     | {
         consultationPlan?: {
@@ -147,6 +154,85 @@ function consultantUserIdOf(vm: AppointmentVM): string | null {
     appt?.class?.classPlan?.consultantProfile?.user?.id ??
     null
   );
+}
+
+export function consulteeUserIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment;
+  if (appt?.consultation?.requestedBy?.user?.id) {
+    return appt.consultation.requestedBy.user.id;
+  }
+  if (appt?.subscription?.requestedBy?.user?.id) {
+    return appt.subscription.requestedBy.user.id;
+  }
+  const src = vm.raw.source as
+    | {
+        requestedBy?: { user?: { id?: string } };
+        consulteeProfile?: { user?: { id?: string } };
+      }
+    | undefined;
+  return src?.requestedBy?.user?.id ?? src?.consulteeProfile?.user?.id ?? null;
+}
+
+export function eventChannelIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment as
+    | {
+        webinar?: { id?: string } | null;
+        class?: { id?: string } | null;
+        webinarId?: string | null;
+        classId?: string | null;
+      }
+    | undefined;
+  if (vm.kind === "WEBINAR") {
+    return appt?.webinar?.id ?? appt?.webinarId ?? sourceId(vm);
+  }
+  if (vm.kind === "CLASS") {
+    return appt?.class?.id ?? appt?.classId ?? sourceId(vm);
+  }
+  return null;
+}
+
+export function chatAffordancesForVm(options: {
+  vm: AppointmentVM;
+  messagesBasePath: string;
+  role: "consultant" | "consultee";
+  push: (href: string) => void;
+}): OverflowItem[] {
+  const { vm, messagesBasePath, role, push } = options;
+  if (vm.kind === "TRIAL") return [];
+
+  const chatItems: OverflowItem[] = [];
+  if (
+    (vm.kind === "WEBINAR" || vm.kind === "CLASS") &&
+    OPENABLE_EVENT_SET.has(vm.status)
+  ) {
+    const eventId = eventChannelIdOf(vm);
+    if (eventId) {
+      const eventChatHref = `${messagesBasePath}?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+      chatItems.push({
+        key: "event-chat",
+        label: "Open Event Chat",
+        href: eventChatHref,
+        onClick: () => push(eventChatHref),
+      });
+    }
+  }
+
+  if (DM_ELIGIBLE_SET.has(vm.status) && vm.appointmentId) {
+    const counterpartyUserId =
+      role === "consultant" ? consulteeUserIdOf(vm) : consultantUserIdOf(vm);
+    if (counterpartyUserId) {
+      const dmHref = `${messagesBasePath}?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`;
+      chatItems.push({
+        key: "message",
+        label:
+          role === "consultant" ? "Message Consultee" : "Message Consultant",
+        href: dmHref,
+        onClick: () => push(dmHref),
+      });
+    }
+  }
+
+  return chatItems;
 }
 
 /**
@@ -372,60 +458,15 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "documents"),
       });
     }
-    const chatAllowed =
-      vm.kind !== "TRIAL" &&
-      !isPendingPaymentStatus(vm.status) &&
-      (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status));
-
-    if (
-      chatAllowed &&
-      consulteeId &&
-      vm.appointmentId &&
-      (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION")
-    ) {
-      const counterpartyUserId = consultantUserIdOf(vm);
-      const messageHref = `/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
-        counterpartyUserId
-          ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
-          : ""
-      }`;
-      items.push({
-        key: "message",
-        label: "Message Consultant",
-        href: messageHref,
-        onClick: () => router.push(messageHref),
-      });
-    }
-
-    if (
-      chatAllowed &&
-      consulteeId &&
-      (vm.kind === "WEBINAR" || vm.kind === "CLASS")
-    ) {
-      const eventId = sourceId(vm);
-      if (eventId) {
-        const eventChatHref = `/dashboard/consultee/${consulteeId}/messages?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
-        items.push({
-          key: "event-chat",
-          label: "Open Event Chat",
-          href: eventChatHref,
-          onClick: () => router.push(eventChatHref),
-        });
-      }
-      if (vm.appointmentId) {
-        const counterpartyUserId = consultantUserIdOf(vm);
-        const dmHref = `/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
-          counterpartyUserId
-            ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
-            : ""
-        }`;
-        items.push({
-          key: "message",
-          label: "Message Consultant",
-          href: dmHref,
-          onClick: () => router.push(dmHref),
-        });
-      }
+    if (consulteeId) {
+      items.push(
+        ...chatAffordancesForVm({
+          vm,
+          messagesBasePath: `/dashboard/consultee/${consulteeId}/messages`,
+          role: "consultee",
+          push: (href) => router.push(href),
+        }),
+      );
     }
     if (vm.appointmentId && consulteeId) {
       // #1527 — one verb for help everywhere, and one place: the booking's

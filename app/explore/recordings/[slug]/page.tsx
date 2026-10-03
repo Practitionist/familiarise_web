@@ -8,18 +8,35 @@ import {
   type RecordingListing,
 } from "@/lib/data/recordings-explore";
 import { RecordingService } from "@/lib/stream/recording-service";
+import {
+  hiddenFromLateJoiner,
+  lateJoinRecordingAccess,
+} from "@/lib/stream/late-join-recordings";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { Badge } from "@/components/ui/badge";
 import { RecordingBuyButton } from "./RecordingBuyButton";
 
-export const revalidate = 120;
-export const dynamicParams = true;
+type RecordingAccessRow = {
+  status: string;
+  storagePath: string | null;
+  recordingUrl: string | null;
+  meeting?: {
+    occurrence?: {
+      startsAt: Date;
+      appointment?: {
+        classId: string | null;
+        class?: { classPlanId: string } | null;
+      } | null;
+    } | null;
+  } | null;
+};
 
 async function canUserWatchRecording(
   userId: string,
   consultantProfileId: string | null | undefined,
   listing: RecordingListing,
+  recording: RecordingAccessRow | null,
 ): Promise<boolean> {
   if (
     consultantProfileId &&
@@ -28,16 +45,14 @@ async function canUserWatchRecording(
     return true;
   }
 
-  const purchase = prisma.recordingPurchase?.findFirst
-    ? await prisma.recordingPurchase.findFirst({
-        where: {
-          recordingId: listing.id,
-          buyerId: userId,
-          status: "SUCCEEDED",
-        },
-        select: { id: true },
-      })
-    : null;
+  const purchase = await prisma.recordingPurchase.findFirst({
+    where: {
+      recordingId: listing.id,
+      buyerId: userId,
+      status: "SUCCEEDED",
+    },
+    select: { id: true },
+  });
   if (purchase) {
     return true;
   }
@@ -51,7 +66,8 @@ async function canUserWatchRecording(
     return true;
   }
   if (listing.planType === "CLASS" && classPlanIds.includes(listing.planId)) {
-    return true;
+    const lateJoin = await lateJoinRecordingAccess(userId);
+    return !hiddenFromLateJoiner(recording ?? {}, lateJoin);
   }
 
   return false;
@@ -121,28 +137,46 @@ export default async function RecordingDetailPage({
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
 
-  const session = await getSession(true).catch(() => null);
-  const alreadyAccess = session?.user?.id
-    ? await canUserWatchRecording(
-        session.user.id,
-        session.user.consultantProfileId,
-        listing,
-      )
-    : false;
-
-  const rawRecording = alreadyAccess
+  const session = await getSession(true);
+  const rawRecording = session?.user?.id
     ? await prisma.recording.findUnique({
         where: { id: listing.id },
         select: {
           status: true,
           storagePath: true,
           recordingUrl: true,
+          meeting: {
+            select: {
+              occurrence: {
+                select: {
+                  startsAt: true,
+                  appointment: {
+                    select: {
+                      classId: true,
+                      class: { select: { classPlanId: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       })
     : null;
-  const fullPlaybackUrl = rawRecording
-    ? await getBestRecordingUrl(rawRecording)
-    : null;
+
+  const alreadyAccess = session?.user?.id
+    ? await canUserWatchRecording(
+        session.user.id,
+        session.user.consultantProfileId,
+        listing,
+        rawRecording,
+      )
+    : false;
+
+  const fullPlaybackUrl =
+    alreadyAccess && rawRecording
+      ? await getBestRecordingUrl(rawRecording)
+      : null;
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">

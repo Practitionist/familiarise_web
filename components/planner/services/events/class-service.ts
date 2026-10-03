@@ -196,7 +196,24 @@ export class ClassService {
       );
     }
 
-    const recording = recordingPayload(plan);
+    const defaultRecording = recordingPayload(plan);
+    const recordingFields = isUpdate
+      ? {
+          ...(plan?.recordingEnabled !== undefined
+            ? { recordingEnabled: plan.recordingEnabled }
+            : {}),
+          ...(plan?.recordingStoragePolicy !== undefined
+            ? {
+                recordingStoragePolicy: plan.recordingStoragePolicy as
+                  "STREAM_ONLY" | "PERMANENT",
+              }
+            : {}),
+        }
+      : {
+          recordingEnabled: defaultRecording.recordingEnabled,
+          recordingStoragePolicy: defaultRecording.recordingStoragePolicy as
+            "STREAM_ONLY" | "PERMANENT",
+        };
 
     // Build base payload with required fields
     const basePayload = {
@@ -210,9 +227,7 @@ export class ClassService {
       sessionDurationInHours: plan?.sessionDurationInHours,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
-      recordingEnabled: recording.recordingEnabled,
-      recordingStoragePolicy: recording.recordingStoragePolicy as
-        "STREAM_ONLY" | "PERMANENT",
+      ...recordingFields,
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,

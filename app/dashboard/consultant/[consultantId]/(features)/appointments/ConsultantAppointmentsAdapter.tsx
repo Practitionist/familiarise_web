@@ -29,6 +29,7 @@ import {
 } from "./utils/participantHelpers";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
 import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
 
@@ -63,39 +64,56 @@ function actionableRawSlots(vm: AppointmentVM) {
   return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
 }
 
-function counterpartyUserIdOf(vm: AppointmentVM): string | null {
-  const appt = vm.raw.appointment;
-  if (appt?.consultation?.requestedBy?.user?.id) {
-    return appt.consultation.requestedBy.user.id;
-  }
-  if (appt?.subscription?.requestedBy?.user?.id) {
-    return appt.subscription.requestedBy.user.id;
-  }
-  const src = vm.raw.source as
-    | {
-        requestedBy?: { user?: { id?: string } };
-        consulteeProfile?: { user?: { id?: string } };
-      }
-    | undefined;
-  return src?.requestedBy?.user?.id ?? src?.consulteeProfile?.user?.id ?? null;
+function canOfferTimings(vm: AppointmentVM, timingsOk: boolean): boolean {
+  return Boolean(
+    vm.raw.appointment &&
+    vm.bucket !== "cancelled" &&
+    vm.bucket !== "past" &&
+    timingsOk,
+  );
 }
 
-function groupEventIdOf(vm: AppointmentVM): string | null {
-  const appt = vm.raw.appointment as
-    | {
-        webinar?: { id?: string } | null;
-        class?: { id?: string } | null;
-        webinarId?: string | null;
-        classId?: string | null;
-      }
-    | undefined;
-  if (vm.kind === "WEBINAR") {
-    return appt?.webinar?.id ?? appt?.webinarId ?? null;
-  }
-  if (vm.kind === "CLASS") {
-    return appt?.class?.id ?? appt?.classId ?? null;
-  }
-  return null;
+function canOfferReschedule(
+  vm: AppointmentVM,
+  lifecycleOk: boolean,
+  inactive: boolean,
+  timingsOk: boolean,
+  rawOccurrences: ReturnType<typeof actionableRawSlots>,
+): boolean {
+  return Boolean(
+    vm.appointmentId &&
+    vm.kind !== "TRIAL" &&
+    lifecycleOk &&
+    !inactive &&
+    isApprovedStatus(vm.status) &&
+    !timingsOk &&
+    occurrencesAllowReschedule(rawOccurrences),
+  );
+}
+
+function canOfferUnschedule(
+  vm: AppointmentVM,
+  lifecycleOk: boolean,
+  inactive: boolean,
+  rawOccurrences: ReturnType<typeof actionableRawSlots>,
+): boolean {
+  return Boolean(
+    vm.appointmentId &&
+    lifecycleOk &&
+    !inactive &&
+    isConfirmedStatus(vm.status) &&
+    allowsUnschedule(vm.kind, rawOccurrences),
+  );
+}
+
+function canOfferDocuments(vm: AppointmentVM): boolean {
+  return Boolean(
+    vm.appointmentId &&
+    isConfirmedStatus(vm.status) &&
+    (vm.kind === "CONSULTATION" ||
+      vm.kind === "SUBSCRIPTION" ||
+      vm.kind === "TRIAL"),
+  );
 }
 
 export function useConsultantAppointmentsAdapter(
@@ -269,20 +287,9 @@ export function useConsultantAppointmentsAdapter(
     const inactive = isInactiveStatus(vm.status);
     const rawOccurrences = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm);
-    const isTrial = vm.kind === "TRIAL";
-
-    // Manage Timings moves sessions with no notice and no acceptance, so it is
-    // only offered where nobody else has committed to the time. A 1:1 whose
-    // consultee already holds a confirmed slot gets Reschedule below instead —
-    // the two are alternatives, never both (#1082).
     const timingsOk = allowsManageTimings(vm.kind, rawOccurrences);
 
-    if (
-      appointment &&
-      vm.bucket !== "cancelled" &&
-      vm.bucket !== "past" &&
-      timingsOk
-    ) {
+    if (canOfferTimings(vm, timingsOk)) {
       items.push({
         key: "timings",
         label: "Timings",
@@ -297,51 +304,26 @@ export function useConsultantAppointmentsAdapter(
           router.push(getParticipantManagementUrl(appointment, consultantId)),
       });
     }
-
     if (
-      vm.appointmentId &&
-      !isTrial &&
-      lifecycleOk &&
-      !inactive &&
-      isApprovedStatus(vm.status) &&
-      // Reschedule is the negotiated path, so it belongs exactly where Manage
-      // Timings does not: a booking a counterparty holds a confirmed time on.
-      !timingsOk &&
-      occurrencesAllowReschedule(rawOccurrences)
+      canOfferReschedule(vm, lifecycleOk, inactive, timingsOk, rawOccurrences)
     ) {
       items.push({
         key: "reschedule",
         label: "Reschedule",
-        // The consultant's OWN reschedule route. This surface used to mount
-        // the consultee's dialog, which has no equivalent page a consultant
-        // may open: that route's consultee ownership check would 403 them.
         onClick: () =>
           router.push(
             `/dashboard/consultant/${consultantId}/appointments/${vm.appointmentId}/reschedule`,
           ),
       });
     }
-
-    // Unschedule is not a third branch of the pair above: a confirmed webinar
-    // offers Timings AND this. It withdraws the date only — the booking stays
-    // sold, attendees stay enrolled, no money moves — which is the whole of
-    // what separates it from Cancel below (#1082).
-    if (
-      vm.appointmentId &&
-      lifecycleOk &&
-      !inactive &&
-      // The route's own from-state for a group release is SCHEDULED/IN_PROGRESS.
-      isConfirmedStatus(vm.status) &&
-      allowsUnschedule(vm.kind, rawOccurrences)
-    ) {
+    if (canOfferUnschedule(vm, lifecycleOk, inactive, rawOccurrences)) {
       items.push({
         key: "unschedule",
         label: "Unschedule",
         onClick: () => openDialog(vm, "unschedule"),
       });
     }
-
-    if (vm.appointmentId && !isTrial && lifecycleOk && !inactive) {
+    if (vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive) {
       items.push({
         key: "cancel",
         label: "Cancel booking",
@@ -349,14 +331,7 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => openDialog(vm, "cancel"),
       });
     }
-
-    if (
-      vm.appointmentId &&
-      isConfirmedStatus(vm.status) &&
-      (vm.kind === "CONSULTATION" ||
-        vm.kind === "SUBSCRIPTION" ||
-        vm.kind === "TRIAL")
-    ) {
+    if (canOfferDocuments(vm)) {
       items.push({
         key: "documents",
         label: "Upload document",
@@ -364,47 +339,15 @@ export function useConsultantAppointmentsAdapter(
       });
     }
 
-    const chatAllowed =
-      !isTrial && (isConfirmedStatus(vm.status) || vm.status === "COMPLETED");
+    items.push(
+      ...chatAffordancesForVm({
+        vm,
+        messagesBasePath: `/dashboard/consultant/${consultantId}/messages`,
+        role: "consultant",
+        push: (href) => router.push(href),
+      }),
+    );
 
-    if (
-      chatAllowed &&
-      vm.appointmentId &&
-      (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION")
-    ) {
-      const counterpartyUserId = counterpartyUserIdOf(vm);
-      const messageHref = `/dashboard/consultant/${consultantId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
-        counterpartyUserId
-          ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
-          : ""
-      }`;
-      items.push({
-        key: "message",
-        label: "Message Consultee",
-        href: messageHref,
-        onClick: () => router.push(messageHref),
-      });
-    }
-
-    if (chatAllowed && (vm.kind === "WEBINAR" || vm.kind === "CLASS")) {
-      const eventId = groupEventIdOf(vm);
-      if (eventId) {
-        const eventChatHref = `/dashboard/consultant/${consultantId}/messages?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
-        items.push({
-          key: "event-chat",
-          label: "Open Event Chat",
-          href: eventChatHref,
-          onClick: () => router.push(eventChatHref),
-        });
-      }
-    }
-
-    // #1270 — the dev backdoor is ADDITIVE: a separately-labelled overflow
-    // entry that appears exactly where the real Join does not. It must never
-    // relax the primary action's gate, which is what the trial branch used to
-    // do (`trialJoinable(vm) || isDev` re-labelled the real Join instead of
-    // adding a second affordance, so on any dev build every trial offered a
-    // "Join (Dev)" button whether or not it was genuinely joinable).
     if (isDev && hasSlotRows(vm) && !canJoinNow(vm)) {
       items.push({
         key: "dev-join",

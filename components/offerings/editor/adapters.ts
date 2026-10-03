@@ -240,7 +240,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       maxParticipants: 100,
       certificateProvided: false,
       recordingEnabled: false,
-      recordingStoragePolicy: "PERMANENT",
+      // Permanent storage is an explicit opt-in even for marketplace-eligible offerings.
+      recordingStoragePolicy: "STREAM_ONLY",
     },
     planOf: (event) => {
       const plan = (event as { webinarPlan?: Record<string, unknown> })
@@ -273,7 +274,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       emailSupport: "GENERAL",
       certificateProvided: false,
       recordingEnabled: false,
-      recordingStoragePolicy: "PERMANENT",
+      recordingStoragePolicy: "STREAM_ONLY",
       classContents: [],
       schedulingStartDate: null,
       lateJoinUntilSession: null,

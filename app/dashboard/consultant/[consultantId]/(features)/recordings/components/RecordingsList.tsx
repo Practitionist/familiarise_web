@@ -25,26 +25,143 @@ import { createConsultantQueries } from "@/lib/dashboard-queries";
 export type ConsultantRecordingFilterType =
   "webinar" | "class" | "consultation" | "subscription" | "trial";
 
-interface RecordingsListProps {
-  consultantId: string;
-  type?: ConsultantRecordingFilterType | null;
+const EMPTY_RECORDING_MESSAGES: Record<ConsultantRecordingFilterType, string> =
+  {
+    webinar: "Webinar recordings will appear here after you record a session.",
+    class: "Class recordings will appear here after you record a session.",
+    consultation:
+      "Consultation recordings will appear here after you record a session.",
+    subscription:
+      "Subscription recordings will appear here after you record a session.",
+    trial: "Your recorded sessions will appear here.",
+  };
+
+function getEmptyRecordingMessage(
+  type?: ConsultantRecordingFilterType | null,
+): string {
+  if (!type) return "Your recorded sessions will appear here.";
+  return EMPTY_RECORDING_MESSAGES[type];
 }
 
-export function RecordingsList({ consultantId, type }: RecordingsListProps) {
+function RecordingsSkeletonGrid() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="space-y-3">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="aspect-video w-full rounded-lg" />
+          <Skeleton className="h-9 w-full rounded-lg" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface NoRecordingsEmptyStateProps {
+  readonly type?: ConsultantRecordingFilterType | null;
+  readonly isSyncing: boolean;
+  readonly onSync: () => void;
+}
+
+function NoRecordingsEmptyState({
+  type,
+  isSyncing,
+  onSync,
+}: Readonly<NoRecordingsEmptyStateProps>) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <Video className="w-12 h-12 text-muted-foreground mb-4" />
+      <p className="text-lg font-medium">No recordings yet</p>
+      <p className="text-sm text-muted-foreground mt-1">
+        {getEmptyRecordingMessage(type)}
+      </p>
+      <p className="text-sm text-muted-foreground mt-2 max-w-md">
+        Recordings are created automatically when you enable recording during a
+        session. Use the button below to check for new recordings.
+      </p>
+      <Button
+        onClick={onSync}
+        disabled={isSyncing}
+        variant="outline"
+        size="sm"
+        className="mt-4"
+      >
+        {isSyncing ? (
+          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+        ) : (
+          <RefreshCw className="w-4 h-4 mr-2" />
+        )}
+        Sync from Stream
+      </Button>
+    </div>
+  );
+}
+
+interface RecordingsPaginationProps {
+  readonly page: number;
+  readonly totalPages: number;
+  readonly onPageChange: (nextPage: number) => void;
+}
+
+function RecordingsPagination({
+  page,
+  totalPages,
+  onPageChange,
+}: Readonly<RecordingsPaginationProps>) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between mt-6 pt-4 border-t">
+      <p className="text-sm text-muted-foreground">
+        Page {page} of {totalPages}
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <span className="text-sm min-w-[80px] text-center">
+          {page} / {totalPages}
+        </span>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page === totalPages}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface RecordingsListProps {
+  readonly consultantId: string;
+  readonly type?: ConsultantRecordingFilterType | null;
+}
+
+export function RecordingsList({
+  consultantId,
+  type,
+}: Readonly<RecordingsListProps>) {
   const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
-  const [activePlayerRecording, setActivePlayerRecording] =
-    useState<ExtendedRecordingData | null>(null);
-  const [activeManageRecording, setActiveManageRecording] =
-    useState<ExtendedRecordingData | null>(null);
+  const [activePlayerRecordingId, setActivePlayerRecordingId] = useState<
+    string | null
+  >(null);
+  const [activeManageRecordingId, setActiveManageRecordingId] = useState<
+    string | null
+  >(null);
 
-  // Search + pagination state
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const limit = 12;
 
-  // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
@@ -53,7 +170,6 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Reset page when type filter changes
   useEffect(() => {
     setPage(1);
   }, [type]);
@@ -65,8 +181,6 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
       limit,
       search: debouncedSearch,
     }),
-    // Keep the previous page on screen while the next one loads so
-    // pagination and search don't flash the whole grid to a skeleton.
     placeholderData: keepPreviousData,
   });
 
@@ -74,22 +188,27 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
 
+  const activePlayerRecording =
+    recordings.find((r) => r.id === activePlayerRecordingId) ?? null;
+  const activeManageRecording =
+    recordings.find((r) => r.id === activeManageRecordingId) ?? null;
+
   const handleSync = async () => {
     setIsSyncing(true);
     try {
       const response = await fetch("/api/stream/recordings/sync", {
         method: "POST",
       });
-      const data = await response.json();
+      const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to sync recordings");
+        throw new Error(payload.error || "Failed to sync recordings");
       }
 
-      if (data.synced > 0) {
+      if (payload.synced > 0) {
         toast({
           title: "Synced",
-          description: `${data.synced} recording(s) synced from Stream.`,
+          description: `${payload.synced} recording(s) synced from Stream.`,
         });
         await refetch();
       } else {
@@ -120,11 +239,10 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
     );
 
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || "Transfer failed");
+      const payload = await response.json();
+      throw new Error(payload.error || "Transfer failed");
     }
 
-    // Refresh recordings list after successful transfer
     await refetch();
 
     toast({
@@ -134,17 +252,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   };
 
   if (isPending) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="space-y-3">
-            <Skeleton className="h-10 w-full rounded-lg" />
-            <Skeleton className="aspect-video w-full rounded-lg" />
-            <Skeleton className="h-9 w-full rounded-lg" />
-          </div>
-        ))}
-      </div>
-    );
+    return <RecordingsSkeletonGrid />;
   }
 
   if (isError) {
@@ -166,45 +274,16 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
 
   if (recordings.length === 0 && !debouncedSearch) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Video className="w-12 h-12 text-muted-foreground mb-4" />
-        <p className="text-lg font-medium">No recordings yet</p>
-        <p className="text-sm text-muted-foreground mt-1">
-          {type === "webinar"
-            ? "Webinar recordings will appear here after you record a session."
-            : type === "class"
-              ? "Class recordings will appear here after you record a session."
-              : type === "consultation"
-                ? "Consultation recordings will appear here after you record a session."
-                : type === "subscription"
-                  ? "Subscription recordings will appear here after you record a session."
-                  : "Your recorded sessions will appear here."}
-        </p>
-        <p className="text-sm text-muted-foreground mt-2 max-w-md">
-          Recordings are created automatically when you enable recording during
-          a session. Use the button below to check for new recordings.
-        </p>
-        <Button
-          onClick={handleSync}
-          disabled={isSyncing}
-          variant="outline"
-          size="sm"
-          className="mt-4"
-        >
-          {isSyncing ? (
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-          ) : (
-            <RefreshCw className="w-4 h-4 mr-2" />
-          )}
-          Sync from Stream
-        </Button>
-      </div>
+      <NoRecordingsEmptyState
+        type={type}
+        isSyncing={isSyncing}
+        onSync={handleSync}
+      />
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Search bar + Sync button */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -216,6 +295,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
           />
           {search && (
             <button
+              type="button"
               onClick={() => setSearch("")}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
@@ -239,7 +319,6 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
         </Button>
       </div>
 
-      {/* Results count */}
       {total > 0 && (
         <p className="text-sm text-muted-foreground">
           Showing {(page - 1) * limit + 1}-{Math.min(page * limit, total)} of{" "}
@@ -247,7 +326,6 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
         </p>
       )}
 
-      {/* Empty search results */}
       {recordings.length === 0 && debouncedSearch && (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <Search className="w-12 h-12 text-muted-foreground mb-4" />
@@ -265,7 +343,6 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
         </div>
       )}
 
-      {/* Recordings grid */}
       {recordings.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {recordings.map((recording) => (
@@ -273,47 +350,23 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
               key={recording.id}
               recording={recording}
               onTransfer={handleTransfer}
-              onWatch={(rec) => setActivePlayerRecording(rec)}
-              onManage={(rec) => setActiveManageRecording(rec)}
+              onWatch={(rec) => setActivePlayerRecordingId(rec.id)}
+              onManage={(rec) => setActiveManageRecordingId(rec.id)}
             />
           ))}
         </div>
       )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-6 pt-4 border-t">
-          <p className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-sm min-w-[80px] text-center">
-              {page} / {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <RecordingsPagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
 
       <RecordingPlayerModal
         open={Boolean(activePlayerRecording)}
         onOpenChange={(open) => {
-          if (!open) setActivePlayerRecording(null);
+          if (!open) setActivePlayerRecordingId(null);
         }}
         recording={
           activePlayerRecording
@@ -336,7 +389,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
       <RecordingManageSheet
         open={Boolean(activeManageRecording)}
         onOpenChange={(open) => {
-          if (!open) setActiveManageRecording(null);
+          if (!open) setActiveManageRecordingId(null);
         }}
         recording={activeManageRecording}
         onUpdated={() => {
