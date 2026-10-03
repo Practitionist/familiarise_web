@@ -368,8 +368,10 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
     // THE point of rec C: no parallel Razorpay order exists to pay.
     expect(createPaymentIntent).not.toHaveBeenCalled();
 
-    // The lookup must be scoped tightly — user + PENDING + fresh window +
+    // The lookup must be scoped tightly — user + PENDING +
     // org equality + gateway + this event's appointment join.
+    // #1478 — expiresAt is evaluated in-code so expired PENDING rows are
+    // superseded and released rather than silently left occupying the calendar.
     const where = (prisma.payment.findMany as jest.Mock).mock.calls[0][0].where;
     expect(where).toMatchObject({
       userId: "user-1",
@@ -379,8 +381,7 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
       deletedAt: null,
       appointment: { webinarId: "evt-1" },
     });
-    // The window is evaluated at lookup time and must be live, not stale.
-    expect(where.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(startedAtMs);
+    expect(where.expiresAt).toBeUndefined();
 
     // Early return still releases both locks via the finally block.
     expect(unlockEventCheckout).toHaveBeenCalled();

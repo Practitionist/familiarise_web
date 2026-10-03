@@ -13,6 +13,7 @@ import { useAvailabilityWindow } from "../hooks/useAvailabilityWindow";
 interface ConsultantAvailabilityProps {
   consultantDetails: ConsultantDetailData;
   timezone: string;
+  consulteeUserId?: string;
   /**
    * Shared with the pricing panel's reader: both observers carry the same
    * one-shot bypass ref, so a BFCache-restore invalidation refetches past
@@ -32,6 +33,7 @@ type DayWithSlots = {
 export function ConsultantAvailability({
   consultantDetails,
   timezone,
+  consulteeUserId,
   bypassRef,
 }: ConsultantAvailabilityProps) {
   const [weekOffset, setWeekOffset] = useState(0);
@@ -58,6 +60,7 @@ export function ConsultantAvailability({
     startUtc: consultantDetails?.id ? startDateInUtc : null,
     endUtc: consultantDetails?.id ? endDateInUtc : null,
     timezone: consultantDetails?.id ? timezone : null,
+    consulteeUserId,
     bypassRef,
   });
 

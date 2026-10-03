@@ -353,6 +353,7 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           schedulingPeriodStartsAt:
             effectiveSearchParams.schedulingPeriodStartsAt,
+          renewsSubscriptionId: effectiveSearchParams.renewsSubscriptionId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -585,6 +586,12 @@ export default function SubscriptionCheckoutPage({
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
+          {effectiveSearchParams?.renewsSubscriptionId && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+              Renewing your existing subscription — your new period will start
+              immediately after your current subscription ends
+            </div>
+          )}
           <div className="grid gap-2">
             {/* Start + first cycle (#1766): the buyer picked a start; the
                 consultant schedules one cycle at a time from it. */}
@@ -825,10 +832,6 @@ export default function SubscriptionCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -839,6 +842,10 @@ export default function SubscriptionCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -916,6 +923,8 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
+                            renewsSubscriptionId:
+                              effectiveSearchParams.renewsSubscriptionId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId
@@ -937,6 +946,8 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "STRIPE",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
+                            renewsSubscriptionId:
+                              effectiveSearchParams.renewsSubscriptionId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId

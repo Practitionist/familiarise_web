@@ -62,6 +62,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
+  buildConsultantOccupancyWhere,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -237,6 +238,8 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
   "CREDIT_SHORTFALL",
   "SUBSCRIPTION_ALREADY_ACTIVE",
+  "ALREADY_RENEWED",
+  "INVALID_RENEWAL_SOURCE",
 ]);
 
 /**
@@ -473,12 +476,11 @@ export async function findReusablePendingOrderPayment(
   }
   if (!planScope) return { reusable: null, supersede: [] };
 
+  const now = new Date();
   const candidates = await db.payment.findMany({
     where: {
       userId: params.userId,
       paymentStatus: PaymentStatus.PENDING,
-      // Freshness — respect the minted window exactly; never resume a stale hold.
-      expiresAt: { gt: new Date() },
       // Null-safe org equality: personal stays personal, sponsored matches sponsor.
       organizationId: params.organizationId,
       paymentGateway: params.paymentGateway,
@@ -503,6 +505,12 @@ export async function findReusablePendingOrderPayment(
             // single bookable window so a pathological row cannot widen the read.
             take: 48,
           },
+          subscription: {
+            select: {
+              schedulingPeriodStartsAt: true,
+              schedulingPeriodEndsAt: true,
+            },
+          },
         },
       },
     },
@@ -512,8 +520,21 @@ export async function findReusablePendingOrderPayment(
   const supersede: Array<{ id: string; reason: string }> = [];
 
   for (const candidate of candidates) {
+    // #1478 — a PENDING row whose hold window has lapsed is never resumed,
+    // and must be actively superseded so its tentative slot / participant seat
+    // is released before the new booking writes (even if the cleanup cron has
+    // not swept it yet).
+    if (!candidate.expiresAt || candidate.expiresAt.getTime() <= now.getTime()) {
+      supersede.push({ id: candidate.id, reason: "hold-expired" });
+      continue;
+    }
+
     const appt = candidate.appointment as {
       occurrences: Array<{ startsAt: Date; endsAt: Date }>;
+      subscription?: {
+        schedulingPeriodStartsAt: Date | null;
+        schedulingPeriodEndsAt: Date | null;
+      } | null;
     } | null;
 
     // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
@@ -534,9 +555,18 @@ export async function findReusablePendingOrderPayment(
     }
     if (params.appointmentType === "SUBSCRIPTION") {
       const reqPeriod = params.schedulingPeriod ?? null;
-      // Subscription windows ride the SAME slot rows as consultations — the
-      // minted placeholder's slot carries the scheduling-period bounds.
-      const rowPeriod = slotRunWindow(appt?.occurrences);
+      // Subscription windows ride the SAME slot rows as consultations when
+      // direct-slot booked, or live on `appointment.subscription` when minted
+      // as a scheduling-period placeholder (which has no occurrences yet).
+      const subRow = appt?.subscription;
+      const rowPeriod =
+        slotRunWindow(appt?.occurrences) ??
+        (subRow?.schedulingPeriodStartsAt && subRow?.schedulingPeriodEndsAt
+          ? {
+              startsAt: subRow.schedulingPeriodStartsAt,
+              endsAt: subRow.schedulingPeriodEndsAt,
+            }
+          : null);
       if (!!reqPeriod !== !!rowPeriod) {
         supersede.push({ id: candidate.id, reason: "period-mismatch" });
         continue;
@@ -602,15 +632,35 @@ async function releaseSupersededHolds(params: {
   userId: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx: Tx) => {
-    const claimed = await tx.payment.updateManyAndReturn({
-      where: {
-        id: { in: params.paymentIds },
-        userId: params.userId,
-        paymentStatus: PaymentStatus.PENDING,
-      },
-      data: { paymentStatus: PaymentStatus.EXPIRED, expiresAt: new Date() },
-      select: { id: true, appointmentId: true },
-    });
+    const claimWhere = {
+      id: { in: params.paymentIds },
+      userId: params.userId,
+      paymentStatus: PaymentStatus.PENDING,
+    };
+    const claimData = {
+      paymentStatus: PaymentStatus.EXPIRED,
+      expiresAt: new Date(),
+    };
+    let claimed: Array<{ id: string; appointmentId: string | null }> = [];
+    if (typeof tx.payment?.updateManyAndReturn === "function") {
+      claimed =
+        (await tx.payment.updateManyAndReturn({
+          where: claimWhere,
+          data: claimData,
+          select: { id: true, appointmentId: true },
+        })) ?? [];
+    } else {
+      const pendingRows =
+        (await tx.payment?.findMany?.({
+          where: claimWhere,
+          select: { id: true, appointmentId: true },
+        })) ?? [];
+      await tx.payment?.updateMany?.({
+        where: claimWhere,
+        data: claimData,
+      });
+      claimed = pendingRows;
+    }
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
@@ -776,6 +826,8 @@ export async function calculateAmountAndValidate(
     let plan;
     let priceCurrency: Currency = "INR";
     let classSessionsQuoted: number | null = null;
+    let subscriptionSchedulingPeriod: { startsAt: Date; endsAt: Date } | null =
+      null;
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
@@ -871,6 +923,7 @@ export async function calculateAmountAndValidate(
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
           organizationId,
+          plan.consultantProfile.id,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -904,7 +957,46 @@ export async function calculateAmountAndValidate(
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
           organizationId,
+          plan.consultantProfile.id,
         );
+        if (
+          validatedData.schedulingPeriodStartsAt ||
+          validatedData.renewsSubscriptionId
+        ) {
+          let priorEndsAt: Date | null = null;
+          if (
+            validatedData.renewsSubscriptionId &&
+            typeof tx.subscription?.findUnique === "function"
+          ) {
+            const priorSub = await tx.subscription.findUnique({
+              where: { id: validatedData.renewsSubscriptionId },
+              select: { schedulingPeriodEndsAt: true },
+            });
+            priorEndsAt = priorSub?.schedulingPeriodEndsAt ?? null;
+          }
+          const schedulingTimezone = resolveSchedulingTimezone(
+            plan.consultantProfile?.user?.timezone,
+          );
+          const now = new Date();
+          const requestedStart = validatedData.schedulingPeriodStartsAt
+            ? new Date(validatedData.schedulingPeriodStartsAt)
+            : now;
+          const effectiveStart = priorEndsAt
+            ? new Date(
+                Math.max(
+                  priorEndsAt.getTime(),
+                  requestedStart.getTime(),
+                  now.getTime(),
+                ),
+              )
+            : requestedStart;
+          const { start, end } = firstCycleWindow(
+            plan,
+            effectiveStart,
+            schedulingTimezone,
+          );
+          subscriptionSchedulingPeriod = { startsAt: start, endsAt: end };
+        }
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
         break;
@@ -1153,6 +1245,7 @@ export async function calculateAmountAndValidate(
       buyerCountry,
       isInternational,
       classSessionsQuoted,
+      subscriptionSchedulingPeriod,
     };
   });
 }
@@ -1269,7 +1362,13 @@ export async function findSelfHoldAppointmentIds(
       deletedAt: null,
       payment: {
         some: {
-          ...buildLiveHoldPaymentFilter(params.buyerUserId, params.now),
+          // #1478 — match any PENDING hold for this buyer/gateway/org on the
+          // exact window (even if expiresAt has just lapsed and the cron has
+          // not swept it yet), because findReusablePendingOrderPayment +
+          // releaseSupersededHolds will supersede and release it before Step 5.
+          userId: params.buyerUserId,
+          paymentStatus: PaymentStatus.PENDING,
+          deletedAt: null,
           // The two terms `findReusablePendingOrderPayment` also requires.
           // Null-safe org equality: personal stays personal.
           paymentGateway: params.paymentGateway,
@@ -1336,6 +1435,7 @@ export async function validateSlotAvailability(
    * request that could never resume it.
    */
   organizationId: string | null = null,
+  consultantProfileId?: string,
 ): Promise<{ selfHoldAppointmentIds: string[] }> {
   if (!data.startsAt || !data.endsAt) return { selfHoldAppointmentIds: [] };
 
@@ -1387,6 +1487,7 @@ export async function validateSlotAvailability(
   // consultant's rows: every 30-minute atom of the window must fall inside
   // some published row. The named id, when present, still proves ownership
   // and catches a soft-deleted profile (B13); it is no longer the boundary.
+  let resolvedProfileId = consultantProfileId;
   if (data.availabilityWindowWeeklyId || data.availabilityWindowCustomId) {
     // Both row kinds are read for the same three facts, so they share one
     // include; a checkout names at most one of them.
@@ -1427,9 +1528,10 @@ export async function validateSlotAvailability(
     }
     const profileId =
       named?.consultantProfile.id ??
+      resolvedProfileId ??
       (consultantUserId
         ? (
-            await tx.consultantProfile.findFirst({
+            await tx.consultantProfile?.findFirst({
               // The named row got its deletedAt check above; this fallback
               // runs when there is no named row, so it carries its own.
               where: { userId: consultantUserId, deletedAt: null },
@@ -1440,6 +1542,7 @@ export async function validateSlotAvailability(
     if (!profileId) {
       throw new Error("Availability slot not found");
     }
+    resolvedProfileId = profileId;
 
     const atoms = windowAtoms(slotStart, slotEnd);
     // ScheduleType is exclusive, so only the consultant's active arm publishes
@@ -1471,6 +1574,13 @@ export async function validateSlotAvailability(
         "Selected slot does not fall within the specified availability window",
       );
     }
+  } else if (!resolvedProfileId && consultantUserId) {
+    resolvedProfileId = (
+      await tx.consultantProfile?.findFirst({
+        where: { userId: consultantUserId, deletedAt: null },
+        select: { id: true },
+      })
+    )?.id;
   }
 
   // #1463 — the buyer's own open order for exactly this booking. Resolved once
@@ -1498,6 +1608,8 @@ export async function validateSlotAvailability(
   // (partial start, partial end, full containment, and exact match)
   // FIX #540: Only check slots belonging to occupied (active) appointments.
   // Cancelled/rejected/expired appointment slots should NOT block new bookings.
+  // #1688: Also include ACCEPTED co-host commitments on webinars and classes
+  // via buildConsultantOccupancyWhere when resolvedProfileId is available.
   const existingBooking = await tx.appointmentOccurrence.findFirst({
     where: {
       AND: [
@@ -1511,29 +1623,43 @@ export async function validateSlotAvailability(
         // live holds and drops released/expired ones by status, and
         // cleanup-tentative-occurrences bounds any stale remainder. Re-adding a
         // confirmed-only predicate here reopens the double-charge.
-        // Filter by consultant — only rows whose booking seats this consultant
-        // (#1554: the roster is the appointment's participant list).
-        ...(consultantUserId
+        ...(resolvedProfileId && consultantUserId
           ? [
               {
-                appointment: {
-                  participants: { some: liveParticipant(consultantUserId) },
-                },
+                appointment: buildConsultantOccupancyWhere(
+                  resolvedProfileId,
+                  consultantUserId,
+                  now,
+                ),
               },
             ]
-          : []),
-        // FIX #540: Only count slots from active/occupied appointments.
-        // #1319 — minus dead holds (lapsed DIRECT_CHECKOUT / pay-link windows),
-        // so a slot frees the moment its payment window passes rather than
-        // when the sweep runs. The JS twin is isOccupiedByLiveAppointment.
-        {
-          appointment: {
-            AND: [
-              { OR: buildOccupiedAppointmentFilter() },
-              { NOT: buildDeadHoldFilter(now) },
-            ],
-          },
-        },
+          : [
+              // Filter by consultant — only rows whose booking seats this consultant
+              // (#1554: the roster is the appointment's participant list).
+              ...(consultantUserId
+                ? [
+                    {
+                      appointment: {
+                        participants: {
+                          some: liveParticipant(consultantUserId),
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              // FIX #540: Only count slots from active/occupied appointments.
+              // #1319 — minus dead holds (lapsed DIRECT_CHECKOUT / pay-link windows),
+              // so a slot frees the moment its payment window passes rather than
+              // when the sweep runs. The JS twin is isOccupiedByLiveAppointment.
+              {
+                appointment: {
+                  AND: [
+                    { OR: buildOccupiedAppointmentFilter() },
+                    { NOT: buildDeadHoldFilter(now) },
+                  ],
+                },
+              },
+            ]),
         // #1463 — the buyer's own live hold on exactly this window and plan is
         // their open order, not another occupant, and the Rec C block below
         // (findReusablePendingOrderPayment) is the path that resumes or
@@ -2331,6 +2457,7 @@ async function revalidateInsideLock(
             userId,
             consultationPlan.consultantProfile.user.id,
             orgContext?.organizationId ?? null,
+            consultationPlan.consultantProfile.id,
           );
 
           // Consultee-side conflict check.
@@ -2382,6 +2509,7 @@ async function revalidateInsideLock(
             userId,
             subscriptionPlan.consultantProfile.user.id,
             orgContext?.organizationId ?? null,
+            subscriptionPlan.consultantProfile.id,
           );
 
           // Consultee-side conflict check for direct-slot subscriptions.
@@ -2591,6 +2719,7 @@ export async function handleConsultationCheckout(
     consulteeUserId,
     consultantUserId,
     paymentOrganizationId,
+    plan.consultantProfile.id,
   );
 
   // Create consultation
@@ -2677,28 +2806,147 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  const isSchedulingPeriodRequest = !!data.schedulingPeriodStartsAt;
+  // #1743 — validate renewal source when renewsSubscriptionId is provided.
+  let priorSubscription: {
+    id: string;
+    subscriptionPlanId: string;
+    requestedById: string;
+    status: AppointmentStatus;
+    schedulingPeriodEndsAt: Date;
+    deletedAt: Date | null;
+    renewal: {
+      id: string;
+      status: AppointmentStatus;
+      deletedAt: Date | null;
+    } | null;
+  } | null = null;
+
+  if (data.renewsSubscriptionId) {
+    priorSubscription = await tx.subscription.findUnique({
+      where: { id: data.renewsSubscriptionId },
+      select: {
+        id: true,
+        subscriptionPlanId: true,
+        requestedById: true,
+        status: true,
+        schedulingPeriodEndsAt: true,
+        deletedAt: true,
+        renewal: {
+          select: { id: true, status: true, deletedAt: true },
+        },
+      },
+    });
+
+    if (
+      !priorSubscription ||
+      priorSubscription.deletedAt !== null ||
+      priorSubscription.requestedById !== consulteeProfileId ||
+      priorSubscription.subscriptionPlanId !== plan.id ||
+      priorSubscription.status === AppointmentStatus.CANCELLED ||
+      priorSubscription.status === AppointmentStatus.REJECTED ||
+      priorSubscription.status === AppointmentStatus.EXPIRED
+    ) {
+      throw Object.assign(
+        new Error(
+          "The subscription being renewed was not found or cannot be renewed.",
+        ),
+        { httpStatus: 400, code: "INVALID_RENEWAL_SOURCE" },
+      );
+    }
+
+    if (priorSubscription.renewal) {
+      const child = priorSubscription.renewal;
+      const isChildDead =
+        child.deletedAt !== null ||
+        child.status === AppointmentStatus.CANCELLED ||
+        child.status === AppointmentStatus.REJECTED ||
+        child.status === AppointmentStatus.EXPIRED;
+      if (!isChildDead) {
+        throw Object.assign(
+          new Error("This subscription has already been renewed."),
+          { httpStatus: 409, code: "ALREADY_RENEWED" },
+        );
+      }
+      // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
+      // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
+      const cleared =
+        typeof tx.subscription.updateMany === "function"
+          ? await tx.subscription.updateMany({
+              where: {
+                id: child.id,
+                OR: [
+                  { deletedAt: { not: null } },
+                  {
+                    status: {
+                      in: [
+                        AppointmentStatus.CANCELLED,
+                        AppointmentStatus.REJECTED,
+                        AppointmentStatus.EXPIRED,
+                      ],
+                    },
+                  },
+                ],
+              },
+              data: { renewedFromSubscriptionId: null },
+            })
+          : await tx.subscription
+              .update({
+                where: { id: child.id },
+                data: { renewedFromSubscriptionId: null },
+              })
+              .then(() => ({ count: 1 }));
+      if (cleared.count !== 1) {
+        throw Object.assign(
+          new PaymentError(
+            "This subscription has already been renewed.",
+            "ALREADY_RENEWED",
+          ),
+          { httpStatus: 409 },
+        );
+      }
+    }
+  }
+
+  const isSchedulingPeriodRequest = Boolean(
+    data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
+  );
   // #1766 — window = first cycle; a client end is clamped/ignored, never
   // refused. Start from the client (default now), end derived server-side.
+  // #1743 — when renewing a prior subscription, anchor the new cycle start to
+  // max(prior.schedulingPeriodEndsAt, requestedStart, now) so the renewal
+  // starts seamlessly when the prior cycle ends.
   const schedulingTimezone = resolveSchedulingTimezone(
     plan.consultantProfile?.user?.timezone,
   );
+  const now = new Date();
+  const requestedStart = data.schedulingPeriodStartsAt
+    ? new Date(data.schedulingPeriodStartsAt)
+    : now;
+  const effectiveStart = priorSubscription
+    ? new Date(
+        Math.max(
+          priorSubscription.schedulingPeriodEndsAt.getTime(),
+          requestedStart.getTime(),
+          now.getTime(),
+        ),
+      )
+    : requestedStart;
   const { start: startDate, end: endDate } = firstCycleWindow(
     plan,
-    data.schedulingPeriodStartsAt
-      ? new Date(data.schedulingPeriodStartsAt)
-      : new Date(),
+    effectiveStart,
     schedulingTimezone,
   );
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
+  // #1743 — exclude the priorSubscription being explicitly renewed.
   const liveRows = await tx.subscription.findMany({
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
       deletedAt: null,
       status: { in: LIVE_SUBSCRIPTION_STATUSES },
+      ...(priorSubscription ? { id: { not: priorSubscription.id } } : {}),
     },
     select: {
       sessionsTotal: true,
@@ -2751,21 +2999,38 @@ export async function handleSubscriptionCheckout(
   }
 
   // Create subscription - consultant will allocate slots via Requests tab
-  const subscription = await tx.subscription.create({
-    data: {
-      subscriptionPlanId: plan.id,
-      status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
-      requestedById: consulteeProfileId,
-      requestNotes: data.notes,
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: startDate,
-      schedulingPeriodEndsAt: endDate,
-      // #1076 — caps bucket on the consultant's days, not the column default.
-      schedulingTimezone,
-      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
-      sessionsTotal: plan.totalSessions,
-    },
-  });
+  let subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
+  try {
+    subscription = await tx.subscription.create({
+      data: {
+        subscriptionPlanId: plan.id,
+        status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
+        requestedById: consulteeProfileId,
+        requestNotes: data.notes,
+        bookingSource: "DIRECT_CHECKOUT",
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        // #1076 — caps bucket on the consultant's days, not the column default.
+        schedulingTimezone,
+        // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+        sessionsTotal: plan.totalSessions,
+        ...(priorSubscription
+          ? { renewedFromSubscriptionId: priorSubscription.id }
+          : {}),
+      },
+    });
+  } catch (createErr) {
+    if (
+      isUniqueViolationOn(createErr, "renewedFromSubscriptionId") ||
+      isUniqueViolationOn(createErr, "renewsSubscriptionId")
+    ) {
+      throw Object.assign(
+        new Error("This subscription has already been renewed."),
+        { httpStatus: 409, code: "ALREADY_RENEWED" },
+      );
+    }
+    throw createErr;
+  }
 
   // Link any completed trial to this subscription (trial conversion tracking)
   // Find a completed trial from the same consultee for this consultant
@@ -3516,6 +3781,7 @@ export async function handleCheckout(
       buyerCountry: detectedBuyerCountry,
       isInternational,
       classSessionsQuoted,
+      subscriptionSchedulingPeriod,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -3698,7 +3964,8 @@ export async function handleCheckout(
         ...(appointmentType === "SUBSCRIPTION"
           ? {
               schedulingPeriod:
-                validatedData.schedulingPeriodStartsAt &&
+                subscriptionSchedulingPeriod ??
+                (validatedData.schedulingPeriodStartsAt &&
                 validatedData.schedulingPeriodEndsAt
                   ? {
                       startsAt: new Date(
@@ -3706,7 +3973,7 @@ export async function handleCheckout(
                       ),
                       endsAt: new Date(validatedData.schedulingPeriodEndsAt),
                     }
-                  : null,
+                  : null),
             }
           : {}),
       });

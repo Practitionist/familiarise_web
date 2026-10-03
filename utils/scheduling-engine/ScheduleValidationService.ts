@@ -277,6 +277,11 @@ export class ScheduleValidationService {
        * scope keep the old participant-only behavior.
        */
       consultantProfileId?: string;
+      /**
+       * The event's own appointment IDs for co-host conflict exclusions
+       * (mirrors assertCollaboratorsFree's ownAppointmentIds).
+       */
+      ownAppointmentIds?: string[];
     },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
@@ -297,7 +302,70 @@ export class ScheduleValidationService {
       options?.consultantProfileId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
-    const conflicts = conflictCheck.conflicts;
+    let conflicts = conflictCheck.conflicts;
+
+    // #1689 — For webinars and classes, validate ACCEPTED co-hosts' schedules
+    // and existing appointments/commitments so `/validate` agrees with the
+    // commit-time collaborator guard.
+    if (eventType === "webinar" || eventType === "class") {
+      const { collaborators, ownAppointmentIds } =
+        await this.loadEventCollaborators(eventType, eventId);
+      if (!options?.overrideAvailabilityWindow) {
+        for (const collab of collaborators) {
+          if (!collab.hasScheduleData) continue;
+          const collabScheduleCheck = this.validateMatchesSchedule(
+            slots,
+            collab.consultantData,
+          );
+          if (!collabScheduleCheck.isValid) {
+            return {
+              isValid: false,
+              errors: collabScheduleCheck.errors.map(
+                (err) =>
+                  `[COLLABORATOR_SCHEDULE] Co-host ${collab.name}: ${err}`,
+              ),
+              warnings: collabScheduleCheck.warnings,
+            };
+          }
+        }
+      }
+      // Exclude the event's own appointment(s) from the co-host check (same
+      // rule as assertCollaboratorsFree) while preserving excludeOccurrenceIds
+      // for released occurrences during rescheduling.
+      const collabExcludeAppointmentIds = Array.from(
+        new Set([
+          ...(excludeAppointmentIds ?? []),
+          ...(options?.ownAppointmentIds ?? []),
+          ...ownAppointmentIds,
+        ]),
+      );
+      for (const collab of collaborators) {
+        const collabConflictCheck = await this.validateNoConflicts(
+          slots,
+          collab.consultantData.userId,
+          collabExcludeAppointmentIds,
+          undefined,
+          options?.excludeOccurrenceIds,
+          collab.consultantProfileId,
+        );
+        if (!collabConflictCheck.isValid) {
+          return {
+            isValid: false,
+            errors: collabConflictCheck.errors.map(
+              (err) => `[COLLABORATOR_CONFLICT] Co-host ${collab.name}: ${err}`,
+            ),
+            warnings: collabConflictCheck.warnings,
+            conflicts: [
+              ...(conflicts ?? []),
+              ...(collabConflictCheck.conflicts ?? []),
+            ],
+          };
+        }
+        if (collabConflictCheck.conflicts?.length) {
+          conflicts = [...(conflicts ?? []), ...collabConflictCheck.conflicts];
+        }
+      }
+    }
 
     // FIX: Server-side scheduling period validation
     // This was only done client-side, which could be bypassed
@@ -321,6 +389,152 @@ export class ScheduleValidationService {
       options?.excludeOccurrenceIds,
     );
     return { ...typed, conflicts };
+  }
+
+  /**
+   * #1689 — Load ACCEPTED co-hosts for a webinar or class event so pre-submit
+   * validation enforces both their availability windows and their conflict-free
+   * calendar. Guarded with optional chaining for partial Prisma mocks in tests.
+   */
+  private async loadEventCollaborators(
+    eventType: EventType,
+    eventId: string,
+  ): Promise<{
+    collaborators: Array<{
+      consultantProfileId: string;
+      name: string;
+      hasScheduleData: boolean;
+      consultantData: ConsultantAllocationData;
+    }>;
+    ownAppointmentIds: string[];
+  }> {
+    if (eventType !== "webinar" && eventType !== "class") {
+      return { collaborators: [], ownAppointmentIds: [] };
+    }
+
+    const collaboratorSelect = {
+      where: { status: "ACCEPTED" as const },
+      select: {
+        consultantProfileId: true,
+        consultantProfile: {
+          select: {
+            id: true,
+            scheduleType: true,
+            availabilityWindowsWeekly: true,
+            availabilityWindowsCustom: true,
+            user: { select: { id: true, name: true, timezone: true } },
+          },
+        },
+      },
+    };
+
+    type RawCollab = {
+      consultantProfileId: string;
+      consultantProfile?: {
+        id?: string;
+        scheduleType?: ScheduleType;
+        availabilityWindowsWeekly?: ConsultantAllocationData["availabilityWindowsWeekly"];
+        availabilityWindowsCustom?: ConsultantAllocationData["availabilityWindowsCustom"];
+        user?: {
+          id?: string;
+          name?: string | null;
+          timezone?: string | null;
+        } | null;
+      } | null;
+    };
+
+    let rawCollabs: RawCollab[] | undefined;
+    let planId: string | undefined;
+    const ownAppointmentIds: string[] = [];
+
+    if (eventType === "webinar") {
+      const webinar = await this.prismaClient.webinar?.findUnique?.({
+        where: { id: eventId },
+        select: {
+          webinarPlanId: true,
+          appointment: { select: { id: true } },
+          webinarPlan: {
+            select: {
+              id: true,
+              collaborators: collaboratorSelect,
+            },
+          },
+        },
+      });
+      rawCollabs = webinar?.webinarPlan?.collaborators as
+        | RawCollab[]
+        | undefined;
+      planId = webinar?.webinarPlanId ?? webinar?.webinarPlan?.id;
+      if (webinar?.appointment?.id) {
+        ownAppointmentIds.push(webinar.appointment.id);
+      }
+    } else {
+      const cls = await this.prismaClient.class?.findUnique?.({
+        where: { id: eventId },
+        select: {
+          classPlanId: true,
+          appointment: { select: { id: true } },
+          classPlan: {
+            select: {
+              id: true,
+              collaborators: collaboratorSelect,
+            },
+          },
+        },
+      });
+      rawCollabs = cls?.classPlan?.collaborators as RawCollab[] | undefined;
+      planId = cls?.classPlanId ?? cls?.classPlan?.id;
+      if (cls?.appointment?.id) {
+        ownAppointmentIds.push(cls.appointment.id);
+      }
+    }
+
+    if (!rawCollabs && planId && this.prismaClient.collaborator?.findMany) {
+      rawCollabs = (await this.prismaClient.collaborator.findMany({
+        where: {
+          status: "ACCEPTED",
+          ...(eventType === "webinar"
+            ? { webinarPlanId: planId }
+            : { classPlanId: planId }),
+        },
+        select: collaboratorSelect.select,
+      })) as RawCollab[];
+    }
+
+    if (!Array.isArray(rawCollabs)) {
+      return { collaborators: [], ownAppointmentIds };
+    }
+
+    const result: Array<{
+      consultantProfileId: string;
+      name: string;
+      hasScheduleData: boolean;
+      consultantData: ConsultantAllocationData;
+    }> = [];
+
+    for (const c of rawCollabs) {
+      if (!c?.consultantProfileId) continue;
+      const profile = c.consultantProfile;
+      const hasScheduleData = Boolean(
+        profile?.scheduleType &&
+          (Array.isArray(profile.availabilityWindowsWeekly) ||
+            Array.isArray(profile.availabilityWindowsCustom)),
+      );
+      result.push({
+        consultantProfileId: c.consultantProfileId,
+        name: profile?.user?.name || c.consultantProfileId,
+        hasScheduleData,
+        consultantData: {
+          userId: profile?.user?.id || c.consultantProfileId,
+          scheduleType: profile?.scheduleType ?? ScheduleType.WEEKLY,
+          availabilityWindowsWeekly: profile?.availabilityWindowsWeekly ?? [],
+          availabilityWindowsCustom: profile?.availabilityWindowsCustom ?? [],
+          timezone: profile?.user?.timezone || "UTC",
+        },
+      });
+    }
+
+    return { collaborators: result, ownAppointmentIds };
   }
 
   private async validateByType(
@@ -1242,20 +1456,27 @@ export class ScheduleValidationService {
       );
     }
 
-    // Validate weekly limits
-    const slotsByWeek = ScheduleCalculationService.groupSlotsByWeek(
-      slots.map((s) => ({
-        startTime: s,
-        endTime: new Date(s.getTime() + SCHEDULING_INTERVAL_MS),
-        isAvailable: true,
-        isBooked: false,
-      })),
+    // #1690 — Group into whole sessions of slotsPerSession atoms first, then
+    // attribute each session to the week of its sessionStart. Grouping raw
+    // 30-min atoms by week and dividing by slotsPerSession split a session
+    // crossing the Sunday/Monday midnight boundary across two weeks and
+    // Math.floor'd both halves to zero.
+    const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
+    const proposedSessionsByWeek = new Map<string, number>();
+    const tz =
       config.schedulingTimezone ??
-        ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
-    );
+      ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
+    for (
+      let i = 0;
+      i + slotsPerSession <= sortedSlots.length;
+      i += slotsPerSession
+    ) {
+      const sessionStart = sortedSlots[i];
+      const wk = ScheduleCalculationService.weekKey(sessionStart, tz);
+      proposedSessionsByWeek.set(wk, (proposedSessionsByWeek.get(wk) || 0) + 1);
+    }
 
-    slotsByWeek.forEach((weekSlots, weekKey) => {
-      const proposedSessions = Math.floor(weekSlots.length / slotsPerSession);
+    proposedSessionsByWeek.forEach((proposedSessions, weekKey) => {
       const sessionsThisWeek =
         proposedSessions + (existingSessionsPerWeek.get(weekKey) || 0);
       if (sessionsThisWeek > config.sessionsPerWeek!) {

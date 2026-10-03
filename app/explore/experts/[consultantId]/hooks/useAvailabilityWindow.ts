@@ -3,15 +3,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { endOfMonth, startOfMonth } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
-import type { MutableRefObject } from "react";
+import { useRef, type MutableRefObject } from "react";
 import type { TIntervalTiming } from "@/types/slots";
 
 /**
- * One day of the availability-with-allocation grid answer.
- *
- * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
- * the slot timings plus the allocation overlay the pricing panel needs.
- */
+  * One day of the availability-with-allocation grid answer.
+  *
+  * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
+  * the slot timings plus the allocation overlay the pricing panel needs.
+  */
 export type AvailabilityDaySlots = (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
@@ -19,17 +19,46 @@ export type AvailabilityDaySlots = (TIntervalTiming & {
 
 export type AvailabilityWindowData = Record<string, AvailabilityDaySlots>;
 
+export interface EtagCacheEntry {
+  key: string;
+  etag: string;
+  data: AvailabilityWindowData;
+}
+
 async function fetchWindow(
   consultantId: string,
   startUtc: Date,
   endUtc: Date,
   timezone: string,
   noStore: boolean,
+  consulteeUserId?: string,
+  etagCacheRef?: MutableRefObject<EtagCacheEntry | null>,
 ): Promise<AvailabilityWindowData> {
-  const response = await fetch(
-    `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
-    noStore ? { cache: "no-store" } : undefined,
-  );
+  const consulteeParam = consulteeUserId
+    ? `&consulteeUserId=${encodeURIComponent(consulteeUserId)}`
+    : "";
+  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}`;
+
+  const cachedEntry =
+    !noStore && etagCacheRef?.current && etagCacheRef.current.key === url
+      ? etagCacheRef.current
+      : null;
+
+  const init: RequestInit | undefined = noStore
+    ? { cache: "no-store" }
+    : cachedEntry?.etag
+      ? {
+          headers: {
+            "If-None-Match": cachedEntry.etag,
+            "X-Availability-If-None-Match": cachedEntry.etag,
+          },
+        }
+      : undefined;
+
+  const response = await fetch(url, init);
+  if (response.status === 304 && cachedEntry) {
+    return cachedEntry.data;
+  }
   if (!response.ok) {
     const errorData = await response
       .json()
@@ -37,7 +66,17 @@ async function fetchWindow(
     throw new Error(errorData.error || "Failed to fetch availability slots");
   }
   const { data } = await response.json();
-  return (data ?? {}) as AvailabilityWindowData;
+  const resolved = (data ?? {}) as AvailabilityWindowData;
+  const responseEtag =
+    response.headers?.get?.("ETag") ?? response.headers?.get?.("etag") ?? null;
+  if (responseEtag && etagCacheRef) {
+    etagCacheRef.current = {
+      key: url,
+      etag: responseEtag,
+      data: resolved,
+    };
+  }
+  return resolved;
 }
 
 export function availabilityQueryKey(
@@ -45,14 +84,24 @@ export function availabilityQueryKey(
   startUtc: Date,
   endUtc: Date,
   timezone: string,
+  consulteeUserId?: string,
 ) {
-  return [
-    "availability",
-    consultantId,
-    startUtc.toISOString(),
-    endUtc.toISOString(),
-    timezone,
-  ];
+  return consulteeUserId
+    ? [
+        "availability",
+        consultantId,
+        startUtc.toISOString(),
+        endUtc.toISOString(),
+        timezone,
+        consulteeUserId,
+      ]
+    : [
+        "availability",
+        consultantId,
+        startUtc.toISOString(),
+        endUtc.toISOString(),
+        timezone,
+      ];
 }
 
 /**
@@ -75,6 +124,7 @@ export function useAvailabilityWindow({
   startUtc,
   endUtc,
   timezone,
+  consulteeUserId,
   enabled = true,
   bypassRef,
 }: {
@@ -82,15 +132,23 @@ export function useAvailabilityWindow({
   startUtc: Date | null;
   endUtc: Date | null;
   timezone: string | null;
+  consulteeUserId?: string;
   enabled?: boolean;
   bypassRef?: MutableRefObject<boolean>;
 }) {
+  const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;
   return useQuery({
     queryKey:
       ready && consultantId && startUtc && endUtc && timezone
-        ? availabilityQueryKey(consultantId, startUtc, endUtc, timezone)
+        ? availabilityQueryKey(
+            consultantId,
+            startUtc,
+            endUtc,
+            timezone,
+            consulteeUserId,
+          )
         : ["availability", "disabled"],
     queryFn: () => {
       const noStore = bypassRef?.current ?? false;
@@ -101,6 +159,8 @@ export function useAvailabilityWindow({
         endUtc as Date,
         timezone as string,
         noStore,
+        consulteeUserId,
+        etagCacheRef,
       );
     },
     enabled: ready,
@@ -131,18 +191,29 @@ export function useAvailabilityMonth({
   consultantId,
   monthStart,
   timezone,
+  consulteeUserId,
   enabled = true,
 }: {
   consultantId: string | undefined;
   monthStart: Date;
   timezone: string | null;
+  consulteeUserId?: string;
   enabled?: boolean;
 }) {
+  const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = timezone ? monthKeyOf(monthStart, timezone) : "";
   return useQuery({
     queryKey: ready
-      ? ["availability-month", consultantId, monthKey, timezone]
+      ? consulteeUserId
+        ? [
+            "availability-month",
+            consultantId,
+            monthKey,
+            timezone,
+            consulteeUserId,
+          ]
+        : ["availability-month", consultantId, monthKey, timezone]
       : ["availability-month", "disabled"],
     queryFn: () =>
       fetchWindow(
@@ -151,6 +222,8 @@ export function useAvailabilityMonth({
         endOfMonth(monthStart),
         timezone as string,
         false,
+        consulteeUserId,
+        etagCacheRef,
       ),
     enabled: ready,
     staleTime: 60_000,

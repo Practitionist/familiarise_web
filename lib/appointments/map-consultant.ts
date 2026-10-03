@@ -45,6 +45,7 @@ export interface ConsultantTrialLike {
       id: string;
       startsAt: string | Date;
       endsAt: string | Date;
+      isTentative?: boolean;
     }>;
   } | null;
 }
@@ -279,17 +280,15 @@ function mapTrial(
   consultantId: string,
   now: Date,
 ): AppointmentVM {
-  // A trial's rows are shown as confirmed regardless of the placeholder flag,
-  // so the override is applied BEFORE grouping — the grouper splits a run on a
-  // change of `isTentative`, and masking afterwards would leave the split.
+  const slotsOfAppointment = (t.appointment?.occurrences ?? []).map((slot) => ({
+    ...slot,
+    isTentative: slot.isTentative ?? false,
+  }));
   const occurrences = occurrencesOfAppointment(
     t.appointment
       ? {
           id: t.appointment.id,
-          occurrences: (t.appointment.occurrences ?? []).map((slot) => ({
-            ...slot,
-            isTentative: false,
-          })),
+          occurrences: slotsOfAppointment,
         }
       : null,
   );

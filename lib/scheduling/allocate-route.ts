@@ -108,6 +108,12 @@ export async function handleAllocate(
       // lib/payments/core/razorpay.ts uses for its gateway call — no new
       // dependency, no exporter — and it puts the number in the same trace as
       // the request that produced it.
+      const resolvedExpectedTentativeSlotCount =
+        body.expectedTentativeSlotCount ??
+        (body.isReschedule === false && !body.topUp && mode !== "requested"
+          ? 0
+          : undefined);
+
       const result = await Sentry.startSpan(
         { op: "booking.allocate", name: `allocate.${eventType}` },
         () =>
@@ -120,7 +126,7 @@ export async function handleAllocate(
             // the first batch instead of allocating twice.
             idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
             initialAllocation: body.initialAllocation,
-            expectedTentativeSlotCount: body.expectedTentativeSlotCount,
+            expectedTentativeSlotCount: resolvedExpectedTentativeSlotCount,
             // Honoured only for the consultant (or ADMIN/STAFF): accepting a
             // time outside the published availability is the consultant's call,
             // not something a consultee may assert about someone else's schedule.

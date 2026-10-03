@@ -6,6 +6,7 @@ import redisClient, {
 import { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT } from "../lib/redis-mock";
 import crypto from "crypto";
 import * as Sentry from "@sentry/nextjs";
+import { SCHEDULING_INTERVAL_MS } from "../lib/appointments/occurrences";
 import { SlotLockError } from "./errors/SlotLockError";
 
 function getErrorMessage(error: unknown): string {
@@ -460,7 +461,7 @@ export async function renewApprovalLock(
 // Public API - Slot Booking Locks (30-minute interval atoms)
 // ============================================================================
 
-const SLOT_ATOM_MS = 30 * 60 * 1000;
+const SLOT_ATOM_MS = SCHEDULING_INTERVAL_MS;
 
 const INTERVAL_RETRY_CONFIG: LockRetryConfig = {
   ...DEFAULT_RETRY_CONFIG,

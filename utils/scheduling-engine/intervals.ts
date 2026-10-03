@@ -1,6 +1,7 @@
 import { DayOfWeek } from "@prisma/client";
 import { addDays, isBefore, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { TIntervalTiming } from "@/types/slots";
 import { weeklyRowOccurrencesInRange } from "@/utils/schedule/weekly-projection";
 
@@ -102,7 +103,7 @@ export function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
 // #997 Phase 2 — exported so the availability-with-allocation route can bucket
 // its OWN overlap-metadata index (title/participant for tooltips) using the
 // exact same alignment as isSlotAllocated/getSlotBookingStatus below.
-export const THIRTY_MIN_MS = 30 * 60 * 1000;
+export const THIRTY_MIN_MS = SCHEDULING_INTERVAL_MS;
 export type AppointmentIndex = Map<number, AppointmentSlot[]>;
 
 export function buildAppointmentIndex(
