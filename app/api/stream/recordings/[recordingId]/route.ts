@@ -605,6 +605,8 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         recordingUrl: "",
         storageUrl: null,
         storagePath: null,
+        previewClipUrl: null,
+        previewClipStoragePath: null,
         listingStatus: "UNPUBLISHED",
       },
     });

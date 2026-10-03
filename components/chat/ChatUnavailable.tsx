@@ -34,16 +34,19 @@ export function ChatUnavailable({
   const handleGrantConsent = async () => {
     setIsGranting(true);
     try {
-      await fetch("/api/user/privacy/consent", {
+      const res = await fetch("/api/user/privacy/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ purposeCodes: ["STREAM_DATA_PROCESSING"] }),
       });
+      if (!res.ok) return;
       if (onRetry) {
         onRetry();
       } else {
         window.dispatchEvent(new Event("stream:retry-connection"));
       }
+    } catch {
+      // Keep the consent prompt visible if the request fails.
     } finally {
       setIsGranting(false);
     }

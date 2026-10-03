@@ -484,13 +484,6 @@ export async function handleSessionParticipantLeft(
         },
         data: { leftAt },
       });
-      const existingAttendance = await tx.meetingAttendance.findUnique?.({
-        where: { meetingId_userId: { meetingId, userId } },
-        select: { lastLeftAt: true },
-      });
-      const canAdvanceLastLeft =
-        !existingAttendance?.lastLeftAt ||
-        leftAt.getTime() > existingAttendance.lastLeftAt.getTime();
       // upsert (not update) — a leave arriving without a recorded join still
       // creates the row, with firstJoinedAt rebuilt from the leave's duration.
       await tx.meetingAttendance.upsert({
@@ -505,7 +498,6 @@ export async function handleSessionParticipantLeft(
           lastLeftAt: leftAt,
         },
         update: {
-          ...(canAdvanceLastLeft && { lastLeftAt: leftAt }),
           ...(newSessions > 0 && { joinCount: { increment: newSessions } }),
         },
       });

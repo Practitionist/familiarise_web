@@ -227,7 +227,7 @@ export async function decideSlotOutcome(
     // Owner decision — a group seat absent from a held session hears only of its recording.
     const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
     if (count > 0 && verdict.outcome === "HELD" && isGroup) {
-      await stageNoShowBells(tx, slot, "group");
+      await stageNoShowBells(tx, { ...slot, presences }, "group");
     }
     // A void is a class miss: bells, and the exit right re-checked in this tx.
     if (count > 0 && to === "VOIDED" && slot.appointment.classId) {

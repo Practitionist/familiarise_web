@@ -175,7 +175,7 @@ export function isPayloadTooLargeUploadError(error: unknown): boolean {
     const msg = typeof obj.message === "string" ? obj.message : "";
     if (
       msg.includes("RECORDING_OBJECT_CEILING") ||
-      /exceed|too large|payload too large|entity too large|exceeded maximum size/i.test(
+      /too large|payload too large|entity too large|exceeded (?:the )?maximum (?:allowed )?size|maximum (?:allowed )?size exceeded/i.test(
         msg,
       )
     ) {
@@ -482,128 +482,131 @@ export class RecordingTransferService {
         () => abortController.abort(),
         TRANSFER_TIMEOUT_MS,
       );
-      let response: Response;
+      let fileSize: bigint | null = null;
+      let storagePath = "";
       try {
-        response = await fetch(recording.recordingUrl, {
+        const response = await fetch(recording.recordingUrl, {
           redirect: "error",
           signal: abortController.signal,
         });
-      } finally {
-        clearTimeout(timeoutHandle);
-      }
 
-      if (!response.ok) {
-        // Revert to READY so cron and manual retries can re-attempt
-        const error = `Failed to download recording: ${response.status} ${response.statusText}`;
-        await this.recordTransferFailure(recordingId, error);
-        return { success: false, error };
-      }
-
-      // Get file data
-      const contentType = response.headers.get("content-type") || "video/mp4";
-      const contentLength = response.headers.get("content-length");
-      let fileSize = contentLength ? BigInt(contentLength) : null;
-      const fileSizeNumber = contentLength ? parseInt(contentLength, 10) : null;
-
-      // Check file size before attempting transfer to prevent OOM
-      if (fileSizeNumber && fileSizeNumber > RECORDING_MAX_OBJECT_BYTES) {
-        streamLogger.warn("Recording too large for direct transfer", {
-          recordingId,
-          fileSize: fileSizeNumber,
-          maxSize: RECORDING_MAX_OBJECT_BYTES,
-        });
-        const error = `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum is ${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB.`;
-        await this.recordTransferFailure(recordingId, error, {
-          terminal: true,
-        });
-        return { success: false, error };
-      }
-
-      // Validate content type
-      if (!RECORDING_MIME_TYPES.includes(contentType)) {
-        streamLogger.warn("Unexpected content type for recording", {
-          recordingId,
-          contentType,
-        });
-      }
-
-      // Create file path: recordings/{year}/{month}/{recordingId}/{uuid}.{ext}
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      // Strip content-type params (e.g. "video/mp4; charset=utf-8" → "video/mp4")
-      const mimeType = contentType.split(";")[0].trim();
-      const filename = generateStorageFileName(mimeType);
-      const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
-
-      if (useR2) {
-        streamLogger.info("Uploading recording to Cloudflare R2", {
-          recordingId,
-          storagePath,
-        });
-        const bucket = getR2RecordingsBucket();
-        if (response.body) {
-          const uploaded = await streamMultipartToR2({
-            bucket,
-            key: storagePath,
-            stream: response.body,
-            contentType,
-            maxBytes: RECORDING_MAX_OBJECT_BYTES,
-          });
-          if (fileSize === null) {
-            fileSize = BigInt(uploaded.size);
-          }
-        } else {
-          const rawBytes = new Uint8Array(await response.arrayBuffer());
-          if (rawBytes.byteLength > RECORDING_MAX_OBJECT_BYTES) {
-            throw new Error(
-              `RECORDING_OBJECT_CEILING: Recording stream exceeded maximum size (${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB)`,
-            );
-          }
-          await uploadR2Object({
-            bucket,
-            key: storagePath,
-            body: rawBytes,
-            contentType,
-          });
-          if (fileSize === null) {
-            fileSize = BigInt(rawBytes.byteLength);
-          }
-        }
-      } else {
-        // Upload to Supabase
-        streamLogger.info("Uploading recording to Supabase", {
-          recordingId,
-          storagePath,
-        });
-
-        const uploadBody = response.body
-          ? createSizeLimitedStream(response.body, RECORDING_MAX_OBJECT_BYTES)
-          : await response.blob();
-
-        const { error: uploadError } = await storageClient.storage
-          .from(RECORDINGS_BUCKET)
-          .upload(storagePath, uploadBody, {
-            contentType,
-            cacheControl: "31536000", // 1 year cache
-            upsert: true,
-          });
-
-        if (uploadError) {
+        if (!response.ok) {
           // Revert to READY so cron and manual retries can re-attempt
-          streamLogger.error("Failed to upload to Supabase", uploadError, {
+          const error = `Failed to download recording: ${response.status} ${response.statusText}`;
+          await this.recordTransferFailure(recordingId, error);
+          return { success: false, error };
+        }
+
+        // Get file data
+        const contentType = response.headers.get("content-type") || "video/mp4";
+        const contentLength = response.headers.get("content-length");
+        fileSize = contentLength ? BigInt(contentLength) : null;
+        const fileSizeNumber = contentLength
+          ? parseInt(contentLength, 10)
+          : null;
+
+        // Check file size before attempting transfer to prevent OOM
+        if (fileSizeNumber && fileSizeNumber > RECORDING_MAX_OBJECT_BYTES) {
+          streamLogger.warn("Recording too large for direct transfer", {
+            recordingId,
+            fileSize: fileSizeNumber,
+            maxSize: RECORDING_MAX_OBJECT_BYTES,
+          });
+          const error = `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum is ${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB.`;
+          await this.recordTransferFailure(recordingId, error, {
+            terminal: true,
+          });
+          return { success: false, error };
+        }
+
+        // Validate content type
+        if (!RECORDING_MIME_TYPES.includes(contentType)) {
+          streamLogger.warn("Unexpected content type for recording", {
+            recordingId,
+            contentType,
+          });
+        }
+
+        // Create file path: recordings/{year}/{month}/{recordingId}/{uuid}.{ext}
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, "0");
+        // Strip content-type params (e.g. "video/mp4; charset=utf-8" → "video/mp4")
+        const mimeType = contentType.split(";")[0].trim();
+        const filename = generateStorageFileName(mimeType);
+        storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
+
+        if (useR2) {
+          streamLogger.info("Uploading recording to Cloudflare R2", {
             recordingId,
             storagePath,
           });
-          await this.recordTransferFailure(
+          const bucket = getR2RecordingsBucket();
+          if (response.body) {
+            const uploaded = await streamMultipartToR2({
+              bucket,
+              key: storagePath,
+              stream: response.body,
+              contentType,
+              maxBytes: RECORDING_MAX_OBJECT_BYTES,
+            });
+            if (fileSize === null) {
+              fileSize = BigInt(uploaded.size);
+            }
+          } else {
+            const rawBytes = new Uint8Array(await response.arrayBuffer());
+            if (rawBytes.byteLength > RECORDING_MAX_OBJECT_BYTES) {
+              throw new Error(
+                `RECORDING_OBJECT_CEILING: Recording stream exceeded maximum size (${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB)`,
+              );
+            }
+            await uploadR2Object({
+              bucket,
+              key: storagePath,
+              body: rawBytes,
+              contentType,
+            });
+            if (fileSize === null) {
+              fileSize = BigInt(rawBytes.byteLength);
+            }
+          }
+        } else {
+          // Upload to Supabase
+          streamLogger.info("Uploading recording to Supabase", {
             recordingId,
-            uploadError.message,
-            isPayloadTooLargeUploadError(uploadError)
-              ? { terminal: true }
-              : undefined,
-          );
-          return { success: false, error: uploadError.message };
+            storagePath,
+          });
+
+          const uploadBody = response.body
+            ? createSizeLimitedStream(response.body, RECORDING_MAX_OBJECT_BYTES)
+            : await response.blob();
+
+          const { error: uploadError } = await storageClient.storage
+            .from(RECORDINGS_BUCKET)
+            .upload(storagePath, uploadBody, {
+              contentType,
+              cacheControl: "31536000", // 1 year cache
+              upsert: true,
+            });
+
+          if (uploadError) {
+            // Revert to READY so cron and manual retries can re-attempt
+            streamLogger.error("Failed to upload to Supabase", uploadError, {
+              recordingId,
+              storagePath,
+            });
+            await this.recordTransferFailure(
+              recordingId,
+              uploadError.message,
+              isPayloadTooLargeUploadError(uploadError)
+                ? { terminal: true }
+                : undefined,
+            );
+            return { success: false, error: uploadError.message };
+          }
         }
+      } finally {
+        clearTimeout(timeoutHandle);
       }
 
       // Store the path (NOT a public URL) — presigned URLs are generated on access.

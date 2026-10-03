@@ -857,22 +857,31 @@ export const ChatSidebar = () => {
           return;
         }
 
-        if (deepLinkChannelId) {
+        if (deepLinkChannelId && client.userID) {
           const colonIdx = deepLinkChannelId.indexOf(":");
           const channelType =
             colonIdx > 0
               ? deepLinkChannelId.slice(0, colonIdx)
-              : deepLinkChannelId.startsWith("dm-")
+              : deepLinkChannelId.startsWith("dm-") ||
+                  deepLinkChannelId.startsWith("dmo-")
                 ? "messaging"
                 : "team";
           const channelId =
             colonIdx > 0
               ? deepLinkChannelId.slice(colonIdx + 1)
               : deepLinkChannelId;
-          const channel = client.channel(channelType, channelId);
-          await channel.watch();
-          if (cancelled) return;
-          handleChannelSelect(channel);
+          const found = await client.queryChannels(
+            {
+              type: channelType,
+              id: { $eq: channelId },
+              members: { $in: [client.userID] },
+              ...buildOrgChannelFilter(scope),
+            },
+            { last_message_at: -1 },
+            { watch: true, state: true, limit: 1 },
+          );
+          if (cancelled || found.length === 0) return;
+          handleChannelSelect(found[0]);
         }
       } catch (err) {
         console.error("Failed to open deep-linked channel:", err);
