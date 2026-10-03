@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Download } from "lucide-react";
 import {
   useMutation,
   useQueries,
@@ -17,6 +18,7 @@ import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import {
   ALL_PURPOSE_CODES,
   PURPOSE_CODE_META,
+  SIGNUP_PURPOSES,
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
@@ -31,6 +33,20 @@ interface Artifact {
   withdrawnAt: string | null;
   auditRetainedUntil: string;
 }
+
+interface PersonalConsentResponse {
+  data: Artifact[];
+  preferences?: {
+    marketingEmails: boolean;
+    cookieAnalytics: boolean;
+    cookieMarketing: boolean;
+  };
+}
+
+const OPTIONAL_PERSONAL_PURPOSES: readonly PurposeCode[] = [
+  "MARKETING_COMMS",
+  "ANALYTICS",
+] as const;
 
 /** An operator's record that you asked this org to stop (#1527 decision 5). */
 interface WithdrawalRequest {
@@ -59,19 +75,64 @@ function grantedPurposes(artifacts: Artifact[]): Set<PurposeCode> {
 }
 
 const CONSENT_KEY = "account-org-consent";
+const PERSONAL_CONSENT_KEY = "account-personal-consent";
 
 /**
- * #1527 3c — only the member grants or withdraws their consent (decision 5),
- * so this is the member's own Grant / Withdraw for each organisation they
- * belong to, through that org's self-only consent routes. An operator's
- * recorded withdrawal request shows on its purpose, next to Withdraw.
- * Checkout's CONSENT_REQUIRED links here via `dataConsentHref`.
+ * #1527 3c — Personal platform consent (Familiarise Two-Tier DPDP Consent +
+ * §11 self-serve JSON data export) for every user, plus per-organisation
+ * consent when the user belongs to one or more enterprise organisations.
  */
 export function ConsentSection() {
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const personalConsent = useQuery<PersonalConsentResponse>({
+    queryKey: [PERSONAL_CONSENT_KEY],
+    queryFn: async () => {
+      const res = await fetch("/api/user/privacy/consent");
+      if (!res.ok) throw new Error("Couldn't load your platform consent");
+      return (await res.json()) as PersonalConsentResponse;
+    },
+    enabled: !!userId,
+  });
+
+  const personalChange = useMutation({
+    mutationFn: async (vars: { purposeCode: PurposeCode; grant: boolean }) => {
+      const res = vars.grant
+        ? await fetch("/api/user/privacy/consent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              purposeCodes: [vars.purposeCode],
+              language: "en-IN",
+              version: 1,
+            }),
+          })
+        : await fetch(
+            `/api/user/privacy/consent?${new URLSearchParams({ purposeCode: vars.purposeCode })}`,
+            { method: "DELETE" },
+          );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(body.error ?? "Please try again.");
+      }
+    },
+    onSuccess: async (_data, vars) => {
+      await queryClient.invalidateQueries({ queryKey: [PERSONAL_CONSENT_KEY] });
+      toast({ title: vars.grant ? "Consent given" : "Consent withdrawn" });
+    },
+    onError: (error) => {
+      toast({
+        title: "Couldn't update your consent",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   const memberships = useQuery<OrgMembership[]>({
     queryKey: ["account-org-memberships"],
@@ -100,7 +161,7 @@ export function ConsentSection() {
   });
 
   // The section loads after the page, so an anchored link lands short of it.
-  const ready = memberships.isSuccess;
+  const ready = memberships.isSuccess || personalConsent.isSuccess;
   useEffect(() => {
     if (ready && window.location.hash === `#${DATA_CONSENT_ANCHOR}`) {
       document.getElementById(DATA_CONSENT_ANCHOR)?.scrollIntoView();
@@ -142,25 +203,145 @@ export function ConsentSection() {
     },
   });
 
+  const personalGranted = grantedPurposes(personalConsent.data?.data ?? []);
+  if (personalConsent.data?.preferences?.marketingEmails) {
+    personalGranted.add("MARKETING_COMMS");
+  }
+  if (personalConsent.data?.preferences?.cookieAnalytics) {
+    personalGranted.add("ANALYTICS");
+  }
+
   return (
     <Section
       id={DATA_CONSENT_ANCHOR}
-      title="Data consent"
-      description="Your organisations can only book sessions for you, or share your data for these purposes, while you consent. A withdrawal applies to every organisation you belong to."
+      title="Data consent & privacy rights"
+      description="Manage your DPDP Act 2023 data consents, download a machine-readable summary of your personal data and sub-processor sharing (§11), or withdraw core consent to close your account (§6(4) & §12)."
       variant="card"
     >
-      {memberships.isError && (
-        <p className="text-sm text-muted-foreground">
-          We couldn&apos;t load your organisations. Refresh to try again.
-        </p>
-      )}
-      {memberships.isSuccess && orgs.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          You don&apos;t belong to an organisation, so there is no organisation
-          consent to manage.
-        </p>
-      )}
       <div className="space-y-6">
+        {/* DPDP §11 Data Export + Core Withdrawal Action Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3.5">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium text-foreground">
+              Your personal data &amp; processor sharing summary (DPDP §11)
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Download your profile, bookings, payments, consent history, and
+              the list of Data Processors (Razorpay, GetStream, Novu, Resend,
+              Sentry pseudonymous token) as JSON.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              asChild
+              data-testid="download-personal-data-btn"
+            >
+              <a href="/api/user/privacy/export" download>
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Download my data (JSON)
+              </a>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              onClick={() =>
+                document
+                  .getElementById("delete-account")
+                  ?.scrollIntoView({ behavior: "smooth" })
+              }
+            >
+              Withdraw core consent &amp; close account
+            </Button>
+          </div>
+        </div>
+
+        {/* Personal Platform Consent (Familiarise) */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium text-foreground">
+            Familiarise platform consent
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Core platform purposes (including pseudonymous security &amp; error
+            telemetry via <code className="text-[11px]">ust_&lt;hash&gt;</code>{" "}
+            under DPDP §8(5) &amp; Rule 6) are required while your account is
+            open. Optional purposes can be toggled anytime in 1 click without
+            affecting your bookings.
+          </p>
+          <ul className="divide-y divide-border">
+            {SIGNUP_PURPOSES.map((code) => {
+              const meta = PURPOSE_CODE_META[code];
+              return (
+                <li
+                  key={code}
+                  className="flex items-center justify-between gap-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {meta.label}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {meta.description}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <StatusBadge label="Required (Active)" tone="success" />
+                  </div>
+                </li>
+              );
+            })}
+            {OPTIONAL_PERSONAL_PURPOSES.map((code) => {
+              const meta = PURPOSE_CODE_META[code];
+              const isGranted = personalGranted.has(code);
+              const busy =
+                personalChange.isPending &&
+                personalChange.variables?.purposeCode === code;
+              return (
+                <li
+                  key={code}
+                  className="flex items-center justify-between gap-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {meta.label}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {meta.description}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <StatusBadge
+                      label={isGranted ? "Given" : "Not given"}
+                      tone={isGranted ? "success" : "neutral"}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={personalConsent.isLoading || busy}
+                      onClick={() =>
+                        personalChange.mutate({
+                          purposeCode: code,
+                          grant: !isGranted,
+                        })
+                      }
+                    >
+                      {isGranted ? "Withdraw" : "Give consent"}
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        {/* Enterprise Organisation Consents */}
+        {memberships.isError && (
+          <p className="text-sm text-muted-foreground">
+            We couldn&apos;t load your organisations. Refresh to try again.
+          </p>
+        )}
         {orgs.map((org, i) => {
           const query = consents[i];
           const granted = grantedPurposes(query?.data?.data ?? []);

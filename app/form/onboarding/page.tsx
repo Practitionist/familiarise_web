@@ -330,7 +330,9 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
             // Same invariant as the submit path: no save may land after the
             // draft row is deleted below.
             await ctx.onQuiesceDraftSaves();
-            await completeOrgWorkspaceOnboardingAction(userId);
+            await completeOrgWorkspaceOnboardingAction(userId, {
+              acceptTermsAndPrivacy: true,
+            });
             await clearOnboardingDraftAction();
           }}
         />
@@ -802,6 +804,7 @@ const MultiStepForm: React.FC = () => {
           name: merged.name?.trim() || undefined,
           phone: trimmedPhone || undefined,
           timezone: merged.timezone?.trim() || undefined,
+          ...(merged.dateOfBirth ? { dateOfBirth: merged.dateOfBirth } : {}),
         });
         if (!result.success) {
           toast({
