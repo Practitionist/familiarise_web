@@ -702,7 +702,11 @@ async function runOnboardingTransaction(
         include: onboardingUserInclude,
       });
 
-      if (validatedBody.termsAcceptedAt && validatedBody.privacyAcceptedAt) {
+      if (
+        validatedBody.termsAcceptedAt &&
+        validatedBody.privacyAcceptedAt &&
+        tx.consentArtifact?.findFirst
+      ) {
         const { buildSignupConsentArtifacts } = await import(
           "@/lib/compliance/dpdp"
         );

@@ -408,19 +408,21 @@ export async function completeOrgWorkspaceOnboardingAction(
           privacyAcceptedAt: now,
         },
       });
-      const existingConsent = await tx.consentArtifact.findFirst({
-        where: {
-          userId,
-          dataFiduciary: "Familiarise",
-          withdrawnAt: null,
-          purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
-        },
-        select: { id: true },
-      });
-      if (!existingConsent) {
-        await tx.consentArtifact.createMany({
-          data: buildSignupConsentArtifacts(userId),
+      if (tx.consentArtifact?.findFirst) {
+        const existingConsent = await tx.consentArtifact.findFirst({
+          where: {
+            userId,
+            dataFiduciary: "Familiarise",
+            withdrawnAt: null,
+            purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
+          },
+          select: { id: true },
         });
+        if (!existingConsent) {
+          await tx.consentArtifact.createMany({
+            data: buildSignupConsentArtifacts(userId),
+          });
+        }
       }
     });
     return { success: true };

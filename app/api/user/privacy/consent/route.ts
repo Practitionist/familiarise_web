@@ -33,14 +33,9 @@ import {
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
 
-export const CORE_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set(
+const CORE_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set(
   SIGNUP_PURPOSES,
 );
-
-export const OPTIONAL_PLATFORM_PURPOSES: ReadonlySet<PurposeCode> = new Set([
-  PURPOSE_CODES.MARKETING_COMMS,
-  PURPOSE_CODES.ANALYTICS,
-]);
 
 const LanguageSchema = z
   .string()
