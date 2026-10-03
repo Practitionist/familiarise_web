@@ -22,6 +22,8 @@ const mockClassFindMany = jest.fn();
 const mockTrialFindMany = jest.fn();
 const mockGetPaidPlanIds = jest.fn();
 const mockGetBestRecordingUrl = jest.fn();
+const mockRecordingFindUnique = jest.fn();
+const mockGetPublicRecordingBySlug = jest.fn();
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
@@ -41,6 +43,7 @@ jest.mock("../../lib/prisma", () => ({
     recording: {
       count: (...args: unknown[]) => mockRecordingCount(...args),
       findMany: (...args: unknown[]) => mockRecordingFindMany(...args),
+      findUnique: (...args: unknown[]) => mockRecordingFindUnique(...args),
     },
     recordingPurchase: {
       findFirst: (...args: unknown[]) =>
@@ -93,7 +96,8 @@ jest.mock("../../lib/stream/session-recordings", () => ({
 
 jest.mock("../../lib/data/recordings-explore", () => ({
   __esModule: true,
-  getPublicRecordingBySlug: jest.fn(),
+  getPublicRecordingBySlug: (...args: unknown[]) =>
+    mockGetPublicRecordingBySlug(...args),
 }));
 
 jest.mock("../../lib/auth-server", () => ({
@@ -103,7 +107,7 @@ jest.mock("../../lib/auth-server", () => ({
 
 import { GET as getConsultantRecordings } from "@/app/api/consultants/[consultantId]/recordings/route";
 import { GET as getConsulteeResources } from "@/app/api/dashboard/consultee/[consulteeId]/resources/route";
-import { canUserWatchRecording } from "@/app/explore/recordings/[slug]/page";
+import RecordingDetailPage from "@/app/explore/recordings/[slug]/page";
 import { EVENT_TYPE_LABELS } from "@/components/dashboard/library/LibraryBrowser";
 import type { RecordingListing } from "@/lib/data/recordings-explore";
 
@@ -280,7 +284,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
     });
   });
 
-  describe("canUserWatchRecording (app/explore/recordings/[slug]/page.tsx)", () => {
+  describe("RecordingDetailPage (app/explore/recordings/[slug]/page.tsx)", () => {
     const sampleListing: RecordingListing = {
       id: "rec-100",
       slug: "system-design-live",
@@ -306,37 +310,63 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       },
     };
 
-    it("grants access to owning consultant, SUCCEEDED replay buyer, and paid plan enrollee", async () => {
+    it("grants unlocked playback to owning consultant, SUCCEEDED replay buyer, and paid plan enrollee while gating strangers", async () => {
+      mockGetPublicRecordingBySlug.mockResolvedValue(sampleListing);
+      mockRecordingFindUnique.mockResolvedValue({
+        status: "AVAILABLE",
+        storagePath: "recordings/rec-100.mp4",
+        recordingUrl: null,
+      });
+
       // 1. Owning consultant
-      expect(
-        await canUserWatchRecording("u-owner", "cp-owner", sampleListing),
-      ).toBe(true);
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "u-owner", consultantProfileId: "cp-owner" },
+      });
+      await RecordingDetailPage({
+        params: Promise.resolve({ slug: "system-design-live" }),
+      });
+      expect(mockGetBestRecordingUrl).toHaveBeenCalledTimes(1);
 
       // 2. Replay buyer
+      mockGetBestRecordingUrl.mockClear();
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "u-buyer", consultantProfileId: null },
+      });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce({ id: "pur-1" });
-      expect(await canUserWatchRecording("u-buyer", null, sampleListing)).toBe(
-        true,
-      );
+      await RecordingDetailPage({
+        params: Promise.resolve({ slug: "system-design-live" }),
+      });
+      expect(mockGetBestRecordingUrl).toHaveBeenCalledTimes(1);
 
       // 3. Paid parent webinar plan holder
+      mockGetBestRecordingUrl.mockClear();
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "u-attendee", consultantProfileId: null },
+      });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
       mockGetPaidPlanIds.mockResolvedValueOnce({
         webinarPlanIds: ["wplan-1"],
         classPlanIds: [],
       });
-      expect(
-        await canUserWatchRecording("u-attendee", null, sampleListing),
-      ).toBe(true);
+      await RecordingDetailPage({
+        params: Promise.resolve({ slug: "system-design-live" }),
+      });
+      expect(mockGetBestRecordingUrl).toHaveBeenCalledTimes(1);
 
       // 4. Unentitled user
+      mockGetBestRecordingUrl.mockClear();
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "u-stranger", consultantProfileId: null },
+      });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
       mockGetPaidPlanIds.mockResolvedValueOnce({
         webinarPlanIds: [],
         classPlanIds: [],
       });
-      expect(
-        await canUserWatchRecording("u-stranger", null, sampleListing),
-      ).toBe(false);
+      await RecordingDetailPage({
+        params: Promise.resolve({ slug: "system-design-live" }),
+      });
+      expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
     });
   });
 

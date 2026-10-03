@@ -16,7 +16,7 @@ import { RecordingBuyButton } from "./RecordingBuyButton";
 export const revalidate = 120;
 export const dynamicParams = true;
 
-export async function canUserWatchRecording(
+async function canUserWatchRecording(
   userId: string,
   consultantProfileId: string | null | undefined,
   listing: RecordingListing,
