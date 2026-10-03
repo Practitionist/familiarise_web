@@ -278,6 +278,26 @@ const nextConfig = {
         }
       : {}),
     webpackMemoryOptimizations: true,
+    // Disables NextNodeServer's cold-start `unstable_preloadEntries()` and
+    // `preloadAppDocument()` loops (`next/dist/server/next-server.js`).
+    //
+    // Why this is critical on Netlify (`___netlify-server-handler`):
+    // - Unlike Vercel (`minimalMode: true`, which skips `unstable_preloadEntries`),
+    //   `@netlify/plugin-nextjs` instantiates `NextNodeServer` with
+    //   `minimalMode: false`.
+    // - With Next 15's default `preloadEntriesOnStart: true`, every cold Lambda
+    //   instance eagerly calls `loadComponents()` across all 606 routes
+    //   (1.67M `webpackRequire` calls) before/during the first request.
+    // - That eager preload caused both the #1124 ~24–32s cold-start event-loop
+    //   stall (even on zero-import `/api/perf/probe-bare`) and — once the
+    //   dependency upgrade in #1948 pushed peak preload heap past Node 22's
+    //   512 MB V8 old-space limit on 1024 MB Lambda containers — fatal V8 GC
+    //   thrashing / OOM (`504 Inactivity Timeout` on 100% of requests).
+    // - With both flags `false`, routes load on demand: cold-start `/api/perf/probe-bare`
+    //   completes in ~690ms at 33 MB heap (123 MB RSS) instead of ~20–34s at
+    //   512+ MB heap (642 MB RSS).
+    preloadEntriesOnStart: false,
+    appDocumentPreloading: false,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
     // those was inert config that read as if it were doing something.
@@ -376,6 +396,7 @@ const nextConfig = {
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
+    "@novu/api",
   ],
 
   images: {
