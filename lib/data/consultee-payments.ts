@@ -281,10 +281,22 @@ export function paymentRowSelect(userId: string) {
           },
         },
         // #1760 — the EXPIRED edge tells a lapsed pay link from an
-        // unanswered request.
+        // unanswered request. #1846 added the second arm: a consultant's
+        // withdraw-approval now ends in CANCELLED, so the `toStatus: "EXPIRED"`
+        // filter alone would drop the edge that names the expert who ended it.
+        // Added rather than substituted — the EXPIRED edge is still what proves
+        // a pay link lapsed rather than being withdrawn.
         statusHistory: {
-          where: { toStatus: "EXPIRED" },
-          select: { fromStatus: true, toStatus: true },
+          where: {
+            OR: [
+              { toStatus: "EXPIRED" as const },
+              {
+                toStatus: "CANCELLED" as const,
+                reason: "WITHDRAWN_BY_CONSULTANT",
+              },
+            ],
+          },
+          select: { fromStatus: true, toStatus: true, reason: true },
         },
       },
     },

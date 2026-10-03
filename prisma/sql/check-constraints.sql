@@ -145,7 +145,7 @@ ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_amount_nonnegative" CHECK ("amount
 ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
+  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND "clawbackAmountPaise" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
 -- SPLIT
 ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_amounts_nonnegative";
 -- SPLIT
@@ -379,13 +379,12 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
     AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
   );
 -- SPLIT
--- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund or a
--- Dispute. Both minters (lib/payments/operations/refund.ts) set exactly one and
--- no seed file writes CreditNote, so the strict XOR is the true shape.
+-- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
+-- Dispute, or an OverageEvent reversal.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (("refundId" IS NULL) <> ("disputeId" IS NULL));
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT
@@ -541,6 +540,33 @@ ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
 
 -- SPLIT
+-- #1367 / #1368 — TdsRate integer-bps and effective-window sanity: rates live
+-- in [0, 10000] bps (covering 194O, 393-8(v), 194J, 194C), thresholds are
+-- non-negative, and a closed window never ends before it started.
+ALTER TABLE "TdsRate" DROP CONSTRAINT IF EXISTS "tds_rate_bps_and_window_sane";
+-- SPLIT
+ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_and_window_sane"
+  CHECK (
+    "rateBps" >= 0 AND "rateBps" <= 10000
+    AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+    AND ("thresholdPaise" IS NULL OR "thresholdPaise" >= 0)
+    AND ("effectiveTo" IS NULL OR "effectiveTo" >= "effectiveFrom")
+  );
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tds_rate_bps_bounds'
+  ) THEN
+    ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_bounds"
+      CHECK (
+        "rateBps" >= 0 AND "rateBps" <= 10000
+        AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+      );
+  END IF;
+END $$;
+
+-- SPLIT
 -- #1549 — one review per (consultant, consultee, track, event). ratingUnitId is NULL on
 -- every 1:1 row, so the key needs NULLS NOT DISTINCT, which Prisma cannot express; the
 -- predicate exempts NULL-track legacy rows and is what keeps `db push` from seeing the
@@ -649,6 +675,57 @@ CREATE TRIGGER review_revision_immutable
   BEFORE UPDATE OR DELETE ON "ConsultantReviewRevision"
   FOR EACH ROW
   EXECUTE FUNCTION assert_review_revision_immutable();
+
+-- SPLIT
+-- #1854 — UsageLedgerEntry is the append-only ledger the entitlement meters are
+-- DERIVED from: `reverseBookingUtilization` computes "how much of this booking
+-- has already been reversed" by summing its negative rows, and
+-- reconcile-ledgers.ts asserts Σ engagementsConsumed against
+-- ProgramAssignment.engagementsUsed nightly. Both are only true while the rows
+-- cannot be edited. A DELETE (or an UPDATE) passed silently, and the next
+-- reversal re-released a seat the org had already paid back.
+--
+-- Nothing in the codebase writes anything but `create` / `aggregate` on this
+-- table (the forward and reverse paths both APPEND, which is what makes the
+-- partial-reversal clamp work), so a raise trigger costs nothing — the same
+-- argument, and the same shape, as ledger_entry_immutable in
+-- ledger-triggers.sql.
+--
+-- NOT staged behind the banner below, unlike the CHECKs there: a trigger fires
+-- on FUTURE writes and never scans existing rows, so it cannot fail to apply
+-- against pre-reset data. Only a constraint that validates what is already in
+-- the table needs the reset window.
+DROP TRIGGER IF EXISTS usage_ledger_entry_immutable ON "UsageLedgerEntry";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_usage_ledger_entry_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'UsageLedgerEntry % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER usage_ledger_entry_immutable
+  BEFORE UPDATE OR DELETE ON "UsageLedgerEntry"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
+
+-- SPLIT
+-- BookingStatusHistory is append-only (reschedule-restore and response-rate read
+-- it as truth). A trigger never scans existing rows, so it ships live, not staged.
+DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+-- UPDATE OF lists only the audit columns: the three FKs are ON DELETE SET NULL,
+-- which Postgres runs as an UPDATE of the FK column and must not be refused.
+CREATE TRIGGER booking_status_history_immutable
+  BEFORE UPDATE OF "id", "entity", "entityId", "fromStatus", "toStatus", "reason", "createdAt"
+  OR DELETE ON "BookingStatusHistory"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_booking_status_history_immutable();
 
 -- SPLIT
 -- ============================================================================
@@ -767,3 +844,29 @@ BEGIN
     ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
   END IF;
 END $$;
+-- SPLIT
+-- #1926 — Enforce at most one RUNNING SystemJobExecution row per jobName at a time
+-- so concurrent callers (cron-tick.mts vs GitHub Actions) cannot both acquire the
+-- same cron lock in the check-then-insert window. First sweep any pre-existing
+-- older duplicate RUNNING rows so index creation is guaranteed to succeed.
+WITH ranked_running AS (
+  SELECT
+    "id",
+    ROW_NUMBER() OVER (
+      PARTITION BY "jobName"
+      ORDER BY "startedAt" DESC, "id" DESC
+    ) AS rn
+  FROM "SystemJobExecution"
+  WHERE "status" = 'RUNNING'
+)
+UPDATE "SystemJobExecution"
+SET
+  "status" = 'FAILED',
+  "endedAt" = COALESCE("endedAt", NOW()),
+  "errorLog" = COALESCE("errorLog", 'deduplicated stale RUNNING row before unique index')
+WHERE "id" IN (SELECT "id" FROM ranked_running WHERE rn > 1);
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
+  ON "SystemJobExecution" ("jobName")
+  WHERE "status" = 'RUNNING';
+

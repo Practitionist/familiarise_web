@@ -12,7 +12,11 @@
 import {
   computeTdsForPayout,
   isValidPan,
+  NO_PAN_BPS_194O,
   NO_PAN_RATE_194O,
+  PAN_FALLBACK_BPS,
+  resolveEffectiveTdsRate,
+  TDS_SECTION_DEFAULT_BPS,
   TDS_SECTION_DEFAULTS,
   type TdsConsultantInput,
 } from "@/lib/compliance/tds";
@@ -159,3 +163,134 @@ describe("isValidPan", () => {
     expect(isValidPan("ABCDE12345")).toBe(false); // wrong shape
   });
 });
+
+describe("Integer basis-point math & resolveEffectiveTdsRate (#1368, #1367)", () => {
+  it("exposes integer basis-point constants and populates rateAppliedBps on computeTdsForPayout", () => {
+    expect(TDS_SECTION_DEFAULT_BPS["194O"]).toBe(10);
+    expect(TDS_SECTION_DEFAULT_BPS["194J"]).toBe(1000);
+    expect(NO_PAN_BPS_194O).toBe(500);
+    expect(PAN_FALLBACK_BPS).toBe(2000);
+
+    const res = computeTdsForPayout({
+      grossAmountPaise: 505_000, // 505_000 * 10 / 10_000 = 505p
+      consultant: profile(),
+    });
+    expect(res.rateAppliedBps).toBe(10);
+    expect(res.rateApplied).toBe(0.001);
+    expect(res.tdsAmountPaise).toBe(505);
+  });
+
+  it("resolves effective TDS rate from DB TDSRate row and falls back to static defaults", async () => {
+    const findFirst = jest.fn().mockResolvedValueOnce({
+      lawCode: "IT2025",
+      rateBps: 20,
+      noPanRateBps: 500,
+      thresholdPaise: BigInt(6_000_000),
+      paymentCode: "1005",
+    });
+    const fromDb = await resolveEffectiveTdsRate(
+      { tdsRate: { findFirst } },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fromDb).toMatchObject({
+      section: "194O",
+      lawCode: "IT2025",
+      rateBps: 20,
+      thresholdPaise: BigInt(6_000_000),
+      paymentCode: "1005",
+      source: "db",
+    });
+    expect(findFirst).toHaveBeenCalledTimes(1);
+
+    findFirst.mockResolvedValueOnce(null);
+    const fallback = await resolveEffectiveTdsRate(
+      { tdsRate: { findFirst } },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fallback).toMatchObject({
+      section: "194O",
+      rateBps: 10,
+      thresholdPaise: BigInt(50_000_000),
+      source: "default",
+    });
+
+    const fallback194J = await resolveEffectiveTdsRate(
+      null,
+      "194J",
+      new Date("2025-12-01T00:00:00Z"),
+    );
+    expect(fallback194J).toMatchObject({
+      section: "194J",
+      lawCode: "IT1961",
+      rateBps: 1000,
+      noPanRateBps: 2000,
+      thresholdPaise: BigInt(3_000_000),
+      source: "default",
+    });
+
+    const fallback194C = await resolveEffectiveTdsRate(
+      null,
+      "194C",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fallback194C).toMatchObject({
+      section: "194C",
+      lawCode: "IT2025",
+      rateBps: 200,
+      thresholdPaise: null,
+      source: "default",
+    });
+  });
+
+  it("rethrows serialization/aborted-tx errors (P2034 / 25P02) and live-client DB failures while falling back on non-client mock errors", async () => {
+    const p2034Err = Object.assign(new Error("Serialization failure"), {
+      code: "P2034",
+    });
+    await expect(
+      resolveEffectiveTdsRate(
+        { tdsRate: { findFirst: jest.fn().mockRejectedValueOnce(p2034Err) } },
+        "194O",
+      ),
+    ).rejects.toThrow("Serialization failure");
+
+    const abortedTxErr = new Error(
+      "current transaction is aborted, commands ignored until end of transaction block (25P02)",
+    );
+    await expect(
+      resolveEffectiveTdsRate(
+        {
+          tdsRate: { findFirst: jest.fn().mockRejectedValueOnce(abortedTxErr) },
+        },
+        "194O",
+      ),
+    ).rejects.toThrow("25P02");
+
+    const liveClientErr = new Error("connection reset");
+    await expect(
+      resolveEffectiveTdsRate(
+        {
+          $executeRawUnsafe: jest.fn(),
+          tdsRate: {
+            findFirst: jest.fn().mockRejectedValueOnce(liveClientErr),
+          },
+        } as unknown as Parameters<typeof resolveEffectiveTdsRate>[0],
+        "194O",
+      ),
+    ).rejects.toThrow("connection reset");
+
+    const mockFallback = await resolveEffectiveTdsRate(
+      {
+        tdsRate: {
+          findFirst: jest.fn().mockRejectedValueOnce(new Error("stub error")),
+        },
+      },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(mockFallback.source).toBe("default");
+    expect(mockFallback.rateBps).toBe(10);
+  });
+});
+

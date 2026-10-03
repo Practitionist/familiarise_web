@@ -279,22 +279,30 @@ export async function rollupOrgInvoiceAccruals(params: {
             // REVERSED/FAILED one is not an orphan, it is already settled.
             chargeStatus: "PENDING",
             settledAt: null,
-            bookingUtilization: { paymentId: { in: accrued.map((p) => p.id) } },
+            OR: [
+              {
+                bookingUtilization: {
+                  paymentId: { in: accrued.map((p) => p.id) },
+                },
+              },
+              { paymentId: { in: accrued.map((p) => p.id) } },
+            ],
           },
           select: {
             id: true,
+            paymentId: true,
             bookingUtilization: { select: { paymentId: true } },
           },
         });
 
         const settledAt = new Date();
         for (const ev of overageEvents) {
+          const linePaymentId = ev.paymentId ?? ev.bookingUtilization.paymentId;
           // #775 — PENDING → ACCRUED: now on an issued invoice. The invoice-paid
           // ledger handler flips ACCRUED → CHARGED on payment.
           const moved = await transitionOverage(tx, { id: ev.id }, "ACCRUED", {
             settledAt,
-            invoiceLineItemId:
-              lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
+            invoiceLineItemId: lineItemByPaymentId.get(linePaymentId) ?? null,
           });
 
           // #1357 7.4 (inverse) — the allowed-from guard IS the filter, so an
@@ -311,7 +319,7 @@ export async function rollupOrgInvoiceAccruals(params: {
               overageEventId: ev.id,
               invoiceId: invoice.id,
               invoiceNumber,
-              paymentId: ev.bookingUtilization.paymentId,
+              paymentId: linePaymentId,
             });
           }
         }

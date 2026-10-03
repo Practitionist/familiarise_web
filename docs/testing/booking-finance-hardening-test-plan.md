@@ -40,7 +40,7 @@ redundant, though harmless.
 Every seeded user shares one password: `SEED_PASSWORD` env, default
 **`SeedPass123!`** (`prisma/seedFiles/1a-create-users.ts`).
 
-Seeded org shapes (`prisma/seedFiles/15a-create-organizations.ts`):
+Seeded org shapes (`prisma/seedFiles/14a-create-organizations.ts`):
 
 | Org | Shape | Funding | Use for |
 |---|---|---|---|
@@ -273,12 +273,20 @@ Chaos category 07 now includes `test-cancel-pending-vs-webhook` (#849) and
 `test-last-seat-storm` (capacity race regression — exactly one winner for a
 single free webinar seat).
 
-DB-level backstop (#440): the `slot_no_confirmed_overlap` exclusion
+DB-level backstop (#440): the `occurrence_no_confirmed_overlap` exclusion
 constraint (applied automatically by `npm run db:push`, which now chains
-`db:constraints`) rejects two CONFIRMED overlapping slots for one consultant at
-the database. Verify after any reset: a direct duplicate-window insert with
-`isTentative=false` and a set `consultantProfileId` must fail with an exclusion
-violation; tentative and back-to-back inserts must succeed.
+`db:constraints`) rejects two CONFIRMED overlapping occurrences for one
+consultant at the database. Verify after any reset: a direct duplicate-window
+insert with `isTentative=false`, a set `consultantProfileId` and a null
+`deletedAt` must fail with an exclusion violation. Three cases must succeed,
+and each is load-bearing: tentative inserts (the predicate requires
+`NOT isTentative`), back-to-back inserts (a half-open range does not overlap its
+neighbour), and soft-deleted inserts (#1694 exempts tombstones via
+`deletedAt IS NULL` so a cancelled time can be re-booked). A row with a **null**
+`consultantProfileId` is also outside the constraint entirely — that is the
+reason the plan owner's profile is denormalized onto every webinar and class
+occurrence, and the reason a NULL there is a silent loss of protection rather
+than a neutral state.
 
 ## 6. Reporting
 

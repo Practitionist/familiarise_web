@@ -78,7 +78,11 @@ export async function GET(
             id: true,
             participants: {
               where: liveParticipant(),
-              select: { user: { select: PARTICIPANT_USER_SELECT } },
+              select: {
+                status: true,
+                role: true,
+                user: { select: PARTICIPANT_USER_SELECT },
+              },
             },
           },
         },
@@ -89,12 +93,19 @@ export async function GET(
       return new NextResponse("Class not found", { status: 404 });
     }
 
-    // Get unique participants by user ID
+    // Get unique participants by user ID. The seat's own status rides along
+    // additively on the user object: AppointmentParticipant is the only place
+    // that knows a seat is held vs confirmed, and a roster that drops it tells
+    // the host "registered" for both.
     const participants = Array.from(
       new Map(
         classEvent.appointment?.participants.map((participant) => [
           participant.user.id,
-          participant.user,
+          {
+            ...participant.user,
+            participantStatus: participant.status,
+            participantRole: participant.role,
+          },
         ]) || [],
       ).values(),
     );

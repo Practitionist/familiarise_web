@@ -96,8 +96,10 @@ export async function settleAvailabilityWrite(
     where: { id: consultantProfileId },
     select: {
       scheduleType: true,
+      // No `deletedAt` filter: availability rows are removed by `deleteMany`
+      // (see the consultant delete door), never tombstoned, so the filter could
+      // only ever hide nothing — and the columns no longer exist.
       availabilityWindowsWeekly: {
-        where: { deletedAt: null },
         select: {
           startDay: true,
           startTimeUtc: true,
@@ -106,7 +108,6 @@ export async function settleAvailabilityWrite(
         },
       },
       availabilityWindowsCustom: {
-        where: { deletedAt: null },
         select: { startsAt: true, endsAt: true },
       },
     },

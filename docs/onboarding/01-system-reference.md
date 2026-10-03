@@ -1085,6 +1085,6 @@ whole design.
 | `lib/scheduling/uncovered-upcoming.ts` | `settleAvailabilityWrite()` — shrink notice + completion recompute after every availability write |
 | `lib/profiles/profile-completion.ts` | `calculateProfileCompletion()` / `recomputeProfileCompletion()` (#698 OB-1) |
 | `utils/scheduling-engine/slotTimeUtils.ts` | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()` |
-| `utils/timeScheduleValidation.ts` | `isValidTimeRange()` — duration bounds (30min–12h) |
+| `utils/scheduling-engine/interval-validation.ts` | `isValidTimeRange()` — duration bounds (30min–12h) |
 | `lib/novu.ts` | `notifyNewConsultantApplication()` — admin notifications |
 | `prisma/schema.prisma` | All model definitions |

@@ -146,8 +146,18 @@ function txStub() {
       findUniqueOrThrow: jest.fn(async () => payment),
       findUnique: jest.fn(async () => payment),
     },
-    consultantEarnings: { update: jest.fn().mockResolvedValue({}) },
-    organizationEarnings: { update: jest.fn().mockResolvedValue({}) },
+    // W1c — the earnings REFUNDED writers moved from a plain `update` to a
+    // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
+    // the pre-read). Keep the surface complete so this suite fails on an
+    // assertion rather than on `updateMany is not a function`.
+    consultantEarnings: {
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    organizationEarnings: {
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     organizationPayout: { update: jest.fn().mockResolvedValue({}) },
     organizationInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
     creditNote: { findUnique: jest.fn().mockResolvedValue(null) },

@@ -86,7 +86,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] Trials take the shared `slot-booking:` atom keys through `lockSlotBooking`, not a namespace of their own — the retired `trial-slot-booking:` prefix must never reappear (`__tests__/booking-algorithm/trial-slot-integrity.test.ts` asserts this)
 - [ ] Consultee-side dedupe locks under `consultee-booking:<userId>` (`lockConsulteeBooking`)
 - [ ] Event checkout (webinar/class) locks a single mutex per event under `event-checkout:<type>:<eventOrPlanId>` (`lockEventCheckout`) — this is a mutex, not a counting semaphore; capacity is re-checked inside the write transaction, not by the lock
-- [ ] `SchedulingService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `slot_no_confirmed_overlap` exclusion constraint
+- [ ] `SchedulingService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `occurrence_no_confirmed_overlap` exclusion constraint
 - [ ] Cancel and reschedule take `lockAppointment` (`APPOINTMENT_LOCK_TTL_MS`) so a stale tab and a live cancel serialize instead of racing the CAS write
 - [ ] Global lock order is respected end-to-end: event/consultant -> consultee -> slot
 - [ ] Checkout lock TTLs match `CHECKOUT_LOCK_TTL_MS` by type (CONSULTATION 60s, SUBSCRIPTION/WEBINAR 120s, CLASS 600s) — sized per checkout shape, not one universal TTL
@@ -115,7 +115,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] `useScheduling` (`hooks/scheduling/useScheduling.ts`) hook: correct `requiredSlots` for SUBSCRIPTION and CLASS types
 - [ ] Calendar renders overnight slots correctly (split across two days if needed)
 - [ ] Main UI save paths (onboarding + settings) create single overnight weekly records (not split at midnight)
-- [ ] Frontend validator (`isValidTimeRange`, `validateTimeSlot` in `lib/scheduling/slotSelectionValidation.ts`) accepts overnight slots
+- [ ] Frontend validator (`isValidTimeRange`, `validateTimeSlot` in `utils/scheduling-engine/interval-validation.ts`) accepts overnight slots
 - [ ] Timezone handling uses `minuteUtcToDate()` for weekly slot display
 - [ ] Slot selection UI prevents selecting past slots
 - [ ] The availability grid polls every 60 seconds while its tab is visible (`lib/scheduling/availabilityPolling.ts`) so a slot someone else just booked stops reading as free; the post-allocation refetch requests `cache: "no-store"` so the consultant sees the slots they just booked
@@ -151,7 +151,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] M2M `_AppointmentParticipant` connects BOTH consultant AND consultee
 - [ ] Cascading deletes: `ConsultantProfile` -> `AvailabilityWindowWeekly/Custom`
 - [ ] No orphaned slots after cancellation (cleanup or cascade)
-- [ ] The correctness backstops that are NOT in `schema.prisma` — the `slot_no_confirmed_overlap` GiST exclusion constraint, CHECK constraints, ledger triggers — are applied via `npm run db:sidecars` after every schema push; never assume they exist on a database that only saw a bare `prisma db push`
+- [ ] The correctness backstops that are NOT in `schema.prisma` — the `occurrence_no_confirmed_overlap` GiST exclusion constraint, CHECK constraints, ledger triggers — are applied via `npm run db:sidecars` after every schema push; never assume they exist on a database that only saw a bare `prisma db push`
 - [ ] Migration safety: no destructive migrations without a data migration plan on prod
 - [ ] Seed data includes `_AppointmentParticipant` rows for test appointments
 
@@ -196,25 +196,25 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 
 ## Key File Paths
 
-| Area                          | Files                                                                                                                                                                 |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Availability CRUD             | `app/api/scheduling/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                  |
-| Public availability           | `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` (the only public grid since the bespoke `availability/[consultantId]` route was deleted)    |
-| Checkout                      | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                                                                          |
-| Status transitions (CAS)      | `lib/booking/transitions.ts`                                                                                                                                          |
-| Availability union check      | `utils/scheduling-engine/availabilityCoverage.ts`                                                                                                                     |
-| Occupancy / hold-expiry       | `utils/scheduling-engine/occupancyPolicy.ts`, `utils/scheduling-engine/ScheduleValidationService.ts` (`isOccupiedByLiveAppointment`)                                  |
-| Slot utils                    | `utils/scheduling-engine/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                                                                             |
-| Allocation engine (server)    | `utils/scheduling-engine/SchedulingService.ts`                                                                                                                        |
-| Validation engine             | `utils/scheduling-engine/ScheduleValidationService.ts`                                                                                                                |
-| Calculation                   | `utils/scheduling-engine/ScheduleCalculationService.ts`                                                                                                               |
-| Locking                       | `utils/appointmentlock.ts`                                                                                                                                            |
-| Cancel/Reschedule             | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts`                                                                                         |
-| Request flow                  | `app/api/scheduling/request-for-approval/route.ts`                                                                                                                    |
-| Frontend hooks                | `hooks/scheduling/useScheduling.ts`, `hooks/scheduling/useCalendarData.ts`                                                                                            |
-| Frontend selection/validation | `lib/scheduling/slotSelectionValidation.ts`, `lib/scheduling/allocationAlgorithms.ts` (manual/requested pre-submission only), `lib/scheduling/availabilityPolling.ts` |
-| Stream cleanup                | `actions/stream/chat/event-channel.action.ts`                                                                                                                         |
-| Appointments page             | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx`                                                                                            |
-| Onboarding                    | `app/form/onboarding/components/ConsultantPreferredScheduleForm.tsx`                                                                                                  |
+| Area                          | Files                                                                                                                                                                     |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------     |
+| Availability CRUD             | `app/api/scheduling/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                      |
+| Public availability           | `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` (the only public grid since the bespoke `availability/[consultantId]` route was deleted)        |
+| Checkout                      | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                                                                              |
+| Status transitions (CAS)      | `lib/booking/transitions.ts`                                                                                                                                              |
+| Availability union check      | `utils/scheduling-engine/availabilityCoverage.ts`                                                                                                                         |
+| Occupancy / hold-expiry       | `utils/scheduling-engine/occupancyPolicy.ts`, `utils/scheduling-engine/ScheduleValidationService.ts` (`isOccupiedByLiveAppointment`)                                      |
+| Slot utils                    | `utils/scheduling-engine/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                                                                                 |
+| Allocation engine (server)    | `utils/scheduling-engine/SchedulingService.ts`                                                                                                                            |
+| Validation engine             | `utils/scheduling-engine/ScheduleValidationService.ts`                                                                                                                    |
+| Calculation                   | `utils/scheduling-engine/ScheduleCalculationService.ts`                                                                                                                   |
+| Locking                       | `utils/appointmentlock.ts`                                                                                                                                                |
+| Cancel/Reschedule             | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts`                                                                                             |
+| Request flow                  | `app/api/scheduling/request-for-approval/route.ts`                                                                                                                        |
+| Frontend hooks                | `hooks/scheduling/useScheduling.ts`, `hooks/scheduling/useCalendarData.ts`                                                                                                |
+| Frontend selection/validation | `lib/scheduling/intervalSelectionValidation.ts`, `lib/scheduling/allocationAlgorithms.ts` (manual/requested pre-submission only), `lib/scheduling/availabilityPolling.ts` |
+| Stream cleanup                | `actions/stream/chat/event-channel.action.ts`                                                                                                                             |
+| Appointments page             | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx`                                                                                                |
+| Onboarding                    | `app/form/onboarding/components/ConsultantPreferredScheduleForm.tsx`                                                                                                      |
 
 See `docs/booking/README.md` for the full source map and `docs/booking/00-architecture-decisions.md` / `docs/booking/05-troubleshooting-and-changelog.md` for the history behind these rules.

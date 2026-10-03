@@ -22,7 +22,10 @@ import {
   OnboardingFormData,
   PreferredScheduleFormSchema,
 } from "@/utils/onboarding";
-import { validateTimeSlot } from "@/utils/scheduling-engine/interval-validation";
+import {
+  PICKER_STEP_SECONDS,
+  validateTimeSlot,
+} from "@/utils/scheduling-engine/interval-validation";
 import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   SlotValidationFeedback,
@@ -32,6 +35,7 @@ import type { SlotType, SlotsType } from "@/utils/schedule/types";
 import {
   buildCustomSlotsForSave,
   buildWeeklySlotsForSave,
+  normaliseSlotToSchedulingGrid,
 } from "@/utils/schedule/formatting";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
@@ -185,6 +189,15 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             i === index ? { ...slot, [field]: value } : slot,
           ),
         };
+        // Snap onto the booking grid before validating, so the wizard validates
+        // the row it will submit. The input steps by 15 minutes but publication
+        // is on the 30-minute UTC grid, and whether a 15-minute value is on it
+        // depends on the consultant's offset; both boundaries shift together so
+        // the typed duration survives. See `normaliseSlotToSchedulingGrid`.
+        updatedSlots[day][index] = normaliseSlotToSchedulingGrid(
+          updatedSlots[day][index],
+          timezone || "UTC",
+        );
         const validationResult = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
@@ -198,7 +211,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return updatedSlots;
       });
     },
-    [],
+    [timezone],
   );
 
   const handleDeleteSlot = useCallback(
@@ -257,7 +270,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     !slot.isValid ? "border-destructive" : ""
                   }`}
                   required
-                  step="900"
+                  step={PICKER_STEP_SECONDS}
                 />
                 <Input
                   type="time"
@@ -276,7 +289,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     !slot.isValid ? "border-destructive" : ""
                   }`}
                   required
-                  step="900"
+                  step={PICKER_STEP_SECONDS}
                 />
                 <TrashIcon
                   className="w-5 h-5 cursor-pointer text-destructive hover:text-destructive/80 transition-colors"
@@ -415,7 +428,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 !slot.isValid ? "border-destructive" : ""
               }`}
               required
-              step="900"
+              step={PICKER_STEP_SECONDS}
             />
             <Input
               type="time"
@@ -434,7 +447,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 !slot.isValid ? "border-destructive" : ""
               }`}
               required
-              step="900"
+              step={PICKER_STEP_SECONDS}
             />
             <TrashIcon
               className="w-5 h-5 cursor-pointer text-destructive hover:text-destructive/80 transition-colors"

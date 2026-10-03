@@ -16,6 +16,27 @@ const VALIDATION_CONFIG = {
   SESSION_INCREMENT_MINUTES: 30,
 } as const;
 
+/**
+ * The granularity a consultant may PICK a boundary at, in minutes. Exported so
+ * the pickers and the 15-minute step they hand the browser read one number
+ * instead of a `900` literal repeated in each form.
+ *
+ * This is an ENTRY step, not a publishing guarantee, and the two are not the
+ * same number. Publication snaps to the 30-minute booking grid, and whether a
+ * value typed at this granularity already sits on that grid depends on the
+ * consultant's UTC offset: 09:00 is on the grid in Asia/Kolkata (+05:30 → 03:30Z)
+ * and off it in Asia/Kathmandu (+05:45 → 03:15Z). So 15 stays here — narrowing
+ * it to 30 would not fix the snap (in a :45 zone a 30-minute step offers only
+ * half the legal values, and it is the :00/:30 values that get snapped) and it
+ * would remove a granularity a consultant may legitimately want to type in. The
+ * grid is enforced where it is a fact about the instant: at save, by
+ * `snapInstantsToSchedulingGrid`.
+ */
+export const TIME_INCREMENT_MINUTES = VALIDATION_CONFIG.TIME_INCREMENT_MINUTES;
+
+/** The same step for a native `<input type="time" step>`, which counts seconds. */
+export const PICKER_STEP_SECONDS = TIME_INCREMENT_MINUTES * 60;
+
 // Helper function to convert HH:MM to minutes
 const getMinutes = (time: string): number | null => {
   if (!time || typeof time !== "string") return null;
@@ -77,7 +98,19 @@ export const isValidTimeRange = (
   );
 };
 
-// Check if time follows required increments
+/**
+ * Whether a typed value is shaped like something a consultant may pick, and
+ * whether the session is a whole number of 30-minute atoms.
+ *
+ * Deliberately NOT a bookability check. The booking grid is a property of the
+ * UTC INSTANT, and whether a 15-minute-multiple wall clock lands on it depends
+ * on the consultant's offset — 10:15 in Asia/Kolkata is 04:45Z, off the grid,
+ * and this function cannot know that without a zone. Rejecting every value
+ * this one cannot vouch for would reject the consultant's round hours too (the
+ * function has no zone, so it has no way to tell 09:00 IST from 09:00 NPT), and
+ * accepting them silently is what the save path's snap now handles. So the
+ * message says what this actually is: a shape rule for typed input.
+ */
 const validateTimeIncrements = (
   startMinutes: number,
   endMinutes: number,

@@ -353,10 +353,11 @@ const nextConfig = {
       "./node_modules/react/**",
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
+      "./public/fonts/**",
       "./node_modules/react/**",
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**"],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
@@ -390,12 +391,6 @@ const nextConfig = {
         hostname: "avatars.githubusercontent.com",
       },
       {
-        hostname: "picsum.photos",
-      },
-      {
-        hostname: "cdn.jsdelivr.net",
-      },
-      {
         hostname: "upload.wikimedia.org",
       },
       {
@@ -418,6 +413,13 @@ const nextConfig = {
   // bundle saving the original comment was after. Note this cannot be recovered
   // with Sentry's consoleLoggingIntegration: that patches globalThis.console at
   // runtime, and this deletes the call expressions at compile time.
+  //
+  // HOUSE RULE (#1127): Because server-side `console.error` / `console.warn`
+  // output reaches Netlify function logs directly WITHOUT passing through
+  // Sentry's `beforeSend` / `beforeSendLog` PII scrubber, NEVER pass raw
+  // request bodies, full Prisma error objects (`err.meta`), session/user
+  // records, or raw emails/phones/payment IDs to `console.*`. Structured
+  // operational logs must go through `reportSentryError` or `Sentry.logger.*`.
   compiler: {
     removeConsole:
       process.env.NODE_ENV === "production"

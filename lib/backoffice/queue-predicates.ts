@@ -1,5 +1,7 @@
 import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 
+import { HELD_PRE_LAUNCH } from "@/lib/email/held";
+
 /**
  * #1527 Q12 — the `where` behind every back-office queue, shared by the page's
  * own route and `/api/backoffice/nav-counts`, so a badge can never count a
@@ -63,7 +65,11 @@ export const UNREPORTED_BREACH_WHERE: Prisma.DataBreachWhereInput = {
   reportedAt: null,
 };
 
-/** Emails every retry gave up on; only an operator replays them. */
+/**
+ * Emails every retry gave up on; only an operator replays them. Pre-launch holds
+ * are expected, not failures. `lastError: null` stays in: SQL `<>` drops NULLs.
+ */
 export const DEAD_LETTER_EMAIL_WHERE: Prisma.FailedEmailWhereInput = {
   status: "DEAD_LETTER",
+  OR: [{ lastError: null }, { lastError: { not: HELD_PRE_LAUNCH } }],
 };

@@ -1,6 +1,7 @@
 import { CalendarInterval, calculateRequiredSlots } from "./calendarUtils";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { isValidTimeZone } from "@/lib/time/viewer-zone";
 
 /**
  * Pure client-side selection validation for the Allocate Slots calendar.
@@ -192,13 +193,14 @@ export function getSlotLimits(
       const pastSessions = Math.floor(
         (options.pastConfirmedSlotCount || 0) / subscriptionSessionSlots,
       );
+      const remainingCalls = Math.max(0, rawMaxCalls - pastSessions);
       return {
-        minSlots: requiredSlots,
+        minSlots: remainingCalls * subscriptionSessionSlots,
         // Floor at 0 — over-allocated data (past sessions > plan total) must
         // read as "nothing left", not a negative cap.
-        maxSlots: Math.max(0, rawMaxCalls - pastSessions),
+        maxSlots: remainingCalls * subscriptionSessionSlots,
         slotsPerSession: subscriptionSessionSlots,
-        totalSessions: totalCalls,
+        totalSessions: remainingCalls,
       };
     }
 
@@ -501,7 +503,7 @@ export function validateSubscriptionSlots(
 
   const { slotsPerSession: slotsPerCall } = limits;
   const sessionsPerWeek = options.sessionsPerWeek || 1;
-  const maxTotalCalls = limits.maxSlots;
+  const maxTotalCalls = limits.totalSessions;
   const timeZone = options.schedulingTimezone;
 
   const slotsByDay = groupSlotsByDay(slots, timeZone);
@@ -600,10 +602,10 @@ function validateSelectionCounts(
       limits.slotsPerSession,
     );
 
-    if (completeCalls > limits.maxSlots) {
+    if (completeCalls > limits.totalSessions) {
       result.isValid = false;
       result.errors.push(
-        `Maximum ${limits.maxSlots} calls allowed for this subscription (${completeCalls} complete calls selected)`,
+        `Maximum ${limits.totalSessions} calls allowed for this subscription (${completeCalls} complete calls selected)`,
       );
     }
 
@@ -871,3 +873,32 @@ export function validateEventSlots(
 
   return result;
 }
+
+export interface GridZoneOptions {
+  eventType?: string;
+  schedulingTimezone?: string | null;
+  preferViewerZone?: boolean;
+}
+
+/**
+ * #1168 — Draw recurring slot grids (subscription, class) in the event's
+ * `schedulingTimezone` by default so grid day columns and Monday-start week
+ * boundaries align with `ScheduleCalculationService.dayKey/weekKey` bucket
+ * validation, while allowing the user to toggle back to `preferViewerZone`.
+ */
+export function resolveGridZone(
+  viewerZone: string | null | undefined,
+  browserZone: string,
+  options?: GridZoneOptions,
+): string {
+  if (
+    (options?.eventType === "subscription" || options?.eventType === "class") &&
+    options?.schedulingTimezone &&
+    isValidTimeZone(options.schedulingTimezone) &&
+    !options?.preferViewerZone
+  ) {
+    return options.schedulingTimezone;
+  }
+  return isValidTimeZone(viewerZone) ? viewerZone : browserZone;
+}
+

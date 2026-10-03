@@ -24,7 +24,7 @@
  * See ADR 27.
  */
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
@@ -32,6 +32,16 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import * as Sentry from "@sentry/nextjs";
+import {
+  isFreeCreditIntent,
+  isInternalFundedIntent,
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
+import { RefundValidationError } from "@/lib/payments/operations/refund";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 export interface OrphanedConfirmationResult {
   success: boolean;
@@ -320,4 +330,291 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
 export async function disconnectDatabase(): Promise<void> {
   await prisma.$disconnect();
+}
+
+export interface OrphanedPaymentHealResult {
+  success: boolean;
+  scanned: number;
+  linked: number;
+  refunded: number;
+  escrowed: number;
+  nonGatewaySkipped: number;
+  topupSkipped: number;
+  stillFailing: number;
+  timestamp: string;
+}
+
+const ORPHAN_PAYMENT_GRACE_MINUTES = 60;
+const ORPHAN_PAYMENT_WINDOW_DAYS = 7;
+
+type OrphanPaymentRow = {
+  id: string;
+  paymentIntent: string;
+  userId: string;
+  createdAt: Date;
+};
+
+function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
+  return {
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    appointmentId: null,
+    deletedAt: null,
+    parentPaymentId: null,
+    NOT: { paymentIntent: { startsWith: "overage:" } },
+    createdAt: { gte: windowCutoff, lt: graceCutoff },
+    refunds: { none: { status: RefundStatus.PENDING } },
+    disputes: {
+      none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    },
+  } satisfies Prisma.PaymentWhereInput;
+}
+
+// Fail-closed: this sweep refunds, so concurrent runs must collapse to one.
+export async function reconcileOrphanedPayments(
+  opts: { graceMinutes?: number; limit?: number } = {},
+): Promise<OrphanedPaymentHealResult> {
+  return withCronLock("reconcile-orphaned-payments", { failMode: "closed" }, () =>
+    reconcileOrphanedPaymentsUnlocked(opts),
+  );
+}
+
+async function reconcileOrphanedPaymentsUnlocked(
+  opts: { graceMinutes?: number; limit?: number } = {},
+): Promise<OrphanedPaymentHealResult> {
+  const graceMinutes = opts.graceMinutes ?? ORPHAN_PAYMENT_GRACE_MINUTES;
+  const limit = opts.limit ?? 200;
+  const now = Date.now();
+  const graceCutoff = new Date(now - graceMinutes * 60_000);
+  const windowCutoff = new Date(
+    now - ORPHAN_PAYMENT_WINDOW_DAYS * 24 * 3_600_000,
+  );
+  const result: OrphanedPaymentHealResult = {
+    success: true,
+    scanned: 0,
+    linked: 0,
+    refunded: 0,
+    escrowed: 0,
+    nonGatewaySkipped: 0,
+    topupSkipped: 0,
+    stillFailing: 0,
+    timestamp: new Date(now).toISOString(),
+  };
+
+  const orphans = await prisma.payment.findMany({
+    where: orphanPaymentWhere(graceCutoff, windowCutoff),
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    select: { id: true, paymentIntent: true, userId: true, createdAt: true },
+  });
+  result.scanned = orphans.length;
+
+  const failedIds: string[] = [];
+  for (const payment of orphans) {
+    try {
+      await healOneOrphan(payment, result);
+    } catch (err) {
+      result.stillFailing += 1;
+      failedIds.push(payment.id);
+      console.error(`orphan heal failed for payment ${payment.id}:`, err);
+    }
+  }
+
+  const stale = await prisma.payment.findMany({
+    where: {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+      deletedAt: null,
+      parentPaymentId: null,
+      NOT: { paymentIntent: { startsWith: "overage:" } },
+      createdAt: { lt: windowCutoff },
+      refunds: { none: { status: RefundStatus.PENDING } },
+      disputes: {
+        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    select: { id: true, paymentIntent: true, userId: true, createdAt: true },
+  });
+  for (const payment of stale) {
+    try {
+      if (await escrowOneOrphan(payment)) result.escrowed += 1;
+    } catch (err) {
+      result.stillFailing += 1;
+      failedIds.push(payment.id);
+      console.error(`orphan escrow failed for payment ${payment.id}:`, err);
+    }
+  }
+
+  // One event per run, never per row.
+  if (
+    result.linked + result.refunded + result.escrowed + result.stillFailing >
+    0
+  ) {
+    reportSentryMessage(
+      `orphaned-payments: healed ${result.linked} linked, ${result.refunded} refunded, ${result.escrowed} escrowed`,
+      {
+        subsystem: "payments",
+        op: "reconcile-orphaned-payments",
+        fingerprint: ["orphaned-payments"],
+        extra: {
+          scanned: result.scanned,
+          linked: result.linked,
+          refunded: result.refunded,
+          escrowed: result.escrowed,
+          nonGatewaySkipped: result.nonGatewaySkipped,
+          topupSkipped: result.topupSkipped,
+          stillFailing: result.stillFailing,
+          sample: failedIds.slice(0, 10),
+        },
+      },
+    );
+  }
+
+  result.success = result.stillFailing === 0;
+  console.log(
+    `orphan payments: scanned=${result.scanned} linked=${result.linked} ` +
+      `refunded=${result.refunded} escrowed=${result.escrowed} ` +
+      `nonGateway=${result.nonGatewaySkipped} topup=${result.topupSkipped} ` +
+      `failing=${result.stillFailing}`,
+  );
+  return result;
+}
+
+async function healOneOrphan(
+  payment: OrphanPaymentRow,
+  result: OrphanedPaymentHealResult,
+): Promise<void> {
+  // Wallet top-ups live in their own table; a matching order id means this
+  // row belongs to that reconciler, not this one.
+  const topup = await prisma.walletTopUp.findUnique({
+    where: { providerOrderId: payment.paymentIntent },
+    select: { id: true },
+  });
+  if (topup) {
+    result.topupSkipped += 1;
+    return;
+  }
+
+  const candidates = await prisma.appointment.findMany({
+    where: {
+      deletedAt: null,
+      participants: { some: { userId: payment.userId } },
+      occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
+      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+    },
+    select: { id: true },
+    take: 2,
+  });
+  if (candidates.length === 1) {
+    const appointmentId = candidates[0].id;
+    const won = await claimAndNotifyOnce({
+      claim: () =>
+        prisma.payment.updateMany({
+          where: {
+            id: payment.id,
+            paymentStatus: PaymentStatus.SUCCEEDED,
+            appointmentId: null,
+          },
+          data: { appointmentId },
+        }),
+      notify: async () => {
+        await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await confirmExistingAppointment(tx, appointmentId, payment.userId);
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              maxWait: 10_000,
+              timeout: 15_000,
+            },
+          ),
+        );
+      },
+    });
+    // A lost claim means another runner linked it; never fall through to a
+    // refund on a row we did not win.
+    if (won) result.linked += 1;
+    return;
+  }
+  if (candidates.length > 1) return;
+
+  // Synthetic intents carry no gateway money; count and leave for the
+  // owning rail instead of calling the gateway.
+  if (
+    isInternalFundedIntent(payment.paymentIntent) ||
+    isFreeCreditIntent(payment.paymentIntent)
+  ) {
+    result.nonGatewaySkipped += 1;
+    return;
+  }
+
+  const dedupeKey = `orphan-auto:${payment.id}`;
+  const won = await claimAndNotifyOnce({
+    claim: () =>
+      prisma.payment.updateMany({
+        where: {
+          id: payment.id,
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          appointmentId: null,
+        },
+        data: { updatedAt: new Date() },
+      }),
+    notify: async () => {
+      try {
+        await refundBookingPayment({
+          paymentId: payment.id,
+          reason: "orphan auto-refund: SUCCEEDED payment with no appointment",
+          initiatedByUserId: null,
+          dedupeKey,
+        });
+      } catch (err) {
+        // A concurrent win already refunded under the same key; that is the
+        // single-refund outcome, not a failure.
+        if (
+          err instanceof RefundValidationError &&
+          err.code === "ALREADY_FULLY_REFUNDED"
+        ) {
+          return;
+        }
+        throw err;
+      }
+    },
+  });
+  if (won) result.refunded += 1;
+}
+
+// Rows past the window are never dropped: one SystemEvent per payment guards
+// the once-only page, and the money waits for an operator.
+async function escrowOneOrphan(payment: OrphanPaymentRow): Promise<boolean> {
+  const correlationId = `orphan-escrow:${payment.id}`;
+  const existing = await prisma.systemEvent.findFirst({
+    where: { correlationId },
+    select: { id: true },
+  });
+  if (existing) return false;
+  await recordSystemEvent({
+    organizationId: null,
+    category: "PAYMENT",
+    severity: "WARN",
+    message: `Orphaned payment ${payment.id} past escrow age needs manual recovery`,
+    context: {
+      paymentId: payment.id,
+      paymentIntent: payment.paymentIntent,
+      userId: payment.userId,
+      createdAt: payment.createdAt.toISOString(),
+    },
+    correlationId,
+  });
+  reportSentryMessage(
+    `orphan-escrow: payment ${payment.id} past 7d needs manual recovery`,
+    {
+      subsystem: "payments",
+      op: "reconcile-orphaned-payments",
+      fingerprint: ["orphan-escrow"],
+      extra: { paymentId: payment.id },
+    },
+  );
+  return true;
 }

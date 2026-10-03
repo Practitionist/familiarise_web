@@ -43,7 +43,7 @@ objects live in checked-in SQL and are applied and asserted by scripts.
 
 | File                                   | Contents                                                                                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `slot_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
+| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
 | `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                             |
 | `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                       |
 | `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                   |
@@ -103,6 +103,14 @@ merge, and confirm `npm run db:assert-sidecars` passes afterwards.
 Do not write a data migration for pre-reset rows. Do not push from a worktree to
 prove a test passes. If a change genuinely requires a rename, a drop or a type
 change, say so and stop; that is a reset-day decision.
+
+## Live-database drift (2026-10-02)
+
+On 2026-10-02 the Subscriptions tab of the Requests inbox returned 500 on production and on previews, because the live enum `RescheduleRequestStatus` lacked the value `COUNTERED`, which has been in the schema since #1060. It was fixed with `ALTER TYPE "RescheduleRequestStatus" ADD VALUE IF NOT EXISTS 'COUNTERED' AFTER 'PENDING_REVIEW'`. The additive auth columns from #1878 were applied the same day: `twoFactor` `failedVerificationCount`, `lockedUntil` and `verified`, `ssoProvider` `createdAt`, `domainVerified` and `updatedAt`, and the unique index `twoFactor_userId_key`. The rest of the drift waits for the planned reset tracked in #1934, and `check-db-drift` has been non-required since `ed876981e`, so CI will not flag it.
+
+A read-only drift check with Prisma 7 is `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`, because `--from-url` no longer exists. That diff proposes dropping the hand-applied sidecar partial uniques `appointment_feedback_level_key` and `consultant_earnings_occurrence_key`, so never fix drift with a plain `db push`, and run `npm run db:sidecars` after any reset.
+
+To reproduce a `lib/data` reader locally and see the real Prisma error, run `NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env --tsconfig tsconfig.json <script>`. Without `--env-file`, Prisma silently connects to localhost.
 
 ## The cutover to versioned migrations
 

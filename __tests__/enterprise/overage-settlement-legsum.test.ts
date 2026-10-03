@@ -101,7 +101,13 @@ function makeTx(opts: {
           if (data.amount?.decrement != null)
             payment.amount -= data.amount.decrement;
         }),
-        findUnique: jest.fn(async () => ({ amount: payment.amount })),
+        findUnique: jest.fn<
+          Promise<{
+            amount: number;
+            billableToOrgInvoiceId?: string | null;
+          } | null>,
+          [unknown?]
+        >(async () => ({ amount: payment.amount })),
       },
     },
   };
@@ -333,4 +339,108 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
       }),
     );
   });
+
+  it("lazy allocation (#1895): leaves an already-invoiced parent untouched under CHARGE_MEMBER and creates the side payment", async () => {
+    const { state, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      surchargeBps: 2500,
+      overageBehavior: "CHARGE_MEMBER",
+    });
+    tx.payment.findUnique.mockResolvedValue({
+      amount: 100_000,
+      billableToOrgInvoiceId: "inv_issued_1",
+    });
+
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+      isLazyAllocation: true,
+    });
+
+    // Parent payment and its leg are NOT mutated because parent is already invoiced
+    expect(state.legs).toEqual([
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+    ]);
+    expect(state.payment.amount).toBe(100_000);
+    // Side-charge Payment and OverageEvent ARE created for the surcharge only
+    expect(state.children).toEqual([{ amount: 25_000 }]);
+    expect(tx.overageEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("lazy allocation (#1895): creates a child accrual Payment for surchargePaise > 0 without mutating the already-invoiced parent under CHARGE_ORG", async () => {
+    const { state, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      surchargeBps: 2500, // 25_000 surcharge
+      overageBehavior: "CHARGE_ORG",
+    });
+    tx.payment.findUnique.mockResolvedValue({
+      amount: 100_000,
+      billableToOrgInvoiceId: "inv_issued_1",
+    });
+
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+      isLazyAllocation: true,
+    });
+
+    // Parent is untouched; a standalone child accrual Payment is minted for the 25_000 surcharge
+    expect(state.payment.amount).toBe(100_000);
+    expect(state.legs).toEqual([
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+    ]);
+    expect(state.children).toEqual([{ amount: 25_000 }]);
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "PENDING",
+          basePaise: 0,
+          surchargePaise: 25_000,
+          marginalPaise: 25_000,
+          paymentId: "child1",
+        }),
+      }),
+    );
+  });
+
+  it("lazy allocation (#1895): records an ACCRUED CHARGE_ORG OverageEvent with 0 marginal when parent is already invoiced and surcharge is 0", async () => {
+    const { state, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      surchargeBps: 0,
+      overageBehavior: "CHARGE_ORG",
+    });
+    tx.payment.findUnique.mockResolvedValue({
+      amount: 100_000,
+      billableToOrgInvoiceId: "inv_issued_1",
+    });
+
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+      isLazyAllocation: true,
+    });
+
+    expect(state.payment.amount).toBe(100_000);
+    expect(state.children).toEqual([]);
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "ACCRUED",
+          basePaise: 0,
+          surchargePaise: 0,
+          marginalPaise: 0,
+          paymentId: "pay1",
+        }),
+      }),
+    );
+  });
 });
+

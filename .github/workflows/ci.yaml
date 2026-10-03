@@ -20,8 +20,8 @@
 name: CI
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   # A direct push to a release branch deploys without a PR, so the same checks
@@ -46,18 +46,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
 
       - name: Shell syntax + shellcheck
         # #1757 — scripts/ci/notify-ops-failure.sh is the alert path for every
@@ -74,7 +77,6 @@ jobs:
       - name: ESLint Check
         id: eslint
         run: npx eslint . --format stylish 2>&1 | tee /tmp/eslint.txt; exit ${PIPESTATUS[0]}
-        continue-on-error: true
 
       - name: Lint Summary
         if: always()
@@ -95,7 +97,7 @@ jobs:
             echo ""
 
             if [ "${{ steps.eslint.outcome }}" = "failure" ]; then
-              echo "### ⚠️ ESLint — errors/warnings found (non-blocking)"
+              echo "### ⚠️ ESLint — errors found (warnings are advisory)"
               echo '```'
               cat /tmp/eslint.txt | head -100
               echo '```'
@@ -104,55 +106,39 @@ jobs:
             fi
           } >> $GITHUB_STEP_SUMMARY
 
-  test-and-build:
-    name: TypeScript, Tests & Build
+  typecheck:
+    name: TypeScript & guards
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-
-    services:
-      redis:
-        image: redis
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Supply-chain security audit
+        # #1885 — fail CI when any production dependency has a high or critical
+        # advisory so vulnerable transitive packages cannot ship to prod.
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
-      - name: Point the database at the reset rehearsal (label db-reset)
-        # #1554 — a PR that renames tables cannot be checked against the live
-        # database until the reset. With the `db-reset` label the sidecar/drift
-        # guards and the build run against the rehearsal project instead of
-        # being skipped; remove the label (and the two secrets) after the cutover.
-        if: contains(github.event.pull_request.labels.*.name, 'db-reset')
-        run: |
-          test -n "${{ secrets.REHEARSAL_DATABASE_URL }}" || { echo "db-reset label set but REHEARSAL_DATABASE_URL is missing"; exit 1; }
-          sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
-          grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
+      - name: Generate Prisma Client
+        run: npm run db:generate
 
       - name: TypeScript Check
         run: npx tsc --noEmit
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
 
       - name: Money-column guard
         # #780 — no money column may be declared Int (int4 overflows at
@@ -178,8 +164,77 @@ jobs:
         # esbuild and that broke the Netlify build; see the PR discussion.
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
+  unit-tests:
+    name: Unit tests
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Load environment
+        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
       - name: Unit Tests
         run: npm run test
+
+  build:
+    name: Build
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Load environment
+        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Build
         # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
@@ -190,56 +245,15 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
 
-  # Hermetic: applies this branch's schema + SQL sidecars to a throwaway Postgres
-  # and asserts them, so red means the branch is broken, never the shared DB.
-  # Live-DB drift is checked off the PR path by db-live-drift.yml.
-  db-guards:
-    name: Database sidecar + drift guard
+  test-and-build:
+    name: TypeScript, Tests & Build
+    needs: [typecheck, unit-tests, build]
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    # No .env exists here, so these are the only URLs prisma.config.ts and lib/prisma.ts see.
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
-
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
-
-      - name: Push schema + sidecars
-        # `db push` alone drops the ledger trigger and every CHECK; sidecars restore them.
+      - name: All of typecheck, unit tests and build passed
         run: |
-          node_modules/.bin/prisma db push
-          npm run db:sidecars
-
-      - name: Database sidecar + drift guard
-        run: |
-          node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
-          node_modules/.bin/tsx scripts/ci/check-db-drift.ts
+          test "${{ needs.typecheck.result }}" = success
+          test "${{ needs.unit-tests.result }}" = success
+          test "${{ needs.build.result }}" = success

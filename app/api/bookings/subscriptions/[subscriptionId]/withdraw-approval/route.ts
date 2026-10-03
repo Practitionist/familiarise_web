@@ -3,15 +3,21 @@ import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import { apiError } from "@/lib/errors";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  renewAppointmentLock,
+  withAppointmentLock,
+  type ApprovalLock,
+} from "@/utils/appointmentlock";
 import { withdrawApproval } from "@/lib/booking/lapse-approved-request";
 
 /**
  * POST /api/bookings/subscriptions/[subscriptionId]/withdraw-approval (#1775)
  *
  * The subscription twin of the consultation route: the consultant's
- * `APPROVED_PENDING_PAYMENT → EXPIRED` by CAS; 200 `{ status: "EXPIRED" }`
- * or 409 `REQUEST_CHANGED_ELSEWHERE`.
+ * `APPROVED_PENDING_PAYMENT → CANCELLED` by CAS; 200 `{ status: "CANCELLED" }`
+ * or 409 `REQUEST_CHANGED_ELSEWHERE`. The held times stay released — a
+ * subscription's wrapper may have no appointment yet (#1554), and either way an
+ * unpaid approval's occurrences were tentative, so there is nothing to restore.
  */
 export async function POST(
   _request: NextRequest,
@@ -34,6 +40,22 @@ export async function POST(
         privileged: isPrivileged(auth.session.user.role),
       },
       lock: withAppointmentLock,
+      // The retry loop outlives the appointment lock's fixed grant, so each
+      // attempt re-grants it — see withdrawApproval.
+      //
+      // `renewAppointmentLock` answers whether the re-grant succeeded; that is
+      // deliberately dropped. A renewal that fails only costs serialisation,
+      // because the request CAS below carries the money predicate in its WHERE
+      // (see lapseApprovedRequest), so correctness never rests on the lock
+      // being held for the whole retry loop.
+      //
+      // The cast is this route's job, not a shortcut. `RenewInjectedLock` takes
+      // `unknown` on purpose — lapse-approved-request must not import the Redis
+      // module, or every sweep that shares it stops loading under jsdom. This is
+      // the one boundary that has both types in scope.
+      renewLock: async (heldLock) => {
+        await renewAppointmentLock(heldLock as ApprovalLock | null | undefined);
+      },
     });
     return NextResponse.json(body, {
       headers: { "Cache-Control": "no-store" },

@@ -133,18 +133,50 @@ export async function POST(
     );
   }
 
-  // Idempotent by client key: reuse an open pending entry instead of
-  // minting a second Razorpay order on a duplicate POST. The
-  // WalletEntry row itself is keyed by providerOrderId (@unique), so
-  // even without the client key a retry of the same physical request
-  // can't create a duplicate. If we already minted a Razorpay order
-  // for this entry, persist the gateway order id alongside the entry
-  // (in notes/`razorpayOrderId`) so the client can resume checkout
-  // without us minting a fresh order on the gateway side.
+  // #1438 — Idempotent by client key: reuse an open pending entry instead of
+  // minting a second Razorpay order on a duplicate POST. Extract the minted
+  // `razorpay_order=(order_...)` from `notes` so the replay returns the full
+  // usable checkout payload (`razorpayOrderId`, `keyId`, `currency`), or if
+  // the placeholder was left at `razorpay_order=pending`, complete Step 2
+  // (`createRazorpayOrder`) and Step 3 (`update` `notes`) instead of stranding
+  // the idempotency key.
+  const extractMintedOrderId = (notes: string | null | undefined): string | null => {
+    const match = notes?.match(/razorpay_order=(order_\w+)/);
+    return match?.[1] ?? null;
+  };
+
+  const isStaleClaimNote = (
+    notes: string | null | undefined,
+    nowMs = Date.now(),
+    staleMs = 60_000,
+  ): boolean => {
+    if (!notes?.includes("razorpay_order=claiming")) {
+      return false;
+    }
+    const tsMatch = /claiming_at=(\d+)/.exec(notes);
+    if (!tsMatch) {
+      return false;
+    }
+    const claimedAtMs = Number.parseInt(tsMatch[1], 10);
+    return Number.isFinite(claimedAtMs) && nowMs - claimedAtMs >= staleMs;
+  };
+
+  let reusedPendingPlaceholder = false;
+  let reusedPlaceholderId: string | undefined;
+  let reusedNotes: string | null | undefined;
+  let effectiveAmountPaise = amountPaise;
+
   if (clientIdempotencyKey) {
     const existing = await prisma.walletTopUp.findUnique({
       where: { providerOrderId: clientIdempotencyKey },
-      select: { providerOrderId: true, billingAccount: { select: { ownerOrgId: true } } },
+      select: {
+        id: true,
+        providerOrderId: true,
+        amountPaise: true,
+        status: true,
+        notes: true,
+        billingAccount: { select: { ownerOrgId: true, currency: true } },
+      },
     });
     if (existing) {
       // Cross-tenant guard: providerOrderId is globally unique, so without
@@ -158,21 +190,34 @@ export async function POST(
           { status: 409 },
         );
       }
-      // We can't retrieve the original Razorpay order id here without
-      // a dedicated column, so a "resume" path requires a fresh order.
-      // To stay strictly idempotent, surface the existing pending entry
-      // and instruct the client to retry without the same key.
-      return NextResponse.json(
-        {
-          topUpId: existing.providerOrderId,
-          amountPaise,
-          status: "pending",
-          reused: true,
-          error:
-            "A top-up with this idempotency key already exists. Retry without the key to launch a new gateway order.",
-        },
-        { status: 200 },
-      );
+      if (existing.status !== "PENDING") {
+        return NextResponse.json(
+          {
+            error: "This top-up is no longer payable",
+            code: "TOPUP_NOT_PENDING",
+          },
+          { status: 409 },
+        );
+      }
+      const existingOrderId = extractMintedOrderId(existing.notes);
+      if (existingOrderId) {
+        return NextResponse.json(
+          {
+            topUpId: existing.providerOrderId,
+            razorpayOrderId: existingOrderId,
+            keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+            amountPaise: existing.amountPaise,
+            currency: existing.billingAccount.currency,
+            status: existing.status.toLowerCase(),
+            reused: true,
+          },
+          { status: 200 },
+        );
+      }
+      reusedPendingPlaceholder = true;
+      reusedPlaceholderId = existing.id;
+      reusedNotes = existing.notes;
+      effectiveAmountPaise = existing.amountPaise;
     }
   }
 
@@ -191,68 +236,129 @@ export async function POST(
   // The previous order (create Razorpay order → persist WalletEntry)
   // leaked orders into Razorpay whenever the DB write failed, and the
   // gateway order would linger until its 24h TTL with no DB trace.
-  try {
-    await prisma.$transaction(async (tx) => {
-      await initiateTopUp(tx, {
-        billingAccountId: ba.id,
-        amountPaise,
-        providerOrderId: walletEntryOrderId,
-        notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
+  if (!reusedPendingPlaceholder) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        await initiateTopUp(tx, {
+          billingAccountId: ba.id,
+          amountPaise: effectiveAmountPaise,
+          providerOrderId: walletEntryOrderId,
+          notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
+        });
       });
-    });
-  } catch (err) {
-    // #1205-triage — the preflight lookup is not atomic with this insert. If
-    // a concurrent request from ANY org claimed the same global key between
-    // our lookup and here, the insert dies with P2002. Re-run the
-    // ownership-aware lookup: same-org → surface as reuse; cross-org → 409.
-    // Falling through to the generic error path would leak a 500 where a
-    // deterministic idempotency answer exists.
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
-    ) {
-      const winner = await prisma.walletTopUp.findUnique({
-        where: { providerOrderId: walletEntryOrderId },
-        select: { providerOrderId: true, billingAccount: { select: { ownerOrgId: true } } },
-      });
-      if (winner?.billingAccount.ownerOrgId === orgId) {
+    } catch (err) {
+      // #1205-triage — the preflight lookup is not atomic with this insert. If
+      // a concurrent request from ANY org claimed the same global key between
+      // our lookup and here, the insert dies with P2002. Re-run the
+      // ownership-aware lookup: same-org → surface as reuse; cross-org → 409.
+      // Falling through to the generic error path would leak a 500 where a
+      // deterministic idempotency answer exists.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        const winner = await prisma.walletTopUp.findUnique({
+          where: { providerOrderId: walletEntryOrderId },
+          select: {
+            id: true,
+            providerOrderId: true,
+            amountPaise: true,
+            status: true,
+            notes: true,
+            billingAccount: { select: { ownerOrgId: true, currency: true } },
+          },
+        });
+        if (winner?.billingAccount.ownerOrgId === orgId) {
+          if (winner.status !== "PENDING") {
+            return NextResponse.json(
+              {
+                error: "This top-up is no longer payable",
+                code: "TOPUP_NOT_PENDING",
+              },
+              { status: 409 },
+            );
+          }
+          const winnerOrderId = extractMintedOrderId(winner.notes);
+          if (winnerOrderId) {
+            return NextResponse.json(
+              {
+                topUpId: winner.providerOrderId,
+                razorpayOrderId: winnerOrderId,
+                keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+                amountPaise: winner.amountPaise,
+                currency: winner.billingAccount.currency,
+                status: winner.status.toLowerCase(),
+                reused: true,
+              },
+              { status: 200 },
+            );
+          }
+          reusedPendingPlaceholder = true;
+          reusedPlaceholderId = winner.id;
+          reusedNotes = winner.notes;
+          effectiveAmountPaise = winner.amountPaise;
+        } else {
+          return NextResponse.json(
+            { error: "A top-up with this idempotency key already exists" },
+            { status: 409 },
+          );
+        }
+      } else {
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "enterprise" } },
+        );
+        console.error(
+          "[wallet/top-ups] placeholder WalletEntry persistence failed:",
+          err,
+        );
         return NextResponse.json(
           {
-            topUpId: winner.providerOrderId,
-            amountPaise,
-            status: "pending",
-            reused: true,
             error:
-              "A top-up with this idempotency key already exists. Retry without the key to launch a new gateway order.",
+              err instanceof Error
+                ? err.message
+                : "Failed to record pending top-up",
           },
-          { status: 200 },
+          { status: 500 },
         );
       }
+    }
+  }
+
+  let claimNotes: string | null = null;
+  if (
+    reusedPendingPlaceholder &&
+    typeof prisma.walletTopUp?.updateMany === "function"
+  ) {
+    claimNotes = `client_key=${clientIdempotencyKey};razorpay_order=claiming;claiming_at=${Date.now()};claim_id=${globalThis.crypto.randomUUID()}`;
+    const claimed = await prisma.walletTopUp.updateMany({
+      where: {
+        ...(reusedPlaceholderId
+          ? { id: reusedPlaceholderId }
+          : { providerOrderId: walletEntryOrderId }),
+        status: "PENDING",
+        notes: reusedNotes ?? { contains: "razorpay_order=pending" },
+      },
+      data: {
+        notes: claimNotes,
+      },
+    });
+    if (claimed.count !== 1) {
       return NextResponse.json(
-        { error: "A top-up with this idempotency key already exists" },
+        {
+          error:
+            "Top-up creation is already in progress; please retry shortly",
+          code: "TOPUP_IN_PROGRESS",
+        },
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    console.error(
-      "[wallet/top-ups] placeholder WalletEntry persistence failed:",
-      err,
-    );
-    return NextResponse.json(
-      {
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to record pending top-up",
-      },
-      { status: 500 },
-    );
   }
 
   let razorpayOrderId: string;
   try {
     const order = await createRazorpayOrder({
-      amount: amountPaise,
+      amount: effectiveAmountPaise,
       currency: ba.currency,
       paymentGateway: "RAZORPAY",
       // PaymentIntentParams.metadata insists on appointmentId/Type for
@@ -268,22 +374,45 @@ export async function POST(
         billingAccountId: ba.id,
         // amountPaise duplicated in notes so the webhook can pass it
         // to confirmTopUp without a separate DB lookup.
-        amountPaise: String(amountPaise),
+        amountPaise: String(effectiveAmountPaise),
       },
     });
     razorpayOrderId = order.id;
   } catch (err) {
-    // Razorpay refused — reap the placeholder so abandoned-cleanup
-    // doesn't have to. If this delete fails too, the cron will eventually
-    // pick it up; the user sees a clean error either way.
-    await prisma.walletTopUp
-      .delete({ where: { providerOrderId: walletEntryOrderId } })
-      .catch((cleanupErr) =>
-        console.error(
-          "[wallet/top-ups] failed to reap orphan WalletTopUp:",
-          cleanupErr,
-        ),
-      );
+    // Razorpay refused — reap a freshly-created placeholder so abandoned-cleanup
+    // doesn't have to, or restore a reused placeholder back to pending so a
+    // subsequent retry can claim it.
+    if (reusedPendingPlaceholder) {
+      if (typeof prisma.walletTopUp?.updateMany === "function") {
+        await prisma.walletTopUp
+          .updateMany({
+            where: {
+              ...(reusedPlaceholderId
+                ? { id: reusedPlaceholderId }
+                : { providerOrderId: walletEntryOrderId }),
+              notes: claimNotes ?? { contains: "razorpay_order=claiming" },
+            },
+            data: {
+              notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
+            },
+          })
+          .catch((restoreErr) =>
+            console.error(
+              "[wallet/top-ups] failed to restore pending WalletTopUp notes:",
+              restoreErr,
+            ),
+          );
+      }
+    } else {
+      await prisma.walletTopUp
+        .delete({ where: { providerOrderId: walletEntryOrderId } })
+        .catch((cleanupErr) =>
+          console.error(
+            "[wallet/top-ups] failed to reap orphan WalletTopUp:",
+            cleanupErr,
+          ),
+        );
+    }
     if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
       Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", { tags: { subsystem: "enterprise" } });
       return NextResponse.json(
@@ -310,36 +439,88 @@ export async function POST(
     );
   }
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      await tx.walletTopUp.update({
-        where: { providerOrderId: walletEntryOrderId },
-        data: {
-          notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,
-        },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "WALLET",
-          action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
-          description: `Top-up initiated: ₹${(amountPaise / 100).toLocaleString("en-IN")}`,
-          details: {
-            walletEntryOrderId,
-            razorpayOrderId,
-            amountPaise,
+  const persistedNotes = `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`;
+  let notesSaved = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (
+        reusedPendingPlaceholder &&
+        claimNotes &&
+        typeof prisma.walletTopUp?.updateMany === "function"
+      ) {
+        const updated = await prisma.walletTopUp.updateMany({
+          where: {
+            ...(reusedPlaceholderId
+              ? { id: reusedPlaceholderId }
+              : { providerOrderId: walletEntryOrderId }),
+            notes: { in: [claimNotes, persistedNotes] },
           },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        if (updated.count === 1) {
+          notesSaved = true;
+          break;
+        }
+        throw new Error(
+          "Concurrent caller reclaimed stale top-up placeholder before order notes were persisted",
+        );
+      } else {
+        await prisma.walletTopUp.update({
+          where: { providerOrderId: walletEntryOrderId },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        notesSaved = true;
+        break;
+      }
+    } catch (err) {
+      if (attempt === 3) {
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "enterprise" } },
+        );
+        console.error(
+          "[wallet/top-ups] notes write failed after 3 attempts:",
+          err,
+        );
+      }
+    }
+  }
+  if (!notesSaved) {
+    return NextResponse.json(
+      {
+        error: "Failed to persist payment order reference; please retry",
+        errorType: "TOPUP_ORDER_PERSIST_FAILED",
+      },
+      { status: 500 },
+    );
+  }
+
+  try {
+    await prisma.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "WALLET",
+        action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
+        description: `Top-up initiated: ₹${(effectiveAmountPaise / 100).toLocaleString("en-IN")}`,
+        details: {
+          walletEntryOrderId,
+          razorpayOrderId,
+          amountPaise: effectiveAmountPaise,
         },
-      });
+      },
     });
   } catch (err) {
-    // Notes/audit-log write failed, but the WalletEntry already exists
-    // and the Razorpay order is live — the top-up will still settle on
-    // webhook capture. Return 201 and log for operators.
+    // Audit-log write failed, but the WalletEntry notes already persist
+    // razorpayOrderId and the Razorpay order is live — the top-up will still
+    // settle on webhook capture. Return 201 and log for operators.
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(
-      "[wallet/top-ups] notes/audit-log write failed (top-up still valid):",
+      "[wallet/top-ups] audit-log write failed (top-up still valid):",
       err,
     );
   }
@@ -356,11 +537,11 @@ export async function POST(
       // confirmation without the client forwarding anything itself.
       razorpayOrderId,
       keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-      amountPaise,
+      amountPaise: effectiveAmountPaise,
       currency: ba.currency,
       status: "pending",
-      reused: false,
+      reused: reusedPendingPlaceholder,
     },
-    { status: 201 },
+    { status: reusedPendingPlaceholder ? 200 : 201 },
   );
 }

@@ -7,6 +7,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   liveParticipant,
   recordParticipants,
@@ -102,6 +103,13 @@ import {
   TWENTY_FOUR_HOURS_IN_MS,
 } from "./slotTimeUtils";
 import {
+  buildAvailabilityIndex,
+  createSearchBudget,
+  indexCoversAtom,
+  type AvailabilityInterval,
+  type SearchBudget,
+} from "./availability-search";
+import {
   utcStartDayIndex,
   weeklyRowDurationMinutes,
 } from "@/utils/schedule/weekly-projection";
@@ -146,6 +154,22 @@ type AppointmentWithSlots = Appointment & {
 const MAX_CANDIDATE_STARTS_PER_ROW = 48;
 
 /**
+ * Wall-clock ceiling on ONE availability search.
+ *
+ * The search is O(window × rows) and runs outside the write transaction, so an
+ * unbounded walk is the only thing in this path that can cross the ~25 s edge
+ * ceiling (a long scheduling period over a consultant with many published rows)
+ * — and because the `auto-allocate` grant behind it is a fixed 150 s TTL that is
+ * never renewed, an overrun also runs the search unprotected. Ten seconds leaves
+ * the rest of the request (the validator read, the write transaction, the
+ * notices) its budget; past it the walk stops and answers with the same
+ * SLOT_SHORTAGE a full calendar produces, which `allowPartial` already knows how
+ * to turn into "place what fits". Mirrors `TOP_UP_TIME_BUDGET_MS`
+ * (scripts/appointments/reconcile-occurrence-availability.ts).
+ */
+const ALLOCATOR_SEARCH_TIME_BUDGET_MS = 10_000;
+
+/**
  * #1194 — who is being scheduled, carried down the row walk so a truncated
  * availability row names a consultant and an event instead of appearing as an
  * anonymous "no slots available".
@@ -161,6 +185,13 @@ interface AllocationWalkContext {
    * breadcrumb on the Sentry scope — losing the context the report exists for.
    */
   reportedTruncations?: Set<string>;
+  /**
+   * The merged custom-availability index, built on first use. Keyed by object
+   * identity because `fetchEventData` mints a fresh consultant per allocation:
+   * the index can never outlive the rows it was built from, and the scan it
+   * replaces ran once per candidate.
+   */
+  customIndex?: AvailabilityInterval[];
 }
 
 /**
@@ -280,6 +311,7 @@ export class SchedulingService {
           // The consultant explicitly accepting these times as-is. Gated to
           // the event consultant by the route (canOverride) before dispatch.
           request.override,
+          request.allowPartial,
         );
 
       case "requested":
@@ -835,6 +867,7 @@ export class SchedulingService {
     eventId: string,
     idempotencyKey: string | undefined,
     fresh: boolean,
+    expectedSlotStarts?: string[],
   ): Promise<AllocationResult | null> {
     // #1518 — `$executeRaw`, not `$queryRaw`: `pg_advisory_xact_lock` returns
     // `void`, and the Prisma 7 driver adapter throws "Failed to deserialize
@@ -845,12 +878,50 @@ export class SchedulingService {
       eventType,
       eventId,
       idempotencyKey,
-      undefined,
+      expectedSlotStarts,
       tx,
     );
     if (lockedReplay) return lockedReplay;
     if (fresh) await this.assertNoConfirmedSlots(tx, eventType, eventId);
     return null;
+  }
+
+  /**
+   * Two definitions this file used to answer three ways, each now said once.
+   *
+   * `liveOccurrenceWhere` / `isDeadOccurrence` are canonical; these are their
+   * narrow companions for the two concepts the allocator counts.
+   */
+
+  /**
+   * A tentative row the event STILL CARRIES — the unit #1012's stale-tab guard
+   * counts, and the unit every client counts with (the request inbox and the
+   * appointment detail both read occurrences filtered `deletedAt: null`).
+   *
+   * Deliberately NOT `isDeadOccurrence`: a reschedule releases a row IN PLACE as
+   * `isTentative: true` + `completionStatus: RESCHEDULED`, which is exactly the
+   * row the reschedule is replacing. Excluding completionStatus would drop the
+   * very rows the guard exists to protect and 409 every reschedule as stale.
+   * A tombstoned row is the one both sides must agree to ignore: the client never
+   * sees it, so counting it only ever produced a false conflict.
+   * `isReleasedForReschedule` stays the stricter predicate for the narrower
+   * "released" concept (isReschedule, top-up gating, requiredSlots).
+   */
+  private static isCarriedTentativeOccurrence(
+    // Structural, and only the two fields the body reads. Typed against the
+    // whole `AppointmentOccurrence` this predicate could not be passed to a
+    // caller that selects a narrower occurrence shape — the in-transaction
+    // re-read picks four columns, not forty.
+    occurrence: { isTentative: boolean | null; deletedAt: Date | null },
+  ): boolean {
+    return !!occurrence.isTentative && !occurrence.deletedAt;
+  }
+
+  /** A CONFIRMED row the calendar still shows: not tentative, not dead. */
+  private static isLiveConfirmedOccurrence(
+    occurrence: AppointmentWithSlots["occurrences"][number],
+  ): boolean {
+    return !occurrence.isTentative && !isDeadOccurrence(occurrence);
   }
 
   private static async assertNoConfirmedSlots(
@@ -861,8 +932,13 @@ export class SchedulingService {
     const relationField = this.getEventRelationField(eventType);
     const confirmed = await db.appointmentOccurrence.count({
       where: {
+        // The same predicate assertHeldSessionCountInTx below already used:
+        // `isTentative: false` alone counted a CONFIRMED-but-voided row (a
+        // cancelled or rescheduled-away session that was not tombstoned) as a
+        // live booking, so an event whose sessions had all been released could
+        // not be freshly allocated from a dialog.
+        ...liveOccurrenceWhere,
         isTentative: false,
-        deletedAt: null,
         appointment: {
           [`${relationField}Id`]: eventId,
           deletedAt: null,
@@ -977,6 +1053,10 @@ export class SchedulingService {
    * write txn (e.g. a second tab that raced the lock, or useRequestedSlots).
    * Re-read with `tx`, behind the per-event advisory lock, before
    * delete/recreate.
+   *
+   * The count itself is `tentativeSlotCountOf`, the same function the pre-txn
+   * read uses. This used to be a third copy of the same reduce, which is how the
+   * three came to disagree about what a tentative row is.
    */
   private static async assertExpectedTentativeSlotCountInTx(
     tx: Tx,
@@ -993,13 +1073,10 @@ export class SchedulingService {
         } as Prisma.AppointmentWhereInput,
         include: { occurrences: true },
       });
-    const tentativeSlotCount = existingAppointments.reduce(
-      (count, appointment) =>
-        count +
-        appointment.occurrences.filter((slot) => slot.isTentative).length,
-      0,
+    this.assertExpectedTentativeSlotCount(
+      this.tentativeSlotCountOf(existingAppointments),
+      expected,
     );
-    this.assertExpectedTentativeSlotCount(tentativeSlotCount, expected);
   }
 
   /**
@@ -1042,9 +1119,45 @@ export class SchedulingService {
   ): Promise<AllocationResult | null> {
     if (!idempotencyKey) return null;
 
+    const batch = await this.loadIdempotentBatchAppointments(
+      db,
+      eventType,
+      eventId,
+      idempotencyKey,
+    );
+    if (!batch) return null;
+
+    const { stamped, appointments } = batch;
+    if (expectedSlotStarts) {
+      this.assertIdempotentPayloadMatches(
+        eventType,
+        idempotencyKey,
+        stamped.id,
+        appointments,
+        expectedSlotStarts,
+      );
+    }
+
+    return {
+      success: true,
+      appointments,
+      ...(await this.replayPartialCounts(eventType, eventId, appointments, db)),
+    };
+  }
+
+  private static async loadIdempotentBatchAppointments(
+    db: PrismaLike,
+    eventType: EventType,
+    eventId: string,
+    idempotencyKey: string,
+  ): Promise<{
+    stamped: { id: string };
+    appointments: AppointmentWithSlots[];
+  } | null> {
     const stamped = await db.appointment.findUnique({
       where: { allocationIdempotencyKey: idempotencyKey },
       select: {
+        id: true,
         consultationId: true,
         subscriptionId: true,
         webinarId: true,
@@ -1075,43 +1188,168 @@ export class SchedulingService {
       include: { occurrences: true },
     });
 
-    if (expectedSlotStarts) {
-      // Compared against the batch's live FUTURE rows only: an in-progress
-      // recurring manual submit carries future slots while deliberately
-      // preserved past rows stay stamped, so testing the whole cohort would
-      // 422 a legitimate double-submit instead of replaying it.
-      //
-      // Expanded to interval starts before comparing: one occurrence covers
-      // one whole call with its real end ("the 30-minute intervals stay the
-      // unit of arithmetic, not the persisted shape"), while the attempt
-      // carries every 30-minute atom — an exact retry of a multi-slot
-      // session would otherwise mismatch on row count alone.
-      const now = new Date();
-      const stampedStarts = appointments
-        .flatMap((a) => a.occurrences ?? [])
-        .filter((o) => !o.deletedAt && o.endsAt > now)
-        .flatMap((o) => intervalStartsOf(o))
-        .map((start) => start.getTime())
-        .sort((a, b) => a - b);
-      const attemptedStarts = expectedSlotStarts
-        .map((s) => new Date(s).getTime())
-        .sort((a, b) => a - b);
-      const samePayload =
-        stampedStarts.length === attemptedStarts.length &&
-        stampedStarts.every((t, i) => t === attemptedStarts[i]);
-      if (!samePayload) {
-        throw new AllocationIdempotencyMismatchError(
-          "This idempotency key was already used with different slots. " +
-            "Reload and submit as a new allocation.",
-        );
+    return { stamped, appointments };
+  }
+
+  private static startsOfOccurrences(rows: AppointmentOccurrence[]): number[] {
+    return rows
+      .flatMap((o) => intervalStartsOf(o))
+      .map((start) => start.getTime())
+      .sort((a, b) => a - b);
+  }
+
+  private static numberArraysEqual(a: number[], b: number[]): boolean {
+    return a.length === b.length && a.every((t, i) => t === b[i]);
+  }
+
+  private static assertIdempotentPayloadMatches(
+    eventType: EventType,
+    idempotencyKey: string,
+    stampedId: string | undefined,
+    appointments: AppointmentWithSlots[],
+    expectedSlotStarts: string[],
+  ): void {
+    // Compared against the batch's live FUTURE rows only: an in-progress
+    // recurring manual submit carries future slots while deliberately
+    // preserved past rows stay stamped, so testing the whole cohort would
+    // 422 a legitimate double-submit instead of replaying it.
+    //
+    // Expanded to interval starts before comparing: one occurrence covers
+    // one whole call with its real end ("the 30-minute intervals stay the
+    // unit of arithmetic, not the persisted shape"), while the attempt
+    // carries every 30-minute atom — an exact retry of a multi-slot
+    // session would otherwise mismatch on row count alone.
+    const now = new Date();
+    const allLiveOccurrences = appointments
+      .flatMap((a) => a.occurrences ?? [])
+      .filter((o) => !o.deletedAt && !isDeadOccurrence(o));
+    const liveFutureOccurrences = allLiveOccurrences.filter(
+      (o) => o.endsAt > now,
+    );
+    const candidateOccurrences =
+      liveFutureOccurrences.length > 0
+        ? liveFutureOccurrences
+        : allLiveOccurrences;
+
+    const stampedStarts = this.startsOfOccurrences(liveFutureOccurrences);
+    const allStampedStarts = this.startsOfOccurrences(allLiveOccurrences);
+    const attemptedStarts = expectedSlotStarts
+      .map((s) => new Date(s).getTime())
+      .sort((a, b) => a - b);
+
+    const samePayload =
+      this.numberArraysEqual(stampedStarts, attemptedStarts) ||
+      this.numberArraysEqual(allStampedStarts, attemptedStarts) ||
+      this.matchesRecurringBatchSubset({
+        eventType,
+        idempotencyKey,
+        stampedId,
+        appointments,
+        candidateOccurrences,
+        hasLiveFuture: liveFutureOccurrences.length > 0,
+        now,
+        attemptedStarts,
+      });
+
+    if (!samePayload) {
+      throw new AllocationIdempotencyMismatchError(
+        "This idempotency key was already used with different slots. " +
+          "Reload and submit as a new allocation.",
+      );
+    }
+  }
+
+  /**
+   * #1692 Item 6 — On a multi-batch recurring event (top-up cycle or partial
+   * reschedule), the wrapper (or sibling wrappers) also holds pre-existing
+   * confirmed future occurrences from earlier cycles. Match against the
+   * stamped appointment's occurrences or the latest batch's whole occurrences
+   * when multiple recurring occurrences exist.
+   */
+  private static matchesRecurringBatchSubset(params: {
+    eventType: EventType;
+    idempotencyKey: string;
+    stampedId: string | undefined;
+    appointments: AppointmentWithSlots[];
+    candidateOccurrences: AppointmentOccurrence[];
+    hasLiveFuture: boolean;
+    now: Date;
+    attemptedStarts: number[];
+  }): boolean {
+    const {
+      eventType,
+      idempotencyKey,
+      stampedId,
+      appointments,
+      candidateOccurrences,
+      hasLiveFuture,
+      now,
+      attemptedStarts,
+    } = params;
+    if (!isRecurringEventType(eventType) || candidateOccurrences.length <= 1) {
+      return false;
+    }
+
+    const stampedAppt = appointments.find(
+      (a) =>
+        (stampedId && a.id === stampedId) ||
+        a.allocationIdempotencyKey === idempotencyKey,
+    );
+    if (stampedAppt && appointments.length > 1) {
+      const apptOccurrences = (stampedAppt.occurrences ?? []).filter(
+        (o) =>
+          !o.deletedAt &&
+          !isDeadOccurrence(o) &&
+          (!hasLiveFuture || o.endsAt > now),
+      );
+      if (
+        this.numberArraysEqual(
+          this.startsOfOccurrences(apptOccurrences),
+          attemptedStarts,
+        )
+      ) {
+        return true;
       }
     }
 
-    return {
-      success: true,
-      appointments,
-      ...(await this.replayPartialCounts(eventType, eventId, appointments, db)),
-    };
+    const movedRows = candidateOccurrences.filter(
+      (o) => (o as { movedAt?: Date | null }).movedAt != null,
+    );
+    if (
+      movedRows.length > 0 &&
+      this.numberArraysEqual(
+        this.startsOfOccurrences(movedRows),
+        attemptedStarts,
+      )
+    ) {
+      return true;
+    }
+
+    return this.matchesOrdinalSuffix(candidateOccurrences, attemptedStarts);
+  }
+
+  private static matchesOrdinalSuffix(
+    candidateOccurrences: AppointmentOccurrence[],
+    attemptedStarts: number[],
+  ): boolean {
+    const withOrdinals = candidateOccurrences.filter(
+      (o) => typeof (o as { ordinal?: number }).ordinal === "number",
+    );
+    if (withOrdinals.length !== candidateOccurrences.length) {
+      return false;
+    }
+    const byOrdinal = [...candidateOccurrences].sort(
+      (a, b) =>
+        ((a as { ordinal?: number }).ordinal ?? 0) -
+        ((b as { ordinal?: number }).ordinal ?? 0),
+    );
+    for (let startIdx = 1; startIdx < byOrdinal.length; startIdx++) {
+      const suffixStarts = this.startsOfOccurrences(byOrdinal.slice(startIdx));
+      if (this.numberArraysEqual(suffixStarts, attemptedStarts)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1264,14 +1502,21 @@ export class SchedulingService {
     }
   }
 
-  /** Tentative ROWS, the unit #1012's stale-tab precondition compares. */
+  /**
+   * Tentative ROWS the event still carries, the unit #1012's stale-tab
+   * precondition compares and the unit the client counts with. One definition
+   * (`isCarriedTentativeOccurrence`) for the pre-txn read, the in-txn re-read and
+   * both mode entry points that used to inline the same filter.
+   */
   private static tentativeSlotCountOf(
     appointments: AppointmentWithSlots[],
   ): number {
     return appointments.reduce(
       (count, appointment) =>
         count +
-        appointment.occurrences.filter((slot) => slot.isTentative).length,
+        appointment.occurrences.filter((row) =>
+          this.isCarriedTentativeOccurrence(row),
+        ).length,
       0,
     );
   }
@@ -1555,16 +1800,11 @@ export class SchedulingService {
       // is what the page's expectedTentativeSlotCount is measured in.
       const existingNonTentativeSlotCount =
         this.confirmedIntervalsOf(existingAppointments);
-      const tentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => slot.isTentative).length,
-        0,
-      );
       // #1012 — before any delete+recreate, confirm the page's view of the
-      // tentative set still matches the database.
+      // tentative set still matches the database. Same predicate as the in-txn
+      // re-read (see tentativeSlotCountOf).
       this.assertExpectedTentativeSlotCount(
-        tentativeSlotCount,
+        this.tentativeSlotCountOf(existingAppointments),
         expectedTentativeSlotCount,
       );
       // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
@@ -1632,7 +1872,7 @@ export class SchedulingService {
       // cannot turn the shortfall into a fraction.
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
-        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
       // #1766 — a subscription with held sessions is ALWAYS additive: the
       // next cycle appends; the delete-and-replan path is for classes only.
       const isTopUp =
@@ -2109,6 +2349,11 @@ export class SchedulingService {
      * and future-time all still apply.
      */
     override?: boolean,
+    /**
+     * #1692 Item 4 — allow manual placement of fewer than the full required
+     * sessions on recurring events (matching autoAllocate's #1206 behavior).
+     */
+    allowPartial = false,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     // A same-key submit with different slots is a client bug, not a retry:
@@ -2278,12 +2523,8 @@ export class SchedulingService {
           include: { occurrences: true },
         });
 
-      const tentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => slot.isTentative).length,
-        0,
-      );
+      const tentativeSlotCount =
+        this.tentativeSlotCountOf(existingAppointments);
       // #1012 — before any delete+recreate, confirm the page's view of the
       // tentative set still matches the database.
       this.assertExpectedTentativeSlotCount(
@@ -2303,7 +2544,7 @@ export class SchedulingService {
       // next cycle is being appended, so nothing is deleted or excluded.
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
-        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
       const isTopUp = this.isSubscriptionTopUp(
         eventType,
         existingConfirmedSessionCount,
@@ -2359,6 +2600,14 @@ export class SchedulingService {
         this.releasedOccurrenceIdsOf(existingAppointments);
 
       // Validate total slot count for recurring event types
+      let manualPartialInfo:
+        | {
+            partial: boolean;
+            placedSessions: number;
+            requiredSessions: number;
+            unplacedSessions: number;
+          }
+        | undefined;
       if (isRecurringEventType(eventType)) {
         if (isReschedule) {
           // Expected count = (live RELEASED sessions) × slotsPerCall, i.e. the
@@ -2379,19 +2628,42 @@ export class SchedulingService {
             );
           }
         } else if (isTopUp) {
-          // #1766 — exactly this cycle's batch; the held sessions stay put.
-          const cycleTarget =
-            this.topUpTargetSessions(
-              eventType,
-              config,
-              existingConfirmedSessionCount,
-              slotsPerCall,
-            ) - existingConfirmedSessionCount;
-          if (slots.length !== cycleTarget * slotsPerCall) {
+          // #1766 & #1692 Item 4 — this cycle's batch; the held sessions stay put.
+          const topUpTotalSessions = this.topUpTargetSessions(
+            eventType,
+            config,
+            existingConfirmedSessionCount,
+            slotsPerCall,
+          );
+          const cycleTarget = topUpTotalSessions - existingConfirmedSessionCount;
+          const requiredTopUpSlots = cycleTarget * slotsPerCall;
+          if (slots.length > requiredTopUpSlots) {
             throw new AllocationValidationError(
               `This cycle takes exactly ${cycleTarget} session(s) ` +
-                `(${cycleTarget * slotsPerCall} slots), but ${slots.length} were provided.`,
+                `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
             );
+          }
+          if (slots.length < requiredTopUpSlots) {
+            if (!allowPartial) {
+              throw new SlotShortageError(
+                `This cycle takes exactly ${cycleTarget} session(s) ` +
+                  `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
+                Math.floor(slots.length / slotsPerCall),
+                cycleTarget,
+              );
+            }
+            const placedSessions =
+              existingConfirmedSessionCount +
+              Math.floor(slots.length / slotsPerCall);
+            manualPartialInfo = {
+              partial: placedSessions < topUpTotalSessions,
+              placedSessions,
+              requiredSessions: topUpTotalSessions,
+              unplacedSessions: Math.max(
+                0,
+                topUpTotalSessions - placedSessions,
+              ),
+            };
           }
         } else if (isInProgressReallocation) {
           // In-progress: only future slots expected, past ones are preserved
@@ -2416,12 +2688,31 @@ export class SchedulingService {
               eventType,
               config,
             );
-          if (slots.length !== requiredSlots) {
+          if (slots.length > requiredSlots) {
             throw new AllocationValidationError(
               `This ${eventType} requires exactly ${requiredSlots} slots ` +
                 `(based on the scheduling period and session configuration), ` +
                 `but ${slots.length} were provided.`,
             );
+          }
+          if (slots.length < requiredSlots) {
+            const placedSessions = Math.floor(slots.length / slotsPerCall);
+            const requiredSessions = Math.ceil(requiredSlots / slotsPerCall);
+            if (!allowPartial) {
+              throw new SlotShortageError(
+                `This ${eventType} requires exactly ${requiredSlots} slots ` +
+                  `(based on the scheduling period and session configuration), ` +
+                  `but ${slots.length} were provided.`,
+                placedSessions,
+                requiredSessions,
+              );
+            }
+            manualPartialInfo = {
+              partial: placedSessions < requiredSessions,
+              placedSessions,
+              requiredSessions,
+              unplacedSessions: Math.max(0, requiredSessions - placedSessions),
+            };
           }
         }
       }
@@ -2462,6 +2753,7 @@ export class SchedulingService {
             eventId,
             idempotencyKey,
             isFreshAllocation,
+            slotStrings,
           );
           if (lockedReplay) return lockedReplay;
           // #1766 — see autoAllocate: a stale tab must not append twice.
@@ -2583,11 +2875,12 @@ export class SchedulingService {
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
+            ...manualPartialInfo,
             stagedNotices: await SchedulingService.stageAllocationNotices(
               tx,
               eventType,
               eventId,
-              undefined,
+              manualPartialInfo,
               outcome,
             ),
           };
@@ -2634,6 +2927,14 @@ export class SchedulingService {
     overrideAvailabilityWindow?: boolean,
     expectedTentativeSlotCount?: number,
   ): Promise<AllocationResult> {
+    // #1692 Item 7 — group events (webinar, class) never have consultee-requested
+    // slots; reject upfront before touching idempotency or locks.
+    if (eventType === "webinar" || eventType === "class") {
+      throw new AllocationValidationError(
+        `Requested-slot allocation is not supported for ${eventType} events; only consultations and subscriptions have consultee-requested slots.`,
+        "INVALID_MODE",
+      );
+    }
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
     const replay = await this.findIdempotentAllocation(
@@ -2855,7 +3156,9 @@ export class SchedulingService {
           const liveTentativeCount = liveRows.reduce(
             (count, appointment) =>
               count +
-              appointment.occurrences.filter((o) => o.isTentative).length,
+              appointment.occurrences.filter(
+                SchedulingService.isCarriedTentativeOccurrence,
+              ).length,
             0,
           );
           if (
@@ -3033,6 +3336,7 @@ export class SchedulingService {
   private static isWithinAvailability(
     candidate: Date,
     consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
   ): boolean {
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
       const candidateDay = candidate.getUTCDay();
@@ -3050,19 +3354,39 @@ export class SchedulingService {
           slot.utcOffsetMinutes,
         ),
       );
-    } else {
-      // CUSTOM schedule: candidate must fall within a specific date range
-      const thirtyMinMs = 30 * 60 * 1000;
-      return consultant.availabilityWindowsCustom.some((slot) => {
-        const slotStart = new Date(slot.startsAt);
-        const slotEnd = new Date(slot.endsAt);
-
-        return (
-          candidate >= slotStart &&
-          candidate.getTime() + thirtyMinMs <= slotEnd.getTime()
-        );
-      });
     }
+    // CUSTOM schedule: the candidate's own atom must fit inside ONE published
+    // range. That used to be a linear `.some()` with two `new Date()` per row per
+    // call, run once per candidate start × row × day of the window — the reason a
+    // consultant with a few hundred published rows could push this past the edge
+    // ceiling. The merged index is built once per allocation (below) and then
+    // binary-searched, which is exactly equivalent: a contiguous atom lies inside
+    // a union of ranges if and only if it lies inside one connected component.
+    return indexCoversAtom(
+      this.customAvailabilityIndex(consultant, walk),
+      candidate.getTime(),
+    );
+  }
+
+  /**
+   * The consultant's custom rows as one merged interval list, built on first use
+   * and then carried on the walk. A walk without a context (a direct unit call)
+   * builds it per call, which is what the test that calls the predicate directly
+   * asserts about.
+   */
+  private static customAvailabilityIndex(
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): AvailabilityInterval[] {
+    if (!walk) {
+      return buildAvailabilityIndex(consultant.availabilityWindowsCustom);
+    }
+    if (!walk.customIndex) {
+      walk.customIndex = buildAvailabilityIndex(
+        consultant.availabilityWindowsCustom,
+      );
+    }
+    return walk.customIndex;
   }
 
   /**
@@ -3078,6 +3402,10 @@ export class SchedulingService {
    * nor by the old hard MAX_CANDIDATE_STARTS_PER_ROW=48 ceiling (which
    * silently truncated legitimate long rows). Callers that cannot supply a
    * row end still get the 48-step safety net.
+   *
+   * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
+   * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:
+   * on-grid and inside the published hours.
    */
   private static candidateStartsInRow(
     rowStart: Date,
@@ -3093,18 +3421,19 @@ export class SchedulingService {
     const starts: Date[] = [];
     /** Did the ROW (its end, or the edge of availability) stop the walk? */
     let boundedByRow = false;
+    const anchorMs =
+      Math.ceil(rowStart.getTime() / SCHEDULING_INTERVAL_MS) *
+      SCHEDULING_INTERVAL_MS;
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
-      const candidate = new Date(
-        rowStart.getTime() + step * SCHEDULING_INTERVAL_MS,
-      );
+      const candidate = new Date(anchorMs + step * SCHEDULING_INTERVAL_MS);
       // Stop at the row's own end before checking availability — adjacent
       // rows would otherwise let the walk escape past its owner.
       if (candidate.getTime() + SCHEDULING_INTERVAL_MS > rowEndMs) {
         boundedByRow = true;
         break;
       }
-      if (!this.isWithinAvailability(candidate, consultant)) {
+      if (!this.isWithinAvailability(candidate, consultant, walk)) {
         boundedByRow = true;
         break;
       }
@@ -3118,12 +3447,11 @@ export class SchedulingService {
     // simply ends at the 48th start from reporting a truncation it never had.
     if (!boundedByRow) {
       const next = new Date(
-        rowStart.getTime() +
-          MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
+        anchorMs + MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
       );
       if (
         next.getTime() + SCHEDULING_INTERVAL_MS <= rowEndMs &&
-        this.isWithinAvailability(next, consultant)
+        this.isWithinAvailability(next, consultant, walk)
       ) {
         this.reportRowWalkTruncated(rowStart, rowEndMs, consultant, walk);
       }
@@ -3177,6 +3505,42 @@ export class SchedulingService {
   }
 
   /**
+   * One breadcrumb per allocation for a search that ran out of its time budget.
+   * Without it a budget-truncated walk is indistinguishable from a genuinely full
+   * calendar — the SLOT_SHORTAGE it raises is the same one, by design — and the
+   * next thing anyone would do is widen the search again.
+   */
+  private static reportSearchBudgetSpent(
+    budget: SearchBudget,
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): void {
+    const detail = {
+      budgetMs: budget.limitMs,
+      spentMs: budget.spentMs(),
+      consultantUserId: consultant.userId,
+      consultantProfileId: walk?.consultantProfileId ?? null,
+      customRows: consultant.availabilityWindowsCustom.length,
+      eventType: walk?.eventType ?? null,
+      eventId: walk?.eventId ?? null,
+    };
+    try {
+      Sentry.addBreadcrumb({
+        category: "scheduling",
+        message: "allocation: availability search hit its time budget",
+        level: "warning",
+        data: detail,
+      });
+    } catch {
+      // Telemetry must never fail an allocation.
+    }
+    console.warn(
+      "[allocation] availability search hit its time budget",
+      detail,
+    );
+  }
+
+  /**
    * Build one call's worth of back-to-back slots from `start`, or null if the
    * run is interrupted by a booking, the edge of availability, or the past.
    */
@@ -3186,6 +3550,7 @@ export class SchedulingService {
     consultant: ConsultantAllocationData,
     bookedSlots: Set<string>,
     now: Date,
+    walk?: AllocationWalkContext,
   ): Date[] | null {
     const block: Date[] = [];
     let currentTime = new Date(start);
@@ -3193,7 +3558,7 @@ export class SchedulingService {
     for (let i = 0; i < slotsPerCall; i++) {
       if (
         bookedSlots.has(currentTime.toISOString()) ||
-        !this.isWithinAvailability(currentTime, consultant) ||
+        !this.isWithinAvailability(currentTime, consultant, walk) ||
         currentTime < now
       ) {
         return null;
@@ -3276,6 +3641,7 @@ export class SchedulingService {
         consultant,
         bookedSlots,
         now,
+        walk,
       );
       if (!block) continue;
 
@@ -3308,6 +3674,11 @@ export class SchedulingService {
    * The remembered best is the entire safety property: whatever the preference
    * says, if any block was placeable at all this returns one, so a preference
    * that cannot be met costs a less-liked time and never the allocation.
+   *
+   * `budget` bounds the row walk only. The remembered best survives a truncated
+   * walk, so a search that ran out of time still returns the best block it had
+   * found rather than nothing — which is what lets the caller answer with a
+   * shortage instead of a timeout.
    */
   private static bestBlockForSingleSession(
     eventType: EventType,
@@ -3320,6 +3691,7 @@ export class SchedulingService {
     schedulingTimezone?: string,
     preference?: AllocationPreference,
     walk?: AllocationWalkContext,
+    budget?: SearchBudget,
   ): Date[] | null {
     const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
     const maxScore = maxPreferenceScore(preference);
@@ -3356,6 +3728,13 @@ export class SchedulingService {
     }
 
     for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {
+      // One row's worth of walk is the unit of work here, so this is the finest
+      // place the budget can be tested without putting a clock read inside the
+      // candidate loop.
+      if (budget?.exhausted()) {
+        this.reportSearchBudgetSpent(budget, consultant, walk);
+        break;
+      }
       for (const candidateStart of this.candidateStartsInRow(
         rowStart,
         consultant,
@@ -3370,6 +3749,7 @@ export class SchedulingService {
           consultant,
           bookedSlots,
           now,
+          walk,
         );
         if (!consecutiveBlock) continue;
 
@@ -3399,6 +3779,11 @@ export class SchedulingService {
    * caps, the scheduling period) is evaluated exactly as before and no
    * preference can relax or tighten one. An unsatisfiable preference therefore
    * changes nothing except which of the equally-legal placements is chosen.
+   *
+   * The search runs under `ALLOCATOR_SEARCH_TIME_BUDGET_MS`. Spending it ends
+   * the walk and falls through to the ordinary "not enough" tail, so the caller
+   * sees SLOT_SHORTAGE with a real placeable count — or, with `allowPartial`,
+   * the sessions that did fit.
    */
   private static async findAvailableSlots(
     // #908 — accepts the base client so slot discovery can run OUTSIDE the write
@@ -3580,6 +3965,11 @@ export class SchedulingService {
 
     const now = occupancyClock;
     const selectedSlots: Date[] = [];
+    // Opened once the reads are done, so the ceiling bounds the SEARCH (the only
+    // O(window) work in this request) and not the queries that feed it. A
+    // truncated search answers through the same shortage tail below, so
+    // `allowPartial` keeps working exactly as it does for a full calendar.
+    const searchBudget = createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
 
     // Sort weekly slots by next calendar occurrence (not raw clock time)
     // so auto-allocation picks the chronologically earliest slot first.
@@ -3626,11 +4016,14 @@ export class SchedulingService {
         config.schedulingTimezone,
         preference,
         walk,
+        searchBudget,
       );
       if (singleSession) return singleSession;
 
       // One session, so nothing is placeable short of the whole thing —
       // placeableSessions 0 tells the client not to offer a partial schedule.
+      // A budget-truncated walk lands here too: it found nothing, and the
+      // shortage is the same answer a full calendar gets.
       throw new SlotShortageError(
         `No ${slotsPerCall} consecutive slots available for ${eventType}`,
         0,
@@ -3862,6 +4255,13 @@ export class SchedulingService {
      * made impossible. The while loop terminates because every successful
      * placement strictly advances a bounded counter (per-day cap, weekly cap,
      * totalSlotsNeeded).
+     *
+     * The budget stops the DAY walk, which is the coarsest unit that still
+     * bounds the overrun: one day is one pass over that day's rows. It leaves
+     * the search through the ordinary shortage tail below rather than a new
+     * error, so a truncated walk is answered as "no more room" and still
+     * honours `allowPartial` — the partial answer is what the consultant
+     * actually gets, and a 504 would have given them nothing.
      */
     const sweepPeriod = (perfectOnly: boolean): void => {
       const cursor = new Date(
@@ -3877,6 +4277,10 @@ export class SchedulingService {
         cursor <= endDate && selectedSlots.length < totalSlotsNeeded;
         cursor.setUTCDate(cursor.getUTCDate() + 1)
       ) {
+        if (searchBudget.exhausted()) {
+          this.reportSearchBudgetSpent(searchBudget, consultant, walk);
+          return;
+        }
         while (
           selectedSlots.length < totalSlotsNeeded &&
           tryPlaceOnDay(new Date(cursor), perfectOnly)
@@ -4330,6 +4734,7 @@ export class SchedulingService {
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
+        subscriptionPlan: { select: { totalSessions: true, price: true } },
         appointment: {
           include: {
             payment: true,
@@ -4394,7 +4799,17 @@ export class SchedulingService {
         },
       },
       orderBy: { periodEnd: "desc" },
-      select: { id: true },
+      select: {
+        id: true,
+        program: {
+          select: {
+            type: true,
+            licensedSeatConfig: {
+              select: { priceCapPerEngagementPaise: true },
+            },
+          },
+        },
+      },
     });
     if (!assignment) return;
 
@@ -4461,7 +4876,7 @@ export class SchedulingService {
     // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
     // correctly classified as one of its modelled outcomes). A capture here
     // too would be a dupe, so this no longer needs its own try/catch.
-    await recordBookingUtilization(tx, {
+    const utilResult = await recordBookingUtilization(tx, {
       programAssignmentId: assignment.id,
       paymentId: orgPayment.id,
       engagementsConsumed: idsToDebit.length,
@@ -4473,6 +4888,150 @@ export class SchedulingService {
       // genuinely-new ids.
       appointmentIds: idsToDebit,
     });
+
+    // #1895 — Trigger overage billing when a lazily allocated subscription
+    // session exceeds the program cap.
+    if (utilResult?.wasOverage) {
+      await this.settleSubscriptionAllocationOverage({
+        tx,
+        subscriptionId,
+        subscription,
+        orgPayment,
+        assignment,
+        existingUtil,
+        idsToDebit,
+        utilResult,
+        consulteeUserId,
+      });
+    }
+  }
+
+  private static async settleSubscriptionAllocationOverage(params: {
+    tx: Tx;
+    subscriptionId: string;
+    subscription: {
+      subscriptionPlanId?: string;
+      sessionsTotal?: number | null;
+      subscriptionPlan?: {
+        totalSessions?: number | null;
+        price?: number | null;
+      } | null;
+    } | null;
+    orgPayment: {
+      id: string;
+      amount: number;
+      originalAmount?: number | null;
+      currency?: Prisma.PaymentCreateInput["currency"] | null;
+      organizationId: string | null;
+      paymentGateway?: Prisma.PaymentCreateInput["paymentGateway"] | null;
+    };
+    assignment: {
+      id: string;
+      program?: {
+        type?: "LICENSED_SEAT" | "CREDIT_POOL" | null;
+        licensedSeatConfig?: {
+          priceCapPerEngagementPaise?: number | null;
+        } | null;
+      } | null;
+    };
+    existingUtil: { id: string } | null;
+    idsToDebit: string[];
+    utilResult: Awaited<ReturnType<typeof recordBookingUtilization>>;
+    consulteeUserId: string;
+  }): Promise<void> {
+    const {
+      tx,
+      subscriptionId,
+      subscription,
+      orgPayment,
+      assignment,
+      existingUtil,
+      idsToDebit,
+      utilResult,
+      consulteeUserId,
+    } = params;
+    if (!orgPayment.organizationId) return;
+
+    const totalPlanSessions = Math.max(
+      1,
+      subscription?.sessionsTotal ??
+        subscription?.subscriptionPlan?.totalSessions ??
+        1,
+    );
+    const basePaymentAmount = orgPayment.originalAmount ?? orgPayment.amount;
+    let unitSessionPricePaise = Math.round(
+      basePaymentAmount / totalPlanSessions,
+    );
+    if (unitSessionPricePaise <= 0) {
+      const planPricePaise =
+        subscription?.subscriptionPlan?.price ??
+        (subscription?.subscriptionPlanId
+          ? (
+              await tx.subscriptionPlan?.findUnique?.({
+                where: { id: subscription.subscriptionPlanId },
+                select: { price: true },
+              })
+            )?.price
+          : undefined);
+      if (typeof planPricePaise === "number" && planPricePaise > 0) {
+        unitSessionPricePaise = Math.round(planPricePaise / totalPlanSessions);
+      }
+    }
+
+    const programPriceCapPaise =
+      assignment.program?.licensedSeatConfig?.priceCapPerEngagementPaise;
+    if (unitSessionPricePaise <= 0 && (programPriceCapPaise ?? 0) <= 0) {
+      await recordSystemErrorSafe({
+        organizationId: orgPayment.organizationId,
+        category: "OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE",
+        summary:
+          "Subscription overage allocation resolved zero unit session price with no program price cap",
+        err: new Error(
+          `OVERAGE_SUBSCRIPTION_NO_UNIT_PRICE for subscription=${subscriptionId} payment=${orgPayment.id}`,
+        ),
+        db: tx,
+        context: {
+          subscriptionId,
+          paymentId: orgPayment.id,
+          programAssignmentId: assignment.id,
+          basePaymentAmount,
+          totalPlanSessions,
+        },
+      });
+      return;
+    }
+
+    const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;
+    const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
+      await import("@/lib/payments/billing/overage-settlement");
+    const resolvedProgramType =
+      assignment.program?.type ?? utilResult.programType ?? "LICENSED_SEAT";
+    const lazyCreditDelta = existingUtil ? overageBookingPricePaise : 0;
+    const effectiveConsumedPaiseAfter =
+      resolvedProgramType === "CREDIT_POOL"
+        ? utilResult.consumedPaiseAfter + lazyCreditDelta
+        : utilResult.consumedPaiseAfter;
+    const pendingNotify = await recordOverageAtCheckout({
+      tx,
+      programAssignmentId: assignment.id,
+      utilization: {
+        programType: resolvedProgramType,
+        engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
+        engagementsUsedAfter: utilResult.engagementsUsedAfter,
+        consumedPaiseAfter: effectiveConsumedPaiseAfter,
+        creditBudgetPaise: utilResult.creditBudgetPaise,
+      },
+      bookingPricePaise: overageBookingPricePaise,
+      currency: orgPayment.currency ?? "INR",
+      paymentId: orgPayment.id,
+      userId: consulteeUserId,
+      organizationId: orgPayment.organizationId,
+      paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
+      isLazyAllocation: existingUtil !== null,
+    });
+    if (pendingNotify) {
+      notifyOverageDueAfterCommit(pendingNotify);
+    }
   }
 
   /**
@@ -4824,22 +5383,53 @@ export class SchedulingService {
           enrolledUserIdSet.add(seat.userId);
         }
       }
-      // Every sessionless row below is deleted whichever arm runs; a
-      // held-session row survives and keeps its ordinal.
+      // Every replaceable sessionless row below is deleted whichever arm runs;
+      // a held-session or completed/past history row survives and keeps its ordinal.
+      const now = new Date();
+      const isProtectedSessionlessSlot = (
+        slot: (typeof existingAppointments)[number]["occurrences"][number],
+      ): boolean =>
+        slot.completionStatus === "COMPLETED" ||
+        (slot.completionStatus !== undefined &&
+          !slot.isTentative &&
+          new Date(slot.endsAt) <= now);
       const freed = existingAppointments.flatMap((appointment) =>
-        appointment.occurrences.filter((slot) => slot.meeting === null),
+        appointment.occurrences.filter(
+          (slot) => slot.meeting === null && !isProtectedSessionlessSlot(slot),
+        ),
       );
 
       await Promise.all(
         existingAppointments.map(async (appointment) => {
-          // #1169 PR 1 — a slot whose Meeting already happened is
-          // history, not availability: deleting it cascades Meeting →
-          // Recording. Preserve the appointment and every held-session slot;
-          // only sessionless slots are freed.
+          // #1169 PR 1 & #1692 Item 6 — a slot whose Meeting already happened
+          // or that is already COMPLETED / in the past is history, not
+          // availability: deleting it cascades Meeting → Recording or destroys
+          // completed occurrence history. Preserve the appointment and every
+          // held/completed/past slot; only replaceable future sessionless slots
+          // are freed.
           const hasHeldSession = appointment.occurrences.some(
             (slot) => slot.meeting !== null,
           );
-          if ((appointment._count?.payment ?? 0) > 0 || hasHeldSession) {
+          const hasProtectedSessionless = appointment.occurrences.some(
+            isProtectedSessionlessSlot,
+          );
+          const occurrenceDeleteWhere: Prisma.AppointmentOccurrenceWhereInput =
+            hasProtectedSessionless
+              ? {
+                  appointmentId: appointment.id,
+                  meeting: { is: null },
+                  endsAt: { gt: now },
+                  completionStatus: { not: "COMPLETED" },
+                }
+              : {
+                  appointmentId: appointment.id,
+                  meeting: { is: null },
+                };
+          if (
+            (appointment._count?.payment ?? 0) > 0 ||
+            hasHeldSession ||
+            hasProtectedSessionless
+          ) {
             // Keep the Appointment (and its Payment + ConsultantEarnings audit
             // trail); strip its slots. No-op for the slot-less subscription
             // placeholder, but frees slots for any other payment-bearing case.
@@ -4850,10 +5440,7 @@ export class SchedulingService {
               reusableAppointmentId = appointment.id;
             }
             return tx.appointmentOccurrence.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                meeting: { is: null },
-              },
+              where: occurrenceDeleteWhere,
             });
           }
           // B-P1-05 (#1189 audit) — atomic payment guard, same as the
@@ -4870,10 +5457,7 @@ export class SchedulingService {
               reusableAppointmentId = appointment.id;
             }
             return tx.appointmentOccurrence.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                meeting: { is: null },
-              },
+              where: occurrenceDeleteWhere,
             });
           }
           return deletedAppointment;

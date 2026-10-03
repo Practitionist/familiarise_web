@@ -705,7 +705,7 @@ For local development, tour rehearsals, and any agent reasoning about
 "what the dashboard should look like for a real org", refer to the
 deterministic cohort below. Slugs and emails are stable handles —
 prefer them over raw IDs in tests, prompts, and docs (IDs change
-across `prisma migrate reset`). Source: `prisma/seedFiles/15a-create-organizations.ts`.
+across `prisma migrate reset`). Source: `prisma/seedFiles/14a-create-organizations.ts`.
 
 | Slug | Capability | Funding | Program | Notes |
 |---|---|---|---|---|

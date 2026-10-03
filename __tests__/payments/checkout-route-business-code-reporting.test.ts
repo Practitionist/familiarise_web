@@ -53,6 +53,15 @@ const captureException = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => captureException(...args),
   captureMessage: jest.fn(),
+  // #1846 — the route now runs the checkout core inside a span and tags the
+  // scope with the gateway order id on the way out. A boundary mock that stops
+  // at captureException is not a smaller mock, it is a different module: the
+  // missing `startSpan` throws inside the handler, the catch answers 500, and
+  // every case below then asserts against an exception instead of the refusal
+  // it set up. Pass no span, as the sibling checkout suites do — the route reads
+  // it defensively (`span?.setAttribute`).
+  startSpan: (_opts: unknown, fn: () => unknown) => fn(),
+  getCurrentScope: () => ({ setTag: jest.fn() }),
 }));
 
 jest.mock("../../lib/prisma", () => ({

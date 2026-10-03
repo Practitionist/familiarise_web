@@ -66,7 +66,7 @@ import { getAppUrl } from "@/lib/url";
 // each cohort has its own cutoff, so they are not merged into one sweep.
 //
 // Belt-and-braces on top of the requestedAt refresh in the reschedule route:
-// a booking with a LIVE reschedule proposal (PENDING_REVIEW / COUNTERED) is
+// a booking with a LIVE reschedule proposal (RESCHEDULE_OPEN_STATUSES) is
 // excluded from the PENDING cohorts entirely. The proposal system budgets its
 // own lifetime (72h); the expiry sweep must never race it — an unanswered
 // reschedule used to be auto-EXPIRED and fully refunded within the hour while
@@ -93,6 +93,36 @@ const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 const MAX_REQUESTS_PER_RUN = 500;
 // Slot rows released per run by the stale-RESCHEDULED pass; the next run continues.
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
+
+/**
+ * #1583 P1 — the per-run bite, overridable per invocation.
+ *
+ * The constants above bound a GitHub Actions run. They do NOT bound the Netlify
+ * ticker, which drives the same core from a 20 s abort: this sweep has seven
+ * cohort arms, so "500 per arm" is 3,500 rows and up to seven sequential
+ * transaction streams against a budget that also has to cover a gateway refund
+ * per expired payment. At production volume that is a 10–20 minute job inside
+ * a 20-second window, i.e. the ticker aborted it on every tick and no cohort
+ * ever finished.
+ *
+ * Every arm here is oldest-first with a per-run cap and NO persisted cursor,
+ * and every arm's write removes the row from its cohort (EXPIRED, CANCELLED, or
+ * a soft-cancel tombstone), so a smaller cap is a BUDGET and not a drop: the
+ * next run collects the next-oldest rows and the backlog drains. That property
+ * is the whole reason a cap is safe here and would not be on a job that read a
+ * window and then had to remember where it stopped.
+ */
+export interface StaleRequestRunLimits {
+  /** Rows one cohort arm may read and transition this run. */
+  maxRequests: number;
+  /** Slot rows the stale-RESCHEDULED pass may release this run. */
+  maxSlotReleases: number;
+}
+
+const DEFAULT_RUN_LIMITS: StaleRequestRunLimits = {
+  maxRequests: MAX_REQUESTS_PER_RUN,
+  maxSlotReleases: MAX_SLOT_RELEASES_PER_RUN,
+};
 
 /**
  * #1775 C-3 — a paid plan's consultant has 48 h from the capture to allocate
@@ -125,6 +155,33 @@ const NO_LIVE_SESSION = {
   NOT: {
     appointment: {
       occurrences: { some: { isTentative: false, deletedAt: null } },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
+// P0-3 — no released occurrence still waiting for its replacement. A reschedule
+// releases a slot IN PLACE (isTentative: true + RESCHEDULED), and a DECLINE
+// restores it — the counterparty said no to the new time, not to the booking, so
+// the original time is put back. What leaves a slot released after a decline is
+// the case where the original time was taken while the proposal was open: the
+// restore cannot land, the parent is parked, and a human must place the
+// sessions. A whole-booking reschedule also leaves the parent PENDING, which is
+// exactly the shape the 48 h arm below selects — so a paid plan parked by a
+// decline (or by a restore that could not finish, because the original time was
+// taken while the proposal was open) was EXPIRED and refunded in full with
+// nobody having cancelled it. Stated on the LIVE SLOT rather than on the parent
+// status, because the status is the reschedule work's decision to make and the
+// slot says the same thing under any of them: a RESCHEDULED occurrence is a
+// session that has not been re-placed, so a human owns this booking.
+const NO_UNPLACED_SLOT = {
+  NOT: {
+    appointment: {
+      occurrences: {
+        some: {
+          completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
+          deletedAt: null,
+        },
+      },
     },
   },
 } satisfies Prisma.SubscriptionWhereInput;
@@ -176,6 +233,40 @@ export interface ExpireStaleRequestsResult {
 }
 
 /**
+ * The three arms that refund an expired engagement, by name. The name IS half
+ * the dedupe key, and the wrapper it used to carry cannot be that half: two of
+ * the three arms are subscription arms, so a key built from the wrapper would
+ * let one arm's refund read back as another arm's already-done work — the
+ * second arm would report "issued" while moving no money. The wrapper is
+ * derived from the arm rather than passed beside it, so no caller can pair an
+ * arm with the wrong relation.
+ */
+type ExpiredRefundArm =
+  | "pending-consultation"
+  | "pending-subscription"
+  | "approved-unallocated";
+
+const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
+  "pending-consultation": "consultation",
+  "pending-subscription": "subscription",
+  "approved-unallocated": "subscription",
+};
+
+/**
+ * P0-4 — the one refund this arm owes this payment, and the unique index on
+ * `Refund.dedupeKey` is what enforces "one". Unkeyed, the only guard left was
+ * refundPayment's re-derivation of the refundable balance inside its own
+ * Serializable transaction: a read-then-write, which two concurrent unkeyed
+ * runs (exactly what an expired `cron:lock:` grant allows) both pass, because
+ * `Refund` has no unique constraint on paymentId. with-cron-lock states that
+ * the CAS guards, not the lock, are the correctness backstop; an unkeyed
+ * refund was the one place that claim was false. Nothing here varies per run,
+ * so a re-run produces the identical string and the index actually dedupes.
+ */
+const expiredRefundKey = (arm: ExpiredRefundArm, paymentId: string) =>
+  `${arm}:${paymentId}`;
+
+/**
  * Refund every SUCCEEDED payment attached to the given expired engagement's
  * appointments. Booking-journey audit gap #1: the sweep used to flip PAID
  * rows to EXPIRED with no money movement and no trace — buyer paid, got
@@ -184,11 +275,12 @@ export interface ExpireStaleRequestsResult {
  * must drain the cohort even when one gateway call fails).
  */
 async function refundPaymentsForExpired(
-  kind: "consultation" | "subscription",
+  arm: ExpiredRefundArm,
   expiredIds: string[],
 ): Promise<{ issued: number; failures: number; failureMsgs: string[] }> {
   if (expiredIds.length === 0)
     return { issued: 0, failures: 0, failureMsgs: [] };
+  const kind = ARM_WRAPPER[arm];
   const rel = kind === "consultation" ? "consultationId" : "subscriptionId";
   const appointments = await prisma.appointment.findMany({
     where: { [rel]: { in: expiredIds } },
@@ -209,6 +301,7 @@ async function refundPaymentsForExpired(
           paymentId: pay.id,
           reason: `${kind} expired unallocated/unanswered — automatic full refund`,
           initiatedByUserId: null,
+          dedupeKey: expiredRefundKey(arm, pay.id),
         });
         issued += 1;
       } catch (err) {
@@ -230,7 +323,9 @@ async function refundPaymentsForExpired(
  * before B1 a slot pinned by a stale request waited for the status flip and
  * then another sweeper cycle — 30+ days in the worst case.
  */
-async function expirePendingConsultations(): Promise<{
+async function expirePendingConsultations(
+  limits: StaleRequestRunLimits,
+): Promise<{
   expired: number;
   slotsReleased: number;
   issued: number;
@@ -280,9 +375,9 @@ async function expirePendingConsultations(): Promise<{
         },
       },
       orderBy: { requestedAt: "asc" },
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
     });
-    warnIfCapped("consultation", staleConsultations.length);
+    warnIfCapped("consultation", staleConsultations.length, limits);
 
     console.log(
       `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
@@ -357,7 +452,10 @@ async function expirePendingConsultations(): Promise<{
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    const refunds = await refundPaymentsForExpired("consultation", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "pending-consultation",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
@@ -372,7 +470,9 @@ async function expirePendingConsultations(): Promise<{
 /**
  * Expire stale PENDING subscriptions
  */
-async function expirePendingSubscriptions(): Promise<{
+async function expirePendingSubscriptions(
+  limits: StaleRequestRunLimits,
+): Promise<{
   expired: number;
   issued: number;
   failures: number;
@@ -409,9 +509,9 @@ async function expirePendingSubscriptions(): Promise<{
       // single bulk statement, so it takes the same per-run cap and
       // oldest-first drain as every other cohort in this file.
       orderBy: { requestedAt: "asc" },
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
     });
-    warnIfCapped("subscription", staleSubscriptions.length);
+    warnIfCapped("subscription", staleSubscriptions.length, limits);
 
     console.log(
       `Found ${staleSubscriptions.length} subscriptions in PENDING for >${PENDING_EXPIRATION_DAYS} days`,
@@ -471,7 +571,10 @@ async function expirePendingSubscriptions(): Promise<{
         (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "pending-subscription",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -510,7 +613,9 @@ async function expirePendingSubscriptions(): Promise<{
  */
 const STALE_RESCHEDULED_HOURS = PENDING_EXPIRATION_DAYS * 24;
 
-async function releaseStaleRescheduledSlots(): Promise<{
+async function releaseStaleRescheduledSlots(
+  limits: StaleRequestRunLimits,
+): Promise<{
   released: number;
   errors: string[];
 }> {
@@ -536,7 +641,7 @@ async function releaseStaleRescheduledSlots(): Promise<{
       },
       select: { id: true },
       orderBy: { updatedAt: "asc" },
-      take: MAX_SLOT_RELEASES_PER_RUN,
+      take: limits.maxSlotReleases,
     });
     const released = await transitionSlotsInChunks(
       stale.map((s) => s.id),
@@ -620,7 +725,9 @@ function expiryNoticeFor(
   };
 }
 
-async function expireApprovedUnallocatedSubscriptions(): Promise<{
+async function expireApprovedUnallocatedSubscriptions(
+  limits: StaleRequestRunLimits,
+): Promise<{
   expired: number;
   issued: number;
   failures: number;
@@ -645,9 +752,9 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
       // Same per-run cap and oldest-first drain as the cohorts above, now that
       // this arm expires one subscription per transaction (#1423).
       orderBy: { updatedAt: "asc" },
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
     });
-    warnIfCapped("subscription", stale.length);
+    warnIfCapped("subscription", stale.length, limits);
 
     if (stale.length === 0)
       return { expired: 0, issued: 0, failures: 0, errors };
@@ -702,7 +809,10 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
         (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "approved-unallocated",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -752,7 +862,9 @@ async function stageUnallocatedRefundBell(
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
 
 /** Plans expired UNALLOCATED_48H in the last 14 days (the retry cohort). */
-async function recentlyUnallocatedSubscriptionIds(): Promise<string[]> {
+async function recentlyUnallocatedSubscriptionIds(
+  limits: StaleRequestRunLimits,
+): Promise<string[]> {
   const rows = await prisma.bookingStatusHistory.findMany({
     where: {
       entity: "SUBSCRIPTION",
@@ -761,7 +873,7 @@ async function recentlyUnallocatedSubscriptionIds(): Promise<string[]> {
       createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
     },
     select: { entityId: true },
-    take: MAX_REQUESTS_PER_RUN,
+    take: limits.maxRequests,
   });
   return rows?.map((r) => r.entityId) ?? [];
 }
@@ -817,7 +929,15 @@ async function refundUnallocatedPlans(subscriptionIds: string[]) {
 function unallocatedCohort() {
   const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
   return {
-    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
+    // Narrowest guard last, and every one of them rides the CAS WHERE as well
+    // as this read: a booking whose slot was released between the two matches
+    // zero rows and is left for the reschedule machine.
+    AND: [
+      NO_LIVE_SESSION,
+      noLiveProposal(),
+      paidCapturedBefore(cutoff),
+      NO_UNPLACED_SLOT,
+    ],
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
@@ -918,7 +1038,9 @@ export async function expireUnallocatedPaidSubscriptionForOne(
  * matrix: allocation first → the cohort CAS matches 0 rows; sweep first → the
  * allocation's PENDING→APPROVED CAS rolls back (409 to the consultant).
  */
-async function expireUnallocatedPaidSubscriptions(): Promise<{
+async function expireUnallocatedPaidSubscriptions(
+  limits: StaleRequestRunLimits,
+): Promise<{
   expired: number;
   issued: number;
   failures: number;
@@ -931,9 +1053,9 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
       where: { status: AppointmentStatus.PENDING, ...cohort },
       select: UNALLOCATED_SELECT,
       orderBy: { requestedAt: "asc" },
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
     });
-    warnIfCapped("subscription", stale.length);
+    warnIfCapped("subscription", stale.length, limits);
 
     const expiredIds: string[] = [];
     for (const subscription of stale) {
@@ -944,7 +1066,7 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
 
     // Keyed per payment, and retried from the history for a refund that
     // failed after an earlier run's CAS (the row is EXPIRED by then).
-    const retry = await recentlyUnallocatedSubscriptionIds();
+    const retry = await recentlyUnallocatedSubscriptionIds(limits);
     const refunds = await refundUnallocatedPlans([
       ...new Set([...expiredIds, ...retry]),
     ]);
@@ -996,7 +1118,9 @@ export function subscriptionNudgeDedupeKey(
  * the email follows the bell and rides its own outbox. Nothing here writes
  * the subscription, so `updatedAt` stays the stable "since payment" clock.
  */
-async function nudgeUnscheduledSubscriptions(): Promise<{
+async function nudgeUnscheduledSubscriptions(
+  limits: StaleRequestRunLimits,
+): Promise<{
   nudged: number;
   errors: string[];
 }> {
@@ -1045,7 +1169,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
         },
       },
       orderBy: { requestedAt: "asc" },
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
     });
 
     const candidates = waiting.flatMap((sub) => {
@@ -1167,13 +1291,17 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
   }
 }
 
-function warnIfCapped(kind: "consultation" | "subscription", read: number) {
-  if (read < MAX_REQUESTS_PER_RUN) return;
+function warnIfCapped(
+  kind: "consultation" | "subscription",
+  read: number,
+  limits: StaleRequestRunLimits,
+) {
+  if (read < limits.maxRequests) return;
   console.warn(
     JSON.stringify({
       event: "expire_payment_pending_capped",
       kind,
-      cap: MAX_REQUESTS_PER_RUN,
+      cap: limits.maxRequests,
       note: "backlog exceeds one run; the next scheduled run continues",
       timestamp: new Date().toISOString(),
     }),
@@ -1191,7 +1319,9 @@ function warnIfCapped(kind: "consultation" | "subscription", read: number) {
  * to show for it. Each request now moves through its guarded helper in its
  * own transaction; a raced capture matches zero rows and is skipped.
  */
-async function expirePaymentPendingRequests(): Promise<{
+async function expirePaymentPendingRequests(
+  limits: StaleRequestRunLimits,
+): Promise<{
   consultationsExpired: number;
   subscriptionsExpired: number;
   errors: string[];
@@ -1223,7 +1353,7 @@ async function expirePaymentPendingRequests(): Promise<{
 
   try {
     const staleConsultations = await prisma.consultation.findMany({
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -1235,7 +1365,7 @@ async function expirePaymentPendingRequests(): Promise<{
         consultationPlan: EXPIRY_NOTICE_PLAN_SELECT,
       },
     });
-    warnIfCapped("consultation", staleConsultations.length);
+    warnIfCapped("consultation", staleConsultations.length, limits);
 
     let consultationsExpired = 0;
     let consultationsSkipped = 0;
@@ -1278,7 +1408,7 @@ async function expirePaymentPendingRequests(): Promise<{
     );
 
     const staleSubscriptions = await prisma.subscription.findMany({
-      take: MAX_REQUESTS_PER_RUN,
+      take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -1290,7 +1420,7 @@ async function expirePaymentPendingRequests(): Promise<{
         subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
       },
     });
-    warnIfCapped("subscription", staleSubscriptions.length);
+    warnIfCapped("subscription", staleSubscriptions.length, limits);
 
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
@@ -1349,16 +1479,28 @@ async function expirePaymentPendingRequests(): Promise<{
 // mutual exclusion. #1341 — fail-closed: this sweep refunds SUCCEEDED
 // payments through the refund front door, so an unlocked double-run risks a
 // double refund; a missed run pages instead.
-export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> {
+export async function expireStaleRequests(opts?: {
+  limits?: Partial<StaleRequestRunLimits>;
+}): Promise<ExpireStaleRequestsResult> {
+  const limits: StaleRequestRunLimits = {
+    maxRequests: opts?.limits?.maxRequests ?? DEFAULT_RUN_LIMITS.maxRequests,
+    maxSlotReleases:
+      opts?.limits?.maxSlotReleases ?? DEFAULT_RUN_LIMITS.maxSlotReleases,
+  };
   return withCronLock("expire-stale-requests", { failMode: "closed" }, () =>
-    expireStaleRequestsUnlocked(),
+    expireStaleRequestsUnlocked(limits),
   );
 }
 
-async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult> {
+async function expireStaleRequestsUnlocked(
+  limits: StaleRequestRunLimits,
+): Promise<ExpireStaleRequestsResult> {
   const allErrors: string[] = [];
 
   console.log("🕐 Starting stale request expiration...");
+  console.log(
+    `   Per-arm cap: ${limits.maxRequests} request(s), ${limits.maxSlotReleases} slot release(s)`,
+  );
   console.log(
     `   Consultation PENDING expiration threshold: ${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
     `   Subscription PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
@@ -1368,23 +1510,24 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   );
 
   // Expire PENDING consultations
-  const consultationResult = await expirePendingConsultations();
+  const consultationResult = await expirePendingConsultations(limits);
   allErrors.push(...consultationResult.errors);
 
   // Expire PENDING subscriptions
-  const subscriptionResult = await expirePendingSubscriptions();
+  const subscriptionResult = await expirePendingSubscriptions(limits);
   allErrors.push(...subscriptionResult.errors);
 
   // Expire APPROVED-unallocated paid subscriptions (PR 2c money fix)
-  const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
+  const approvedUnallocated =
+    await expireApprovedUnallocatedSubscriptions(limits);
   allErrors.push(...approvedUnallocated.errors);
 
   // #1775 C-3 — paid plans the consultant never allocated within 48 h.
-  const paidUnallocated = await expireUnallocatedPaidSubscriptions();
+  const paidUnallocated = await expireUnallocatedPaidSubscriptions(limits);
   allErrors.push(...paidUnallocated.errors);
 
   // #1703 — nudge the consultant before that 30-day refund ever fires.
-  const nudges = await nudgeUnscheduledSubscriptions();
+  const nudges = await nudgeUnscheduledSubscriptions(limits);
   allErrors.push(...nudges.errors);
 
   // Release stale tentative-RESCHEDULED slots on APPROVED subscriptions
@@ -1394,11 +1537,11 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // forever (no sweep cohort covered them). This pass deletes tentative-
   // RESCHEDULED slots past the threshold so the calendar frees up. The
   // parent stays APPROVED (it has confirmed sessions); only the ghosts go.
-  const staleRescheduledReleased = await releaseStaleRescheduledSlots();
+  const staleRescheduledReleased = await releaseStaleRescheduledSlots(limits);
   allErrors.push(...staleRescheduledReleased.errors);
 
   // Expire APPROVED_PENDING_PAYMENT requests
-  const paymentPendingResult = await expirePaymentPendingRequests();
+  const paymentPendingResult = await expirePaymentPendingRequests(limits);
   allErrors.push(...paymentPendingResult.errors);
 
   // #1778 — backup interest in a window that has passed can never be booked.

@@ -19,11 +19,10 @@ import {
   type AllocationOptions,
 } from "@/lib/scheduling/allocationAlgorithms";
 import { AllocationService } from "@/lib/scheduling/allocationService";
-// eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import {
   makeTimeSlot,
   makeConsecutiveTimeSlots,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 
 // Use jest.spyOn instead of jest.mock to avoid bracket-path resolution issue
 let mockAllocateSlots: jest.SpyInstance;

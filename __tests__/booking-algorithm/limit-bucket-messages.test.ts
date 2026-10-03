@@ -5,16 +5,12 @@
  * its span onto the viewer's clock; these tests pin the bounds (including
  * across a DST transition, where start+24h is the wrong answer) and the
  * silence when both zones agree.
- *
- * #1132 — and the 409 relabel: a slot conflict must render as itself instead
- * of "this request was already allocated".
  */
 
 import "./setup";
 
 import {
   dailyLimitReached,
-  isPreservedAllocationMessage,
   limitBucketNote,
   oneSessionPerDay,
   schedulingDayBucket,
@@ -139,32 +135,6 @@ describe("cap messages carry the bucket", () => {
     );
     expect(dailyLimitReached(1).description).toBe(
       "You can only schedule 1 session per day. Choose a different day.",
-    );
-  });
-});
-
-describe("isPreservedAllocationMessage", () => {
-  it("recognises the server's slot-conflict wording verbatim", () => {
-    // SchedulingService wraps ScheduleValidationService's error, so the whole
-    // string is what reaches the dialog.
-    expect(
-      isPreservedAllocationMessage(
-        "Slot taken during allocation: [CONFLICT] Slot already booked: 2026-08-05 09:00",
-      ),
-    ).toBe(true);
-    expect(
-      isPreservedAllocationMessage("[CONFLICT] Slot already booked: 10:00"),
-    ).toBe(true);
-  });
-
-  it("leaves a genuine already-allocated 409 to be relabelled", () => {
-    expect(
-      isPreservedAllocationMessage(
-        "This subscription has already been allocated",
-      ),
-    ).toBe(false);
-    expect(isPreservedAllocationMessage("Allocation already in progress")).toBe(
-      false,
     );
   });
 });

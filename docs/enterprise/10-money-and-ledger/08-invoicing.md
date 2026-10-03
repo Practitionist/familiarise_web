@@ -158,7 +158,7 @@ Which tax columns are populated depends entirely on the buyer's `placeOfSupply` 
 | Export (zero-rated) | all tax = 0; `lutNumber` set |
 | Reverse charge | `reverseCharge = true`; buyer self-accounts |
 
-`placeOfSupply` is the buyer's 2-char GST state code (e.g. `"27"` Maharashtra). `deriveGstBreakdown` (`lib/compliance/gst.ts`) populates the columns. Authoritative rules: [`../compliance/02-gst-overview.md`](../../compliance/02-gst-overview.md). The booking's `GST_PAYABLE` credit ([ledger & postings §4.2](03-ledger-and-postings.md)) is the platform-side liability; the invoice records the customer-facing breakdown.
+`placeOfSupply` is the buyer's 2-char GST state code (e.g. `"27"` Maharashtra). `deriveGstBreakdown` (`lib/compliance/gst.ts`) populates the columns. Authoritative rules: [`../compliance/03-gst-overview.md`](../../compliance/03-gst-overview.md). The booking's `GST_PAYABLE` credit ([ledger & postings §4.2](03-ledger-and-postings.md)) is the platform-side liability; the invoice records the customer-facing breakdown.
 
 `hsnCode` default `999293` (commercial training & coaching); line items may override per-row.
 
@@ -269,7 +269,7 @@ The status-level invoice transition is the coarse view (`PAID → REFUNDED` for 
 
 ## 8b. Consumer invoices (B2C) — #1365
 
-Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/07-b2c-tax-invoice.md).
+Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/06-b2c-tax-invoice.md).
 
 The two families are deliberately separate models rather than one model with nullable columns. `OrganizationInvoice` requires an organization, a billing account and a due date, and those columns are load-bearing for dunning and for the IRP e-invoice payload; a consumer invoice has none of them, is paid before it is issued, and runs on one platform-wide gapless series instead of one series per organization. Collapsing them would make every one of those columns optional and would quietly weaken the B2B guarantees this page describes.
 
@@ -313,5 +313,5 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 - [Booking → earnings §6](05-booking-to-earnings.md) — the overage flow that feeds §9, and the refund-failed notify (§6.5).
 - [Ledger & postings](03-ledger-and-postings.md) — the `INVOICE_PAID` / `REFUND` transactions.
 - [Ledger integrity](13-ledger-integrity.md) — `INVOICE_TOTAL_MISMATCH`, `OVERAGE_CHARGESTATUS_INTEGRITY`.
-- [Compliance map](../40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) → [`../compliance/02-gst-overview.md`](../../compliance/02-gst-overview.md) (GST/IRN) · [`../compliance/05-refund-and-chargeback-tax-adjustments.md`](../../compliance/05-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
+- [Compliance map](../40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) → [`../compliance/03-gst-overview.md`](../../compliance/03-gst-overview.md) (GST/IRN) · [`../compliance/06-refund-and-chargeback-tax-adjustments.md`](../../compliance/06-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
 - Ground truth: `lib/payments/billing/{invoice-rollup,invoice-numbering,credit-note-numbering}.ts`, `lib/payments/operations/refund.ts`, `lib/compliance/{irp,irp-payload}.ts`, `jobs/billing/{dunning,settle-invoice-accruals}.ts`, `jobs/compliance/irp-uploader.ts`.

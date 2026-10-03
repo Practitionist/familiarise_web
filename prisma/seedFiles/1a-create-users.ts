@@ -46,7 +46,8 @@ import {
  * written; the privileged half of the same story is `config.withStaff`.
  */
 const DEFAULT_SEED_PASSWORD = "SeedPass123!";
-const SEED_PASSWORD = process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
+const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
+const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -424,11 +425,6 @@ async function createConsultantProfileData() {
         ConsultantVerificationStatus.UNDER_REVIEW,
       ]);
 
-  // Total mentees helped
-  const totalMenteesHelped = Math.floor(
-    experience * faker.number.int({ min: 5, max: 20 }),
-  );
-
   return {
     experience,
     description: sanitizeString(faker.lorem.paragraph()),
@@ -465,7 +461,14 @@ async function createConsultantProfileData() {
     profileCompletionPercentage,
     isVerified,
     verificationStatus,
-    totalMenteesHelped,
+    // `totalMenteesHelped` is deliberately NOT set here. It used to be
+    // `experience * faker.number.int({min:5,max:20})`, which made every
+    // consultant's public "mentees helped" a random integer frozen at seed
+    // time. It is now DERIVED from delivered sessions by
+    // `recomputeMenteesHelped` (lib/profiles/mentees-helped.ts), which the
+    // hourly auto-complete pass calls and the seed calls once here, after the
+    // bookings exist. Leaving the column at its 0 default until then is honest;
+    // inventing a number is not.
     domainName: domain.name, // For passing to work experience generation
   };
 }
@@ -530,7 +533,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   // the database byte-for-byte as it found it. Two independent reasons, either
   // sufficient; see ./config for the full argument.
   assertSeedPasswordSafeForEnv(
-    process.env.SEED_PASSWORD,
+    RAW_SEED_PASSWORD,
     SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
   );
   assertStaffSeedAllowed(config.withStaff);

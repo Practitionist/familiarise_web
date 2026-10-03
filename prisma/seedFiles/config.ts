@@ -51,7 +51,14 @@ export interface VolumeConfig {
   // openForAppointmentId without colliding.
   rescheduleProposals: {
     openConsultation: number;
-    counteredSubscription: number;
+    /**
+     * Subscription-originated OPEN proposals. Was `counteredSubscription`, which
+     * seeded `RescheduleRequestStatus.COUNTERED` rows — a state no production
+     * path writes, so the seed was the only producer of a status the UI offered
+     * an Accept for. The cohort is kept (a subscription proposal is worth having
+     * in a dev database) and re-pointed at the only open status.
+     */
+    openSubscription: number;
     resolved: number;
   };
   // Phase 7: Engagement
@@ -116,7 +123,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 3, class: 2 },
     rescheduleProposals: {
       openConsultation: 4,
-      counteredSubscription: 2,
+      openSubscription: 2,
       resolved: 3,
     },
     waitlistSubscribers: 50,
@@ -170,7 +177,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 6, class: 4 },
     rescheduleProposals: {
       openConsultation: 12,
-      counteredSubscription: 5,
+      openSubscription: 5,
       resolved: 8,
     },
     waitlistSubscribers: 150,
@@ -224,7 +231,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 12, class: 8 },
     rescheduleProposals: {
       openConsultation: 30,
-      counteredSubscription: 12,
+      openSubscription: 12,
       resolved: 20,
     },
     waitlistSubscribers: 400,
@@ -370,17 +377,50 @@ export function getSeedWithStaff(): boolean {
  * backfill reference data (TDS rates, cancellation policies) that is not
  * derivable, and refusing that would just push them to ad-hoc SQL.
  */
+const LOCAL_DB_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "0.0.0.0",
+  "postgres",
+  "db",
+  "host.docker.internal",
+]);
+
+export function isNonLocalDatabaseUrl(
+  databaseUrl: string | undefined = process.env.DATABASE_URL,
+): boolean {
+  if (!databaseUrl?.trim()) return false;
+  try {
+    const parsed = new URL(databaseUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (!hostname) return false;
+    if (LOCAL_DB_HOSTS.has(hostname) || hostname.endsWith(".local")) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function assertSeedPasswordSafeForEnv(
   seedPassword: string | undefined,
   isDefaultPassword: boolean,
+  databaseUrl: string | undefined = process.env.DATABASE_URL,
 ): void {
-  if (process.env.NODE_ENV !== "production") return;
-  if (isDefaultPassword) {
+  const isProdEnv = process.env.NODE_ENV === "production";
+  const isNonLocalDb = isNonLocalDatabaseUrl(databaseUrl);
+  if (!isProdEnv && !isNonLocalDb) return;
+
+  const trimmed = seedPassword?.trim();
+  if (!trimmed || isDefaultPassword) {
     throw new Error(
-      "Refusing to seed with the default SEED_PASSWORD while NODE_ENV=production — " +
+      "Refusing to seed with an empty or default SEED_PASSWORD when NODE_ENV=production or DATABASE_URL points to a non-local host — " +
         '"SeedPass123!" is committed to this repository, so every seeded account on a ' +
         "live database would be sign-in-able by anyone who has read it. Set an " +
-        "explicit SEED_PASSWORD, or unset NODE_ENV if you are seeding a local database.",
+        "explicit SEED_PASSWORD, or point DATABASE_URL to a local database.",
     );
   }
 }
@@ -447,7 +487,7 @@ export function printConfigSummary(): void {
   );
   const proposals = volumes.rescheduleProposals;
   console.log(
-    `  Reschedule proposals: ${proposals.openConsultation} open, ${proposals.counteredSubscription} countered, ${proposals.resolved} resolved`,
+    `  Reschedule proposals: ${proposals.openConsultation} consultation + ${proposals.openSubscription} subscription open, ${proposals.resolved} resolved`,
   );
   console.log(`  Payments: ${volumes.payments}`);
   console.log(`  Topics: ${volumes.topics}`);

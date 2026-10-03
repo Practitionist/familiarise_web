@@ -148,10 +148,18 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: jest.fn(),
 }));
+// #1846 — a capture can now be refused for a full room (the group-event
+// creators replay the checkout capacity gate), so the reading must be a real
+// one. A bare `jest.fn()` reads as "no reading", which the production gate must
+// NOT read as "room available"; answer with a room that has space instead.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getWebinarCapacity: jest.fn(() => ({
+    isFull: false,
+    registered: 1,
+    max: 10,
+  })),
+  getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";

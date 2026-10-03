@@ -1,38 +1,19 @@
-import { randomUUID } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   cleanupRoute,
   parseLimitParam,
+  parseLimitParamOrDefault,
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { goHref } from "@/lib/dashboard/go";
 import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
-import type { ReconcileRunSnapshot } from "@/scripts/reconcile/reconcile-ledgers";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
   POST: (req: NextRequest) => Promise<NextResponse>;
 };
-
-const ReconcileLedgersQuerySchema = z.object({
-  runId: z.string().uuid().optional(),
-  triggeredById: z.string().min(1).max(64).optional(),
-  abandon: z.string().min(1).max(500).optional(),
-  resume: z.enum(["1", "true"]).optional(),
-});
-
-type ReconcileLedgersTwinResult =
-  | ({ success: true } & ReconcileRunSnapshot)
-  | {
-      success: true;
-      status: "IDLE";
-      runId: null;
-      progress: null;
-      report: null;
-    };
 
 type ExpiringStreamOnly = {
   recordingId: string;
@@ -67,6 +48,25 @@ async function notifyConsultantsOfExpiringRecordings(
     }),
   );
 }
+
+// Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
+// overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
+/** Sessions per reminder window; each costs a claim, a bell and an email. */
+const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
+/** Parents per pass and slot outcomes per pass; one Stream report each. */
+const MAX_AUTO_COMPLETE_PER_PASS = 25;
+/** Candidates per run; each is checked against a Stream call report. */
+const MAX_NO_SHOW_CANDIDATES = 10;
+/** Rows per stale-request arm; the refund arm calls the gateway per row. */
+const MAX_STALE_REQUESTS_PER_ARM = 20;
+/** Slot rows the stale-RESCHEDULED arm may release; a pure row-lock pass. */
+const MAX_STALE_SLOT_RELEASES = 200;
+/** Unpaid trials per run; the unanswered arm refunds per payment. */
+const MAX_UNPAID_TRIALS = 25;
+/** Lapsed proposals per run; each takes the appointment lock and a restore. */
+const MAX_RESCHEDULE_PROPOSALS = 25;
+/** Tentative slots per run; a cheap soft cancel behind an expensive read. */
+const MAX_TENTATIVE_SLOTS = 200;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -188,16 +188,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "alert-orphaned-payments": () =>
       cleanupRoute({
         job: "alert-orphaned-payments",
-        run: async () => {
+        run: async (req) => {
           const { alertOrphanedPayments } = await import(
             "@/scripts/alerts/alert-orphaned-payments"
           );
-          return alertOrphanedPayments();
+          return alertOrphanedPayments({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
           totalOrphaned: r.totalOrphaned,
           criticalCount: r.criticalCount,
           totalAmount: r.totalAmount,
+          sideChargeCount: r.sideChargeCount,
         }),
         status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
         failureMessage: "Failed to check for orphaned payments",
@@ -207,11 +208,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "appointment-reminders": () =>
       cleanupRoute({
         job: "appointment-reminders",
-        run: async () => {
+        run: async (req) => {
           const { sendAppointmentReminders } = await import(
             "@/scripts/appointments/send-appointment-reminders"
           );
-          return sendAppointmentReminders();
+          return sendAppointmentReminders({
+            maxPerWindow: parseLimitParamOrDefault(
+              req,
+              MAX_REMINDER_SESSIONS_PER_WINDOW,
+            ),
+          });
         },
         summarize: (r) => ({
           reminders24h: r.reminders24h,
@@ -261,11 +267,18 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auto-complete-appointments": () =>
       cleanupRoute({
         job: "auto-complete-appointments",
-        run: async () => {
+        run: async (req) => {
           const { autoCompleteAppointments } = await import(
             "@/scripts/appointments/auto-complete-appointments"
           );
-          return autoCompleteAppointments();
+          const limit = parseLimitParamOrDefault(
+            req,
+            MAX_AUTO_COMPLETE_PER_PASS,
+          );
+          return autoCompleteAppointments({
+            maxParents: limit,
+            maxSlotOutcomes: limit,
+          });
         },
         summarize: (r) => ({
           webinarsCompleted: r.webinarsCompleted,
@@ -292,11 +305,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "detect-consultant-no-shows": () =>
       cleanupRoute({
         job: "detect-consultant-no-shows",
-        run: async () => {
+        run: async (req) => {
           const { detectConsultantNoShows } = await import(
             "@/scripts/appointments/detect-consultant-no-shows"
           );
-          return detectConsultantNoShows();
+          return detectConsultantNoShows({
+            maxCandidates: parseLimitParamOrDefault(
+              req,
+              MAX_NO_SHOW_CANDIDATES,
+            ),
+          });
         },
         summarize: (r) => ({
           detected: r.detected,
@@ -353,11 +371,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-stale-requests": () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async () => {
+        run: async (req) => {
           const { expireStaleRequests } = await import(
             "@/scripts/appointments/expire-stale-requests"
           );
-          return expireStaleRequests();
+          return expireStaleRequests({
+            limits: {
+              maxRequests: parseLimitParamOrDefault(
+                req,
+                MAX_STALE_REQUESTS_PER_ARM,
+              ),
+              maxSlotReleases: MAX_STALE_SLOT_RELEASES,
+            },
+          });
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
@@ -372,11 +398,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-unpaid-trials": () =>
       cleanupRoute({
         job: "expire-unpaid-trials",
-        run: async () => {
+        run: async (req) => {
           const { expireUnpaidTrials } = await import(
             "@/scripts/trials/expire-unpaid-trials"
           );
-          return expireUnpaidTrials();
+          return expireUnpaidTrials({
+            maxTrials: parseLimitParamOrDefault(req, MAX_UNPAID_TRIALS),
+          });
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
@@ -577,65 +605,32 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req): Promise<ReconcileLedgersTwinResult> => {
-          const {
-            advanceReconcileRun,
-            findInFlightReconcileRun,
-            markReconcileRunFailed,
-          } = await import("@/scripts/reconcile/reconcile-ledgers");
-          const limit = parseLimitParam(req);
-          const q = ReconcileLedgersQuerySchema.parse({
-            runId: req.nextUrl.searchParams.get("runId") ?? undefined,
-            triggeredById:
-              req.nextUrl.searchParams.get("triggeredById") ?? undefined,
-            abandon: req.nextUrl.searchParams.get("abandon") ?? undefined,
-            resume: req.nextUrl.searchParams.get("resume") ?? undefined,
+        run: async (req) => {
+          const { runReconcileLedgers } = await import(
+            "@/scripts/reconcile/reconcile-ledgers"
+          );
+          const triggeredById =
+            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const report = await runReconcileLedgers({
+            scope: "full",
+            triggeredById,
           });
-          if (q.abandon && q.runId) {
-            await markReconcileRunFailed(q.runId, q.abandon);
-            return {
-              success: true,
-              runId: q.runId,
-              scope: "full",
-              status: "FAILED",
-              progress: null,
-              report: null,
-              error: q.abandon,
-            };
-          }
-          if (q.resume && !q.runId) {
-            const inFlight = await findInFlightReconcileRun();
-            if (!inFlight) {
-              return {
-                success: true,
-                status: "IDLE",
-                runId: null,
-                progress: null,
-                report: null,
-              };
-            }
-            const snap = await advanceReconcileRun({
-              runId: inFlight,
-              ...(limit === undefined ? {} : { limit }),
-            });
-            return { success: true, ...snap };
-          }
-          const snap = await advanceReconcileRun({
-            runId: q.runId ?? randomUUID(),
-            ...(limit === undefined ? {} : { limit }),
-            createIfMissing: { scope: "full", triggeredById: q.triggeredById },
-          });
-          return { success: true, ...snap };
+          return {
+            success: true,
+            runId: report.id,
+            scope: report.scope,
+            status: "OK" as const,
+            report,
+          };
         },
         summarize: (r) => ({
           runId: r.runId,
           status: r.status,
-          step: r.progress?.step ?? null,
-          calls: r.progress?.calls ?? r.report?.summary.calls ?? null,
-          ok: r.report?.ok ?? null,
+          ok: r.report.ok,
+          discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
         }),
-        status: (r) => statusFor(r, r.report !== null && !r.report.ok),
-        failureMessage: "Failed to advance ledger reconciliation",
+        status: (r) => statusFor(r, !r.report.ok),
+        failureMessage: "Failed to run ledger reconciliation",
       }),
 
     // @cleanup-twin reconcile-occurrence-availability
@@ -683,6 +678,33 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r, r.channelsFailed > 0),
         failureMessage: "Failed to reconcile orphaned confirmations",
+      }),
+
+    // @cleanup-twin reconcile-orphaned-payments
+    "reconcile-orphaned-payments": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-payments",
+        run: async (req) => {
+          const { reconcileOrphanedPayments } = await import(
+            "@/scripts/payments/reconcile-orphaned-confirmations"
+          );
+          const limit = parseLimitParam(req);
+          return reconcileOrphanedPayments(
+            limit === undefined ? {} : { limit },
+          );
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          linked: r.linked,
+          refunded: r.refunded,
+          escrowed: r.escrowed,
+          nonGatewaySkipped: r.nonGatewaySkipped,
+          topupSkipped: r.topupSkipped,
+          stillFailing: r.stillFailing,
+        }),
+        status: (r) =>
+          statusFor(r, r.escrowed > 0 || r.stillFailing > 0),
+        failureMessage: "Failed to reconcile orphaned payments",
       }),
 
     // @cleanup-twin reconcile-payment-status
@@ -794,11 +816,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reschedule-proposals": () =>
       cleanupRoute({
         job: "expire-reschedule-proposals",
-        run: async () => {
+        run: async (req) => {
           const { expireRescheduleProposals } = await import(
             "@/scripts/appointments/expire-reschedule-proposals"
           );
-          return expireRescheduleProposals();
+          return expireRescheduleProposals({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_RESCHEDULE_PROPOSALS),
+          });
         },
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
@@ -889,6 +913,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             canaryAlertNeeded,
             recordCanaryAlertSent,
           } = await import("@/lib/observability/ingest-alert");
+          const { checkSentryQuota } = await import(
+            "@/lib/observability/quota-alert"
+          );
           const probe = await probeSentryIngest();
           const healthy = isIngestHealthy(probe);
 
@@ -904,6 +931,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
                 })
               : false;
             if (alerted) await recordCanaryAlertSent(probe.verdict);
+            // After the ingest alert: the stats fetch and its email
+            // must not spend the function ceiling ahead of the page.
+            const quota = await checkSentryQuota();
             return {
               healthy,
               verdict: probe.verdict,
@@ -912,15 +942,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
               alerted,
               alertSuppressed: !needed,
               detail: describeIngest(probe),
+              quota,
             };
           }
 
+          // 70% quota warning rides the canary; never throws.
+          const quota = await checkSentryQuota();
           return {
             healthy: true,
             verdict: probe.verdict,
             status: probe.status,
             eventId: probe.eventId,
             alerted: false,
+            quota,
           };
         },
         status: (result) => (result.healthy ? 200 : 503),
@@ -1105,11 +1139,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "tentative-occurrences": () =>
       cleanupRoute({
         job: "cleanup-tentative-occurrences",
-        run: async () => {
+        run: async (req) => {
           const { cleanupTentativeOccurrences } = await import(
             "@/scripts/appointments/cleanup-tentative-occurrences"
           );
-          return cleanupTentativeOccurrences();
+          return cleanupTentativeOccurrences({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_TENTATIVE_SLOTS),
+          });
         },
         summarize: (r) => ({
           slotsReleased: r.slotsReleased,

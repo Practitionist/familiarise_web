@@ -46,15 +46,12 @@ npm run db:seed
 
 ### The `isMockPayment` Flag
 
-**File**: `actions/checkout.action.ts`
+**File**: `app/api/checkout/route.ts`
 
-The `checkoutAction` server action accepts an optional `isMockPayment` parameter (default: `false`). When `true`, the payment flow bypasses real gateway charges.
+`POST /api/checkout` accepts an optional `isMockPayment` field in the request body (default: `false`), and honours it only when `NODE_ENV === "development"` — a client cannot force a mock payment in production. When `true`, the payment flow bypasses real gateway charges.
 
 ```typescript
-export async function checkoutAction(
-  data: CheckoutInput,
-  isMockPayment: boolean = false,
-);
+export async function POST(req: NextRequest);
 ```
 
 ### How Mock Payment Flow Differs
@@ -136,7 +133,7 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 ### a. Create and Approve a Consultation
 
 1. **Seed or create** a consultant with availability and a consultation plan.
-2. **Checkout**: Call `checkoutAction` with `appointmentType: "CONSULTATION"`, a valid `planId`, and `startsAt`/`endsAt` within the consultant's availability. Set `isMockPayment: true` for local dev.
+2. **Checkout**: Call `POST /api/checkout` with `appointmentType: "CONSULTATION"`, a valid `planId`, and `startsAt`/`endsAt` within the consultant's availability. Set `isMockPayment: true` for local dev.
 3. **Verify**: The consultation should have `status: "PENDING"` and a tentative appointment.
 4. **Approve**: Use the consultant's dashboard Requests tab, or call `SchedulingService.allocate` directly with `mode: "requested"` to confirm the requested slots.
 5. **Result**: `status` transitions to `APPROVED`, `isTentative` is cleared on all slots.
@@ -336,7 +333,7 @@ ORDER BY soa."createdAt" DESC;
 
 ### Viewing Notification Logs
 
-The booking system sends notifications via Novu (`lib/novu.ts`). Functions like `notifyAppointmentCancelled` are called after cancellation. To verify:
+The booking system sends notifications via Novu (the `lib/novu/` module; the trigger helpers, `notifyAppointmentCancelled` among them, live in `lib/novu/service.ts`). To verify:
 
 - Check the **Novu dashboard** for delivery status of triggered notifications.
 - In tests, Novu is mocked: `jest.mock("../../lib/novu", ...)`. Check mock call arguments to verify notification payloads.

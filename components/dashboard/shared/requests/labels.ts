@@ -104,6 +104,37 @@ const CODE_SENTENCE: Record<string, string> = {
   VALIDATION_ERROR: "That request could not be read. Refresh and try again.",
   RATE_LIMITED: "Too many attempts — wait a moment, then retry.",
   ACCESS_DENIED: "You do not have access to this request.",
+  // #1863 — the codes the booking paths below the inbox emit with no entry
+  // here. Each arrived as a bracketed/raw server string, which is both ugly and
+  // a lie: the sentence beside the code is the actionable half and the code is
+  // the durable one. Registered rather than left to the regex fallback so a
+  // reworded server message cannot change what the consultant is told.
+  //
+  // The reschedule family: a second reschedule click, a proposal that closed
+  // while they were choosing, or the notice window. The last one is not a
+  // failure at all — it is a policy answer, and the server's own sentence names
+  // the hours, so pass it through rather than inventing a vaguer one.
+  RESCHEDULE_ALREADY_OPEN:
+    "A reschedule request is already open for this booking.",
+  PROPOSAL_COUNT_MISMATCH: TOAST.changedElsewhere,
+  PROPOSAL_WINDOW_CLOSED: TOAST.changedElsewhere,
+  // CN-1 / #1169 PR 1 — the booking locks fail CLOSED on a Redis outage. The
+  // request is untouched, so this is a wait-and-retry, same as LOCK_CONTENTION.
+  BOOKING_LOCK_UNAVAILABLE:
+    "The booking system is briefly busy — retry in a moment.",
+  // #1319 — the server spent its Serializable budget. Nothing was written.
+  SERIALIZATION_CONFLICT: "The booking system was busy — please try again.",
+  // B4 — the capacity pre-check. Terminal, so the sentence points elsewhere
+  // rather than at a retry.
+  EVENT_SOLD_OUT:
+    "This session is full — pick another time or join the waitlist.",
+  // DELIBERATELY ABSENT, because the server's own sentence is the better copy
+  // and the fallback below already reaches it (with any `[CODE]` stripped):
+  //   RESCHEDULE_WINDOW, SLOT_TOO_SOON, SLOT_NOT_ON_GRID
+  // The first names the hours until the meeting and the minimum notice; the
+  // second names how many minutes are left and the lead time. Restating either
+  // here would be a vaguer duplicate of a sentence the route already wrote for
+  // this person.
 };
 
 export function errorSentence(

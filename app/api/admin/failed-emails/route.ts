@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
 
 const ReplayBodySchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(200),
@@ -44,8 +45,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
+  // The dead-letter view shares the nav badge's predicate (pre-launch holds
+  // excluded); "All" still lists held rows.
+  const where = status?.success
+    ? status.data === "DEAD_LETTER"
+      ? DEAD_LETTER_EMAIL_WHERE
+      : { status: status.data }
+    : undefined;
   const rows = await prisma.failedEmail.findMany({
-    where: status?.success ? { status: status.data } : undefined,
+    where,
     orderBy: { createdAt: "desc" },
     take: limit,
     // Don't ship the rendered html/text bodies in the list view — they can be

@@ -30,7 +30,11 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  classSeriesLedgers,
+  refundWholeEventPayments,
+} from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -52,6 +56,22 @@ export interface BulkCancelSummary {
   refundsIssued: number;
   refundedPaise: number;
   failures: Array<{ kind: string; id: string; error: string }>;
+  /**
+   * Classes whose seats were refunded IN FULL because the per-seat pro-rata
+   * series ledger could not be read — as opposed to the seats that were netted
+   * to what the series did not deliver.
+   *
+   * Separate from `failures` on purpose. A `refundsIssued` / `refundedPaise`
+   * total cannot express which of the two produced it: a class of ten sessions
+   * with eight taught nets two, and the same class with an unreadable ledger
+   * returns ten, and the two numbers are the same shape. An operator reading
+   * only the totals cannot tell a correct pro-rata refund from a deliberate
+   * over-refund, which is the whole reason this list exists.
+   */
+  refundedInFullOnUnreadableLedger: Array<{
+    classId: string;
+    reason: string;
+  }>;
   /** Work items not reached inside the time budget — safe to re-run. */
   remaining: Array<{ kind: string; id: string }>;
 }
@@ -93,6 +113,7 @@ export async function cancelFutureEngagementsForUser(
     refundsIssued: 0,
     refundedPaise: 0,
     failures: [],
+    refundedInFullOnUnreadableLedger: [],
     remaining: [],
   };
 
@@ -621,12 +642,100 @@ async function casCancelGroupEvent(
   return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
 }
 
+/**
+ * #1780 D-5 — the class ledger for the refund, or `null` when it could not be
+ * read. `null` is the whole-balance answer every door used before #1780, so a
+ * transient read failure degrades to the old behaviour instead of losing the
+ * refunds.
+ *
+ * THE FULL REFUND IS A DELIBERATE CHOICE, NOT THE CORRECT ARITHMETIC. Netting a
+ * seat to `amount − unit × deliveredHeld` is the right answer; returning the
+ * whole balance because the read failed is the second-best one, and it costs the
+ * consultant the share for every session actually taught. It is taken anyway
+ * because the alternatives are worse: this runs once, inside a staff-triggered
+ * moderation action, so deferring the event loses the cancellation AND the
+ * refunds, and refunding nothing strands an innocent attendee's money on a
+ * booking a moderator has already ended. A ban that under-refunds is a support
+ * queue; a ban that over-refunds is a ledger line somebody reconciles.
+ *
+ * What is NOT permitted is doing that silently, which is what this function
+ * exists to prevent. Three signals, deliberately distinct from one another and
+ * from the per-seat refund failures:
+ *
+ *   1. `summary.refundedInFullOnUnreadableLedger` — the summary names the class
+ *      and says the netting was skipped, so `refundsIssued` / `refundedPaise`
+ *      cannot be read as a pro-rata result.
+ *   2. A `failures` row under its own `kind`, so it is never counted as one
+ *      failed seat among many.
+ *   3. A durable `SystemEvent`. A `summary.failures` row rides the response of
+ *      whoever pressed the button and a Sentry event evaporates; neither is
+ *      findable when the reconciliation question arrives a week later, which is
+ *      the only moment the question is asked.
+ *
+ * CORRECTION PATH: the admin whole-event refund door
+ * (app/api/admin/refunds/route.ts) reads the ledger again and refunds a class
+ * WITHOUT touching its status, so once the read works it nets the same seats to
+ * the same shortfall and the operator tops up through there. No compensating
+ * entry is written here — an automatic clawback would race a human reading the
+ * same class.
+ */
+async function readClassSeriesLedgers(
+  classId: string,
+  ctx: { summary: BulkCancelSummary },
+): Promise<ReturnType<typeof classSeriesLedgers> | null> {
+  try {
+    return await classSeriesLedgers(classId);
+  } catch (error) {
+    const reason = errMsg(error);
+    ctx.summary.refundedInFullOnUnreadableLedger.push({ classId, reason });
+    ctx.summary.failures.push({
+      kind: "refund-ledger-unreadable",
+      id: classId,
+      error: `class series ledger unreadable, refunding every seat in full: ${reason}`,
+    });
+    await recordSystemErrorSafe({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Moderation refunded a class in full because its series ledger was unreadable; a person must reconcile the pro-rata shortfall (class ${classId})`,
+      err: error,
+      context: {
+        classId,
+        reason,
+        // What the caller does with this `null`, stated on the durable row: the
+        // refund that follows is every seat at its FULL balance, not the
+        // pro-rata net. A reader reconciling the consultant's earnings needs to
+        // know which of the two they are looking at.
+        fallbackRefundBasis:
+          "full balance for every seat (pro-rata netting skipped)",
+      },
+    });
+    captureModerationError(error);
+    return null;
+  }
+}
+
 async function cancelGroupEvent(
   kind: "webinar-event" | "class-event",
   eventId: string,
   ctx: { initiatedByUserId: string; summary: BulkCancelSummary },
 ) {
   const isWebinar = kind === "webinar-event";
+
+  // #1780 D-5 — each class seat's ledger, read BEFORE `casCancelGroupEvent`
+  // releases the sessions: `seatLedger` counts only rows with `deletedAt: null`,
+  // so a read taken after the release sees an empty series and every seat looks
+  // as though it was owed a full refund. A webinar still refunds every seat in
+  // full, so there is no ledger to read for it.
+  //
+  // A failed read must not cost the ban its refunds, so it falls back to the
+  // whole-balance behaviour this door always had — an over-refund on a
+  // partly-delivered class, taken deliberately rather than computed, and never
+  // silently: `readClassSeriesLedgers` records it three ways and names the
+  // correction door. A webinar's `null` is not a failure and is not recorded as
+  // one, because this helper is only reached for a class.
+  const seriesLedgers = isWebinar
+    ? null
+    : await readClassSeriesLedgers(eventId, ctx);
 
   const moved = await casCancelGroupEvent(
     isWebinar,
@@ -641,11 +750,18 @@ async function cancelGroupEvent(
   // reversal engine (#776 §C): org-funded seats reverse in-ledger (CLASS_MULTI),
   // card/mock seats credit the gateway. The old per-payment refundPayment loop
   // failed org-funded seats (createRefund → UNKNOWN_GATEWAY on a synthetic id).
+  //
+  // These two totals are "money that moved", and for a class whose ledger read
+  // they are money that moved TOO MUCH. `refundedInFullOnUnreadableLedger` is
+  // what separates the two readings; the totals are deliberately not adjusted,
+  // because understating them would misreport the refunds that really were issued
+  // to the attendees who were owed them.
   const eventRefund = await refundWholeEventPayments(
     isWebinar ? "webinar" : "class",
     eventId,
     "moderation (100% — platform-initiated cancellation)",
     ctx.initiatedByUserId,
+    { ledgers: seriesLedgers ?? undefined },
   );
   ctx.summary.refundsIssued += eventRefund.refundsIssued;
   ctx.summary.refundedPaise += eventRefund.refundedPaise;

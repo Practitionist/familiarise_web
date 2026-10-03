@@ -47,7 +47,10 @@ export type Finding = {
     | "LEDGER_DUAL_WRITE_GAP"
     | "EARNINGS_WITHOUT_BOOKING_TXN"
     | "SPLIT_SUM_MISMATCH"
-    | "OVERAGE_SETTLEMENT_MISMATCH";
+    | "OVERAGE_SETTLEMENT_MISMATCH"
+    // An anti-invoice-fraud park older than 24h. Detect-only: age never
+    // releases a park.
+    | "PENDING_TRUST_PARK_STALE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -85,20 +88,6 @@ export type ReconcileReport = {
     calls?: number;
   };
   findings: Finding[];
-};
-
-export type ReconcileRunSnapshot = {
-  runId: string;
-  scope: string;
-  status: ReconcileRunStatus;
-  progress: {
-    step: number;
-    cursor: string | null;
-    calls: number;
-    startedAt: string;
-  } | null;
-  report: ReconcileReport | null;
-  error?: string;
 };
 
 /** A RUNNING row older than this is a stuck run and no longer blocks a new kick. */
@@ -147,7 +136,7 @@ export function clawbackDualWriteGapFindings(
   return out;
 }
 
-const DEFAULT_UNJOURNALED_GRACE_MS = 30 * 60 * 1000;
+const DEFAULT_UNJOURNALED_GRACE_MS = 60 * 1000;
 const configuredGraceMs = Number(process.env.RECONCILE_UNJOURNALED_GRACE_MS);
 export const RECONCILE_UNJOURNALED_GRACE_MS =
   Number.isFinite(configuredGraceMs) && configuredGraceMs >= 0
@@ -1026,13 +1015,151 @@ async function stepSplitSums(ctx: StepCtx): Promise<void> {
   }
 }
 
-// --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence ---
+type MemberOverageEventRow = {
+  id: string;
+  chargeStatus: string;
+  basePaise: number;
+  marginalPaise: number;
+  paymentId: string | null;
+  settledAt: Date | null;
+  payment: {
+    paymentStatus: string;
+    amount: number;
+    parentPaymentId: string | null;
+    organizationId: string | null;
+  } | null;
+  creditNote?: { subtotalPaise: number | bigint } | null;
+};
+
+function inspectOverageEventLedgerState(
+  ev: MemberOverageEventRow,
+  txnKeys: Set<string>,
+  recarveReversalAmounts: Map<string, number>,
+  creditNoteByOverageEventId: Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >,
+  findings: StepCtx["findings"],
+): void {
+  const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+  const flag = (
+    note: string,
+    expected = ev.marginalPaise,
+    actual = ev.payment?.amount ?? 0,
+  ) =>
+    findings.push({
+      kind: "OVERAGE_SETTLEMENT_MISMATCH",
+      paymentId: ev.paymentId ?? undefined,
+      organizationId: ev.payment?.organizationId ?? undefined,
+      expectedPaise: expected,
+      actualPaise: actual,
+      deltaPaise: actual - expected,
+      details: {
+        overageEventId: ev.id,
+        chargeStatus: ev.chargeStatus,
+        unit: "paise",
+        note,
+      },
+    });
+
+  if (ev.chargeStatus === "CHARGED") {
+    if (ev.payment?.paymentStatus !== "SUCCEEDED") {
+      flag("CHARGED member overage without a SUCCEEDED side-payment.");
+    } else if (!hasTxn) {
+      flag(
+        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+      );
+    } else if (ev.payment.amount !== ev.marginalPaise) {
+      flag("Side-payment amount diverges from the event's marginalPaise.");
+    } else if (!ev.settledAt) {
+      flag("CHARGED member overage missing settledAt.");
+    }
+  } else if (
+    (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+    hasTxn
+  ) {
+    flag(
+      "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+    );
+  }
+
+  if (
+    !ev.paymentId ||
+    !recarveReversalAmounts.has(`overage-recarve-invoice:${ev.paymentId}`)
+  ) {
+    return;
+  }
+
+  const reversalPaise = recarveReversalAmounts.get(
+    `overage-recarve-invoice:${ev.paymentId}`,
+  );
+  const creditNote =
+    ev.creditNote ?? creditNoteByOverageEventId.get(ev.id) ?? null;
+  if (reversalPaise === undefined || reversalPaise <= 0) {
+    flag(
+      "overage-recarve-invoice ledger reversal has non-positive DEBIT sum.",
+      ev.basePaise,
+      reversalPaise ?? 0,
+    );
+  } else if (!creditNote) {
+    flag(
+      "overage-recarve-invoice ledger reversal exists without a corresponding CreditNote on the OverageEvent.",
+      reversalPaise,
+      0,
+    );
+  } else if (Number(creditNote.subtotalPaise) !== reversalPaise) {
+    flag(
+      `CreditNote subtotalPaise (${Number(creditNote.subtotalPaise)}) does not match overage-recarve-invoice ledger reversal (${reversalPaise}).`,
+      reversalPaise,
+      Number(creditNote.subtotalPaise),
+    );
+  }
+}
+
+async function loadRecarveCreditNotes(
+  memberEvents: MemberOverageEventRow[],
+  recarveReversalAmounts: Map<string, number>,
+): Promise<Map<string, { id: string; subtotalPaise: number | bigint }>> {
+  const creditNoteByOverageEventId = new Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >();
+  if (
+    recarveReversalAmounts.size === 0 ||
+    typeof (prisma as unknown as { creditNote?: { findMany?: unknown } })
+      .creditNote?.findMany !== "function"
+  ) {
+    return creditNoteByOverageEventId;
+  }
+  const recarveEventIds = memberEvents
+    .filter(
+      (e) =>
+        !!e.paymentId &&
+        recarveReversalAmounts.has(`overage-recarve-invoice:${e.paymentId}`),
+    )
+    .map((e) => e.id);
+  if (recarveEventIds.length === 0) return creditNoteByOverageEventId;
+
+  const notes = await prisma.creditNote.findMany({
+    where: { overageEventId: { in: recarveEventIds } },
+    select: { id: true, overageEventId: true, subtotalPaise: true },
+  });
+  for (const cn of notes) {
+    if (cn.overageEventId) {
+      creditNoteByOverageEventId.set(cn.overageEventId, cn);
+    }
+  }
+  return creditNoteByOverageEventId;
+}
+
+// --- (Q) #775/#782/#1900 — CHARGE_MEMBER overage settlement coherence ---
 async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   const memberEvents = await prisma.overageEvent.findMany({
     where: { overageBehavior: "CHARGE_MEMBER" },
     select: {
       id: true,
       chargeStatus: true,
+      basePaise: true,
       marginalPaise: true,
       paymentId: true,
       settledAt: true,
@@ -1050,54 +1177,182 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
     .map((e) => e.paymentId)
     .filter((p): p is string => !!p);
   const txnKeys = new Set<string>();
+  const recarveReversalAmounts = new Map<string, number>();
   for (let i = 0; i < sideIds.length; i += CHUNK) {
+    const slice = sideIds.slice(i, i + CHUNK);
     const overageTxns = await prisma.ledgerTransaction.findMany({
       where: {
         idempotencyKey: {
-          in: sideIds.slice(i, i + CHUNK).map((id) => `overage:${id}`),
+          in: [
+            ...slice.map((id) => `overage:${id}`),
+            ...slice.map((id) => `overage-recarve-invoice:${id}`),
+          ],
         },
       },
-      select: { idempotencyKey: true },
-    });
-    for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
-  }
-  for (const ev of memberEvents) {
-    const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
-    const flag = (note: string) =>
-      ctx.findings.push({
-        kind: "OVERAGE_SETTLEMENT_MISMATCH",
-        paymentId: ev.paymentId ?? undefined,
-        organizationId: ev.payment?.organizationId ?? undefined,
-        expectedPaise: ev.marginalPaise,
-        actualPaise: ev.payment?.amount ?? 0,
-        deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
-        details: {
-          overageEventId: ev.id,
-          chargeStatus: ev.chargeStatus,
-          unit: "paise",
-          note,
+      select: {
+        idempotencyKey: true,
+        entries: {
+          where: { direction: "DEBIT" },
+          select: { amountPaise: true },
         },
-      });
-    if (ev.chargeStatus === "CHARGED") {
-      if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
-        flag("CHARGED member overage without a SUCCEEDED side-payment.");
-      } else if (!hasTxn) {
-        flag(
-          "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+      },
+    });
+    for (const t of overageTxns) {
+      if (t.idempotencyKey.startsWith("overage-recarve-invoice:")) {
+        const debitLines =
+          t.entries ??
+          (t as unknown as { postings?: Array<{ amountPaise: number | bigint }> })
+            .postings ??
+          [];
+        const debitSum = debitLines.reduce(
+          (s: number, p: { amountPaise: number | bigint }) =>
+            s + Number(p.amountPaise),
+          0,
         );
-      } else if (ev.payment.amount !== ev.marginalPaise) {
-        flag("Side-payment amount diverges from the event's marginalPaise.");
-      } else if (!ev.settledAt) {
-        flag("CHARGED member overage missing settledAt.");
+        recarveReversalAmounts.set(t.idempotencyKey, debitSum);
+      } else {
+        txnKeys.add(t.idempotencyKey);
       }
-    } else if (
-      (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
-      hasTxn
-    ) {
-      flag(
-        "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
-      );
     }
+  }
+  const creditNoteByOverageEventId = await loadRecarveCreditNotes(
+    memberEvents,
+    recarveReversalAmounts,
+  );
+  for (const ev of memberEvents) {
+    inspectOverageEventLedgerState(
+      ev,
+      txnKeys,
+      recarveReversalAmounts,
+      creditNoteByOverageEventId,
+      ctx.findings,
+    );
+  }
+}
+
+// --- PENDING_TRUST park watchdog ---
+// A park is released only when its sponsor is verified or pays an invoice, so
+// one that does neither withholds earnings forever. Report parks older than
+// 24h per sponsor (graded on the oldest row's createdAt, which is conservative
+// for a row re-parked from HELD). Detect-only: age must never release a park.
+export const PENDING_TRUST_PARK_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** One PENDING_TRUST row, normalised across the two earnings tables. */
+export type PendingTrustParkRow = {
+  earningId: string;
+  /** The org that owes the invoice (the park's key), not the host org. */
+  sponsorOrganizationId: string;
+  amountPaise: number;
+  createdAt: Date;
+};
+
+export type PendingTrustParkGroup = {
+  organizationId: string;
+  earningCount: number;
+  parkedPaise: number;
+  oldestCreatedAt: Date;
+  sampleEarningIds: string[];
+};
+
+/** Group parked rows by sponsor, largest withheld amount first. */
+export function groupPendingTrustParks(
+  rows: PendingTrustParkRow[],
+): PendingTrustParkGroup[] {
+  const byOrg = new Map<string, PendingTrustParkGroup>();
+  for (const row of rows) {
+    let g = byOrg.get(row.sponsorOrganizationId);
+    if (!g) {
+      g = {
+        organizationId: row.sponsorOrganizationId,
+        earningCount: 0,
+        parkedPaise: 0,
+        oldestCreatedAt: row.createdAt,
+        sampleEarningIds: [],
+      };
+      byOrg.set(row.sponsorOrganizationId, g);
+    }
+    g.earningCount += 1;
+    g.parkedPaise += row.amountPaise;
+    if (row.createdAt < g.oldestCreatedAt) g.oldestCreatedAt = row.createdAt;
+    if (g.sampleEarningIds.length < 10) g.sampleEarningIds.push(row.earningId);
+  }
+  return [...byOrg.values()].sort((a, b) => b.parkedPaise - a.parkedPaise);
+}
+
+async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
+  const cutoff = new Date(ctx.now.getTime() - PENDING_TRUST_PARK_STALE_MS);
+  const [consultantParks, orgParks] = await Promise.all([
+    prisma.consultantEarnings.findMany({
+      where: {
+        status: "PENDING_TRUST",
+        createdAt: { lte: cutoff },
+        ...(ctx.opts.organizationId
+          ? { payment: { organizationId: ctx.opts.organizationId } }
+          : {}),
+      },
+      select: {
+        id: true,
+        consultantSharePaise: true,
+        createdAt: true,
+        payment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.organizationEarnings.findMany({
+      where: {
+        status: "PENDING_TRUST",
+        createdAt: { lte: cutoff },
+        ...(ctx.opts.organizationId
+          ? { organizationId: ctx.opts.organizationId }
+          : {}),
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        orgSharePaise: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  const rows: PendingTrustParkRow[] = [];
+  for (const ce of consultantParks) {
+    // No sponsor org means the gate never parked it.
+    if (!ce.payment.organizationId) continue;
+    rows.push({
+      earningId: ce.id,
+      sponsorOrganizationId: ce.payment.organizationId,
+      amountPaise: sumPaise(ce.consultantSharePaise),
+      createdAt: ce.createdAt,
+    });
+  }
+  for (const oe of orgParks) {
+    rows.push({
+      earningId: oe.id,
+      sponsorOrganizationId: oe.organizationId,
+      amountPaise: sumPaise(oe.orgSharePaise),
+      createdAt: oe.createdAt,
+    });
+  }
+
+  for (const g of groupPendingTrustParks(rows)) {
+    ctx.findings.push({
+      kind: "PENDING_TRUST_PARK_STALE",
+      organizationId: g.organizationId,
+      expectedPaise: g.parkedPaise,
+      actualPaise: 0,
+      deltaPaise: g.parkedPaise,
+      details: {
+        unit: "paise",
+        scope: "pending-trust-park",
+        earningCount: g.earningCount,
+        oldestCreatedAt: g.oldestCreatedAt.toISOString(),
+        ageHours: Math.round(
+          (ctx.now.getTime() - g.oldestCreatedAt.getTime()) / 3_600_000,
+        ),
+        sampleEarningIds: g.sampleEarningIds,
+        note: "PENDING_TRUST earnings parked past 24h. Never auto-released on age. Unblock by verifying the sponsoring org (status=ACTIVE) or having it pay one invoice; otherwise it needs an operator decision.",
+      },
+    });
   }
 }
 
@@ -1115,66 +1370,6 @@ const EMPTY_COUNTS: ReconcileCounts = {
 export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
   const s = (row.summary ?? {}) as { status?: string };
   return s.status === "RUNNING";
-}
-
-/** The newest full-scope run still RUNNING and younger than the stale window, if any. */
-export async function findInFlightReconcileRun(): Promise<string | null> {
-  const recent = await prisma.ledgerReconciliationReport.findMany({
-    where: {
-      scope: "full",
-      runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
-    },
-    orderBy: { runAt: "desc" },
-    take: 5,
-    select: { id: true, summary: true },
-  });
-  return recent.find(isReconcileRunInProgress)?.id ?? null;
-}
-
-/** Open a run as `ok=false` + RUNNING. */
-export async function createReconcileRun(
-  opts: ReconcileScope,
-  id?: string,
-): Promise<string> {
-  const summary = {
-    ...EMPTY_COUNTS,
-    status: "RUNNING" as const,
-  };
-  const row = await prisma.ledgerReconciliationReport.create({
-    data: {
-      ...(id ? { id } : {}),
-      scope: opts.scope,
-      ok: false,
-      durationMs: 0,
-      summary: summary as unknown as Prisma.InputJsonValue,
-      findings: [],
-      triggeredById: opts.triggeredById ?? null,
-    },
-    select: { id: true },
-  });
-  return row.id;
-}
-
-/** Close a RUNNING run that can no longer be advanced. */
-export async function markReconcileRunFailed(
-  runId: string,
-  error: string,
-): Promise<void> {
-  const row = await prisma.ledgerReconciliationReport.findUnique({
-    where: { id: runId },
-    select: { summary: true },
-  });
-  if (!row || !isReconcileRunInProgress(row)) return;
-  const summary = {
-    ...EMPTY_COUNTS,
-    ...((row.summary as Record<string, unknown>) ?? {}),
-    status: "FAILED" as const,
-    error,
-  };
-  await prisma.ledgerReconciliationReport.update({
-    where: { id: runId },
-    data: { summary: summary as unknown as Prisma.InputJsonValue },
-  });
 }
 
 async function executeSteps(opts: ReconcileScope): Promise<{
@@ -1208,15 +1403,28 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   }
   await stepSplitSums(ctx);
   await stepOverageSettlement(ctx);
+  await stepPendingTrustParks(ctx);
 
   return { ctx, durationMs: Date.now() - startedAt };
 }
 
 async function runReconcileLedgersUnlocked(
   opts: ReconcileScope,
-  existingRunId?: string,
 ): Promise<ReconcileReport> {
-  const runId = existingRunId ?? (await createReconcileRun(opts));
+  const row = await prisma.ledgerReconciliationReport.create({
+    data: {
+      scope: opts.scope,
+      ok: false,
+      durationMs: 0,
+      summary: {
+        ...EMPTY_COUNTS,
+        status: "RUNNING" as const,
+      } as unknown as Prisma.InputJsonValue,
+      findings: [],
+      triggeredById: opts.triggeredById ?? null,
+    },
+    select: { id: true },
+  });
   const { ctx, durationMs } = await executeSteps(opts);
   const ok = ctx.findings.length === 0;
   const summary = {
@@ -1227,7 +1435,7 @@ async function runReconcileLedgersUnlocked(
   };
 
   const report = await prisma.ledgerReconciliationReport.update({
-    where: { id: runId },
+    where: { id: row.id },
     data: {
       ok,
       durationMs,
@@ -1245,45 +1453,6 @@ async function runReconcileLedgersUnlocked(
     summary,
     findings: ctx.findings,
   };
-}
-
-/** Single-pass wrapper preserving the HTTP cleanup route signature. */
-export async function advanceReconcileRun(args: {
-  runId: string;
-  limit?: number;
-  budgetMs?: number;
-  createIfMissing?: ReconcileScope;
-}): Promise<ReconcileRunSnapshot> {
-  return withCronLock(
-    "reconcile-ledgers",
-    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
-    async () => {
-      let row = await prisma.ledgerReconciliationReport.findUnique({
-        where: { id: args.runId },
-      });
-      if (!row && args.createIfMissing) {
-        await createReconcileRun(args.createIfMissing, args.runId);
-        row = await prisma.ledgerReconciliationReport.findUnique({
-          where: { id: args.runId },
-        });
-      }
-      if (!row) throw new Error(`reconcile run ${args.runId} not found`);
-      const opts: ReconcileScope = row.scope.startsWith("org:")
-        ? {
-            scope: row.scope,
-            organizationId: row.scope.slice("org:".length),
-          }
-        : { scope: row.scope };
-      const report = await runReconcileLedgersUnlocked(opts, row.id);
-      return {
-        runId: row.id,
-        scope: row.scope,
-        status: "COMPLETED",
-        progress: null,
-        report,
-      };
-    },
-  );
 }
 
 export async function runReconcileLedgers(

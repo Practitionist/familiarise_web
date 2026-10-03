@@ -52,6 +52,11 @@ import {
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -116,6 +121,15 @@ export default function SubscriptionCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
 
   const { toast } = useToast();
   const {
@@ -339,6 +353,7 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           schedulingPeriodStartsAt:
             effectiveSearchParams.schedulingPeriodStartsAt,
+          renewsSubscriptionId: effectiveSearchParams.renewsSubscriptionId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -571,6 +586,12 @@ export default function SubscriptionCheckoutPage({
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
+          {effectiveSearchParams?.renewsSubscriptionId && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+              Renewing your existing subscription — your new period will start
+              immediately after your current subscription ends
+            </div>
+          )}
           <div className="grid gap-2">
             {/* Start + first cycle (#1766): the buyer picked a start; the
                 consultant schedules one cycle at a time from it. */}
@@ -811,10 +832,6 @@ export default function SubscriptionCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -825,6 +842,10 @@ export default function SubscriptionCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -850,6 +871,16 @@ export default function SubscriptionCheckoutPage({
               <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
+              />
+              {/* #1863 — the notice ladder, at purchase. The 48 h promise above
+                  is about the expert not scheduling; this is about the buyer
+                  changing their mind, which is a different rule and was
+                  invisible until the cancel dialog. */}
+              <CancellationPolicyNote
+                eventKind="individual"
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
             </div>
           </CardContent>
@@ -892,6 +923,8 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
+                            renewsSubscriptionId:
+                              effectiveSearchParams.renewsSubscriptionId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId
@@ -913,6 +946,8 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "STRIPE",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
+                            renewsSubscriptionId:
+                              effectiveSearchParams.renewsSubscriptionId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId

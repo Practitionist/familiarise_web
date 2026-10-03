@@ -32,6 +32,7 @@ import {
   loginAs,
   ensureServerOrSkip,
 } from "../../utilities/api-client";
+import { buildRazorpayPaymentCapturedEnvelope } from "../../utilities/fixtures";
 
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 
@@ -73,6 +74,13 @@ async function createPendingPayment(
       isMockPayment: true, // skip the real gateway-cancel call post-commit
       userId,
       appointmentId,
+      legs: {
+        create: {
+          source: "CARD",
+          amountPaise: 10000,
+          sourceRef: paymentIntent,
+        },
+      },
     },
     select: { id: true },
   });
@@ -91,10 +99,32 @@ async function pollPaymentTerminal(paymentId: string): Promise<string> {
   return "PENDING";
 }
 
+async function pollWebhookProcessed(
+  eventId: string,
+  maxAttempts = 40,
+): Promise<{ settled: boolean; processed: boolean; error: string | null }> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const ev = await prisma.webhookEvent.findUnique({
+      where: { eventId },
+      select: { processed: true, error: true },
+    });
+    if (ev && (ev.processed || ev.error !== null)) {
+      return {
+        settled: true,
+        processed: ev.processed === true && ev.error === null,
+        error: ev.error,
+      };
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return { settled: false, processed: false, error: null };
+}
+
 async function run() {
   await ensureServerOrSkip();
 
-  // Fixture: a consultation appointment whose requester we can log in as.
+  // Fixture: a consultation appointment whose requester we can log in as,
+  // with no pre-existing payments so the (userId, appointmentId) unique is free.
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: {
@@ -103,6 +133,7 @@ async function run() {
         },
       },
       occurrences: { some: {} },
+      payment: { none: {} },
     },
     select: {
       id: true,
@@ -165,6 +196,7 @@ async function run() {
   // fixture (consultation status, slots, synthetic payments) — reruns were
   // flaky when an early throw skipped the tail cleanup.
   const createdPaymentIds: string[] = [];
+  const createdWebhookEventIds: string[] = [];
   try {
     // ---------------------------------------------------------------------
     // Leg 1: cancel vs capture webhook (only when the webhook secret is set —
@@ -176,31 +208,20 @@ async function run() {
       createdPaymentIds.push(leg1.paymentId);
       const slot = originalSlots[0];
       const gatewayPaymentId = `pay_chaos_cp_${process.pid}_${Date.now()}`;
-      const payload = JSON.stringify({
-        entity: "event",
-        account_id: "acc_chaos",
-        event: "payment.captured",
-        contains: ["payment"],
-        payload: {
-          payment: {
-            entity: {
-              id: gatewayPaymentId,
-              entity: "payment",
-              order_id: leg1.paymentIntent,
-              status: "captured",
-              amount: 10000,
-              currency: "INR",
-              notes: {
-                appointmentType: "CONSULTATION",
-                userId: requester.id,
-                planId: consultation.consultationPlanId,
-                startsAt: slot.startsAt.toISOString(),
-                endsAt: slot.endsAt.toISOString(),
-              },
-            },
-          },
+      const expectedEventId = `payment.captured:${gatewayPaymentId}`;
+      createdWebhookEventIds.push(expectedEventId);
+      const payload = buildRazorpayPaymentCapturedEnvelope({
+        paymentId: gatewayPaymentId,
+        orderId: leg1.paymentIntent,
+        amount: 10000,
+        currency: "INR",
+        notes: {
+          appointmentType: "CONSULTATION",
+          userId: requester.id,
+          planId: consultation.consultationPlanId,
+          startsAt: slot.startsAt.toISOString(),
+          endsAt: slot.endsAt.toISOString(),
         },
-        created_at: Math.floor(Date.now() / 1000),
       });
       const signature = crypto
         .createHmac("sha256", WEBHOOK_SECRET)
@@ -236,73 +257,87 @@ async function run() {
         cancelRes,
       );
 
-      const finalStatus = await pollPaymentTerminal(leg1.paymentId);
-      check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
-        finalStatus,
-      });
+      let leg1Result = await pollWebhookProcessed(expectedEventId);
+      if (!leg1Result.settled) {
+        // Bounded drain so an in-flight background webhook finishes before
+        // Leg 2 mutates or finally cleans up the shared fixture.
+        leg1Result = await pollWebhookProcessed(expectedEventId, 30);
+      }
+      check(
+        "Leg 1 webhook settled before cleanup",
+        leg1Result.processed,
+        { orderId: leg1.paymentIntent, error: leg1Result.error },
+      );
+      if (leg1Result.processed) {
+        const finalStatus = await pollPaymentTerminal(leg1.paymentId);
+        check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
+          finalStatus,
+        });
 
-      const tentativeLeft = await prisma.appointmentOccurrence.count({
-        where: {
-          appointmentId: appointment.id,
-          isTentative: true,
-          deletedAt: null,
-        },
-      });
-      const parent = await prisma.consultation.findUniqueOrThrow({
-        where: { id: consultation.id },
-        select: { status: true },
-      });
-      const cancelWon = cancelRes.status === 200;
+        const tentativeLeft = await prisma.appointmentOccurrence.count({
+          where: {
+            appointmentId: appointment.id,
+            isTentative: true,
+            deletedAt: null,
+          },
+        });
+        const parent = await prisma.consultation.findUniqueOrThrow({
+          where: { id: consultation.id },
+          select: { status: true },
+        });
+        const cancelWon = cancelRes.status === 200;
 
-      if (finalStatus === "EXPIRED") {
-        // Outcome A — cancel won cleanly.
-        check("leg1/A: cancel reported the win", cancelWon, { cancelRes });
-        check("leg1/A: tentative slots released", tentativeLeft === 0, {
-          tentativeLeft,
-        });
-        // Released by status, never by delete: every slot of the cancelled
-        // booking is still stored, CANCELLED and tombstoned.
-        const releasedSlots = await prisma.appointmentOccurrence.findMany({
-          where: { appointmentId: appointment.id },
-          select: { completionStatus: true, deletedAt: true },
-        });
-        check(
-          "leg1/A: released slots are stored as CANCELLED tombstones",
-          releasedSlots.length > 0 &&
-            releasedSlots.every(
-              (s) => s.completionStatus === "CANCELLED" && s.deletedAt !== null,
-            ),
-          releasedSlots,
-        );
-        check(
-          "leg1/A: parent CANCELLED",
-          parent.status === "CANCELLED",
-          parent,
-        );
-      } else {
-        // Outcome B (webhook won: cancel 409, slots confirmed) or the
-        // documented late-capture orphan C (cancel 200, slots deleted,
-        // parent CANCELLED, reconciler refunds). Never a half-state.
-        const confirmed = await prisma.appointmentOccurrence.count({
-          where: { appointmentId: appointment.id, isTentative: false },
-        });
-        if (cancelWon) {
+        if (finalStatus === "EXPIRED") {
+          // Outcome A — cancel won cleanly.
+          check("leg1/A: cancel reported the win", cancelWon, { cancelRes });
+          check("leg1/A: tentative slots released", tentativeLeft === 0, {
+            tentativeLeft,
+          });
+          // Released by status, never by delete: every slot of the cancelled
+          // booking is still stored, CANCELLED and tombstoned.
+          const releasedSlots = await prisma.appointmentOccurrence.findMany({
+            where: { appointmentId: appointment.id },
+            select: { completionStatus: true, deletedAt: true },
+          });
           check(
-            "leg1/C: late capture left no half-confirmed booking (slots released, parent CANCELLED)",
-            confirmed === 0 && parent.status === "CANCELLED",
-            { confirmed, parent },
-          );
-        } else {
-          check(
-            "leg1/B: webhook win confirmed the booking (no tentative residue)",
-            tentativeLeft === 0,
-            { tentativeLeft, confirmed, parent },
+            "leg1/A: released slots are stored as CANCELLED tombstones",
+            releasedSlots.length > 0 &&
+              releasedSlots.every(
+                (s) =>
+                  s.completionStatus === "CANCELLED" && s.deletedAt !== null,
+              ),
+            releasedSlots,
           );
           check(
-            "leg1/B: webhook win left the parent un-cancelled",
-            parent.status !== "CANCELLED",
+            "leg1/A: parent CANCELLED",
+            parent.status === "CANCELLED",
             parent,
           );
+        } else {
+          // Outcome B (webhook won: cancel 409, slots confirmed) or the
+          // documented late-capture orphan C (cancel 200, slots deleted,
+          // parent CANCELLED, reconciler refunds). Never a half-state.
+          const confirmed = await prisma.appointmentOccurrence.count({
+            where: { appointmentId: appointment.id, isTentative: false },
+          });
+          if (cancelWon) {
+            check(
+              "leg1/C: late capture left no half-confirmed booking (slots released, parent CANCELLED)",
+              confirmed === 0 && parent.status === "CANCELLED",
+              { confirmed, parent },
+            );
+          } else {
+            check(
+              "leg1/B: webhook win confirmed the booking (no tentative residue)",
+              tentativeLeft === 0,
+              { tentativeLeft, confirmed, parent },
+            );
+            check(
+              "leg1/B: webhook win left the parent un-cancelled",
+              parent.status !== "CANCELLED",
+              parent,
+            );
+          }
         }
       }
     } else {
@@ -386,6 +421,11 @@ async function run() {
     // shared dev fixture may legitimately carry pre-existing values.
     // -------------------------------------------------------------------
     await retireChaosPayments(createdPaymentIds);
+    if (createdWebhookEventIds.length > 0) {
+      await prisma.webhookEvent.deleteMany({
+        where: { eventId: { in: createdWebhookEventIds } },
+      });
+    }
     await prisma.consultation.update({
       where: { id: consultation.id },
       data: {

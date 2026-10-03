@@ -38,9 +38,15 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatForViewer } from "@/lib/time/viewer-zone";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
@@ -114,6 +120,11 @@ export default function WebinarCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  // #1863 — the session line below was `toLocale*String()` with no zone, so it
+  // printed the RUNTIME's zone (a New York laptop) on a page whose own zone
+  // resolution is the viewer's saved one. `formatForViewer` renders that zone
+  // and labels it whenever it had to fall back.
+  const viewer = useViewerZone();
   const { availableCredits, isLoadingCredits, creditsLoadFailed } =
     useReferralCreditsBalance(
       checkoutTaxContext.referralCreditsLoaded,
@@ -137,6 +148,15 @@ export default function WebinarCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+
+  // #1863 — derived from the buyer's own funding choices rather than passed in,
+  // so the refund-rail promise under the price moves the moment they change how
+  // they are paying (an org payer forces credits off, credits clear the org).
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
 
   const { toast } = useToast();
   const {
@@ -672,23 +692,19 @@ export default function WebinarCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Date</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleDateString(
-                      undefined,
-                      {
-                        weekday: "long",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      },
+                    {formatForViewer(
+                      nextSession.startsAt,
+                      viewer,
+                      "EEEE, d MMMM yyyy",
                     )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextSession.endsAt).toLocaleTimeString()} (
-                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {formatForViewer(nextSession.startsAt, viewer, "h:mm a")}
+                    {" - "}
+                    {formatForViewer(nextSession.endsAt, viewer, "h:mm a zzz")}
                   </div>
                 </div>
               </>
@@ -853,10 +869,6 @@ export default function WebinarCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -867,6 +879,10 @@ export default function WebinarCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -883,6 +899,17 @@ export default function WebinarCheckoutPage({
                 startsAt={nextSession?.startsAt}
                 windowHours={planDetails?.refundWindowHours}
                 className="text-xs text-muted-foreground"
+              />
+              {/* #1863 — the rule behind that deadline, and the rail the money
+                  comes back on. A webinar buy showed no cancellation terms at
+                  all before this. */}
+              <CancellationPolicyNote
+                eventKind="webinar"
+                eventWindowHours={planDetails?.refundWindowHours}
+                eventStartsAt={nextSession?.startsAt}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
               <FxEstimateNote
                 totalPaise={pricing.total}

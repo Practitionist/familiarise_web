@@ -162,8 +162,16 @@ export interface BookingPresentationInput {
    * #1760 — the EXPIRED history edge tells a lapsed pay link apart from a
    * request nobody answered. Optional: a read without history falls back to
    * "a pay link was minted".
+   *
+   * `reason` is the audit attribution the transition wrote (lib/booking/
+   * transitions.ts `HistoryMeta.reason`), and it is the only thing that
+   * distinguishes the several writers of one terminal status — CANCELLED is
+   * written by the buyer's abandon, by a decline's restore and by the
+   * consultant's withdraw-approval alike. A reader that selects `fromStatus`
+   * and `toStatus` without it cannot tell them apart, which is why the readers
+   * widen their `where` as well as their `select` where a reason matters.
    */
-  history?: { fromStatus: string; toStatus: string }[];
+  history?: { fromStatus: string; toStatus: string; reason?: string | null }[];
   /** Plan price for the not-due arithmetic line; null when the read lacks it. */
   plan?: {
     pricePaise: bigint | number | string;
@@ -358,8 +366,34 @@ function deriveBooking(
   const p = input.names.payer;
   if (status === "REJECTED")
     return { state: "DECLINED", why: `${c} declined this request.` };
-  if (status === "CANCELLED")
-    return { state: "CANCELLED", why: "This booking was cancelled." };
+  if (status === "CANCELLED") {
+    // #1846 — the consultant's Withdraw approval ends a live, still-payable
+    // approval in CANCELLED (`lib/booking/lapse-approved-request.ts`), where it
+    // used to land on EXPIRED and so arrive here through the lapsed-pay-link
+    // arm below. CANCELLED is the honest word for it, but the generic sentence
+    // — "This booking was cancelled." — then hides WHO ended a booking the buyer
+    // is looking for an explanation of, and reads as though they or the
+    // consultant had cancelled a paid session. So the withdrawal is named.
+    //
+    // Read off the history edge's `reason` rather than inferred from the
+    // status: CANCELLED is also written by the buyer's abandon and by a
+    // decline's restore, and guessing between them would put a false accusation
+    // in front of one of them. `WITHDRAWN_BY_CONSULTANT` is the `LapseReason`
+    // the writer passes; the literal is repeated rather than imported because
+    // importing that module would pull prisma into a client-safe file.
+    const withdrawn = input.history?.some(
+      (h) =>
+        normalizeStatus(h.toStatus) === "CANCELLED" &&
+        h.reason === "WITHDRAWN_BY_CONSULTANT",
+    );
+    return withdrawn
+      ? {
+          state: "CANCELLED",
+          label: "Withdrawn",
+          why: `${c} withdrew this approval before it was paid, so the held times were released. No payment was taken.`,
+        }
+      : { state: "CANCELLED", why: "This booking was cancelled." };
+  }
   if (status === "EXPIRED") {
     const edges =
       input.history?.filter((h) => normalizeStatus(h.toStatus) === "EXPIRED") ??

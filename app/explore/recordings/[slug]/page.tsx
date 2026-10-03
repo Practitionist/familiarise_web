@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { Clock, PlayCircle, ShieldCheck } from "lucide-react";
 import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
@@ -56,11 +57,14 @@ function renderMedia(listing: {
   }
   if (listing.thumbnailUrl) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
+      // `unoptimized`: the thumbnail host is not allow-listed in next.config,
+      // so the image is served as-is rather than through the optimizer.
+      <Image
         src={listing.thumbnailUrl}
         alt={listing.listingTitle}
-        className="h-full w-full object-cover"
+        fill
+        unoptimized
+        className="object-cover"
       />
     );
   }
@@ -83,7 +87,7 @@ export default async function RecordingDetailPage({
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
       <div className="space-y-6">
-        <div className="aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
+        <div className="relative aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
           {renderMedia(listing)}
         </div>
 

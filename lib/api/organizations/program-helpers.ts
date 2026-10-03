@@ -52,6 +52,32 @@ export class ProgramAssignmentLimitError extends Error {
 }
 
 /**
+ * A reversal asked for more than the counters hold.
+ *
+ * `reverseBookingUtilization` guards its decrement with `gte` predicates, so a
+ * counter that has already drifted below zero (or below the amount being
+ * returned) matches zero rows and this is raised instead of writing the row.
+ * It is an OPERATOR signal, not a buyer-facing one: the meters are derived
+ * caches over `UsageLedgerEntry`, and the only way they can be short is if some
+ * earlier writer moved them without the ledger — so the message names the
+ * assignment and the delta that would have driven it negative, which is what
+ * `scripts/reconcile/reconcile-ledgers.ts` needs to find the offending trail.
+ */
+export class ProgramAssignmentUnderflowError extends Error {
+  readonly httpStatus = 500;
+  constructor(
+    public programAssignmentId: string,
+    public engagementsToReverse: number,
+    public paiseToReverse: number,
+  ) {
+    super(
+      `Program assignment ${programAssignmentId} cannot release ${engagementsToReverse} engagement(s) / ${paiseToReverse} paise: its counters are lower than the reversal (UsageLedgerEntry drift — run reconcile-ledgers).`,
+    );
+    this.name = "ProgramAssignmentUnderflowError";
+  }
+}
+
+/**
  * Resolve the ACTIVE assignment for a membership against a program for a
  * given point in time. Returns null if no active assignment.
  */
@@ -482,6 +508,10 @@ export async function recordBookingUtilization(
  * the same booking are supported (e.g., refund 25% now, another 50%
  * later); `reversedAt` is stamped only when the cumulative reversal
  * fully exhausts the original consumption.
+ *
+ * The counter decrement is a guarded CAS, so a meter that has drifted
+ * below what this call returns raises `ProgramAssignmentUnderflowError`
+ * (rolling the reversal back) instead of going further negative.
  */
 export async function reverseBookingUtilization(
   tx: Tx,
@@ -598,24 +628,50 @@ export async function reverseBookingUtilization(
     priceReversal = Math.min(Math.max(0, proportional), remainingPrice);
   }
 
-  await tx.programAssignment.update({
-    where: { id: util.programAssignmentId },
+  // #1372 — a CREDIT_POOL program meters in paise; LICENSED_SEAT leaves
+  // consumedPaise alone (writing a seat count as money would invent a number).
+  const reversesPaise =
+    util.programAssignment.program?.type === "CREDIT_POOL" && priceReversal > 0;
+  const decrementsOverage = util.wasOverage && willBeFullyReversed;
+
+  // Guarded CAS, same shape as the BLOCK branch of the forward path above:
+  // the predicate rides the WHERE, so a counter that cannot absorb the
+  // reversal matches zero rows rather than being driven negative. This used to
+  // be a bare `update` — with no `CHECK (engagementsUsed >= 0)` anywhere in
+  // prisma/sql/, a drifted counter (an earlier unguarded writer, a manual fix,
+  // a legacy row) turned every refund into a larger giveaway and no database
+  // object objected. Each counter is guarded only where this call actually
+  // decrements it, so an untouched column cannot fail the match.
+  const guard = await tx.programAssignment.updateMany({
+    where: {
+      id: util.programAssignmentId,
+      engagementsUsed: { gte: actualReversal },
+      ...(reversesPaise && { consumedPaise: { gte: priceReversal } }),
+      ...(decrementsOverage && { overageCount: { gte: 1 } }),
+    },
     data: {
       engagementsUsed: { decrement: actualReversal },
       // #775/#753 — CREDIT_POOL meters in paise; reverse the prorated price so
-      // consumedPaise nets back. LICENSED_SEAT leaves it untouched.
-      consumedPaise:
-        util.programAssignment.program?.type === "CREDIT_POOL"
-          ? { decrement: priceReversal }
-          : undefined,
+      // consumedPaise nets back.
+      consumedPaise: reversesPaise ? { decrement: priceReversal } : undefined,
       // overageCount tracks the number of OVER-CAP BOOKINGS, not units.
       // Decrement only on the LAST reversal (the booking is now wholly
       // un-counted). Partial reversals leave the flag in place — the
       // booking still happened over cap.
-      overageCount:
-        util.wasOverage && willBeFullyReversed ? { decrement: 1 } : undefined,
+      overageCount: decrementsOverage ? { decrement: 1 } : undefined,
     },
   });
+  // Fail closed and loud: the ledger row below is what the reconciler trusts,
+  // so writing it against a counter that would have gone negative is how the
+  // drift starts. Rolling the transaction back keeps the two in step and
+  // surfaces the refund as an error instead of a silent double-restore.
+  if (guard.count === 0) {
+    throw new ProgramAssignmentUnderflowError(
+      util.programAssignmentId,
+      actualReversal,
+      reversesPaise ? priceReversal : 0,
+    );
+  }
 
   await tx.usageLedgerEntry.create({
     data: {

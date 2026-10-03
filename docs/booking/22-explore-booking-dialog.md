@@ -1,6 +1,6 @@
 # The expert page's booking dialog: day-cell states, the monochrome slot list and the Today control
 
-**Date:** 2026-09-21 · **Issue:** #1785 · **Scope:** `app/explore/experts/[consultantId]/ExpertProfileClient.tsx`, `day-state.ts`, `hooks/useAvailabilityWindow.ts`, `components/ConsultationPricingToggle.tsx`, `components/SlotList.tsx`, `components/slot-list-policy.ts`.
+**Date:** 2026-09-21 · **Issue:** #1785 · **Scope:** `app/explore/experts/[consultantId]/ExpertProfileClient.tsx`, `app/explore/experts/[consultantId]/day-state.ts`, `app/explore/experts/[consultantId]/hooks/useAvailabilityWindow.ts`, `app/explore/experts/[consultantId]/components/ConsultationPricingToggle.tsx`, `app/explore/experts/[consultantId]/components/SlotList.tsx`, `app/explore/experts/[consultantId]/components/slot-list-policy.ts`.
 
 This page describes what a consultee sees in the "Book Now" dialog on an expert's public page, and the rules behind it. The decisions were locked by the owner on 2026-09-21 after a check against the Calendly and Cal.com booking calendars; they follow the quiet-monochrome design system of 2026-09-06, so no state is carried by colour alone.
 

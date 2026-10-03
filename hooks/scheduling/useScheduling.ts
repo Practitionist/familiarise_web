@@ -47,7 +47,6 @@ import {
   allocatedElsewhere,
   requestChangedElsewhere,
   rateLimited,
-  isPreservedAllocationMessage,
   schedulingDayBucket,
   schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
@@ -74,19 +73,21 @@ export type { ValidationResult, EventConstraints, SlotLimits };
  * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
  * illegal transition, transient lock) and must neither close the dialog
  * nor say that they did.
+ * The branch is the structured `errorCode` alone, never the server's prose.
  */
 type AllocationFailureAction =
   | "rate-limited"
   | "allocated-elsewhere"
   | "request-changed"
   | "stay-open-refresh"
-  | "stay-open-raw-refresh"
   | "key-reset"
   | "generic";
 
+/** @param result the failed attempt, with the server's `errorCode` when it sent
+ * one. The message is deliberately NOT a parameter: it is a sentence, and a
+ * sentence must never decide what the UI does. */
 function classifyAllocationFailure(
   result: AllocationResult,
-  errorMessage: string,
 ): AllocationFailureAction {
   if (result.httpStatus === 429) return "rate-limited";
   if (
@@ -106,14 +107,22 @@ function classifyAllocationFailure(
     case "ILLEGAL_TRANSITION":
     case "RESCHEDULE_STATE_CHANGED":
       return "request-changed";
+    // #1132 / #1863 — slot lost, co-host busy or lock contention: nothing was
+    // allocated and the request stands, so stay open and refetch both grids.
     case "SLOT_TAKEN":
-      return "stay-open-raw-refresh";
     case "COLLABORATOR_UNAVAILABLE":
     case "LOCK_CONTENTION":
     default:
-      return isPreservedAllocationMessage(errorMessage)
-        ? "stay-open-raw-refresh"
-        : "stay-open-refresh";
+      // DEFAULT, AND THE WHOLE POINT: an unknown or absent code — a 409 whose
+      // body was not JSON, a proxy's own 409, a code added server-side after
+      // this deploy — stays open. Closing the dialog is the irreversible half
+      // (it drops the row out of the consultant's queue and the request has to
+      // be rediscovered), and it is the half a guess can get wrong: a genuine
+      // ALREADY_ALLOCATED that we failed to recognise is recoverable by
+      // refreshing, whereas an allocatable request closed on a mis-read 409
+      // is a booking the consultant believes they scheduled and nobody did.
+      // The cost of being wrong this way is one dismissible toast.
+      return "stay-open-refresh";
   }
 }
 
@@ -659,7 +668,7 @@ export function useEventSlotAllocation(
       setAllocationError(errorMessage);
       // A stay-open failure means the grid cells just proved stale: the host
       // refetches so the next pick is made against fresh data.
-      switch (classifyAllocationFailure(result, errorMessage)) {
+      switch (classifyAllocationFailure(result)) {
         case "rate-limited":
           // Rate limited — back off, don't resubmit into it.
           toast(rateLimited());
@@ -675,13 +684,10 @@ export function useEventSlotAllocation(
           onConflict?.();
           break;
         case "stay-open-refresh":
-          toast(allocationFailedWithCode(errorMessage, result.errorCode));
-          onStaleData?.();
-          break;
-        case "stay-open-raw-refresh":
-          // Slot conflict — the server's wording names the taken time, so
-          // it rides as the description under the code's title; the dialog
-          // stays open and refetches so the retry sees the taken slot (#1132).
+          // #1132 — nothing was allocated away, so the dialog stays open and
+          // the grid refetches so the retry is picked fresh. The server's
+          // wording rides as the description under the code's title, which is
+          // how a lost time still gets named ("that time", not "something").
           toast(allocationFailedWithCode(errorMessage, result.errorCode));
           onStaleData?.();
           break;
@@ -831,7 +837,7 @@ export function useEventSlotAllocation(
               slotsPerCall,
             );
 
-            const maxTotalCalls = slotLimits.maxSlots;
+            const maxTotalCalls = slotLimits.totalSessions;
 
             // If this slot would complete a call, check total limits
             const slotsByDayPost = groupSlotsByDay(
@@ -952,7 +958,7 @@ export function useEventSlotAllocation(
           if (eventType === "subscription" && options.sessionDurationInHours) {
             const slotsPerCall = slotLimits.slotsPerSession;
             const sessionsPerWeek = options.sessionsPerWeek || 1;
-            const maxTotalCalls = slotLimits.maxSlots;
+            const maxTotalCalls = slotLimits.totalSessions;
 
             const slotsByDay = groupSlotsByDay(
               newSelection,
@@ -1352,6 +1358,7 @@ export function useEventSlotAllocation(
             strategy: "server-auto",
           });
         } else {
+          attemptKeyRef.current = null;
           // #1206 — a shortage that could still place SOMETHING is a question
           // for the consultant, not a dead end. The offer replaces the toast
           // on the first attempt only; answering it re-runs with allowPartial
@@ -1382,6 +1389,7 @@ export function useEventSlotAllocation(
           );
         }
       } catch (error) {
+        attemptKeyRef.current = null;
         const errorMessage =
           error instanceof Error ? error.message : "Auto allocation failed";
         setAllocationError(errorMessage);

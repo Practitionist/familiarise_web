@@ -23,6 +23,9 @@ jest.mock("../../lib/prisma", () => ({
     consultantEarnings: {
       updateMany: jest.fn(),
       findFirst: jest.fn(),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: { consultantSharePaise: 500000, refundedShareAmount: 0 },
+      }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
   },

@@ -6,7 +6,7 @@
 | Audience      | All engineers, on-call                                                         |
 | Last reviewed | 2026-10-01                                                                     |
 | Sibling       | [`docs/authorization/`](../authorization/) for "what can this user do"         |
-| Schema        | Frozen by [ADR 36](../enterprise/70-design-decisions/36-auth-schema-freeze.md) |
+| Schema        | Frozen by [ADR 36](../enterprise/70-design-decisions/35-auth-schema-freeze.md) |
 
 This folder answers "who is this user, and how do we know?". It is built on
 [BetterAuth](https://better-auth.com) **1.7.6** with `@better-auth/sso`
@@ -104,7 +104,7 @@ flowchart LR
 
 ## Related
 
-- [ADR 35: session visibility and revocation](../enterprise/70-design-decisions/35-user-session-visibility-and-revocation.md)
-- [ADR 36: auth schema freeze](../enterprise/70-design-decisions/36-auth-schema-freeze.md)
-- [Security headers and CSP](../enterprise/20-iam-and-security/05-security-headers.md)
-- [Runbooks](../enterprise/50-operations/03-runbooks.md)
+- [ADR 35: session visibility and revocation](../enterprise/70-design-decisions/34-user-session-visibility-and-revocation.md)
+- [ADR 36: auth schema freeze](../enterprise/70-design-decisions/35-auth-schema-freeze.md)
+- [Security headers and CSP](../enterprise/20-iam-and-security/04-security-headers.md)
+- [Runbooks](../enterprise/50-operations/02-runbooks.md)

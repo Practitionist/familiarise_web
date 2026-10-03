@@ -89,6 +89,12 @@ export const currencyLimiter = makeLimiter(30, "1 m", "rl:currency");
 export const participantReadLimiter = makeLimiter(30, "1 m", "rl:participants");
 /** 10 per minute — event mutations: /api/bookings/* POST/PATCH */
 export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
+/** 5 per 10 minutes per (appointment, user) — /api/appointments/[id]/reschedule* (#1497) */
+export const rescheduleAppointmentLimiter = makeLimiter(
+  5,
+  "10 m",
+  "rl:reschedule-appt",
+);
 /** 10 per minute per user — document upload POSTs */
 export const documentUploadLimiter = makeLimiter(
   10,

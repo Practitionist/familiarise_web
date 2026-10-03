@@ -238,6 +238,13 @@ export default async function MyProgramPage({
               const unitLabel =
                 a.program.type === "CREDIT_POOL" ? "credits" : "sessions";
               const overagePaise = overagePaiseByAssignment[a.id] ?? 0;
+              const poolRateNote = isPool ? " (1 credit = ₹1)" : "";
+              const remainingWord =
+                a.program.type === "CREDIT_POOL" ? "remaining" : "left";
+              const availabilitySummary =
+                cap === null
+                  ? `${unitLabel} available — no cap this cycle${poolRateNote}`
+                  : `${unitLabel} ${remainingWord} this cycle${poolRateNote}`;
 
               return (
                 <div key={a.id} className="rounded-lg border bg-card p-5">
@@ -276,9 +283,7 @@ export default async function MyProgramPage({
                         : `${remaining!.toLocaleString("en-IN")} of ${cap.toLocaleString("en-IN")}`}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {cap === null
-                        ? `${unitLabel} available — no cap this cycle`
-                        : `${unitLabel} ${a.program.type === "CREDIT_POOL" ? "remaining" : "left"} this cycle`}
+                      {availabilitySummary}
                     </p>
                   </div>
 
@@ -384,35 +389,54 @@ export default async function MyProgramPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {utilizations.map((u) => (
-                    <tr key={u.id} className="border-t">
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        {u.createdAt.toLocaleDateString("en-IN", {
-                          timeZone: "Asia/Kolkata",
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        {humanizeEnum(u.payment.appointment?.appointmentType) ||
-                          "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right whitespace-nowrap">
-                        {u.engagementsConsumed}
-                      </td>
-                      <td className="px-4 py-2 text-right whitespace-nowrap">
-                        {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
-                      </td>
-                      <td className="px-4 py-2 text-xs whitespace-nowrap">
-                        {u.reversedAt
-                          ? "Reversed"
-                          : u.wasOverage
-                            ? "Overage"
-                            : "Covered"}
-                      </td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const hasCreditPool = assignments.some(
+                      (a) => a.program.type === "CREDIT_POOL",
+                    );
+                    const hasLicensedSeat = assignments.some(
+                      (a) => a.program.type === "LICENSED_SEAT",
+                    );
+                    return utilizations.map((u) => {
+                      const matchedAssignment = assignments.find(
+                        (a) => a.id === u.programAssignmentId,
+                      );
+                      const isPoolUtilization = matchedAssignment
+                        ? matchedAssignment.program.type === "CREDIT_POOL"
+                        : hasCreditPool && !hasLicensedSeat;
+                      return (
+                      <tr key={u.id} className="border-t">
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          {u.createdAt.toLocaleDateString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          {humanizeEnum(
+                            u.payment.appointment?.appointmentType,
+                          ) || "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          {isPoolUtilization
+                            ? `${Math.round(u.priceAtBookingPaise / 100).toLocaleString("en-IN")} credits`
+                            : u.engagementsConsumed}
+                        </td>
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
+                        </td>
+                        <td className="px-4 py-2 text-xs whitespace-nowrap">
+                          {u.reversedAt
+                            ? "Reversed"
+                            : u.wasOverage
+                              ? "Overage"
+                              : "Covered"}
+                        </td>
+                      </tr>
+                    );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

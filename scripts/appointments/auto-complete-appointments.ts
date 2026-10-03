@@ -61,6 +61,8 @@ import {
 } from "@/lib/booking/session-outcome-sweep";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import { sessionHostUserIds } from "@/lib/booking/session-hosts";
+import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
@@ -70,6 +72,22 @@ const COMPLETION_BUFFER_HOURS = 1;
 // #1569 — sessions judged per run; each may ask Stream for its call report, so
 // a backlog drains over several hourly runs instead of one long one.
 const MAX_SLOT_OUTCOMES_PER_RUN = 500;
+
+// #1775 — the per-parent cap, and the reason it exists. All FIVE parent passes
+// (webinars, classes, consultations, subscriptions, trials) read their cohort
+// with no `take` and no `orderBy` at all, so "500 per run" bounded only the
+// slot pass and the five parents were unbounded. On Actions that is merely
+// slow; on the Netlify ticker — which drives this route inside a 20 s abort —
+// it is a guaranteed mid-run abort, and the abort lands in the middle of a
+// parent CAS loop, so a cold tick could complete some parents and abandon
+// others with no record that it had.
+//
+// Oldest-first on `updatedAt`, which is the parent's last write: a row that
+// has been sitting SCHEDULED longest is the one whose earnings hold has been
+// waiting longest, so that is the right end of the queue to drain first. Every
+// parent pass is a guarded CAS out of the cohort (COMPLETED is terminal), so a
+// capped run continues on the next tick with the rows it did not reach.
+const MAX_PARENTS_PER_RUN = 25;
 
 // #1583 B-P1-16 — "every session has ended" counts live confirmed rows only:
 // a stale tentative hold or a tombstoned row must not veto completion.
@@ -136,7 +154,7 @@ async function completeThroughHelper(
 /**
  * Auto-complete webinars that have ended
  */
-async function completeWebinars(): Promise<{
+async function completeWebinars(maxParents: number): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -149,6 +167,8 @@ async function completeWebinars(): Promise<{
 
   // Find SCHEDULED or IN_PROGRESS webinars where all slots have ended
   const webinarsToComplete = await prisma.webinar.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxParents,
     where: {
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
       appointment: { AND: endedAndSettled(bufferTime) },
@@ -211,7 +231,7 @@ async function completeWebinars(): Promise<{
 /**
  * Auto-complete classes that have ended (all sessions done)
  */
-async function completeClasses(): Promise<{
+async function completeClasses(maxParents: number): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -224,6 +244,8 @@ async function completeClasses(): Promise<{
 
   // Find SCHEDULED or IN_PROGRESS classes where all slots have ended
   const classesToComplete = await prisma.class.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxParents,
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
@@ -288,7 +310,7 @@ async function completeClasses(): Promise<{
 /**
  * Auto-complete consultations that have ended
  */
-async function completeConsultations(): Promise<{
+async function completeConsultations(maxParents: number): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -301,6 +323,8 @@ async function completeConsultations(): Promise<{
 
   // Find APPROVED or SCHEDULED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxParents,
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // A voided consultation is owed its make-up or refund first (#1569 D4).
@@ -427,7 +451,7 @@ async function completeConsultations(): Promise<{
 /**
  * Auto-complete subscriptions that have ended (all sessions done)
  */
-async function completeSubscriptions(): Promise<{
+async function completeSubscriptions(maxParents: number): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -440,6 +464,8 @@ async function completeSubscriptions(): Promise<{
 
   // Find APPROVED or SCHEDULED subscriptions where all slots have ended
   const subscriptionsToComplete = await prisma.subscription.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxParents,
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
@@ -577,7 +603,7 @@ async function completeSubscriptions(): Promise<{
 /**
  * Auto-complete trial sessions that have ended
  */
-async function completeTrials(): Promise<{
+async function completeTrials(maxParents: number): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -590,6 +616,8 @@ async function completeTrials(): Promise<{
 
   // Find SCHEDULED trials where the appointment slot has ended
   const trialsToComplete = await prisma.trial.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxParents,
     where: {
       status: TrialStatus.SCHEDULED,
       // #1569 D4 — a free trial's void is a record only, so the unsettled-miss
@@ -726,6 +754,56 @@ function tallyDecision(tally: SlotTally, decision: SlotDecision): boolean {
 }
 
 /**
+ * Recompute `ConsultantProfile.totalMenteesHelped` for every consultant whose
+ * session this pass actually decided.
+ *
+ * The stat is a stored column (see lib/profiles/mentees-helped.ts for the
+ * definition and why a column rather than a read-time count), and this is the
+ * only place a session stops being a booking and becomes a delivered one — so it
+ * is the only place the column can move. Hooked to the SLOT pass rather than the
+ * five parent passes because the slot pass is the one that walks every event
+ * type uniformly; a host-side user id comes straight off `OUTCOME_SLOT_SELECT`.
+ *
+ * Any DECIDED row counts, not just COMPLETED: the read predicate admits a
+ * voided-but-attended session as delivered, and a stat whose writer and reader
+ * disagree is worse than a stat that lags by an hour.
+ *
+ * Best-effort and never fatal. A failure here must not take down a pass that has
+ * already moved real statuses; the column is idempotent, so the next pass for
+ * that consultant repairs it.
+ *
+ * Cost: one indexed `userId IN (…)` read plus five small indexed aggregates per
+ * consultant, and it is skipped entirely when the pass decided nothing — which
+ * is the steady state once the backlog is drained, and the case the 20 s Netlify
+ * tick budget is most sensitive to. It runs AFTER the outcome loop, so the work
+ * that does decide rows is never behind it. No per-run cap: a cap that deferred
+ * a consultant would leave their column permanently stale once their sessions
+ * stopped, which is worse than the queries it saved.
+ */
+async function settleMenteesHelped(hostUserIds: Set<string>): Promise<void> {
+  if (hostUserIds.size === 0) return;
+  const profiles = await prisma.consultantProfile.findMany({
+    where: { userId: { in: [...hostUserIds] } },
+    select: { id: true },
+  });
+  for (const profile of profiles) {
+    try {
+      await recomputeMenteesHelped(prisma, profile.id);
+    } catch (error) {
+      reportSentryMessage("mentees helped recompute failed", {
+        subsystem: "bookings",
+        op: "auto-complete-appointments",
+        level: "warning",
+        extra: {
+          consultantProfileId: profile.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+}
+
+/**
  * #1766 — per distinct subscription wrapper, in a fresh transaction: the
  * consultee's cycle bell, deduped on the cycle so a re-run is quiet.
  */
@@ -754,7 +832,7 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
  * one CAS per row (`decideSlotOutcome`). A live overrun and a consultation host
  * no-show still inside the detector's handoff are left SCHEDULED.
  */
-async function completeIndividualSlots(): Promise<{
+async function completeIndividualSlots(maxOutcomes: number): Promise<{
   completed: number;
   unverified: number;
   voided: number;
@@ -786,7 +864,7 @@ async function completeIndividualSlots(): Promise<{
       },
       select: OUTCOME_SLOT_SELECT,
       orderBy: { endsAt: "asc" },
-      take: MAX_SLOT_OUTCOMES_PER_RUN,
+      take: maxOutcomes,
     });
     // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
     const earliestStart = new Date(
@@ -797,6 +875,7 @@ async function completeIndividualSlots(): Promise<{
     );
     const outages = await readOutageWindows(prisma, earliestStart);
     const wrappers = new Set<string>();
+    const decidedHosts = new Set<string>();
     for (const slot of cohort) {
       try {
         const decision = await decideSlotOutcome(slot, {
@@ -806,6 +885,11 @@ async function completeIndividualSlots(): Promise<{
         });
         if (tallyDecision(tally, decision) && slot.appointment.subscriptionId) {
           wrappers.add(slot.appointmentId);
+        }
+        if (decision.kind === "written" && decision.moved) {
+          for (const id of sessionHostUserIds(slot.appointment)) {
+            decidedHosts.add(id);
+          }
         }
       } catch (error) {
         errors.push(
@@ -825,6 +909,7 @@ async function completeIndividualSlots(): Promise<{
       });
     }
     await settleCycleBells(wrappers);
+    await settleMenteesHelped(decidedHosts);
     console.log(
       `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
     );
@@ -842,42 +927,63 @@ async function completeIndividualSlots(): Promise<{
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
-export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
+//
+// `maxParents` is the Netlify ticker's bite across each of the five parent
+// passes (#1775); `maxSlotOutcomes` bounds the slot pass, which was already
+// bounded. A caller that omits them keeps the Actions figures.
+export async function autoCompleteAppointments(opts?: {
+  maxParents?: number;
+  maxSlotOutcomes?: number;
+}): Promise<AutoCompleteResult> {
+  const maxParents =
+    opts?.maxParents && opts.maxParents > 0
+      ? Math.floor(opts.maxParents)
+      : MAX_PARENTS_PER_RUN;
+  const maxSlotOutcomes =
+    opts?.maxSlotOutcomes && opts.maxSlotOutcomes > 0
+      ? Math.floor(opts.maxSlotOutcomes)
+      : MAX_SLOT_OUTCOMES_PER_RUN;
   return withCronLock("auto-complete-appointments", { failMode: "open" }, () =>
-    autoCompleteAppointmentsUnlocked(),
+    autoCompleteAppointmentsUnlocked(maxParents, maxSlotOutcomes),
   );
 }
 
-async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
+async function autoCompleteAppointmentsUnlocked(
+  maxParents: number,
+  maxSlotOutcomes: number,
+): Promise<AutoCompleteResult> {
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");
   console.log(
     `   Buffer time: ${COMPLETION_BUFFER_HOURS} hour(s) after session end`,
   );
+  console.log(
+    `   Per-run cap: ${maxSlotOutcomes} session(s), ${maxParents} parent(s) per pass`,
+  );
 
   // Complete individual slots first (per-slot status before parent-level)
-  const slotResult = await completeIndividualSlots();
+  const slotResult = await completeIndividualSlots(maxSlotOutcomes);
   allErrors.push(...slotResult.errors);
 
   // Complete webinars
-  const webinarResult = await completeWebinars();
+  const webinarResult = await completeWebinars(maxParents);
   allErrors.push(...webinarResult.errors);
 
   // Complete classes
-  const classResult = await completeClasses();
+  const classResult = await completeClasses(maxParents);
   allErrors.push(...classResult.errors);
 
   // Complete consultations
-  const consultationResult = await completeConsultations();
+  const consultationResult = await completeConsultations(maxParents);
   allErrors.push(...consultationResult.errors);
 
   // Complete subscriptions
-  const subscriptionResult = await completeSubscriptions();
+  const subscriptionResult = await completeSubscriptions(maxParents);
   allErrors.push(...subscriptionResult.errors);
 
   // Complete trial sessions
-  const trialResult = await completeTrials();
+  const trialResult = await completeTrials(maxParents);
   allErrors.push(...trialResult.errors);
 
   // Summary

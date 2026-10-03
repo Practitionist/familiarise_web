@@ -42,7 +42,7 @@ For the case skeleton + fix-and-retest gate, see [`case-template.md`](./case-tem
 
 ## §2 — Seed cohort
 
-The deterministic cohort lives in `prisma/seedFiles/15a-create-organizations.ts`,
+The deterministic cohort lives in `prisma/seedFiles/14a-create-organizations.ts`,
 with the users it draws from created in `1a-create-users.ts`. Use these for
 read-only and happy-path cases. **Do not mutate them destructively** —
 that's what the fresh-org spawn pattern below is for.
@@ -135,7 +135,7 @@ gate.
 | **Payout idempotency** | `scripts/payouts/process-payouts.ts:69` uses `payout_${payoutId}` (no `Date.now()`). `OrganizationPayout.idempotencyKey @unique`. Re-runs return `alreadyExisted: true`. | `scripts/payouts/process-payouts.ts:69`; `lib/payments/payouts/org-payout-service.ts:createOrgPayoutBatch` |
 | **Recording orgId** | `Recording.organizationId` is populated at write time from the parent appointment. Null FK only for personal (non-org) plans. | `lib/stream/recording-handlers.ts` |
 | **Programs v2 reject** | POST `/api/organizations/[orgId]/programs` with `type=PROJECT` or `type=RETAINER` → 400 `code: "PROGRAM_TYPE_NOT_AVAILABLE"`. Other invalid bodies → 400 with no code. | `app/api/organizations/[orgId]/programs/route.ts` — `ProgramsV2AttemptSchema` |
-| **DPDP breach 72h cron** | Hourly. Sweeps `DataBreach WHERE reportedAt IS NULL`. Warn ≤12h before 72h deadline; critical past deadline. Resend email (env-gated) + structured-log fallback. | `jobs/compliance/databreach-deadline-alerts.ts`; `.github/workflows/databreach-deadline-alerts.yml` |
+| **DPDP breach 72h cron** | Hourly. Sweeps `DataBreach WHERE reportedAt IS NULL`. Warn ≤12h before 72h deadline; critical past deadline. Resend email (env-gated) + structured-log fallback. | `jobs/compliance/databreach-deadline-alerts.ts`; `.github/workflows/cron-intra-day.yml` (step `databreach-deadline-alerts`) |
 | **Contract expiry cron** | Daily 03:00 UTC. ACTIVE → EXPIRED when `effectiveTo < NOW()`. In-flight earnings retain their `rateCardId` snapshot. | `jobs/compliance/contract-expiry.ts`; `.github/workflows/expire-contracts.yml` |
 
 ---

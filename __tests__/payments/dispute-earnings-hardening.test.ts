@@ -194,13 +194,26 @@ type EarningsUpdate = Partial<
 
 /** The two WHERE shapes handleDispute* issues on earnings tables. */
 interface EarningsHoldWhere {
-  paymentId: string;
-  status?: EarningStatus;
+  /** The dispute paths select by payment; the W1c LOST CAS selects by id. */
+  paymentId?: string;
+  id?: string;
+  status?: EarningStatus | { in: EarningStatus[] };
   preDisputeStatus?: EarningStatus | null;
+  /**
+   * W1c — the optimistic half of the REFUNDED CAS. The WHERE pins the
+   * pre-read value so two concurrent reversals cannot both win, and the write
+   * is absolute rather than an `increment`.
+   */
+  refundedShareAmount?: number;
+  /** Same optimistic pin, org column. */
+  refundedAmountPaise?: number;
 }
 interface EarningsLostWhere {
-  paymentId: string;
-  status?: { in: EarningStatus[] };
+  paymentId?: string;
+  id?: string;
+  status?: { in: EarningStatus[] } | EarningStatus;
+  preDisputeStatus?: EarningStatus | null;
+  refundedAmountPaise?: number;
 }
 
 function isIncrement(value: unknown): value is IncrementOp {
@@ -248,11 +261,28 @@ function resetStore(): void {
   store.orgEarnings.length = 0;
 }
 
+/**
+ * Does a Prisma `status` filter (a bare status or `{ in: [...] }`) accept this
+ * row's status? Typed on `unknown` because the two callers pass differently
+ * narrow shapes and a direct property access cannot narrow a string/object
+ * union.
+ */
+function statusMatches(filter: unknown, actual: EarningStatus): boolean {
+  if (filter === null || filter === undefined) return true;
+  if (typeof filter === "object" && "in" in filter) {
+    const list = (filter as { in?: EarningStatus[] }).in;
+    return !!list && list.includes(actual);
+  }
+  return filter === actual;
+}
+
 function inList(
   status: EarningsLostWhere["status"],
   actual: EarningStatus,
 ): boolean {
-  return !status || status.in.includes(actual);
+  // Delegate rather than duplicate: the `in` operator rejects a `string`
+  // operand outright, so this cannot narrow the union itself.
+  return statusMatches(status, actual);
 }
 
 interface TxStub {
@@ -294,6 +324,10 @@ interface TxStub {
       data: Record<string, unknown>;
     }) => Promise<{ count: number }>;
     findMany: (args: { where: EarningsLostWhere }) => Promise<OrgEarningRow[]>;
+    /** The CAS re-reads through this after a lost race. */
+    findUnique: (args: {
+      where: { id: string };
+    }) => Promise<OrgEarningRow | null>;
     update: (args: {
       where: { id: string };
       data: EarningsUpdate;
@@ -384,8 +418,26 @@ function makeTxStub(): TxStub {
       updateMany: async ({ where, data }) => {
         let count = 0;
         for (const e of store.consultantEarnings) {
-          if (e.paymentId !== where.paymentId) continue;
-          if (where.status && e.status !== where.status) continue;
+          if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
+            continue;
+          // W1c — the LOST branch's CAS predicates the row by `id`, a
+          // `status: { in: [...] }` set, and a pinned `refundedShareAmount`.
+          // Without these the mock matched nothing, the CAS reported a lost
+          // race, and the reversal silently never landed.
+          if (where.id !== undefined && e.id !== where.id) continue;
+          if (where.status !== undefined) {
+            if (typeof where.status === "string") {
+              if (e.status !== where.status) continue;
+            } else if (Array.isArray(where.status.in)) {
+              if (!where.status.in.includes(e.status)) continue;
+            }
+          }
+          if (
+            where.refundedShareAmount !== undefined &&
+            e.refundedShareAmount !== where.refundedShareAmount
+          ) {
+            continue;
+          }
           if (
             where.preDisputeStatus !== undefined &&
             e.preDisputeStatus !== where.preDisputeStatus
@@ -413,20 +465,42 @@ function makeTxStub(): TxStub {
       },
     },
     organizationEarnings: {
+      // Handles BOTH WHERE shapes the org rail issues: the dispute paths
+      // select by `paymentId`, the shared CAS writer selects by `id` with the
+      // status set and the prior amount pinned. Without the pinned-amount and
+      // `id` branches the CAS matched zero rows, reported a lost race, and then
+      // re-read through a `findUnique` this stub did not define.
       updateMany: async ({ where, data }) => {
         let count = 0;
         for (const e of store.orgEarnings) {
-          if (e.paymentId !== where.paymentId) continue;
-          if (where.status && e.status !== where.status) continue;
+          if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
+            continue;
+          if (where.id !== undefined && e.id !== where.id) continue;
+          if (
+            where.status !== undefined &&
+            !statusMatches(where.status, e.status)
+          )
+            continue;
           if (
             where.preDisputeStatus !== undefined &&
             e.preDisputeStatus !== where.preDisputeStatus
+          )
+            continue;
+          // The optimistic half of the CAS: the row must still carry the
+          // amount we read, or the write is a lost race.
+          if (
+            where.refundedAmountPaise !== undefined &&
+            e.refundedAmountPaise !== where.refundedAmountPaise
           )
             continue;
           resolveUpdate(e, data);
           count++;
         }
         return { count };
+      },
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const row = store.orgEarnings.find((e) => e.id === where.id);
+        return row ? { ...row } : null;
       },
       findMany: async ({ where }) =>
         store.orgEarnings

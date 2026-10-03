@@ -168,7 +168,7 @@ const CREDIT_EXPIRY_MONTHS = 6;
 | `app/dashboard/consultant/.../referrals/page.tsx` | Consultant referral dashboard                 |
 | `app/dashboard/consultee/.../referrals/page.tsx`  | Consultee referral dashboard                  |
 | `scripts/referrals/expire-credits.ts`             | Cron: expire old credits                      |
-| `prisma/seedFiles/14a-create-referral-codes.ts`   | Seed data                                     |
+| `prisma/seedFiles/13a-create-referral-codes.ts`   | Seed data                                     |
 
 ---
 

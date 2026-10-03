@@ -15,6 +15,7 @@ import { getResendClient, SENDERS } from "@/lib/email";
 import { createHash } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
 import { companyPostalAddress } from "@/lib/email/config";
+import { heldRecipientDomain } from "@/lib/email/delivery-guard";
 import { findSuppressed } from "@/lib/email/suppression";
 import prisma from "@/lib/prisma";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
@@ -67,11 +68,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // #1647 — a bounced or complaining address stays SUBSCRIBED only until the
     // webhook settles it; the suppression list is the authority either way.
     const suppressed = await findSuppressed(allSubscribers.map((s) => s.email));
-    const subscribers = allSubscribers.filter((s) => !suppressed.has(s.email));
-    const skippedSuppressed = allSubscribers.length - subscribers.length;
+    const unsuppressed = allSubscribers.filter((s) => !suppressed.has(s.email));
+    const skippedSuppressed = allSubscribers.length - unsuppressed.length;
+    // The pre-launch guard holds every subscriber outside the allowlist.
+    const subscribers = unsuppressed.filter(
+      (s) => heldRecipientDomain(s.email) === null,
+    );
+    const skippedHeld = unsuppressed.length - subscribers.length;
+    if (skippedHeld > 0) {
+      console.info("[email] held pre-launch", {
+        event: "email.held_pre_launch",
+        emailType: "WAITLIST_BROADCAST",
+        held: skippedHeld,
+      });
+    }
     if (subscribers.length === 0) {
       return NextResponse.json(
-        { error: "No confirmed subscribers to send to", skippedSuppressed },
+        {
+          error: "No confirmed subscribers to send to",
+          skippedSuppressed,
+          skippedHeld,
+        },
         { status: 404 },
       );
     }
@@ -98,7 +115,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     console.log(
-      `[admin/waitlist/broadcast] sent=${sent} failed=${failed} total=${subscribers.length} skippedSuppressed=${skippedSuppressed}`,
+      `[admin/waitlist/broadcast] sent=${sent} failed=${failed} total=${subscribers.length} skippedSuppressed=${skippedSuppressed} skippedHeld=${skippedHeld}`,
     );
 
     return NextResponse.json({
@@ -107,6 +124,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       failed,
       total: subscribers.length,
       skippedSuppressed,
+      skippedHeld,
       ...(errors.length > 0 && { errors }),
     });
   } catch (error) {

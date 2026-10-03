@@ -14,6 +14,16 @@
  * the refund call itself throws, and #1846 N2's retry sweep then re-drives it. Either way the booking
  * is never confirmed (no appointment lookup, no earnings, no Phase-2 confirm
  * work). The matching-amount happy path is inert on the guard.
+ *
+ * W1b — ORDERING CHANGED, and this paragraph used to be the only description
+ * of it. The parity comparison now runs BEFORE the `SUCCEEDED → return null`
+ * short-circuit, so a webhook REDELIVERY of an already-confirmed payment still
+ * re-validates the captured amount; a mismatch on a terminal row pages P1 and
+ * logs `*_MISMATCH_REDELIVERY` but performs no second remediation. Without the
+ * hoist a mismatched redelivery returned at the short-circuit and the mismatch
+ * was never examined at all. The `EXPIRED`/`FAILED` claim was hoisted above it
+ * too; the two predicates are mutually exclusive, so its behaviour is unchanged.
+ * See `capture-amount-parity-plumbing.test.ts` for the redelivery pins.
  */
 
 const captureException = jest.fn();

@@ -46,7 +46,7 @@ One sidecar lesson belongs here because it is about the review unique. #1268 rem
 
 ## The frozen rating rails on `Consultation` and `Subscription`
 
-`Consultation.rating`, `feedbackFromConsultee` and `feedbackFromConsultant`, and the identical trio on `Subscription`, are marked `FROZEN` as of #1300 in the shape of `Appointment.cancellationPolicySnapshot`. They were never read: 119 rows carry values and no render path ever displayed one. Feedback about a session is `AppointmentFeedback` and an opinion of a consultant is `ConsultantReview`, and the frozen trio belonged to neither.
+`Consultation.rating`, `feedbackFromConsultee` and `feedbackFromConsultant`, and the identical trio on `Subscription`, are marked `FROZEN` as of #1300 in the shape of the stored-not-re-derived SLA columns on `SupportTicket`. (The ADR this originally cited, `Appointment.cancellationPolicySnapshot`, was dropped in the vocabulary reset and no longer exists, so the live precedent is cited here instead.) They were never read: 119 rows carry values and no render path ever displayed one. Feedback about a session is `AppointmentFeedback` and an opinion of a consultant is `ConsultantReview`, and the frozen trio belonged to neither.
 
 They were also unsafe to keep writing. The `PUT` that fed them authorised "either participant or staff" and then accepted **both** sides' fields from either party, so a consultant could author the consultee's opinion of themselves, and the two zod schemas even disagreed about the floor (`min(1)` on one, `min(0)` on the other). Every writer was deleted: both schemas, both routes, both seed sites. The schemas are `.strict()`, so a caller that still sends one now gets a 400 rather than silently writing to a field nobody reads.
 

@@ -383,15 +383,13 @@ export function OperatorAppointmentsClient({
                                     tone="warning"
                                   />
                                 )}
-                                {/* #1486 — a reschedule waiting on a party. */}
+                                {/* #1486 — a reschedule waiting on a party.
+                                    One label, not two: the query filters to the
+                                    open statuses, and since the counter-round was
+                                    retired the only open status is PENDING_REVIEW. */}
                                 {appointment.reschedule && (
                                   <StatusBadge
-                                    label={
-                                      appointment.reschedule.status ===
-                                      "COUNTERED"
-                                        ? "Reschedule countered"
-                                        : "Reschedule proposed"
-                                    }
+                                    label="Reschedule proposed"
                                     tone="caution"
                                   />
                                 )}

@@ -8,19 +8,20 @@ last-reviewed: 2026-06-05
 
 # Chart of accounts
 
-**What this covers:** the ten `LedgerAccountKind` buckets every posting touches, which side each is *normal* on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.
+**What this covers:** the eleven `LedgerAccountKind` buckets every posting touches, which side each is *normal* on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.
 
 > **Reading a balance.** `ledgerBalancePaise()` returns the **signed** balance `Σ(DEBIT) − Σ(CREDIT)` in paise. For a **debit-normal** account that number is the balance as-is. For a **credit-normal** account (every liability and revenue), the meaningful figure — *the amount we owe / the revenue we booked* — is the **negative** of it. That single sign flip is why callers must know an account's normal side.
 
 ---
 
-## 1. The ten accounts
+## 1. The eleven accounts
 
 ```mermaid
 classDiagram
   class Assets_DebitNormal {
     CASH  — platform gateway / settlement cash
     ORG_RECEIVABLE  — an INVOICE-funded org owes us (accrued at booking, cleared on payment)
+    CONSULTANT_RECEIVABLE  — a consultant owes us cash we already disbursed and cannot pull back (a lost dispute or chargeback on an already-PAID earning)
   }
   class Liabilities_CreditNormal {
     WALLET  — prepaid balance we owe an org
@@ -44,6 +45,7 @@ classDiagram
 | `ORG_RECEIVABLE` | asset | DEBIT | org | an INVOICE-funded org owes us; accrued at booking, cleared on invoice payment |
 | `WALLET` | liability | CREDIT | org | prepaid balance we owe the org (an IOU) |
 | `CONSULTANT_PAYABLE` | liability | CREDIT | consultant | earnings owed to a consultant, not yet paid out |
+| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning, posted `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`: it reclassifies the debit the chargeback reversal left on the payable and never touches revenue. B2C only (an org-funded chargeback is borne by the org). Tracked alongside `ConsultantPayout.clawbackAmountPaise` for recovery. Net of TDS |
 | `ORG_PAYABLE` | liability | CREDIT | org | host-org share owed, not yet paid out |
 | `TDS_PAYABLE` | liability | CREDIT | platform | TDS withheld at payout, owed to the government |
 | `GST_PAYABLE` | liability | CREDIT | platform | GST collected on a booking, owed to the government |
@@ -51,7 +53,7 @@ classDiagram
 | `PLATFORM_PROMO` | contra-revenue | DEBIT | platform | platform-funded credits/comps + referral credits the platform eats |
 | `DISCOUNT` | contra-revenue | DEBIT | platform | discount given to the buyer (reduces recognized revenue) |
 
-`LedgerAccountKind` and `LedgerDirection` (`DEBIT` / `CREDIT`) are enums in `prisma/schema.prisma`. The class list above mirrors them exactly.
+`LedgerAccountKind` and `LedgerDirection` (`DEBIT` / `CREDIT`) are enums in `prisma/schema.prisma`. The class list above mirrors all 11 `LedgerAccountKind` values in `prisma/schema.prisma` (`CASH`, `WALLET`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `CONSULTANT_PAYABLE`, `ORG_PAYABLE`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`, `TDS_PAYABLE`, `GST_PAYABLE`).
 
 ### Who owes whom — the account map as obligations
 
@@ -62,6 +64,7 @@ flowchart LR
   subgraph BUY["Buyers (money in)"]
     ORGW["org WALLET<br/>(we owe the org — Cr)"]
     ORGR["org ORG_RECEIVABLE<br/>(org owes us — Dr)"]
+    CONSR["consultant CONSULTANT_RECEIVABLE<br/>(consultant owes us — Dr)"]
     CARDIN["learner card"]
   end
   CASH(["CASH (platform)<br/>Dr-normal asset"])
@@ -87,7 +90,7 @@ flowchart LR
   CASH -->|"collected at booking"| GST
 ```
 
-Every liability/revenue box is **credit-normal** (the meaningful figure is the *negative* of the signed balance — what we owe / booked); the two asset boxes (`CASH`, `ORG_RECEIVABLE`) and the two contra-revenue boxes (`PLATFORM_PROMO`, `DISCOUNT`) are **debit-normal**. That split is exactly the sign-flip rule in the callout above.
+Every liability/revenue box is **credit-normal** (the meaningful figure is the *negative* of the signed balance — what we owe / booked); the three asset boxes (`CASH`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`) and the two contra-revenue boxes (`PLATFORM_PROMO`, `DISCOUNT`) are **debit-normal**. That split is exactly the sign-flip rule in the callout above.
 
 ---
 
@@ -96,10 +99,10 @@ Every liability/revenue box is **credit-normal** (the meaningful figure is the *
 An account is **scoped** by who it belongs to:
 
 - **Platform-wide** (both owners null): `CASH`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `TDS_PAYABLE`, `GST_PAYABLE`. One account per kind per currency.
-- **Org-scoped** (`organizationId` set): `WALLET`, `ORG_PAYABLE`, `ORG_RECEIVABLE`. One per org.
-- **Consultant-scoped** (`consultantProfileId` set): `CONSULTANT_PAYABLE`. One per consultant.
+- **Org-scoped** (`organizationId` set): `WALLET`, `ORG_PAYABLE`, `ORG_RECEIVABLE`. One per org per kind.
+- **Consultant-scoped** (`consultantProfileId` set): `CONSULTANT_PAYABLE`, `CONSULTANT_RECEIVABLE`. One per consultant per kind.
 
-So "what do we owe **LearnPro Academy**?" is `-balance(ORG_PAYABLE, organizationId=learnpro-academy)`, and "what does **IIT Madras** hold in its wallet?" is `-balance(WALLET, organizationId=iit-madras)` — for the seeded ₹14,75,000 pool, that returns `1475000_00` paise until the first booking debits it. **Wipro**, being INVOICE-funded, has no `WALLET` account at all; its booking obligation lives on `ORG_RECEIVABLE|wipro|_|INR` (org owes us) rather than a wallet IOU.
+So "what do we owe **LearnPro Academy**?" is `-balance(ORG_PAYABLE, organizationId=learnpro-academy)`, and "what does **IIT Madras** hold in its wallet?" is `-balance(WALLET, organizationId=iit-madras)` — for the seeded ₹14,75,000 pool, that returns `1475000_00` paise until the first booking debits it. **Wipro**, being INVOICE-funded, has no `WALLET` account at all; its booking obligation lives on `ORG_RECEIVABLE|wipro|_|INR` (org owes us) rather than a wallet IOU. Similarly, when a lost dispute claws back an already-disbursed B2C consultant payout, the net receivable is tracked on `CONSULTANT_RECEIVABLE|_|<consultantProfileId>|INR`.
 
 ---
 
@@ -115,6 +118,7 @@ Examples:
 - `CASH|_|_|INR` — the platform cash account.
 - `WALLET|org_abc|_|INR` — org `org_abc`'s wallet.
 - `CONSULTANT_PAYABLE|_|cp_xyz|INR` — what we owe consultant `cp_xyz`.
+- `CONSULTANT_RECEIVABLE|_|cp_xyz|INR` — clawback owed to us by consultant `cp_xyz` (net of TDS).
 
 This is `ledgerAccountId(ref)` in `lib/payments/ledger/post.ts`. Two reasons it's deterministic rather than a UUID:
 

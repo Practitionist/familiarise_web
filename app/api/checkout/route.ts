@@ -95,11 +95,30 @@ export async function POST(req: NextRequest) {
 
     // Unified checkout flow: Create payment first, then appointment via webhook
     // Supports both real and mock payments via isMockPayment flag
-    const result = await handleCheckout(
-      validatedData,
-      session.user.id,
-      isMockPayment,
-      buyerCountry,
+    //
+    // #1846 — the checkout core, as a span. This is the most expensive
+    // operation in the product (price derivation, seat hold, a gateway order
+    // mint and a payment write) and it was unmeasurable: the repo emits no
+    // metrics at all, so the only evidence of a checkout slowdown was the
+    // client seeing a slow response. `Sentry.startSpan` is the same idiom
+    // lib/payments/core/razorpay.ts already uses for the inner gateway call, so
+    // the two nest in one trace — the outer span shows the total, the inner one
+    // shows how much of it was Razorpay. No new dependency and no exporter.
+    const result = await Sentry.startSpan(
+      { op: "booking.checkout", name: "checkout.handle" },
+      (span) =>
+        handleCheckout(
+          validatedData,
+          session.user.id,
+          isMockPayment,
+          buyerCountry,
+        ).then((value) => {
+          // Which gateway ran, not what was asked for: auto-routing may have
+          // overridden the request above, and it is the one input that changes
+          // what this span's duration means.
+          span?.setAttribute("gateway", gatewayRouting.gateway);
+          return value;
+        }),
     );
     if (!result.success) {
       return NextResponse.json(result, { status: 400 });

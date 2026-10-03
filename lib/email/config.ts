@@ -4,6 +4,8 @@
 const DEFAULT_TRANSACTIONAL_DOMAIN = "mail.familiarisenow.com";
 const DEFAULT_NEWSLETTER_DOMAIN = "news.familiarisenow.com";
 const DEFAULT_SUPPORT_EMAIL = "support@familiarisenow.com";
+/** Reply-To on ops alerts, so a reply never loops back to the alert recipient. */
+export const OPS_EMAIL = "ops@familiarisenow.com";
 
 // Static `process.env.X` reads (not a dynamic key) so Next.js can inline the
 // NEXT_PUBLIC_ ones; a blank value counts as unset.
@@ -76,6 +78,10 @@ export const SENDERS = {
   },
   get system(): string {
     return `system@${transactionalDomain()}`;
+  },
+  /** The From header of every ops alert: the system address with a display name. */
+  get ops(): string {
+    return `Familiarise Ops <system@${transactionalDomain()}>`;
   },
 };
 

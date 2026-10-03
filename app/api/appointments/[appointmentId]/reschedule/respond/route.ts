@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import {
+  applyRateLimit,
+  eventMutationLimiter,
+  rescheduleAppointmentLimiter,
+} from "@/lib/rate-limit";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import {
   acceptProposal,
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
+import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
@@ -32,13 +38,21 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
 };
 const ACCEPT_FAILURE_FALLBACK = "The proposed times could not be confirmed.";
 
+const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
+  DECLINED:
+    "Proposal declined. Your original session times have been put back and stand.",
+  RELEASED:
+    "Proposal declined. That original time has since been booked, so the consultant will place those sessions at new times.",
+};
+
 /**
  * POST /api/appointments/[appointmentId]/reschedule/respond
  *
  * The counterparty answers the open proposal (#1163). Accept re-validates the
- * proposed times through the full allocator; decline ends the request and
- * deliberately leaves the released slots in the consultant's allocate queue.
- * The initiator has withdraw, which is the restoring exit.
+ * proposed times through the full allocator; decline ends the request and puts
+ * the released slots back where they were, or — when the original time has been
+ * taken while the proposal was open — leaves them in the consultant's allocate
+ * queue. The initiator's withdraw reaches the same restore.
  */
 export async function POST(
   request: NextRequest,
@@ -50,6 +64,14 @@ export async function POST(
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
+    // Same budget as the sibling reschedule route: both move slots and money.
+    const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (limited) return limited;
+    const apptLimited = await applyRateLimit(
+      rescheduleAppointmentLimiter,
+      `${session.user.id}:${appointmentId}`,
+    );
+    if (apptLimited) return apptLimited;
     const parsed = RespondSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -67,6 +89,10 @@ export async function POST(
       select: {
         id: true,
         initiatedById: true,
+        // #1846 — the released rows are NOT read here. This route used to
+        // recount them to decide the outcome code, which made it a second reader
+        // of a decision the module had already committed; the module now reports
+        // `restoredFully` and the route only words it.
         appointment: {
           select: {
             consultationId: true,
@@ -175,10 +201,29 @@ export async function POST(
           { status: 409 },
         );
       }
+      // A partial restore is reported as RELEASED, like the module's own
+      // notification does: a session still owing a time is the stranded
+      // problem, and it is the arm that tells the counterparty so.
+      //
+      // `result.restoredFully` is the restore's matched count as read inside the
+      // transaction that did the restoring. This route used to recount the rows
+      // itself, AFTER the lock was released — a second reader of a decision
+      // already committed, free to disagree with it: a slot cancelled in the
+      // gap turned a completed restore into "we could not put your times back"
+      // and told a consultant their sessions were gone when they were not. The
+      // module reports the outcome; this route words it.
+      const outcome: RescheduleRespondCode = result.restoredFully
+        ? "DECLINED"
+        : "RELEASED";
       return NextResponse.json({
         declined: true,
-        message:
-          "Proposal declined. The released times stay in the allocate queue until new times are placed.",
+        // #1846 — the released slots are restored by this decline, so the one
+        // fixed sentence this route returned for every successful decline
+        // ("they stay in the allocate queue") named the STRANDED outcome while
+        // the slots had just been put back. The code is what a client branches
+        // on; the message beside it is prose.
+        outcome,
+        message: DECLINE_OUTCOME_COPY[outcome],
       });
     }
 
@@ -189,9 +234,10 @@ export async function POST(
     //
     // Deliberately placed AFTER the counterparty gate, not before it: answering
     // 409 to an unauthorized caller would turn this route into the dispute
-    // oracle the 404 discipline above exists to prevent. Decline is exempt —
-    // it moves nothing (the slots were released when the proposal opened, and
-    // the hourly expiry job reaches the same terminal state regardless).
+    // oracle the 404 discipline above exists to prevent. Decline is exempt — it
+    // moves the booking to no NEW time (it ends the request and, since #1846,
+    // puts the released slots back where they were, which is where the hourly
+    // expiry job leaves them regardless of any dispute).
     if (await hasActiveDisputeForAppointment(appointmentId)) {
       return NextResponse.json(
         {

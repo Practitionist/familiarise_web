@@ -262,7 +262,12 @@ export async function GET(
     const callerMemberships = consultantUser
       ? await prisma.membership.findMany({
           where: { userId: consultantUser.userId, status: "ACTIVE" },
-          select: { organizationId: true, status: true, role: true },
+          select: {
+            organizationId: true,
+            status: true,
+            role: true,
+            organization: { select: { status: true } },
+          },
         })
       : [];
     const scopeResolution = resolveOrgScope({

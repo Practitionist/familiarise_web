@@ -442,6 +442,13 @@ const createWebinarAppointment = async (
     .shuffle(otherConsultees)
     .slice(0, additionalCount);
 
+  // #1639 item 3 — pick once and reuse, so the occurrence's stamp matches the
+  // plan actually connected below rather than a second independent draw. This
+  // is also what puts a group-event row inside `occurrence_no_confirmed_overlap`:
+  // the predicate requires a non-null `consultantProfileId`, so a NULL here left
+  // every seeded webinar permanently outside the only DB-level double-book guard.
+  const selectedPlan = faker.helpers.arrayElement(webinarPlans);
+
   return {
     appointmentType: AppointmentsType.WEBINAR,
     participants: {
@@ -469,13 +476,15 @@ const createWebinarAppointment = async (
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: false,
+        // #1639 item 3 — stamp the plan's consultant, as checkout does.
+        consultantProfileId: selectedPlan.consultantProfileId,
         meeting: createMeetingData(isPastAppointment),
       },
     },
     webinar: {
       create: {
         webinarPlan: {
-          connect: { id: faker.helpers.arrayElement(webinarPlans).id },
+          connect: { id: selectedPlan.id },
         },
         status: isPastAppointment
           ? WebinarStatus.COMPLETED
@@ -508,6 +517,13 @@ const createClassAppointment = async (
   const additionalParticipants = faker.helpers
     .shuffle(otherConsultees)
     .slice(0, additionalCount);
+
+  // #1639 item 3 — pick once and reuse, so every occurrence's stamp matches the
+  // plan actually connected below rather than a second independent draw. This
+  // is also what puts a group-event row inside `occurrence_no_confirmed_overlap`:
+  // the predicate requires a non-null `consultantProfileId`, so a NULL here left
+  // every seeded class permanently outside the only DB-level double-book guard.
+  const selectedPlan = faker.helpers.arrayElement(classPlans);
 
   return {
     appointmentType: AppointmentsType.CLASS,
@@ -548,6 +564,8 @@ const createClassAppointment = async (
           startsAt: slotStart,
           endsAt: slotEnd,
           isTentative: false,
+          // #1639 item 3 — stamp the plan's consultant, as checkout does.
+          consultantProfileId: selectedPlan.consultantProfileId,
           meeting: createMeetingData(
             isPastAppointment && index === limitedSlots - 1,
           ),
@@ -557,7 +575,7 @@ const createClassAppointment = async (
     class: {
       create: {
         classPlan: {
-          connect: { id: faker.helpers.arrayElement(classPlans).id },
+          connect: { id: selectedPlan.id },
         },
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,

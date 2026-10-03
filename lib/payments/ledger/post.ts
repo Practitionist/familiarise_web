@@ -1,4 +1,7 @@
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).
@@ -30,7 +33,7 @@ export interface AccountRef {
   kind: LedgerAccountKind;
   /** Org-scoped accounts (WALLET, ORG_PAYABLE, ORG_RECEIVABLE). */
   organizationId?: string | null;
-  /** Consultant-scoped accounts (CONSULTANT_PAYABLE). */
+  /** Consultant-scoped accounts (CONSULTANT_PAYABLE, CONSULTANT_RECEIVABLE). */
   consultantProfileId?: string | null;
   /**
    * #783 — the ledger is **INR-denominated**: Razorpay always settles in INR

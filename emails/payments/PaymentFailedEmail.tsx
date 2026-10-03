@@ -33,7 +33,9 @@ export const PaymentFailedEmail = ({
   appointmentType = "consultation",
   amount = 100,
   currency = "USD",
-  retryUrl = `${getAppUrl()}/payment`,
+  // No /payment route exists; the payer's own payments surface is the
+  // fallback (callers always pass the checkout pay page explicitly).
+  retryUrl = `${getAppUrl()}/dashboard/go/client/payments`,
   failureReason = "Payment could not be processed",
   expiresAt,
 }: PaymentFailedEmailProps) => {

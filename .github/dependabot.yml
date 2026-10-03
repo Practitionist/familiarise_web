@@ -17,8 +17,9 @@ updates:
     versioning-strategy: "increase"
     allow:
       - dependency-type: "direct"
-      - dependency-type: "indirect"
     ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "@types/*"
         update-types: ["version-update:semver-patch"]
       # Ignore patch updates for specific dev tools to reduce noise
@@ -46,7 +47,6 @@ updates:
           - "@types/react"
           - "@types/react-dom"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -82,7 +82,6 @@ updates:
           - "@stripe/*"
           - "razorpay"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -92,7 +91,6 @@ updates:
           - "@stream-io/*"
           - "stream-chat*"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 

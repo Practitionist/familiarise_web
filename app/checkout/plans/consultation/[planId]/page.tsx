@@ -54,6 +54,11 @@ import {
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -136,6 +141,14 @@ export default function ConsultationCheckoutPage({
     string | null
   >(null);
   const { data: session } = useSession();
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
   const selectedOrgFundingSource = useMemo(() => {
     if (!selectedOrganizationId) return null;
     const memberships = session?.user?.organizationMemberships ?? [];
@@ -144,7 +157,6 @@ export default function ConsultationCheckoutPage({
         ?.fundingSource ?? null
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
-  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
 
   const { toast } = useToast();
   const {
@@ -821,10 +833,6 @@ export default function ConsultationCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -835,6 +843,10 @@ export default function ConsultationCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -844,30 +856,38 @@ export default function ConsultationCheckoutPage({
               <Separator className="bg-border" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>
-                  {isLicenseCovered
-                    ? formatPrice(0)
-                    : formatPrice(pricing.total)}
-                </div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
-              {!isLicenseCovered && (
-                <FxEstimateNote
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {!isLicenseCovered && (
-                <EmiHint
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {isLicenseCovered && (
+              <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">
-                  Session value {formatPrice(pricing.total)} — covered by
-                  enterprise license
+                  Programme license coverage (if entitled) is verified and
+                  applied at checkout
                 </p>
               )}
+              {/* #1863 — the notice ladder, in the buyer's own terms, at the
+                  one moment they can still act on it. A consultation buy showed
+                  no cancellation terms at all: the ladder only surfaced in the
+                  cancel dialog, i.e. after the money had already gone. */}
+              <CancellationPolicyNote
+                eventKind="individual"
+                // A consultation checkout can already carry a chosen slot, and
+                // when it does the ladder has a live rung: the note then says
+                // what cancelling THIS booking returns and how much earlier
+                // notice would be worth more, instead of only printing the
+                // table.
+                eventStartsAt={validatedSearchParams?.startsAt ?? null}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
+              />
             </div>
           </CardContent>
         </Card>
@@ -941,6 +961,13 @@ export default function ConsultationCheckoutPage({
                                 error.message ??
                                 error.reason,
                               errorType: error.code,
+                              // #1583 E-P1-03 — the same string arrives as
+                              // `code` on the body and is what titles a
+                              // lead-time refusal correctly; without it
+                              // `errorType` above is the coarse
+                              // AVAILABILITY bucket and the buyer is told the
+                              // listing is gone.
+                              code: error.code,
                             })
                           }
                         />
@@ -974,10 +1001,12 @@ export default function ConsultationCheckoutPage({
                             message?: string;
                             description?: string;
                             errorType?: string;
+                            code?: string;
                           }) =>
                             handleApiError({
                               error: error.message ?? error.description,
                               errorType: error.errorType,
+                              code: error.code,
                             })
                           }
                         />

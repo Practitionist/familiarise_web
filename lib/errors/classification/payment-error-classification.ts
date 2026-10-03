@@ -89,6 +89,33 @@ export const ErrorTypes = {
   // card not charged" toast instead of UNKNOWN.
   EVENT_CHECKOUT_BUSY: "EVENT_CHECKOUT_BUSY",
   CONSULTEE_BOOKING_BUSY: "CONSULTEE_BOOKING_BUSY",
+  // Same literal-equality rule as the two above, and the same reason it is not
+  // a fall-through: these are `error.code` off a typed Error class
+  // (utils/appointmentlock.ts) that the route forwards verbatim, so the value
+  // here must BE that string or the toast map misses it and the buyer is told
+  // "Something Went Wrong" about an outcome the server already described.
+  //   SERIALIZATION_CONFLICT          — P2034 retries exhausted, 409 + retryAfter
+  //   EVENT_SOLD_OUT                  — EventFullError, 409, terminal
+  //   EVENT_CHECKOUT_LOCK_UNAVAILABLE — Redis unreachable, fail-closed 503
+  //   BOOKING_LOCK_UNAVAILABLE        — same, for every non-flash-sale atom
+  //
+  // SERIALIZATION_CONFLICT and the two BUSY codes are the three the client
+  // auto-retries exactly once (app/checkout/plans/utils.ts `BUSY_ERROR_TYPES`),
+  // so this map is what the SECOND failure reads — the one the buyer actually
+  // sees, because the first one already toasted "someone is one step ahead".
+  SERIALIZATION_CONFLICT: "SERIALIZATION_CONFLICT",
+  EVENT_SOLD_OUT: "EVENT_SOLD_OUT",
+  EVENT_CHECKOUT_LOCK_UNAVAILABLE: "EVENT_CHECKOUT_LOCK_UNAVAILABLE",
+  BOOKING_LOCK_UNAVAILABLE: "BOOKING_LOCK_UNAVAILABLE",
+  // The two client-picked-start refusals (lib/payments/utils/slot-validation.ts,
+  // raised at the Zod edge in schemas/checkout.ts and schemas/slots.ts). They
+  // travel as `code` ALONGSIDE `errorType: "AVAILABILITY_ERROR"`, so
+  // `AVAILABILITY_ERROR` alone titles a lead-time refusal "No Longer Available" —
+  // a fact about the listing, not about the buyer who dawdled on the pay page.
+  // The client passes `code` to `getErrorToast` ahead of `errorType` for
+  // exactly this reason.
+  SLOT_TOO_SOON: "SLOT_TOO_SOON",
+  SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -478,12 +505,19 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
       // #1819 — class batch enrolment closed, or re-priced mid-checkout.
       "ENROLMENT_CLOSED",
       "CLASS_PRICE_CHANGED",
+      // #1743 — subscription renewal already linked to an active successor.
+      "ALREADY_RENEWED",
     ] as const
   ).map((code) => ({
     code,
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 409,
   })),
+  {
+    code: "INVALID_RENEWAL_SOURCE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
   {
     code: "BACKUP_WINDOW_PAST",
     errorType: ErrorTypes.BOOKING_RULE,

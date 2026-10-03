@@ -94,6 +94,13 @@ jest.mock("../../lib/email", () => ({
 
 const refundWholeEventPayments = jest.fn();
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  // #1780 D-5 — the whole-event door nets each seat to the class ledger before
+  // the fan-out, so the route reads this alongside the summary. Same trap as a
+  // Sentry mock missing `startSpan`: an export the boundary does not carry is
+  // `undefined` at the call site, and every class POST then answers the 500
+  // `TypeError` catch instead of the summary under test. An empty ledger is the
+  // honest stub — the summary is mocked, so nothing reads the rows.
+  classSeriesLedgers: async () => new Map(),
   refundWholeEventPayments: (...args: unknown[]) =>
     refundWholeEventPayments(...args),
 }));

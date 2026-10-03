@@ -28,6 +28,7 @@ const paymentIntentSchema = z.object({
   id: z.string(),
   object: z.literal("payment_intent"),
   amount: z.number(),
+  amount_received: z.number().nullable().optional(),
   currency: z.string(),
   metadata: metadataSchema,
   status: z.string(),
@@ -91,16 +92,25 @@ export const stripeSubscriptionCreatedEventSchema =
   });
 
 // Checkout Session schema (session.id is the cs_... stored in Payment.paymentIntent)
-const checkoutSessionSchema = z.object({
-  id: z.string(), // cs_... ID — matches Payment.paymentIntent
-  object: z.literal("checkout.session"),
-  payment_intent: z.string().nullable(), // pi_... ID — the underlying PaymentIntent
-  payment_status: z.string(), // "paid", "unpaid", "no_payment_required"
-  status: z.string(), // "complete", "expired", "open"
-  metadata: metadataSchema,
-  amount_total: z.number().nullable(),
-  currency: z.string().nullable(),
-});
+export const stripeCheckoutSessionObjectSchema = z
+  .object({
+    id: z.string(), // cs_... ID — matches Payment.paymentIntent
+    object: z.literal("checkout.session").optional(),
+    payment_intent: z.string().nullable().optional(), // pi_... ID — the underlying PaymentIntent
+    payment_status: z.string().optional(), // "paid", "unpaid", "no_payment_required"
+    status: z.string().optional(), // "complete", "expired", "open"
+    metadata: metadataSchema.optional(),
+    amount_total: z.number().nullable().optional(),
+    currency: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export const stripeCheckoutSessionCompletedObjectSchema =
+  stripeCheckoutSessionObjectSchema.extend({
+    payment_status: z.string(),
+  });
+
+export const stripePaymentIntentObjectSchema = paymentIntentSchema.passthrough();
 
 // FIX CF-3: Checkout Session Completed event
 // This is the correct event for Stripe Checkout Sessions.
@@ -109,7 +119,7 @@ export const stripeCheckoutSessionCompletedEventSchema =
   stripeBaseEventSchema.extend({
     type: z.literal("checkout.session.completed"),
     data: z.object({
-      object: checkoutSessionSchema,
+      object: stripeCheckoutSessionCompletedObjectSchema,
     }),
   });
 
@@ -118,6 +128,135 @@ export const stripeCheckoutSessionExpiredEventSchema =
   stripeBaseEventSchema.extend({
     type: z.literal("checkout.session.expired"),
     data: z.object({
-      object: checkoutSessionSchema,
+      object: stripeCheckoutSessionObjectSchema,
     }),
   });
+
+export const stripeRefundEntrySchema = z
+  .object({
+    id: z.string(),
+    amount: z.number(),
+    currency: z.string(),
+    status: z.string().nullable().optional(),
+    charge: z
+      .union([z.string(), z.object({ id: z.string() }).passthrough()])
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+export const stripeChargeRefundedObjectSchema = z
+  .object({
+    id: z.string(),
+    payment_intent: z.string().nullable().optional(),
+    refunds: z
+      .object({
+        data: z.array(stripeRefundEntrySchema).optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+export const stripeChargeRefundedEventSchema = stripeBaseEventSchema.extend({
+  type: z.literal("charge.refunded"),
+  data: z.object({
+    object: stripeChargeRefundedObjectSchema,
+  }),
+});
+
+export const stripeDisputeCreatedObjectSchema = z
+  .object({
+    id: z.string(),
+    charge: z.string(),
+    amount: z.number(),
+    currency: z.string(),
+    reason: z.string(),
+    status: z.string(),
+    evidence_details: z
+      .object({
+        due_by: z.number().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    is_charge_refundable: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const stripeDisputeCreatedEventSchema = stripeBaseEventSchema.extend({
+  type: z.literal("charge.dispute.created"),
+  data: z.object({
+    object: stripeDisputeCreatedObjectSchema,
+  }),
+});
+
+export const stripeDisputeUpdatedObjectSchema = z
+  .object({
+    id: z.string(),
+    status: z.string(),
+    evidence: z.record(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+export const stripeDisputeUpdatedEventSchema = stripeBaseEventSchema.extend({
+  type: z.enum(["charge.dispute.updated", "charge.dispute.closed"]),
+  data: z.object({
+    object: stripeDisputeUpdatedObjectSchema,
+  }),
+});
+
+export const stripePayoutObjectSchema = z
+  .object({
+    id: z.string(),
+    status: z.string(),
+    failure_code: z.string().nullable().optional(),
+    failure_message: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export const stripePayoutEventSchema = stripeBaseEventSchema.extend({
+  type: z.enum([
+    "payout.created",
+    "payout.paid",
+    "payout.failed",
+    "payout.canceled",
+  ]),
+  data: z.object({
+    object: stripePayoutObjectSchema,
+  }),
+});
+
+export const stripeAccountObjectSchema = z
+  .object({
+    id: z.string(),
+    charges_enabled: z.boolean().optional(),
+    payouts_enabled: z.boolean().optional(),
+    details_submitted: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const stripeAccountUpdatedEventSchema = stripeBaseEventSchema.extend({
+  type: z.literal("account.updated"),
+  data: z.object({
+    object: stripeAccountObjectSchema,
+  }),
+});
+
+export const stripeTransferObjectSchema = z
+  .object({
+    id: z.string(),
+    amount: z.number().optional(),
+    destination: z.string().nullable().optional(),
+    reversed: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const stripeTransferEventSchema = stripeBaseEventSchema.extend({
+  type: z.enum(["transfer.created", "transfer.reversed"]),
+  data: z.object({
+    object: stripeTransferObjectSchema,
+  }),
+});
+

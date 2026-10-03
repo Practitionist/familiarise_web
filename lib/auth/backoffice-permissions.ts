@@ -75,6 +75,8 @@ export type BackofficeSurface =
   | "subscriptions.manage"
   | "payouts.read"
   | "payouts.manage"
+  | "referrals.read"
+  | "referrals.manage"
   | "approvalPayments.manage"
   | "tds.read"
   // #1771 K-6 — the class-series doors: support moves vs money moves.
@@ -154,6 +156,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "subscriptions.manage": ADMIN_ONLY,
   "payouts.read": OPERATORS,
   "payouts.manage": ADMIN_ONLY,
+  "referrals.read": OPERATORS,
+  "referrals.manage": ADMIN_ONLY,
   "approvalPayments.manage": ADMIN_ONLY,
   "tds.read": ADMIN_ONLY,
   // #1780 — staff cancel a session for a host, grant a make-up and flag

@@ -29,6 +29,8 @@ import { createAppointments } from "./seedFiles/6a-create-appointments";
 import { createDraftSessions } from "./seedFiles/6b-create-draft-sessions";
 import { createRescheduleProposals } from "./seedFiles/6c-create-reschedule-proposals";
 
+import { recomputeAllMenteesHelped } from "./seedFiles/6d-recompute-mentees-helped";
+
 // Phase 7: Engagement
 import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
 import { createConsultantReviews } from "./seedFiles/7b-create-consultant-reviews";
@@ -41,31 +43,30 @@ import { createPayments } from "./seedFiles/8b-create-payments";
 import { createPlatformFeedback } from "./seedFiles/9a-create-platform-feedback";
 import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
 
-// Phase 11: Documents & Meetings
-import { createAppointmentDocuments } from "./seedFiles/11a-create-appointment-documents";
-import { createMeetings } from "./seedFiles/11b-create-meetings";
+// Phase 10: Documents & Meetings
+import { createAppointmentDocuments } from "./seedFiles/10a-create-appointment-documents";
+import { createMeetings } from "./seedFiles/10b-create-meetings";
 
-// Phase 12: Payment Extensions
-import { createRefunds } from "./seedFiles/12a-create-refunds";
-import { createDisputes } from "./seedFiles/12b-create-disputes";
+// Phase 11: Payment Extensions
+import { createRefunds } from "./seedFiles/11a-create-refunds";
+import { createDisputes } from "./seedFiles/11b-create-disputes";
 
-// Phase 13: Payout System
-import { createPayoutAccounts } from "./seedFiles/13a-create-payout-accounts";
-import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earnings";
-import { createPayouts } from "./seedFiles/13c-create-payouts";
-// 13d-create-invoices removed in #768 lockdown (legacy Invoice model dropped).
+// Phase 12: Payout System
+import { createPayoutAccounts } from "./seedFiles/12a-create-payout-accounts";
+import { createConsultantEarnings } from "./seedFiles/12b-create-consultant-earnings";
+import { createPayouts } from "./seedFiles/12c-create-payouts";
 
-// Phase 14: Referrals & Collaborators
-import { createReferralCodes } from "./seedFiles/14a-create-referral-codes";
-import { createCollaborators } from "./seedFiles/14b-create-collaborators";
+// Phase 13: Referrals & Collaborators
+import { createReferralCodes } from "./seedFiles/13a-create-referral-codes";
+import { createCollaborators } from "./seedFiles/13b-create-collaborators";
 
-// Phase 15: Enterprise Organizations
-import { createOrganizations } from "./seedFiles/15a-create-organizations";
-import { createOrgCatalog } from "./seedFiles/15b-create-org-catalog";
+// Phase 14: Enterprise Organizations
+import { createOrganizations } from "./seedFiles/14a-create-organizations";
+import { createOrgCatalog } from "./seedFiles/14b-create-org-catalog";
 
-// Phase 16: Statutory lookups (#778 §D)
-import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
-import { createPlatformCancellationPolicy } from "./seedFiles/16b-create-cancellation-policy";
+// Phase 15: Statutory lookups
+import { createTdsRates } from "./seedFiles/15a-create-tds-rates";
+import { createPlatformCancellationPolicy } from "./seedFiles/15b-create-cancellation-policy";
 
 async function seed() {
   console.log("Starting seed process...");
@@ -142,6 +143,14 @@ async function seed() {
     console.log("Creating reschedule proposals...");
     await createRescheduleProposals();
 
+    // `totalMenteesHelped` is a stored column with no seed value (see
+    // 1a-create-users.ts), so the derived figure is written here — the first
+    // moment a delivered session exists. Without it a dev database shows every
+    // consultant as 0 until the hourly auto-complete pass first runs, which on
+    // a freshly seeded database may be never.
+    console.log("Deriving totalMenteesHelped from delivered sessions...");
+    await recomputeAllMenteesHelped();
+
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");
     console.log("Creating waitlist subscribers...");
@@ -166,24 +175,24 @@ async function seed() {
     console.log("Creating support tickets...");
     await createSupportTickets(users);
 
-    // Phase 11: Documents & Meetings
-    console.log("\n[Phase 11] Creating documents & meeting sessions...");
+    // Phase 10: Documents & Meetings
+    console.log("\n[Phase 10] Creating documents & meeting sessions...");
     console.log("Creating appointment documents...");
     await createAppointmentDocuments();
 
     console.log("Creating meeting sessions...");
     await createMeetings();
 
-    // Phase 12: Payment Extensions
-    console.log("\n[Phase 12] Creating payment extensions...");
+    // Phase 11: Payment Extensions
+    console.log("\n[Phase 11] Creating payment extensions...");
     console.log("Creating refunds...");
     await createRefunds();
 
     console.log("Creating disputes...");
     await createDisputes();
 
-    // Phase 13: Payout System
-    console.log("\n[Phase 13] Creating payout system data...");
+    // Phase 12: Payout System
+    console.log("\n[Phase 12] Creating payout system data...");
     console.log("Creating payout accounts...");
     await createPayoutAccounts();
 
@@ -193,16 +202,16 @@ async function seed() {
     console.log("Creating payouts...");
     await createPayouts();
 
-    // Phase 14: Referrals & Collaborators
-    console.log("\n[Phase 14] Creating referrals & collaborators...");
+    // Phase 13: Referrals & Collaborators
+    console.log("\n[Phase 13] Creating referrals & collaborators...");
     console.log("Creating referral codes...");
     await createReferralCodes();
 
     console.log("Creating collaborators...");
     await createCollaborators();
 
-    // Phase 15: Enterprise Organizations
-    console.log("\n[Phase 15] Creating enterprise organizations...");
+    // Phase 14: Enterprise Organizations
+    console.log("\n[Phase 14] Creating enterprise organizations...");
     await createOrganizations(users);
 
     // Must follow createOrganizations: the catalog attaches to canHost orgs
@@ -210,12 +219,10 @@ async function seed() {
     console.log("Creating org-owned catalog plans...");
     await createOrgCatalog();
 
-    // Phase 16: Statutory lookups
-    console.log("\n[Phase 16] Seeding statutory TDS rates...");
+    // Phase 15: Statutory lookups
+    console.log("\n[Phase 15] Seeding statutory TDS rates...");
     await createTdsRates();
 
-    // #1499 — the platform refund ladder every booking falls back to. Appointment
-    // seeds leave the FK null on purpose, which reads as this ladder anyway.
     console.log("Seeding the platform cancellation policy...");
     await createPlatformCancellationPolicy();
 

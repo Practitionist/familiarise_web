@@ -344,6 +344,30 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Another change is in progress — retry in a moment",
     variant: "destructive",
   },
+  // #1583 E-P1-03 — the client's own picked start, refused at the Zod edge
+  // (schemas/slots.ts → request-for-approval, schemas/checkout.ts → the buy).
+  // These reach the allocate dialog too, because a consultant re-submitting a
+  // consultee's requested time hits the same edge. The server's sentence is the
+  // good one (it names the minutes left, or the :00/:30 grid), so it rides as
+  // the description and only the title is added — "Couldn't save timings" under
+  // "that time is now too close" would send the consultant hunting for a
+  // permissions problem they do not have.
+  SLOT_TOO_SOON: {
+    title: "That time is now too close",
+    variant: "destructive",
+  },
+  SLOT_NOT_ON_GRID: {
+    title: "That time isn't bookable",
+    variant: "destructive",
+  },
+  // #1169 PR 1 / CN-1 — the booking locks fail CLOSED on a Redis outage and
+  // answer 503 with this code. Nothing was written and the request is still
+  // allocatable, so this is the same "wait and retry" story LOCK_CONTENTION
+  // tells, said once for a lock nobody is holding.
+  BOOKING_LOCK_UNAVAILABLE: {
+    title: "The booking system is briefly busy — retry in a moment",
+    variant: "destructive",
+  },
 };
 
 /** Shared 429 copy: every limiter answers it, every surface renders it. */
@@ -377,23 +401,6 @@ export const invalidEventId = (): AllocationToast => ({
   title: "Couldn't save timings",
   description: "This booking can't be scheduled as shown. Please reload.",
 });
-
-/**
- * #1132 — server 409 messages that must render AS THEMSELVES instead of
- * being relabeled "already allocated in another tab". A slot conflict
- * ("Slot taken during allocation: [CONFLICT] Slot already booked: …",
- * ScheduleValidationService/SchedulingService) means the SLOT went to
- * someone else — the request is still allocatable with different times, so
- * the honest message keeps the dialog open instead of kicking the
- * consultant back to the list.
- */
-export const preservedMessages: readonly RegExp[] = [
-  /slot already booked/i,
-  /slot taken during allocation/i,
-];
-
-export const isPreservedAllocationMessage = (message: string): boolean =>
-  preservedMessages.some((pattern) => pattern.test(message));
 
 /** 409 — another tab or teammate already allocated this request. "Session"
  * is deliberately avoided here: it means a bookable session everywhere else
@@ -444,6 +451,16 @@ export type ValidationFailureKind =
  * `SESSION_LOOKUP_FAILED` (#1716), which — like every 503, a refusal with a
  * sentence and nothing done — reads as "try again in a moment" rather than
  * as an unknown outcome.
+ *
+ * #1863 — audited for a code-first branch and deliberately left on the status.
+ * The typed validate refusals (`SLOT_TOO_SOON`, `SLOT_NOT_ON_GRID`, raised at
+ * the Zod edge in schemas/slots.ts) answer 400 WITH a sentence naming the
+ * minutes left or the :00/:30 grid, and every 4xx already lands on "refused",
+ * whose copy branch relays `serverMessage` verbatim. A `code` parameter here
+ * would classify them no differently and would be a second, decorative
+ * mechanism. The codes that DID need branching live where the branch changes
+ * something visible: `ALLOCATION_ERROR_TOASTS` above (the title) and
+ * `classifyAllocationFailure` (whether the dialog closes).
  */
 export function classifyValidationFailure(
   httpStatus: number | undefined,

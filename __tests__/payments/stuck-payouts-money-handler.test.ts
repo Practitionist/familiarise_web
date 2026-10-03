@@ -71,10 +71,10 @@ const PAYOUT: Row = {
 
 let payoutRow: Row;
 
-// `var` (not let/const): the hoisted jest.mock factory runs before this
-// declaration line, and only `var` is initialized (to undefined) at hoist time.
-// eslint-disable-next-line no-var
-var prismaStub: {
+// The stub is built inside the hoisted jest.mock factory (which runs before any
+// `const` below is initialised) and read back through jest.requireMock after
+// the imports, so no `var` hoisting trick is needed.
+type PrismaStub = {
   consultantPayout: {
     findFirst: jest.Mock;
     updateMany: jest.Mock;
@@ -87,7 +87,7 @@ var prismaStub: {
 };
 
 jest.mock("../../lib/prisma", () => {
-  prismaStub = {
+  const prismaStub: PrismaStub = {
     consultantPayout: {
       findFirst: jest.fn(async () => payoutRow),
       updateMany: jest.fn(
@@ -113,6 +113,10 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { handlePayoutWebhook } from "../../lib/payments/payouts/payout-service";
+
+const prismaStub = (
+  jest.requireMock("../../lib/prisma") as { default: PrismaStub }
+).default;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -186,4 +190,57 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
     expect(recordTDSDeduction).not.toHaveBeenCalled();
     expect(postLedgerTxn).not.toHaveBeenCalled();
   });
+
+  it("accrues clawbackAmountPaise and logs PAYOUT_COMPLETION_EARNINGS_SHORTFALL when a late refund cascaded in-flight (#1898)", async () => {
+    payoutRow.earnings = [
+      {
+        id: "ce_1",
+        payoutId: "po_1",
+        status: "BATCHED",
+        consultantSharePaise: 100000,
+        refundedShareAmount: 0,
+      },
+    ];
+    const completionEarnings = prismaStub.consultantEarnings as Record<
+      string,
+      unknown
+    >;
+    completionEarnings.findMany = jest
+      .fn()
+      .mockResolvedValue([
+        { consultantSharePaise: 100000, refundedShareAmount: 25000 },
+      ]);
+    const systemEventCreate = jest.fn().mockResolvedValue({ id: "se_1898" });
+    (prismaStub as Record<string, unknown>).systemEvent = {
+      create: systemEventCreate,
+    };
+
+    try {
+      await handlePayoutWebhook("RAZORPAY", "pout_live_1", "COMPLETED");
+
+      expect(completionEarnings.findMany).toHaveBeenCalledWith({
+        where: { payoutId: "po_1" },
+        select: { consultantSharePaise: true, refundedShareAmount: true },
+      });
+      expect(prismaStub.consultantPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: "po_1" },
+        data: { clawbackAmountPaise: { increment: 25000 } },
+      });
+      expect(systemEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            category: "PAYOUT",
+            severity: "WARN",
+            message: expect.stringContaining(
+              "PAYOUT_COMPLETION_EARNINGS_SHORTFALL",
+            ),
+          }),
+        }),
+      );
+    } finally {
+      delete completionEarnings.findMany;
+      delete (prismaStub as Record<string, unknown>).systemEvent;
+    }
+  });
 });
+

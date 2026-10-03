@@ -92,7 +92,9 @@ export async function POST(req: NextRequest) {
     const { consultantProfileIds } = data;
 
     // Create payout batch
-    const batchId = await createPayoutBatch(consultantProfileIds);
+    const batchId = await createPayoutBatch(consultantProfileIds, {
+      createdBy: auth.session.user.id,
+    });
 
     // Get created payouts
     const payouts = await prisma.consultantPayout.findMany({

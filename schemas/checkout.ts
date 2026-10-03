@@ -71,6 +71,7 @@ export const consultationSearchParamsSchema = searchParamsSchema
 export const subscriptionSearchParamsSchema = searchParamsSchema.extend({
   schedulingPeriodStartsAt: z.string().datetime().optional(),
   schedulingPeriodEndsAt: z.string().datetime().optional(),
+  renewsSubscriptionId: z.string().optional(),
 });
 
 // Webinar-specific validation
@@ -138,6 +139,9 @@ export const checkoutSchema = z
     //   INVOICE   → deferred billing; line item lands on next invoice.
     //   PROJECT   → reserved for v2.
     organizationId: z.string().optional(),
+    // #1743 — optional renewal link to an APPROVED or COMPLETED subscription
+    // for the same plan and consultee.
+    renewsSubscriptionId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -169,9 +173,11 @@ export const checkoutSchema = z
       const hasSlotData = data.startsAt && data.endsAt;
       // #1766 — the server derives the window (first cycle) from the start;
       // `schedulingPeriodEndsAt` stays accepted for old clients and is ignored.
-      const hasSchedulingPeriod = !!data.schedulingPeriodStartsAt;
+      // #1743 — a renewal anchors its start to the prior subscription's end.
+      const hasSchedulingPeriod =
+        !!data.schedulingPeriodStartsAt || !!data.renewsSubscriptionId;
 
-      // Require EITHER slot data OR a scheduling start
+      // Require EITHER slot data OR a scheduling start / renewal source
       if (!hasSlotData && !hasSchedulingPeriod) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -354,6 +360,7 @@ export const createCheckoutData = (params: {
   useReferralCredits?: boolean;
   organizationId?: string;
   consumerStateCode?: string;
+  renewsSubscriptionId?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -372,5 +379,6 @@ export const createCheckoutData = (params: {
     useReferralCredits: params.useReferralCredits,
     organizationId: params.organizationId,
     consumerStateCode: params.consumerStateCode,
+    renewsSubscriptionId: params.renewsSubscriptionId,
   };
 };

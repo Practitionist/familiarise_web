@@ -14,6 +14,7 @@ import {
   getPayoutById,
   approvePayout,
   rejectPayout,
+  PayoutMakerCheckerError,
 } from "@/lib/payments/payouts";
 
 interface RouteParams {
@@ -82,6 +83,18 @@ export const POST = withOpsAction(
           await rejectPayout(params.id, body.reason);
         }
       } catch (err) {
+        if (
+          err instanceof PayoutMakerCheckerError ||
+          (err instanceof Error &&
+            (err as { code?: string }).code ===
+              "PAYOUT_MAKER_CHECKER_VIOLATION")
+        ) {
+          throw new OpsRefusal(
+            "PAYOUT_MAKER_CHECKER_VIOLATION",
+            err.message,
+            403,
+          );
+        }
         // The service CAS lost to a concurrent decision: a state, not a fault.
         const msg = err instanceof Error ? err.message : "";
         if (/cannot be (approved|rejected)/.test(msg)) throw notPending(null);

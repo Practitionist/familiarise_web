@@ -81,6 +81,7 @@ import prisma from "../../lib/prisma";
 import { listRefunds, getRefund } from "../../lib/payments";
 import { RefundError } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
+import { notifyRefundFailed } from "../../lib/novu/service";
 import { reconcilePendingRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
 
 /** The Prisma refund surface the reconcile core touches. */
@@ -100,6 +101,7 @@ const refundTable = (prisma as unknown as ReconcilePrismaMock).refund;
 const mockList = listRefunds as jest.Mock;
 const mockGet = getRefund as jest.Mock;
 const mockPage = reportSentryMessage as jest.Mock;
+const mockNotifyFailed = notifyRefundFailed as jest.Mock;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -234,6 +236,72 @@ describe("reconcilePendingRefunds placeholder matching", () => {
       expect.stringContaining("Ambiguous"),
       expect.objectContaining({ tags: { feature: "refund-reconcile" } }),
     );
+  });
+});
+
+// Prod 2026-10-01: orders.fetchPayments 404'd for five stale placeholders and
+// failed every run. Past 24h the row is FAILED and paged once; younger waits.
+describe("reconcilePendingRefunds — placeholder whose order the gateway does not know", () => {
+  const orderNotFound = () =>
+    new RefundError("Failed to process refund", "UNKNOWN_ERROR", "RAZORPAY", {
+      statusCode: 404,
+      error: undefined,
+    });
+
+  test("past 24h → FAILED via CAS, paged once, batch continues, run succeeds", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([
+        placeholderRow({ id: "res_a", ageHours: 30 }),
+        placeholderRow({ id: "res_b", ageHours: 30 }),
+      ])
+      .mockResolvedValueOnce([]);
+    mockList
+      .mockRejectedValueOnce(orderNotFound())
+      .mockRejectedValueOnce(orderNotFound());
+
+    const result = await reconcilePendingRefunds();
+
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "res_b", status: "PENDING" },
+        data: expect.objectContaining({ status: "FAILED" }),
+      }),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      failedCount: 2,
+      failedUnknownId: 2,
+      errors: [],
+    });
+    expect(mockPage).toHaveBeenCalledTimes(1);
+    expect(mockPage.mock.calls[0][1]).toMatchObject({
+      extra: { failed: ["res_a", "res_b"] },
+    });
+  });
+
+  test("within 24h → left PENDING and skipped; any other list error stays an error", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([
+        placeholderRow({ id: "res_young", ageHours: 2 }),
+        placeholderRow({ id: "res_flaky", ageHours: 30 }),
+      ])
+      .mockResolvedValueOnce([]);
+    mockList.mockRejectedValueOnce(orderNotFound()).mockRejectedValueOnce(
+      new RefundError("Failed to process refund", "UNKNOWN_ERROR", "RAZORPAY", {
+        statusCode: 502,
+      }),
+    );
+
+    const result = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).not.toHaveBeenCalled();
+    expect(result.skippedCount).toBe(1);
+    expect(result.errors).toEqual([
+      "Refund res_flaky: Failed to process refund",
+    ]);
+    expect(result.success).toBe(false);
+    expect(mockPage).not.toHaveBeenCalled();
   });
 });
 
@@ -496,5 +564,43 @@ describe("reconcilePendingRefunds — no live client past 24h (#1757)", () => {
       if (previous === undefined) delete process.env.STRIPE_ENABLED;
       else process.env.STRIPE_ENABLED = previous;
     }
+  });
+});
+
+// The notify pass runs inside the core, after both reconcile passes, so every
+// door that reconciles also pages the payer of a FAILED refund exactly once.
+describe("reconcilePendingRefunds — failed-refund notice", () => {
+  test("pages the payer of an un-notified FAILED refund after reconciling", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([]) // placeholder pass
+      .mockResolvedValueOnce([]) // real-id pass
+      .mockResolvedValueOnce([
+        {
+          id: "row_failed",
+          paymentId: "pay_1",
+          amountPaise: 10_000,
+          currency: "INR",
+          metadata: {},
+          failureReason: null,
+          failedAt: null,
+          payment: { userId: "user_1", organizationId: null },
+        },
+      ]);
+
+    await reconcilePendingRefunds();
+
+    expect(refundTable.findMany).toHaveBeenCalledTimes(3);
+    expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
+      where: { status: "FAILED", failedNotifiedAt: null },
+    });
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "row_failed", failedNotifiedAt: null },
+      }),
+    );
+    expect(mockNotifyFailed).toHaveBeenCalledWith(
+      "user_1",
+      expect.objectContaining({ amount: 10_000 }),
+    );
   });
 });

@@ -42,6 +42,7 @@ import type {
   PlaceOfSupplySource,
 } from "@prisma/client";
 import {
+  BODY_FONT,
   StatutoryDocumentFrame,
   statutoryStyles,
   formatStatutoryDate,
@@ -50,7 +51,7 @@ import {
   type StatutoryBuyer,
 } from "./statutory-document-frame";
 
-// The Devanagari face used by the consumer documents is registered once in
+// The Devanagari face used by statutory documents is registered once in
 // ./statutory-document-frame. Re-exported here because that is where callers
 // have always imported it from.
 export { BODY_FONT } from "./statutory-document-frame";
@@ -143,7 +144,7 @@ export type OrgInvoicePdfData = {
 const orgStyles = StyleSheet.create({
   page: {
     padding: 36,
-    fontFamily: "Helvetica",
+    fontFamily: BODY_FONT,
     fontSize: 10,
     color: "#222",
   },

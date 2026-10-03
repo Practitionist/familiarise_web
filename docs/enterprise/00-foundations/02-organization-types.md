@@ -46,7 +46,7 @@ flowchart TD
 
 ### Each combo, grounded in a seeded persona
 
-The four seeded orgs (`prisma/seedFiles/15a-create-organizations.ts`) exist
+The four seeded orgs (`prisma/seedFiles/14a-create-organizations.ts`) exist
 precisely to put one real shape behind every cell of the table above:
 
 | Derived kind | Seeded org | One concrete line |

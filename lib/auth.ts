@@ -181,9 +181,13 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
 
-  // Upstash-backed so the count is shared across lambdas; budgets and the
-  // store live in lib/auth/rate-limit.ts. The edge limiter in middleware.ts
-  // covers only non-BetterAuth routes, so nothing is counted twice.
+  // #1487 / #1878 — Two-layer rate-limiting architecture:
+  // 1. BetterAuth endpoints (`/api/auth/*`) use `authRateLimit` (lib/auth/rate-limit.ts),
+  //    backed by shared Upstash Redis via customStorage so counters persist across
+  //    serverless function instances instead of resetting per cold start.
+  // 2. Non-BetterAuth routes use Edge (`middleware.ts`) and route-level (`lib/rate-limit.ts`)
+  //    `@upstash/ratelimit` sliding-window limiters. Middleware excludes `/api/auth/*`
+  //    from edge rate-limit rules so auth requests are never double-counted.
   rateLimit: authRateLimit,
 
   emailAndPassword: {
@@ -277,6 +281,12 @@ export const auth = betterAuth({
     // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
     // vanish at the pre-MVP reset.
     encryptOAuthTokens: true,
+    // #1876 §3 — Explicitly enable OAuth token rotation on every re-sign-in
+    // (BetterAuth's default, stated here so an upstream default change cannot
+    // silently disable it). Ensures accessToken/refreshToken/idToken and
+    // accessTokenExpiresAt are refreshed and re-encrypted under
+    // `encryptOAuthTokens: true` whenever a user signs in via Google/GitHub.
+    updateAccountOnSignIn: true,
   },
 
   // Previously unset, so every cookie and IP attribute was BetterAuth's

@@ -42,8 +42,13 @@ async function resolveOrg(
   eventType: EventType,
   event: unknown,
 ): Promise<string | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const svc = SchedulingService as any;
+  const svc = SchedulingService as unknown as {
+    fetchEventData: (
+      tx: unknown,
+      eventType: EventType,
+      eventId: string,
+    ) => Promise<{ organizationId?: string | null } | null | undefined>;
+  };
   const tx = {
     [model]: { findUnique: jest.fn().mockResolvedValue(event) },
   };

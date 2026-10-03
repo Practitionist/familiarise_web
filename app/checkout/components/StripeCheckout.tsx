@@ -126,6 +126,10 @@ export default function StripeCheckout({
       const data = validationResult.data;
 
       if (!data.success) {
+        // A 200 that says `success: false` is the route's own application-level
+        // refusal (expired contract, credit limit) and never the typed
+        // slot/lead-time codes — those are 400s answered above with the whole
+        // body, so `code` arrives there. Nothing to prefer here.
         onPaymentError({ message: data.error, errorType: data.errorType });
         return;
       }

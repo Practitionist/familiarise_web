@@ -80,7 +80,7 @@ Until #1470 the posting debited `netPayoutPaise + TDS` and credited `CASH` at `n
 
 The **consultant** payout is the mirror — `payout:<payoutId>`, `kind = PAYOUT`: `Dr CONSULTANT_PAYABLE / Cr CASH + TDS_PAYABLE` (`lib/payments/payouts/payout-service.ts`). On `FAILED` (and, on the consultant rail, `CANCELLED`), the linked earnings are released back to `READY` with their `orgPayoutId` / `payoutId` cleared, and provisional `TDSRecord` rows are deleted. The reconciler asserts `sum(orgShare − refunded) == netPayoutPaise` (`ORG_PAYOUT_TOTAL_MISMATCH`, [ledger integrity](13-ledger-integrity.md)), and it does so only for payouts in `PENDING`, `APPROVED`, `PROCESSING` or `COMPLETED`. A `FAILED`, `REVERSED` or `CANCELLED` payout has deliberately detached its earnings back to `READY` with `orgPayoutId` cleared, so it ends up with nothing attached against a retained `netPayoutPaise`; reporting that as drift was noise rather than a finding (#1471).
 
-> 🔒 **`ENABLE_LIVE_PAYOUTS` is still off.** The whole pipeline runs — batching, TDS/MSME, the status machine, the ledger posting — but **gateway submission is held**, so approved org payouts sit at `APPROVED` (surfaced in the UI as "pending platform enablement", never as a failure). The `ORG_PAYOUT` / `PAYOUT` ledger leg posts only on a real `PROCESSING → COMPLETED`, so no cash-leaving entry exists until go-live. See the [live-payout go-live runbook](../50-operations/06-live-payout-go-live-runbook.md).
+> 🔒 **`ENABLE_LIVE_PAYOUTS` is still off.** The whole pipeline runs — batching, TDS/MSME, the status machine, the ledger posting — but **gateway submission is held**, so approved org payouts sit at `APPROVED` (surfaced in the UI as "pending platform enablement", never as a failure). The `ORG_PAYOUT` / `PAYOUT` ledger leg posts only on a real `PROCESSING → COMPLETED`, so no cash-leaving entry exists until go-live. See the [live-payout go-live runbook](../50-operations/05-live-payout-go-live-runbook.md).
 
 ---
 
@@ -166,7 +166,7 @@ TDS is computed by `computeTdsForPayout` (`lib/compliance/tds.ts`). The default 
 
 Both rails share one `TDSRecord` table, and a row belongs to exactly one of them. `consultantProfileId` and `organizationId` are both nullable, and two CHECK constraints in `prisma/sql/check-constraints.sql` do the work that `NOT NULL` used to do: `tds_record_deductee_xor` requires exactly one deductee, and `tds_record_payout_rail_matches` stops a row on one rail from citing the other rail's payout. Each rail also carries its own unique key, because a single key spanning both would dedupe nothing — Postgres treats NULLs as distinct, so an org row whose consultant columns are all null never conflicts with itself.
 
-Authoritative: `docs/compliance/01-tds-overview.md`.
+Authoritative: `docs/compliance/02-tds-overview.md`.
 
 ### 4.2 MSME §15 payment window
 
@@ -178,15 +178,15 @@ The cost of missing the window is twofold. Commercially, MSMED §16 imposes **co
 
 > 🟡 **Gap — §16 interest is neither documented nor accrued (no issue filed yet).** Nothing in the code models the §16 three-times-RBI-bank-rate monthly-compounding interest on a missed deadline; the cron only _alerts_. That is acceptable for v1 — the alert is meant to prevent the breach — but finance should understand that a missed `mustPayByDate` carries a real statutory interest cost we do not currently compute.
 
-> 🟥 **Divergence vs `docs/compliance/03-msme-43b-h.md`.** That doc states 43B(h) "carries forward unchanged into the Income-tax Act, 2025 … under equivalent clause numbering." The mechanics are unchanged, but the **clause number changed**: under the 2025 Act old §43B becomes **Section 37** and the MSME limb §43B(h) becomes **Section 37(2)(g)** ("any sum payable … to a micro or small enterprise beyond the time limit specified in section 15 of the MSMED Act, 2006"), with the ITR-due-date relief again expressly excluding that clause (corroborated by [TaxGuru's §37 explainer](https://taxguru.in/income-tax/section-37-income-tax-act-2025-earlier-section-43b-income-tax-act-1961.html)). The compliance doc's "equivalent clause numbering" phrasing is stale. (This doc does not edit docs/compliance.) The revised Udyam thresholds in force since 1 April 2025 (S.O. 1364(E)) are MICRO ≤ ₹2.5 cr investment / ≤ ₹10 cr turnover, SMALL ≤ ₹25 cr / ≤ ₹100 cr, and MEDIUM ≤ ₹125 cr / ≤ ₹500 cr, applied as a composite test; the disallowance reaches only MICRO and SMALL suppliers, which is why `computeMsmePaymentDeadline` routes MEDIUM and NONE to ordinary terms.
+> 🟥 **Divergence vs `docs/compliance/04-msme-43b-h.md`.** That doc states 43B(h) "carries forward unchanged into the Income-tax Act, 2025 … under equivalent clause numbering." The mechanics are unchanged, but the **clause number changed**: under the 2025 Act old §43B becomes **Section 37** and the MSME limb §43B(h) becomes **Section 37(2)(g)** ("any sum payable … to a micro or small enterprise beyond the time limit specified in section 15 of the MSMED Act, 2006"), with the ITR-due-date relief again expressly excluding that clause (corroborated by [TaxGuru's §37 explainer](https://taxguru.in/income-tax/section-37-income-tax-act-2025-earlier-section-43b-income-tax-act-1961.html)). The compliance doc's "equivalent clause numbering" phrasing is stale. (This doc does not edit docs/compliance.) The revised Udyam thresholds in force since 1 April 2025 (S.O. 1364(E)) are MICRO ≤ ₹2.5 cr investment / ≤ ₹10 cr turnover, SMALL ≤ ₹25 cr / ≤ ₹100 cr, and MEDIUM ≤ ₹125 cr / ≤ ₹500 cr, applied as a composite test; the disallowance reaches only MICRO and SMALL suppliers, which is why `computeMsmePaymentDeadline` routes MEDIUM and NONE to ordinary terms.
 
-Authoritative: `docs/compliance/03-msme-43b-h.md`.
+Authoritative: `docs/compliance/04-msme-43b-h.md`.
 
 ### 4.3 Cross-border (FEMA)
 
 For a `NON_RESIDENT` host or expert, the cross-border columns carry the regulatory trail: `form15caPartCRef` / `form15cbRef` (CA tax clearance), `rbiPurposeCode` (P0802 computing / P0807 consultancy), `dtaaRateApplied`, and `fxRateUsed` plus `firceRef`. These are populated manually until the first non-resident host org ships; the consultant rail's `processSinglePayout` outright rejects a non-resident payout today, since RazorpayX only pays Indian bank accounts and Section 195 / 393(2) withholding is not yet implemented.
 
-Authoritative: `docs/compliance/07-cross-border-flows.md`.
+Authoritative: `docs/compliance/08-cross-border-flows.md`.
 
 ---
 
@@ -239,4 +239,4 @@ The mock-Redis case is the sharper one, and it is why the check rejects mock out
 - [Ledger & postings](03-ledger-and-postings.md) — the `ORG_PAYOUT` / `PAYOUT` transactions in full.
 - [Ledger integrity](13-ledger-integrity.md) — `ORG_PAYOUT_TOTAL_MISMATCH`.
 - [Expert lifecycle](../30-programs-and-lifecycle/03-expert-lifecycle.md) — how `payoutRecipient` decides whether an org earnings row exists.
-- Authoritative compliance: [`../../compliance/01-tds-overview.md`](../../compliance/01-tds-overview.md) · [`../../compliance/03-msme-43b-h.md`](../../compliance/03-msme-43b-h.md) · [`../../compliance/07-cross-border-flows.md`](../../compliance/07-cross-border-flows.md).
+- Authoritative compliance: [`../../compliance/02-tds-overview.md`](../../compliance/02-tds-overview.md) · [`../../compliance/04-msme-43b-h.md`](../../compliance/04-msme-43b-h.md) · [`../../compliance/08-cross-border-flows.md`](../../compliance/08-cross-border-flows.md).

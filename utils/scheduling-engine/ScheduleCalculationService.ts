@@ -191,11 +191,29 @@ export class ScheduleCalculationService {
    * - Week 5: Sunday Jan 26
    * = 5 weeks total
    */
-  static countWeeks(startDate: Date, endDate: Date): number {
+  static countWeeks(
+    startDate: Date,
+    endDate: Date,
+    timeZone?: string,
+  ): number {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
     if (end < start) return 0;
+
+    if (timeZone) {
+      const startKey = this.weekKey(start, timeZone);
+      const endKey = this.weekKey(end, timeZone);
+      const [sy, sm, sd] = startKey.split("-").map(Number);
+      const [ey, em, ed] = endKey.split("-").map(Number);
+      const startSundayMs = Date.UTC(sy, sm - 1, sd);
+      const endSundayMs = Date.UTC(ey, em - 1, ed);
+      if (endSundayMs < startSundayMs) return 0;
+      return (
+        Math.round((endSundayMs - startSundayMs) / (7 * 24 * 60 * 60 * 1000)) +
+        1
+      );
+    }
 
     // Find the Sunday of the week containing start and end (UTC-based)
     const startSunday = this.startOfWeekSunday(start);
@@ -388,22 +406,13 @@ export class ScheduleCalculationService {
 
     switch (eventType) {
       case "consultation": {
-        const duration = config.durationInHours;
-        if (!duration || duration <= 0) {
-          console.warn(
-            "Consultation duration missing or invalid. Using default: 1 hour",
-          );
-          return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-        }
-        return Math.ceil(duration / 0.5); // 30-minute intervals
+        this.validateDuration(config.durationInHours, "Consultation duration");
+        return Math.ceil(config.durationInHours! / 0.5); // 30-minute intervals
       }
 
       case "webinar": {
-        const duration = config.durationInHours;
-        if (!duration || duration <= 0) {
-          return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-        }
-        return Math.ceil(duration / 0.5); // 30-minute intervals
+        this.validateDuration(config.durationInHours, "Webinar duration");
+        return Math.ceil(config.durationInHours! / 0.5); // 30-minute intervals
       }
 
       case "subscription": {
@@ -416,15 +425,12 @@ export class ScheduleCalculationService {
           );
         }
 
-        let sessionDuration = config.sessionDurationInHours;
-        if (!sessionDuration || sessionDuration <= 0) {
-          console.warn(
-            "Subscription session duration missing or invalid. Using default: 1 hour",
-          );
-          sessionDuration = 1; // Default 1 hour
-        }
+        this.validateDuration(
+          config.sessionDurationInHours,
+          "Subscription session duration",
+        );
 
-        const slotsPerCall = Math.ceil(sessionDuration / 0.5);
+        const slotsPerCall = Math.ceil(config.sessionDurationInHours! / 0.5);
 
         // #1766 — one cycle at a time: the entitlement helper already said how
         // many sessions this run may place.
@@ -443,6 +449,7 @@ export class ScheduleCalculationService {
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
+          config.schedulingTimezone,
         );
         const totalCalls = totalWeeks * (config.sessionsPerWeek || 1);
         return totalCalls * slotsPerCall;
@@ -482,6 +489,7 @@ export class ScheduleCalculationService {
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
+          config.schedulingTimezone,
         );
         const totalSessions = totalWeeks * config.sessionsPerWeek;
         return totalSessions * slotsPerSession;
@@ -546,6 +554,7 @@ export class ScheduleCalculationService {
           const weeks = this.countWeeks(
             config.schedulingPeriodStartsAt,
             config.schedulingPeriodEndsAt,
+            config.schedulingTimezone,
           );
           required = weeks * config.sessionsPerWeek;
         }

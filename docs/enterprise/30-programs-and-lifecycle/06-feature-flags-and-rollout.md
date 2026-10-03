@@ -68,7 +68,7 @@ flowchart TD
 > migration window.
 
 Each flag's go-live checklist lives in its module doc-comment (and a tracking
-issue: host #646/#662, live-payout `docs/enterprise/50-operations/06-live-payout-go-live-runbook.md`,
+issue: host #646/#662, live-payout `docs/enterprise/50-operations/05-live-payout-go-live-runbook.md`,
 IRP #713, TDS #737). None is a runtime toggle.
 
 ## Non-module env gates

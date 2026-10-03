@@ -42,31 +42,57 @@ export async function GET(req: NextRequest) {
 
     const skip = (page - 1) * limit;
 
-    const [weeklySlots, total] = await Promise.all([
-      prisma.availabilityWindowWeekly.findMany({
-        where: {
-          consultantProfileId: consultantProfileId,
-        },
-        orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
-        include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              user: {
+    // #1846 — the grid read, as a span.
+    //
+    // This is the first query on the booking funnel and it runs on every
+    // consultant page view, so its latency decides whether the rest of the
+    // funnel is reachable. It was previously invisible: there is no metrics
+    // emission anywhere in the repo, so a regression here surfaced only as a
+    // user complaint. `Sentry.startSpan` is the same idiom
+    // lib/payments/core/razorpay.ts uses for its gateway call, and for the same
+    // reason — no new dependency, no exporter, and the span lands in the same
+    // trace as the request that produced it.
+    //
+    // The `op` is deliberately NOT `db.sql.query`: Prisma is instrumented
+    // separately, so reusing that op would nest this span inside the
+    // auto-instrumented query spans and make the grid's own number harder to
+    // read than the two queries it wraps.
+    const { weeklySlots, total } = await Sentry.startSpan(
+      { op: "booking.availability", name: "availability.weekly-grid" },
+      async (span) => {
+        const [slots, count] = await Promise.all([
+          prisma.availabilityWindowWeekly.findMany({
+            where: {
+              consultantProfileId: consultantProfileId,
+            },
+            orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
+            include: {
+              consultantProfile: {
                 select: {
-                  name: true,
+                  id: true,
+                  user: {
+                    select: {
+                      name: true,
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-        skip,
-        take: limit,
-      }),
-      prisma.availabilityWindowWeekly.count({
-        where: { consultantProfileId: consultantProfileId },
-      }),
-    ]);
+            skip,
+            take: limit,
+          }),
+          prisma.availabilityWindowWeekly.count({
+            where: { consultantProfileId: consultantProfileId },
+          }),
+        ]);
+        // The row count rides in an attribute rather than in the span NAME: a
+        // name containing it would mint a separate span per cohort and destroy
+        // the aggregation this exists to provide.
+        span?.setAttribute("rows", slots.length);
+        span?.setAttribute("total", count);
+        return { weeklySlots: slots, total: count };
+      },
+    );
 
     return NextResponse.json(
       {
