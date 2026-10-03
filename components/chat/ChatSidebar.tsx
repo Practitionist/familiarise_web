@@ -35,6 +35,7 @@ import { useOrgScope } from "@/hooks/useOrgScope";
 import { scopeOrgId } from "@/lib/api/scope/parse";
 import { useSession } from "@/lib/auth-client";
 import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
+import { useSearchParams } from "next/navigation";
 
 // Custom channel item component for the sidebar - memoized for performance
 const ChannelItem = memo(
@@ -211,6 +212,24 @@ export const ChatSidebar = () => {
   const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  const searchParams = useSearchParams();
+  const contextAppointmentId =
+    searchParams?.get("contextAppointmentId") ??
+    searchParams?.get("appointmentId") ??
+    null;
+  const counterpartyUserId =
+    searchParams?.get("counterpartyUserId") ??
+    searchParams?.get("peerUserId") ??
+    null;
+  const deepLinkEventType = searchParams?.get("eventType") ?? null;
+  const deepLinkEventId = searchParams?.get("eventId") ?? null;
+  const deepLinkChannelId = searchParams?.get("channelId") ?? null;
+  const hasDeepLink = Boolean(
+    counterpartyUserId ||
+    (deepLinkEventType && deepLinkEventId) ||
+    deepLinkChannelId,
+  );
+  const deepLinkHandledRef = useRef<string | null>(null);
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -347,8 +366,8 @@ export const ChatSidebar = () => {
       // it earlier (or on skip) is what let a switched scope show stale data.
       fetchedKeyRef.current = fetchKey;
 
-      // Auto-select the most recent channel on initial load
-      if (!initialSelectionDoneRef.current) {
+      // Auto-select the most recent channel on initial load (unless deep-linked)
+      if (!initialSelectionDoneRef.current && !hasDeepLink) {
         initialSelectionDoneRef.current = true;
         const mostRecentTeam = teamResponse[0];
         // The FILTERED list — auto-selecting `dmResponse[0]` could open a
@@ -389,7 +408,7 @@ export const ChatSidebar = () => {
     // useOrgScope's `scope` shifts and we must refetch the channel list
     // through the new filter. Without this, the inbox keeps showing the
     // previous tenant's threads until a hard reload.
-  }, [client, setActiveChannel, scope, computeFetchKey]);
+  }, [client, setActiveChannel, scope, computeFetchKey, hasDeepLink]);
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
@@ -766,6 +785,115 @@ export const ChatSidebar = () => {
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  // Open and select a channel when deep-linked via URL query parameters
+  useEffect(() => {
+    if (!client?.userID || !hasDeepLink) return;
+    const pinnedOrgId = scopeOrgId(scope);
+    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${contextAppointmentId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
+    if (deepLinkHandledRef.current === deepLinkKey) return;
+    deepLinkHandledRef.current = deepLinkKey;
+    initialSelectionDoneRef.current = true;
+
+    let cancelled = false;
+    const openDeepLinkedChannel = async () => {
+      try {
+        if (counterpartyUserId) {
+          const response = await fetch("/api/stream/channels/open", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: "dm",
+              counterpartyUserId,
+              peerUserId: counterpartyUserId,
+              ...(contextAppointmentId ? { contextAppointmentId } : {}),
+              organizationId: pinnedOrgId ?? null,
+            }),
+          });
+          if (!response.ok || cancelled) return;
+          const { channelType, channelId } = (await response.json()) as {
+            channelType: "messaging" | "team";
+            channelId: string;
+          };
+          const channel = client.channel(channelType, channelId);
+          await channel.watch();
+          if (cancelled) return;
+          setDirectMessages((prev) =>
+            prev.some((ch) => ch.cid === channel.cid)
+              ? prev
+              : [channel, ...prev],
+          );
+          handleChannelSelect(channel);
+          return;
+        }
+
+        if (
+          (deepLinkEventType === "webinar" || deepLinkEventType === "class") &&
+          deepLinkEventId
+        ) {
+          const response = await fetch("/api/stream/channels/open", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: "event",
+              eventType: deepLinkEventType,
+              eventId: deepLinkEventId,
+            }),
+          });
+          if (!response.ok || cancelled) return;
+          const { channelType, channelId } = (await response.json()) as {
+            channelType: "messaging" | "team";
+            channelId: string;
+          };
+          const channel = client.channel(channelType, channelId);
+          await channel.watch();
+          if (cancelled) return;
+          setTeamChannels((prev) =>
+            prev.some((ch) => ch.cid === channel.cid)
+              ? prev
+              : [channel, ...prev],
+          );
+          handleChannelSelect(channel);
+          return;
+        }
+
+        if (deepLinkChannelId) {
+          const colonIdx = deepLinkChannelId.indexOf(":");
+          const channelType =
+            colonIdx > 0
+              ? deepLinkChannelId.slice(0, colonIdx)
+              : deepLinkChannelId.startsWith("dm-")
+                ? "messaging"
+                : "team";
+          const channelId =
+            colonIdx > 0
+              ? deepLinkChannelId.slice(colonIdx + 1)
+              : deepLinkChannelId;
+          const channel = client.channel(channelType, channelId);
+          await channel.watch();
+          if (cancelled) return;
+          handleChannelSelect(channel);
+        }
+      } catch (err) {
+        console.error("Failed to open deep-linked channel:", err);
+      }
+    };
+
+    void openDeepLinkedChannel();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    client,
+    hasDeepLink,
+    counterpartyUserId,
+    contextAppointmentId,
+    deepLinkEventType,
+    deepLinkEventId,
+    deepLinkChannelId,
+    scope,
+    handleChannelSelect,
+  ]);
 
   // Debug Stream tools: local hostname only — never on deployed/preview hosts
   // even if NODE_ENV were somehow still "development".

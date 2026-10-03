@@ -140,9 +140,11 @@ export class RecordingService {
   /**
    * Stop recording for a call
    * @param streamCallId The Stream call ID
+   * @param userId Optional user ID who triggered the stop
    */
   static async stopRecording(
     streamCallId: string,
+    userId?: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const client = getStreamVideoClient();
@@ -157,6 +159,7 @@ export class RecordingService {
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,
+        ...(userId ? { userId } : {}),
       });
 
       return { success: true };
@@ -165,6 +168,7 @@ export class RecordingService {
         error instanceof Error ? error.message : "Failed to stop recording";
       streamLogger.error("Failed to stop recording", error, {
         streamCallId,
+        ...(userId ? { userId } : {}),
       });
       return { success: false, error: errorMessage };
     }

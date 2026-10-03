@@ -18,6 +18,7 @@ import {
   CheckIcon,
   XIcon,
   FlagIcon,
+  CalendarIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -118,8 +119,58 @@ export const CustomMessage = () => {
   // Check if this message is a reply to another message
   const hasQuotedMessage = !!message.quoted_message;
 
+  // Inspect message for booking context metadata
+  const msgRecord = message as unknown as Record<string, unknown>;
+  const customRecord =
+    typeof msgRecord.custom === "object" && msgRecord.custom !== null
+      ? (msgRecord.custom as Record<string, unknown>)
+      : undefined;
+  const bookingAppointmentId =
+    typeof msgRecord.booking_appointment_id === "string"
+      ? msgRecord.booking_appointment_id
+      : typeof customRecord?.booking_appointment_id === "string"
+        ? customRecord.booking_appointment_id
+        : null;
+  const isBookingContext = Boolean(
+    bookingAppointmentId ||
+    msgRecord.kind === "booking_context" ||
+    customRecord?.kind === "booking_context",
+  );
+  const bookingType = (
+    typeof msgRecord.booking_type === "string"
+      ? msgRecord.booking_type
+      : typeof customRecord?.booking_type === "string"
+        ? customRecord.booking_type
+        : "CONSULTATION"
+  ).toUpperCase();
+  const bookingTitle =
+    typeof msgRecord.booking_title === "string"
+      ? msgRecord.booking_title
+      : typeof customRecord?.booking_title === "string"
+        ? customRecord.booking_title
+        : "Scheduled Session";
+  const bookingStartsAtRaw =
+    typeof msgRecord.booking_starts_at === "string"
+      ? msgRecord.booking_starts_at
+      : typeof customRecord?.booking_starts_at === "string"
+        ? customRecord.booking_starts_at
+        : null;
+  const bookingStartsAtDate = bookingStartsAtRaw
+    ? new Date(bookingStartsAtRaw)
+    : null;
+  const formattedBookingStartsAt =
+    bookingStartsAtDate && !Number.isNaN(bookingStartsAtDate.getTime())
+      ? format(bookingStartsAtDate, "PPp")
+      : null;
+
   // Avoid rendering empty messages
-  if (!hasText && !hasAttachments && message.type !== "system" && !isDeleted) {
+  if (
+    !hasText &&
+    !hasAttachments &&
+    !isBookingContext &&
+    message.type !== "system" &&
+    !isDeleted
+  ) {
     return null;
   }
 
@@ -416,6 +467,48 @@ export const CustomMessage = () => {
             </div>
           )}
 
+          {/* Booking Context Card */}
+          {isBookingContext && (
+            <div
+              data-testid="booking-context-card"
+              className={cn(
+                "mb-2 rounded-md border p-2.5 text-left",
+                isMyMessage
+                  ? "border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+                  : "border-border bg-background/80 text-foreground",
+              )}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                    isMyMessage
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-secondary text-secondary-foreground",
+                  )}
+                >
+                  {bookingType}
+                </span>
+              </div>
+              <div className="text-xs font-semibold leading-snug">
+                {bookingTitle}
+              </div>
+              {formattedBookingStartsAt && (
+                <div
+                  className={cn(
+                    "mt-0.5 text-[11px]",
+                    isMyMessage
+                      ? "text-primary-foreground/80"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {formattedBookingStartsAt}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Render Attachments if they exist */}
           {hasAttachments && (
             <div className={`attachments ${hasText ? "mb-1" : ""} grid gap-2`}>
@@ -487,7 +580,9 @@ export const CustomMessage = () => {
                         key={reactionType}
                         type="button"
                         className={`text-sm px-2 py-0.5 rounded-full hover:opacity-80 ${
-                          isMyMessage ? "bg-primary-foreground/20" : "bg-background"
+                          isMyMessage
+                            ? "bg-primary-foreground/20"
+                            : "bg-background"
                         }`}
                         onClick={() => handleReactionClick(reactionType)}
                         aria-label={`React with ${reactionType} (${count} so far)`}

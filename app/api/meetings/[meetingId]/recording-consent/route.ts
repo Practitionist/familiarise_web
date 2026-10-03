@@ -4,10 +4,13 @@ import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { resolveMeetingAccess } from "@/lib/meetings/access";
+import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 import {
   getRecordingNotice,
   recordRecordingConsent,
 } from "@/lib/stream/recording-consent";
+import { RecordingService } from "@/lib/stream/recording-service";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -43,7 +46,6 @@ export async function GET(
         { status: access.reason === "not_found" ? 404 : 403 },
       );
     }
-
 
     const notice = await getRecordingNotice(
       access.meetingId,
@@ -90,7 +92,6 @@ export async function POST(
       );
     }
 
-
     const appointment = access.appointment;
     const notice = await getRecordingNotice(
       access.meetingId,
@@ -124,17 +125,66 @@ export async function POST(
       );
     }
 
-    // Records the decision; does NOT act on a recording already in progress.
-    // `getRecordingBlock` gates the START of a recording, so a decline lands
-    // before one begins in the ordinary lobby flow — but this is an upsert, and
-    // a participant can switch to DECLINED after the host has started. See the
-    // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
-    // a product decision and is deliberately not done here.
     await recordRecordingConsent(
       access.meetingId,
       session.user.id,
       parsed.data.decision,
     );
+
+    // When a participant in a 1:1 session withdraws consent mid-call while a
+    // recording is active, immediately stop the recording so withdrawal takes
+    // effect in real time.
+    if (parsed.data.decision === RecordingConsentDecision.DECLINED) {
+      const accessWithRecording = access as typeof access & {
+        isRecording?: boolean;
+        meeting?: { isRecording?: boolean; streamCallId?: string | null };
+      };
+      let isRecording =
+        accessWithRecording.isRecording ??
+        accessWithRecording.meeting?.isRecording;
+      let targetCallId =
+        access.streamCallId ||
+        accessWithRecording.meeting?.streamCallId ||
+        access.meetingId;
+
+      if (isRecording === undefined && prisma.meeting?.findUnique) {
+        const meetingRow = await prisma.meeting
+          .findUnique({
+            where: { id: access.meetingId },
+            select: { isRecording: true, streamCallId: true },
+          })
+          .catch(() => null);
+        if (meetingRow) {
+          isRecording = meetingRow.isRecording;
+          if (meetingRow.streamCallId) {
+            targetCallId = meetingRow.streamCallId;
+          }
+        }
+      }
+
+      if (isRecording) {
+        await RecordingService.stopRecording(
+          targetCallId,
+          session.user.id,
+        ).catch((err) => {
+          streamLogger.warn(
+            "Failed to stop active recording after consent withdrawal",
+            {
+              meetingId: access.meetingId,
+              streamCallId: targetCallId,
+              userId: session.user.id,
+              error: err,
+            },
+          );
+        });
+        await prisma.meeting
+          ?.update?.({
+            where: { id: access.meetingId },
+            data: { isRecording: false },
+          })
+          .catch(() => undefined);
+      }
+    }
 
     return NextResponse.json({
       decision: parsed.data.decision,

@@ -17,9 +17,9 @@
  * refused — so it is an account state, not an outage.
  */
 export type ConnectFailureKind =
-  | "account-disabled"
-  | "not-retryable"
-  | "retryable";
+  "account-disabled" | "consent" | "not-retryable" | "retryable";
+
+export type StreamConnectFailureKind = ConnectFailureKind;
 
 export interface ConnectFailure {
   kind: ConnectFailureKind;
@@ -29,9 +29,13 @@ export interface ConnectFailure {
   detail: string;
   title: string;
   description: string;
-  /** What the empty state offers: a retry that can succeed, a reload, or support. */
-  action: "retry" | "reload" | "support";
+  /** Optional alias for description used by callers reading `.message`. */
+  message?: string;
+  /** What the empty state offers: a retry that can succeed, a reload, support, or granting DPDP consent. */
+  action: "retry" | "reload" | "support" | "grant_consent";
 }
+
+export type StreamConnectFailure = ConnectFailure;
 
 /** Codes Stream marks `retryable: false` that a connect can surface. */
 export const NON_RETRYABLE_STREAM_CODES: ReadonlySet<number> = new Set([
@@ -109,7 +113,29 @@ export const RETRYABLE_CONNECT_FAILURE: ConnectFailure = {
 };
 
 export function classifyConnectFailure(error: unknown): ConnectFailure {
+  const errorName =
+    typeof error === "object" && error !== null
+      ? (error as { name?: unknown }).name
+      : undefined;
   const { code, message } = readStreamError(error);
+  if (
+    errorName === "ConsentRequiredError" ||
+    message.includes("STREAM_DATA_PROCESSING") ||
+    message.includes("data-processing consent for messaging")
+  ) {
+    const userMessage =
+      message ||
+      "Data-processing consent for live chat and video has not been granted.";
+    return {
+      kind: "consent",
+      code: null,
+      detail: message,
+      title: "Enable live chat & video",
+      description: userMessage,
+      message: userMessage,
+      action: "grant_consent",
+    };
+  }
   if (code === ACCOUNT_DISABLED_CODE) {
     return {
       kind: "account-disabled",

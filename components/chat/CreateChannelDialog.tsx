@@ -23,6 +23,8 @@ import { PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import { scopeOrgId } from "@/lib/api/scope/parse";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;
@@ -51,6 +53,7 @@ export const CreateChannelDialog = ({
   // conversation pane stays hidden until this runs, so without it the new
   // channel opens behind the list the dialog just closed over.
   const { openConversation } = useChatPane();
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const { toast } = useToast();
 
   // Fetch user's events
@@ -122,6 +125,7 @@ export const CreateChannelDialog = ({
     }
 
     setIsLoading(true);
+    const organizationId = scopeOrgId(scope);
 
     try {
       // Three states, not two. `selectedEvent` initialises to `null`, so an
@@ -157,6 +161,7 @@ export const CreateChannelDialog = ({
             eventType,
             eventId,
             createdById: currentUserId,
+            organizationId,
           }),
         });
 
@@ -215,6 +220,7 @@ export const CreateChannelDialog = ({
             channelType: "team",
             channelName,
             createdById: currentUserId,
+            organizationId,
           }),
         });
 

@@ -7,6 +7,8 @@ import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import { scopeOrgId } from "@/lib/api/scope/parse";
 import type { AppointmentSearchResult } from "@/schemas/stream-search";
 
 // Type badge configuration for events (webinars/classes)
@@ -76,6 +78,9 @@ export const ChannelSearch = () => {
   // ChatLayout. Selecting a channel without it leaves the person staring at
   // the list they just searched, with the channel silently active behind it.
   const { openConversation } = useChatPane();
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
+  const pinnedOrgId = scopeOrgId(scope);
+  const scopeParam = pinnedOrgId ? `org:${pinnedOrgId}` : "personal";
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
@@ -175,69 +180,73 @@ export const ChannelSearch = () => {
     };
   }, [searchResults]);
 
-  const runSearch = useCallback(async (raw: string) => {
-    const term = raw.trim();
+  const runSearch = useCallback(
+    async (raw: string) => {
+      const term = raw.trim();
 
-    // Abort whatever is still in flight. Nobody is waiting on it, and on a
-    // route that fires every 300ms of typing the abandoned work is real server
-    // cost, not just a wasted response.
-    abortRef.current?.abort();
+      // Abort whatever is still in flight. Nobody is waiting on it, and on a
+      // route that fires every 300ms of typing the abandoned work is real server
+      // cost, not just a wasted response.
+      abortRef.current?.abort();
 
-    if (term.length < 2) {
-      abortRef.current = null;
-      setSearchResults([]);
-      setSettledQuery("");
-      setSearchError(null);
-      setLoading(false);
-      // Cleared here too. `handleSearch` used to early-return BEFORE the
-      // setOpenError below, so a 403 refusal outlived the input that produced
-      // it: emptying the box left an error panel floating over a blank search,
-      // and `isOpen` kept the dropdown up with no way to dismiss it.
-      setOpenError(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    // Bumped synchronously, before the first await, so two searches started in
-    // the same tick still get distinct ids.
-    const requestId = ++requestIdRef.current;
-
-    try {
-      setLoading(true);
-      // A refusal from the previous attempt must not outlive the query that
-      // caused it.
-      setOpenError(null);
-      setSearchError(null);
-
-      const response = await fetch(
-        `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}`,
-        { signal: controller.signal },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to search appointments");
+      if (term.length < 2) {
+        abortRef.current = null;
+        setSearchResults([]);
+        setSettledQuery("");
+        setSearchError(null);
+        setLoading(false);
+        // Cleared here too. `handleSearch` used to early-return BEFORE the
+        // setOpenError below, so a 403 refusal outlived the input that produced
+        // it: emptying the box left an error panel floating over a blank search,
+        // and `isOpen` kept the dropdown up with no way to dismiss it.
+        setOpenError(null);
+        return;
       }
 
-      const results: AppointmentSearchResult[] = await response.json();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      // Bumped synchronously, before the first await, so two searches started in
+      // the same tick still get distinct ids.
+      const requestId = ++requestIdRef.current;
 
-      if (requestId !== requestIdRef.current) return;
-      setSearchResults(results);
-      setSettledQuery(term);
-    } catch (error) {
-      // An abort is this component cancelling its own request, not a failure.
-      // Treating it as one would clear the results the newer request is about
-      // to populate.
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      if (requestId !== requestIdRef.current) return;
-      console.error("Error searching appointments:", error);
-      setSearchResults([]);
-      setSettledQuery(term);
-      setSearchError("Search is unavailable right now. Please try again.");
-    } finally {
-      if (requestId === requestIdRef.current) setLoading(false);
-    }
-  }, []);
+      try {
+        setLoading(true);
+        // A refusal from the previous attempt must not outlive the query that
+        // caused it.
+        setOpenError(null);
+        setSearchError(null);
+
+        const response = await fetch(
+          `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}&scope=${encodeURIComponent(scopeParam)}`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to search appointments");
+        }
+
+        const results: AppointmentSearchResult[] = await response.json();
+
+        if (requestId !== requestIdRef.current) return;
+        setSearchResults(results);
+        setSettledQuery(term);
+      } catch (error) {
+        // An abort is this component cancelling its own request, not a failure.
+        // Treating it as one would clear the results the newer request is about
+        // to populate.
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        if (requestId !== requestIdRef.current) return;
+        console.error("Error searching appointments:", error);
+        setSearchResults([]);
+        setSettledQuery(term);
+        setSearchError("Search is unavailable right now. Please try again.");
+      } finally {
+        if (requestId === requestIdRef.current) setLoading(false);
+      }
+    },
+    [scopeParam],
+  );
 
   // 300ms, matching the five other search inputs in the app, and now via the
   // same `use-debounce` helper they use rather than a hand-rolled setTimeout.

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MessageSquareOff, ShieldOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -26,11 +27,36 @@ export function ChatUnavailable({
   failure?: ConnectFailure | null;
   onRetry?: () => void;
 }) {
+  const [isGranting, setIsGranting] = useState(false);
   const f = failure ?? RETRYABLE_CONNECT_FAILURE;
   const reload = () => window.location.reload();
 
+  const handleGrantConsent = async () => {
+    setIsGranting(true);
+    try {
+      await fetch("/api/user/privacy/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purposeCodes: ["STREAM_DATA_PROCESSING"] }),
+      });
+      if (onRetry) {
+        onRetry();
+      } else {
+        window.dispatchEvent(new Event("stream:retry-connection"));
+      }
+    } finally {
+      setIsGranting(false);
+    }
+  };
+
   let action: React.ReactNode;
-  if (f.action === "support") {
+  if (f.action === "grant_consent") {
+    action = (
+      <Button onClick={handleGrantConsent} disabled={isGranting}>
+        {isGranting ? "Enabling..." : "Grant Consent & Connect"}
+      </Button>
+    );
+  } else if (f.action === "support") {
     action = (
       <PlatformSupportSheet
         trigger={<Button variant="outline">Contact support</Button>}
@@ -55,7 +81,7 @@ export function ChatUnavailable({
       <EmptyState
         icon={f.kind === "account-disabled" ? ShieldOff : MessageSquareOff}
         title={f.title}
-        description={f.description}
+        description={f.description || f.message || ""}
         action={action}
       />
     </div>

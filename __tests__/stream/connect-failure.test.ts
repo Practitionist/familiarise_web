@@ -55,6 +55,16 @@ describe("classifyConnectFailure", () => {
     expect(f.action).toBe("reload");
   });
 
+  it("classifies DPDP ConsentRequiredError as consent with grant_consent action", () => {
+    const err = new Error(
+      "Consent required for purpose 'STREAM_DATA_PROCESSING'",
+    );
+    err.name = "ConsentRequiredError";
+    const f = classifyConnectFailure(err);
+    expect(f.kind).toBe("consent");
+    expect(f.action).toBe("grant_consent");
+  });
+
   it("keeps network and transient failures retryable, with the raw text as detail only", () => {
     const network = classifyConnectFailure(new TypeError("Failed to fetch"));
     expect(network.kind).toBe("retryable");

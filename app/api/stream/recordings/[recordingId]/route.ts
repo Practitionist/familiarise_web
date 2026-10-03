@@ -11,8 +11,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import {
+  deleteRecordingObject,
+  getBestRecordingUrl,
+} from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -376,6 +380,244 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
+      { status: 500 },
+    );
+  }
+}
+
+const patchRecordingSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+});
+
+async function isRecordingHostOrAdmin(
+  user: {
+    id: string;
+    role?: string | null;
+    consultantProfileId?: string | null;
+  },
+  recording: NonNullable<
+    Awaited<ReturnType<typeof RecordingService.getRecordingById>>
+  >,
+): Promise<boolean> {
+  if (user.role === "ADMIN") return true;
+
+  let consultantProfileId = user.consultantProfileId ?? null;
+  if (!consultantProfileId && prisma.consultantProfile?.findUnique) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    consultantProfileId = profile?.id ?? null;
+  }
+
+  const appointment = recording.meeting?.occurrence?.appointment as
+    | {
+        webinar?: {
+          webinarPlan?: {
+            consultantProfileId?: string | null;
+            consultantProfile?: { userId?: string | null } | null;
+          } | null;
+        } | null;
+        class?: {
+          classPlan?: {
+            consultantProfileId?: string | null;
+            consultantProfile?: { userId?: string | null } | null;
+          } | null;
+        } | null;
+        consultation?: {
+          consultationPlan?: {
+            consultantProfileId?: string | null;
+            consultantProfile?: { userId?: string | null } | null;
+          } | null;
+        } | null;
+        subscription?: {
+          subscriptionPlan?: {
+            consultantProfileId?: string | null;
+            consultantProfile?: { userId?: string | null } | null;
+          } | null;
+        } | null;
+        trial?: {
+          subscriptionPlan?: {
+            consultantProfileId?: string | null;
+            consultantProfile?: { userId?: string | null } | null;
+          } | null;
+        } | null;
+      }
+    | undefined;
+
+  const plans = [
+    appointment?.webinar?.webinarPlan,
+    appointment?.class?.classPlan,
+    appointment?.consultation?.consultationPlan,
+    appointment?.subscription?.subscriptionPlan,
+    appointment?.trial?.subscriptionPlan,
+  ];
+
+  for (const plan of plans) {
+    if (!plan) continue;
+    if (
+      consultantProfileId &&
+      plan.consultantProfileId === consultantProfileId
+    ) {
+      return true;
+    }
+    if (plan.consultantProfile?.userId === user.id) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export async function PATCH(req: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await getSession(true);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { recordingId } = await params;
+    const recording = await RecordingService.getRecordingById(recordingId);
+    if (!recording) {
+      return NextResponse.json(
+        { error: "Recording not found" },
+        { status: 404 },
+      );
+    }
+
+    const allowed = await isRecordingHostOrAdmin(session.user, recording);
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden: only the host consultant or an admin may update this recording",
+        },
+        { status: 403 },
+      );
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const parsed = patchRecordingSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", details: parsed.error.flatten() },
+        { status: 400 },
+      );
+    }
+
+    const updated = await prisma.recording.update({
+      where: { id: recordingId },
+      data: {
+        ...(parsed.data.title !== undefined
+          ? { title: parsed.data.title }
+          : {}),
+      },
+    });
+
+    return NextResponse.json({ recording: updated });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+    streamLogger.error("Error updating recording", error);
+    return NextResponse.json(
+      { error: "Failed to update recording" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await getSession(true);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { recordingId } = await params;
+    const recording = await RecordingService.getRecordingById(recordingId);
+    if (!recording) {
+      return NextResponse.json(
+        { error: "Recording not found" },
+        { status: 404 },
+      );
+    }
+
+    const allowed = await isRecordingHostOrAdmin(session.user, recording);
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden: only the host consultant or an admin may delete this recording",
+        },
+        { status: 403 },
+      );
+    }
+
+    const recWithListing = recording as typeof recording & {
+      listingStatus?: string | null;
+      previewClipStoragePath?: string | null;
+    };
+
+    if (recWithListing.listingStatus === "PUBLISHED") {
+      const activePurchase = await prisma.recordingPurchase?.findFirst?.({
+        where: { recordingId, status: "SUCCEEDED" },
+        select: { id: true },
+      });
+      if (activePurchase) {
+        return NextResponse.json(
+          {
+            error: "Cannot delete a published recording that has active buyers",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (recording.storagePath) {
+      const deletedMain = await deleteRecordingObject(recording.storagePath);
+      if (!deletedMain.success) {
+        return NextResponse.json(
+          {
+            error:
+              deletedMain.error ?? "Failed to delete recording storage object",
+          },
+          { status: 500 },
+        );
+      }
+    }
+
+    if (recWithListing.previewClipStoragePath) {
+      await deleteRecordingObject(recWithListing.previewClipStoragePath);
+    }
+
+    const updated = await prisma.recording.update({
+      where: { id: recordingId },
+      data: {
+        status: "EXPIRED",
+        recordingUrl: "",
+        storageUrl: null,
+        storagePath: null,
+        listingStatus: "UNPUBLISHED",
+      },
+    });
+
+    return NextResponse.json({ success: true, recording: updated });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
+    streamLogger.error("Error deleting recording", error);
+    return NextResponse.json(
+      { error: "Failed to delete recording" },
       { status: 500 },
     );
   }

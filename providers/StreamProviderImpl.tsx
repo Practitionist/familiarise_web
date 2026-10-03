@@ -85,12 +85,24 @@ export function isVideoClientLive(client: VideoLiveness): boolean {
  * retry or report. Shaped like a Stream failure so ChatUnavailable renders it.
  */
 function refusedConnectFailure(refusal: Refusal): ConnectFailure {
+  if (refusal.code === "CONSENT_REQUIRED") {
+    return {
+      kind: "consent",
+      code: null,
+      detail: refusal.devMessage,
+      title: "Enable live chat & video",
+      description: refusal.userMessage,
+      message: refusal.userMessage,
+      action: "grant_consent",
+    };
+  }
   return {
     kind: "not-retryable",
     code: null,
     detail: refusal.devMessage,
     title: "Please sign in again",
     description: refusal.userMessage,
+    message: refusal.userMessage,
     action: "reload",
   };
 }
@@ -563,6 +575,25 @@ const StreamProviderImpl = ({
             userId: userDetails.id,
           });
         } catch (upsertError) {
+          const errName =
+            typeof upsertError === "object" && upsertError !== null
+              ? (upsertError as { name?: unknown }).name
+              : undefined;
+          const errMessage =
+            upsertError instanceof Error
+              ? upsertError.message
+              : String(upsertError ?? "");
+          if (
+            errName === "ConsentRequiredError" ||
+            errMessage.includes("STREAM_DATA_PROCESSING") ||
+            errMessage.includes("data-processing consent for messaging")
+          ) {
+            const consentFailure = classifyConnectFailure(upsertError);
+            setError(consentFailure.description);
+            setFailure(consentFailure);
+            setChatConnected(false);
+            return null;
+          }
           streamLogger.warn("User upsert failed, continuing", {
             userId: userDetails.id,
             error: upsertError,
@@ -738,7 +769,9 @@ const StreamProviderImpl = ({
         // Stream said this cannot succeed as-is (deactivated user, bad token,
         // suspended app). Report once and stop: the five backoff retries per
         // client per page were the Sentry noise.
-        if (!signedOut) reportNonRetryableConnectFailure(error, classified);
+        if (!signedOut && classified.kind !== "consent") {
+          reportNonRetryableConnectFailure(error, classified);
+        }
         return;
       }
       if (signedOut) {
