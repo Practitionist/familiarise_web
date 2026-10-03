@@ -20,7 +20,7 @@ GitHub Actions is retained only for daily, weekly, and monthly batch crons and m
 
 The ticker always returns HTTP `200` so Netlify does not retry the entire tick 3x on a single target failure; failures are logged on the structured `{"event":"cron-tick",...}` line.
 
-Instances are kept warm by `netlify/functions/keep-warm.mts` (every 4 minutes against `/api/perf/probe-bare`).
+`netlify/functions/keep-warm.mts` (PR #1685) was retired and deleted in PR #1972 once `preloadEntriesOnStart: false` reduced Next.js cold starts to `0.97–1.90 s`.
 
 ## `?limit=` semantics
 

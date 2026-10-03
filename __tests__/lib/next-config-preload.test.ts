@@ -9,7 +9,7 @@
  * the Node event loop for 20–34s and exhausting Node 22's 512 MB V8 heap ceiling
  * on 1024 MB AWS Lambda containers.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const src = readFileSync(path.join(process.cwd(), "next.config.mjs"), "utf8");
@@ -31,5 +31,17 @@ describe("next.config.mjs — serverless cold-start preload guards", () => {
 
   it("externalizes @novu/api on the server to keep server chunks slim", () => {
     expect(serverExternalBlock).toMatch(/"@novu\/api"/);
+  });
+
+  it("imports withSentryConfig from @sentry/nextjs/config rather than the deprecated root export", () => {
+    expect(src).toMatch(
+      /import\s*\{\s*withSentryConfig\s*\}\s*from\s*"@sentry\/nextjs\/config"/,
+    );
+  });
+
+  it("keeps the obsolete netlify/functions/keep-warm.mts scheduled pinger deleted", () => {
+    expect(
+      existsSync(path.join(process.cwd(), "netlify/functions/keep-warm.mts")),
+    ).toBe(false);
   });
 });
