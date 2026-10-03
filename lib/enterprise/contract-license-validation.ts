@@ -15,6 +15,63 @@ export type ContractLicenseValidationInput = {
  * and mutual exclusion / required cycle rules for `FLAT_FEE` vs `PER_SEAT`
  * license inputs.
  */
+function validateModelFeeRules(
+  v: ContractLicenseValidationInput,
+  ctx: z.RefinementCtx,
+): void {
+  if (v.licenseModel === "PER_SEAT") {
+    if (v.licenseRatePerSeatPaise === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
+        path: ["licenseRatePerSeatPaise"],
+      });
+    }
+    if (v.licenseFeePaise !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
+        path: ["licenseFeePaise"],
+      });
+    }
+    return;
+  }
+
+  if (v.licenseModel === "FLAT_FEE") {
+    if (v.licenseFeePaise === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
+        path: ["licenseFeePaise"],
+      });
+    }
+    if (v.licenseRatePerSeatPaise !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
+        path: ["licenseRatePerSeatPaise"],
+      });
+    }
+    return;
+  }
+
+  if (
+    v.licenseFeePaise !== undefined &&
+    v.licenseRatePerSeatPaise !== undefined
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Cannot specify both licenseFeePaise and licenseRatePerSeatPaise",
+      path: ["licenseModel"],
+    });
+  }
+}
+
 export function validateContractLicenseInput(
   v: ContractLicenseValidationInput,
   ctx: z.RefinementCtx,
@@ -45,54 +102,5 @@ export function validateContractLicenseInput(
     });
   }
 
-  if (v.licenseModel === "PER_SEAT") {
-    if (v.licenseRatePerSeatPaise === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
-        path: ["licenseRatePerSeatPaise"],
-      });
-    }
-    if (v.licenseFeePaise !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
-        path: ["licenseFeePaise"],
-      });
-    }
-  }
-
-  if (v.licenseModel === "FLAT_FEE") {
-    if (v.licenseFeePaise === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
-        path: ["licenseFeePaise"],
-      });
-    }
-    if (v.licenseRatePerSeatPaise !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
-        path: ["licenseRatePerSeatPaise"],
-      });
-    }
-  }
-
-  if (
-    v.licenseModel === undefined &&
-    v.licenseFeePaise !== undefined &&
-    v.licenseRatePerSeatPaise !== undefined
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message:
-        "Cannot specify both licenseFeePaise and licenseRatePerSeatPaise",
-      path: ["licenseModel"],
-    });
-  }
+  validateModelFeeRules(v, ctx);
 }

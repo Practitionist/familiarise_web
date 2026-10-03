@@ -187,19 +187,25 @@ afterEach(() => {
 });
 
 describe("a consultant's published grid is the allocator's grid", () => {
-  it("emits only on-grid starts for an ALIGNED row, earliest first", async () => {
+  async function allocateWithCustomRow(iso: string, hours: number) {
     mockTx.consultation.findUnique.mockResolvedValue(
-      consultationWithRow(customRow("2025-01-06T09:00:00.000Z", 4)),
+      consultationWithRow(customRow(iso, hours)),
     );
-
     const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
     });
+    return { result, placed: placedOccurrences() };
+  }
+
+  it("emits only on-grid starts for an ALIGNED row, earliest first", async () => {
+    const { result, placed } = await allocateWithCustomRow(
+      "2025-01-06T09:00:00.000Z",
+      4,
+    );
 
     expect(result.success).toBe(true);
-    const placed = placedOccurrences();
     expect(placed).toHaveLength(1);
     // The published row opens at 09:00, so the first placeable start is 09:00 —
     // not 09:30, not a later block that scores better.
@@ -218,18 +224,12 @@ describe("a consultant's published grid is the allocator's grid", () => {
   it("places an OFF-GRID legacy row at its first on-grid start inside the row", async () => {
     // A legacy row published 10:15-14:15: never 10:15 (checkout refuses it) and
     // never 10:00 (outside the published hours).
-    mockTx.consultation.findUnique.mockResolvedValue(
-      consultationWithRow(customRow("2025-01-06T10:15:00.000Z", 4)),
+    const { result, placed } = await allocateWithCustomRow(
+      "2025-01-06T10:15:00.000Z",
+      4,
     );
 
-    const result = await SchedulingService.allocate({
-      eventType: "consultation",
-      eventId: "consult-1",
-      mode: "auto",
-    });
-
     expect(result.success).toBe(true);
-    const placed = placedOccurrences();
     expect(placed).toHaveLength(1);
     expect(new Date(placed[0].startsAt).toISOString()).toBe(
       "2025-01-06T10:30:00.000Z",
@@ -241,17 +241,11 @@ describe("a consultant's published grid is the allocator's grid", () => {
     // buyer-side predicate accepts on the GRID. The lead-time half is
     // deliberately not asserted — the allocator keeps its own five-second
     // buffer (see the header), so only the grid half is claimed here.
-    mockTx.consultation.findUnique.mockResolvedValue(
-      consultationWithRow(customRow("2025-01-06T09:00:00.000Z", 8)),
+    const { placed } = await allocateWithCustomRow(
+      "2025-01-06T09:00:00.000Z",
+      8,
     );
 
-    await SchedulingService.allocate({
-      eventType: "consultation",
-      eventId: "consult-1",
-      mode: "auto",
-    });
-
-    const placed = placedOccurrences();
     expect(placed.length).toBeGreaterThan(0);
     for (const row of placed) {
       expect(
@@ -262,17 +256,12 @@ describe("a consultant's published grid is the allocator's grid", () => {
   });
 
   it("leaves the earliest-fit objective alone: still the FIRST placeable start", async () => {
-    mockTx.consultation.findUnique.mockResolvedValue(
-      consultationWithRow(customRow("2025-01-06T09:00:00.000Z", 4)),
+    const { placed } = await allocateWithCustomRow(
+      "2025-01-06T09:00:00.000Z",
+      4,
     );
 
-    await SchedulingService.allocate({
-      eventType: "consultation",
-      eventId: "consult-1",
-      mode: "auto",
-    });
-
-    expect(new Date(placedOccurrences()[0].startsAt).toISOString()).toBe(
+    expect(new Date(placed[0].startsAt).toISOString()).toBe(
       "2025-01-06T09:00:00.000Z",
     );
   });

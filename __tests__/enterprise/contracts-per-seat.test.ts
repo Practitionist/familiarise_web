@@ -315,7 +315,7 @@ describe("#770 & #1844 — Enterprise Contracts PER_SEAT & Termination Guards", 
           data: expect.objectContaining({
             contractId: "con_new",
             model: "PER_SEAT",
-            ratePerSeatPaise: BigInt(200000),
+            ratePerSeatPaise: 200000,
             flatFeePaise: null,
             cycle: "MONTHLY",
           }),

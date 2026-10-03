@@ -209,7 +209,7 @@ export async function handlePaymentSuccess(
   options?: { recover?: boolean },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
-  const metadata = normalizeLegacySlotKeys(rawMetadata);
+  const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
 
   // #1758 — Pre-plan earnings context (rate card, consultant profile, trust-park
@@ -393,6 +393,21 @@ export async function handlePaymentSuccess(
               extra: { paymentIntentId },
             });
             return null; // Signal: already processed, skip Phase 2
+          }
+
+          if (payment.appointmentId) {
+            if (!metadata.userId && payment.userId) {
+              metadata.userId = payment.userId;
+            }
+            if (!metadata.appointmentType) {
+              const existingAppt = await tx.appointment.findUnique({
+                where: { id: payment.appointmentId },
+                select: { appointmentType: true },
+              });
+              if (existingAppt?.appointmentType) {
+                metadata.appointmentType = existingAppt.appointmentType;
+              }
+            }
           }
 
           try {
@@ -700,9 +715,7 @@ export async function handlePaymentSuccess(
               if (isRetryableSerialization) {
                 throw phase1EarningsErr;
               }
-              if (isUniqueViolation(phase1EarningsErr)) {
-                earningsCreatedInPhase1 = true;
-              } else if (hasSavepoint) {
+              if (hasSavepoint) {
                 console.warn(
                   `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
                   phase1EarningsErr,

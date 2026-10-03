@@ -40,24 +40,34 @@ async function fetchWindow(
   const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}`;
 
   const cachedEntry =
-    !noStore && etagCacheRef?.current && etagCacheRef.current.key === url
+    !noStore && etagCacheRef?.current?.key === url
       ? etagCacheRef.current
       : null;
 
-  const init: RequestInit | undefined = noStore
-    ? { cache: "no-store" }
-    : cachedEntry?.etag
-      ? {
-          headers: {
-            "If-None-Match": cachedEntry.etag,
-            "X-Availability-If-None-Match": cachedEntry.etag,
-          },
-        }
-      : undefined;
+  let init: RequestInit;
+  if (noStore) {
+    init = { credentials: "include", cache: "no-store" };
+  } else if (cachedEntry?.etag) {
+    init = {
+      credentials: "include",
+      headers: {
+        "If-None-Match": cachedEntry.etag,
+        "X-Availability-If-None-Match": cachedEntry.etag,
+      },
+    };
+  } else {
+    init = { credentials: "include" };
+  }
 
-  const response = await fetch(url, init);
-  if (response.status === 304 && cachedEntry) {
-    return cachedEntry.data;
+  let response = await fetch(url, init);
+  if (response.status === 304) {
+    if (cachedEntry) {
+      return cachedEntry.data;
+    }
+    response = await fetch(url, {
+      credentials: "include",
+      cache: "no-store",
+    });
   }
   if (!response.ok) {
     const errorData = await response
@@ -203,18 +213,12 @@ export function useAvailabilityMonth({
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = timezone ? monthKeyOf(monthStart, timezone) : "";
+  const queryKey = consulteeUserId
+    ? ["availability-month", consultantId, monthKey, timezone, consulteeUserId]
+    : ["availability-month", consultantId, monthKey, timezone];
+  const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
-    queryKey: ready
-      ? consulteeUserId
-        ? [
-            "availability-month",
-            consultantId,
-            monthKey,
-            timezone,
-            consulteeUserId,
-          ]
-        : ["availability-month", consultantId, monthKey, timezone]
-      : ["availability-month", "disabled"],
+    queryKey: activeQueryKey,
     queryFn: () =>
       fetchWindow(
         consultantId as string,
