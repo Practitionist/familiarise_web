@@ -236,22 +236,36 @@ export function AppointmentSheet({
                 )}
                 {overflow.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    {overflow.map((item) => (
-                      <Button
-                        key={item.key}
-                        variant="outline"
-                        size="sm"
-                        disabled={item.disabled}
-                        onClick={item.onClick}
-                        className={
-                          item.destructive
-                            ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                            : undefined
-                        }
-                      >
-                        {item.label}
-                      </Button>
-                    ))}
+                    {overflow.map((item) => {
+                      const destructiveClassName = item.destructive
+                        ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+                        : undefined;
+                      if (item.href && !item.disabled) {
+                        return (
+                          <Button
+                            key={item.key}
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className={destructiveClassName}
+                          >
+                            <Link href={item.href}>{item.label}</Link>
+                          </Button>
+                        );
+                      }
+                      return (
+                        <Button
+                          key={item.key}
+                          variant="outline"
+                          size="sm"
+                          disabled={item.disabled}
+                          onClick={item.onClick}
+                          className={destructiveClassName}
+                        >
+                          {item.label}
+                        </Button>
+                      );
+                    })}
                   </div>
                 )}
                 {detailHref && (

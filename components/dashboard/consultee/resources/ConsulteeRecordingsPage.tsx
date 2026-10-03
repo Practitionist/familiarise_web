@@ -110,10 +110,7 @@ export function ConsulteeRecordingsPage({
         trials: [],
       };
     }
-    return {
-      ...data,
-      webinars: [...data.webinars, ...purchasedItems],
-    };
+    return data;
   }, [data, category]);
 
   if (isLoading) return <PageSkeleton />;

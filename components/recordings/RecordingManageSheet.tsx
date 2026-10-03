@@ -538,14 +538,15 @@ export function RecordingManageSheet({
         throw new Error(payload.error || "Failed to publish recording");
       }
 
-      if (previewClipFile) {
-        await uploadPreviewClip(previewClipFile);
+      const clipOk = previewClipFile
+        ? await uploadPreviewClip(previewClipFile)
+        : true;
+      if (clipOk) {
+        toast({
+          title: "Published to Marketplace",
+          description: "Your replay listing is now live on Explore Recordings.",
+        });
       }
-
-      toast({
-        title: "Published to Marketplace",
-        description: "Your replay listing is now live on Explore Recordings.",
-      });
       await onUpdated?.();
     } catch (err) {
       toast({

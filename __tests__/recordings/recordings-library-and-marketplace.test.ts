@@ -7,7 +7,6 @@ import { NextRequest } from "next/server";
 const mockGetSession = jest.fn();
 const mockConsultantProfileFindUnique = jest.fn();
 const mockRequireApiAuth = jest.fn();
-const mockIsPrivileged = jest.fn();
 const mockRecordingCount = jest.fn();
 const mockRecordingFindMany = jest.fn();
 const mockRecordingPurchaseFindFirst = jest.fn();
@@ -34,7 +33,6 @@ jest.mock("../../lib/auth-client", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
   requireApiAuth: (...args: unknown[]) => mockRequireApiAuth(...args),
-  isPrivileged: (...args: unknown[]) => mockIsPrivileged(...args),
   forbiddenResponse: (msg: string) =>
     new Response(JSON.stringify({ error: msg }), { status: 403 }),
 }));
@@ -262,50 +260,51 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           },
         },
       });
-      mockIsPrivileged.mockReturnValue(false);
       mockConsulteeProfileFindUnique.mockResolvedValue({ userId: "u-buyer" });
       mockConsultationFindMany.mockResolvedValue([]);
       mockSubscriptionFindMany.mockResolvedValue([]);
       mockWebinarFindMany.mockResolvedValue([]);
       mockClassFindMany.mockResolvedValue([]);
       mockTrialFindMany.mockResolvedValue([]);
-      mockRecordingPurchaseFindMany.mockResolvedValue([
-        {
-          id: "pur-1",
-          recordingId: "rec-99",
-          buyerId: "u-buyer",
-          status: "SUCCEEDED",
-          recording: {
-            id: "rec-99",
-            title: "Raw Webinar Recording",
-            listingTitle: "Distributed Systems Deep Dive",
-            durationInMinutes: 90,
-            recordedAt: new Date("2026-09-25T15:00:00Z"),
-            status: "AVAILABLE",
-            storagePath: "recordings/rec-99.mp4",
-            recordingUrl: null,
-            thumbnailUrl: "https://cdn.example.com/thumb.jpg",
-            meeting: {
-              occurrence: {
-                appointment: {
-                  webinar: {
-                    webinarPlan: {
-                      title: "Distributed Systems",
-                      consultantProfile: {
-                        user: {
-                          id: "u-host",
-                          name: "Dr. Meera",
-                          image: null,
-                        },
+      const purchaseItem = {
+        id: "pur-1",
+        recordingId: "rec-99",
+        buyerId: "u-buyer",
+        status: "SUCCEEDED",
+        recording: {
+          id: "rec-99",
+          title: "Raw Webinar Recording",
+          listingTitle: "Distributed Systems Deep Dive",
+          durationInMinutes: 90,
+          recordedAt: new Date("2026-09-25T15:00:00Z"),
+          status: "AVAILABLE",
+          storagePath: "recordings/rec-99.mp4",
+          recordingUrl: null,
+          thumbnailUrl: "https://cdn.example.com/thumb.jpg",
+          meeting: {
+            occurrence: {
+              appointment: {
+                webinar: {
+                  webinarPlan: {
+                    title: "Distributed Systems",
+                    consultantProfile: {
+                      user: {
+                        id: "u-host",
+                        name: "Dr. Meera",
+                        image: null,
                       },
                     },
                   },
-                  class: null,
                 },
+                class: null,
               },
             },
           },
         },
+      };
+      mockRecordingPurchaseFindMany.mockResolvedValue([
+        purchaseItem,
+        { ...purchaseItem, id: "pur-dup" },
       ]);
 
       const req = new Request(
@@ -339,6 +338,69 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       expect(body.data.purchased[0].recordings[0].playbackUrl).toBeNull();
       expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
+    });
+
+    it("redacts thumbnailUrl and audits metadata-only access for STAFF operators", async () => {
+      mockRequireApiAuth.mockResolvedValue({
+        session: {
+          user: {
+            id: "u-staff",
+            role: "STAFF",
+            consulteeProfileId: null,
+          },
+        },
+      });
+      mockConsulteeProfileFindUnique.mockResolvedValue({ userId: "u-buyer" });
+      mockConsultationFindMany.mockResolvedValue([]);
+      mockSubscriptionFindMany.mockResolvedValue([]);
+      mockWebinarFindMany.mockResolvedValue([]);
+      mockClassFindMany.mockResolvedValue([]);
+      mockTrialFindMany.mockResolvedValue([]);
+      mockRecordingPurchaseFindMany.mockResolvedValue([
+        {
+          id: "pur-staff",
+          recordingId: "rec-staff-1",
+          buyerId: "u-buyer",
+          status: "SUCCEEDED",
+          recording: {
+            id: "rec-staff-1",
+            title: "Webinar Recording",
+            listingTitle: "Staff Audited Replay",
+            durationInMinutes: 60,
+            recordedAt: new Date("2026-09-25T15:00:00Z"),
+            status: "AVAILABLE",
+            storagePath: "recordings/rec-staff-1.mp4",
+            recordingUrl: null,
+            thumbnailUrl: "https://cdn.example.com/thumb.jpg",
+            meeting: {
+              occurrence: {
+                appointment: {
+                  webinar: null,
+                  class: null,
+                },
+              },
+            },
+          },
+        },
+      ]);
+
+      const req = new Request(
+        "http://localhost:3000/api/dashboard/consultee/ce-1/resources",
+      );
+      const res = await getConsulteeResources(req, {
+        params: Promise.resolve({ consulteeId: "ce-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.purchased[0].recordings[0].thumbnailUrl).toBeNull();
+      expect(mockAuditOperatorRecordingAccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: "u-staff",
+          actorRole: "STAFF",
+          played: false,
+        }),
+      );
     });
   });
 

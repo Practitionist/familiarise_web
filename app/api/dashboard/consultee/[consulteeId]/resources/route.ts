@@ -505,33 +505,40 @@ export async function GET(
           })),
         )
       ).filter(shouldInclude),
-      purchased: purchasedRecordings.map((p) => {
-        const rec = p.recording;
-        const apt = rec.meeting?.occurrence?.appointment;
-        const plan = apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
-        const consultantUser = plan?.consultantProfile?.user;
-        return {
-          id: `purchased-${p.id}`,
-          planTitle: rec.listingTitle || plan?.title || rec.title,
-          consultantName: consultantUser?.name ?? null,
-          consultantImage: consultantUser?.image ?? null,
-          status: "COMPLETED",
-          date: rec.recordedAt,
-          eventType: "purchased" as const,
-          materials: [],
-          recordings: [
-            {
-              id: rec.id,
-              title: rec.listingTitle || rec.title,
-              durationInMinutes: rec.durationInMinutes,
-              recordedAt: rec.recordedAt,
-              playbackUrl: null,
-              thumbnailUrl: includeMediaUrls ? rec.thumbnailUrl : null,
-              status: rec.status,
-            },
-          ],
-        };
-      }),
+      purchased: purchasedRecordings
+        .filter(
+          (p, idx, arr) =>
+            arr.findIndex((item) => item.recording.id === p.recording.id) ===
+            idx,
+        )
+        .map((p) => {
+          const rec = p.recording;
+          const apt = rec.meeting?.occurrence?.appointment;
+          const plan =
+            apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
+          const consultantUser = plan?.consultantProfile?.user;
+          return {
+            id: `purchased-${p.id}`,
+            planTitle: rec.listingTitle || plan?.title || rec.title,
+            consultantName: consultantUser?.name ?? null,
+            consultantImage: consultantUser?.image ?? null,
+            status: "COMPLETED",
+            date: rec.recordedAt,
+            eventType: "purchased" as const,
+            materials: [],
+            recordings: [
+              {
+                id: rec.id,
+                title: rec.listingTitle || rec.title,
+                durationInMinutes: rec.durationInMinutes,
+                recordedAt: rec.recordedAt,
+                playbackUrl: null,
+                thumbnailUrl: includeMediaUrls ? rec.thumbnailUrl : null,
+                status: rec.status,
+              },
+            ],
+          };
+        }),
     };
 
     return NextResponse.json({ data: transform, success: true });

@@ -56,10 +56,6 @@ const FILTER_KEYS = ["kind", "from", "to", "source", "view"] as const;
 
 export const EVENT_TYPE_LABELS: Record<string, string> = {
   ...LIBRARY_KIND_LABEL,
-  CONSULTATION: "Consultation",
-  SUBSCRIPTION: "Subscription",
-  WEBINAR: "Webinar",
-  CLASS: "Class",
   TRIAL: "Trial",
   consultation: "Consultation",
   subscription: "Subscription",
