@@ -223,6 +223,7 @@ describe("late capture after the parent was invoiced", () => {
       // #1894 — the note names its real trigger, never a borrowed refundId.
       overageEventId: "oe1",
       amountPaise: 118_000,
+      exactSubtotalPaise: BASE,
       reason: expect.stringContaining("side1"),
     });
   });
@@ -337,12 +338,14 @@ describe("late capture after the parent was invoiced", () => {
       invoiceId: "inv1",
       overageEventId: "oe1",
       amountPaise: 118_000,
+      exactSubtotalPaise: BASE,
       reason: expect.stringContaining("side1"),
     });
     expect(mockMint).toHaveBeenNthCalledWith(2, tx, {
       invoiceId: "inv1",
       overageEventId: "oe2",
       amountPaise: 118_000,
+      exactSubtotalPaise: BASE,
       reason: expect.stringContaining("side2"),
     });
     expect(tx.organizationInvoice.updateMany).toHaveBeenCalledTimes(2);

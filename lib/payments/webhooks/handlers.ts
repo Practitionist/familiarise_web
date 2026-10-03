@@ -37,7 +37,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
@@ -66,7 +66,9 @@ import {
 } from "@/lib/email";
 import {
   createEarningsFromPayment,
+  planEarningsForPayment,
   resolvePaymentForEarnings,
+  type PreplannedEarningsContext,
 } from "@/lib/payments/payouts";
 import {
   attemptTrigger,
@@ -128,6 +130,7 @@ type PaymentSuccessTxResult =
       doubleBookingBlocked: boolean;
       // The capture's webinar/class seat was released before the money landed.
       seatReleased: boolean;
+      earningsCreatedInPhase1: boolean;
       appointmentForEmails: AppointmentForEmails | null;
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
@@ -208,6 +211,24 @@ export async function handlePaymentSuccess(
   const recovering = options?.recover === true;
   const metadata = normalizeLegacySlotKeys(rawMetadata);
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
+
+  // #1758 — Pre-plan earnings context (rate card, consultant profile, trust-park
+  // status, collaborator splits, subscription tranches, and payment legs) before
+  // opening the Phase-1 Serializable transaction when payment.appointmentId is
+  // already known, so Phase 1 can commit ConsultantEarnings + booking journal
+  // atomically with appointment confirmation without holding Serializable locks
+  // across read-heavy rate-card resolution queries.
+  let preplannedEarnings: PreplannedEarningsContext | null = null;
+  if (typeof planEarningsForPayment === "function") {
+    try {
+      preplannedEarnings = await planEarningsForPayment(
+        { paymentIntent: paymentIntentId },
+        metadata.appointmentType,
+      );
+    } catch {
+      preplannedEarnings = null;
+    }
+  }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
   let txResult: PaymentSuccessTxResult | null;
@@ -615,6 +636,7 @@ export async function handlePaymentSuccess(
           const blocked =
             confirmResult.capturedAfterTerminal ||
             confirmResult.doubleBookingBlocked;
+          let earningsCreatedInPhase1 = false;
           if (blocked) {
             await tx.payment.update({
               where: { id: payment.id },
@@ -628,6 +650,74 @@ export async function handlePaymentSuccess(
                 ),
               },
             });
+          } else if (typeof createEarningsFromPayment === "function") {
+            const rawTx = tx as {
+              $executeRawUnsafe?: (query: string) => Promise<unknown>;
+            };
+            const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
+            if (hasSavepoint) {
+              await rawTx.$executeRawUnsafe!("SAVEPOINT sp_phase1_earnings");
+            }
+            try {
+              const resolvedInTx =
+                preplannedEarnings?.resolvedPayment ??
+                (typeof resolvePaymentForEarnings === "function"
+                  ? await resolvePaymentForEarnings(
+                      { id: payment.id },
+                      metadata.appointmentType,
+                      tx,
+                    )
+                  : null);
+              if (resolvedInTx) {
+                await createEarningsFromPayment({
+                  payment: resolvedInTx.paymentForEarnings,
+                  appointmentType: resolvedInTx.earningsAppointmentType,
+                  tx,
+                  preplanned: preplannedEarnings ?? undefined,
+                });
+                earningsCreatedInPhase1 = true;
+                console.log(
+                  `💰 Earnings record created atomically in Phase 1 for payment ${payment.id}, consultant ${resolvedInTx.consultantProfileId}`,
+                );
+              }
+              if (hasSavepoint) {
+                await rawTx.$executeRawUnsafe!(
+                  "RELEASE SAVEPOINT sp_phase1_earnings",
+                );
+              }
+            } catch (phase1EarningsErr) {
+              if (hasSavepoint) {
+                await rawTx
+                  .$executeRawUnsafe!(
+                    "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
+                  )
+                  .catch(() => undefined);
+              }
+              const isRetryableSerialization =
+                phase1EarningsErr instanceof
+                  Prisma.PrismaClientKnownRequestError &&
+                phase1EarningsErr.code === "P2034";
+              if (isRetryableSerialization) {
+                throw phase1EarningsErr;
+              }
+              if (isUniqueViolation(phase1EarningsErr)) {
+                earningsCreatedInPhase1 = true;
+              } else if (hasSavepoint) {
+                console.warn(
+                  `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
+                  phase1EarningsErr,
+                );
+                earningsCreatedInPhase1 = false;
+              } else if (
+                "consultantEarnings" in tx &&
+                typeof (tx as { consultantEarnings?: unknown })
+                  .consultantEarnings === "object" &&
+                (tx as { consultantEarnings?: unknown }).consultantEarnings !==
+                  null
+              ) {
+                throw phase1EarningsErr;
+              }
+            }
           }
           const appointmentForEmails = blocked
             ? null
@@ -661,6 +751,7 @@ export async function handlePaymentSuccess(
             capturedAfterTerminal: confirmResult.capturedAfterTerminal,
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
             seatReleased: confirmResult.seatReleased ?? false,
+            earningsCreatedInPhase1,
             appointmentForEmails,
             successEmail,
             bookedEmails,
@@ -872,38 +963,40 @@ export async function handlePaymentSuccess(
   const { paymentId, appointmentId, userId, userName, amount, currency } =
     txResult;
 
-  try {
-    const resolved = await resolvePaymentForEarnings(
-      { id: paymentId },
-      metadata.appointmentType,
-    );
+  if (!txResult.earningsCreatedInPhase1) {
+    try {
+      const resolved = await resolvePaymentForEarnings(
+        { id: paymentId },
+        metadata.appointmentType,
+      );
 
-    if (resolved) {
-      await createEarningsFromPayment({
-        payment: resolved.paymentForEarnings,
-        appointmentType: resolved.earningsAppointmentType,
+      if (resolved) {
+        await createEarningsFromPayment({
+          payment: resolved.paymentForEarnings,
+          appointmentType: resolved.earningsAppointmentType,
+        });
+
+        console.log(
+          `💰 Earnings record created for payment ${paymentId}, consultant ${resolved.consultantProfileId}`,
+        );
+      }
+    } catch (earningsError) {
+      reportSentryError(earningsError, {
+        subsystem: "payments",
+        extra: { paymentId, appointmentId, userId, path: "webhook" },
       });
-
-      console.log(
-        `💰 Earnings record created for payment ${paymentId}, consultant ${resolved.consultantProfileId}`,
+      await recordSystemError({
+        category: "PAYOUT",
+        summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
+        err: earningsError,
+        correlationId: paymentId,
+        context: { paymentId, appointmentId, userId, path: "webhook" },
+      });
+      console.error(
+        `⚠️ Failed to create earnings for payment ${paymentId}:`,
+        earningsError,
       );
     }
-  } catch (earningsError) {
-    reportSentryError(earningsError, {
-      subsystem: "payments",
-      extra: { paymentId, appointmentId, userId, path: "webhook" },
-    });
-    await recordSystemError({
-      category: "PAYOUT",
-      summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
-      err: earningsError,
-      correlationId: paymentId,
-      context: { paymentId, appointmentId, userId, path: "webhook" },
-    });
-    console.error(
-      `⚠️ Failed to create earnings for payment ${paymentId}:`,
-      earningsError,
-    );
   }
 
   try {

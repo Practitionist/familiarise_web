@@ -10,10 +10,13 @@ import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEventSafe,
+} from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, RefundStatus } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
@@ -22,6 +25,7 @@ import {
   recordOrgTDSDeduction,
   recordOrgTdsReversal,
 } from "@/lib/payments/tax/tds-service";
+import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
@@ -39,9 +43,9 @@ import {
   classifyGatewaySubmissionError,
   computeResidentPayoutTds,
   DISPUTE_GATED_PAYMENT_WHERE,
+  PayoutMakerCheckerError,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
-  tdsRateToBps,
 } from "./shared-lifecycle";
 
 export class PayoutLockError extends Error {
@@ -156,6 +160,7 @@ export interface CreateOrgPayoutBatchOptions {
   idempotencyKey?: string;
   notes?: string;
   actorMembershipId?: string | null;
+  createdBy?: string;
 }
 
 const PAYOUT_LOCK_TTL_MS = 60_000;
@@ -298,6 +303,7 @@ export async function createOrgPayoutBatch(
                 platformFeePaise: 0,
                 refundsPaise: 0,
                 netPayoutPaise: 0,
+                createdBy: opts.createdBy ?? "SYSTEM_CRON",
                 idempotencyKey:
                   opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
               },
@@ -377,12 +383,18 @@ export async function createOrgPayoutBatch(
                 },
               },
             });
+            const resolvedRate = await resolveEffectiveTdsRate(
+              tx,
+              null,
+              new Date(),
+            );
             const tds = computeResidentPayoutTds(
               netPayout,
               orgForCompliance?.taxInfo?.panEncrypted,
+              resolvedRate,
             );
             const amountAfterTds = netPayout - tds.tdsAmountPaise;
-            const tdsRateBps = tdsRateToBps(tds.tdsRate);
+            const tdsRateBps = tds.rateAppliedBps;
             const mustPayByDate = resolvePayoutMsmeDeadline(
               orgForCompliance?.msmeInfo?.msmeStatus,
               orgForCompliance?.msmeInfo?.msmeWrittenAgreementOnFile,
@@ -493,6 +505,86 @@ export async function createOrgPayoutBatch(
   }
 }
 
+/**
+ * Approve a PENDING organization payout with maker-checker enforcement (#1898).
+ */
+export async function approveOrgPayout(
+  payoutId: string,
+  adminUserId: string,
+): Promise<void> {
+  const existing = await prisma.organizationPayout.findUnique({
+    where: { id: payoutId },
+    select: { status: true, createdBy: true, organizationId: true },
+  });
+  if (!existing) {
+    throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+  }
+  if (existing.status !== "PENDING") {
+    throw new PayoutValidationError(
+      `Payout cannot be approved from status: ${existing.status}`,
+      409,
+    );
+  }
+
+  const makerCheckerRequired =
+    process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
+  if (
+    makerCheckerRequired &&
+    existing.createdBy &&
+    existing.createdBy === adminUserId
+  ) {
+    const activeAdminCount =
+      typeof (prisma as unknown as { user?: { count?: unknown } }).user
+        ?.count === "function"
+        ? await prisma.user.count({
+            where: { role: "ADMIN" },
+          })
+        : 2;
+    if (activeAdminCount > 1) {
+      throw new PayoutMakerCheckerError(
+        "Maker-checker violation: the admin who created this org payout batch cannot also approve it.",
+      );
+    }
+    if (typeof recordSystemEventSafe === "function") {
+      await recordSystemEventSafe({
+        organizationId: existing.organizationId,
+        category: "PAYOUT",
+        severity: "WARN",
+        message: `Solo-admin bootstrap exception: admin ${adminUserId} self-approved org payout ${payoutId}`,
+        context: {
+          action: "ORG_PAYOUT_SOLO_ADMIN_SELF_APPROVAL",
+          actorUserId: adminUserId,
+          payoutId,
+          adminUserId,
+          activeAdminCount,
+        },
+      });
+    }
+  }
+
+  const approved = await prisma.organizationPayout.updateMany({
+    where: { id: payoutId, status: { in: PAYOUT_ALLOWED_FROM.APPROVED } },
+    data: {
+      status: "APPROVED",
+      approvedAt: new Date(),
+      approvedBy: adminUserId,
+    },
+  });
+  if (approved.count === 0) {
+    const current = await prisma.organizationPayout.findUnique({
+      where: { id: payoutId },
+      select: { status: true },
+    });
+    if (!current) {
+      throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+    }
+    throw new PayoutValidationError(
+      `Payout cannot be approved from status: ${current.status}`,
+      409,
+    );
+  }
+}
+
 export async function processOrgPayout(payoutId: string): Promise<{
   status: PayoutStatus;
   submittedToGateway: boolean;
@@ -500,156 +592,220 @@ export async function processOrgPayout(payoutId: string): Promise<{
 }> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
-  return prisma
-    .$transaction(async (tx) => {
-      if (!liveEnabled) {
-        const current = await tx.organizationPayout.findUnique({
-          where: { id: payoutId },
-          select: { status: true },
-        });
-        if (!current) {
-          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
-        }
-        return {
-          status: current.status,
-          submittedToGateway: false,
-          claimed: false,
-        };
-      }
-
-      const disputedOrgEarning = await tx.organizationEarnings.findFirst({
-        where: {
-          orgPayoutId: payoutId,
-          payment: DISPUTE_GATED_PAYMENT_WHERE,
-        },
-        select: { id: true },
-      });
-      if (disputedOrgEarning) {
-        console.warn(
-          `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
-        );
-        const blocked = await tx.organizationPayout.findUnique({
-          where: { id: payoutId },
-          select: { status: true },
-        });
-        if (!blocked) {
-          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
-        }
-        return {
-          status: blocked.status,
-          submittedToGateway: false,
-          claimed: false,
-        };
-      }
-
-      const claim = await tx.organizationPayout.updateMany({
-        where: { id: payoutId, status: { in: PAYOUT_ALLOWED_FROM.PROCESSING } },
-        data: { status: "PROCESSING" },
-      });
-      if (claim.count === 0) {
-        const current = await tx.organizationPayout.findUnique({
-          where: { id: payoutId },
-          select: { status: true },
-        });
-        if (!current) {
-          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
-        }
-        console.log(
-          `[OrgPayoutService] processOrgPayout no-op: payout ${payoutId} status=${current.status}`,
-        );
-        return {
-          status: current.status,
-          submittedToGateway: false,
-          claimed: false,
-        };
-      }
-
-      const payout = await tx.organizationPayout.findUniqueOrThrow({
-        where: { id: payoutId },
-        select: {
-          id: true,
-          organizationId: true,
-          amountPaise: true,
-          netPayoutPaise: true,
-          currency: true,
-        },
-      });
-
-      if (typeof tx.organizationEarnings.aggregate === "function") {
-        const owedAgg = await tx.organizationEarnings.aggregate({
-          where: { orgPayoutId: payoutId },
-          _sum: { orgSharePaise: true, refundedAmountPaise: true },
-        });
-        if (owedAgg?._sum) {
-          const owedPaise =
-            sumPaise(owedAgg._sum.orgSharePaise) -
-            sumPaise(owedAgg._sum.refundedAmountPaise);
-          const expectedNet = payout.netPayoutPaise ?? payout.amountPaise;
-          if (owedPaise < expectedNet) {
-            const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${expectedNet}p`;
-            await tx.organizationPayout.updateMany({
-              where: { id: payoutId, status: "PROCESSING" },
-              data: {
-                status: "FAILED",
-                failureReason: shortfallReason.slice(0, 500),
-                failedAt: new Date(),
-              },
+  return withSerializableRetry(
+    () =>
+      prisma.$transaction(
+        async (tx) => {
+          if (!liveEnabled) {
+            const current = await tx.organizationPayout.findUnique({
+              where: { id: payoutId },
+              select: { status: true },
             });
-            await tx.organizationEarnings.updateMany({
-              where: { orgPayoutId: payoutId, status: "BATCHED" },
-              data: { status: "READY", orgPayoutId: null },
-            });
-            await tx.orgAuditLog.create({
-              data: {
-                organizationId: payout.organizationId,
-                actorMembershipId: null,
-                category: "PAYOUT",
-                action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-                description: `Payout ${payoutId} failed before disbursement due to post-batch refund shortfall`,
-                details: {
-                  payoutId,
-                  owedPaise,
-                  expectedNetPaise: expectedNet,
-                  reason: shortfallReason,
-                },
-              },
-            });
-            reportSentryMessage("org-payout-batch-earnings-shortfall", {
-              subsystem: "payments",
-              level: "error",
-              extra: { payoutId, owedPaise, expectedNetPaise: expectedNet },
-            });
+            if (!current) {
+              throw new PayoutValidationError(
+                `Payout ${payoutId} not found`,
+                404,
+              );
+            }
             return {
-              status: "FAILED" as PayoutStatus,
+              status: current.status,
               submittedToGateway: false,
-              claimed: true,
+              claimed: false,
             };
           }
-        }
-      }
 
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: payout.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
-          description: `Payout ${payoutId} moved to PROCESSING`,
-          details: {
-            payoutId,
-            amountPaise: payout.amountPaise,
-            currency: payout.currency,
-            liveSubmissionEnabled: liveEnabled,
-          },
+          const disputedOrgEarning = await tx.organizationEarnings.findFirst({
+            where: {
+              orgPayoutId: payoutId,
+              payment: DISPUTE_GATED_PAYMENT_WHERE,
+            },
+            select: { id: true },
+          });
+          if (disputedOrgEarning) {
+            console.warn(
+              `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
+            );
+            const blocked = await tx.organizationPayout.findUnique({
+              where: { id: payoutId },
+              select: { status: true },
+            });
+            if (!blocked) {
+              throw new PayoutValidationError(
+                `Payout ${payoutId} not found`,
+                404,
+              );
+            }
+            return {
+              status: blocked.status,
+              submittedToGateway: false,
+              claimed: false,
+            };
+          }
+
+          const uncascadedRefundEarning =
+            typeof tx.organizationEarnings?.findFirst === "function"
+              ? await tx.organizationEarnings.findFirst({
+                  where: {
+                    orgPayoutId: payoutId,
+                    payment: {
+                      refunds: {
+                        some: {
+                          OR: [
+                            { status: RefundStatus.PENDING },
+                            {
+                              status: RefundStatus.SUCCEEDED,
+                              cascadedAt: null,
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                  select: { id: true },
+                })
+              : null;
+          if (uncascadedRefundEarning) {
+            console.warn(
+              `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has an in-flight or uncascaded refund`,
+            );
+            const blocked = await tx.organizationPayout.findUnique({
+              where: { id: payoutId },
+              select: { status: true },
+            });
+            if (!blocked) {
+              throw new PayoutValidationError(
+                `Payout ${payoutId} not found`,
+                404,
+              );
+            }
+            return {
+              status: blocked.status,
+              submittedToGateway: false,
+              claimed: false,
+            };
+          }
+
+          const claim = await tx.organizationPayout.updateMany({
+            where: {
+              id: payoutId,
+              status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
+            },
+            data: { status: "PROCESSING" },
+          });
+          if (claim.count === 0) {
+            const current = await tx.organizationPayout.findUnique({
+              where: { id: payoutId },
+              select: { status: true },
+            });
+            if (!current) {
+              throw new PayoutValidationError(
+                `Payout ${payoutId} not found`,
+                404,
+              );
+            }
+            console.log(
+              `[OrgPayoutService] processOrgPayout no-op: payout ${payoutId} status=${current.status}`,
+            );
+            return {
+              status: current.status,
+              submittedToGateway: false,
+              claimed: false,
+            };
+          }
+
+          const payout = await tx.organizationPayout.findUniqueOrThrow({
+            where: { id: payoutId },
+            select: {
+              id: true,
+              organizationId: true,
+              amountPaise: true,
+              netPayoutPaise: true,
+              currency: true,
+            },
+          });
+
+          if (typeof tx.organizationEarnings.aggregate === "function") {
+            const owedAgg = await tx.organizationEarnings.aggregate({
+              where: { orgPayoutId: payoutId },
+              _sum: { orgSharePaise: true, refundedAmountPaise: true },
+            });
+            if (owedAgg?._sum) {
+              const owedPaise =
+                sumPaise(owedAgg._sum.orgSharePaise) -
+                sumPaise(owedAgg._sum.refundedAmountPaise);
+              const expectedNet = payout.netPayoutPaise ?? payout.amountPaise;
+              if (owedPaise < expectedNet) {
+                const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${expectedNet}p`;
+                await tx.organizationPayout.updateMany({
+                  where: { id: payoutId, status: "PROCESSING" },
+                  data: {
+                    status: "FAILED",
+                    failureReason: shortfallReason.slice(0, 500),
+                    failedAt: new Date(),
+                  },
+                });
+                await tx.organizationEarnings.updateMany({
+                  where: { orgPayoutId: payoutId, status: "BATCHED" },
+                  data: { status: "READY", orgPayoutId: null },
+                });
+                await tx.orgAuditLog.create({
+                  data: {
+                    organizationId: payout.organizationId,
+                    actorMembershipId: null,
+                    category: "PAYOUT",
+                    action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+                    description: `Payout ${payoutId} failed before disbursement due to post-batch refund shortfall`,
+                    details: {
+                      payoutId,
+                      owedPaise,
+                      expectedNetPaise: expectedNet,
+                      reason: shortfallReason,
+                    },
+                  },
+                });
+                reportSentryMessage("org-payout-batch-earnings-shortfall", {
+                  subsystem: "payments",
+                  level: "error",
+                  extra: { payoutId, owedPaise, expectedNetPaise: expectedNet },
+                });
+                return {
+                  status: "FAILED" as PayoutStatus,
+                  submittedToGateway: false,
+                  claimed: true,
+                };
+              }
+            }
+          }
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: payout.organizationId,
+              actorMembershipId: null,
+              category: "PAYOUT",
+              action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
+              description: `Payout ${payoutId} moved to PROCESSING`,
+              details: {
+                payoutId,
+                amountPaise: payout.amountPaise,
+                currency: payout.currency,
+                liveSubmissionEnabled: liveEnabled,
+              },
+            },
+          });
+
+          return {
+            status: "PROCESSING" as const,
+            submittedToGateway: false,
+            claimed: true,
+          };
         },
-      });
-
-      return {
-        status: "PROCESSING" as const,
-        submittedToGateway: false,
-        claimed: true,
-      };
-    })
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: 25_000,
+        },
+      ),
+    1,
+  )
     .then(async (result) => {
       if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
         return {
@@ -935,6 +1091,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         status: current.status,
         notify: null,
         missingTdsRate: null,
+        shortfall: null,
       };
     }
 
@@ -957,6 +1114,52 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
       where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "PAID" },
     });
+
+    // #1902: Re-verify owedPaise at completion in case a refund cascaded after
+    // PROCESSING claim. Money already moved at the gateway, so record the
+    // overpayment in clawbackAmountPaise and emit a WARN SystemEvent.
+    let completionShortfall: {
+      organizationId: string;
+      shortfallPaise: number;
+      owedPaise: number;
+      netPayoutPaise: number;
+    } | null = null;
+    if (typeof tx.organizationEarnings?.findMany === "function") {
+      const batchEarnings = await tx.organizationEarnings.findMany({
+        where: { orgPayoutId: payoutId },
+        select: { orgSharePaise: true, refundedAmountPaise: true },
+      });
+      if (Array.isArray(batchEarnings) && batchEarnings.length > 0) {
+        const owedPaise = batchEarnings.reduce(
+          (sum, e) => sum + (e.orgSharePaise - (e.refundedAmountPaise ?? 0)),
+          0,
+        );
+        if (owedPaise < payout.netPayoutPaise) {
+          const shortfallPaise = payout.netPayoutPaise - owedPaise;
+          if (typeof tx.organizationPayout?.update === "function") {
+            await tx.organizationPayout.update({
+              where: { id: payoutId },
+              data: {
+                clawbackAmountPaise: { increment: shortfallPaise },
+              },
+            });
+          } else {
+            await tx.organizationPayout.updateMany({
+              where: { id: payoutId },
+              data: {
+                clawbackAmountPaise: { increment: shortfallPaise },
+              },
+            });
+          }
+          completionShortfall = {
+            organizationId: payout.organizationId,
+            shortfallPaise,
+            owedPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+          };
+        }
+      }
+    }
 
     await tx.orgAuditLog.create({
       data: {
@@ -1041,6 +1244,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         orgTds > 0 && !hasOrgTdsRate
           ? { organizationId: payout.organizationId, tdsAmountPaise: orgTds }
           : null,
+      shortfall: completionShortfall,
     };
   });
 
@@ -1050,6 +1254,23 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     }
     throw err;
   });
+
+  if (result.shortfall && typeof recordSystemEventSafe === "function") {
+    await recordSystemEventSafe({
+      organizationId: result.shortfall.organizationId,
+      category: "PAYOUT",
+      severity: "WARN",
+      message: `Org payout ${payoutId} completed with post-processing refund shortfall of ${result.shortfall.shortfallPaise} paise; recorded in clawbackAmountPaise`,
+      context: {
+        action: "ORG_PAYOUT_COMPLETION_EARNINGS_SHORTFALL",
+        orgPayoutId: payoutId,
+        organizationId: result.shortfall.organizationId,
+        netPayoutPaise: result.shortfall.netPayoutPaise,
+        owedPaise: result.shortfall.owedPaise,
+        shortfallPaise: result.shortfall.shortfallPaise,
+      },
+    });
+  }
 
   if (result.missingTdsRate) {
     const summary =

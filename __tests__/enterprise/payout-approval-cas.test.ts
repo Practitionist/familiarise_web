@@ -40,13 +40,20 @@ jest.mock("../../lib/redis", () => ({
 import prisma from "../../lib/prisma";
 import {
   approvePayout,
+  PayoutMakerCheckerError,
   rejectPayout,
 } from "../../lib/payments/payouts/payout-service";
 
 /** The Prisma surface approve/reject touch in these tests. */
 interface ApprovalPrismaMock {
-  consultantPayout: { findUnique: jest.Mock; updateMany: jest.Mock };
+  consultantPayout: {
+    findUnique: jest.Mock;
+    findFirst?: jest.Mock;
+    updateMany: jest.Mock;
+  };
   consultantEarnings: { updateMany: jest.Mock };
+  user?: { count: jest.Mock };
+  systemEvent?: { create: jest.Mock };
   $transaction: jest.Mock;
 }
 
@@ -86,6 +93,62 @@ describe("approvePayout CAS", () => {
     // unconditional update may exist.
     expect(cp.consultantPayout.updateMany).toHaveBeenCalledTimes(1);
     expect(cp.consultantPayout.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("approvePayout maker-checker (#1902)", () => {
+  beforeEach(() => {
+    cp.consultantPayout.findFirst = jest.fn();
+    cp.user = { count: jest.fn() };
+    cp.systemEvent = { create: jest.fn().mockResolvedValue({ id: "se_1" }) };
+    delete process.env.PAYOUT_MAKER_CHECKER_REQUIRED;
+  });
+
+  afterEach(() => {
+    delete cp.consultantPayout.findFirst;
+    delete cp.user;
+    delete cp.systemEvent;
+  });
+
+  test("rejects self-approval with PayoutMakerCheckerError (403) when multiple admins exist", async () => {
+    cp.consultantPayout.findFirst!.mockResolvedValueOnce({
+      status: "PENDING",
+      createdBy: "admin_1",
+    });
+    cp.user!.count.mockResolvedValueOnce(2);
+
+    await expect(approvePayout("payout_1", "admin_1")).rejects.toThrow(
+      PayoutMakerCheckerError,
+    );
+    expect(cp.consultantPayout.updateMany).not.toHaveBeenCalled();
+  });
+
+  test("allows solo-admin bootstrap self-approval when activeAdminCount === 1 and emits WARN SystemEvent", async () => {
+    cp.consultantPayout.findFirst!.mockResolvedValueOnce({
+      status: "PENDING",
+      createdBy: "admin_solo",
+    });
+    cp.user!.count.mockResolvedValueOnce(1);
+    cp.consultantPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await approvePayout("payout_1", "admin_solo");
+
+    expect(cp.consultantPayout.updateMany).toHaveBeenCalledWith({
+      where: { id: "payout_1", status: "PENDING" },
+      data: expect.objectContaining({
+        status: "APPROVED",
+        approvedBy: "admin_solo",
+      }),
+    });
+    expect(cp.systemEvent!.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: "PAYOUT",
+          severity: "WARN",
+          message: expect.stringContaining("PAYOUT_SOLO_ADMIN_SELF_APPROVAL"),
+        }),
+      }),
+    );
   });
 });
 
@@ -139,3 +202,4 @@ describe("rejectPayout CAS", () => {
     expect(tx.consultantEarnings.updateMany).not.toHaveBeenCalled();
   });
 });
+

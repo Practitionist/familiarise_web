@@ -113,7 +113,6 @@
     "stream-chat-react": "13.14.6",
     "stripe": "^20.2.0",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss-animate": "^1.0.7",
     "use-debounce": "^10.1.0",
     "zod": "^3.25.67"
   },
@@ -149,6 +148,7 @@
     "prettier": "^3.8.1",
     "prisma": "7.7.0",
     "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
     "tsx": "4.23.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0"

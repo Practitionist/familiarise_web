@@ -32,6 +32,7 @@ import {
   loginAs,
   ensureServerOrSkip,
 } from "../../utilities/api-client";
+import { buildRazorpayPaymentCapturedEnvelope } from "../../utilities/fixtures";
 
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 
@@ -73,6 +74,13 @@ async function createPendingPayment(
       isMockPayment: true, // skip the real gateway-cancel call post-commit
       userId,
       appointmentId,
+      legs: {
+        create: {
+          source: "CARD",
+          amountPaise: 10000,
+          sourceRef: paymentIntent,
+        },
+      },
     },
     select: { id: true },
   });
@@ -91,10 +99,23 @@ async function pollPaymentTerminal(paymentId: string): Promise<string> {
   return "PENDING";
 }
 
+async function pollWebhookProcessed(eventId: string): Promise<boolean> {
+  for (let i = 0; i < 40; i++) {
+    const ev = await prisma.webhookEvent.findUnique({
+      where: { eventId },
+      select: { processed: true, error: true },
+    });
+    if (ev && (ev.processed || ev.error !== null)) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
 async function run() {
   await ensureServerOrSkip();
 
-  // Fixture: a consultation appointment whose requester we can log in as.
+  // Fixture: a consultation appointment whose requester we can log in as,
+  // with no pre-existing payments so the (userId, appointmentId) unique is free.
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: {
@@ -103,6 +124,7 @@ async function run() {
         },
       },
       occurrences: { some: {} },
+      payment: { none: {} },
     },
     select: {
       id: true,
@@ -165,6 +187,7 @@ async function run() {
   // fixture (consultation status, slots, synthetic payments) — reruns were
   // flaky when an early throw skipped the tail cleanup.
   const createdPaymentIds: string[] = [];
+  const createdWebhookEventIds: string[] = [];
   try {
     // ---------------------------------------------------------------------
     // Leg 1: cancel vs capture webhook (only when the webhook secret is set —
@@ -176,31 +199,20 @@ async function run() {
       createdPaymentIds.push(leg1.paymentId);
       const slot = originalSlots[0];
       const gatewayPaymentId = `pay_chaos_cp_${process.pid}_${Date.now()}`;
-      const payload = JSON.stringify({
-        entity: "event",
-        account_id: "acc_chaos",
-        event: "payment.captured",
-        contains: ["payment"],
-        payload: {
-          payment: {
-            entity: {
-              id: gatewayPaymentId,
-              entity: "payment",
-              order_id: leg1.paymentIntent,
-              status: "captured",
-              amount: 10000,
-              currency: "INR",
-              notes: {
-                appointmentType: "CONSULTATION",
-                userId: requester.id,
-                planId: consultation.consultationPlanId,
-                startsAt: slot.startsAt.toISOString(),
-                endsAt: slot.endsAt.toISOString(),
-              },
-            },
-          },
+      const expectedEventId = `payment.captured:${gatewayPaymentId}`;
+      createdWebhookEventIds.push(expectedEventId);
+      const payload = buildRazorpayPaymentCapturedEnvelope({
+        paymentId: gatewayPaymentId,
+        orderId: leg1.paymentIntent,
+        amount: 10000,
+        currency: "INR",
+        notes: {
+          appointmentType: "CONSULTATION",
+          userId: requester.id,
+          planId: consultation.consultationPlanId,
+          startsAt: slot.startsAt.toISOString(),
+          endsAt: slot.endsAt.toISOString(),
         },
-        created_at: Math.floor(Date.now() / 1000),
       });
       const signature = crypto
         .createHmac("sha256", WEBHOOK_SECRET)
@@ -236,6 +248,12 @@ async function run() {
         cancelRes,
       );
 
+      const leg1Processed = await pollWebhookProcessed(expectedEventId);
+      check(
+        "Leg 1 webhook processed before cleanup",
+        leg1Processed,
+        `orderId=${leg1.paymentIntent}`,
+      );
       const finalStatus = await pollPaymentTerminal(leg1.paymentId);
       check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
         finalStatus,
@@ -386,6 +404,11 @@ async function run() {
     // shared dev fixture may legitimately carry pre-existing values.
     // -------------------------------------------------------------------
     await retireChaosPayments(createdPaymentIds);
+    if (createdWebhookEventIds.length > 0) {
+      await prisma.webhookEvent.deleteMany({
+        where: { eventId: { in: createdWebhookEventIds } },
+      });
+    }
     await prisma.consultation.update({
       where: { id: consultation.id },
       data: {

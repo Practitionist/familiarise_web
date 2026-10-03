@@ -135,6 +135,7 @@ export function tdsRateToBps(tdsRate: number): number {
 export function computeResidentPayoutTds(
   grossAmountPaise: number,
   panEncrypted: Uint8Array | string | null | undefined,
+  resolvedRate?: Parameters<typeof computeTdsForPayout>[0]["resolvedRate"],
 ) {
   return computeTdsForPayout({
     grossAmountPaise,
@@ -147,7 +148,24 @@ export function computeResidentPayoutTds(
       tdsLowerRateCert: null,
       providerCountry: null,
     },
+    resolvedRate,
   });
+}
+
+/**
+ * #1902 — Raised when the admin attempting to approve a payout is the same
+ * admin who created it (`createdBy === adminUserId`) and dual-control
+ * maker-checker enforcement is active.
+ */
+export class PayoutMakerCheckerError extends Error {
+  readonly httpStatus = 403;
+  readonly code = "PAYOUT_MAKER_CHECKER_VIOLATION";
+  constructor(
+    message = "Maker-checker violation: a payout cannot be approved by the same admin who created it.",
+  ) {
+    super(message);
+    this.name = "PayoutMakerCheckerError";
+  }
 }
 
 /**

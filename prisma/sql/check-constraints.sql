@@ -540,6 +540,20 @@ ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
 
 -- SPLIT
+-- #1367 / #1368 — TdsRate integer-bps and effective-window sanity: rates live
+-- in [0, 10000] bps (covering 194O, 393-8(v), 194J, 194C), thresholds are
+-- non-negative, and a closed window never ends before it started.
+ALTER TABLE "TdsRate" DROP CONSTRAINT IF EXISTS "tds_rate_bps_and_window_sane";
+-- SPLIT
+ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_and_window_sane"
+  CHECK (
+    "rateBps" >= 0 AND "rateBps" <= 10000
+    AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+    AND ("thresholdPaise" IS NULL OR "thresholdPaise" >= 0)
+    AND ("effectiveTo" IS NULL OR "effectiveTo" >= "effectiveFrom")
+  );
+
+-- SPLIT
 -- #1549 — one review per (consultant, consultee, track, event). ratingUnitId is NULL on
 -- every 1:1 row, so the key needs NULLS NOT DISTINCT, which Prisma cannot express; the
 -- predicate exempts NULL-track legacy rows and is what keeps `db push` from seeing the

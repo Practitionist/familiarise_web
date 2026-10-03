@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Globe, FileText } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Globe, FileText, AlertTriangle, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -793,6 +794,15 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           <CancellationPolicyCard orgId={orgId} />
         )}
 
+        {/* #1844 — OWNER-only Danger Zone: Transfer Ownership & Deactivate / Close Organization */}
+        {can("org.delete") && (
+          <DangerZoneCard
+            orgId={orgId}
+            orgSlug={data.organization?.slug ?? ""}
+            orgStatus={data.profile.status}
+          />
+        )}
+
         <AlertDialog
           open={pendingDisable !== null}
           onOpenChange={(open) => !open && setPendingDisable(null)}
@@ -847,5 +857,367 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         </AlertDialog>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #1844 — Danger Zone (OWNER-only):
+//   1. Transfer Ownership (promote an active MAINTAINER / staff member to OWNER)
+//   2. Deactivate / Close Organization (DELETE /api/organizations/[orgId] after
+//      typed confirmation of the organization slug)
+// ---------------------------------------------------------------------------
+
+interface ActiveMemberCandidate {
+  id: string;
+  role: string;
+  status: string;
+  user: {
+    id: string;
+    name: string | null;
+    email: string | null;
+  };
+}
+
+async function fetchActiveMembers(
+  orgId: string,
+): Promise<{ data: ActiveMemberCandidate[] }> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?status=ACTIVE&perPage=100`,
+  );
+  if (!res.ok) throw new Error("Failed to load active members");
+  return res.json();
+}
+
+function DangerZoneCard({
+  orgId,
+  orgSlug,
+  orgStatus,
+}: {
+  orgId: string;
+  orgSlug: string;
+  orgStatus: OrgStatus;
+}) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  const membersQuery = useQuery({
+    queryKey: ["org-danger-zone-members", orgId],
+    queryFn: () => fetchActiveMembers(orgId),
+  });
+
+  // Eligible candidates: active MAINTAINERs first, followed by other non-OWNER
+  // administrative roles (BILLING_ADMIN, MANAGER, SUPPORT).
+  const eligibleMembers = (membersQuery.data?.data ?? []).filter(
+    (m) =>
+      m.status === "ACTIVE" &&
+      ["MAINTAINER", "BILLING_ADMIN", "MANAGER", "SUPPORT"].includes(m.role),
+  );
+
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferConfirmText, setTransferConfirmText] = useState("");
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [transferSuccess, setTransferSuccess] = useState<string | null>(null);
+
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [deactivateConfirmSlug, setDeactivateConfirmSlug] = useState("");
+  const [deactivateError, setDeactivateError] = useState<string | null>(null);
+
+  const transferMutation = useMutation({
+    mutationFn: async (memberId: string) => {
+      const res = await fetch(
+        `/api/organizations/${orgId}/members/${memberId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "OWNER" }),
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          (json as { error?: string }).error ??
+            "Failed to transfer ownership to member",
+        );
+      }
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["org-danger-zone-members", orgId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
+      setTransferOpen(false);
+      setTransferConfirmText("");
+      setSelectedMemberId("");
+      setTransferError(null);
+      setTransferSuccess(
+        "Selected member has been promoted to OWNER. You may now step down from the People tab if desired.",
+      );
+    },
+    onError: (err: Error) => {
+      setTransferError(err.message);
+    },
+  });
+
+  const deactivateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/organizations/${orgId}`, {
+        method: "DELETE",
+      });
+      if (res.status === 204) {
+        return { hardDeleted: true };
+      }
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          (json as { error?: string }).error ??
+            "Failed to deactivate organization",
+        );
+      }
+      return json as { softDeleted?: boolean };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
+      queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) });
+      setDeactivateOpen(false);
+      setDeactivateConfirmSlug("");
+      setDeactivateError(null);
+      router.push("/dashboard");
+    },
+    onError: (err: Error) => {
+      setDeactivateError(err.message);
+    },
+  });
+
+  const selectedCandidate = eligibleMembers.find(
+    (m) => m.id === selectedMemberId,
+  );
+  const expectedTransferToken = orgSlug || "TRANSFER";
+
+  return (
+    <Card className="mt-6 border-red-200 dark:border-red-900/60">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-red-700 dark:text-red-400">
+          <AlertTriangle className="h-4 w-4" /> Danger Zone
+        </CardTitle>
+        <CardDescription>
+          High-impact ownership and organization lifecycle actions. Restricted
+          to organization owners.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* 1. Transfer Ownership */}
+        <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
+          <div>
+            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Transfer ownership / add co-owner
+            </p>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+              Promote an active maintainer or operator to{" "}
+              <strong>OWNER</strong>. Promoting a successor owner is required
+              before the last owner can leave or be demoted.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <select
+              aria-label="Select member to promote to owner"
+              className="flex h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              value={selectedMemberId}
+              onChange={(e) => {
+                setSelectedMemberId(e.target.value);
+                setTransferError(null);
+                setTransferSuccess(null);
+              }}
+            >
+              <option value="">Select an active member…</option>
+              {eligibleMembers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.user.name || m.user.email || m.id} ({m.role})
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+              disabled={!selectedMemberId}
+              onClick={() => {
+                setTransferConfirmText("");
+                setTransferError(null);
+                setTransferOpen(true);
+              }}
+            >
+              Transfer ownership
+            </Button>
+          </div>
+          {eligibleMembers.length === 0 && !membersQuery.isLoading && (
+            <p className="text-xs text-zinc-500">
+              No eligible active maintainers or staff members found. Invite a
+              maintainer from the People page first.
+            </p>
+          )}
+          {transferSuccess && (
+            <p className="text-xs text-emerald-600">{transferSuccess}</p>
+          )}
+        </div>
+
+        {/* 2. Deactivate / Close Organization */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-red-900 dark:text-red-300">
+              Deactivate / close organization
+            </p>
+            <p className="text-xs text-red-800/90 dark:text-red-300/80">
+              Permanently closes this organization. Active or draft contracts,
+              unpaid invoices, open purchase orders, unsettled earnings,
+              in-flight payouts, and non-zero wallet balances must be wound down
+              first. If financial history exists, statutory invoice records are
+              retained while contact PII is scrubbed.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={orgStatus === "DEACTIVATED"}
+            onClick={() => {
+              setDeactivateConfirmSlug("");
+              setDeactivateError(null);
+              setDeactivateOpen(true);
+            }}
+          >
+            {orgStatus === "DEACTIVATED"
+              ? "Already deactivated"
+              : "Deactivate organization"}
+          </Button>
+        </div>
+      </CardContent>
+
+      {/* Transfer ownership confirmation dialog */}
+      <AlertDialog open={transferOpen} onOpenChange={setTransferOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Promote member to Owner?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-zinc-600 dark:text-zinc-400">
+                <p>
+                  You are granting full <strong>OWNER</strong> privileges
+                  (including billing, tax identity, contract termination, and
+                  organization closure) to{" "}
+                  <strong>
+                    {selectedCandidate?.user.name ||
+                      selectedCandidate?.user.email ||
+                      "this member"}
+                  </strong>
+                  .
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirm-transfer-slug">
+                    Type <code>{expectedTransferToken}</code> to confirm
+                  </Label>
+                  <Input
+                    id="confirm-transfer-slug"
+                    value={transferConfirmText}
+                    onChange={(e) => setTransferConfirmText(e.target.value)}
+                    placeholder={expectedTransferToken}
+                  />
+                </div>
+                {transferError && (
+                  <p className="text-xs text-red-600">{transferError}</p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={
+                transferConfirmText.trim() !== expectedTransferToken ||
+                transferMutation.isPending ||
+                !selectedMemberId
+              }
+              onClick={() => transferMutation.mutate(selectedMemberId)}
+            >
+              {transferMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Promoting…
+                </>
+              ) : (
+                "Confirm ownership grant"
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Deactivate organization confirmation dialog */}
+      <AlertDialog open={deactivateOpen} onOpenChange={setDeactivateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Deactivate / close organization?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-zinc-600 dark:text-zinc-400">
+                <p>Closing this organization has the following impact:</p>
+                <ul className="list-disc pl-5 space-y-1 text-xs">
+                  <li>
+                    <strong>Members &amp; bookings:</strong> Members lose
+                    sponsored booking access; any active programs or live
+                    contracts must be terminated first.
+                  </li>
+                  <li>
+                    <strong>Wallet balance &amp; invoices:</strong> Wallet
+                    balance must be ₹0 and all open invoices, purchase orders,
+                    and overage accruals must be settled before closure.
+                  </li>
+                  <li>
+                    <strong>Statutory retention:</strong> Organizations with
+                    prior financial history are soft-deleted (`DEACTIVATED`) to
+                    preserve tax invoices while scrubbing contact details.
+                  </li>
+                </ul>
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="confirm-deactivate-slug">
+                    Type the organization slug <code>{orgSlug}</code> to confirm
+                  </Label>
+                  <Input
+                    id="confirm-deactivate-slug"
+                    value={deactivateConfirmSlug}
+                    onChange={(e) => setDeactivateConfirmSlug(e.target.value)}
+                    placeholder={orgSlug}
+                  />
+                </div>
+                {deactivateError && (
+                  <p className="text-xs text-red-600">{deactivateError}</p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={
+                !orgSlug ||
+                deactivateConfirmSlug.trim() !== orgSlug ||
+                deactivateMutation.isPending
+              }
+              onClick={() => deactivateMutation.mutate()}
+            >
+              {deactivateMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Closing…
+                </>
+              ) : (
+                "Deactivate organization"
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
