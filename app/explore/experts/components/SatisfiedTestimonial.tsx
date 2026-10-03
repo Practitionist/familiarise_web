@@ -119,7 +119,7 @@ export function SatisfiedTestimonial() {
                     <p className="font-medium text-white text-sm">
                       {testimonial.name}
                     </p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-400">
                       {testimonial.role} at {testimonial.company}
                     </p>
                   </div>
@@ -133,7 +133,7 @@ export function SatisfiedTestimonial() {
                     width={14}
                     height={14}
                   />
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-[10px] text-zinc-400">
                     Reviewed on Familiarise
                   </span>
                 </div>

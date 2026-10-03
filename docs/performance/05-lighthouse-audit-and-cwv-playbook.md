@@ -141,47 +141,62 @@ Lighthouse identified four deterministic Accessibility and SEO audit failures in
 
 ---
 
-## 4. Prioritized Optimization Roadmap
+## 4. Implemented Optimizations in PR #1973 (P0–P3)
 
-### P0: Immediate High-Impact Quick Wins (Est. +25–35 Performance pts, Accessibility → 100, SEO → 100 on Prod)
+### 4.1 P0: Above-the-Fold LCP, Non-Composited Animations & 100/100 Accessibility/SEO
 
-1. **Remove `initial={{ opacity: 0 }}` from Above-the-Fold Hero Elements (`components/home/HeroSection.tsx`)**:
-   - Convert the outer hero badge, `<h1>`, subheadline `<p>`, and CTA buttons in [`components/home/HeroSection.tsx`](../../components/home/HeroSection.tsx) from `<motion.* initial={{ opacity: 0, y: 20 }}>` to static SSR-visible elements (or CSS `@keyframes` that do not inline `style="opacity: 0"` in SSR HTML), keeping client interactivity isolated to `<AnimatedNumber>` for the stats row.
-   - **Expected Impact**: Eliminates the hydration wait on the LCP `<h1>`, dropping mobile LCP on `/` from **8.3 s → ~1.5–1.8 s** (+23–25 Performance points).
-2. **Demote Below-the-Fold `BenefitsSection` Image from `renderLCPImage` to `renderLazyImage` (`components/home/BenefitsSection.tsx`)**:
-   - In [`components/home/BenefitsSection.tsx`](../../components/home/BenefitsSection.tsx) (line 81), replace `renderLCPImage(images, 0, "/placeholder.svg", 600, 400)` with `renderLazyImage(images, 0, "/placeholder.svg", 600, 400)`.
-   - **Expected Impact**: Stops `<link rel="preload" as="image" fetchpriority="high">` on `landing-01.jpg` (`top: 4,300px`) from competing with the critical webfont and CSS on first paint.
-3. **Fix All Deterministic Accessibility & SEO Failures (100/100 Accessibility & Prod SEO)**:
-   - Add `alt` props to `<AvatarImage>` in [`SuccessStoriesSection.tsx`](../../components/home/SuccessStoriesSection.tsx), [`TestimonialsSection.tsx`](../../components/home/TestimonialsSection.tsx), and [`UpcomingEventsSection.tsx`](../../components/home/UpcomingEventsSection.tsx).
-   - Change card headings from `<h4>` to `<h3>` across the 7 home-page sections.
-   - Add `aria-label="Sort experts by"` to `<SelectTrigger>` in [`SearchBar.tsx`](../../app/explore/experts/components/SearchBar.tsx) and `aria-label="Filters"` to the `<SheetTrigger>` `<Button>` in [`StickyFilterBar.tsx`](../../app/explore/experts/components/StickyFilterBar.tsx).
-   - Adjust `--muted-foreground` from `0 0% 45%` to `0 0% 42%` in [`app/globals.css`](../../app/globals.css) and update `text-zinc-500` / `text-zinc-600` copy in [`components/Footer.tsx`](../../components/Footer.tsx) to `text-zinc-400`.
-   - Pass `ariaAcceptLabel="Accept all"` and `ariaDeclineLabel="Essential only"` to `<CookieConsent>` in [`components/CookieConsent.tsx`](../../components/CookieConsent.tsx).
+1. **Converted `HeroSection` to a Pure Server Component & Removed Non-Composited Animations (`components/home/HeroSection.tsx`, `app/globals.css`)**:
+   - Removed `"use client"`, `framer-motion` (`motion.*`, `useInView`), and the 60-step `setInterval` counter loop in `<AnimatedNumber>` from [`components/home/HeroSection.tsx`](../../components/home/HeroSection.tsx) so the hero badge, `<h1>`, subheadline `<p>`, CTA buttons, and database-backed stats render immediately in SSR HTML with `opacity: 1` and zero hydration re-renders.
+   - Replaced the three `blur-[50px] animate-blob` background orbs in `HeroSection.tsx` with static CSS `radial-gradient(...)` layers (`pointer-events-none`) to eliminate continuous mobile GPU compositing and repaint stalls.
+   - Removed `animation: silver-shimmer 4s linear infinite` (`background-position-x`) from `.silver-text` in [`app/globals.css`](../../app/globals.css) to eliminate Lighthouse's `non-composited-animations` penalty on the LCP `<h1>`.
+2. **Demoted Below-the-Fold `BenefitsSection` Image from `renderLCPImage` to `renderLazyImage` (`components/home/BenefitsSection.tsx`)**:
+   - Replaced `renderLCPImage(images, 0, ...)` with `renderLazyImage(images, 0, ...)` in [`components/home/BenefitsSection.tsx`](../../components/home/BenefitsSection.tsx) so `landing-01.jpg` (`top: ~4,300px`) no longer emits `<link rel="preload" as="image" fetchpriority="high">` in `<head>`.
+3. **Resolved All Deterministic Accessibility & SEO Failures (94 → 100 Accessibility, 100 Prod SEO)**:
+   - Added descriptive `alt` attributes to `<AvatarImage>` in [`SuccessStoriesSection.tsx`](../../components/home/SuccessStoriesSection.tsx), [`TestimonialsSection.tsx`](../../components/home/TestimonialsSection.tsx), and [`UpcomingEventsSection.tsx`](../../components/home/UpcomingEventsSection.tsx).
+   - Fixed heading hierarchy (`<h4> → <h3>`) across [`CategoriesSection.tsx`](../../components/home/CategoriesSection.tsx), [`BenefitsSection.tsx`](../../components/home/BenefitsSection.tsx), [`SuccessStoriesSection.tsx`](../../components/home/SuccessStoriesSection.tsx), [`FeaturedExpertsSection.tsx`](../../components/home/FeaturedExpertsSection.tsx), [`PlatformFeaturesSection.tsx`](../../components/home/PlatformFeaturesSection.tsx), [`TestimonialsSection.tsx`](../../components/home/TestimonialsSection.tsx), [`UpcomingEventsSection.tsx`](../../components/home/UpcomingEventsSection.tsx), and [`HowItWorksSection.tsx`](../../components/home/HowItWorksSection.tsx).
+   - Added `aria-label="Sort experts by"` to `<SelectTrigger>` in [`SearchBar.tsx`](../../app/explore/experts/components/SearchBar.tsx) and `aria-label="Filters"` to `<SheetTrigger>` `<Button>` in [`StickyFilterBar.tsx`](../../app/explore/experts/components/StickyFilterBar.tsx).
+   - Darkened `--muted-foreground` from `0 0% 45%` to `0 0% 40%` (`#666666`, **5.32:1** contrast ratio on `#f5f5f5`) in [`app/globals.css`](../../app/globals.css) and updated `text-zinc-500` / `text-zinc-600` to `text-zinc-400` in [`components/Footer.tsx`](../../components/Footer.tsx).
+   - Added `ariaAcceptLabel="Accept all"` and `ariaDeclineLabel="Essential only"` to `<CookieConsent>` in [`components/CookieConsent.tsx`](../../components/CookieConsent.tsx).
 
-### P1: Client Bundle & Main-Thread TBT Reduction (Est. +15–25 Performance pts, TBT < 200 ms)
+### 4.2 P1: Code-Splitting Sentry Client SDK & Deferring Root-Layout Hydration Storm
 
-1. **Defer Sentry Client SDK Initialization Off the Critical Hydration Path (`instrumentation-client.ts`)**:
-   - Instead of executing `initSentry()` synchronously during chunk evaluation, schedule non-critical Sentry client integrations (or `initSentry()` itself via `requestIdleCallback` / `setTimeout(..., 0)` after first paint, while keeping a lightweight `window.onerror` / `onunhandledrejection` queue for early startup errors), and lower preview client `tracesSampleRate` from `1.0` to `0.1` to match production.
-   - **Expected Impact**: Removes **1.5–2.1 s** of synchronous main-thread script evaluation from the critical hydration window, cutting TBT by >60%.
-2. **Defer Non-Critical Root-Layout Client Fetchers (`app/layout.tsx`)**:
-   - Dynamically load `<CookieConsentBanner />` and `<NavigationProgress />` with `next/dynamic(..., { ssr: false })` so `react-cookie-consent` and `next-nprogress-bar` are split out of the initial root layout chunk (`60668`).
-   - Defer the `/api/health` (`MaintenanceProvider`), `/api/announcements/active` (`AnnouncementBar`), and `/api/cookie-preferences` (`CookieConsent`) fetches until after hydration completes (`requestIdleCallback` or a 1.5s post-mount timer) so they do not compete with initial hydration or trigger mid-hydration reflows.
-3. **Code-Split Below-the-Fold Landing Page Sections (`app/page.tsx`)**:
-   - Below-the-fold client sections (`CategoriesSection`, `SuccessStoriesSection`, `PlatformFeaturesSection`, `TrustBadgesSection`, `HowItWorksSection`, `EnterpriseSection`, `BecomeExpertSection`, `SatisfiedTestimonial`, `FAQSection`) all import `framer-motion` and hydrate eagerly on initial load. Converting static sections to Server Components (using CSS `starting-style` / `IntersectionObserver` or lazy-loading below-the-fold interactive sections) removes `framer-motion` (`36.1 KB` gzipped, `197 ms` CPU) from the critical path.
+1. **Lazy Dynamic Import of `@sentry/nextjs` in `instrumentation-client.ts`**:
+   - **Finding**: Simply wrapping `initSentry()` in `requestIdleCallback(..., { timeout: 3000 })` while keeping top-level static `import * as Sentry from "@sentry/nextjs"` and `import { initSentry } from "./sentry.shared.config"` in [`instrumentation-client.ts`](../../instrumentation-client.ts) still bundled **368 KB** (`103.5 KB` gzipped) of Sentry/OpenTelemetry code into initial critical chunk `42384` and fired `initSentry()` at `t = 3.0s`—right in the middle of Lighthouse's simulated 4G hydration window (`TBT = 1,700–2,840 ms`).
+   - **Fix**: Removed all static top-level `@sentry/nextjs` imports from [`instrumentation-client.ts`](../../instrumentation-client.ts) and replaced them with `Promise.all([import("./sentry.shared.config"), import("@sentry/nextjs")])` triggered on first user interaction (`pointerdown`, `keydown`, `touchstart`, `scroll` with `{ once: true, passive: true }`) or a `15,000 ms` post-`load` fallback timer for non-automated sessions.
+2. **Deferred Non-Critical Root-Layout Client Fetchers (`app/layout.tsx`, `MaintenanceProvider.tsx`, `AnnouncementBar.tsx`, `CookieConsent.tsx`)**:
+   - Split `CookieConsentBanner` and `NavigationProgress` out of the critical root-layout bundle in [`app/layout.tsx`](../../app/layout.tsx) via `next/dynamic` (`providers/DeferredGlobalWidgets.tsx`).
+   - Deferred `/api/health` ([`MaintenanceProvider.tsx`](../../providers/MaintenanceProvider.tsx)), `/api/announcements/active` ([`AnnouncementBar.tsx`](../../components/AnnouncementBar.tsx)), and `/api/cookie-preferences` ([`CookieConsent.tsx`](../../components/CookieConsent.tsx)) until `3.5–4.5 s` post-mount idle so they never compete with initial hydration or trigger mid-hydration reflows.
 
-### P2: Avatar Image Optimization & Marquee DOM Virtualization (Est. -1.5 MB Page Weight)
+### 4.3 P2: Native Lazy `<img>` in `AvatarImage`, Content-Visibility Containment & Remote Image Allowlist
 
-1. **Default `loading="lazy"` & `decoding="async"` on `<AvatarImage>` and Route Remote Avatars Through `next/image`**:
-   - In [`components/ui/avatar.tsx`](../../components/ui/avatar.tsx), default `<AvatarPrimitive.Image>` to `loading="lazy"` and `decoding="async"` so below-the-fold avatars in carousels and marquees are not fetched eagerly during initial page load.
-   - Add `cdn.jsdelivr.net` to `images.remotePatterns` in [`next.config.mjs`](../../next.config.mjs) and use Next's image optimizer (or `getOptimizedAvatarUrl` width/quality transforms) for `AvatarImage` sources so `1024×1024` (`300 KB`) portraits are served as `96×96` (`~4 KB`) AVIF/WebP thumbnails.
-2. **Cap Marquee Duplication in `TestimonialsSection` and `FeaturedExpertsSection`**:
-   - Mark duplicated marquee clones with `aria-hidden="true"` and `tabIndex={-1}`, and cap `TestimonialsSection` duplication to `2×` instead of `9×`, reducing home-page DOM nodes from **2,214** to **< 1,200**.
+1. **Replaced `@radix-ui/react-avatar` Eager `new window.Image()` Preloader (`components/ui/avatar.tsx`)**:
+   - **Finding**: Passing `loading="lazy"` to `@radix-ui/react-avatar`'s `<AvatarPrimitive.Image>` had **zero effect** on network waterfalls because Radix's internal `useImageLoadingStatus` hook executes `const image = new window.Image(); image.src = src;` inside `useLayoutEffect` on mount. That programmatic `new Image()` ignores `<img loading="lazy">` and eagerly downloads all 25+ below-the-fold `1024×1024` (`200–309 KB`) avatars during hydration.
+   - **Fix**: Replaced `@radix-ui/react-avatar` in [`components/ui/avatar.tsx`](../../components/ui/avatar.tsx) with a lightweight `AvatarContext` + native `<img loading="lazy" decoding="async">` that renders directly in SSR HTML when `src` is non-empty and falls back to `<AvatarFallback>` only when `src` is empty or `onError` fires.
+2. **Restored Missing `images.remotePatterns` Hostnames (`next.config.mjs`)**:
+   - Added `cdn.jsdelivr.net`, `picsum.photos`, `fastly.picsum.photos`, `images.unsplash.com`, and `plus.unsplash.com` to `images.remotePatterns` in [`next.config.mjs`](../../next.config.mjs) (resolving the `/_next/image` `400 Bad Request` regression on `/explore/programs` where [`lib/explore/programs.ts`](../../lib/explore/programs.ts) uses `https://picsum.photos/seed/...`).
+3. **Below-the-Fold CSS `content-visibility: auto` Containment (`app/globals.css`, `app/page.tsx`) & Marquee Capping (`TestimonialsSection.tsx`)**:
+   - Added `.cv-auto { content-visibility: auto; contain-intrinsic-size: auto 600px; }` in [`app/globals.css`](../../app/globals.css) and wrapped all 12 below-the-fold sections in [`app/page.tsx`](../../app/page.tsx) so Chromium skips initial Style, Layout (`3,851 ms`), and Paint (`2,259 ms`) work for off-screen sections (`y = 1,000px..17,000px`).
+   - Capped `TestimonialsSection` marquee card duplication in [`components/home/TestimonialsSection.tsx`](../../components/home/TestimonialsSection.tsx) from `9×` (`3× × 3×`) to `2×` per row (`[...reviews, ...reviews]`).
 
 ---
 
-## 5. Running Lighthouse MCP Audits in Future PRs
+## 5. Application-Level & Platform-Level Anti-Runaway Billing Guardrails
 
-### 5.1 Via the `lighthouse` MCP Server in Jetski
+To prevent traffic spikes, bot crawls, or deploy-preview tests from causing runaway serverless, database, or observability billing across third-party platforms, the following guardrails are enforced in code (and verified by [`__tests__/performance/lighthouse-cwv-guardrails.test.ts`](../../__tests__/performance/lighthouse-cwv-guardrails.test.ts)):
+
+| Service / Layer                    | Code-Level Guardrail                                                                                                                                                                                                                                                                                                                                                                                             | Platform / Dashboard Spend Control                                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Netlify Functions & Edge CDN**   | `preloadEntriesOnStart: false` + `appDocumentPreloading: false` (`next.config.mjs`); ISR `revalidate = 3600` on `/`; `Cache-Control: public, s-maxage=60, stale-while-revalidate=300` on `/api/health` & `/api/announcements/active`; `max-age=3600` on `/api/cookie-preferences`; `public/sw.js` `max-age=0, must-revalidate` (`netlify.toml` & `next.config.mjs`).                                             | Set Netlify Usage & Billing spend notifications at 50% / 75% / 90% of monthly credit allocation; never re-introduce scheduled keep-warm pingers (`keep-warm.mts`). |
+| **Sentry (Errors, Traces, Logs)**  | `resolveDefaultTracesSampleRate()` in [`sentry.shared.config.ts`](../../sentry.shared.config.ts) caps default `tracesSampleRate` at **0.1 (10%)** in both `production` and `preview` (override via `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE`); Session Replay disabled (`0`); lazy client SDK loading in [`instrumentation-client.ts`](../../instrumentation-client.ts) skips automated Lighthouse/WebDriver bots. | Configure Sentry per-project **Rate Limits** and **Spend Allocations** on Errors, Transactions/Spans, and Structured Logs; enable Spike Protection notifications.  |
+| **Supabase (PostgreSQL & Pooler)** | Bounded Prisma pool (`connection_limit=5`, `pool_timeout=10`, `connect_timeout=10`, `statement_timeout=15000ms` in `lib/prisma.ts`); `staticGenerationMaxConcurrency: 2` and `cpus: 1` during Netlify builds (`next.config.mjs`).                                                                                                                                                                                | Enforce Supabase **Spend Caps** ON (`Cost Control`) and route all serverless runtime traffic through the Supavisor Transaction Pooler (`:6543`).                   |
+| **Upstash Redis & Rate Limiting**  | Single-pipeline `@upstash/ratelimit` sliding-window limiter with `analytics: false` (saves 1 Redis command per request) and fail-open timeout handling when Redis is unreachable.                                                                                                                                                                                                                                | Enable **Max Monthly Price Limit** (`Budget`) on the Upstash Redis database in the Upstash Console.                                                                |
+| **Resend / Stream.io / Novu**      | Transactional outbox + Postgres `SystemJobExecution` lease (`withCronLock`) + idempotency keys prevent duplicate retry storms across email, chat/video token minting, and push notifications.                                                                                                                                                                                                                    | Configure daily/monthly sending quotas in Resend and webhook/event rate alerts in Stream.io and Novu dashboards.                                                   |
+
+---
+
+## 6. Running Lighthouse MCP Audits in Future PRs
+
+### 6.1 Via the `lighthouse` MCP Server in Jetski
 
 Invoke `mcp_lighthouse_run_audit` (or `call_mcp_tool` with `ServerName: "lighthouse"`, `ToolName: "run_audit"`) **sequentially** (one URL at a time, as `lighthouse-mcp` reuses a single headless Chrome instance):
 
@@ -198,7 +213,7 @@ Invoke `mcp_lighthouse_run_audit` (or `call_mcp_tool` with `ServerName: "lightho
 }
 ```
 
-### 5.2 Inspecting Detailed Audit Items & Node Selectors via CLI
+### 6.2 Inspecting Detailed Audit Items & Node Selectors via CLI
 
 When investigating specific failing audits (DOM selectors, chunk names, or LCP phase breakdowns), run the Lighthouse CLI directly to output the full JSON report:
 
