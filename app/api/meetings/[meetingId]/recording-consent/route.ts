@@ -66,6 +66,94 @@ export async function GET(
   }
 }
 
+async function stopRecordingOnConsentDecline(
+  access: {
+    meetingId: string;
+    streamCallId?: string | null;
+    isRecording?: boolean;
+  },
+  userId: string,
+): Promise<NextResponse | null> {
+  let isRecording = access.isRecording;
+  let targetCallId = access.streamCallId ?? null;
+
+  if (isRecording === undefined || !targetCallId) {
+    const meetingRow = await prisma.meeting?.findUnique?.({
+      where: { id: access.meetingId },
+      select: { isRecording: true, streamCallId: true },
+    });
+    if (meetingRow) {
+      isRecording ??= meetingRow.isRecording;
+      targetCallId ||= meetingRow.streamCallId;
+    }
+  }
+
+  if (!isRecording) return null;
+
+  if (!targetCallId) {
+    const missingCallError = new Error(
+      `Missing streamCallId while stopping active recording for meeting ${access.meetingId}`,
+    );
+    streamLogger.warn(
+      "Cannot stop active recording after consent withdrawal — streamCallId missing",
+      { meetingId: access.meetingId, userId },
+    );
+    reportSentryError(missingCallError, {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: { meetingId: access.meetingId, userId },
+    });
+    return NextResponse.json(
+      {
+        error:
+          "Recording could not be stopped — please leave the call while we investigate.",
+      },
+      { status: 502 },
+    );
+  }
+
+  const stopResult = await RecordingService.stopRecording(targetCallId, userId);
+  if (stopResult.success) {
+    await prisma.meeting.update({
+      where: { id: access.meetingId },
+      data: { isRecording: false },
+    });
+    return null;
+  }
+
+  streamLogger.warn(
+    "Failed to stop active recording after consent withdrawal",
+    {
+      meetingId: access.meetingId,
+      streamCallId: targetCallId,
+      userId,
+      error: stopResult.error,
+    },
+  );
+  reportSentryError(
+    new Error(
+      stopResult.error ??
+        "Failed to stop active recording after consent withdrawal",
+    ),
+    {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: {
+        meetingId: access.meetingId,
+        streamCallId: targetCallId,
+        userId,
+      },
+    },
+  );
+  return NextResponse.json(
+    {
+      error:
+        "Recording could not be stopped — please leave the call while we investigate.",
+    },
+    { status: 502 },
+  );
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
@@ -135,74 +223,11 @@ export async function POST(
     // recording is active, immediately stop the recording so withdrawal takes
     // effect in real time.
     if (parsed.data.decision === RecordingConsentDecision.DECLINED) {
-      const accessWithRecording = access as typeof access & {
-        isRecording?: boolean;
-        meeting?: { isRecording?: boolean; streamCallId?: string | null };
-      };
-      let isRecording =
-        accessWithRecording.isRecording ??
-        accessWithRecording.meeting?.isRecording;
-      let targetCallId =
-        access.streamCallId ||
-        accessWithRecording.meeting?.streamCallId ||
-        null;
-
-      if (
-        (isRecording === undefined || !targetCallId) &&
-        prisma.meeting?.findUnique
-      ) {
-        const meetingRow = await prisma.meeting
-          .findUnique({
-            where: { id: access.meetingId },
-            select: { isRecording: true, streamCallId: true },
-          })
-          .catch(() => null);
-        if (meetingRow) {
-          if (isRecording === undefined) {
-            isRecording = meetingRow.isRecording;
-          }
-          if (meetingRow.streamCallId) {
-            targetCallId = meetingRow.streamCallId;
-          }
-        }
-      }
-
-      if (isRecording) {
-        const resolvedCallId = targetCallId ?? access.meetingId;
-        const stopResult = await RecordingService.stopRecording(
-          resolvedCallId,
-          session.user.id,
-        ).catch((err) => ({
-          success: false,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-        if (!stopResult || stopResult.success !== false) {
-          await prisma.meeting
-            ?.update?.({
-              where: { id: access.meetingId },
-              data: { isRecording: false },
-            })
-            .catch(() => undefined);
-        } else {
-          streamLogger.warn(
-            "Failed to stop active recording after consent withdrawal",
-            {
-              meetingId: access.meetingId,
-              streamCallId: resolvedCallId,
-              userId: session.user.id,
-              error: stopResult.error,
-            },
-          );
-          return NextResponse.json(
-            {
-              error:
-                stopResult.error ??
-                "Consent withdrawn, but failed to stop active recording",
-            },
-            { status: 502 },
-          );
-        }
-      }
+      const stopErrorResponse = await stopRecordingOnConsentDecline(
+        access,
+        session.user.id,
+      );
+      if (stopErrorResponse) return stopErrorResponse;
     }
 
     return NextResponse.json({

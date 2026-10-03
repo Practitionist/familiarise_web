@@ -55,7 +55,7 @@ describe("classifyConnectFailure", () => {
     expect(f.action).toBe("reload");
   });
 
-  it("classifies DPDP ConsentRequiredError as consent with grant_consent action", () => {
+  it("classifies DPDP ConsentRequiredError as consent with grant_consent action and fixed copy", () => {
     const err = new Error(
       "Consent required for purpose 'STREAM_DATA_PROCESSING'",
     );
@@ -63,6 +63,12 @@ describe("classifyConnectFailure", () => {
     const f = classifyConnectFailure(err);
     expect(f.kind).toBe("consent");
     expect(f.action).toBe("grant_consent");
+    expect(f.description).toBe(
+      "Live chat and video need your data-processing consent before they can connect.",
+    );
+    expect(f.detail).toBe(
+      "Consent required for purpose 'STREAM_DATA_PROCESSING'",
+    );
   });
 
   it("keeps network and transient failures retryable, with the raw text as detail only", () => {

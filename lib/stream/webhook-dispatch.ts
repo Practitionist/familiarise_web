@@ -284,6 +284,62 @@ const EVENT_HANDLERS = {
   { schema: z.ZodTypeAny; handle: (event: unknown) => Promise<void> }
 >;
 
+async function executeValidatedStreamHandler(
+  eventType: HandledEventType,
+  eventId: string,
+  event: unknown,
+  claim: WebhookClaim | undefined,
+): Promise<void> {
+  const { schema, handle } = EVENT_HANDLERS[eventType];
+  const parsed = schema.safeParse(event);
+
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+      .join("; ");
+    const processingError = permanentFailure(
+      `${eventType} payload does not match its schema — ${detail}`,
+    );
+    streamLogger.error(
+      `Stream webhook ${eventId} is permanently unprocessable`,
+      { eventType, detail },
+    );
+    Sentry.captureException(
+      new Error(`Stream ${eventType} payload failed schema validation`),
+      {
+        tags: { subsystem: "stream", reason: "stream.schema_mismatch" },
+        extra: { eventId, detail },
+        level: "error",
+      },
+    );
+    await markWebhookEventFailed(eventId, processingError, claim);
+    return;
+  }
+
+  let processingError: string | undefined;
+  try {
+    await handle(parsed.data);
+  } catch (handlerError) {
+    processingError =
+      handlerError instanceof Error
+        ? handlerError.message
+        : String(handlerError);
+    streamLogger.error(`Error processing ${eventType}`, handlerError);
+    Sentry.captureException(
+      handlerError instanceof Error
+        ? handlerError
+        : new Error(String(handlerError)),
+      { tags: { subsystem: "stream" } },
+    );
+  } finally {
+    if (processingError !== undefined) {
+      await markWebhookEventFailed(eventId, processingError, claim);
+    } else {
+      await markWebhookEventProcessed(eventId, undefined, claim);
+    }
+  }
+}
+
 export async function processStreamEvent(
   event: unknown,
   eventType: string,
@@ -291,20 +347,6 @@ export async function processStreamEvent(
   signature: string | undefined,
   baseEvent: { call_cid?: string },
   opts: {
-    /**
-     * The caller already wrote the receipt and therefore owns the claim.
-     *
-     * The route does: it persists before acknowledging, then dispatches in
-     * `after()`. Without this, that second call re-enters `logWebhookEvent` for
-     * an id whose row it just created — a row in the IN-PROGRESS state, aged
-     * milliseconds — and the staleness escape correctly refuses it as another
-     * worker's in-flight work. `isNew` comes back false and dispatch returns
-     * having done nothing. The sweeper still rescues it, so nothing is lost, but
-     * every event waits a full sweep cycle instead of running inline.
-     *
-     * The sweeper passes nothing and claims normally, which is what makes the
-     * concurrency guard meaningful for the caller that actually competes.
-     */
     claimAlreadyHeld?: boolean;
     claim?: WebhookClaim;
   } = {},
@@ -338,8 +380,6 @@ export async function processStreamEvent(
       call_cid: baseEvent.call_cid || "chat",
     });
 
-    let processingError: string | undefined;
-
     if (!isHandledEventType(eventType)) {
       streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
       await markWebhookEventProcessed(eventId, undefined, claim);
@@ -357,53 +397,7 @@ export async function processStreamEvent(
       return;
     }
 
-    const { schema, handle } = EVENT_HANDLERS[eventType];
-    const parsed = schema.safeParse(event);
-
-    if (!parsed.success) {
-      const detail = parsed.error.issues
-        .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
-        .join("; ");
-      processingError = permanentFailure(
-        `${eventType} payload does not match its schema — ${detail}`,
-      );
-      streamLogger.error(
-        `Stream webhook ${eventId} is permanently unprocessable`,
-        { eventType, detail },
-      );
-      Sentry.captureException(
-        new Error(`Stream ${eventType} payload failed schema validation`),
-        {
-          tags: { subsystem: "stream", reason: "stream.schema_mismatch" },
-          extra: { eventId, detail },
-          level: "error",
-        },
-      );
-      await markWebhookEventFailed(eventId, processingError, claim);
-      return;
-    }
-
-    try {
-      await handle(parsed.data);
-    } catch (handlerError) {
-      processingError =
-        handlerError instanceof Error
-          ? handlerError.message
-          : String(handlerError);
-      streamLogger.error(`Error processing ${eventType}`, handlerError);
-      Sentry.captureException(
-        handlerError instanceof Error
-          ? handlerError
-          : new Error(String(handlerError)),
-        { tags: { subsystem: "stream" } },
-      );
-    } finally {
-      if (processingError !== undefined) {
-        await markWebhookEventFailed(eventId, processingError, claim);
-      } else {
-        await markWebhookEventProcessed(eventId, undefined, claim);
-      }
-    }
+    await executeValidatedStreamHandler(eventType, eventId, event, claim);
   } catch (error) {
     // Reaching here means the bookkeeping itself failed. That used to be the one
     // shape that could still lose an event, because the row was written on this

@@ -14,6 +14,7 @@ import { notifyRecordingExpiring } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
 import { goHref } from "../../lib/dashboard/go";
 import fs from "fs";
+import { pathToFileURL } from "node:url";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
@@ -135,8 +136,9 @@ async function main(): Promise<void> {
   console.log("🎉 Job completed successfully");
 }
 
-export const runTransferExpiringRecordings = main;
-
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   runJob("transfer-expiring-recordings", main);
 }

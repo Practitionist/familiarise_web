@@ -28,25 +28,34 @@ export function ChatUnavailable({
   onRetry?: () => void;
 }) {
   const [isGranting, setIsGranting] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
   const f = failure ?? RETRYABLE_CONNECT_FAILURE;
   const reload = () => window.location.reload();
 
   const handleGrantConsent = async () => {
     setIsGranting(true);
+    setGrantError(null);
     try {
       const res = await fetch("/api/user/privacy/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ purposeCodes: ["STREAM_DATA_PROCESSING"] }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setGrantError(
+          "Could not save your consent preference. Please try again.",
+        );
+        return;
+      }
       if (onRetry) {
         onRetry();
       } else {
         window.dispatchEvent(new Event("stream:retry-connection"));
       }
     } catch {
-      // Keep the consent prompt visible if the request fails.
+      setGrantError(
+        "Could not save your consent preference. Please try again.",
+      );
     } finally {
       setIsGranting(false);
     }
@@ -55,9 +64,16 @@ export function ChatUnavailable({
   let action: React.ReactNode;
   if (f.action === "grant_consent") {
     action = (
-      <Button onClick={handleGrantConsent} disabled={isGranting}>
-        {isGranting ? "Enabling..." : "Grant Consent & Connect"}
-      </Button>
+      <div className="flex flex-col items-center gap-2">
+        <Button onClick={handleGrantConsent} disabled={isGranting}>
+          {isGranting ? "Enabling..." : "Grant Consent & Connect"}
+        </Button>
+        {grantError && (
+          <p role="alert" className="text-xs text-destructive max-w-xs">
+            {grantError}
+          </p>
+        )}
+      </div>
     );
   } else if (f.action === "support") {
     action = (

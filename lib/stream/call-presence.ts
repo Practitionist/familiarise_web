@@ -78,6 +78,68 @@ export async function getCallPresenceEvidence(
   }
 }
 
+type StreamParticipantSessionRow = {
+  user_id?: string | null;
+  user_session_id?: string | null;
+  joined_at?: string | Date | null;
+  left_at?: string | Date | null;
+  duration_in_seconds?: number | null;
+};
+
+function toParticipantSessionInterval(
+  row: StreamParticipantSessionRow,
+  resolvedSessionId: string,
+): StreamParticipantSessionInterval | null {
+  if (!row.user_id) return null;
+  const leftAt = row.left_at ? new Date(row.left_at) : null;
+  let joinedAt: Date | null = null;
+  if (row.joined_at) {
+    joinedAt = new Date(row.joined_at);
+  } else if (leftAt && typeof row.duration_in_seconds === "number") {
+    joinedAt = new Date(
+      leftAt.getTime() - Math.max(0, row.duration_in_seconds) * 1000,
+    );
+  }
+  if (!joinedAt) return null;
+  return {
+    userId: row.user_id,
+    userSessionId: row.user_session_id || `${resolvedSessionId}:${row.user_id}`,
+    joinedAt,
+    leftAt,
+  };
+}
+
+async function fetchParticipantSessionPages(
+  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
+  resolvedSessionId: string,
+): Promise<StreamParticipantSessionInterval[]> {
+  const intervals: StreamParticipantSessionInterval[] = [];
+  const seenCursors = new Set<string>();
+  let nextCursor: string | undefined;
+
+  do {
+    const query = nextCursor
+      ? { session: resolvedSessionId, next: nextCursor }
+      : { session: resolvedSessionId };
+    const response = await withStreamCircuitBreaker(() =>
+      call.queryCallParticipantSessions(query),
+    );
+    const rows = response.participants_sessions ?? [];
+    for (const row of rows) {
+      const interval = toParticipantSessionInterval(row, resolvedSessionId);
+      if (interval) intervals.push(interval);
+    }
+    const candidateNext = response.next || undefined;
+    if (!candidateNext || seenCursors.has(candidateNext)) {
+      break;
+    }
+    seenCursors.add(candidateNext);
+    nextCursor = candidateNext;
+  } while (nextCursor);
+
+  return intervals;
+}
+
 /**
  * Fetch per-participant session intervals from Stream when webhook deliveries
  * missed a participant that `getCallReport` saw.
@@ -100,31 +162,8 @@ export async function getCallParticipantSessionsFromStream(
     ) {
       return [];
     }
-    const response = await withStreamCircuitBreaker(() =>
-      call.queryCallParticipantSessions({ session: resolvedSessionId }),
-    );
-    const rows = response.participants_sessions ?? [];
-    const intervals: StreamParticipantSessionInterval[] = [];
-    for (const row of rows) {
-      if (!row.user_id) continue;
-      const leftAt = row.left_at ? new Date(row.left_at) : null;
-      const joinedAt = row.joined_at
-        ? new Date(row.joined_at)
-        : leftAt && typeof row.duration_in_seconds === "number"
-          ? new Date(
-              leftAt.getTime() - Math.max(0, row.duration_in_seconds) * 1000,
-            )
-          : null;
-      if (!joinedAt) continue;
-      intervals.push({
-        userId: row.user_id,
-        userSessionId:
-          row.user_session_id || `${resolvedSessionId}:${row.user_id}`,
-        joinedAt,
-        leftAt,
-      });
-    }
-    return intervals;
+
+    return await fetchParticipantSessionPages(call, resolvedSessionId);
   } catch (error) {
     streamLogger.warn("Failed to query Stream participant sessions", {
       streamCallId,

@@ -53,7 +53,12 @@ export function getR2PreviewsBucket(): string {
 
 export function getR2PublicBaseUrl(): string | null {
   const raw = process.env.R2_PUBLIC_BASE_URL?.trim();
-  return raw ? raw.replace(/\/+$/, "") : null;
+  if (!raw) return null;
+  let url = raw;
+  while (url.endsWith("/")) {
+    url = url.slice(0, -1);
+  }
+  return url;
 }
 
 function requireR2Credentials(): R2Credentials {
@@ -69,7 +74,7 @@ function requireR2Credentials(): R2Credentials {
 function encodeRfc3986(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
-    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+    (ch) => `%${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase()}`,
   );
 }
 
@@ -112,14 +117,25 @@ function deriveSigningKey(
   return hmacSha256(kService, "aws4_request");
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+function formatR2ErrorDetail(errorText: string): string {
+  return errorText ? `: ${errorText.slice(0, 300)}` : "";
+}
+
 function buildCanonicalQueryString(
   params: Record<string, string | undefined>,
 ): string {
   return Object.entries(params)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => [encodeRfc3986(k), encodeRfc3986(v ?? "")] as const)
-    .sort(([aKey, aVal], [bKey, bVal]) =>
-      aKey === bKey ? aVal.localeCompare(bVal) : aKey.localeCompare(bKey),
+    .sort(
+      ([aKey, aVal], [bKey, bVal]) =>
+        compareCodeUnits(aKey, bKey) || compareCodeUnits(aVal, bVal),
     )
     .map(([k, v]) => `${k}=${v}`)
     .join("&");
@@ -156,9 +172,7 @@ function signR2Request(opts: {
     }
   }
 
-  const sortedHeaderKeys = Object.keys(rawHeaders).sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const sortedHeaderKeys = Object.keys(rawHeaders).sort(compareCodeUnits);
   const canonicalHeaders = sortedHeaderKeys
     .map((k) => `${k}:${rawHeaders[k]}\n`)
     .join("");
@@ -295,8 +309,9 @@ export async function uploadR2Object(opts: {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    const detail = formatR2ErrorDetail(errorText);
     throw new Error(
-      `R2 PUT failed (${response.status} ${response.statusText})${errorText ? `: ${errorText.slice(0, 300)}` : ""}`,
+      `R2 PUT failed (${response.status} ${response.statusText})${detail}`,
     );
   }
 
@@ -333,13 +348,14 @@ async function initiateMultipartUpload(opts: {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    const detail = formatR2ErrorDetail(errorText);
     throw new Error(
-      `R2 CreateMultipartUpload failed (${response.status} ${response.statusText})${errorText ? `: ${errorText.slice(0, 300)}` : ""}`,
+      `R2 CreateMultipartUpload failed (${response.status} ${response.statusText})${detail}`,
     );
   }
 
   const xml = await response.text();
-  const match = xml.match(/<UploadId>([^<]+)<\/UploadId>/);
+  const match = /<UploadId>([^<]+)<\/UploadId>/.exec(xml);
   if (!match?.[1]) {
     throw new Error("R2 CreateMultipartUpload response missing UploadId");
   }
@@ -373,8 +389,9 @@ async function uploadMultipartPart(opts: {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    const detail = formatR2ErrorDetail(errorText);
     throw new Error(
-      `R2 UploadPart #${opts.partNumber} failed (${response.status} ${response.statusText})${errorText ? `: ${errorText.slice(0, 300)}` : ""}`,
+      `R2 UploadPart #${opts.partNumber} failed (${response.status} ${response.statusText})${detail}`,
     );
   }
 
@@ -420,8 +437,9 @@ async function completeMultipartUpload(opts: {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    const detail = formatR2ErrorDetail(errorText);
     throw new Error(
-      `R2 CompleteMultipartUpload failed (${response.status} ${response.statusText})${errorText ? `: ${errorText.slice(0, 300)}` : ""}`,
+      `R2 CompleteMultipartUpload failed (${response.status} ${response.statusText})${detail}`,
     );
   }
 }
@@ -478,6 +496,26 @@ export async function streamMultipartToR2(opts: {
     return slice;
   };
 
+  const flushFullParts = async () => {
+    while (bufferedBytes > partSize) {
+      uploadId ??= await initiateMultipartUpload({
+        bucket,
+        key: opts.key,
+        contentType: opts.contentType,
+      });
+      const partBuffer = takeBytes(partSize);
+      const etag = await uploadMultipartPart({
+        bucket,
+        key: opts.key,
+        uploadId,
+        partNumber,
+        body: partBuffer,
+      });
+      completedParts.push({ partNumber, etag });
+      partNumber += 1;
+    }
+  };
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -495,26 +533,7 @@ export async function streamMultipartToR2(opts: {
         Buffer.from(value.buffer, value.byteOffset, value.byteLength),
       );
       bufferedBytes += value.byteLength;
-
-      while (bufferedBytes > partSize) {
-        if (!uploadId) {
-          uploadId = await initiateMultipartUpload({
-            bucket,
-            key: opts.key,
-            contentType: opts.contentType,
-          });
-        }
-        const partBuffer = takeBytes(partSize);
-        const etag = await uploadMultipartPart({
-          bucket,
-          key: opts.key,
-          uploadId,
-          partNumber,
-          body: partBuffer,
-        });
-        completedParts.push({ partNumber, etag });
-        partNumber += 1;
-      }
+      await flushFullParts();
     }
 
     if (!uploadId) {
@@ -597,9 +616,10 @@ export async function deleteR2Object(opts: {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    const detail = formatR2ErrorDetail(errorText);
     return {
       success: false,
-      error: `R2 DELETE failed (${response.status} ${response.statusText})${errorText ? `: ${errorText.slice(0, 300)}` : ""}`,
+      error: `R2 DELETE failed (${response.status} ${response.statusText})${detail}`,
     };
   }
 

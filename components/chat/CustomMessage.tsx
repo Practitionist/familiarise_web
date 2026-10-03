@@ -125,36 +125,24 @@ export const CustomMessage = () => {
     typeof msgRecord.custom === "object" && msgRecord.custom !== null
       ? (msgRecord.custom as Record<string, unknown>)
       : undefined;
-  const bookingAppointmentId =
-    typeof msgRecord.booking_appointment_id === "string"
-      ? msgRecord.booking_appointment_id
-      : typeof customRecord?.booking_appointment_id === "string"
-        ? customRecord.booking_appointment_id
-        : null;
+  const readMessageString = (key: string): string | null => {
+    const direct = msgRecord[key];
+    if (typeof direct === "string") return direct;
+    const nested = customRecord?.[key];
+    return typeof nested === "string" ? nested : null;
+  };
+  const bookingAppointmentId = readMessageString("booking_appointment_id");
   const isBookingContext = Boolean(
     bookingAppointmentId ||
     msgRecord.kind === "booking_context" ||
     customRecord?.kind === "booking_context",
   );
   const bookingType = (
-    typeof msgRecord.booking_type === "string"
-      ? msgRecord.booking_type
-      : typeof customRecord?.booking_type === "string"
-        ? customRecord.booking_type
-        : "CONSULTATION"
+    readMessageString("booking_type") ?? "CONSULTATION"
   ).toUpperCase();
   const bookingTitle =
-    typeof msgRecord.booking_title === "string"
-      ? msgRecord.booking_title
-      : typeof customRecord?.booking_title === "string"
-        ? customRecord.booking_title
-        : "Scheduled Session";
-  const bookingStartsAtRaw =
-    typeof msgRecord.booking_starts_at === "string"
-      ? msgRecord.booking_starts_at
-      : typeof customRecord?.booking_starts_at === "string"
-        ? customRecord.booking_starts_at
-        : null;
+    readMessageString("booking_title") ?? "Scheduled Session";
+  const bookingStartsAtRaw = readMessageString("booking_starts_at");
   const bookingStartsAtDate = bookingStartsAtRaw
     ? new Date(bookingStartsAtRaw)
     : null;

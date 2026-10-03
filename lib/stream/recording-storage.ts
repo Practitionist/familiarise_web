@@ -118,8 +118,12 @@ export function durablyOursWhere(): Prisma.RecordingWhereInput {
 export async function generateSignedUrl(
   storagePath: string,
   expiresIn: number = 3600,
+  opts?: { storageUrl?: string | null },
 ): Promise<string | null> {
-  if (isR2Configured()) {
+  const storedInSupabase = Boolean(
+    opts?.storageUrl && /^https?:\/\//i.test(opts.storageUrl),
+  );
+  if (isR2Configured() && !storedInSupabase) {
     try {
       return createR2PresignedGetUrl({
         bucket: getR2RecordingsBucket(),
@@ -157,9 +161,14 @@ export async function getBestRecordingUrl(recording: {
   status: string;
   storagePath: string | null;
   recordingUrl: string | null;
+  storageUrl?: string | null;
 }): Promise<string | null> {
   if (recording.status === "AVAILABLE" && recording.storagePath) {
-    return generateSignedUrl(recording.storagePath);
+    return recording.storageUrl
+      ? generateSignedUrl(recording.storagePath, 3600, {
+          storageUrl: recording.storageUrl,
+        })
+      : generateSignedUrl(recording.storagePath);
   }
 
   if (recording.status === "READY" && recording.recordingUrl) {

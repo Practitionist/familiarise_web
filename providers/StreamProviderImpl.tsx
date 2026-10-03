@@ -274,8 +274,10 @@ const StreamProviderImpl = ({
   // exactly what the prefetch effect below exists to remove (#248).
   const { data: clientSession, isPending: isSessionPending } = useSession();
   const signedOut = !isSessionPending && !clientSession?.user?.id;
-  const signedOutRef = useRef(false);
-  signedOutRef.current = signedOut;
+  const signedOutRef = useRef(signedOut);
+  useEffect(() => {
+    signedOutRef.current = signedOut;
+  }, [signedOut]);
 
   // Token caching with expiry tracking — use ref to avoid triggering re-renders
   // (useState here caused getCachedToken → connectChat → connectServices to
@@ -489,13 +491,50 @@ const StreamProviderImpl = ({
       });
   }, []);
 
+  const adoptOrReopenChatSingleton = useCallback(
+    async (client: StreamChat, targetUserId: string) => {
+      if (!client.userID || client.userID !== targetUserId) return null;
+
+      setGlobalChatClient(client);
+      setCurrentStreamUserId(targetUserId);
+
+      if (isChatClientLive(client)) {
+        streamLogger.debug("Adopting already-connected Stream Chat singleton", {
+          userId: targetUserId,
+        });
+        setChatConnected(true);
+        kickChannelSync(targetUserId);
+        return client;
+      }
+
+      if (client.wsConnection?.isConnecting) {
+        streamLogger.debug(
+          "Chat socket already reconnecting; awaiting the event",
+          {
+            userId: targetUserId,
+          },
+        );
+        kickChannelSync(targetUserId);
+        return client;
+      }
+
+      streamLogger.info("Reopening chat socket for an existing user", {
+        userId: targetUserId,
+      });
+      await client.openConnection();
+      setChatConnected(true);
+      kickChannelSync(targetUserId);
+      return client;
+    },
+    [kickChannelSync],
+  );
+
   // connectChat/connectVideo RESOLVE to their client (or null) instead of each
   // setting its own state, so the caller can commit both at once and the tree
   // changes shape a single time. See SettledStreamClients.
   const connectChat = useCallback(async () => {
     if (!enableChat || !userDetails || !apiKey) return null;
 
-    // Check if we already have a live global client for this user - adopt it
     const adoptable = getGlobalChatClient();
     if (
       getCurrentStreamUserId() === userDetails.id &&
@@ -509,7 +548,6 @@ const StreamProviderImpl = ({
       return adoptable;
     }
 
-    // Prevent concurrent connectUser calls (e.g. connectVideo re-render race)
     if (isChatConnectingRef.current) {
       streamLogger.debug("Chat connection already in progress, skipping", {
         userId: userDetails.id,
@@ -525,49 +563,14 @@ const StreamProviderImpl = ({
       });
 
       const client = StreamChat.getInstance(apiKey);
-
-      // If the singleton is already connected and live for this user, adopt it directly.
-      if (
-        client.userID &&
-        client.userID === userDetails.id &&
-        isChatClientLive(client)
-      ) {
-        streamLogger.debug("Adopting already-connected Stream Chat singleton", {
-          userId: userDetails.id,
-        });
-        setGlobalChatClient(client);
-        setCurrentStreamUserId(userDetails.id);
-        setChatConnected(true);
-        kickChannelSync(userDetails.id);
-        return client;
+      const adoptedSingleton = await adoptOrReopenChatSingleton(
+        client,
+        userDetails.id,
+      );
+      if (adoptedSingleton) {
+        return adoptedSingleton;
       }
 
-      // If the singleton already holds this user but its socket is down, reopen the connection.
-      if (client.userID && client.userID === userDetails.id) {
-        setGlobalChatClient(client);
-        setCurrentStreamUserId(userDetails.id);
-
-        if (client.wsConnection?.isConnecting) {
-          streamLogger.debug(
-            "Chat socket already reconnecting; awaiting the event",
-            {
-              userId: userDetails.id,
-            },
-          );
-          kickChannelSync(userDetails.id);
-          return client;
-        }
-
-        streamLogger.info("Reopening chat socket for an existing user", {
-          userId: userDetails.id,
-        });
-        await client.openConnection();
-        setChatConnected(true);
-        kickChannelSync(userDetails.id);
-        return client;
-      }
-
-      // Ensure user exists in Stream's database (only if not synced before)
       if (!clientSyncCompletedUsers.has(userDetails.id)) {
         try {
           await upsertUserToStream(userDetails.id);
@@ -579,10 +582,12 @@ const StreamProviderImpl = ({
             typeof upsertError === "object" && upsertError !== null
               ? (upsertError as { name?: unknown }).name
               : undefined;
-          const errMessage =
-            upsertError instanceof Error
-              ? upsertError.message
-              : String(upsertError ?? "");
+          let errMessage = "";
+          if (upsertError instanceof Error) {
+            errMessage = upsertError.message;
+          } else if (typeof upsertError === "string") {
+            errMessage = upsertError;
+          }
           if (
             errName === "ConsentRequiredError" ||
             errMessage.includes("STREAM_DATA_PROCESSING") ||
@@ -613,12 +618,9 @@ const StreamProviderImpl = ({
         () => getCachedToken("chat"),
       );
 
-      // Store in global references
       setGlobalChatClient(client);
       setCurrentStreamUserId(userDetails.id);
-
       setChatConnected(true);
-
       kickChannelSync(userDetails.id);
 
       streamLogger.info("Chat connection established", {
@@ -634,18 +636,28 @@ const StreamProviderImpl = ({
     } finally {
       isChatConnectingRef.current = false;
     }
-  }, [enableChat, userDetails, getCachedToken, kickChannelSync]);
+  }, [
+    enableChat,
+    userDetails,
+    getCachedToken,
+    kickChannelSync,
+    adoptOrReopenChatSingleton,
+  ]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey) return null;
 
     // Check if we already have a live global client for this user - adopt it
     const adoptable = getGlobalVideoClient();
-    const sameUser = getCurrentStreamUserId() === userDetails.id;
+    const adoptableUserId =
+      getCurrentStreamUserId() ??
+      (adoptable?.streamClient as { userID?: string } | undefined)?.userID;
+    const sameUser = adoptableUserId === userDetails.id;
     if (sameUser && adoptable && isVideoClientLive(adoptable)) {
       streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
+      setCurrentStreamUserId(userDetails.id);
       setVideoConnected(true);
       return adoptable;
     }
@@ -653,6 +665,7 @@ const StreamProviderImpl = ({
     try {
       if (sameUser && adoptable) {
         const coordinator = adoptable.streamClient;
+        setCurrentStreamUserId(userDetails.id);
 
         if (coordinator.wsConnection?.isConnecting) {
           streamLogger.debug(
@@ -905,104 +918,101 @@ const StreamProviderImpl = ({
     });
   }, [clients, chatConnected, videoConnected, isConnecting, error, failure]);
 
+  const createConnectionChangeObserver = useCallback(
+    (opts: {
+      label: "Chat socket" | "Video coordinator";
+      setConnected: (connected: boolean) => void;
+      onBeforeReconnect?: () => void;
+    }) => {
+      let graceTimeout: ReturnType<typeof setTimeout> | undefined;
+      let cancelled = false;
+
+      const cancelGrace = () => {
+        if (graceTimeout !== undefined) {
+          clearTimeout(graceTimeout);
+          graceTimeout = undefined;
+        }
+      };
+
+      const onConnectionChanged = (online: boolean | undefined) => {
+        if (online) {
+          cancelGrace();
+          streamLogger.debug(`${opts.label} recovered`, {
+            userId: userDetails?.id,
+          });
+          opts.setConnected(true);
+          return;
+        }
+
+        streamLogger.warn(`${opts.label} dropped; waiting to reconnect`, {
+          userId: userDetails?.id,
+        });
+        opts.setConnected(false);
+        cancelGrace();
+        graceTimeout = setTimeout(() => {
+          if (cancelled || signedOutRef.current) return;
+          streamLogger.info(
+            `${opts.label} still offline after the grace window; reconnecting`,
+            { userId: userDetails?.id },
+          );
+          opts.onBeforeReconnect?.();
+          void connectServices().catch(() => {});
+        }, RECONNECT_GRACE_MS);
+      };
+
+      const dispose = () => {
+        cancelled = true;
+        cancelGrace();
+      };
+
+      return { onConnectionChanged, dispose };
+    },
+    [userDetails?.id, connectServices],
+  );
+
   useEffect(() => {
     const chat = clients?.chat;
     if (!chat) return;
 
-    let graceTimeout: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-
-    const cancelGrace = () => {
-      if (graceTimeout !== undefined) {
-        clearTimeout(graceTimeout);
-        graceTimeout = undefined;
-      }
-    };
-
-    const handler = chat.on((event) => {
-      if (event.type !== "connection.changed") return;
-
-      if (event.online) {
-        cancelGrace();
-        streamLogger.debug("Chat socket recovered", {
-          userId: userDetails?.id,
-        });
-        setChatConnected(true);
-        return;
-      }
-
-      streamLogger.warn("Chat socket dropped; waiting to reconnect", {
-        userId: userDetails?.id,
-      });
-      setChatConnected(false);
-      cancelGrace();
-      graceTimeout = setTimeout(() => {
-        if (cancelled || signedOutRef.current) return;
-        streamLogger.info(
-          "Chat still offline after the grace window; reconnecting",
-          {
-            userId: userDetails?.id,
-          },
-        );
+    const observer = createConnectionChangeObserver({
+      label: "Chat socket",
+      setConnected: setChatConnected,
+      onBeforeReconnect: () => {
         if (userDetails?.id) {
           markSyncIncomplete(userDetails.id, `stream_sync_${userDetails.id}`);
         }
-        void connectServices().catch(() => {});
-      }, RECONNECT_GRACE_MS);
+      },
+    });
+
+    const handler = chat.on((event) => {
+      if (event.type !== "connection.changed") return;
+      observer.onConnectionChanged(event.online);
     });
 
     return () => {
-      cancelled = true;
-      cancelGrace();
+      observer.dispose();
       handler.unsubscribe();
     };
-  }, [clients?.chat, userDetails?.id, connectServices]);
+  }, [clients?.chat, userDetails?.id, createConnectionChangeObserver]);
 
   useEffect(() => {
     const video = clients?.video;
     if (!video) return;
 
-    let graceTimeout: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-
-    const cancelGrace = () => {
-      if (graceTimeout !== undefined) {
-        clearTimeout(graceTimeout);
-        graceTimeout = undefined;
-      }
-    };
+    const observer = createConnectionChangeObserver({
+      label: "Video coordinator",
+      setConnected: setVideoConnected,
+    });
 
     const unsubscribe = video.on("connection.changed", (event) => {
-      if (event.online) {
-        cancelGrace();
-        streamLogger.debug("Video coordinator recovered", {
-          userId: userDetails?.id,
-        });
-        setVideoConnected(true);
-        return;
-      }
-
-      streamLogger.warn("Video coordinator dropped; waiting to reconnect", {
-        userId: userDetails?.id,
-      });
-      setVideoConnected(false);
-      cancelGrace();
-      graceTimeout = setTimeout(() => {
-        if (cancelled || signedOutRef.current) return;
-        streamLogger.info(
-          "Video still offline after the grace window; reconnecting",
-          { userId: userDetails?.id },
-        );
-        void connectServices().catch(() => {});
-      }, RECONNECT_GRACE_MS);
+      observer.onConnectionChanged(event.online);
     });
 
     return () => {
-      cancelled = true;
-      cancelGrace();
+      observer.dispose();
       unsubscribe();
     };
-  }, [clients?.video, userDetails?.id, connectServices]);
+  }, [clients?.video, createConnectionChangeObserver]);
 
   useEffect(() => {
     const onRetry = () => retryConnection();

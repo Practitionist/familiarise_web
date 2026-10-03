@@ -36,6 +36,7 @@ import { scopeOrgId } from "@/lib/api/scope/parse";
 import { useSession } from "@/lib/auth-client";
 import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 import { useSearchParams } from "next/navigation";
+import { useToast } from "@/components/ui/use-toast";
 
 // Custom channel item component for the sidebar - memoized for performance
 const ChannelItem = memo(
@@ -184,9 +185,104 @@ const ChannelListSkeleton = () => (
   </div>
 );
 
+type OrgScope = ReturnType<typeof useOrgScope>["scope"];
+
+function doesChannelMatchScope(ch: unknown, currentScope: OrgScope): boolean {
+  if (!ch || typeof ch !== "object") return false;
+  const record = ch as {
+    organization_id?: unknown;
+    data?: Record<string, unknown>;
+  };
+  const rawOrgId = record.data?.organization_id ?? record.organization_id;
+  if (currentScope.kind === "personal") {
+    return rawOrgId === undefined || rawOrgId === null;
+  }
+  const pinnedOrgId = scopeOrgId(currentScope);
+  return pinnedOrgId ? rawOrgId === pinnedOrgId : true;
+}
+
+function mergeFetchedChannels(
+  prev: Channel[],
+  fetched: Channel[],
+  currentScope: OrgScope,
+  deepLinkedCid: string | null,
+): Channel[] {
+  if (!deepLinkedCid) return fetched;
+  const fetchedCids = new Set(fetched.map((ch) => ch.cid));
+  if (fetchedCids.has(deepLinkedCid)) return fetched;
+  const preserved = prev.find(
+    (ch) => ch.cid === deepLinkedCid && doesChannelMatchScope(ch, currentScope),
+  );
+  return preserved ? [preserved, ...fetched] : fetched;
+}
+
+function pickInitialChannel(
+  mostRecentTeam: Channel | undefined,
+  mostRecentDM: Channel | undefined,
+): Channel | null {
+  if (mostRecentTeam && mostRecentDM) {
+    const teamTime = new Date(
+      (mostRecentTeam.data?.last_message_at as string) || 0,
+    ).getTime();
+    const dmTime = new Date(
+      (mostRecentDM.data?.last_message_at as string) || 0,
+    ).getTime();
+    return dmTime >= teamTime ? mostRecentDM : mostRecentTeam;
+  }
+  return mostRecentTeam || mostRecentDM || null;
+}
+
+function parseDeepLinkChannelTarget(rawChannelId: string): {
+  channelType: "messaging" | "team";
+  channelId: string;
+} {
+  const colonIdx = rawChannelId.indexOf(":");
+  if (colonIdx > 0) {
+    const prefix = rawChannelId.slice(0, colonIdx);
+    const channelType = prefix === "messaging" ? "messaging" : "team";
+    return { channelType, channelId: rawChannelId.slice(colonIdx + 1) };
+  }
+  const isDmPrefix =
+    rawChannelId.startsWith("dm-") || rawChannelId.startsWith("dmo-");
+  return {
+    channelType: isDmPrefix ? "messaging" : "team",
+    channelId: rawChannelId,
+  };
+}
+
+function getChannelLastMessageTime(
+  channel: Channel,
+  targetCid: string,
+  eventMessageCreatedAt?: string | Date,
+): number {
+  if (channel.cid === targetCid && eventMessageCreatedAt) {
+    return new Date(eventMessageCreatedAt).getTime();
+  }
+  const rawLast =
+    (channel.state?.last_message_at as string | Date | undefined) ||
+    (channel.data?.last_message_at as string | undefined) ||
+    0;
+  return new Date(rawLast).getTime();
+}
+
+function sortUpdatedChannels(
+  channels: Channel[],
+  targetCid: string,
+  isNewMessage: boolean,
+  eventMessageCreatedAt?: string | Date,
+): Channel[] {
+  if (!isNewMessage) return channels;
+  return [...channels].sort(
+    (a, b) =>
+      getChannelLastMessageTime(b, targetCid, eventMessageCreatedAt) -
+      getChannelLastMessageTime(a, targetCid, eventMessageCreatedAt),
+  );
+}
+
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
   const { openConversation } = useChatPane();
+  const { toast } = useToast();
   // The app role, NOT `client.user.role` — mapRoleToStream collapses every
   // non-staff account to Stream's `"user"`, so the old `=== "consultant"`
   // check here could never be true.
@@ -211,7 +307,9 @@ export const ChatSidebar = () => {
   // happened to be first, and hid a second org's entirely).
   const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const scopeRef = useRef(scope);
-  scopeRef.current = scope;
+  useEffect(() => {
+    scopeRef.current = scope;
+  }, [scope]);
   const searchParams = useSearchParams();
   const contextAppointmentId =
     searchParams?.get("contextAppointmentId") ??
@@ -230,6 +328,7 @@ export const ChatSidebar = () => {
     deepLinkChannelId,
   );
   const deepLinkHandledRef = useRef<string | null>(null);
+  const deepLinkedChannelCidRef = useRef<string | null>(null);
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -289,15 +388,10 @@ export const ChatSidebar = () => {
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
     if (!client?.userID) {
-      // Don't set loading to false here, wait for client
       return;
     }
 
     const fetchKey = computeFetchKey();
-
-    // #248 dedupe: skip only if the SAME key is already in flight. A different
-    // key (e.g. an org-scope switch mid-fetch) must proceed so the new scope
-    // actually loads instead of inheriting the in-flight scope's result.
     if (inFlightFetchKeyRef.current === fetchKey) {
       return;
     }
@@ -307,8 +401,6 @@ export const ChatSidebar = () => {
     setError(null);
 
     try {
-      // #674 org-scope filter — see buildOrgChannelFilter for what each scope
-      // kind means and why `orgMember` has to pin too.
       const orgFilter: Record<string, unknown> = buildOrgChannelFilter(scope);
       const filter = {
         members: { $in: [client.userID] },
@@ -316,76 +408,56 @@ export const ChatSidebar = () => {
       };
       const sort: { last_message_at: -1 } = { last_message_at: -1 };
       const options = {
-        watch: true, // Crucial for real-time updates
+        watch: true,
         state: true,
-        limit: 20, // Reduced initial limit for faster loading
-        // Sidebar previews need recent context, not full history: 100/channel ×
-        // 40 channels hydrated ~4,000 messages just to paint a list (Stream's
-        // storage-and-bandwidth guidance: align limits with actual need).
-        // Opening a channel paginates deeper history on demand.
+        limit: 20,
         message_limit: 10,
-        presence: false, // Disable presence for initial load to improve performance
+        presence: false,
       };
 
-      // Fetch channels in parallel
       const [teamResponse, dmResponse] = await Promise.all([
         client.queryChannels({ ...filter, type: "team" }, sort, options),
         client.queryChannels({ ...filter, type: "messaging" }, sort, options),
       ]);
 
-      // Staleness guard: if a newer-keyed fetch (e.g. a scope switch) started
-      // while this request was in flight, drop this late response instead of
-      // overwriting the current scope's channels with the old scope's data.
       if (inFlightFetchKeyRef.current !== fetchKey) {
         return;
       }
 
       const usableDms = dmResponse.filter(isUsableDmChannel);
 
-      setTeamChannels(teamResponse);
-      // Phantoms filtered out here rather than hidden at render: a row that is
-      // merely styled as unavailable is still selectable, still opens, and still
-      // accepts a message. See isUsableDmChannel.
-      setDirectMessages(usableDms);
+      setTeamChannels((prev) =>
+        mergeFetchedChannels(
+          prev,
+          teamResponse,
+          scope,
+          deepLinkedChannelCidRef.current,
+        ),
+      );
+      setDirectMessages((prev) =>
+        mergeFetchedChannels(
+          prev,
+          usableDms,
+          scope,
+          deepLinkedChannelCidRef.current,
+        ),
+      );
 
-      // Raw counts, for the next page's offset.
       fetchedCountRef.current = {
         team: teamResponse.length,
         messaging: dmResponse.length,
       };
 
-      // Update pagination state — measured against the RAW response length, not
-      // the filtered one. `response.length === limit` is Stream's
-      // "there may be more" signal, and comparing a filtered count to the limit
-      // would report no-more-pages the moment a single phantom is dropped from
-      // an otherwise full page.
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
-
-      // Record success: only NOW is this scope's data actually loaded. Marking
-      // it earlier (or on skip) is what let a switched scope show stale data.
       fetchedKeyRef.current = fetchKey;
 
-      // Auto-select the most recent channel on initial load (unless deep-linked)
       if (!initialSelectionDoneRef.current && !hasDeepLink) {
         initialSelectionDoneRef.current = true;
-        const mostRecentTeam = teamResponse[0];
-        // The FILTERED list — auto-selecting `dmResponse[0]` could open a
-        // phantom on load, which is the exact thing being filtered out
-        // everywhere else.
-        const mostRecentDM = usableDms[0];
-        let channelToSelect = null;
-        if (mostRecentTeam && mostRecentDM) {
-          const teamTime = new Date(
-            (mostRecentTeam.data?.last_message_at as string) || 0,
-          ).getTime();
-          const dmTime = new Date(
-            (mostRecentDM.data?.last_message_at as string) || 0,
-          ).getTime();
-          channelToSelect = dmTime >= teamTime ? mostRecentDM : mostRecentTeam;
-        } else {
-          channelToSelect = mostRecentTeam || mostRecentDM || null;
-        }
+        const channelToSelect = pickInitialChannel(
+          teamResponse[0],
+          usableDms[0],
+        );
         if (channelToSelect) {
           setActiveChannel(channelToSelect);
           setActiveChannelId(channelToSelect.cid || null);
@@ -396,18 +468,10 @@ export const ChatSidebar = () => {
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
-      // #248: release the in-flight guard only if WE are still the in-flight
-      // fetch. If a newer-keyed fetch started after us, leave its key in place
-      // so it isn't wrongly treated as not-in-flight.
       if (inFlightFetchKeyRef.current === fetchKey) {
         inFlightFetchKeyRef.current = null;
       }
     }
-    // Why `scope` is in deps: when the operator toggles the org-context
-    // dropdown (or navigates into /dashboard/organization/<orgId>/...),
-    // useOrgScope's `scope` shifts and we must refetch the channel list
-    // through the new filter. Without this, the inbox keeps showing the
-    // previous tenant's threads until a hard reload.
   }, [client, setActiveChannel, scope, computeFetchKey, hasDeepLink]);
 
   // Function to load more channels (pagination)
@@ -614,147 +678,97 @@ export const ChatSidebar = () => {
   // Kept separate from the initial fetch so selecting a channel no longer tears
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
-    if (client) {
-      const channelMatchesScope = (ch: unknown): boolean => {
-        if (!ch || typeof ch !== "object") return false;
-        const record = ch as {
-          organization_id?: unknown;
-          data?: Record<string, unknown>;
-        };
-        const rawOrgId = record.data?.organization_id ?? record.organization_id;
-        const currentScope = scopeRef.current;
-        if (currentScope.kind === "personal") {
-          return rawOrgId === undefined || rawOrgId === null;
-        }
-        const pinnedOrgId = scopeOrgId(currentScope);
-        return pinnedOrgId ? rawOrgId === pinnedOrgId : true;
-      };
+    if (!client) return;
 
-      // Listener for events that might require a channel list update.
-      // Nothing is logged here on purpose: this is bound to `*.**`, so the
-      // line that used to sit at the top printed EVERY Stream event payload —
-      // message bodies included — to the production browser console.
-      const handleEvent = (event: Event) => {
-        let channelUpdated = false;
+    const handleAddedToChannel = async (event: Event) => {
+      if (!event.channel) return;
+      const channelType = event.channel.type;
+      const channelId = event.channel.id;
+      const currentScope = scopeRef.current;
+      if (!doesChannelMatchScope(event.channel, currentScope)) {
+        return;
+      }
+      const newChannel = client.channel(channelType, channelId);
+      await newChannel.watch().catch(() => undefined);
+      if (channelType === "team") {
+        setTeamChannels((prev) =>
+          prev.some((ch) => ch.cid === newChannel.cid)
+            ? prev
+            : [newChannel, ...prev],
+        );
+      } else if (channelType === "messaging" && isUsableDmChannel(newChannel)) {
+        setDirectMessages((prev) =>
+          prev.some((ch) => ch.cid === newChannel.cid)
+            ? prev
+            : [newChannel, ...prev],
+        );
+      }
+    };
 
-        // Update channel lists based on events
-        if (
-          event.type === "notification.added_to_channel" &&
-          event.channel &&
-          event.user?.id === client.userID
-        ) {
-          const newChannel = client.channel(
-            event.channel.type,
-            event.channel.id,
-          );
-          if (
-            channelMatchesScope(event.channel) &&
-            channelMatchesScope(newChannel)
-          ) {
-            if (event.channel.type === "team") {
-              setTeamChannels((prev) =>
-                prev.some((ch) => ch.cid === newChannel.cid)
-                  ? prev
-                  : [newChannel, ...prev],
-              );
-            } else if (
-              event.channel.type === "messaging" &&
-              isUsableDmChannel(newChannel)
-            ) {
-              setDirectMessages((prev) =>
-                prev.some((ch) => ch.cid === newChannel.cid)
-                  ? prev
-                  : [newChannel, ...prev],
-              );
-            }
-          }
-          channelUpdated = true;
-        } else if (
-          event.type === "notification.removed_from_channel" &&
-          event.channel &&
-          event.user?.id === client.userID
-        ) {
-          handleUserRemovedFromChannel(event.channel.cid || event.channel.id);
-          channelUpdated = true;
-        } else if (event.type === "channel.deleted" && event.channel) {
-          handleChannelDeleted(event.channel.cid || event.channel.id);
-          channelUpdated = true;
-        }
+    const handleChannelActivity = (event: Event) => {
+      if (!event.channel) return;
+      const targetCid =
+        event.channel.cid || `${event.channel.type}:${event.channel.id}`;
+      const updatedChannel = client.channel(
+        event.channel.type,
+        event.channel.id,
+      );
+      const isNewMessage =
+        event.type === "message.new" ||
+        event.type === "notification.message_new";
+      const updateList = (prev: Channel[]) =>
+        sortUpdatedChannels(
+          prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
+          targetCid,
+          isNewMessage,
+          event.message?.created_at,
+        );
 
-        // Refresh channel object in state if it was updated (e.g., new message, read status)
-        if (
-          event.channel &&
-          !channelUpdated &&
-          (event.type === "message.new" ||
-            event.type === "notification.message_new" ||
-            event.type === "message.read" ||
-            event.type === "channel.updated")
-        ) {
-          const targetCid =
-            event.channel.cid || `${event.channel.type}:${event.channel.id}`;
-          const updatedChannel = client.channel(
-            event.channel.type,
-            event.channel.id,
-          );
-          const isNewMessage =
-            event.type === "message.new" ||
-            event.type === "notification.message_new";
-          const sortChannels = (channels: Channel[]): Channel[] => {
-            if (!isNewMessage) return channels;
-            return [...channels].sort((a, b) => {
-              const aLast =
-                a.cid === targetCid && event.message?.created_at
-                  ? new Date(event.message.created_at).getTime()
-                  : new Date(
-                      (a.state?.last_message_at as string | Date | undefined) ||
-                        (a.data?.last_message_at as string | undefined) ||
-                        0,
-                    ).getTime();
-              const bLast =
-                b.cid === targetCid && event.message?.created_at
-                  ? new Date(event.message.created_at).getTime()
-                  : new Date(
-                      (b.state?.last_message_at as string | Date | undefined) ||
-                        (b.data?.last_message_at as string | undefined) ||
-                        0,
-                    ).getTime();
-              return bLast - aLast;
-            });
-          };
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) =>
-              sortChannels(
-                prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
-              ),
-            );
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) =>
-              sortChannels(
-                prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
-              ),
-            );
-          }
-        }
-      };
+      if (event.channel.type === "team") {
+        setTeamChannels(updateList);
+      } else if (event.channel.type === "messaging") {
+        setDirectMessages(updateList);
+      }
+    };
 
-      // #1280 2.6 — the SINGLE-argument form is the "every event" listener.
-      //
-      // `client.on("*.**", handler)` registers under the LITERAL key `"*.**"`;
-      // there is no wildcard matching in the SDK's dispatcher, which only ever
-      // looks up `listeners.all` and `listeners[event.type]`. No Stream event
-      // has the type `"*.**"`, so this entire live channel-list updater never
-      // fired once — the list only ever changed on an explicit refetch, while
-      // the unread badge pointing at it updated correctly because
-      // `useChatUnreadCount` already uses the right form.
-      client.on(handleEvent);
+    const handleEvent = (event: Event) => {
+      if (
+        event.type === "notification.added_to_channel" &&
+        event.channel &&
+        event.user?.id === client.userID
+      ) {
+        void handleAddedToChannel(event);
+        return;
+      }
+      if (
+        event.type === "notification.removed_from_channel" &&
+        event.channel &&
+        event.user?.id === client.userID
+      ) {
+        handleUserRemovedFromChannel(event.channel.cid || event.channel.id);
+        return;
+      }
+      if (event.type === "channel.deleted" && event.channel) {
+        handleChannelDeleted(event.channel.cid || event.channel.id);
+        return;
+      }
+      if (
+        event.channel &&
+        (event.type === "message.new" ||
+          event.type === "notification.message_new" ||
+          event.type === "message.read" ||
+          event.type === "channel.updated")
+      ) {
+        handleChannelActivity(event);
+      }
+    };
 
-      return () => {
-        client.off(handleEvent);
-      };
-    }
-    // #248: deps intentionally exclude `fetchChannels` and `activeChannelId` so
-    // the listener is not re-attached on every channel selection. It re-attaches
-    // only when the client or the channel-mutation handlers genuinely change.
+    // #1280 2.6 — the SINGLE-argument form is the "every event" listener.
+    client.on(handleEvent);
+
+    return () => {
+      client.off(handleEvent);
+    };
   }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);
 
   const handleChannelSelect = useCallback(
@@ -796,34 +810,100 @@ export const ChatSidebar = () => {
     initialSelectionDoneRef.current = true;
 
     let cancelled = false;
+    let completed = false;
+
+    const failDeepLink = (description: string) => {
+      if (cancelled) return;
+      completed = true;
+      initialSelectionDoneRef.current = false;
+      toast({
+        title: "Unable to open conversation",
+        description,
+        variant: "destructive",
+      });
+    };
+
+    const prependAndSelectChannel = (
+      channel: Channel,
+      targetList: "dm" | "team",
+    ) => {
+      deepLinkedChannelCidRef.current = channel.cid || null;
+      const setter = targetList === "dm" ? setDirectMessages : setTeamChannels;
+      setter((prev) =>
+        prev.some((ch) => ch.cid === channel.cid) ? prev : [channel, ...prev],
+      );
+      completed = true;
+      handleChannelSelect(channel);
+    };
+
+    const openViaEndpoint = async (
+      payload: Record<string, unknown>,
+      targetList: "dm" | "team",
+    ) => {
+      const response = await fetch("/api/stream/channels/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (cancelled) return;
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        const message =
+          typeof errBody?.error === "string"
+            ? errBody.error
+            : "Could not open the requested conversation.";
+        failDeepLink(message);
+        return;
+      }
+      const { channelType, channelId } = (await response.json()) as {
+        channelType: "messaging" | "team";
+        channelId: string;
+      };
+      const channel = client.channel(channelType, channelId);
+      await channel.watch();
+      if (cancelled) return;
+      prependAndSelectChannel(channel, targetList);
+    };
+
+    const openByChannelId = async (rawChannelId: string, userId: string) => {
+      const { channelType, channelId } =
+        parseDeepLinkChannelTarget(rawChannelId);
+      const found = await client.queryChannels(
+        {
+          type: channelType,
+          id: { $eq: channelId },
+          members: { $in: [userId] },
+          ...buildOrgChannelFilter(scope),
+        },
+        { last_message_at: -1 },
+        { watch: true, state: true, limit: 1 },
+      );
+      if (cancelled) return;
+      if (found.length === 0) {
+        failDeepLink("The requested conversation was not found.");
+        return;
+      }
+      prependAndSelectChannel(
+        found[0],
+        channelType === "messaging" ? "dm" : "team",
+      );
+    };
+
     const openDeepLinkedChannel = async () => {
       try {
         if (counterpartyUserId) {
-          const response = await fetch("/api/stream/channels/open", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          await openViaEndpoint(
+            {
               kind: "dm",
               counterpartyUserId,
               peerUserId: counterpartyUserId,
               ...(contextAppointmentId ? { contextAppointmentId } : {}),
               organizationId: pinnedOrgId ?? null,
-            }),
-          });
-          if (!response.ok || cancelled) return;
-          const { channelType, channelId } = (await response.json()) as {
-            channelType: "messaging" | "team";
-            channelId: string;
-          };
-          const channel = client.channel(channelType, channelId);
-          await channel.watch();
-          if (cancelled) return;
-          setDirectMessages((prev) =>
-            prev.some((ch) => ch.cid === channel.cid)
-              ? prev
-              : [channel, ...prev],
+            },
+            "dm",
           );
-          handleChannelSelect(channel);
           return;
         }
 
@@ -831,66 +911,33 @@ export const ChatSidebar = () => {
           (deepLinkEventType === "webinar" || deepLinkEventType === "class") &&
           deepLinkEventId
         ) {
-          const response = await fetch("/api/stream/channels/open", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          await openViaEndpoint(
+            {
               kind: "event",
               eventType: deepLinkEventType,
               eventId: deepLinkEventId,
-            }),
-          });
-          if (!response.ok || cancelled) return;
-          const { channelType, channelId } = (await response.json()) as {
-            channelType: "messaging" | "team";
-            channelId: string;
-          };
-          const channel = client.channel(channelType, channelId);
-          await channel.watch();
-          if (cancelled) return;
-          setTeamChannels((prev) =>
-            prev.some((ch) => ch.cid === channel.cid)
-              ? prev
-              : [channel, ...prev],
+            },
+            "team",
           );
-          handleChannelSelect(channel);
           return;
         }
 
         if (deepLinkChannelId && client.userID) {
-          const colonIdx = deepLinkChannelId.indexOf(":");
-          const channelType =
-            colonIdx > 0
-              ? deepLinkChannelId.slice(0, colonIdx)
-              : deepLinkChannelId.startsWith("dm-") ||
-                  deepLinkChannelId.startsWith("dmo-")
-                ? "messaging"
-                : "team";
-          const channelId =
-            colonIdx > 0
-              ? deepLinkChannelId.slice(colonIdx + 1)
-              : deepLinkChannelId;
-          const found = await client.queryChannels(
-            {
-              type: channelType,
-              id: { $eq: channelId },
-              members: { $in: [client.userID] },
-              ...buildOrgChannelFilter(scope),
-            },
-            { last_message_at: -1 },
-            { watch: true, state: true, limit: 1 },
-          );
-          if (cancelled || found.length === 0) return;
-          handleChannelSelect(found[0]);
+          await openByChannelId(deepLinkChannelId, client.userID);
         }
       } catch (err) {
         console.error("Failed to open deep-linked channel:", err);
+        failDeepLink("Failed to open the requested conversation.");
       }
     };
 
     void openDeepLinkedChannel();
     return () => {
       cancelled = true;
+      if (!completed && deepLinkHandledRef.current === deepLinkKey) {
+        deepLinkHandledRef.current = null;
+        initialSelectionDoneRef.current = false;
+      }
     };
   }, [
     client,
@@ -902,6 +949,7 @@ export const ChatSidebar = () => {
     deepLinkChannelId,
     scope,
     handleChannelSelect,
+    toast,
   ]);
 
   // Debug Stream tools: local hostname only — never on deployed/preview hosts

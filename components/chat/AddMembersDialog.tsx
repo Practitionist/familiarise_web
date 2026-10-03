@@ -89,8 +89,11 @@ export const AddMembersDialog = ({
       setHasSearched(true);
 
       try {
+        const orgScopeParam = activeOrgId
+          ? encodeURIComponent(`org:${activeOrgId}`)
+          : "";
         const orgQueryParam = activeOrgId
-          ? `&organizationId=${encodeURIComponent(activeOrgId)}&scope=${encodeURIComponent(`org:${activeOrgId}`)}`
+          ? `&organizationId=${encodeURIComponent(activeOrgId)}&scope=${orgScopeParam}`
           : `&scope=personal`;
         const response = await fetch(
           // Both halves encoded. `term` was, `exclude` was not — so a member id

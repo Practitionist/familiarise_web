@@ -19,8 +19,6 @@
 export type ConnectFailureKind =
   "account-disabled" | "consent" | "not-retryable" | "retryable";
 
-export type StreamConnectFailureKind = ConnectFailureKind;
-
 export interface ConnectFailure {
   kind: ConnectFailureKind;
   /** Stream API error code when the failure carried one. */
@@ -124,8 +122,7 @@ export function classifyConnectFailure(error: unknown): ConnectFailure {
     message.includes("data-processing consent for messaging")
   ) {
     const userMessage =
-      message ||
-      "Data-processing consent for live chat and video has not been granted.";
+      "Live chat and video need your data-processing consent before they can connect.";
     return {
       kind: "consent",
       code: null,

@@ -215,6 +215,19 @@ describe("transfer failure tracking (STR-2/3)", () => {
       isAllowedStreamRecordingUrl("https://video.getstream.io/rec_1.mp4"),
     ).toBe(true);
     expect(
+      isAllowedStreamRecordingUrl(
+        "https://stream-recordings.s3.us-east-1.amazonaws.com/rec_1.mp4",
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedStreamRecordingUrl(
+        "https://execute-api.us-east-1.amazonaws.com/rec_1.mp4",
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedStreamRecordingUrl("https://cdn.stream.example/rec_1.mp4"),
+    ).toBe(false);
+    expect(
       isAllowedStreamRecordingUrl("http://us-east.stream-io-cdn.com/rec_1.mp4"),
     ).toBe(false);
     expect(

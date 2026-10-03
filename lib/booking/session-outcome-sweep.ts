@@ -99,6 +99,151 @@ export async function readOutageWindows(
     .map((r) => ({ startsAt: r.startedAt, endsAt: r.endedAt }));
 }
 
+async function capOpenSlotPresences(
+  slot: OutcomeSlot,
+): Promise<OutcomeSlot["presences"]> {
+  const { meeting } = slot;
+  if (!slot.presences.some((p) => p.leftAt === null)) {
+    return slot.presences;
+  }
+  const capAt = meeting?.endedAt ?? slot.endsAt;
+  await prisma.meetingPresence?.updateMany?.({
+    where: { appointmentOccurrenceId: slot.id, leftAt: null },
+    data: { leftAt: capAt },
+  });
+  return slot.presences.map((p) =>
+    p.leftAt === null ? { ...p, leftAt: capAt } : p,
+  );
+}
+
+async function backfillMissingPresencesFromStream(
+  slot: OutcomeSlot,
+  presences: OutcomeSlot["presences"],
+  report: Awaited<ReturnType<typeof getCallPresenceEvidence>>,
+): Promise<OutcomeSlot["presences"]> {
+  const { meeting } = slot;
+  const seen = new Set(presences.map((p) => p.userId));
+  if (!meeting || !report || report.unique <= seen.size) {
+    return presences;
+  }
+
+  const backfilled =
+    report.intervals ??
+    (await getCallParticipantSessionsFromStream?.(
+      meeting.streamCallId,
+      report.sessionId,
+    )) ??
+    [];
+  if (backfilled.length === 0) {
+    return presences;
+  }
+
+  const seenSessionIds = new Set<string>();
+  const resolved = backfilled
+    .filter((b) => {
+      if (seenSessionIds.has(b.userSessionId)) return false;
+      seenSessionIds.add(b.userSessionId);
+      return true;
+    })
+    .map((b) => ({
+      userId: b.userId,
+      userSessionId: b.userSessionId,
+      joinedAt: b.joinedAt,
+      leftAt: b.leftAt,
+    }));
+
+  const closedRows = resolved.filter((r) => r.leftAt !== null);
+  const meetingRow =
+    closedRows.length > 0
+      ? await prisma.meeting?.findUnique?.({
+          where: { streamCallId: meeting.streamCallId },
+          select: { id: true },
+        })
+      : null;
+  if (meetingRow?.id) {
+    await prisma.meetingPresence?.createMany?.({
+      data: closedRows.map((r) => ({
+        meetingId: meetingRow.id,
+        appointmentOccurrenceId: slot.id,
+        userId: r.userId,
+        userSessionId: r.userSessionId,
+        joinedAt: r.joinedAt,
+        leftAt: r.leftAt,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  const additionalPresences = resolved
+    .filter(
+      (r) =>
+        !presences.some(
+          (p) =>
+            p.userId === r.userId &&
+            p.joinedAt.getTime() === r.joinedAt.getTime(),
+        ),
+    )
+    .map((r) => ({
+      userId: r.userId,
+      joinedAt: r.joinedAt,
+      leftAt: r.leftAt,
+    }));
+
+  return [...presences, ...additionalPresences];
+}
+
+async function writeSlotOutcomeTransaction(
+  slot: OutcomeSlot,
+  presences: OutcomeSlot["presences"],
+  to: OccurrenceCompletionStatus,
+  verdict: SessionOutcomeVerdict,
+  now: Date,
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const count = await transitionOccurrenceCompletion(tx, {
+      // voidedAt: null — a re-run never re-stamps a void.
+      where: {
+        id: slot.id,
+        isTentative: false,
+        deletedAt: null,
+        voidedAt: null,
+      },
+      to,
+      fromIn: [OccurrenceCompletionStatus.SCHEDULED],
+      data: {
+        outcome: verdict.outcome,
+        outcomeAt: now,
+        deliveredMinutes: verdict.deliveredMinutes,
+        lostMinutes: verdict.lostMinutes,
+        ...(to === "VOIDED" && { voidedAt: now }),
+        ...(to === "COMPLETED" && { completedAt: now }),
+      },
+      reason: `session-outcome:${verdict.outcome}`,
+      organizationId: slot.appointment.organizationId,
+      allowZero: true,
+    });
+    if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
+      await stageNoShowBells(tx, slot, "one-to-one");
+    }
+    // Owner decision — a group seat absent from a held session hears only of its recording.
+    const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
+    if (count > 0 && verdict.outcome === "HELD" && isGroup) {
+      await stageNoShowBells(tx, { ...slot, presences }, "group");
+    }
+    // A void is a class miss: bells, and the exit right re-checked in this tx.
+    if (count > 0 && to === "VOIDED" && slot.appointment.classId) {
+      await onClassSessionVoided(tx, {
+        appointmentId: slot.appointmentId,
+        occurrenceId: slot.id,
+        startsAt: slot.startsAt,
+        voidedAt: now,
+        hostAttributed: verdict.hostAttributed,
+      });
+    }
+    return count > 0;
+  });
+}
+
 /** Classify one past session and write its outcome, or defer it. */
 export async function decideSlotOutcome(
   slot: OutcomeSlot,
@@ -110,17 +255,7 @@ export async function decideSlotOutcome(
     return { kind: "deferred", reason: "live-overrun" };
   }
 
-  let presences = slot.presences;
-  if (presences.some((p) => p.leftAt === null)) {
-    const capAt = meeting?.endedAt ?? slot.endsAt;
-    await prisma.meetingPresence?.updateMany?.({
-      where: { appointmentOccurrenceId: slot.id, leftAt: null },
-      data: { leftAt: capAt },
-    });
-    presences = presences.map((p) =>
-      p.leftAt === null ? { ...p, leftAt: capAt } : p,
-    );
-  }
+  let presences = await capOpenSlotPresences(slot);
 
   const feedGap =
     !!meeting?.endedAt &&
@@ -132,50 +267,7 @@ export async function decideSlotOutcome(
       : null;
   if (feedGap && (report?.unique ?? 0) > 0) ctx.onFeedGap?.();
 
-  const seen = new Set(presences.map((p) => p.userId));
-  if (meeting && report && report.unique > seen.size) {
-    const backfilled =
-      report.intervals ??
-      (await getCallParticipantSessionsFromStream?.(
-        meeting.streamCallId,
-        report.sessionId,
-      )) ??
-      [];
-    if (backfilled.length > 0) {
-      const capAt = meeting.endedAt ?? slot.endsAt;
-      const resolved = backfilled.map((b) => ({
-        userId: b.userId,
-        userSessionId: b.userSessionId,
-        joinedAt: b.joinedAt,
-        leftAt: b.leftAt ?? capAt,
-      }));
-      const meetingRow = await prisma.meeting?.findUnique?.({
-        where: { streamCallId: meeting.streamCallId },
-        select: { id: true },
-      });
-      if (meetingRow?.id) {
-        await prisma.meetingPresence?.createMany?.({
-          data: resolved.map((r) => ({
-            meetingId: meetingRow.id,
-            appointmentOccurrenceId: slot.id,
-            userId: r.userId,
-            userSessionId: r.userSessionId,
-            joinedAt: r.joinedAt,
-            leftAt: r.leftAt,
-          })),
-          skipDuplicates: true,
-        });
-      }
-      presences = [
-        ...presences,
-        ...resolved.map((r) => ({
-          userId: r.userId,
-          joinedAt: r.joinedAt,
-          leftAt: r.leftAt,
-        })),
-      ];
-    }
-  }
+  presences = await backfillMissingPresencesFromStream(slot, presences, report);
 
   const verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
@@ -198,49 +290,13 @@ export async function decideSlotOutcome(
     to = OccurrenceCompletionStatus.UNVERIFIED;
   }
 
-  const moved = await prisma.$transaction(async (tx) => {
-    const count = await transitionOccurrenceCompletion(tx, {
-      // voidedAt: null — a re-run never re-stamps a void.
-      where: {
-        id: slot.id,
-        isTentative: false,
-        deletedAt: null,
-        voidedAt: null,
-      },
-      to,
-      fromIn: [OccurrenceCompletionStatus.SCHEDULED],
-      data: {
-        outcome: verdict.outcome,
-        outcomeAt: ctx.now,
-        deliveredMinutes: verdict.deliveredMinutes,
-        lostMinutes: verdict.lostMinutes,
-        ...(to === "VOIDED" && { voidedAt: ctx.now }),
-        ...(to === "COMPLETED" && { completedAt: ctx.now }),
-      },
-      reason: `session-outcome:${verdict.outcome}`,
-      organizationId: slot.appointment.organizationId,
-      allowZero: true,
-    });
-    if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
-      await stageNoShowBells(tx, slot, "one-to-one");
-    }
-    // Owner decision — a group seat absent from a held session hears only of its recording.
-    const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
-    if (count > 0 && verdict.outcome === "HELD" && isGroup) {
-      await stageNoShowBells(tx, { ...slot, presences }, "group");
-    }
-    // A void is a class miss: bells, and the exit right re-checked in this tx.
-    if (count > 0 && to === "VOIDED" && slot.appointment.classId) {
-      await onClassSessionVoided(tx, {
-        appointmentId: slot.appointmentId,
-        occurrenceId: slot.id,
-        startsAt: slot.startsAt,
-        voidedAt: ctx.now,
-        hostAttributed: verdict.hostAttributed,
-      });
-    }
-    return count > 0;
-  });
+  const moved = await writeSlotOutcomeTransaction(
+    slot,
+    presences,
+    to,
+    verdict,
+    ctx.now,
+  );
   return { kind: "written", to, verdict, moved };
 }
 

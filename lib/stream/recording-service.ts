@@ -543,6 +543,13 @@ export class RecordingService {
           appointment: {
             select: {
               id: true,
+              payment: {
+                where: { userId, paymentStatus: "SUCCEEDED" },
+                select: {
+                  amount: true,
+                  refunds: { select: { amountPaise: true, status: true } },
+                },
+              },
               webinar: { select: { webinarPlanId: true } },
               class: { select: { classPlanId: true } },
               consultation: { select: { id: true } },
@@ -557,7 +564,37 @@ export class RecordingService {
     // #689 — drop fully-refunded purchases before deriving entitled plans; a
     // SUCCEEDED payment whose refunds cover it no longer grants recording access.
     const entitled = enrolledAppointments.filter(isPaymentEntitled);
-    const combined = [...entitled, ...seatRows];
+    const entitledAppointmentIds = new Set(
+      entitled
+        .map((p) => p.appointment?.id ?? p.appointmentId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const refundedAppointmentIds = new Set(
+      enrolledAppointments
+        .filter((p) => !isPaymentEntitled(p))
+        .map((p) => p.appointment?.id ?? p.appointmentId)
+        .filter(
+          (id): id is string =>
+            typeof id === "string" && !entitledAppointmentIds.has(id),
+        ),
+    );
+    const entitledSeats = seatRows.filter((seat) => {
+      const apptId = seat.appointment?.id ?? seat.appointmentId;
+      if (apptId && refundedAppointmentIds.has(apptId)) return false;
+      const seatPayments = (
+        seat.appointment as
+          | {
+              payment?: Array<Parameters<typeof isPaymentEntitled>[0]>;
+            }
+          | null
+          | undefined
+      )?.payment;
+      if (Array.isArray(seatPayments) && seatPayments.length > 0) {
+        return seatPayments.some(isPaymentEntitled);
+      }
+      return true;
+    });
+    const combined = [...entitled, ...entitledSeats];
 
     const webinarPlanIds = Array.from(
       new Set(
@@ -590,6 +627,82 @@ export class RecordingService {
     return { webinarPlanIds, classPlanIds, appointmentIds };
   }
 
+  private static buildOneToOneTypeFilter(
+    type?: "webinar" | "class" | "consultation" | "subscription" | "trial",
+  ): Prisma.AppointmentWhereInput {
+    if (type === "consultation") return { consultation: { isNot: null } };
+    if (type === "subscription") return { subscription: { isNot: null } };
+    if (type === "trial") return { trial: { isNot: null } };
+    return {};
+  }
+
+  private static buildConsulteeWhereConditions(params: {
+    type?: "webinar" | "class" | "consultation" | "subscription" | "trial";
+    webinarPlanIds: string[];
+    classPlanIds: string[];
+    appointmentIds: string[];
+    purchasedRecordingIds: string[];
+  }): Prisma.RecordingWhereInput[] {
+    const {
+      type,
+      webinarPlanIds,
+      classPlanIds,
+      appointmentIds,
+      purchasedRecordingIds,
+    } = params;
+    const whereConditions: Prisma.RecordingWhereInput[] = [];
+
+    if ((!type || type === "webinar") && webinarPlanIds.length > 0) {
+      whereConditions.push({
+        meeting: {
+          occurrence: {
+            appointment: {
+              webinar: { webinarPlanId: { in: webinarPlanIds } },
+            },
+          },
+        },
+      });
+    }
+
+    if ((!type || type === "class") && classPlanIds.length > 0) {
+      whereConditions.push({
+        meeting: {
+          occurrence: {
+            appointment: {
+              class: { classPlanId: { in: classPlanIds } },
+            },
+          },
+        },
+      });
+    }
+
+    const includeOneToOne =
+      !type ||
+      type === "consultation" ||
+      type === "subscription" ||
+      type === "trial";
+    if (includeOneToOne && appointmentIds.length > 0) {
+      whereConditions.push({
+        meeting: {
+          occurrence: {
+            appointment: {
+              id: { in: appointmentIds },
+              ...this.buildOneToOneTypeFilter(type),
+            },
+          },
+        },
+      });
+    }
+
+    if (!type && purchasedRecordingIds.length > 0) {
+      whereConditions.push({
+        id: { in: purchasedRecordingIds },
+      });
+    }
+
+    return whereConditions;
+  }
+
   /**
    * Get all recordings for a consultee (paid enrollments only)
    * @param userId The user ID (for payment lookup)
@@ -611,79 +724,17 @@ export class RecordingService {
           }) ?? Promise.resolve([]),
         ]);
 
-      // Build query based on type filter
-      const whereConditions: Prisma.RecordingWhereInput[] = [];
-
-      if (!filters?.type || filters.type === "webinar") {
-        if (webinarPlanIds.length > 0) {
-          whereConditions.push({
-            meeting: {
-              occurrence: {
-                appointment: {
-                  webinar: {
-                    webinarPlanId: {
-                      in: webinarPlanIds,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        }
-      }
-
-      if (!filters?.type || filters.type === "class") {
-        if (classPlanIds.length > 0) {
-          whereConditions.push({
-            meeting: {
-              occurrence: {
-                appointment: {
-                  class: {
-                    classPlanId: {
-                      in: classPlanIds,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        }
-      }
-
-      const includeOneToOne =
-        !filters?.type ||
-        filters.type === "consultation" ||
-        filters.type === "subscription" ||
-        filters.type === "trial";
-      if (includeOneToOne && appointmentIds.length > 0) {
-        const typeFilter =
-          filters?.type === "consultation"
-            ? { consultation: { isNot: null } }
-            : filters?.type === "subscription"
-              ? { subscription: { isNot: null } }
-              : filters?.type === "trial"
-                ? { trial: { isNot: null } }
-                : {};
-        whereConditions.push({
-          meeting: {
-            occurrence: {
-              appointment: {
-                id: { in: appointmentIds },
-                ...typeFilter,
-              },
-            },
-          },
-        });
-      }
-
       const purchasedRecordingIds = purchases
         .map((p) => p.recordingId)
         .filter((id): id is string => Boolean(id));
-      if (!filters?.type && purchasedRecordingIds.length > 0) {
-        whereConditions.push({
-          id: { in: purchasedRecordingIds },
-        });
-      }
+
+      const whereConditions = this.buildConsulteeWhereConditions({
+        type: filters?.type,
+        webinarPlanIds,
+        classPlanIds,
+        appointmentIds,
+        purchasedRecordingIds,
+      });
 
       // If no valid enrollments found, return empty array
       if (whereConditions.length === 0) {

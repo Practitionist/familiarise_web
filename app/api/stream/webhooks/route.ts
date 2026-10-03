@@ -52,6 +52,7 @@ const gunzip = promisify(gunzipCb);
 async function readSignedBody(req: NextRequest): Promise<string> {
   const raw = Buffer.from(await req.arrayBuffer());
 
+  // RFC 1952 gzip magic number (0x1f 0x8b); Stream signs the uncompressed JSON body.
   const isGzipped = raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b;
   if (!isGzipped) return raw.toString("utf8");
 
@@ -70,6 +71,49 @@ function verifyStreamSignature(
 ): boolean {
   const signature = req.headers.get("x-signature");
   return verifyStreamWebhookSignature(body, signature, secret);
+}
+
+async function handleOutOfWindowDelivery(
+  eventId: string,
+  eventType: string,
+  event: unknown,
+  signature: string | undefined,
+  tooOld: string,
+): Promise<NextResponse> {
+  try {
+    const receipt = await recordStreamEventReceipt(
+      eventId,
+      eventType,
+      event,
+      signature,
+    );
+    if (receipt.isNew) {
+      await markWebhookEventProcessed(eventId, tooOld, receipt.claim);
+    } else {
+      streamLogger.warn(
+        "Out-of-window replay of an already-recorded delivery — leaving its row untouched",
+        { eventId, eventType },
+      );
+    }
+  } catch (persistError) {
+    streamLogger.error(
+      `Failed to persist out-of-window Stream event ${eventId}`,
+      persistError,
+    );
+    return NextResponse.json(
+      { error: "Could not record event" },
+      { status: 503 },
+    );
+  }
+
+  streamLogger.warn(
+    `Refused an out-of-window Stream delivery: ${tooOld} (${eventType})`,
+  );
+  return NextResponse.json({
+    status: "ok",
+    accepted: false,
+    reason: "replay_window",
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -122,6 +166,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", handled: false });
     }
 
+    // Stream call/recording payloads have no stable top-level delivery ID, so hash the raw body.
     const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
     const eventId = `stream_${baseEvent.type}_${bodyHash}`;
 
@@ -132,42 +177,16 @@ export async function POST(req: NextRequest) {
       ? "permanent: unparseable_created_at"
       : classifyStreamDeliveryAge(createdAt);
     if (tooOld) {
-      try {
-        const receipt = await recordStreamEventReceipt(
-          eventId,
-          eventType,
-          event,
-          signature,
-        );
-        if (receipt.isNew) {
-          await markWebhookEventProcessed(eventId, tooOld, receipt.claim);
-        } else {
-          streamLogger.warn(
-            "Out-of-window replay of an already-recorded delivery — leaving its row untouched",
-            { eventId, eventType },
-          );
-        }
-      } catch (persistError) {
-        streamLogger.error(
-          `Failed to persist out-of-window Stream event ${eventId}`,
-          persistError,
-        );
-        return NextResponse.json(
-          { error: "Could not record event" },
-          { status: 503 },
-        );
-      }
-
-      streamLogger.warn(
-        `Refused an out-of-window Stream delivery: ${tooOld} (${eventType})`,
+      return await handleOutOfWindowDelivery(
+        eventId,
+        eventType,
+        event,
+        signature,
+        tooOld,
       );
-      return NextResponse.json({
-        status: "ok",
-        accepted: false,
-        reason: "replay_window",
-      });
     }
 
+    // Persist the receipt before acknowledging so the sweeper can recover if after() is killed.
     let receipt: { isNew: boolean; claim: WebhookClaim };
     try {
       receipt = await recordStreamEventReceipt(
@@ -202,6 +221,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Acknowledge inside Stream's 6s timeout and run heavy handler work in after().
     await runAfterOrInline(async () => {
       await processStreamEvent(
         event,

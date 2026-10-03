@@ -389,7 +389,69 @@ const patchRecordingSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
 });
 
-async function isRecordingHostOrAdmin(
+function sanitizeRecordingMutationResponse(recording: unknown) {
+  if (!recording || typeof recording !== "object") return recording;
+  const {
+    recordingUrl: _recordingUrl,
+    storageUrl: _storageUrl,
+    storagePath: _storagePath,
+    previewClipStoragePath: _previewClipStoragePath,
+    ...safeRecording
+  } = recording as Record<string, unknown>;
+  return safeRecording;
+}
+
+type PlanWithCollaborators = {
+  id?: string;
+  consultantProfileId?: string | null;
+  consultantProfile?: { userId?: string | null } | null;
+  collaborators?: Array<{ consultantProfileId: string }> | null;
+} | null;
+
+async function hasAcceptedCollaboratorAccess(
+  consultantProfileId: string,
+  webinarPlan?: PlanWithCollaborators,
+  classPlan?: PlanWithCollaborators,
+): Promise<boolean> {
+  if (
+    webinarPlan?.collaborators?.some(
+      (c) => c.consultantProfileId === consultantProfileId,
+    ) ||
+    classPlan?.collaborators?.some(
+      (c) => c.consultantProfileId === consultantProfileId,
+    )
+  ) {
+    return true;
+  }
+
+  if (webinarPlan?.id && prisma.collaborator?.findFirst) {
+    const collab = await prisma.collaborator.findFirst({
+      where: {
+        webinarPlanId: webinarPlan.id,
+        consultantProfileId,
+        status: "ACCEPTED",
+      },
+      select: { id: true },
+    });
+    if (collab) return true;
+  }
+
+  if (classPlan?.id && prisma.collaborator?.findFirst) {
+    const collab = await prisma.collaborator.findFirst({
+      where: {
+        classPlanId: classPlan.id,
+        consultantProfileId,
+        status: "ACCEPTED",
+      },
+      select: { id: true },
+    });
+    if (collab) return true;
+  }
+
+  return false;
+}
+
+async function resolveRecordingWriteAccess(
   user: {
     id: string;
     role?: string | null;
@@ -398,9 +460,7 @@ async function isRecordingHostOrAdmin(
   recording: NonNullable<
     Awaited<ReturnType<typeof RecordingService.getRecordingById>>
   >,
-): Promise<boolean> {
-  if (user.role === "ADMIN") return true;
-
+): Promise<{ allowed: boolean; viaOperatorGrant: boolean }> {
   let consultantProfileId = user.consultantProfileId ?? null;
   if (!consultantProfileId && prisma.consultantProfile?.findUnique) {
     const profile = await prisma.consultantProfile.findUnique({
@@ -410,38 +470,27 @@ async function isRecordingHostOrAdmin(
     consultantProfileId = profile?.id ?? null;
   }
 
-  const appointment = recording.meeting?.occurrence?.appointment as
+  const occurrence = recording.meeting?.occurrence as
     | {
-        webinar?: {
-          webinarPlan?: {
-            consultantProfileId?: string | null;
-            consultantProfile?: { userId?: string | null } | null;
-          } | null;
-        } | null;
-        class?: {
-          classPlan?: {
-            consultantProfileId?: string | null;
-            consultantProfile?: { userId?: string | null } | null;
-          } | null;
-        } | null;
-        consultation?: {
-          consultationPlan?: {
-            consultantProfileId?: string | null;
-            consultantProfile?: { userId?: string | null } | null;
-          } | null;
-        } | null;
-        subscription?: {
-          subscriptionPlan?: {
-            consultantProfileId?: string | null;
-            consultantProfile?: { userId?: string | null } | null;
-          } | null;
-        } | null;
-        trial?: {
-          subscriptionPlan?: {
-            consultantProfileId?: string | null;
-            consultantProfile?: { userId?: string | null } | null;
-          } | null;
-        } | null;
+        consultantProfileId?: string | null;
+        appointment?: unknown;
+      }
+    | undefined;
+
+  if (
+    consultantProfileId &&
+    occurrence?.consultantProfileId === consultantProfileId
+  ) {
+    return { allowed: true, viaOperatorGrant: false };
+  }
+
+  const appointment = occurrence?.appointment as
+    | {
+        webinar?: { webinarPlan?: PlanWithCollaborators } | null;
+        class?: { classPlan?: PlanWithCollaborators } | null;
+        consultation?: { consultationPlan?: PlanWithCollaborators } | null;
+        subscription?: { subscriptionPlan?: PlanWithCollaborators } | null;
+        trial?: { subscriptionPlan?: PlanWithCollaborators } | null;
       }
     | undefined;
 
@@ -453,20 +502,34 @@ async function isRecordingHostOrAdmin(
     appointment?.trial?.subscriptionPlan,
   ];
 
-  for (const plan of plans) {
-    if (!plan) continue;
-    if (
-      consultantProfileId &&
-      plan.consultantProfileId === consultantProfileId
-    ) {
-      return true;
-    }
-    if (plan.consultantProfile?.userId === user.id) {
-      return true;
-    }
+  const ownsAnyPlan = plans.some(
+    (plan) =>
+      Boolean(plan) &&
+      ((Boolean(consultantProfileId) &&
+        plan?.consultantProfileId === consultantProfileId) ||
+        plan?.consultantProfile?.userId === user.id),
+  );
+  if (ownsAnyPlan) {
+    return { allowed: true, viaOperatorGrant: false };
   }
 
-  return false;
+  if (
+    consultantProfileId &&
+    (await hasAcceptedCollaboratorAccess(
+      consultantProfileId,
+      appointment?.webinar?.webinarPlan,
+      appointment?.class?.classPlan,
+    ))
+  ) {
+    return { allowed: true, viaOperatorGrant: false };
+  }
+
+  const operator = resolveOperatorRecordingAccess(user.role);
+  if (operator.canPlay) {
+    return { allowed: true, viaOperatorGrant: true };
+  }
+
+  return { allowed: false, viaOperatorGrant: false };
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
@@ -485,7 +548,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const allowed = await isRecordingHostOrAdmin(session.user, recording);
+    const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
+      session.user,
+      recording,
+    );
     if (!allowed) {
       return NextResponse.json(
         {
@@ -511,6 +577,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    if (viaOperatorGrant) {
+      await auditOperatorRecordingAccess({
+        actorUserId: session.user.id,
+        actorRole: String(session.user.role),
+        surface: "PATCH /api/stream/recordings/[recordingId]",
+        played: false,
+        recordingId: recording.id,
+        meetingId: recording.meeting?.id ?? null,
+        streamCallId: recording.meeting?.streamCallId ?? null,
+        organizationId: recording.meeting?.organizationId ?? null,
+      });
+    }
+
     const updated = await prisma.recording.update({
       where: { id: recordingId },
       data: {
@@ -520,7 +599,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    return NextResponse.json({ recording: updated });
+    return NextResponse.json({
+      recording: sanitizeRecordingMutationResponse(updated),
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -550,7 +631,10 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const allowed = await isRecordingHostOrAdmin(session.user, recording);
+    const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
+      session.user,
+      recording,
+    );
     if (!allowed) {
       return NextResponse.json(
         {
@@ -566,15 +650,57 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       previewClipStoragePath?: string | null;
     };
 
-    if (recWithListing.listingStatus === "PUBLISHED") {
-      const activePurchase = await prisma.recordingPurchase?.findFirst?.({
-        where: { recordingId, status: "SUCCEEDED" },
+    // Always block deletion when any PENDING or SUCCEEDED purchase exists,
+    // regardless of current listingStatus (prevents unpublish-then-delete bypass).
+    const findActivePurchase = () =>
+      prisma.recordingPurchase?.findFirst?.({
+        where: {
+          recordingId,
+          status: { in: ["PENDING", "SUCCEEDED"] },
+        },
         select: { id: true },
       });
-      if (activePurchase) {
+
+    const activePurchase = await findActivePurchase();
+    if (activePurchase) {
+      return NextResponse.json(
+        {
+          error: "Cannot delete a recording that has active or pending buyers",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (viaOperatorGrant) {
+      await auditOperatorRecordingAccess({
+        actorUserId: session.user.id,
+        actorRole: String(session.user.role),
+        surface: "DELETE /api/stream/recordings/[recordingId]",
+        played: false,
+        recordingId: recording.id,
+        meetingId: recording.meeting?.id ?? null,
+        streamCallId: recording.meeting?.streamCallId ?? null,
+        organizationId: recording.meeting?.organizationId ?? null,
+      });
+    }
+
+    // If the recording was PUBLISHED, unpublish it first to close the checkout
+    // window before deleting objects from storage, then re-verify no purchase
+    // raced in while PUBLISHED.
+    if (recWithListing.listingStatus === "PUBLISHED") {
+      await prisma.recording.update({
+        where: { id: recordingId },
+        data: {
+          listingStatus: "UNPUBLISHED",
+          unpublishedAt: new Date(),
+        },
+      });
+      const racedPurchase = await findActivePurchase();
+      if (racedPurchase) {
         return NextResponse.json(
           {
-            error: "Cannot delete a published recording that has active buyers",
+            error:
+              "Cannot delete a recording that has active or pending buyers",
           },
           { status: 409 },
         );
@@ -611,7 +737,10 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    return NextResponse.json({ success: true, recording: updated });
+    return NextResponse.json({
+      success: true,
+      recording: sanitizeRecordingMutationResponse(updated),
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

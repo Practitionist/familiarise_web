@@ -31,9 +31,11 @@ export interface StreamInitialTokens {
  */
 export async function mintInitialStreamTokens(
   userId: string,
-  opts: { chat: boolean; video: boolean } = { chat: true, video: true },
+  opts?: { chat?: boolean; video?: boolean },
 ): Promise<StreamInitialTokens | null> {
   if (!isStreamConfigured()) return null;
+  const includeChat = opts?.chat ?? true;
+  const includeVideo = opts?.video ?? true;
   try {
     const hasConsent = await checkConsent({
       userId,
@@ -43,10 +45,10 @@ export async function mintInitialStreamTokens(
 
     return {
       userId,
-      chatToken: opts.chat
+      chatToken: includeChat
         ? generateChatToken(userId, STREAM_TOKEN_TTL_SECONDS)
         : undefined,
-      videoToken: opts.video
+      videoToken: includeVideo
         ? generateVideoToken(userId, STREAM_TOKEN_TTL_SECONDS)
         : undefined,
       expiresAt: Date.now() + STREAM_TOKEN_CACHE_MS,

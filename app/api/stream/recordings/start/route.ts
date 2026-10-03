@@ -22,6 +22,32 @@ const startRecordingSchema = z.object({
   meetingId: z.string().min(1, "Meeting session ID is required"),
 });
 
+function normalizeTrialMeeting<
+  T extends {
+    occurrence?: {
+      appointment?: {
+        trial?: unknown;
+        subscription?: unknown;
+      } | null;
+    } | null;
+  },
+>(meeting: T): T {
+  const appointment = meeting.occurrence?.appointment;
+  if (!appointment?.trial || appointment.subscription) {
+    return meeting;
+  }
+  return {
+    ...meeting,
+    occurrence: {
+      ...meeting.occurrence,
+      appointment: {
+        ...appointment,
+        subscription: appointment.trial,
+      },
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     // Check authentication
@@ -136,20 +162,7 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
-    const normalizedMeeting =
-      meeting.occurrence?.appointment?.trial &&
-      !meeting.occurrence.appointment.subscription
-        ? {
-            ...meeting,
-            occurrence: {
-              ...meeting.occurrence,
-              appointment: {
-                ...meeting.occurrence.appointment,
-                subscription: meeting.occurrence.appointment.trial,
-              },
-            },
-          }
-        : meeting;
+    const normalizedMeeting = normalizeTrialMeeting(meeting);
 
     // Verify the consultant owns this appointment using helper function
     const { isOwner, recordingEnabled } = getMeetingOwnershipInfo(

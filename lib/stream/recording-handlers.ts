@@ -175,6 +175,140 @@ export async function handleRecordingStopped(
  * Handle call.recording_ready event
  * Creates a Recording record in the database
  */
+type RecordingNotificationAppointment = Parameters<
+  typeof getEventAttendeeIds
+>[0] & {
+  organizationId?: string | null;
+  consultation?: {
+    consultationPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  subscription?: {
+    subscriptionPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  trial?: {
+    subscriptionPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  webinar?: {
+    webinarPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  class?: {
+    classPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+};
+
+function resolveRecordingNotificationMeta(
+  appointment: RecordingNotificationAppointment | null | undefined,
+): { appointmentType: string; consultantName: string } {
+  if (appointment?.consultation) {
+    return {
+      appointmentType: "consultation",
+      consultantName:
+        appointment.consultation.consultationPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant",
+    };
+  }
+  if (appointment?.subscription) {
+    return {
+      appointmentType: "subscription",
+      consultantName:
+        appointment.subscription.subscriptionPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant",
+    };
+  }
+  if (appointment?.trial) {
+    return {
+      appointmentType: "trial",
+      consultantName:
+        appointment.trial.subscriptionPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  if (appointment?.webinar) {
+    return {
+      appointmentType: "webinar",
+      consultantName:
+        appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  if (appointment?.class) {
+    return {
+      appointmentType: "class",
+      consultantName:
+        appointment.class.classPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  return {
+    appointmentType: "consultation",
+    consultantName: "Unknown Consultant",
+  };
+}
+
+async function stageAndSendRecordingReadyNotifications(
+  appointment: RecordingNotificationAppointment | null | undefined,
+  url: string,
+  recordingId: string,
+  streamCallId: string,
+): Promise<void> {
+  const userIds = await getEventAttendeeIds(appointment);
+  if (userIds.length === 0) return;
+
+  const { appointmentType, consultantName } =
+    resolveRecordingNotificationMeta(appointment);
+
+  const staged =
+    (await notifyRecordingAvailable(
+      userIds,
+      {
+        ...notificationScope(appointment?.organizationId),
+        appointmentType,
+        consultantName,
+        recordingUrl: url,
+        dashboardUrl: notificationHref(
+          appointment?.organizationId,
+          "recordings",
+        ),
+      },
+      { deferAttempt: true },
+    ).catch((err) => {
+      streamLogger.warn("Failed to stage recording notifications", {
+        recordingId,
+        streamCallId,
+        error: err,
+      });
+      return [];
+    })) ?? [];
+
+  const stagedRows = staged
+    .map((r) => r.staged)
+    .filter((row): row is StagedTrigger => Boolean(row));
+
+  if (stagedRows.length > 0) {
+    await runAfterOrInline(() =>
+      Promise.all(
+        stagedRows.map((row) =>
+          attemptTrigger(row).catch((err) =>
+            streamLogger.error("Failed to send recording notification", err, {
+              streamCallId,
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 export async function handleRecordingReady(
   event: StreamRecordingReadyEvent,
 ): Promise<void> {
@@ -334,7 +468,13 @@ export async function handleRecordingReady(
           recordingId: existingRecording.id,
           streamRecordingId: filename,
         });
-        recording = existingRecording;
+        if (meeting.isRecording) {
+          await prisma.meeting.update({
+            where: { id: meeting.id },
+            data: { isRecording: false },
+          });
+        }
+        return;
       }
     } else {
       recording = await prisma.recording.create({
@@ -386,74 +526,12 @@ export async function handleRecordingReady(
       );
     }
 
-    // Build recipient list — every live seat holder of the booking (#1554)
-    const userIds = await getEventAttendeeIds(appointment);
-
-    if (userIds.length > 0) {
-      let appointmentType = "consultation";
-      let consultantName = "Unknown Consultant";
-
-      if (appointment?.consultation) {
-        consultantName =
-          appointment.consultation.consultationPlan?.consultantProfile?.user
-            ?.name ?? "Unknown Consultant";
-      } else if (appointment?.subscription) {
-        appointmentType = "subscription";
-        consultantName =
-          appointment.subscription.subscriptionPlan?.consultantProfile?.user
-            ?.name ?? "Unknown Consultant";
-      } else if (appointment?.trial) {
-        appointmentType = "trial";
-        consultantName =
-          appointment.trial.subscriptionPlan?.consultantProfile?.user?.name ??
-          "Unknown Consultant";
-      } else if (appointment?.webinar) {
-        appointmentType = "webinar";
-        consultantName =
-          appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
-          "Unknown Consultant";
-      } else if (appointment?.class) {
-        appointmentType = "class";
-        consultantName =
-          appointment.class.classPlan?.consultantProfile?.user?.name ??
-          "Unknown Consultant";
-      }
-
-      const staged =
-        (await notifyRecordingAvailable(
-          userIds,
-          {
-            ...notificationScope(appointment?.organizationId),
-            appointmentType,
-            consultantName,
-            recordingUrl: url,
-            dashboardUrl: notificationHref(
-              appointment?.organizationId,
-              "recordings",
-            ),
-          },
-          { deferAttempt: true },
-        )) ?? [];
-      const stagedRows = staged
-        .map((r) => r.staged)
-        .filter((row): row is StagedTrigger => Boolean(row));
-
-      if (stagedRows.length > 0) {
-        await runAfterOrInline(() =>
-          Promise.all(
-            stagedRows.map((row) =>
-              attemptTrigger(row).catch((err) =>
-                streamLogger.error(
-                  "Failed to send recording notification",
-                  err,
-                  { streamCallId },
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-    }
+    await stageAndSendRecordingReadyNotifications(
+      appointment,
+      url,
+      recordingId,
+      streamCallId,
+    );
   } catch (error) {
     streamLogger.error("Failed to handle recording ready event", error, {
       streamCallId,

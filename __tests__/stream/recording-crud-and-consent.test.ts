@@ -81,6 +81,7 @@ import { POST as postRecordingConsent } from "../../app/api/meetings/[meetingId]
 describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRecordingPurchaseFindFirst.mockResolvedValue(null);
   });
 
   describe("PATCH /api/stream/recordings/[recordingId]", () => {
@@ -113,6 +114,10 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       mockRecordingUpdate.mockResolvedValue({
         id: "rec-1",
         title: "New Session Title",
+        recordingUrl: "https://internal.example/raw.mp4",
+        storagePath: "recordings/rec-1.mp4",
+        storageUrl: "familiarise-recordings",
+        previewClipStoragePath: "previews/rec-1.mp4",
         updatedAt: new Date("2026-03-10T10:00:00Z"),
       });
 
@@ -131,6 +136,10 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.recording.title).toBe("New Session Title");
+      expect(data.recording.storagePath).toBeUndefined();
+      expect(data.recording.storageUrl).toBeUndefined();
+      expect(data.recording.recordingUrl).toBeUndefined();
+      expect(data.recording.previewClipStoragePath).toBeUndefined();
     });
 
     it("rejects non-owners with 403", async () => {
@@ -177,7 +186,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
   });
 
   describe("DELETE /api/stream/recordings/[recordingId]", () => {
-    it("blocks deletion with 409 when published recording has active purchases", async () => {
+    it("blocks deletion with 409 when published or unpublished recording has active or pending purchases", async () => {
       mockGetSession.mockResolvedValue({
         user: {
           id: "consultant-user-1",
@@ -187,7 +196,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       });
       mockGetRecordingById.mockResolvedValue({
         id: "rec-published",
-        listingStatus: "PUBLISHED",
+        listingStatus: "UNPUBLISHED",
         storagePath: "recordings/rec-published.mp4",
         previewClipStoragePath: null,
         meeting: {
