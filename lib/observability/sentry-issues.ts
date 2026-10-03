@@ -34,6 +34,7 @@
 
 import "server-only";
 
+import { resolveSentryUserId } from "./identity";
 import type {
   SentryIssueSummary,
   UserSentryIssues,
@@ -78,12 +79,12 @@ function isConfigured(): boolean {
  * Build the issue-search query.
  *
  * `user.id:` is the indexed user field written by `lib/observability/identity`.
- * The value is a cuid, so it is URL-safe and needs no escaping; the quotes are
- * there so a future non-cuid identifier (an email, say) cannot break the
- * token structure.
+ * Passes `userId` through `resolveSentryUserId` so when `SENTRY_IDENTITY_SALT`
+ * is set, the back-office query looks up the exact HMAC virtual token (`ust_…`)
+ * that `setSentryIdentity` stamped on outgoing events.
  */
 function buildQuery(userId: string): string {
-  return `user.id:"${userId}" is:unresolved`;
+  return `user.id:"${resolveSentryUserId(userId)}" is:unresolved`;
 }
 
 export async function findUserIssues(opts: {

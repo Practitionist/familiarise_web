@@ -27,6 +27,7 @@ import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-repla
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { isDeadlock } from "@/lib/db/pg-errors";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 export async function POST(req: NextRequest) {
@@ -300,13 +301,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #1319 — an exhausted serialization retry (P2034 ×4) means the tx never
-    // committed: nothing was charged and a retry will see the sibling's state.
-    // classifyError is message-only and would label it 500.
+    // #1319 — an exhausted serialization retry (P2034 or 40P01 ×4) means the tx
+    // never committed: nothing was charged and a retry will see the sibling's
+    // state. classifyError is message-only and would label it 500.
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2034"
+      (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034") ||
+      isDeadlock(error)
     ) {
+      reportSentryError(error, {
+        subsystem: "checkout",
+        op: "serializable-exhausted",
+        expected: true,
+        level: "warning",
+      });
       return NextResponse.json(
         {
           error:
@@ -326,13 +334,12 @@ export async function POST(req: NextRequest) {
     // without an explicit branch above — the #1458 programme-cap codes, the
     // #1467 entitlement codes — paging as a checkout incident. Report it the
     // way the modelled refusals inside handleCheckout are reported instead.
+    let errorId: string | undefined;
     if (isBusinessErrorCode((error as { code?: unknown } | null)?.code)) {
       reportSentryError(error, { subsystem: "checkout", expected: true });
     } else {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "checkout" } },
-      );
+      errorId =
+        reportSentryError(error, { subsystem: "checkout" }) || undefined;
     }
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
@@ -347,6 +354,7 @@ export async function POST(req: NextRequest) {
         // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
         ...(error instanceof BookingRuleError ? { code: error.code } : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
+        ...(errorId ? { errorId } : {}),
         timestamp: new Date().toISOString(),
       },
       { status: classified.httpStatus },

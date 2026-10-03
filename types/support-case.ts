@@ -1,5 +1,6 @@
 import type { SupportChannel, SupportPriority } from "@prisma/client";
 
+import type { UserSentryIssues } from "@/lib/observability/sentry-issues-types";
 import type { CaseTopic } from "@/lib/support/case-topic";
 import type { SlaState } from "@/lib/support/sla";
 
@@ -106,6 +107,7 @@ export interface CaseWorkspace {
   payment: CasePayment | null;
   organization: { id: string; name: string } | null;
   pastCases: { key: string; subject: string; status: string; at: string }[];
+  sentryIssues?: UserSentryIssues;
   timeline: TimelineItem[];
   attachments: { id: string; name: string; url: string; size: number }[];
 }

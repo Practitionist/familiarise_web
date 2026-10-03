@@ -663,8 +663,25 @@ function SignInContent() {
             </Link>
           </p>
           <p className="mt-2 text-xs text-zinc-400">
-            By clicking continue, you agree to our Terms of Service and Privacy
-            Policy.
+            By clicking continue, you agree to our{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Privacy Policy
+            </Link>
+            .
           </p>
         </div>
         <div />

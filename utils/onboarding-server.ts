@@ -702,6 +702,33 @@ async function runOnboardingTransaction(
         include: onboardingUserInclude,
       });
 
+      if (
+        validatedBody.termsAcceptedAt &&
+        validatedBody.privacyAcceptedAt &&
+        tx.consentArtifact?.findFirst
+      ) {
+        const { buildSignupConsentArtifacts } = await import(
+          "@/lib/compliance/dpdp"
+        );
+        const { SIGNUP_PURPOSES } = await import(
+          "@/lib/compliance/purpose-codes"
+        );
+        const existingConsent = await tx.consentArtifact.findFirst({
+          where: {
+            userId,
+            dataFiduciary: "Familiarise",
+            withdrawnAt: null,
+            purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
+          },
+          select: { id: true },
+        });
+        if (!existingConsent) {
+          await tx.consentArtifact.createMany({
+            data: buildSignupConsentArtifacts(userId),
+          });
+        }
+      }
+
       return user;
     },
     { maxWait: 15000, timeout: 45000 },

@@ -408,4 +408,61 @@ describe("the disclosure switch, which is DEFAULT OFF", () => {
     process.env.SENTRY_IDENTITY_ENABLED = "on";
     expect(isSentryIdentityEnabled()).toBe(true);
   });
+
+  it("also accepts NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED='on' for client bundles without overriding explicit server 'off'", () => {
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED = "on";
+    try {
+      expect(isSentryIdentityEnabled()).toBe(true);
+      process.env.SENTRY_IDENTITY_ENABLED = "off";
+      expect(isSentryIdentityEnabled()).toBe(false);
+    } finally {
+      delete process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED;
+    }
+  });
+});
+
+describe("resolveSentryUserId (DPDP HMAC-SHA256 virtual token)", () => {
+  const originalSalt = process.env.SENTRY_IDENTITY_SALT;
+
+  beforeEach(() => {
+    process.env.SENTRY_IDENTITY_ENABLED = "on";
+  });
+
+  afterEach(() => {
+    if (originalSalt === undefined) delete process.env.SENTRY_IDENTITY_SALT;
+    else process.env.SENTRY_IDENTITY_SALT = originalSalt;
+  });
+
+  it("passes raw userId through when SENTRY_IDENTITY_SALT is unset or blank", async () => {
+    delete process.env.SENTRY_IDENTITY_SALT;
+    const { resolveSentryUserId } =
+      await import("../../lib/observability/identity");
+    expect(resolveSentryUserId("usr_raw_123")).toBe("usr_raw_123");
+
+    process.env.SENTRY_IDENTITY_SALT = "   ";
+    expect(resolveSentryUserId("usr_raw_123")).toBe("usr_raw_123");
+  });
+
+  it("derives a deterministic ust_<32-hex> HMAC-SHA256 token when SENTRY_IDENTITY_SALT is set and is idempotent", async () => {
+    process.env.SENTRY_IDENTITY_SALT = "test-dpdp-secret-salt-32-bytes-long";
+    const { resolveSentryUserId } =
+      await import("../../lib/observability/identity");
+
+    const token1 = resolveSentryUserId("usr_india_42");
+    const token2 = resolveSentryUserId("usr_india_42");
+    const otherToken = resolveSentryUserId("usr_india_43");
+
+    expect(token1).toMatch(/^ust_[0-9a-f]{32}$/);
+    expect(token1).toBe(token2);
+    expect(token1).not.toBe(otherToken);
+    // Idempotent when already tokenized (e.g. client receiving session.user.sentryUserId)
+    expect(resolveSentryUserId(token1)).toBe(token1);
+
+    setSentryIdentity({ userId: "usr_india_42", role: "CONSULTEE" });
+    expect(setUser).toHaveBeenCalledWith({
+      id: token1,
+      username: "CONSULTEE",
+    });
+  });
 });
