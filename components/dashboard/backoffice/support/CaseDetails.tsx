@@ -155,6 +155,46 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
         )}
       </Section>
 
+      {data.sentryIssues && (
+        <Section title="Recent errors">
+          {!data.sentryIssues.configured ? (
+            <p className="text-sm text-muted-foreground">
+              Error triage is not configured.
+            </p>
+          ) : (data.sentryIssues.issues ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No unresolved errors in the last 14 days.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {(data.sentryIssues.issues ?? []).map((issue) => (
+                <li key={issue.shortId} className="text-sm">
+                  <a
+                    href={issue.permalink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+                  >
+                    <span>
+                      {issue.shortId} · {issue.title}
+                    </span>
+                    <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+                  </a>
+                  <p className="text-xs text-muted-foreground">
+                    {[
+                      issue.culprit,
+                      issue.lastSeen ? day(issue.lastSeen) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || humanizeEnum(issue.level ?? "error")}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
+
       {data.attachments.length > 0 && (
         <Section title="Attachments">
           <ul className="space-y-1.5">

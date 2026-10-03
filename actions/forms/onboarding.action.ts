@@ -39,11 +39,14 @@ const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
 // `.strict()` so an upstream typo (e.g. `phoneNumber`) fails loud
 // rather than silently dropping into `undefined` and bypassing the
 // update.
+import { DateOfBirthSchema } from "@/lib/compliance/age";
+
 const RoleHandoffPersonalInfoSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(200).optional(),
     phone: z.string().trim().min(1, "Phone cannot be empty").max(50).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
+    dateOfBirth: DateOfBirthSchema.optional(),
   })
   .strict();
 
@@ -238,7 +241,12 @@ export async function loadIdentitySeedAction(): Promise<
 export async function setOnboardingRoleAction(
   userId: string,
   role: UserRole,
-  personalInfo: { name?: string; phone?: string; timezone?: string },
+  personalInfo: {
+    name?: string;
+    phone?: string;
+    timezone?: string;
+    dateOfBirth?: Date | string;
+  },
 ): Promise<{ success: boolean; error?: string }> {
   const session = await getSession(true);
   if (!session?.user?.id) {
@@ -283,6 +291,9 @@ export async function setOnboardingRoleAction(
       name: parsedInfo.data.name,
       phone: parsedInfo.data.phone,
       timezone: parsedInfo.data.timezone,
+      ...(parsedInfo.data.dateOfBirth !== undefined
+        ? { dateOfBirth: parsedInfo.data.dateOfBirth }
+        : {}),
     },
   });
 
@@ -357,6 +368,7 @@ export async function resetOnboardingRoleAction(
  */
 export async function completeOrgWorkspaceOnboardingAction(
   userId: string,
+  options?: { acceptTermsAndPrivacy?: boolean },
 ): Promise<{ success: boolean; error?: string }> {
   const session = await getSession(true);
   if (!session?.user?.id) {
@@ -379,6 +391,41 @@ export async function completeOrgWorkspaceOnboardingAction(
       success: false,
       error: "No organization found. Create your organization first.",
     };
+  }
+
+  if (options?.acceptTermsAndPrivacy) {
+    const now = new Date();
+    const { buildSignupConsentArtifacts } = await import(
+      "@/lib/compliance/dpdp"
+    );
+    const { SIGNUP_PURPOSES } = await import("@/lib/compliance/purpose-codes");
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          onboardingCompleted: true,
+          termsAcceptedAt: now,
+          privacyAcceptedAt: now,
+        },
+      });
+      if (tx.consentArtifact?.findFirst) {
+        const existingConsent = await tx.consentArtifact.findFirst({
+          where: {
+            userId,
+            dataFiduciary: "Familiarise",
+            withdrawnAt: null,
+            purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
+          },
+          select: { id: true },
+        });
+        if (!existingConsent) {
+          await tx.consentArtifact.createMany({
+            data: buildSignupConsentArtifacts(userId),
+          });
+        }
+      }
+    });
+    return { success: true };
   }
 
   await prisma.user.update({

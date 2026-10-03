@@ -252,7 +252,7 @@ export function GrievanceSection() {
   );
 }
 
-/** Permanent deletion, confirmed by typing the account's email. */
+/** Permanent deletion / DPDP §6(4) & §12 core consent withdrawal, confirmed by typing the account's email. */
 export function DeleteAccountSection() {
   const { data: session } = useSession();
   const { toast } = useToast();
@@ -260,39 +260,70 @@ export function DeleteAccountSection() {
 
   return (
     <Section
-      title="Delete account"
-      description="Permanently delete your account, bookings history and preferences. This cannot be undone."
+      id="delete-account"
+      title="Withdraw core consent & delete account"
+      description="Under DPDP Act §6(4)–(5) and §12, withdrawing consent for core platform processing permanently closes your account, revokes all active sessions, and erases your personal identifiers."
       variant="card"
     >
-      {user?.email && (
-        <ConfirmDialog
-          trigger={
-            <Button variant="outline" className="text-destructive">
-              <Trash2 className="mr-1.5 h-4 w-4" />
-              Delete my account
-            </Button>
-          }
-          title="Delete your account?"
-          description="Everything on this account is deleted and cannot be recovered."
-          requireTyped={user.email}
-          confirmLabel="Delete my account"
-          tone="destructive"
-          onConfirm={async () => {
-            const res = await fetch(`/api/user/${user.id}`, {
-              method: "DELETE",
-            });
-            if (!res.ok) {
-              const data = (await res.json().catch(() => ({}))) as {
-                error?: string;
-              };
-              throw new Error(data.error || "We couldn't delete your account.");
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1.5">
+          <p className="font-medium text-foreground">
+            What happens when you withdraw core consent &amp; delete your
+            account:
+          </p>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>
+              <strong>Pre-checks:</strong> Any active upcoming bookings, pending
+              consultant payouts, unsettled earnings, or open payment disputes
+              must be completed or settled first.
+            </li>
+            <li>
+              <strong>Immediate PII erasure &amp; vendor offboarding:</strong>{" "}
+              Your name, email, phone, bio, and payout bank details are scrubbed
+              immediately; all active sessions are revoked; and saved Razorpay
+              card tokens and Novu notification profiles are removed.
+            </li>
+            <li>
+              <strong>Statutory tax &amp; audit retention (DPDP §12(3)):</strong>{" "}
+              If you have past financial transactions, anonymised ledger,
+              invoice, and TDS records are retained for 7–8 years solely as
+              required under the Income Tax Act, 1961 (§44AA) and CGST Act, 2017
+              (§36).
+            </li>
+          </ul>
+        </div>
+        {user?.email && (
+          <ConfirmDialog
+            trigger={
+              <Button variant="outline" className="text-destructive">
+                <Trash2 className="mr-1.5 h-4 w-4" />
+                Withdraw core consent &amp; delete account
+              </Button>
             }
-            toast({ title: "Account deleted" });
-            // The account is gone, so home beats a sign-in page with a dead session.
-            await signOutEverywhere("/");
-          }}
-        />
-      )}
+            title="Withdraw core consent and delete your account?"
+            description="Your personal data will be erased, all active consents withdrawn, and your account permanently closed. This cannot be undone."
+            requireTyped={user.email}
+            confirmLabel="Delete my account"
+            tone="destructive"
+            onConfirm={async () => {
+              const res = await fetch(`/api/user/${user.id}`, {
+                method: "DELETE",
+              });
+              if (!res.ok) {
+                const data = (await res.json().catch(() => ({}))) as {
+                  error?: string;
+                };
+                throw new Error(
+                  data.error || "We couldn't delete your account.",
+                );
+              }
+              toast({ title: "Account deleted" });
+              // The account is gone, so home beats a sign-in page with a dead session.
+              await signOutEverywhere("/");
+            }}
+          />
+        )}
+      </div>
     </Section>
   );
 }
