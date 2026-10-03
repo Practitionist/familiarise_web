@@ -1,14 +1,15 @@
 "use client";
 
-import { use } from "react";
+import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { Button } from "@/components/ui/button";
 
 import { ResourcesTab } from "./ResourcesTab";
-import type { EventResource } from "./EventResourceCard";
+import { EventResourceCard, type EventResource } from "./EventResourceCard";
 
 interface BookingResources {
   consultations: EventResource[];
@@ -16,7 +17,23 @@ interface BookingResources {
   webinars: EventResource[];
   classes: EventResource[];
   trials?: EventResource[];
+  purchased?: EventResource[];
 }
+
+export type ConsulteeRecordingCategory =
+  "all" | "webinar" | "class" | "consultation" | "subscription" | "purchased";
+
+const RECORDING_CATEGORIES: {
+  value: ConsulteeRecordingCategory;
+  label: string;
+}[] = [
+  { value: "all", label: "All" },
+  { value: "webinar", label: "Webinar" },
+  { value: "class", label: "Class" },
+  { value: "consultation", label: "Consultation" },
+  { value: "subscription", label: "Subscription" },
+  { value: "purchased", label: "Purchased" },
+];
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -24,14 +41,11 @@ async function getJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/**
- * The consultee Recordings page. The resources read enforces the #1819
- * late-join rule server-side, so one read covers 1:1, group and free events.
- */
 export function ConsulteeRecordingsPage({
   params,
 }: Readonly<{ params: Promise<{ consulteeId: string }> }>) {
   const { consulteeId } = use(params);
+  const [category, setCategory] = useState<ConsulteeRecordingCategory>("all");
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["consultee-recordings", consulteeId],
@@ -39,10 +53,65 @@ export function ConsulteeRecordingsPage({
       const { data } = await getJson<{ data: BookingResources }>(
         `/api/dashboard/consultee/${consulteeId}/resources`,
       );
-      return { ...data, trials: data.trials ?? [] };
+      return {
+        ...data,
+        trials: data.trials ?? [],
+        purchased: data.purchased ?? [],
+      };
     },
     staleTime: 5 * 60 * 1000,
   });
+
+  const scopedData = useMemo(() => {
+    if (!data) return undefined;
+    const purchasedItems = data.purchased ?? [];
+    if (category === "webinar") {
+      return {
+        consultations: [],
+        subscriptions: [],
+        webinars: data.webinars,
+        classes: [],
+        trials: [],
+      };
+    }
+    if (category === "class") {
+      return {
+        consultations: [],
+        subscriptions: [],
+        webinars: [],
+        classes: data.classes,
+        trials: [],
+      };
+    }
+    if (category === "consultation") {
+      return {
+        consultations: data.consultations,
+        subscriptions: [],
+        webinars: [],
+        classes: [],
+        trials: [],
+      };
+    }
+    if (category === "subscription") {
+      return {
+        consultations: [],
+        subscriptions: data.subscriptions,
+        webinars: [],
+        classes: [],
+        trials: [],
+      };
+    }
+    if (category === "purchased") {
+      return {
+        consultations: [],
+        subscriptions: [],
+        webinars: purchasedItems,
+        classes: [],
+        trials: [],
+      };
+    }
+    return data;
+  }, [data, category]);
 
   if (isLoading) return <PageSkeleton />;
 
@@ -57,14 +126,53 @@ export function ConsulteeRecordingsPage({
     );
   }
 
+  const purchasedItems = data?.purchased ?? [];
+
   return (
     <DashboardErrorBoundary>
-      <ResourcesTab
-        data={data}
-        artifact="recordings"
-        title="Recordings"
-        subtitle="Recordings of the sessions you've attended"
-      />
+      <div className="space-y-4">
+        <div
+          role="tablist"
+          aria-label="Recording categories"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {RECORDING_CATEGORIES.map((tab) => (
+            <Button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={category === tab.value}
+              variant={category === tab.value ? "default" : "outline"}
+              size="sm"
+              onClick={() => setCategory(tab.value)}
+            >
+              {tab.label}
+              {tab.value === "purchased" && purchasedItems.length > 0
+                ? ` (${purchasedItems.length})`
+                : ""}
+            </Button>
+          ))}
+        </div>
+
+        {category === "purchased" && purchasedItems.length > 0 ? (
+          <div className="space-y-4">
+            {purchasedItems.map((event) => (
+              <EventResourceCard
+                key={event.id}
+                event={event}
+                artifact="recordings"
+              />
+            ))}
+          </div>
+        ) : (
+          <ResourcesTab
+            data={scopedData}
+            artifact="recordings"
+            title="Recordings"
+            subtitle="Recordings of the sessions you've attended and purchased replays"
+          />
+        )}
+      </div>
     </DashboardErrorBoundary>
   );
 }

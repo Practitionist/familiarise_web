@@ -54,6 +54,17 @@ type FlatRow = LibraryFile & { session: LibrarySession };
 
 const FILTER_KEYS = ["kind", "from", "to", "source", "view"] as const;
 
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  ...LIBRARY_KIND_LABEL,
+  TRIAL: "Trial",
+  consultation: "Consultation",
+  subscription: "Subscription",
+  webinar: "Webinar",
+  class: "Class",
+  trial: "Trial",
+  purchased: "Purchased",
+};
+
 const DATE = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
   month: "short",
@@ -191,7 +202,10 @@ function SessionGroup({
                 {session.title}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {LIBRARY_KIND_LABEL[session.kind]} · {fmt(session.startsAt)}
+                {EVENT_TYPE_LABELS[session.kind] ??
+                  LIBRARY_KIND_LABEL[session.kind] ??
+                  session.kind}{" "}
+                · {fmt(session.startsAt)}
                 {session.expertName && ` · ${session.expertName}`} ·{" "}
                 {files.length} {files.length === 1 ? noun : `${noun}s`}
               </span>

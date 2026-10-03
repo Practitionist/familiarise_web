@@ -1,5 +1,6 @@
 "use client";
 
+import type { RecordingListingStatus } from "@prisma/client";
 import type { RecordingData } from "@/types/recording";
 
 import { useState } from "react";
@@ -14,9 +15,12 @@ import {
   Download,
   ExternalLink,
   Users,
+  Settings2,
+  Store,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { recordingStatusBadge } from "@/lib/labels/session-labels";
 import {
@@ -28,6 +32,23 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 
+export type ExtendedRecordingData = Omit<RecordingData, "planType"> & {
+  planType:
+    "webinar" | "class" | "consultation" | "subscription" | "trial" | null;
+  listingStatus?: RecordingListingStatus | null;
+  listPricePaise?: number | null;
+  listingTitle?: string | null;
+  listingDescription?: string | null;
+  slug?: string | null;
+  tags?: string[];
+  previewClipUrl?: string | null;
+  previewTranscript?: string | null;
+  consentAttestedAt?: string | null;
+  hasBuyers?: boolean;
+  canManage?: boolean;
+  canTransfer?: boolean;
+  canPublish?: boolean;
+};
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -37,11 +58,18 @@ function formatFileSize(bytes: number): string {
 }
 
 interface RecordingCardProps {
-  recording: RecordingData;
-  onTransfer?: (recordingId: string) => Promise<void>;
+  readonly recording: ExtendedRecordingData;
+  readonly onTransfer?: (recordingId: string) => Promise<void>;
+  readonly onWatch?: (recording: ExtendedRecordingData) => void;
+  readonly onManage?: (recording: ExtendedRecordingData) => void;
 }
 
-export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
+export function RecordingCard({
+  recording,
+  onTransfer,
+  onWatch,
+  onManage,
+}: Readonly<RecordingCardProps>) {
   const { toast } = useToast();
   const [isTransferring, setIsTransferring] = useState(false);
 
@@ -78,13 +106,20 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
     }
   };
 
+  const canManage = recording.canManage ?? true;
   const canTransfer =
-    recording.status === "READY" && recording.storageType === "STREAM_S3";
+    recording.canTransfer ??
+    (recording.status === "READY" && recording.storageType === "STREAM_S3");
 
   const isExpiringSoon =
     recording.streamUrlExpiresAt &&
     new Date(recording.streamUrlExpiresAt).getTime() - Date.now() <
       3 * 24 * 60 * 60 * 1000; // 3 days
+
+  const canWatch =
+    Boolean(recording.playbackUrl) ||
+    recording.status === "READY" ||
+    recording.status === "AVAILABLE";
 
   return (
     <Card className="overflow-hidden">
@@ -100,7 +135,18 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
               </p>
             )}
           </div>
-          <StatusBadge {...recordingStatusBadge(recording.status)} />
+          <div className="flex items-center gap-1.5 shrink-0">
+            {recording.listingStatus === "PUBLISHED" && (
+              <Badge
+                variant="outline"
+                className="text-xs border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
+              >
+                <Store className="w-3 h-3 mr-1" />
+                Published
+              </Badge>
+            )}
+            <StatusBadge {...recordingStatusBadge(recording.status)} />
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -138,7 +184,12 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
           )}
           <div className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
-            <span>{format(new Date(recording.appointmentDate ?? recording.recordedAt), "MMM d, yyyy")}</span>
+            <span>
+              {format(
+                new Date(recording.appointmentDate ?? recording.recordedAt),
+                "MMM d, yyyy",
+              )}
+            </span>
           </div>
           <div className="flex items-center gap-1">
             <Clock className="w-4 h-4" />
@@ -171,26 +222,37 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
 
         {/* Actions */}
         <div className="flex gap-2">
-          {recording.playbackUrl && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="default"
-                    className="flex-1"
-                    onClick={() =>
-                      window.open(recording.playbackUrl!, "_blank")
-                    }
-                  >
-                    <Play className="w-4 h-4 mr-2" />
-                    Watch
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Open recording in new tab</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+          {canWatch && (
+            <Button
+              variant="default"
+              className="flex-1"
+              onClick={() => {
+                if (onWatch) {
+                  onWatch(recording);
+                } else if (recording.playbackUrl) {
+                  window.open(
+                    recording.playbackUrl,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                }
+              }}
+            >
+              <Play className="w-4 h-4 mr-2" />
+              Watch
+            </Button>
+          )}
+
+          {canManage && onManage && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onManage(recording)}
+              aria-label="Manage / Publish"
+            >
+              <Settings2 className="w-4 h-4 mr-1.5" />
+              Manage / Publish
+            </Button>
           )}
 
           {canTransfer && onTransfer && (
@@ -241,7 +303,6 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
               </Tooltip>
             </TooltipProvider>
           )}
-
         </div>
       </CardContent>
     </Card>

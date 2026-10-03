@@ -240,6 +240,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       maxParticipants: 100,
       certificateProvided: false,
       recordingEnabled: false,
+      // Permanent storage is an explicit opt-in even for marketplace-eligible offerings.
       recordingStoragePolicy: "STREAM_ONLY",
     },
     planOf: (event) => {
