@@ -1,82 +1,96 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ChevronRight, Star } from "lucide-react";
+import { ArrowRight, BadgeCheck, Briefcase, Star } from "lucide-react";
 import Link from "next/link";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import type { IConsultantCardData } from "@/types/consultant";
 
-function ExpertCard({ expert }: { expert: IConsultantCardData }) {
+function ExpertCard({
+  expert,
+  index,
+}: {
+  expert: IConsultantCardData;
+  index: number;
+}) {
   return (
-    <Link
-      href={`/explore/experts/${expert.id}`}
-      className="block flex-shrink-0 w-[300px] mx-3"
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.4, delay: Math.min(index * 0.06, 0.24) }}
+      className="h-full"
     >
-      <Card className="h-full border border-border bg-card overflow-hidden group hover:border-foreground/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-3">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-4 mb-4">
-            <Avatar className="w-16 h-16 border-2 border-border shadow-elevation-2">
-              <AvatarImage
-                src={expert.user.image ?? "/placeholder-user.jpg"}
-                alt={expert.user.name ?? "Expert"}
-              />
-              <AvatarFallback className="bg-gradient-to-br from-zinc-700 to-zinc-900 text-white text-lg font-medium">
-                {expert.user.name?.charAt(0) ?? "E"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <h4 className="font-semibold text-foreground truncate">
-                {expert.user.name}
-              </h4>
-              <p className="text-sm text-muted-foreground truncate">
-                {expert.headline || expert.domain?.name}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 mb-4">
-            {expert.rating !== null && (
-              <>
-                <div className="flex items-center gap-1">
-                  <Star className="w-4 h-4 fill-foreground text-foreground" />
-                  <span className="font-medium text-foreground">
-                    {expert.rating.toFixed(1)}
-                  </span>
-                </div>
-                <span className="text-muted-foreground/70">•</span>
-              </>
-            )}
-            <span className="text-sm text-muted-foreground">
-              {expert.experience}
+      <Link
+        href={`/explore/experts/${expert.id}`}
+        className="group flex h-full flex-col rounded-2xl border border-border bg-card p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 md:p-6"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <Avatar className="h-16 w-16 border border-border shadow-elevation-1">
+            <AvatarImage
+              src={expert.user.image ?? "/placeholder-user.jpg"}
+              alt={expert.user.name ?? "Expert"}
+              className="object-cover"
+            />
+            <AvatarFallback className="bg-zinc-900 text-lg font-semibold text-white">
+              {expert.user.name?.charAt(0) ?? "E"}
+            </AvatarFallback>
+          </Avatar>
+          {expert.isVerified && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+              <BadgeCheck className="h-3.5 w-3.5 text-foreground" />
+              Verified
             </span>
-          </div>
+          )}
+        </div>
 
-          <div className="flex flex-wrap gap-2">
-            {expert.tags?.slice(0, 3).map((tag) => (
+        <div className="mt-5">
+          <h3 className="flex items-center gap-1.5 text-lg font-bold text-foreground">
+            <span className="line-clamp-1">{expert.user.name}</span>
+          </h3>
+          <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-relaxed text-muted-foreground">
+            {expert.headline || expert.domain?.name || "Familiarise expert"}
+          </p>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          {expert.rating !== null && (
+            <span className="inline-flex items-center gap-1 font-medium text-foreground">
+              <Star className="h-3.5 w-3.5 fill-foreground" />
+              {expert.rating.toFixed(1)}
+            </span>
+          )}
+          {expert.experience && (
+            <span className="inline-flex items-center gap-1">
+              <Briefcase className="h-3.5 w-3.5" />
+              {expert.experience} years experience
+            </span>
+          )}
+        </div>
+
+        {expert.tags && expert.tags.length > 0 && (
+          <div className="mt-5 flex flex-wrap gap-1.5">
+            {expert.tags.slice(0, 3).map((tag) => (
               <Badge
                 key={tag.id}
                 variant="secondary"
-                className="bg-secondary text-secondary-foreground hover:bg-secondary/80 text-xs border-0"
+                className="border-0 bg-muted text-[11px] font-normal text-muted-foreground"
               >
                 {tag.name}
               </Badge>
             ))}
           </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
+        )}
 
-function ExpertLoadingSkeleton() {
-  return (
-    <div className="flex-shrink-0 w-[300px] mx-3">
-      <Card className="h-[200px] animate-pulse bg-muted border-0" />
-    </div>
+        <div className="mt-auto flex items-center justify-between border-t border-border pt-5 text-sm font-semibold text-foreground">
+          View profile
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+        </div>
+      </Link>
+    </motion.div>
   );
 }
 
@@ -89,62 +103,44 @@ export function FeaturedExpertsSection({
   experts,
   isLoading,
 }: FeaturedExpertsSectionProps) {
-  return (
-    <section className="py-20 md:py-32 bg-background overflow-hidden relative">
-      <div className="absolute inset-0 dot-pattern-light opacity-60" />
+  const visibleExperts = experts.slice(0, 4);
 
-      <div className="container mx-auto px-4 md:px-6 mb-12 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="flex flex-col md:flex-row md:items-end md:justify-between gap-6"
-        >
+  return (
+    <section className="relative overflow-hidden bg-zinc-100 py-20 dark:bg-zinc-950 md:py-28">
+      <div className="dot-pattern-light pointer-events-none absolute inset-0 opacity-40 dark:opacity-10" />
+      <div className="relative mx-auto max-w-[1400px] px-4 md:px-8 lg:px-12">
+        <div className="mb-10 flex flex-col justify-between gap-5 md:flex-row md:items-end">
           <div>
-            <Badge
-              variant="secondary"
-              className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
-            >
-              Featured Experts
-            </Badge>
-            <h2 className="text-fluid-4xl font-bold text-foreground mb-2 tracking-tight">
-              Learn from{" "}
-              <span className="text-muted-foreground">industry leaders</span>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Meet the experts
+            </p>
+            <h2 className="text-fluid-4xl font-bold tracking-tight text-foreground">
+              Real experience, ready to share.
             </h2>
-            <p className="text-lg text-muted-foreground">
-              Handpicked professionals ready to guide your journey
+            <p className="mt-3 max-w-2xl text-fluid-base text-muted-foreground">
+              Explore verified profiles, compare their focus areas, and choose
+              the person who fits the problem in front of you.
             </p>
           </div>
-          <Link href="/explore/experts">
-            <Button
-              variant="outline"
-              className="group border-border hover:bg-muted"
-            >
-              View All Experts
-              <ChevronRight className="ml-1 w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </Button>
-          </Link>
-        </motion.div>
-      </div>
+          <Button asChild variant="outline" className="w-full md:w-auto">
+            <Link href="/explore/experts">
+              View all experts
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
 
-      {/* Marquee */}
-      <div className="relative">
-        <div className="absolute left-0 top-0 bottom-0 w-32 bg-gradient-to-r from-background to-transparent z-10" />
-        <div className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-background to-transparent z-10" />
-
-        <div className="flex animate-marquee">
-          {isLoading ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <ExpertLoadingSkeleton key={i} />
-            ))
-          ) : (
-            <>
-              {[...experts, ...experts].map((expert, i) => (
-                <ExpertCard key={`${expert.id}-${i}`} expert={expert} />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {isLoading
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-80 animate-pulse rounded-2xl border border-border bg-muted"
+                />
+              ))
+            : visibleExperts.map((expert, index) => (
+                <ExpertCard key={expert.id} expert={expert} index={index} />
               ))}
-            </>
-          )}
         </div>
       </div>
     </section>
