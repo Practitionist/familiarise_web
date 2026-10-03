@@ -107,9 +107,21 @@ describe("buildCallSettingsOverride", () => {
         limits: { max_duration_seconds: 6300 },
         session: { inactivity_timeout_seconds: 300 },
         backstage: { enabled: true, join_ahead_time_seconds: 900 },
-        audio: { mic_default_on: false, access_request_enabled: true },
-        video: { camera_default_on: false, access_request_enabled: true },
-        screenshare: { access_request_enabled: true },
+        audio: {
+          mic_default_on: false,
+          default_device: "speaker",
+          access_request_enabled: true,
+        },
+        video: {
+          camera_default_on: false,
+          access_request_enabled: true,
+          target_resolution: {
+            width: 1280,
+            height: 720,
+            bitrate: 1_500_000,
+          },
+        },
+        screensharing: { enabled: true, access_request_enabled: true },
         recording: { mode: "available", layout: { name: "spotlight" } },
       });
     }
@@ -195,9 +207,9 @@ describe("provisionAppointmentMeeting & createDbMeeting", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           members: [{ user_id: "host-1", role: "call_member" }],
-          settings_override: {
+          settings_override: expect.objectContaining({
             limits: { max_duration_seconds: 4500 },
-          },
+          }),
         }),
       }),
     );

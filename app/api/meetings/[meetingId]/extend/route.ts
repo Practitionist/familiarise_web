@@ -122,7 +122,7 @@ export async function POST(
       3600;
     const resolvedCallId = toCallId(access.streamCallId);
 
-    const newMaxDurationSeconds = await withStreamCircuitBreaker(async () => {
+    const extendResult = await withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         resolvedCallId,
@@ -152,14 +152,30 @@ export async function POST(
         }
       }
 
-      const updatedCapSeconds = Math.min(
-        currentCapSeconds + EXTENSION_SECONDS,
-        MAX_CALL_DURATION_SECONDS,
-      );
       const prevExtended =
         typeof existingCustom.extendedSeconds === "number"
           ? existingCustom.extendedSeconds
           : 0;
+      const extensionsUsed =
+        typeof existingCustom.extensionsUsed === "number"
+          ? existingCustom.extensionsUsed
+          : prevExtended >= EXTENSION_SECONDS
+            ? 1
+            : 0;
+
+      if (extensionsUsed >= 1) {
+        return {
+          alreadyExtended: true as const,
+          updatedCapSeconds: currentCapSeconds,
+          extensionsUsed,
+        };
+      }
+
+      const updatedCapSeconds = Math.min(
+        currentCapSeconds + EXTENSION_SECONDS,
+        MAX_CALL_DURATION_SECONDS,
+      );
+      const nextExtensionsUsed = extensionsUsed + 1;
 
       await call.update({
         settings_override: {
@@ -168,23 +184,42 @@ export async function POST(
         custom: {
           ...existingCustom,
           extendedSeconds: prevExtended + EXTENSION_SECONDS,
+          extensionsUsed: nextExtensionsUsed,
         },
       });
 
-      return updatedCapSeconds;
+      return {
+        alreadyExtended: false as const,
+        updatedCapSeconds,
+        extensionsUsed: nextExtensionsUsed,
+      };
     });
+
+    if (extendResult.alreadyExtended) {
+      return NextResponse.json(
+        {
+          extended: false,
+          alreadyExtended: true,
+          hasConflictingNextBooking: false,
+          error: "Free +15m extension has already been used for this session.",
+        },
+        { status: 409 },
+      );
+    }
 
     streamLogger.info("Meeting duration extended by host", {
       userId,
       meetingId: resolvedCallId,
       addedSeconds: EXTENSION_SECONDS,
-      maxDurationSeconds: newMaxDurationSeconds,
+      maxDurationSeconds: extendResult.updatedCapSeconds,
+      extensionsUsed: extendResult.extensionsUsed,
     });
 
     return NextResponse.json({
       extended: true,
       addedSeconds: EXTENSION_SECONDS,
-      maxDurationSeconds: newMaxDurationSeconds,
+      maxDurationSeconds: extendResult.updatedCapSeconds,
+      extensionsUsed: extendResult.extensionsUsed,
       hasConflictingNextBooking: false,
     });
   } catch (error) {

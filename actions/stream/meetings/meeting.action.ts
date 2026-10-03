@@ -39,6 +39,14 @@ const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 /** Stamped when the host closes a room before the scheduled slot ends. */
 const ENDED_EARLY_REASON = "ended_early";
 
+const ownerProfileSelect = {
+  select: {
+    id: true,
+    userId: true,
+    user: { select: { id: true, name: true } },
+  },
+} as const;
+
 const occurrenceSelect = {
   id: true,
   startsAt: true,
@@ -59,9 +67,6 @@ export type OccurrenceRow = {
   consultantProfileId: string | null;
 };
 
-const ownerProfileSelect = {
-  select: { id: true, userId: true, user: { select: { name: true } } },
-} as const;
 const collaboratorsSelect = {
   where: { status: "ACCEPTED" as const },
   select: { role: true, consultantProfile: ownerProfileSelect },
@@ -141,7 +146,8 @@ async function readSlotForCaller(slotId: string) {
   const entitled =
     appointment.participants.length > 0 ||
     (!!consultantProfileId &&
-      resolvePlanOwnerIds(appointment).includes(consultantProfileId)) ||
+      (slot.consultantProfileId === consultantProfileId ||
+        resolvePlanOwnerIds(appointment).includes(consultantProfileId))) ||
     isPrivileged(session.user.role);
 
   if (!entitled) {
@@ -152,7 +158,7 @@ async function readSlotForCaller(slotId: string) {
     return null;
   }
 
-  return { slot, appointment, userId };
+  return { slot, appointment, userId, consultantProfileId };
 }
 
 class MeetingRefusal extends Error {}
@@ -197,7 +203,12 @@ async function resolveSessionCallProfile(
   try {
     const authorized = await readSlotForCaller(validatedSlotId);
     if (!authorized) return null;
-    const { slot: anchor, appointment } = authorized;
+    const {
+      slot: anchor,
+      appointment,
+      userId: callerUserId,
+      consultantProfileId: callerConsultantProfileId,
+    } = authorized;
     if (!anchor.appointmentId) return null;
 
     const isGroupEvent =
@@ -211,13 +222,15 @@ async function resolveSessionCallProfile(
     const remember = (
       profile?: {
         id: string;
-        userId: string;
-        user?: { name?: string | null } | null;
+        userId?: string | null;
+        user?: { id?: string | null; name?: string | null } | null;
       } | null,
     ) => {
       if (!profile) return;
-      profileToUser.set(profile.id, profile.userId);
-      if (profile.user?.name) userToName.set(profile.userId, profile.user.name);
+      const resolvedUserId = profile.userId ?? profile.user?.id ?? null;
+      if (!resolvedUserId) return;
+      profileToUser.set(profile.id, resolvedUserId);
+      if (profile.user?.name) userToName.set(resolvedUserId, profile.user.name);
     };
     remember(appointment.consultation?.consultationPlan?.consultantProfile);
     remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
@@ -231,12 +244,37 @@ async function resolveSessionCallProfile(
       remember(collaborator.consultantProfile);
     }
 
+    if (
+      anchor.consultantProfileId &&
+      !profileToUser.has(anchor.consultantProfileId)
+    ) {
+      if (callerConsultantProfileId === anchor.consultantProfileId) {
+        profileToUser.set(anchor.consultantProfileId, callerUserId);
+      } else {
+        const occProfile = await (
+          prisma as { consultantProfile?: typeof prisma.consultantProfile }
+        ).consultantProfile?.findUnique({
+          where: { id: anchor.consultantProfileId },
+          ...ownerProfileSelect,
+        });
+        remember(occProfile);
+      }
+    }
+
+    const hostProfileIds = [
+      ...(anchor.consultantProfileId ? [anchor.consultantProfileId] : []),
+      ...resolvePlanOwnerIds(appointment),
+    ];
+    const occurrenceAssignedUserId = anchor.consultantProfileId
+      ? (profileToUser.get(anchor.consultantProfileId) ?? null)
+      : null;
     const hostUserIds = [
-      ...new Set(
-        resolvePlanOwnerIds(appointment)
+      ...new Set([
+        ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
+        ...hostProfileIds
           .map((profileId) => profileToUser.get(profileId))
           .filter((userId): userId is string => Boolean(userId)),
-      ),
+      ]),
     ];
     const presenterProfileIds = new Set(
       [
@@ -254,11 +292,12 @@ async function resolveSessionCallProfile(
       appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
       null;
     const hostControlUserIds = [
-      ...new Set(
-        [ownerProfileId, ...presenterProfileIds]
+      ...new Set([
+        ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
+        ...[anchor.consultantProfileId, ownerProfileId, ...presenterProfileIds]
           .map((profileId) => (profileId ? profileToUser.get(profileId) : null))
           .filter((userId): userId is string => Boolean(userId)),
-      ),
+      ]),
     ];
 
     const hosts = new Set(hostUserIds);
@@ -288,8 +327,7 @@ async function resolveSessionCallProfile(
     let droppedIds = new Set<string>();
     try {
       const upsertResult = (await upsertUsersToStream(candidateUserIds)) as
-        | { droppedIds?: string[] }
-        | undefined;
+        { droppedIds?: string[] } | undefined;
       if (Array.isArray(upsertResult?.droppedIds)) {
         droppedIds = new Set(upsertResult.droppedIds);
       }
@@ -627,7 +665,12 @@ function buildCallCustom(args: {
     slotId: args.occurrenceId,
     occurrenceId: args.occurrenceId,
     appointmentType: args.appointmentType,
-    ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+    ...(args.organizationId
+      ? {
+          organizationId: args.organizationId,
+          organization_id: args.organizationId,
+        }
+      : {}),
     ...(consultantUserId ? { consultantUserId } : {}),
     ...(hostUserIds.length > 0 ? { hostUserIds } : {}),
     ...(consulteeUserId ? { consulteeUserId } : {}),
@@ -647,8 +690,7 @@ function buildCallCustom(args: {
 }
 
 export type ProvisionedMeeting =
-  | { ok: true; streamCallId: string }
-  | { ok: false; refusal: string };
+  { ok: true; streamCallId: string } | { ok: false; refusal: string };
 
 /** Provisions or reuses the Stream call and database Meeting row for an occurrence. */
 export async function provisionAppointmentMeeting(

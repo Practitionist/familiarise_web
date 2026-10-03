@@ -48,12 +48,22 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
 
   useEffect(() => {
     if (!call) return;
-    return call.on("call.permission_request", (event) => {
+    const unsubRequest = call.on("call.permission_request", (event) => {
       setPermissionRequests((prev) => {
         const filtered = prev.filter((item) => item.user.id !== event.user.id);
         return [...filtered, event];
       });
     });
+    const unsubUpdated =
+      typeof call.on === "function"
+        ? call.on("call.permissions_updated", () => {
+            setHasRequestedStage(false);
+          })
+        : undefined;
+    return () => {
+      unsubRequest?.();
+      unsubUpdated?.();
+    };
   }, [call]);
 
   const isOneToMany = isOneToManyAppointmentType(appointmentType);
@@ -75,6 +85,12 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
     !isHost &&
     ownCapabilities !== undefined &&
     (!canSendAudio || !canSendVideo);
+
+  useEffect(() => {
+    if (canSendAudio && canSendVideo) {
+      setHasRequestedStage(false);
+    }
+  }, [canSendAudio, canSendVideo]);
 
   const handleGoLive = async () => {
     if (!call || isGoingLive) return;
@@ -110,7 +126,15 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
   };
 
   const handleRequestToSpeak = async () => {
-    if (!call || hasRequestedStage) return;
+    if (!call) return;
+    if (hasRequestedStage) {
+      setHasRequestedStage(false);
+      toast({
+        title: "Hand lowered",
+        description: "Your request to speak has been cancelled.",
+      });
+      return;
+    }
     try {
       await call.requestPermissions({
         permissions: [OwnCapability.SEND_AUDIO, OwnCapability.SEND_VIDEO],
@@ -224,13 +248,12 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
         <button
           type="button"
           onClick={handleRequestToSpeak}
-          disabled={hasRequestedStage}
           data-testid="raise-hand-button"
-          className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900/90 px-3.5 py-2 text-xs font-medium text-white shadow-lg backdrop-blur-md transition-colors hover:bg-zinc-800 disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900/90 px-3.5 py-2 text-xs font-medium text-white shadow-lg backdrop-blur-md transition-colors hover:bg-zinc-800"
         >
           <Hand className="h-3.5 w-3.5 text-amber-400" />
           {hasRequestedStage
-            ? "Hand Raised (Waiting for Host)"
+            ? "Hand Raised · Click to Lower Hand"
             : "Raise Hand / Request to Speak"}
         </button>
       )}

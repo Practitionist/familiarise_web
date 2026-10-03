@@ -16,7 +16,11 @@
 import { format } from "date-fns";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
+  isDeadOccurrence,
+} from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
@@ -324,6 +328,15 @@ function occurrenceEnd(o: OccurrenceInput): number {
   ).getTime();
 }
 
+function isOccurrencePastGrace(o: OccurrenceInput, now: Date): boolean {
+  const status = normalizeStatus(o.completionStatus);
+  if (status === "COMPLETED" || status === "VOIDED") {
+    return occurrenceEnd(o) < now.getTime();
+  }
+  const graceMs = o.endsAt ? REJOIN_GRACE_MS : 0;
+  return occurrenceEnd(o) + graceMs < now.getTime();
+}
+
 /** Held / Released / Scheduled / Completed / Cancelled — the schedule words. */
 function rowLabel(
   o: OccurrenceInput,
@@ -476,7 +489,7 @@ function deriveBooking(
             why: "The slots are held until the booking is paid.",
           };
     }
-    if (live.every((o) => occurrenceEnd(o) < now.getTime())) {
+    if (live.every((o) => isOccurrencePastGrace(o, now))) {
       return { state: "COMPLETED", why: "Every session has been held." };
     }
     const noun =
@@ -667,7 +680,7 @@ function deriveNext(
     return (
       !o.isTentative &&
       start - joinWindowMs <= now.getTime() &&
-      now.getTime() <= occurrenceEnd(o)
+      !isOccurrencePastGrace(o, now)
     );
   });
   if (viewer === "CONSULTANT") {
@@ -896,7 +909,7 @@ export function deriveBookingPresentation(
   options: DeriveOptions = {},
 ): BookingPresentation {
   const now = options.now ?? new Date();
-  const joinWindowMs = options.joinWindowMs ?? 10 * 60 * 1000;
+  const joinWindowMs = options.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const live = input.occurrences.filter((o) => !isDeadOccurrence(o));
   const paidRow =
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;

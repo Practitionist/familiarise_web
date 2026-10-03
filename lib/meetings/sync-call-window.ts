@@ -34,9 +34,19 @@ export async function syncMeetingCallWindow(
       STREAM_CALL_TYPE,
       toCallId(input.streamCallId),
     );
+    const existing =
+      typeof call.get === "function"
+        ? await call.get().catch(() => null)
+        : null;
+    const existingCustom = (existing?.call?.custom ?? {}) as Record<
+      string,
+      unknown
+    >;
+
     await call.update({
       starts_at: input.startsAt,
       custom: {
+        ...existingCustom,
         sessionStartsAt: input.startsAt.toISOString(),
         sessionEndsAt: input.endsAt.toISOString(),
         sessionDurationMinutes: durationMinutes,
@@ -53,3 +63,5 @@ export async function syncMeetingCallWindow(
 
   return { maxDurationSeconds };
 }
+
+export const syncStreamCallWindow = syncMeetingCallWindow;

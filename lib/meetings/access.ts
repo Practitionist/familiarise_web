@@ -44,6 +44,7 @@ interface MeetingResolved {
   role: MeetingRole;
   message: string;
   reason: "granted" | "unauthorized";
+  code?: "CONSENT_REQUIRED";
   streamCallId: string;
   meetingId: string;
   appointment: MeetingAppointment;
@@ -251,6 +252,8 @@ export async function resolveMeetingAccess(
     appointment.class?.classPlan?.consultantProfileId ??
     appointment.trial?.consultantProfileId ??
     null;
+  const occurrenceConsultantProfileId =
+    meeting.occurrence.consultantProfileId ?? null;
 
   const grant = async (
     role: Exclude<MeetingRole, null>,
@@ -282,6 +285,7 @@ export async function resolveMeetingAccess(
         message:
           "Consent for live video processing is required to join this session.",
         reason: "unauthorized",
+        code: "CONSENT_REQUIRED",
         streamCallId,
         meetingId,
         appointment,
@@ -322,8 +326,10 @@ export async function resolveMeetingAccess(
   };
 
   if (
-    consultantProfileId &&
-    userProfile?.consultantProfileId === consultantProfileId
+    (consultantProfileId &&
+      userProfile?.consultantProfileId === consultantProfileId) ||
+    (occurrenceConsultantProfileId &&
+      userProfile?.consultantProfileId === occurrenceConsultantProfileId)
   ) {
     return grant("host", "Access granted as meeting host");
   }

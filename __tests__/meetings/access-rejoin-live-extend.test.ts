@@ -124,6 +124,7 @@ import {
 import { resolveMeetingAccess } from "../../lib/meetings/access";
 import { isInCallChatAllowed } from "../../lib/meetings/room-ready";
 import { computeOverrunBannerState } from "../../app/meetings/[id]/components/OverrunBanner";
+import { slotStatus } from "../../components/appointments/SessionTimeline";
 import { POST as joinPOST } from "../../app/api/meetings/[meetingId]/join/route";
 import { POST as endPOST } from "../../app/api/meetings/[meetingId]/end/route";
 import { POST as livePOST } from "../../app/api/meetings/[meetingId]/live/route";
@@ -210,8 +211,27 @@ describe("DPDP consent gate in resolveMeetingAccess", () => {
 
     const access = await resolveMeetingAccess("occurrence-slot-1", "user-1");
 
-    expect(access.hasAccess).toBe(false);
+    expect(access).toMatchObject({
+      hasAccess: false,
+      code: "CONSENT_REQUIRED",
+    });
     expect(access.message).toMatch(/consent.*required/i);
+  });
+
+  it("grants host access to an occurrence-assigned Enterprise org expert when plan owner differs", async () => {
+    const row = makeLiveMeetingRow({ hostProfileId: "cp-plan-owner" });
+    row.occurrence.consultantProfileId = "cp-org-expert";
+    mockMeetingFindUnique.mockResolvedValue(row);
+    mockUserFindUnique.mockResolvedValue({
+      consultantProfileId: "cp-org-expert",
+    });
+
+    const access = await resolveMeetingAccess(
+      "occurrence-slot-1",
+      "user-org-expert",
+    );
+    expect(access.hasAccess).toBe(true);
+    expect(access.role).toBe("host");
   });
 });
 
@@ -349,7 +369,7 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(participantRes.status).toBe(403);
   });
 
-  it("extends call duration by +15m for host when no conflicting booking exists, and returns 409 on conflict", async () => {
+  it("extends call duration by +15m once, refuses a second extension with 409 alreadyExtended, and returns 409 on conflict", async () => {
     const okRes = await extendPOST(req, { params });
     expect(okRes.status).toBe(200);
     const okBody = await okRes.json();
@@ -357,13 +377,29 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       extended: true,
       addedSeconds: 900,
       maxDurationSeconds: 7200,
+      extensionsUsed: 1,
       hasConflictingNextBooking: false,
     });
     expect(mockCallUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         settings_override: { limits: { max_duration_seconds: 7200 } },
+        custom: expect.objectContaining({
+          extendedSeconds: 900,
+          extensionsUsed: 1,
+        }),
       }),
     );
+
+    mockCallGet.mockResolvedValueOnce({
+      call: {
+        settings: { limits: { max_duration_seconds: 7200 } },
+        custom: { extendedSeconds: 900, extensionsUsed: 1 },
+      },
+    });
+    const secondRes = await extendPOST(req, { params });
+    expect(secondRes.status).toBe(409);
+    const secondBody = await secondRes.json();
+    expect(secondBody.alreadyExtended).toBe(true);
 
     mockOccurrenceFindFirst.mockResolvedValue({
       id: "next-slot",
@@ -420,5 +456,35 @@ describe("OverrunBanner state & Trial in-call chat guard", () => {
         now: new Date("2026-10-03T11:29:00.000Z"),
       }).phase,
     ).toBe("cap-imminent");
+  });
+
+  it("maps post-reconciliation occurrence outcomes in SessionTimeline slotStatus", () => {
+    const baseVm = {
+      occurrenceId: "occ-1",
+      appointmentId: "appt-1",
+      startsAt: new Date(Date.now() - 120 * MINUTE),
+      endsAt: new Date(Date.now() - 60 * MINUTE),
+      isTentative: false,
+      completionStatus: "COMPLETED",
+      meetingId: "mtg-1",
+      meetingEndedAt: new Date(Date.now() - 60 * MINUTE),
+      meetingEndedReason: "call_ended",
+    };
+
+    expect(slotStatus({ ...baseVm, outcome: "DELIVERED" }, 15 * MINUTE)).toBe(
+      "completed",
+    );
+    expect(slotStatus({ ...baseVm, outcome: "CUT_SHORT" }, 15 * MINUTE)).toBe(
+      "cutShort",
+    );
+    expect(
+      slotStatus({ ...baseVm, outcome: "CONSULTANT_NO_SHOW" }, 15 * MINUTE),
+    ).toBe("noShow");
+    expect(
+      slotStatus({ ...baseVm, outcome: "INCONCLUSIVE" }, 15 * MINUTE),
+    ).toBe("inconclusive");
+    expect(slotStatus({ ...baseVm, outcome: null }, 15 * MINUTE)).toBe(
+      "completed",
+    );
   });
 });

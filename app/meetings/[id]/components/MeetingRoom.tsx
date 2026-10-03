@@ -166,6 +166,10 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const getDashboardUrl = () => {
     if (!session?.user) return "/";
 
+    if (info.organizationId) {
+      return `/dashboard/organization/${info.organizationId}/appointments`;
+    }
+
     const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
       session.user;
 
@@ -445,6 +449,7 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
               startsAt={info.startsAt}
               endsAt={info.endsAt}
               extendedSeconds={info.extendedSeconds}
+              extensionsUsed={info.extensionsUsed}
               isHost={isHost}
             />
           </div>

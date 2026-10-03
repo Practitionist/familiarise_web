@@ -67,7 +67,11 @@ export async function guardMeetingRoute(
       reason: access.reason,
     });
     return refuse(
-      { error: access.message, reason: access.reason },
+      {
+        error: access.message,
+        reason: access.reason,
+        ...("code" in access && access.code ? { code: access.code } : {}),
+      },
       access.reason === "not_found" ? 404 : 403,
     );
   }

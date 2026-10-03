@@ -27,18 +27,15 @@ export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
-/** Pre-start join window for consultees/attendees (10 minutes). */
-export const CONSULTEE_JOIN_WINDOW_MS = 10 * 60 * 1000;
+/** Pre-start join window for consultees/attendees (15 minutes, symmetric with hosts and backstage). */
+export const CONSULTEE_JOIN_WINDOW_MS = 15 * 60 * 1000;
 /** Pre-start join window for consultants/hosts (15 minutes). */
 export const CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000;
 /** Post-end rejoin and overrun grace window (30 minutes). */
 export const REJOIN_GRACE_MS = 30 * 60 * 1000;
 
 export type OccurrenceJoinState =
-  | "disabled"
-  | "countdown"
-  | "joinable"
-  | "ended";
+  "disabled" | "countdown" | "joinable" | "ended";
 
 export interface JoinableOccurrence {
   id: string;
@@ -435,7 +432,16 @@ export function isOccurrenceOver(
   occurrence: OccurrenceVM,
   now = new Date(),
 ): boolean {
-  return occurrenceEnd(occurrence) < now.getTime();
+  const closedAt = meetingClosedAt(occurrence);
+  if (closedAt) return closedAt.getTime() < now.getTime();
+  if (
+    occurrence.completionStatus === "COMPLETED" ||
+    occurrence.completionStatus === "VOIDED"
+  ) {
+    return occurrenceEnd(occurrence) < now.getTime();
+  }
+  const graceMs = occurrence.endsAt ? REJOIN_GRACE_MS : 0;
+  return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
 /** True when the timeline has occurrences and every live one is over. */

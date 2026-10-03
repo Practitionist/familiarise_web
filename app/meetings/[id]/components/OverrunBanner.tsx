@@ -10,10 +10,7 @@ const ENDING_SOON_THRESHOLD_MS = 5 * 60 * 1000;
 const CAP_IMMINENT_THRESHOLD_MS = 2 * 60 * 1000;
 
 export type OverrunBannerPhase =
-  | "hidden"
-  | "ending-soon"
-  | "overrun-grace"
-  | "cap-imminent";
+  "hidden" | "ending-soon" | "overrun-grace" | "cap-imminent";
 
 export interface OverrunBannerState {
   phase: OverrunBannerPhase;
@@ -94,6 +91,7 @@ interface OverrunBannerProps {
   startsAt: Date | null;
   endsAt: Date | null;
   extendedSeconds?: number;
+  extensionsUsed?: number;
   isHost: boolean;
 }
 
@@ -102,11 +100,13 @@ export function OverrunBanner({
   startsAt,
   endsAt,
   extendedSeconds = 0,
+  extensionsUsed = 0,
   isHost,
 }: OverrunBannerProps) {
   const { toast } = useToast();
   const [now, setNow] = useState(() => new Date());
   const [localExtendedSeconds, setLocalExtendedSeconds] = useState(0);
+  const [alreadyExtended, setAlreadyExtended] = useState(false);
   const [isExtending, setIsExtending] = useState(false);
   const [hasConflictingNextBooking, setHasConflictingNextBooking] =
     useState(false);
@@ -117,6 +117,8 @@ export function OverrunBanner({
   }, []);
 
   const totalExtendedSeconds = Math.max(extendedSeconds, localExtendedSeconds);
+  const isAlreadyExtended =
+    alreadyExtended || extensionsUsed >= 1 || totalExtendedSeconds > 0;
   const banner = computeOverrunBannerState({
     startsAt,
     endsAt,
@@ -129,7 +131,13 @@ export function OverrunBanner({
   }
 
   const handleExtend = async () => {
-    if (!callId || isExtending || hasConflictingNextBooking) return;
+    if (
+      !callId ||
+      isExtending ||
+      hasConflictingNextBooking ||
+      isAlreadyExtended
+    )
+      return;
     setIsExtending(true);
     try {
       const response = await fetch(
@@ -137,6 +145,18 @@ export function OverrunBanner({
         { method: "POST" },
       );
       const data = await response.json().catch(() => ({}));
+
+      if (response.status === 409 && data.alreadyExtended) {
+        setAlreadyExtended(true);
+        toast({
+          title: "Extension already used",
+          description:
+            data.error ||
+            "Free +15m extension has already been used for this session.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       if (response.status === 409 && data.hasConflictingNextBooking) {
         setHasConflictingNextBooking(true);
@@ -155,6 +175,7 @@ export function OverrunBanner({
 
       const added =
         typeof data.addedSeconds === "number" ? data.addedSeconds : 900;
+      setAlreadyExtended(true);
       setLocalExtendedSeconds(
         (prev) => Math.max(prev, totalExtendedSeconds) + added,
       );
@@ -187,27 +208,36 @@ export function OverrunBanner({
     >
       <Clock className="h-3.5 w-3.5 shrink-0" />
       <span>{banner.label}</span>
-      {isHost && callId && (
-        <button
-          type="button"
-          onClick={handleExtend}
-          disabled={isExtending || hasConflictingNextBooking}
-          data-testid="extend-session-button"
-          title={
-            hasConflictingNextBooking
-              ? "Cannot extend: another confirmed session starts within 15 minutes"
-              : "Extend room duration cap by 15 minutes for free"
-          }
-          className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isExtending ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <PlusCircle className="h-3 w-3" />
-          )}
-          Extend +15m (Free)
-        </button>
-      )}
+      {isHost &&
+        callId &&
+        (isAlreadyExtended ? (
+          <span
+            data-testid="extended-badge"
+            className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-200"
+          >
+            Extended (+15m applied)
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={handleExtend}
+            disabled={isExtending || hasConflictingNextBooking}
+            data-testid="extend-session-button"
+            title={
+              hasConflictingNextBooking
+                ? "Cannot extend: another confirmed session starts within 15 minutes"
+                : "Extend room duration cap by 15 minutes for free"
+            }
+            className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isExtending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <PlusCircle className="h-3 w-3" />
+            )}
+            Extend +15m (Free)
+          </button>
+        ))}
     </div>
   );
 }

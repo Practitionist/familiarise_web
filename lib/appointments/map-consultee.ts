@@ -17,7 +17,9 @@ import type {
 } from "@/hooks/useEvents";
 import { deriveBucket } from "./bucket";
 import {
+  REJOIN_GRACE_MS,
   getAnchorTime,
+  isDeliberateEnd,
   isOccurrenceOver,
   liveOccurrences,
   occurrencesOfAppointment,
@@ -63,13 +65,15 @@ function collaborators(
 /**
  * Future/ongoing slots in the shape the existing consultee action hook
  * (useEventActions) receives — mirrors utils/scheduleHelpers.getActualSlots:
- * keep slots whose end hasn't passed, sorted ascending.
+ * keep slots whose end + rejoin grace window hasn't passed, sorted ascending.
  */
 function actionableSlots(slots: OccurrenceLike[], now: Date): OccurrenceLike[] {
   return slots
     .filter((slot) => {
+      if (isDeliberateEnd(slot.meeting)) return false;
       const end = slot.endsAt ? toDate(slot.endsAt) : toDate(slot.startsAt);
-      return end.getTime() >= now.getTime();
+      const graceMs = slot.endsAt ? REJOIN_GRACE_MS : 0;
+      return end.getTime() + graceMs >= now.getTime();
     })
     .sort(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),

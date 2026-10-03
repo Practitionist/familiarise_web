@@ -37,6 +37,8 @@ export interface SessionInfo {
   endsAt: Date | null;
   durationMinutes: number | null;
   extendedSeconds: number;
+  extensionsUsed: number;
+  organizationId: string | null;
   fallbackTitle: string;
   isHost: boolean;
 }
@@ -75,6 +77,14 @@ export function useSessionInfo(): SessionInfo {
     typeof custom?.extendedSeconds === "number" && custom.extendedSeconds > 0
       ? custom.extendedSeconds
       : 0;
+  const extensionsUsed =
+    typeof custom?.extensionsUsed === "number" && custom.extensionsUsed > 0
+      ? custom.extensionsUsed
+      : extendedSeconds > 0
+        ? 1
+        : 0;
+  const organizationId =
+    str(custom?.organizationId) ?? str(custom?.organization_id);
 
   return {
     counterpartName: isHost ? guestName : hostName,
@@ -89,6 +99,8 @@ export function useSessionInfo(): SessionInfo {
         ? Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000)
         : null),
     extendedSeconds,
+    extensionsUsed,
+    organizationId,
     fallbackTitle: str(custom?.title) ?? "Meeting",
     isHost,
   };
@@ -112,11 +124,7 @@ export function formatScheduledAt(startsAt: Date | null): string | null {
 }
 
 export type SessionPhase =
-  | "unknown"
-  | "early"
-  | "starting-soon"
-  | "in-progress"
-  | "overrunning";
+  "unknown" | "early" | "starting-soon" | "in-progress" | "overrunning";
 
 export interface SessionClock {
   phase: SessionPhase;

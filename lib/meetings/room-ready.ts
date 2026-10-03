@@ -38,9 +38,21 @@ export function buildCallSettingsOverride(
         : {}),
       session: { inactivity_timeout_seconds: 300 },
       backstage: { enabled: true, join_ahead_time_seconds: 900 },
-      audio: { mic_default_on: false, access_request_enabled: true },
-      video: { camera_default_on: false, access_request_enabled: true },
-      screenshare: { access_request_enabled: true },
+      audio: {
+        mic_default_on: false,
+        default_device: "speaker" as const,
+        access_request_enabled: true,
+      },
+      video: {
+        camera_default_on: false,
+        access_request_enabled: true,
+        target_resolution: {
+          width: 1280,
+          height: 720,
+          bitrate: 1500000,
+        },
+      },
+      screensharing: { enabled: true, access_request_enabled: true },
       recording: { mode: "available", layout: { name: "spotlight" } },
     };
   }
