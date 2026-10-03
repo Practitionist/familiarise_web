@@ -402,6 +402,10 @@ export async function GET(
             thumbnailUrl: null,
           }));
 
+    const extractAndRedact = async (
+      ...args: Parameters<typeof extractRecordings>
+    ) => applyMediaRedaction(await extractRecordings(...args));
+
     // Include if COMPLETED or has at least 1 material/recording
     type TransformedEvent = {
       status: string;
@@ -424,8 +428,8 @@ export async function GET(
             status: c.status,
             date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
-            recordings: applyMediaRedaction(
-              await extractRecordings(c.appointment ? [c.appointment] : []),
+            recordings: await extractAndRedact(
+              c.appointment ? [c.appointment] : [],
             ),
           })),
         )
@@ -440,8 +444,8 @@ export async function GET(
             status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
-            recordings: applyMediaRedaction(
-              await extractRecordings(s.appointment ? [s.appointment] : []),
+            recordings: await extractAndRedact(
+              s.appointment ? [s.appointment] : [],
             ),
           })),
         )
@@ -457,8 +461,8 @@ export async function GET(
             status: w.status,
             date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
             materials: w.webinarPlan.materials,
-            recordings: applyMediaRedaction(
-              await extractRecordings(w.appointment ? [w.appointment] : []),
+            recordings: await extractAndRedact(
+              w.appointment ? [w.appointment] : [],
             ),
           })),
         )
@@ -476,12 +480,9 @@ export async function GET(
               cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
-            recordings: applyMediaRedaction(
-              await extractRecordings(cl.appointment ? [cl.appointment] : [], {
-                access: lateJoin,
-                classId: cl.id,
-                classPlanId: cl.classPlanId,
-              }),
+            recordings: await extractAndRedact(
+              cl.appointment ? [cl.appointment] : [],
+              { access: lateJoin, classId: cl.id, classPlanId: cl.classPlanId },
             ),
           })),
         )
@@ -498,8 +499,8 @@ export async function GET(
             status: t.status,
             date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
             materials: t.subscriptionPlan.materials,
-            recordings: applyMediaRedaction(
-              await extractRecordings(t.appointment ? [t.appointment] : []),
+            recordings: await extractAndRedact(
+              t.appointment ? [t.appointment] : [],
             ),
           })),
         )

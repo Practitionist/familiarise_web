@@ -482,7 +482,7 @@ export function RecordingManageSheet({
     const numericPrice = Number(priceInRupees);
     const listPricePaise = Number.isFinite(numericPrice)
       ? Math.round(numericPrice * 100)
-      : NaN;
+      : Number.NaN;
     const parsedTags = tags
       .split(",")
       .map((t) => t.trim())

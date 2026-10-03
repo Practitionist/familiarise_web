@@ -60,7 +60,7 @@ export function resolveActivePlaybackUrl(
   resolvedPlayback: ResolvedPlaybackState | null,
 ): string | null {
   if (!recording) return null;
-  if (resolvedPlayback && resolvedPlayback.recordingId === recording.id) {
+  if (resolvedPlayback?.recordingId === recording.id) {
     return resolvedPlayback.url;
   }
   return recording.playbackUrl ?? null;
