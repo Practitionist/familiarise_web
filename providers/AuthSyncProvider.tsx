@@ -120,8 +120,15 @@ export default function AuthSyncProvider() {
   // sign-out call: session expiry, cross-tab sign-out, SSO, and OAuth.
   useEffect(() => {
     if (isPending) return;
-    const userId = session?.user?.id ?? null;
-    const role = session?.user?.role ?? null;
+    const user = session?.user as
+      | {
+          id?: string | null;
+          sentryUserId?: string | null;
+          role?: string | null;
+        }
+      | undefined;
+    const userId = user?.sentryUserId ?? user?.id ?? null;
+    const role = user?.role ?? null;
     const identity = userId ? `${userId}|${role ?? ""}` : null;
     if (identity === stampedIdentityRef.current) return;
     stampedIdentityRef.current = identity;

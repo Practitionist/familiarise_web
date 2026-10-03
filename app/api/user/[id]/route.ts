@@ -8,8 +8,11 @@ import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   eraseStreamPrincipalFootprint,
+  hasMoneyInFlight,
+  moneyInFlightForUser,
   scrubUser,
 } from "@/lib/compliance/erasure/scrub-user";
+import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 
 /**
@@ -194,42 +197,139 @@ export async function PATCH(
   }
 }
 
-async function hasUserRetainedFinancialHistory(id: string): Promise<boolean> {
-  // Money-history gate (#781 §B parity with the consultant route). A hard
-  // delete cascades Payment → PaymentLeg / BookingUtilization /
-  // ReferralCreditUsage away and 500s on the first Restrict (Refund,
-  // Dispute) — destroying financial records the schema's own DPDP comment
-  // says are retained per IT Act 5–7y obligations. Users whose money ever
-  // moved get the §12 erasure scrub instead: PII pseudonymised, erasedAt
-  // tombstone set, financial rows intact.
-  // Consultant-side money lives on ConsultantProfile (earnings/payouts/TDS
-  // Restrict-delete through it), not on Payment — a consultant with payout
-  // history but no payer-side rows must also take the scrub path, or the
-  // hard delete 500s on the first Restrict (#1205-triage).
-  // A held seat counts too: AppointmentParticipant.user is Restrict, and the
-  // delivery record is retained like the payment record, so it scrubs.
-  const [paymentCount, referralCreditCount, seatCount, profile] =
+async function checkConsulteeActiveBookingsBlock(
+  consulteeProfileId: string,
+): Promise<NextResponse | null> {
+  const activeBookingStatuses = [
+    "PENDING",
+    "APPROVED",
+    "APPROVED_PENDING_PAYMENT",
+    "SCHEDULED",
+  ] as const;
+  const [activeConsultations, activeSubscriptions, activeTrials] =
     await Promise.all([
-      prisma.payment.count({ where: { userId: id } }),
-      prisma.referralCredit.count({ where: { userId: id } }),
-      prisma.appointmentParticipant.count({ where: { userId: id } }),
-      prisma.consultantProfile.findFirst({
-        where: { userId: id },
-        select: {
-          _count: {
-            select: { earnings: true, payouts: true, tdsRecords: true },
-          },
+      prisma.consultation.count({
+        where: {
+          requestedById: consulteeProfileId,
+          status: { in: [...activeBookingStatuses] },
+        },
+      }),
+      prisma.subscription.count({
+        where: {
+          requestedById: consulteeProfileId,
+          status: { in: [...activeBookingStatuses] },
+        },
+      }),
+      prisma.trial.count({
+        where: {
+          consulteeProfileId,
+          status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
         },
       }),
     ]);
+  const totalActiveBookings =
+    activeConsultations + activeSubscriptions + activeTrials;
+  if (totalActiveBookings === 0) return null;
+
+  return NextResponse.json(
+    {
+      error:
+        "Cannot delete account while you have active or upcoming consultations, subscriptions, or trials. Please complete or cancel your active bookings first.",
+      code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+      counts: {
+        activeConsultations,
+        activeSubscriptions,
+        activeTrials,
+      },
+    },
+    { status: 409 },
+  );
+}
+
+async function evaluateUserDeletionEligibility(
+  id: string,
+): Promise<{
+  blockerResponse: NextResponse | null;
+  hasRetainedHistory: boolean;
+}> {
+  const [
+    inFlight,
+    paymentCount,
+    referralCreditCount,
+    seatCount,
+    profile,
+    consulteeProfile,
+  ] = await Promise.all([
+    moneyInFlightForUser(prisma, id),
+    prisma.payment.count({ where: { userId: id } }),
+    prisma.referralCredit.count({ where: { userId: id } }),
+    prisma.appointmentParticipant.count({ where: { userId: id } }),
+    prisma.consultantProfile.findFirst({
+      where: { userId: id },
+      select: {
+        id: true,
+        _count: {
+          select: { earnings: true, payouts: true, tdsRecords: true },
+        },
+      },
+    }),
+    prisma.consulteeProfile.findFirst({
+      where: { userId: id },
+      select: { id: true },
+    }),
+  ]);
+
+  if (hasMoneyInFlight(inFlight)) {
+    return {
+      blockerResponse: NextResponse.json(
+        {
+          error:
+            "Cannot delete account while payouts, unsettled earnings, open payment disputes, or unpaid sole-owner organization invoices are in flight. Please wait for settlement or resolve them first.",
+          code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
+          counts: inFlight,
+        },
+        { status: 409 },
+      ),
+      hasRetainedHistory: false,
+    };
+  }
+
+  if (profile?.id) {
+    const activeAppointments = await checkActiveAppointments(profile.id);
+    if (activeAppointments.hasActive) {
+      return {
+        blockerResponse: NextResponse.json(
+          {
+            error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
+            code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+            breakdown: activeAppointments.breakdown,
+          },
+          { status: 409 },
+        ),
+        hasRetainedHistory: false,
+      };
+    }
+  }
+
+  if (consulteeProfile?.id) {
+    const bookingBlocker = await checkConsulteeActiveBookingsBlock(
+      consulteeProfile.id,
+    );
+    if (bookingBlocker) {
+      return { blockerResponse: bookingBlocker, hasRetainedHistory: false };
+    }
+  }
+
   const consultantMoneyCount = profile
     ? profile._count.earnings +
       profile._count.payouts +
       profile._count.tdsRecords
     : 0;
-  return (
-    paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0
-  );
+  return {
+    blockerResponse: null,
+    hasRetainedHistory:
+      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0,
+  };
 }
 
 async function tryEraseStreamFootprint(id: string): Promise<boolean> {
@@ -258,9 +358,6 @@ async function executeRetainedUserScrub(id: string): Promise<NextResponse> {
   const streamErased = activeRequest?.id
     ? !scrubResult.vendorFailures.some((f) => f.startsWith("stream:"))
     : await tryEraseStreamFootprint(id);
-  // Erasure propagates to Novu (never throws; Sentry-reported). The local
-  // scrub is committed either way; an unacknowledged vendor delete is
-  // surfaced as pending rather than hidden behind a success message.
   const novuErased = await deleteSubscriber(id);
   return NextResponse.json({
     message:
@@ -287,13 +384,10 @@ async function executeUserHardDeleteOrFallbackScrub(
     });
   }
 
-  // Revoke all sessions for the user before deletion (atomic)
   await prisma.$transaction([
     prisma.session.deleteMany({ where: { userId: id } }),
     prisma.user.delete({ where: { id } }),
   ]);
-  // Novu holds the same PII (email/name) — remove it too. Never throws;
-  // an unacknowledged delete is reported as pending, not as success.
   const novuErased = await deleteSubscriber(id);
 
   return NextResponse.json(
@@ -318,7 +412,6 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Allow admins to delete any user, or users to delete their own account
     const isSelfDeletion = session.user.id === id;
     const isAdmin = session.user.role === "ADMIN";
     if (!isSelfDeletion && !isAdmin) {
@@ -330,7 +423,13 @@ export async function DELETE(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    if (await hasUserRetainedFinancialHistory(id)) {
+    const { blockerResponse, hasRetainedHistory } =
+      await evaluateUserDeletionEligibility(id);
+    if (blockerResponse) {
+      return blockerResponse;
+    }
+
+    if (hasRetainedHistory) {
       return await executeRetainedUserScrub(id);
     }
 

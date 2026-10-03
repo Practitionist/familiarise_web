@@ -287,6 +287,18 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
           timestamp: new Date().toISOString(),
         }),
       );
+      try {
+        const family = lock.key.split(":")[0] || "unknown";
+        Sentry.logger?.warn("booking lock expired before release", {
+          family,
+          held_duration_ms: heldDuration,
+        });
+        Sentry.metrics?.count("booking.lock_already_released", 1, {
+          attributes: { family },
+        });
+      } catch {
+        // Telemetry must never be the reason a booking fails.
+      }
     }
   } catch (error: unknown) {
     console.error(
@@ -331,6 +343,18 @@ export async function extendLock(
         timestamp: new Date().toISOString(),
       }),
     );
+    try {
+      const family = lock.key.split(":")[0] || "unknown";
+      Sentry.logger?.warn("booking lock extension failed — ownership lost", {
+        family,
+        additional_ttl_ms: additionalTtl,
+      });
+      Sentry.metrics?.count("booking.lock_ownership_lost", 1, {
+        attributes: { family },
+      });
+    } catch {
+      // Telemetry must never be the reason a booking fails.
+    }
     return false;
   } catch (error: unknown) {
     console.error(

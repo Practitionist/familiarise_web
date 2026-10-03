@@ -52,23 +52,97 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
   onPrivacyChange,
   termsChecked,
   privacyChecked,
-}) => (
-  <div className="space-y-4">
-    <Agreement
-      id="terms"
-      checked={termsChecked}
-      onCheckedChange={onTermsChange}
-      label="Terms of Service"
-      link="/terms"
-    />
-    <Agreement
-      id="privacy"
-      checked={privacyChecked}
-      onCheckedChange={onPrivacyChange}
-      label="Privacy Policy"
-      link="/privacy"
-    />
-  </div>
-);
+}) => {
+  const [marketingChecked, setMarketingChecked] = React.useState(false);
+
+  const handleMarketingChange = (checked: boolean) => {
+    setMarketingChecked(checked);
+    void fetch(
+      checked
+        ? "/api/user/privacy/consent"
+        : "/api/user/privacy/consent?purposeCode=MARKETING_COMMS",
+      {
+        method: checked ? "POST" : "DELETE",
+        headers: checked ? { "Content-Type": "application/json" } : undefined,
+        body: checked
+          ? JSON.stringify({
+              purposeCodes: ["MARKETING_COMMS"],
+              language: "en-IN",
+              version: 1,
+            })
+          : undefined,
+      },
+    ).catch(() => {});
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* DPDP Act 2023 & Rule 3 Itemised Data Protection Notice */}
+      <div className="rounded-lg border border-border bg-muted/40 p-4 text-xs text-muted-foreground space-y-2">
+        <p className="font-semibold text-foreground text-sm">
+          Data Protection Notice (DPDP Act, 2023 &amp; Rule 3)
+        </p>
+        <p>
+          To operate your Familiarise account, we process your{" "}
+          <strong>identity &amp; profile details</strong> (name, email, phone,
+          professional bio, and 18+ age verification) for{" "}
+          <strong>core account delivery</strong> (<code>PRIMARY_PROCESSING</code>
+          ), <strong>session scheduling</strong> (<code>SESSION_BOOKING</code>),
+          and <strong>live video &amp; chat</strong> via GetStream.io (
+          <code>STREAM_DATA_PROCESSING</code>), as well as payment/payout
+          settlement via Razorpay/Stripe. For platform security and support
+          diagnostics (DPDP &sect;8(5) &amp; Rule 6), error traces use a
+          one-way pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw
+          PII sent to Sentry.
+        </p>
+        <p>
+          You can <strong>download your data &amp; processor summary</strong>,{" "}
+          <strong>withdraw optional consents</strong> in 1 click,{" "}
+          <strong>withdraw core consent &amp; delete your account</strong>{" "}
+          (subject to Indian 7–8 yr tax invoice retention), or{" "}
+          <strong>file a data protection grievance</strong> (with escalation to
+          the Data Protection Board of India) anytime in{" "}
+          <strong>Settings &rarr; Account</strong>.
+        </p>
+      </div>
+
+      <Agreement
+        id="terms"
+        checked={termsChecked}
+        onCheckedChange={onTermsChange}
+        label="Terms of Service"
+        link="/terms"
+      />
+      <Agreement
+        id="privacy"
+        checked={privacyChecked}
+        onCheckedChange={onPrivacyChange}
+        label="Privacy Policy & Core Data Processing Notice"
+        link="/privacy"
+      />
+
+      {/* Optional Marketing Consent (Granular / Unbundled per DPDP §6) */}
+      <div className="flex items-start space-x-3 p-4 rounded-lg bg-muted/30 border border-dashed border-border hover:bg-muted/50 transition-colors">
+        <Checkbox
+          id="marketing-consent"
+          checked={marketingChecked}
+          onCheckedChange={(checked) =>
+            handleMarketingChange(checked === true)
+          }
+          className="h-5 w-5 mt-0.5"
+        />
+        <Label
+          htmlFor="marketing-consent"
+          className="text-sm cursor-pointer leading-snug"
+        >
+          <span className="font-medium">Optional:</span> Send me product
+          updates, mentorship tips, and promotional offers (
+          <code>MARKETING_COMMS</code>). You can withdraw this anytime in
+          Settings.
+        </Label>
+      </div>
+    </div>
+  );
+};
 
 export default TermsAndPrivacyAgreement;

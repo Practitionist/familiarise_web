@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import { classifyError } from "@/lib/errors/classification/payment-error-classification";
@@ -26,22 +25,28 @@ function refusalResponse(
   refusal: Refusal,
 ): NextResponse {
   console.warn(`${tag}${ctx} Refused ${refusal.code}: ${refusal.devMessage}`);
+  let errorId: string | undefined;
   if (refusal.httpStatus >= 500) {
-    reportSentryError(refusal, {
-      subsystem: "api",
-      expected: true,
-      level: "info",
-      tags: { code: refusal.code },
-      ...(refusal.context ? { contexts: { refusal: refusal.context } } : {}),
-    });
+    errorId =
+      reportSentryError(refusal, {
+        subsystem: "api",
+        expected: true,
+        level: "info",
+        tags: { code: refusal.code },
+        ...(refusal.context ? { contexts: { refusal: refusal.context } } : {}),
+      }) || undefined;
   }
   return NextResponse.json(
     {
       error: refusal.userMessage,
       errorType: refusal.code,
       code: refusal.code,
+      ...(errorId ? { errorId } : {}),
     },
-    { status: refusal.httpStatus },
+    {
+      status: refusal.httpStatus,
+      ...(errorId ? { headers: { "X-Sentry-Event-Id": errorId } } : {}),
+    },
   );
 }
 
@@ -65,18 +70,27 @@ export function apiError({
 
   const classified = classifyError(error, fallbackMessage);
 
+  let errorId: string | undefined;
   if (classified.isBusinessError) {
     console.warn(`${tag}${ctx} Business rule: ${classified.errorMessage}`);
   } else {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "api", route_tag: tag } },
-    );
+    errorId =
+      reportSentryError(error, {
+        subsystem: "api",
+        tags: { route_tag: tag },
+      }) || undefined;
     console.error(`${tag}${ctx} Unexpected:`, error);
   }
 
   return NextResponse.json(
-    { error: classified.errorMessage, errorType: classified.errorType },
-    { status: classified.httpStatus },
+    {
+      error: classified.errorMessage,
+      errorType: classified.errorType,
+      ...(errorId ? { errorId } : {}),
+    },
+    {
+      status: classified.httpStatus,
+      ...(errorId ? { headers: { "X-Sentry-Event-Id": errorId } } : {}),
+    },
   );
 }
