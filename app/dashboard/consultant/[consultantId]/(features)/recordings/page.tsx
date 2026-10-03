@@ -14,7 +14,6 @@ interface RecordingsPageProps {
   }>;
 }
 
-/** #1527 §13b — All · Webinars · Classes as URL tabs (`?tab=`), so a link keeps its tab. */
 export default function RecordingsPage({
   params,
 }: Readonly<RecordingsPageProps>) {
@@ -24,7 +23,7 @@ export default function RecordingsPage({
     <>
       <DashboardHeader
         title="Recordings"
-        subtitle="Manage your webinar and class recordings"
+        subtitle="Manage your session recordings and replay listings"
       />
       <DashboardContent>
         <UrlTabs
@@ -46,6 +45,26 @@ export default function RecordingsPage({
               label: "Classes",
               content: (
                 <RecordingsList consultantId={consultantId} type="class" />
+              ),
+            },
+            {
+              value: "consultation",
+              label: "Consultations",
+              content: (
+                <RecordingsList
+                  consultantId={consultantId}
+                  type="consultation"
+                />
+              ),
+            },
+            {
+              value: "subscription",
+              label: "Subscriptions",
+              content: (
+                <RecordingsList
+                  consultantId={consultantId}
+                  type="subscription"
+                />
               ),
             },
           ]}
