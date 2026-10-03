@@ -187,6 +187,33 @@ describe("scrubSentrySpan (#1916, #1926)", () => {
     });
     expect(scrubbed.contexts.culture).toEqual({ locale: "en-IN" });
   });
+
+  test("scrubs v11 span.name and span.attributes alongside v10 fields", () => {
+    const v11Span = {
+      span_id: "s2",
+      trace_id: "t2",
+      start_timestamp: 1,
+      name: "GET https://familiarisenow.com/api/reset?code=999999&email=alice@example.com",
+      attributes: {
+        "culture.timezone": "Asia/Kolkata",
+        "http.query": "code=999999",
+        authorization: "Bearer secret_jwt",
+        "user.role": "CONSULTEE",
+      },
+    };
+
+    const scrubbed = scrubSentrySpan(
+      v11Span as unknown as Parameters<typeof scrubSentrySpan>[0],
+    ) as unknown as typeof v11Span;
+
+    expect(scrubbed.name).toContain("code=%5Bredacted%5D");
+    expect(scrubbed.name).not.toContain("alice@example.com");
+    expect(scrubbed.attributes).toEqual({
+      "http.query": "code=%5Bredacted%5D",
+      authorization: "[redacted]",
+      "user.role": "CONSULTEE",
+    });
+  });
 });
 
 describe("scrubSentryLog (#1926)", () => {

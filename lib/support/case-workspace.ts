@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
   CaseAuthor,
   CaseBooking,
@@ -353,10 +354,11 @@ async function readTicketWorkspace(
     });
     appointmentId = c?.appointment?.id ?? null;
   }
-  const [booking, payment, pastCases] = await Promise.all([
+  const [booking, payment, pastCases, sentryIssues] = await Promise.all([
     appointmentId ? readBooking(appointmentId, t.user.name) : null,
     grants.showPayment ? readPayment(t.paymentId) : null,
     readPastCases(t.user.id, key),
+    findUserIssues({ userId: t.user.id, limit: 5 }),
   ]);
 
   return {
@@ -386,6 +388,7 @@ async function readTicketWorkspace(
     payment,
     organization: t.organization,
     pastCases,
+    sentryIssues,
     timeline: timeline.toSorted(byTime),
     attachments: t.attachments.map((a) => ({
       id: a.id,
@@ -426,12 +429,13 @@ async function readThreadWorkspace(
   });
   if (!t) return null;
   const key = caseKeyOf({ kind: "thread", id: t.id });
-  const [booking, payment, pastCases] = await Promise.all([
+  const [booking, payment, pastCases, sentryIssues] = await Promise.all([
     readBooking(t.appointmentId, t.user.name),
     grants.showPayment
       ? readPayment(t.appointment.payment[0]?.id ?? null)
       : null,
     readPastCases(t.user.id, key),
+    findUserIssues({ userId: t.user.id, limit: 5 }),
   ]);
   return {
     key,
@@ -460,6 +464,7 @@ async function readThreadWorkspace(
     payment,
     organization: t.organization,
     pastCases,
+    sentryIssues,
     timeline: messageItems(t.messages as MessageRow[]),
     attachments: [],
   };

@@ -99,9 +99,12 @@ describe("pool exhaustion and Postgres SQLSTATE tags (#1696, #1092)", () => {
       { subsystem: "payments", op: "capture" },
     );
     reportSentryError(
-      Object.assign(new Error("could not serialize access due to concurrent update"), {
-        code: "P2034",
-      }),
+      Object.assign(
+        new Error("could not serialize access due to concurrent update"),
+        {
+          code: "P2034",
+        },
+      ),
       { subsystem: "ledger", op: "transfer" },
     );
 
@@ -117,6 +120,51 @@ describe("pool exhaustion and Postgres SQLSTATE tags (#1696, #1092)", () => {
     });
     expect(tagsOf(2)).toMatchObject({
       pg_code: "40001",
+    });
+  });
+
+  it("stamps pg_code on deadlock (40P01), lock timeout (55P03), statement timeout (57014), and transition tags on IllegalTransitionError", () => {
+    captureException.mockReturnValue("evt_deadlock_1");
+    const eventId = reportSentryError(
+      new Error("deadlock detected (SQLSTATE 40P01)"),
+      { subsystem: "checkout", op: "serializable-exhausted" },
+    );
+    expect(eventId).toBe("evt_deadlock_1");
+
+    reportSentryError(
+      new Error("canceling statement due to lock timeout (55P03)"),
+      { subsystem: "bookings", op: "lock" },
+    );
+    reportSentryError(
+      new Error("canceling statement due to statement timeout (57014)"),
+      { subsystem: "bookings", op: "query" },
+    );
+    reportSentryError(
+      Object.assign(
+        new Error(
+          "Illegal RequestStatus transition on req_1: APPROVED -> PENDING",
+        ),
+        {
+          name: "IllegalTransitionError",
+          entity: "RequestStatus",
+          entityId: "req_1",
+          from: "APPROVED",
+          to: "PENDING",
+        },
+      ),
+      { subsystem: "booking", op: "transition" },
+    );
+
+    const tagsOf = (i: number) =>
+      (captureException.mock.calls[i]?.[1] as { tags: Record<string, string> })
+        .tags;
+    expect(tagsOf(0)).toMatchObject({ pg_code: "40P01" });
+    expect(tagsOf(1)).toMatchObject({ pg_code: "55P03" });
+    expect(tagsOf(2)).toMatchObject({ pg_code: "57014" });
+    expect(tagsOf(3)).toMatchObject({
+      transition_entity: "RequestStatus",
+      transition_from: "APPROVED",
+      transition_to: "PENDING",
     });
   });
 });

@@ -32,17 +32,29 @@ import type {
   ProgramStatus,
 } from "@prisma/client";
 
+export interface IllegalTransitionContext {
+  entityId?: string | null;
+  from?: string | null;
+}
+
 export class IllegalTransitionError extends Error {
   readonly httpStatus = 409 as const;
   readonly code = "ILLEGAL_TRANSITION" as const;
+  readonly entityId?: string;
+  readonly from?: string;
   constructor(
     readonly entity: string,
     readonly to: string,
+    context?: IllegalTransitionContext,
   ) {
+    const fromClause =
+      context?.from !== undefined ? ` (from ${context.from ?? "MISSING"})` : "";
     super(
-      `${entity} cannot transition to ${to}: row missing, out of scope, or not in an allowed from-state`,
+      `${entity} cannot transition to ${to}${fromClause}: row missing, out of scope, or not in an allowed from-state`,
     );
     this.name = "IllegalTransitionError";
+    if (context?.entityId) this.entityId = context.entityId;
+    if (context?.from) this.from = context.from;
   }
 }
 
@@ -76,8 +88,15 @@ async function finalize(
   to: string,
   count: number,
   audit?: AuditSpec,
+  entityId?: string,
 ): Promise<void> {
-  if (count === 0) throw new IllegalTransitionError(entity, to);
+  if (count === 0) {
+    throw new IllegalTransitionError(
+      entity,
+      to,
+      entityId ? { entityId } : undefined,
+    );
+  }
   if (audit) await tx.orgAuditLog.create({ data: audit });
 }
 
@@ -103,7 +122,14 @@ export async function transitionOrganization(
     where: { ...args.where, status: { in: ORG_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "Organization", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "Organization",
+    args.to,
+    res.count,
+    args.audit,
+    args.where.id,
+  );
 }
 
 //////////////////////////////////////////////////// Contract ////////////////////////////////////////////////////
@@ -128,7 +154,7 @@ export async function transitionContract(
     where: { ...args.where, status: { in: CONTRACT_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "Contract", args.to, res.count, args.audit);
+  await finalize(tx, "Contract", args.to, res.count, args.audit, args.where.id);
 }
 
 //////////////////////////////////////////////////// Program ////////////////////////////////////////////////////
@@ -153,7 +179,7 @@ export async function transitionProgram(
     where: { ...args.where, status: { in: PROGRAM_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "Program", args.to, res.count, args.audit);
+  await finalize(tx, "Program", args.to, res.count, args.audit, args.where.id);
 }
 
 //////////////////////////////////////////////////// ProgramAssignment ////////////////////////////////////////////////////
@@ -194,7 +220,14 @@ export async function transitionMembership(
     where: { ...args.where, status: { in: MEMBER_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "Membership", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "Membership",
+    args.to,
+    res.count,
+    args.audit,
+    args.where.id,
+  );
 }
 
 //////////////////////////////////////////////////// OrganizationInvoice ////////////////////////////////////////////////////
@@ -226,7 +259,14 @@ export async function transitionOrgInvoice(
     where: { ...args.where, status: { in: INVOICE_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "OrganizationInvoice", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "OrganizationInvoice",
+    args.to,
+    res.count,
+    args.audit,
+    args.where.id,
+  );
 }
 
 //////////////////////////////////////////////////// PurchaseOrder ////////////////////////////////////////////////////
@@ -248,7 +288,14 @@ export async function transitionPurchaseOrder(
     where: { ...args.where, status: { in: PO_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "PurchaseOrder", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "PurchaseOrder",
+    args.to,
+    res.count,
+    args.audit,
+    args.where.id,
+  );
 }
 
 //////////////////////////////////////////////////// OrganizationPayoutAccount ////////////////////////////////////////////////////
@@ -288,6 +335,7 @@ export async function transitionOrgPayoutAccount(
     args.to,
     res.count,
     args.audit,
+    args.where.id,
   );
 }
 
@@ -316,5 +364,12 @@ export async function transitionOrgPayout(
     where: { ...args.where, status: { in: PAYOUT_ALLOWED_FROM[args.to] } },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "OrganizationPayout", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "OrganizationPayout",
+    args.to,
+    res.count,
+    args.audit,
+    args.where.id,
+  );
 }

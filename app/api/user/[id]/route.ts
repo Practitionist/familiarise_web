@@ -6,7 +6,12 @@ import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
-import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import {
+  hasMoneyInFlight,
+  moneyInFlightForUser,
+  scrubUser,
+} from "@/lib/compliance/erasure/scrub-user";
+import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 
 /**
@@ -228,20 +233,106 @@ export async function DELETE(
     // hard delete 500s on the first Restrict (#1205-triage).
     // A held seat counts too: AppointmentParticipant.user is Restrict, and the
     // delivery record is retained like the payment record, so it scrubs.
-    const [paymentCount, referralCreditCount, seatCount, profile] =
-      await Promise.all([
-        prisma.payment.count({ where: { userId: id } }),
-        prisma.referralCredit.count({ where: { userId: id } }),
-        prisma.appointmentParticipant.count({ where: { userId: id } }),
-        prisma.consultantProfile.findFirst({
-          where: { userId: id },
-          select: {
-            _count: {
-              select: { earnings: true, payouts: true, tdsRecords: true },
+    const [
+      inFlight,
+      paymentCount,
+      referralCreditCount,
+      seatCount,
+      profile,
+      consulteeProfile,
+    ] = await Promise.all([
+      moneyInFlightForUser(prisma, id),
+      prisma.payment.count({ where: { userId: id } }),
+      prisma.referralCredit.count({ where: { userId: id } }),
+      prisma.appointmentParticipant.count({ where: { userId: id } }),
+      prisma.consultantProfile.findFirst({
+        where: { userId: id },
+        select: {
+          id: true,
+          _count: {
+            select: { earnings: true, payouts: true, tdsRecords: true },
+          },
+        },
+      }),
+      prisma.consulteeProfile.findFirst({
+        where: { userId: id },
+        select: { id: true },
+      }),
+    ]);
+
+    if (hasMoneyInFlight(inFlight)) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete account while payouts, unsettled earnings, open payment disputes, or unpaid sole-owner organization invoices are in flight. Please wait for settlement or resolve them first.",
+          code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
+          counts: inFlight,
+        },
+        { status: 409 },
+      );
+    }
+
+    if (profile?.id) {
+      const activeAppointments = await checkActiveAppointments(profile.id);
+      if (activeAppointments.hasActive) {
+        return NextResponse.json(
+          {
+            error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
+            code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+            breakdown: activeAppointments.breakdown,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (consulteeProfile?.id) {
+      const activeBookingStatuses = [
+        "PENDING",
+        "APPROVED",
+        "APPROVED_PENDING_PAYMENT",
+        "SCHEDULED",
+      ] as const;
+      const [activeConsultations, activeSubscriptions, activeTrials] =
+        await Promise.all([
+          prisma.consultation.count({
+            where: {
+              requestedById: consulteeProfile.id,
+              status: { in: [...activeBookingStatuses] },
+            },
+          }),
+          prisma.subscription.count({
+            where: {
+              requestedById: consulteeProfile.id,
+              status: { in: [...activeBookingStatuses] },
+            },
+          }),
+          prisma.trial.count({
+            where: {
+              consulteeProfileId: consulteeProfile.id,
+              status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
+            },
+          }),
+        ]);
+      const totalActiveBookings =
+        activeConsultations + activeSubscriptions + activeTrials;
+      if (totalActiveBookings > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Cannot delete account while you have active or upcoming consultations, subscriptions, or trials. Please complete or cancel your active bookings first.",
+            code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+            counts: {
+              activeConsultations,
+              activeSubscriptions,
+              activeTrials,
             },
           },
-        }),
-      ]);
+          { status: 409 },
+        );
+      }
+    }
+
     const consultantMoneyCount = profile
       ? profile._count.earnings +
         profile._count.payouts +

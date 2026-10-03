@@ -315,6 +315,7 @@ function scrubSpanMap(map: Record<string, unknown>): Record<string, unknown> {
  */
 export function scrubSentrySpan<
   T extends ScrubberSpan & {
+    name?: string;
     attributes?: Record<string, unknown>;
     contexts?: Record<string, unknown>;
   },
@@ -323,6 +324,9 @@ export function scrubSentrySpan<
     span.description = stripSensitiveQueryParams(
       scrubStringValue(span.description),
     );
+  }
+  if (typeof span.name === "string") {
+    span.name = stripSensitiveQueryParams(scrubStringValue(span.name));
   }
   if (span.data && typeof span.data === "object") {
     span.data = scrubSpanMap(span.data) as typeof span.data;
