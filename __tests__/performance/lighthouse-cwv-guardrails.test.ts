@@ -11,10 +11,12 @@ function readRepoFile(relPath: string): string {
 }
 
 describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
-  it("renders HeroSection <h1> without Framer Motion initial opacity:0 SSR trap", () => {
+  it("renders HeroSection <h1> as a Server Component without Framer Motion or blur animate-blob repaints", () => {
     const src = readRepoFile("components/home/HeroSection.tsx");
     expect(src).toContain("<h1");
     expect(src).not.toContain("<motion.h1");
+    expect(src).not.toContain("framer-motion");
+    expect(src).not.toContain("animate-blob");
   });
 
   it("uses renderLazyImage instead of renderLCPImage in below-the-fold BenefitsSection", () => {
@@ -23,10 +25,40 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     expect(src).not.toContain("renderLCPImage(");
   });
 
-  it("defaults AvatarImage to loading='lazy' and decoding='async'", () => {
+  it("renders native lazy <img> in AvatarImage without Radix eager new Image() preloading", () => {
     const src = readRepoFile("components/ui/avatar.tsx");
     expect(src).toContain('loading = "lazy"');
     expect(src).toContain('decoding = "async"');
+    expect(src).not.toContain("@radix-ui/react-avatar");
+  });
+
+  it("dynamically imports Sentry on interaction/idle in instrumentation-client.ts instead of bundling eagerly", () => {
+    const src = readRepoFile("instrumentation-client.ts");
+    expect(src).not.toMatch(/^import\s+.*from\s+["']@sentry\/nextjs["']/m);
+    expect(src).not.toMatch(
+      /^import\s+.*from\s+["']\.\/sentry\.shared\.config["']/m,
+    );
+    expect(src).toContain('import("./sentry.shared.config")');
+    expect(src).toContain('import("@sentry/nextjs")');
+  });
+
+  it("includes all required remote image hostnames in next.config.mjs images.remotePatterns", () => {
+    const cfg = readRepoFile("next.config.mjs");
+    const requiredHostnames = [
+      "lh3.googleusercontent.com",
+      "*.supabase.co",
+      "avatars.githubusercontent.com",
+      "upload.wikimedia.org",
+      "img.logo.dev",
+      "cdn.jsdelivr.net",
+      "picsum.photos",
+      "fastly.picsum.photos",
+      "images.unsplash.com",
+      "plus.unsplash.com",
+    ];
+    for (const host of requiredHostnames) {
+      expect(cfg).toContain(`hostname: "${host}"`);
+    }
   });
 
   it("caps TestimonialsSection marquee duplication to 2x per row instead of 9x", () => {
@@ -37,9 +69,11 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     );
   });
 
-  it("sets WCAG AA compliant --muted-foreground (40% lightness) in app/globals.css", () => {
+  it("sets WCAG AA compliant --muted-foreground (40% lightness), static .silver-text, and .cv-auto in app/globals.css", () => {
     const css = readRepoFile("app/globals.css");
     expect(css).toContain("--muted-foreground: 0 0% 40%;");
+    expect(css).toContain("content-visibility: auto;");
+    expect(css).not.toContain("animation: silver-shimmer");
   });
 
   describe("resolveDefaultTracesSampleRate", () => {
