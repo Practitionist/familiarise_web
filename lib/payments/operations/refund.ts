@@ -2002,6 +2002,7 @@ export async function mintInvoiceRefundCreditNote(
   params: {
     invoiceId: string;
     amountPaise: number;
+    exactSubtotalPaise?: number;
     reason: string;
   } & (
     | { refundId: string; overageEventId?: never }
@@ -2024,6 +2025,7 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: true,
       status: true,
       issuedAt: true,
+      subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
       cgstPaise: true,
@@ -2053,15 +2055,46 @@ export async function mintInvoiceRefundCreditNote(
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
-  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise, remaining);
-  if (cnTotal <= 0) return { creditNoteId: null };
 
-  // Same proportional-tax shape as mintRefundCreditNote.
   const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-  const cnTax = Math.round(cnTotal * taxFraction);
-  const cnSubtotal = cnTotal - cnTax;
+  const invoiceSubtotal =
+    invoice.subtotalPaise ?? Math.max(0, invoice.totalPaise - invoiceTax);
+  let cnSubtotal: number;
+  let cnTax: number;
+  let cnTotal: number;
+
+  if (params.exactSubtotalPaise !== undefined) {
+    // #1900: Compute credit note tax directly from exactSubtotalPaise to avoid
+    // 1-paisa rounding drift on cnSubtotal vs the overage ledger reversal.
+    const issuedSub = await tx.creditNote.aggregate({
+      where: { invoiceId: invoice.id },
+      _sum: { subtotalPaise: true },
+    });
+    const remainingSubtotalPaise = Math.max(
+      0,
+      invoiceSubtotal - sumPaise(issuedSub?._sum?.subtotalPaise),
+    );
+    cnSubtotal = Math.min(params.exactSubtotalPaise, remainingSubtotalPaise);
+    if (cnSubtotal <= 0) return { creditNoteId: null };
+    cnTax =
+      invoiceSubtotal > 0
+        ? Math.round((cnSubtotal * invoiceTax) / invoiceSubtotal)
+        : 0;
+    cnTotal = cnSubtotal + cnTax;
+    if (cnTotal > remaining) {
+      cnTotal = remaining;
+      cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+      cnSubtotal = cnTotal - cnTax;
+    }
+  } else {
+    cnTotal = Math.min(params.amountPaise, invoice.totalPaise, remaining);
+    if (cnTotal <= 0) return { creditNoteId: null };
+    const taxFraction =
+      invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+    cnTax = Math.round(cnTotal * taxFraction);
+    cnSubtotal = cnTotal - cnTax;
+  }
+
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
   const cnSgst = interState ? 0 : Math.floor(cnTax / 2);

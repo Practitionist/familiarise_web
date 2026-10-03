@@ -28,6 +28,15 @@ export async function createTdsRates() {
       effectiveTo: new Date("2026-03-31T23:59:59+05:30"),
     },
     {
+      lawCode: "IT1961" as const,
+      section: "194C",
+      rateBps: 200, // 2% contractor rate
+      noPanRateBps: 2000, // 206AA 20%
+      thresholdPaise: BigInt(10_000_000), // ₹1L aggregate per-FY
+      effectiveFrom: new Date("2020-04-01T00:00:00+05:30"),
+      effectiveTo: new Date("2026-03-31T23:59:59+05:30"),
+    },
+    {
       // §393(1) Table Sl. 8(v) — the 194-O successor; same economics.
       lawCode: "IT2025" as const,
       section: "393-8(v)",
@@ -35,6 +44,26 @@ export async function createTdsRates() {
       rateBps: 10,
       noPanRateBps: 500, // §397(2) e-commerce carve-out
       thresholdPaise: BigInt(50_000_000),
+      effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
+      effectiveTo: null,
+    },
+    {
+      lawCode: "IT2025" as const,
+      section: "194J",
+      paymentCode: null,
+      rateBps: 1000,
+      noPanRateBps: 2000,
+      thresholdPaise: BigInt(3_000_000),
+      effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
+      effectiveTo: null,
+    },
+    {
+      lawCode: "IT2025" as const,
+      section: "194C",
+      paymentCode: null,
+      rateBps: 200,
+      noPanRateBps: 2000,
+      thresholdPaise: BigInt(10_000_000),
       effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
       effectiveTo: null,
     },

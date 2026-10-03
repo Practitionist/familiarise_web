@@ -95,8 +95,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+const planEarningsForPayment = jest.fn(
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(null),
+);
 const createEarningsFromPayment = jest.fn();
 jest.mock("../../lib/payments/payouts", () => ({
+  planEarningsForPayment: (...a: unknown[]) => planEarningsForPayment(...a),
   createEarningsFromPayment: (...a: unknown[]) =>
     createEarningsFromPayment(...a),
 }));
@@ -444,3 +448,88 @@ describe("a missing payment_status is refused by the schema, not assumed paid", 
     expect(String(processingError)).toContain("payment_status");
   });
 });
+
+describe("Phase-1 atomic earnings creation (#1758) & Razorpay nested envelope fixtures (#1737)", () => {
+  it("creates consultant earnings inside Phase 1 when confirming a tentative appointment (#1758)", async () => {
+    appointmentFindUnique.mockResolvedValue({
+      id: "appt1",
+      slotsOfAppointment: [
+        {
+          id: "slot1",
+          isTentative: true,
+          startsAt: new Date("2026-06-01T10:00:00Z"),
+        },
+      ],
+    });
+    occurrenceFindMany.mockResolvedValue([]);
+    (txStub.appointmentOccurrence as Record<string, unknown>).updateMany =
+      jest.fn(async () => ({ count: 1 }));
+    (txStub as Record<string, unknown>).appointmentParticipant = {
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    };
+    planEarningsForPayment.mockResolvedValueOnce({
+      resolvedPayment: {
+        paymentForEarnings: pendingPayment,
+        earningsAppointmentType: "CONSULTATION",
+        consultantProfileId: "cp1",
+      },
+    });
+
+    try {
+      await postStripe(sessionCompletedEvent({ payment_status: "paid" }));
+
+      expect(createEarningsFromPayment).toHaveBeenCalledTimes(1);
+      expect(createEarningsFromPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payment: pendingPayment,
+          appointmentType: "CONSULTATION",
+          tx: txStub,
+        }),
+      );
+    } finally {
+      delete (txStub.appointmentOccurrence as Record<string, unknown>)
+        .updateMany;
+      delete (txStub as Record<string, unknown>).appointmentParticipant;
+    }
+  });
+
+  it("buildRazorpayPaymentCapturedEnvelope and buildRazorpayRefundCreatedEnvelope satisfy razorpay webhook schemas (#1737)", () => {
+    const {
+      buildRazorpayPaymentCapturedEnvelope,
+      buildRazorpayRefundCreatedEnvelope,
+    } = jest.requireActual(
+      "../../tests/typescript/race-conditions/utilities/fixtures",
+    );
+    const {
+      razorpayPaymentCapturedEventSchema,
+      razorpayWebhookEnvelopeSchema,
+    } = jest.requireActual("../../schemas/webhooks/razorpay");
+
+    const captured = JSON.parse(
+      buildRazorpayPaymentCapturedEnvelope({
+        orderId: "order_test_1737",
+        paymentId: "pay_test_1737",
+        amount: 50000,
+        notes: { appointmentId: "appt_1737" },
+      }),
+    );
+    const parsedCaptured =
+      razorpayPaymentCapturedEventSchema.safeParse(captured);
+    expect(parsedCaptured.success).toBe(true);
+
+    const refunded = JSON.parse(
+      buildRazorpayRefundCreatedEnvelope({
+        refundId: "rfnd_test_1737",
+        paymentId: "pay_test_1737",
+        amount: 25000,
+        status: "processed",
+      }),
+    );
+    const parsedRefunded = razorpayWebhookEnvelopeSchema.safeParse(refunded);
+    expect(parsedRefunded.success).toBe(true);
+    expect(parsedRefunded.data?.payload?.refund?.entity?.id).toBe(
+      "rfnd_test_1737",
+    );
+  });
+});
+

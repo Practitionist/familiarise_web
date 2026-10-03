@@ -125,6 +125,26 @@ export interface CreateEarningsParams {
   };
   appointmentType: AppointmentType;
   tx?: Tx;
+  preplanned?: PreplannedEarningsContext | null;
+}
+
+export interface PreplannedEarningsContext {
+  resolvedPayment: ResolvedEarningsPayment;
+  anchor: {
+    lastOccurrenceEndsAt: Date | null;
+    appointmentOccurrenceId: string | null;
+  };
+  orgSplit: OrgEarningsSplit | null;
+  parkForTrust: boolean;
+  splits: RevenueSplit[];
+  collabSettlements: Map<
+    string,
+    { sharePaise: number; orgSplit: OrgEarningsSplit }
+  >;
+  tranches: SubscriptionTranches | null;
+  legs: Array<{ source: string; amountPaise: number }>;
+  walletLegOrgId: string | null;
+  orgOverageSurchargePaise: number;
 }
 
 // ============================================
@@ -159,7 +179,7 @@ import {
  * a plan, so the caller falls back to the single whole-purchase row.
  */
 async function resolveSubscriptionTranches(
-  tx: Tx,
+  tx: Tx | typeof prisma,
   appointmentId: string | null | undefined,
 ): Promise<SubscriptionTranches | null> {
   if (!appointmentId) return null;
@@ -227,7 +247,7 @@ const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType> = {
  * ever select fewer cards, never a wrong-tenant one.
  */
 async function resolveSettlementContractId(
-  tx: Tx,
+  tx: Tx | typeof prisma,
   paymentId: string,
   orgId: string,
 ): Promise<string | null> {
@@ -268,7 +288,7 @@ async function resolveSettlementContractId(
  * remains the fallback rather than the primary rule.
  */
 async function resolveOrgSplit(
-  tx: Tx,
+  tx: Tx | typeof prisma,
   consultantProfileId: string,
   grossAmount: number,
   /** Point in time at which the rate card is resolved. Default = now(),
@@ -571,14 +591,222 @@ export async function resolvePaymentForEarnings(
 }
 
 /**
+ * #1758 — Pre-transaction planner that reads rate card, consultant profile,
+ * collaborator splits, trust-park status, subscription tranches, and payment
+ * legs BEFORE opening the Phase-1 Serializable transaction so Phase 1 can
+ * write ConsultantEarnings + OrganizationEarnings + the `booking:<paymentId>`
+ * journal atomically alongside appointment confirmation without ballooning
+ * Serializable lock hold times.
+ */
+export async function planEarningsForPayment(
+  whereOrId: string | Prisma.PaymentWhereUniqueInput,
+  rawAppointmentType: string = "CONSULTATION",
+  db: Tx | typeof prisma = prisma,
+): Promise<PreplannedEarningsContext | null> {
+  const where: Prisma.PaymentWhereUniqueInput =
+    typeof whereOrId === "string" ? { id: whereOrId } : whereOrId;
+  const resolvedPayment = await resolvePaymentForEarnings(
+    where,
+    rawAppointmentType,
+    db,
+  );
+  if (!resolvedPayment) return null;
+
+  const {
+    paymentForEarnings: payment,
+    earningsAppointmentType: appointmentType,
+    consultantProfileId,
+  } = resolvedPayment;
+  const grossAmount = payment.originalAmount;
+
+  let planType: "webinar" | "class" | null = null;
+  let planId: string | null = null;
+  if (appointmentType === "WEBINAR" && payment.appointment?.webinar) {
+    planType = "webinar";
+    planId = payment.appointment.webinar.webinarPlanId;
+  } else if (appointmentType === "CLASS" && payment.appointment?.class) {
+    planType = "class";
+    planId = payment.appointment.class.classPlanId;
+  }
+
+  const anchor = await resolveEarningsAnchor(
+    db,
+    payment.appointmentId,
+    appointmentType,
+  );
+
+  const orgSplit = await resolveOrgSplit(
+    db,
+    consultantProfileId,
+    grossAmount,
+    payment.createdAt,
+    planId && planType ? { id: planId, kind: planType } : null,
+    { paymentId: payment.id, appointmentType },
+  );
+
+  const sponsorOrgId = payment.organizationId;
+  let parkForTrust = false;
+  if (sponsorOrgId && payment.billingAccountId) {
+    const billingAccount = await db.billingAccount.findUnique({
+      where: { id: payment.billingAccountId },
+      select: { fundingSource: true },
+    });
+    if (billingAccount?.fundingSource === "INVOICE") {
+      const sponsorOrg = await db.organization.findUnique({
+        where: { id: sponsorOrgId },
+        select: { status: true },
+      });
+      if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+        const paidInvoiceCount = await db.organizationInvoice.count({
+          where: { organizationId: sponsorOrgId, status: "PAID" },
+        });
+        parkForTrust = paidInvoiceCount === 0;
+      }
+    }
+  }
+
+  const platformFeePaise = orgSplit
+    ? orgSplit.platformFeePaise
+    : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+  const totalConsultantPool = orgSplit
+    ? orgSplit.consultantSharePaise
+    : grossAmount - platformFeePaise;
+
+  let splits: RevenueSplit[] = [];
+  if (planType && planId) {
+    splits = await calculateRevenueSplit(
+      planType,
+      planId,
+      totalConsultantPool,
+      db,
+      { excludeBuyerUserId: payment.userId },
+    );
+  }
+
+  const collabSettlements = new Map<
+    string,
+    { sharePaise: number; orgSplit: OrgEarningsSplit }
+  >();
+  if (splits.length > 0) {
+    const plannedOrgRows = new Set<string>(
+      orgSplit && orgSplit.orgShare > 0 ? [orgSplit.organizationId] : [],
+    );
+    for (const split of splits) {
+      if (split.role === "OWNER" || split.share <= 0) continue;
+      const collabOrgSplit = await resolveOrgSplit(
+        db,
+        split.consultantProfileId,
+        split.share,
+        payment.createdAt,
+      );
+      if (!collabOrgSplit) continue;
+      if (
+        collabOrgSplit.orgShare > 0 &&
+        plannedOrgRows.has(collabOrgSplit.organizationId)
+      ) {
+        continue;
+      }
+      if (collabOrgSplit.orgShare > 0) {
+        plannedOrgRows.add(collabOrgSplit.organizationId);
+      }
+      collabSettlements.set(split.consultantProfileId, {
+        sharePaise: split.share,
+        orgSplit: collabOrgSplit,
+      });
+    }
+  }
+
+  const tranches =
+    splits.length === 0 && appointmentType === "SUBSCRIPTION"
+      ? await resolveSubscriptionTranches(db, payment.appointmentId)
+      : null;
+
+  const legs = await db.paymentLeg.findMany({
+    where: { paymentId: payment.id },
+    select: { source: true, amountPaise: true },
+  });
+
+  let wallet = 0;
+  let overageAccrualPaise = 0;
+  for (const leg of legs) {
+    if (leg.amountPaise <= 0) continue;
+    if (leg.source === "WALLET") wallet += leg.amountPaise;
+    if (leg.source === "OVERAGE_INVOICE_ACCRUAL") {
+      overageAccrualPaise += leg.amountPaise;
+    }
+  }
+
+  let walletLegOrgId: string | null = payment.organizationId ?? null;
+  if (!walletLegOrgId && wallet > 0 && payment.billingAccountId) {
+    const walletOwner = await db.billingAccount.findUnique({
+      where: { id: payment.billingAccountId },
+      select: { ownerOrgId: true },
+    });
+    walletLegOrgId = walletOwner?.ownerOrgId ?? null;
+  }
+
+  let orgOverageSurchargePaise = 0;
+  if (overageAccrualPaise > 0) {
+    const orgOverage = await db.overageEvent.findFirst({
+      where: {
+        bookingUtilization: { paymentId: payment.id },
+        overageBehavior: "CHARGE_ORG",
+      },
+      select: { surchargePaise: true },
+    });
+    orgOverageSurchargePaise = sumPaise(orgOverage?.surchargePaise);
+  }
+
+  return {
+    resolvedPayment,
+    anchor,
+    orgSplit,
+    parkForTrust,
+    splits,
+    collabSettlements,
+    tranches,
+    legs,
+    walletLegOrgId,
+    orgOverageSurchargePaise,
+  };
+}
+
+/**
  * Create earnings record from a successful payment
  * Called from payment success webhook
  */
-export async function createEarningsFromPayment({
-  payment,
-  appointmentType,
-  tx: outerTx,
-}: CreateEarningsParams): Promise<string | null> {
+export async function createEarningsFromPayment(
+  payment: CreateEarningsParams["payment"],
+  appointmentTypeArg?: AppointmentType,
+  txArg?: Tx,
+  preplannedArg?: PreplannedEarningsContext | null,
+): Promise<string | null>;
+export async function createEarningsFromPayment(
+  params: CreateEarningsParams,
+): Promise<string | null>;
+export async function createEarningsFromPayment(
+  paramsOrPayment: CreateEarningsParams | CreateEarningsParams["payment"],
+  appointmentTypeArg?: AppointmentType,
+  txArg?: Tx,
+  preplannedArg?: PreplannedEarningsContext | null,
+): Promise<string | null> {
+  const normalized: CreateEarningsParams =
+    "payment" in paramsOrPayment && "appointmentType" in paramsOrPayment
+      ? paramsOrPayment
+      : {
+          payment: paramsOrPayment,
+          appointmentType: appointmentTypeArg ?? "CONSULTATION",
+          tx: txArg,
+          preplanned: preplannedArg,
+        };
+  const {
+    payment,
+    appointmentType,
+    tx: outerTx,
+    preplanned,
+  } = normalized;
+  const hasPreplanned = preplanned !== null && preplanned !== undefined;
+
   // Get consultant profile ID from the appointment
   const consultantProfileId = payment.appointment?.consultantProfile?.id;
 
@@ -595,11 +823,13 @@ export async function createEarningsFromPayment({
 
   // #1569 — the hold runs from the later of the capture and the last live
   // call's end, and a per-call fee names the occurrence it paid for.
-  const anchor = await resolveEarningsAnchor(
-    outerTx ?? prisma,
-    payment.appointmentId,
-    appointmentType,
-  );
+  const anchor = hasPreplanned
+    ? preplanned.anchor
+    : await resolveEarningsAnchor(
+        outerTx ?? prisma,
+        payment.appointmentId,
+        appointmentType,
+      );
   // #1775 C-9 — a trial is paid before it is delivered: its one row waits
   // (holdUntil null) until the COMPLETED transition stamps the hold.
   const holdUntil = payment.appointment?.trial
@@ -644,14 +874,16 @@ export async function createEarningsFromPayment({
           // time earnings are settled the live rate may have been bumped.
           // Passing `payment.createdAt` keeps the split stable across that
           // window.
-          const orgSplit = await resolveOrgSplit(
-            tx,
-            consultantProfileId,
-            grossAmount,
-            payment.createdAt,
-            planId && planType ? { id: planId, kind: planType } : null,
-            { paymentId: payment.id, appointmentType },
-          );
+          const orgSplit = hasPreplanned
+            ? preplanned.orgSplit
+            : await resolveOrgSplit(
+                tx,
+                consultantProfileId,
+                grossAmount,
+                payment.createdAt,
+                planId && planType ? { id: planId, kind: planType } : null,
+                { paymentId: payment.id, appointmentType },
+              );
 
           // #687 E-01/E-02 — the PENDING_TRUST park keys on the SPONSORING org
           // (the org that OWES the invoice = payment.organizationId), NOT the
@@ -665,8 +897,8 @@ export async function createEarningsFromPayment({
           // the charged billing account's fundingSource, not on organizationId
           // alone.
           const sponsorOrgId = payment.organizationId;
-          let parkForTrust = false;
-          if (sponsorOrgId && payment.billingAccountId) {
+          let parkForTrust = hasPreplanned ? preplanned.parkForTrust : false;
+          if (!hasPreplanned && sponsorOrgId && payment.billingAccountId) {
             const billingAccount = await tx.billingAccount.findUnique({
               where: { id: payment.billingAccountId },
               select: { fundingSource: true },
@@ -705,8 +937,8 @@ export async function createEarningsFromPayment({
           // Calculate collaborator splits if applicable. Read through `tx`:
           // under PG_POOL_MAX=1 a global-client read inside this open
           // transaction waits on the connection it holds (#1435, #1580 C-P0-1).
-          let splits: RevenueSplit[] = [];
-          if (planType && planId) {
+          let splits: RevenueSplit[] = hasPreplanned ? preplanned.splits : [];
+          if (!hasPreplanned && planType && planId) {
             splits = await calculateRevenueSplit(
               planType,
               planId,
@@ -728,11 +960,13 @@ export async function createEarningsFromPayment({
           // detected here deterministically instead of via a P2002 catch — v1
           // semantics kept: the colliding collaborator stays unsettled (full
           // share on ConsultantEarnings, no org accrual).
-          const collabSettlements = new Map<
-            string,
-            { sharePaise: number; orgSplit: OrgEarningsSplit }
-          >();
-          if (splits.length > 0) {
+          const collabSettlements = hasPreplanned
+            ? new Map(preplanned.collabSettlements)
+            : new Map<
+                string,
+                { sharePaise: number; orgSplit: OrgEarningsSplit }
+              >();
+          if (!hasPreplanned && splits.length > 0) {
             const plannedOrgRows = new Set<string>(
               orgSplit && orgSplit.orgShare > 0
                 ? [orgSplit.organizationId]
@@ -840,8 +1074,9 @@ export async function createEarningsFromPayment({
             // completes (settleSubscriptionCycle stamps it). Shares are floored
             // per tranche and every residual paisa lands on tranche 0, so the
             // rows sum to the fee and the pool exactly (EARNINGS_LEDGER_DRIFT).
-            const tranches =
-              appointmentType === "SUBSCRIPTION"
+            const tranches = hasPreplanned
+              ? preplanned.tranches
+              : appointmentType === "SUBSCRIPTION"
                 ? await resolveSubscriptionTranches(tx, payment.appointmentId)
                 : null;
             if (tranches) {
@@ -1025,10 +1260,12 @@ export async function createEarningsFromPayment({
           // rows exactly (EARNINGS_LEDGER_DRIFT contract).
           {
             try {
-              const legs = await tx.paymentLeg.findMany({
-                where: { paymentId: payment.id },
-                select: { source: true, amountPaise: true },
-              });
+              const legs = hasPreplanned
+                ? preplanned.legs
+                : await tx.paymentLeg.findMany({
+                    where: { paymentId: payment.id },
+                    select: { source: true, amountPaise: true },
+                  });
               const orgId = payment.organizationId ?? null;
               // #1458 — tracked separately from `receivable` so the credit side
               // can ask "was a CHARGE_ORG overage funded through this payment?"
@@ -1083,11 +1320,15 @@ export async function createEarningsFromPayment({
                 // fallback; the booking posting was missed).
                 let walletLegOrgId = orgId;
                 if (!walletLegOrgId && wallet > 0 && payment.billingAccountId) {
-                  const walletOwner = await tx.billingAccount.findUnique({
-                    where: { id: payment.billingAccountId },
-                    select: { ownerOrgId: true },
-                  });
-                  walletLegOrgId = walletOwner?.ownerOrgId ?? null;
+                  if (hasPreplanned) {
+                    walletLegOrgId = preplanned.walletLegOrgId;
+                  } else {
+                    const walletOwner = await tx.billingAccount.findUnique({
+                      where: { id: payment.billingAccountId },
+                      select: { ownerOrgId: true },
+                    });
+                    walletLegOrgId = walletOwner?.ownerOrgId ?? null;
+                  }
                 }
                 pushDebit(
                   { kind: "WALLET", organizationId: walletLegOrgId },
@@ -1157,14 +1398,18 @@ export async function createEarningsFromPayment({
               // wallet debit and no such leg exists, and a CHARGE_MEMBER
               // surcharge rides the member's side-payment, not this journal.
               if (overageAccrualPaise > 0) {
-                const orgOverage = await tx.overageEvent.findFirst({
-                  where: {
-                    bookingUtilization: { paymentId: payment.id },
-                    overageBehavior: "CHARGE_ORG",
-                  },
-                  select: { surchargePaise: true },
-                });
-                platformFeeCreditPaise += sumPaise(orgOverage?.surchargePaise);
+                if (hasPreplanned) {
+                  platformFeeCreditPaise += preplanned.orgOverageSurchargePaise;
+                } else {
+                  const orgOverage = await tx.overageEvent.findFirst({
+                    where: {
+                      bookingUtilization: { paymentId: payment.id },
+                      overageBehavior: "CHARGE_ORG",
+                    },
+                    select: { surchargePaise: true },
+                  });
+                  platformFeeCreditPaise += sumPaise(orgOverage?.surchargePaise);
+                }
               }
               pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
               if (splits.length > 0) {
@@ -1267,16 +1512,37 @@ export async function createEarningsFromPayment({
           return ownerId;
   };
 
+  const rawOuterTx = outerTx as
+    | { $executeRawUnsafe?: (query: string) => Promise<unknown> }
+    | undefined;
+  const hasOuterSavepoint =
+    !!outerTx && typeof rawOuterTx?.$executeRawUnsafe === "function";
+
   try {
-    return outerTx
-      ? await runInTx(outerTx)
-      : await withSerializableRetry(() =>
-          prisma.$transaction(runInTx, {
-            isolationLevel: "Serializable",
-            timeout: 10000,
-          }),
+    if (outerTx) {
+      if (hasOuterSavepoint) {
+        await rawOuterTx!.$executeRawUnsafe!("SAVEPOINT sp_create_earnings");
+      }
+      const res = await runInTx(outerTx);
+      if (hasOuterSavepoint) {
+        await rawOuterTx!.$executeRawUnsafe!(
+          "RELEASE SAVEPOINT sp_create_earnings",
         );
+      }
+      return res;
+    }
+    return await withSerializableRetry(() =>
+      prisma.$transaction(runInTx, {
+        isolationLevel: "Serializable",
+        timeout: 10000,
+      }),
+    );
   } catch (error) {
+    if (hasOuterSavepoint) {
+      await rawOuterTx!
+        .$executeRawUnsafe!("ROLLBACK TO SAVEPOINT sp_create_earnings")
+        .catch(() => undefined);
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"

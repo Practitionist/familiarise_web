@@ -12,7 +12,11 @@
 import {
   computeTdsForPayout,
   isValidPan,
+  NO_PAN_BPS_194O,
   NO_PAN_RATE_194O,
+  PAN_FALLBACK_BPS,
+  resolveEffectiveTdsRate,
+  TDS_SECTION_DEFAULT_BPS,
   TDS_SECTION_DEFAULTS,
   type TdsConsultantInput,
 } from "@/lib/compliance/tds";
@@ -159,3 +163,58 @@ describe("isValidPan", () => {
     expect(isValidPan("ABCDE12345")).toBe(false); // wrong shape
   });
 });
+
+describe("Integer basis-point math & resolveEffectiveTdsRate (#1368, #1367)", () => {
+  it("exposes integer basis-point constants and populates rateAppliedBps on computeTdsForPayout", () => {
+    expect(TDS_SECTION_DEFAULT_BPS["194O"]).toBe(10);
+    expect(TDS_SECTION_DEFAULT_BPS["194J"]).toBe(1000);
+    expect(NO_PAN_BPS_194O).toBe(500);
+    expect(PAN_FALLBACK_BPS).toBe(2000);
+
+    const res = computeTdsForPayout({
+      grossAmountPaise: 505_000, // 505_000 * 10 / 10_000 = 505p
+      consultant: profile(),
+    });
+    expect(res.rateAppliedBps).toBe(10);
+    expect(res.rateApplied).toBe(0.001);
+    expect(res.tdsAmountPaise).toBe(505);
+  });
+
+  it("resolves effective TDS rate from DB TDSRate row and falls back to static defaults", async () => {
+    const findFirst = jest.fn().mockResolvedValueOnce({
+      lawCode: "IT2025",
+      rateBps: 20,
+      noPanRateBps: 500,
+      thresholdPaise: BigInt(6_000_000),
+      paymentCode: "1005",
+    });
+    const fromDb = await resolveEffectiveTdsRate(
+      { tdsRate: { findFirst } },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fromDb).toMatchObject({
+      section: "194O",
+      lawCode: "IT2025",
+      rateBps: 20,
+      thresholdPaise: BigInt(6_000_000),
+      paymentCode: "1005",
+      source: "db",
+    });
+    expect(findFirst).toHaveBeenCalledTimes(1);
+
+    findFirst.mockResolvedValueOnce(null);
+    const fallback = await resolveEffectiveTdsRate(
+      { tdsRate: { findFirst } },
+      "194O",
+      new Date("2026-06-01T00:00:00Z"),
+    );
+    expect(fallback).toMatchObject({
+      section: "194O",
+      rateBps: 10,
+      thresholdPaise: BigInt(50_000_000),
+      source: "default",
+    });
+  });
+});
+

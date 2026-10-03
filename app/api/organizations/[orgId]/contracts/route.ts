@@ -56,28 +56,83 @@ const CreateBodySchema = z
     licenseRatePerSeatPaise: z.coerce.number().int().min(1).optional(),
     licenseCycle: LicenseCycleSchema.optional(),
   })
-  .refine(
-    (v) => v.effectiveTo === null || v.effectiveTo === undefined
-      ? true
-      : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
-    {
-      message: "effectiveTo must be strictly after effectiveFrom",
-      path: ["effectiveTo"],
-    },
-  )
-  .refine(
-    (v) =>
-      // PER_SEAT bills seats × rate, so it needs a per-seat rate and must not
-      // carry a flat fee; FLAT_FEE is the reverse. E2E-audit P1 fix — PER_SEAT
-      // was unreachable: the create route hardcoded FLAT_FEE.
-      v.licenseModel !== "PER_SEAT" ||
-      (v.licenseRatePerSeatPaise !== undefined && v.licenseFeePaise === undefined),
-    {
-      message:
-        "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
-      path: ["licenseModel"],
-    },
-  );
+  .superRefine((v, ctx) => {
+    if (
+      v.effectiveTo !== null &&
+      v.effectiveTo !== undefined &&
+      v.effectiveTo.getTime() <= v.effectiveFrom.getTime()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "effectiveTo must be strictly after effectiveFrom",
+        path: ["effectiveTo"],
+      });
+    }
+
+    const hasLicenseInput =
+      v.licenseModel !== undefined ||
+      v.licenseFeePaise !== undefined ||
+      v.licenseRatePerSeatPaise !== undefined;
+    if (hasLicenseInput && v.licenseCycle === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "licenseCycle is required when licenseModel, licenseFeePaise, or licenseRatePerSeatPaise is provided",
+        path: ["licenseCycle"],
+      });
+    }
+
+    if (v.licenseModel === "PER_SEAT") {
+      if (v.licenseRatePerSeatPaise === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
+          path: ["licenseRatePerSeatPaise"],
+        });
+      }
+      if (v.licenseFeePaise !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
+          path: ["licenseFeePaise"],
+        });
+      }
+    }
+
+    if (v.licenseModel === "FLAT_FEE") {
+      if (v.licenseFeePaise === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
+          path: ["licenseFeePaise"],
+        });
+      }
+      if (v.licenseRatePerSeatPaise !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "FLAT_FEE requires licenseFeePaise and forbids licenseRatePerSeatPaise",
+          path: ["licenseRatePerSeatPaise"],
+        });
+      }
+    }
+
+    if (
+      v.licenseModel === undefined &&
+      v.licenseFeePaise !== undefined &&
+      v.licenseRatePerSeatPaise !== undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Cannot specify both licenseFeePaise and licenseRatePerSeatPaise",
+        path: ["licenseModel"],
+      });
+    }
+  });
 
 export async function GET(
   req: NextRequest,
@@ -117,6 +172,8 @@ export async function GET(
           model: true,
           cycle: true,
           flatFeePaise: true,
+          ratePerSeatPaise: true,
+          activeSeatCount: true,
         },
       },
       _count: { select: { programs: true } },
@@ -124,7 +181,14 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: contracts });
+  return NextResponse.json({
+    data: contracts.map((c) => ({
+      ...c,
+      supersededByContractId: c.supersededByContractId ?? null,
+      supersededAt: c.supersededAt ?? null,
+      supersessionReason: c.supersessionReason ?? null,
+    })),
+  });
 }
 
 export async function POST(
@@ -247,12 +311,15 @@ export async function POST(
 
     if (wantsLicenseSubscription) {
       const cycleEnd = computeCycleEnd(body.effectiveFrom, body.licenseCycle!);
-      const isPerSeat = body.licenseModel === "PER_SEAT";
+      const isPerSeat =
+        body.licenseModel === "PER_SEAT" ||
+        (body.licenseModel === undefined &&
+          body.licenseRatePerSeatPaise !== undefined);
       await tx.billingSubscription.create({
         data: {
           contractId: created.id,
           billingAccountId: body.billingAccountId,
-          model: body.licenseModel ?? "FLAT_FEE",
+          model: isPerSeat ? "PER_SEAT" : "FLAT_FEE",
           cycle: body.licenseCycle!,
           ratePerSeatPaise: isPerSeat
             ? BigInt(body.licenseRatePerSeatPaise!)
@@ -284,7 +351,13 @@ export async function POST(
           paymentTermsDays: body.paymentTermsDays,
           ...(wantsLicenseSubscription
             ? {
+                licenseModel:
+                  body.licenseModel ??
+                  (body.licenseRatePerSeatPaise !== undefined
+                    ? "PER_SEAT"
+                    : "FLAT_FEE"),
                 licenseFeePaise: body.licenseFeePaise,
+                licenseRatePerSeatPaise: body.licenseRatePerSeatPaise,
                 licenseCycle: body.licenseCycle,
               }
             : {}),

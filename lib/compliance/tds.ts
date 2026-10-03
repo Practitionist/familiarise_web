@@ -67,39 +67,153 @@
 import type { ConsultantProfile } from "@prisma/client";
 import dtaaRatesJson from "./dtaa-rates.json";
 
-/** Default rates per section. Update when CBDT changes the rate card. */
+/** Default rates per section in integer basis points (10000 = 100%, 10 = 0.1%). (#1367) */
+export const TDS_SECTION_DEFAULT_BPS: Record<string, number> = {
+  // #771 P0-1 / #737 / #738 — 194-O was cut to 0.1% (10 bps) w.e.f. 1-Oct-2024 by
+  // the Finance (No. 2) Act 2024. Under IT Act 2025, §393(1) Table Sl. 8(v) carries
+  // the same 10 bps rate.
+  "194O": 10,
+  "393-8(v)": 10,
+  "194J": 1000,
+  "194C": 200,
+};
+
+/** Default rates per section as decimal fractions (kept for backwards compatibility). */
 export const TDS_SECTION_DEFAULTS: Record<string, number> = {
-  // #771 P0-1 / #737 / #738 — 194-O was cut to 0.1% (0.001) w.e.f. 1-Oct-2024 by
-  // the Finance (No. 2) Act 2024. Previously wrongly 0.01 (1%) → 10x over-withholding.
   "194O": 0.001,
+  "393-8(v)": 0.001,
   "194J": 0.1,
   "194C": 0.02,
 };
 
-/** No-PAN punitive rate (old §206AA, now §397(2) IT Act 2025) — applies to 194J/194C. */
+/** No-PAN punitive rate in integer bps (old §206AA, now §397(2) IT Act 2025) — applies to 194J/194C. */
+export const PAN_FALLBACK_BPS = 2000;
 export const PAN_FALLBACK_RATE = 0.2;
 
 /**
- * #771 P0-1 — the e-commerce (194-O) no-PAN rate is 5%, not the generic 20%.
+ * #771 P0-1 — the e-commerce (194-O / 393-8(v)) no-PAN rate is 5% (500 bps), not the generic 20%.
  * Under the IT Act 2025 both live in §397(2): 20% default with an explicit 5%
- * e-commerce carve-out. Applied when the section is 194-O and PAN is
+ * e-commerce carve-out. Applied when the section is 194-O / 393-8(v) and PAN is
  * missing/invalid.
  */
+export const NO_PAN_BPS_194O = 500;
 export const NO_PAN_RATE_194O = 0.05;
 
 /** Default section when none is explicitly set on the consultant. */
 export const DEFAULT_SECTION = "194O";
 
+const IT2025_EFFECTIVE_FROM = new Date("2026-04-01T00:00:00+05:30");
+
 const DTAA_RATES: Record<string, number> =
   (dtaaRatesJson as { rates: Record<string, number> }).rates ?? {};
 
 export interface TdsComputation {
-  tdsSection: string; // "194J" | "194O" | "194C"
-  tdsRate: number; // decimal (0.10 = 10%)
+  tdsSection: string; // "194J" | "194O" | "194C" | "393-8(v)"
+  /** #1367 — exact integer basis points applied (e.g. 10 = 0.1%, 1000 = 10%). */
+  rateAppliedBps: number;
+  /** #1367 — decimal fraction derived from rateAppliedBps / 10_000. */
+  rateApplied: number;
+  /** Legacy decimal alias (0.10 = 10%), equal to rateApplied. */
+  tdsRate: number;
   tdsAmountPaise: number;
   dtaaRateApplied: number | null;
   fallbackApplied: boolean; // true if 206AA/PAN-missing fallback triggered
   reason: string; // human-readable explanation for audit log
+}
+
+export interface ResolvedTdsRate {
+  section: string;
+  lawCode: "IT1961" | "IT2025";
+  rateBps: number;
+  noPanRateBps: number;
+  thresholdPaise: bigint | number | null;
+  paymentCode: string | null;
+  source: "db" | "default";
+}
+
+type TdsRateReader = {
+  tdsRate?: {
+    findFirst?: (args: {
+      where: Record<string, unknown>;
+      orderBy: { effectiveFrom: "desc" };
+    }) => Promise<{
+      section: string;
+      lawCode: "IT1961" | "IT2025";
+      rateBps: number;
+      noPanRateBps: number | null;
+      thresholdPaise: bigint | number | null;
+      paymentCode: string | null;
+    } | null>;
+  };
+};
+
+function isEcoSection(section: string): boolean {
+  return section === "194O" || section === "393-8(v)";
+}
+
+/**
+ * #1368 — Resolve the effective statutory TDS rate from the `TdsRate` table at
+ * `atDate`, falling back deterministically to `TDS_SECTION_DEFAULT_BPS` when
+ * the table has not been seeded or the caller passes a partial test mock.
+ */
+export async function resolveEffectiveTdsRate(
+  db: TdsRateReader | null | undefined,
+  section: string | null | undefined,
+  atDate: Date = new Date(),
+): Promise<ResolvedTdsRate> {
+  const normalizedSection = section || DEFAULT_SECTION;
+  const defaultRateBps =
+    TDS_SECTION_DEFAULT_BPS[normalizedSection] ??
+    TDS_SECTION_DEFAULT_BPS[DEFAULT_SECTION];
+  const defaultNoPanBps = isEcoSection(normalizedSection)
+    ? NO_PAN_BPS_194O
+    : PAN_FALLBACK_BPS;
+  const defaultLawCode: "IT1961" | "IT2025" =
+    atDate >= IT2025_EFFECTIVE_FROM ? "IT2025" : "IT1961";
+
+  const candidateSections = isEcoSection(normalizedSection)
+    ? [normalizedSection, normalizedSection === "194O" ? "393-8(v)" : "194O"]
+    : [normalizedSection];
+
+  if (typeof db?.tdsRate?.findFirst === "function") {
+    try {
+      const row = await db.tdsRate.findFirst({
+        where: {
+          section: { in: candidateSections },
+          effectiveFrom: { lte: atDate },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: atDate } }],
+        },
+        orderBy: { effectiveFrom: "desc" },
+      });
+      if (row) {
+        return {
+          section: normalizedSection,
+          lawCode: row.lawCode,
+          rateBps: row.rateBps,
+          noPanRateBps: row.noPanRateBps ?? defaultNoPanBps,
+          thresholdPaise: row.thresholdPaise ?? null,
+          paymentCode: row.paymentCode ?? null,
+          source: "db",
+        };
+      }
+    } catch {
+      // Fall back to statutory constants if the lookup fails in a non-DB test context.
+    }
+  }
+
+  return {
+    section: normalizedSection,
+    lawCode: defaultLawCode,
+    rateBps: defaultRateBps,
+    noPanRateBps: defaultNoPanBps,
+    thresholdPaise: isEcoSection(normalizedSection)
+      ? BigInt(50_000_000)
+      : normalizedSection === "194J"
+        ? BigInt(3_000_000)
+        : null,
+    paymentCode: null,
+    source: "default",
+  };
 }
 
 /**
@@ -120,8 +234,7 @@ export type TdsConsultantInput = {
   panOnFile?: boolean;
   residencyStatus: ConsultantProfile["residencyStatus"];
   tdsSection: string | null;
-  /** #781 §C — integer basis points (1000 = 10%); the engine's internal
-   *  math stays decimal-fraction until the PR-C consolidation. */
+  /** #781 §C / #1367 — integer basis points (1000 = 10%). */
   tdsRateBps: number | null;
   tdsLowerRateCert: string | null;
   providerCountry: string | null;
@@ -136,27 +249,42 @@ export function isValidPan(pan: string | null | undefined): boolean {
   return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan);
 }
 
-function decimalToNumber(value: number | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  return value;
+/**
+ * #1367 — Exact integer basis-point withholding calculation using BigInt so IEEE-754
+ * binary float representation (e.g. `0.001 * paise`) never under-withholds by 1 paisa.
+ */
+function computeTdsPaiseFromBps(
+  grossAmountPaise: number,
+  rateBps: number,
+): number {
+  if (grossAmountPaise <= 0 || rateBps <= 0) return 0;
+  return Number(
+    (BigInt(Math.trunc(grossAmountPaise)) * BigInt(Math.trunc(rateBps))) /
+      BigInt(10_000),
+  );
 }
 
 /**
  * Compute TDS for a payout to a consultant. Pure function — no side
- * effects, no DB reads. Caller passes in the consultant's tax fields.
+ * effects, no DB reads. Caller passes in the consultant's tax fields
+ * (and optionally a DB-resolved `ResolvedTdsRate` from `resolveEffectiveTdsRate`).
  */
 export function computeTdsForPayout(params: {
   grossAmountPaise: number;
   consultant: TdsConsultantInput;
+  resolvedRate?: Pick<ResolvedTdsRate, "rateBps" | "noPanRateBps"> | null;
 }): TdsComputation {
-  const { grossAmountPaise, consultant } = params;
+  const { grossAmountPaise, consultant, resolvedRate } = params;
   const reasons: string[] = [];
 
   // --- 1. Section selection
   const explicitSection = consultant.tdsSection ?? null;
   const tdsSection = explicitSection ?? DEFAULT_SECTION;
-  const sectionDefaultRate =
-    TDS_SECTION_DEFAULTS[tdsSection] ?? TDS_SECTION_DEFAULTS[DEFAULT_SECTION];
+  const sectionDefaultBps =
+    resolvedRate?.rateBps ??
+    TDS_SECTION_DEFAULT_BPS[tdsSection] ??
+    TDS_SECTION_DEFAULT_BPS[DEFAULT_SECTION];
+  const sectionDefaultRate = sectionDefaultBps / 10_000;
   if (explicitSection) {
     reasons.push(`section=${tdsSection} (explicit override)`);
   } else {
@@ -170,16 +298,20 @@ export function computeTdsForPayout(params: {
   const hasValidPan =
     consultant.panOnFile === true || isValidPan(consultant.panNumber);
   if (!hasValidPan) {
-    const fallbackRate =
-      tdsSection === "194O" ? NO_PAN_RATE_194O : PAN_FALLBACK_RATE;
-    const amt = Math.floor(grossAmountPaise * fallbackRate);
+    const fallbackBps =
+      resolvedRate?.noPanRateBps ??
+      (isEcoSection(tdsSection) ? NO_PAN_BPS_194O : PAN_FALLBACK_BPS);
+    const fallbackRate = fallbackBps / 10_000;
+    const amt = computeTdsPaiseFromBps(grossAmountPaise, fallbackBps);
     reasons.push(
-      tdsSection === "194O"
-        ? `Section 194-O no-PAN fallback → ${(NO_PAN_RATE_194O * 100).toFixed(0)}%`
-        : `Section 206AA fallback (PAN missing or malformed) → ${(PAN_FALLBACK_RATE * 100).toFixed(0)}%`,
+      isEcoSection(tdsSection)
+        ? `Section 194-O no-PAN fallback → ${(fallbackRate * 100).toFixed(0)}%`
+        : `Section 206AA fallback (PAN missing or malformed) → ${(fallbackRate * 100).toFixed(0)}%`,
     );
     return {
       tdsSection,
+      rateAppliedBps: fallbackBps,
+      rateApplied: fallbackRate,
       tdsRate: fallbackRate,
       tdsAmountPaise: amt,
       dtaaRateApplied: null,
@@ -191,14 +323,18 @@ export function computeTdsForPayout(params: {
   // --- 3. Section 197 lower-rate certificate — overrides section default
   // when both the cert ref AND a per-consultant rate are populated. The
   // schema doesn't carry a separate `tdsLowerRateCertRate` field, so we
-  // re-purpose the consultant's rate (bps → fraction) as the cert's rate.
-  const certRate =
-    consultant.tdsRateBps === null ? null : consultant.tdsRateBps / 10_000;
-  if (consultant.tdsLowerRateCert && certRate !== null) {
-    const amt = Math.floor(grossAmountPaise * certRate);
-    reasons.push(`Section 197 cert ${consultant.tdsLowerRateCert} → ${(certRate * 100).toFixed(2)}%`);
+  // re-purpose the consultant's rate (bps) as the cert's rate.
+  const certBps = consultant.tdsRateBps;
+  if (consultant.tdsLowerRateCert && certBps !== null) {
+    const certRate = certBps / 10_000;
+    const amt = computeTdsPaiseFromBps(grossAmountPaise, certBps);
+    reasons.push(
+      `Section 197 cert ${consultant.tdsLowerRateCert} → ${(certRate * 100).toFixed(2)}%`,
+    );
     return {
       tdsSection,
+      rateAppliedBps: certBps,
+      rateApplied: certRate,
       tdsRate: certRate,
       tdsAmountPaise: amt,
       dtaaRateApplied: null,
@@ -208,29 +344,35 @@ export function computeTdsForPayout(params: {
   }
 
   // --- 4. DTAA lookup (NON_RESIDENT only)
-  let effectiveRate = sectionDefaultRate;
+  let effectiveBps = sectionDefaultBps;
   let dtaaRateApplied: number | null = null;
   if (consultant.residencyStatus === "NON_RESIDENT") {
     const country = (consultant.providerCountry ?? "").toUpperCase();
     const dtaaRate = country ? DTAA_RATES[country] : undefined;
     if (dtaaRate === undefined) {
       reasons.push(`no DTAA entry for country=${country || "(none)"}`);
-    } else if (dtaaRate < sectionDefaultRate) {
-      effectiveRate = dtaaRate;
-      dtaaRateApplied = dtaaRate;
-      reasons.push(
-        `DTAA ${country} ${(dtaaRate * 100).toFixed(2)}% applied (lower than section ${(sectionDefaultRate * 100).toFixed(2)}%)`,
-      );
     } else {
-      reasons.push(
-        `DTAA ${country} ${(dtaaRate * 100).toFixed(2)}% NOT lower than section default ${(sectionDefaultRate * 100).toFixed(2)}% — section wins`,
-      );
+      const dtaaBps = Math.round(dtaaRate * 10_000);
+      if (dtaaBps < sectionDefaultBps) {
+        effectiveBps = dtaaBps;
+        dtaaRateApplied = dtaaBps / 10_000;
+        reasons.push(
+          `DTAA ${country} ${(dtaaRateApplied * 100).toFixed(2)}% applied (lower than section ${(sectionDefaultRate * 100).toFixed(2)}%)`,
+        );
+      } else {
+        reasons.push(
+          `DTAA ${country} ${(dtaaRate * 100).toFixed(2)}% NOT lower than section default ${(sectionDefaultRate * 100).toFixed(2)}% — section wins`,
+        );
+      }
     }
   }
 
-  const tdsAmountPaise = Math.floor(grossAmountPaise * effectiveRate);
+  const effectiveRate = effectiveBps / 10_000;
+  const tdsAmountPaise = computeTdsPaiseFromBps(grossAmountPaise, effectiveBps);
   return {
     tdsSection,
+    rateAppliedBps: effectiveBps,
+    rateApplied: effectiveRate,
     tdsRate: effectiveRate,
     tdsAmountPaise,
     dtaaRateApplied,

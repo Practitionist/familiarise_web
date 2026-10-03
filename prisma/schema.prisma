@@ -2107,6 +2107,9 @@ model OrganizationPayout {
   failureReason   String?
   processedAt     DateTime? @db.Timestamptz
   failedAt        DateTime? @db.Timestamptz
+  createdBy       String?
+  approvedAt      DateTime? @db.Timestamptz
+  approvedBy      String?
 
   /// A1: live RazorpayX/Stripe Connect submission response.
   /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
@@ -3847,8 +3850,12 @@ model Subscription {
   /// check-constraints banner.
   sessionsTotal Int?
 
-  appointment        Appointment?
-  convertedFromTrial Trial?
+  appointment               Appointment?
+  convertedFromTrial        Trial?
+  // #1743 — nullable-unique continuity link for same-plan re-purchase renewals.
+  renewedFromSubscriptionId String?       @unique
+  renewedFrom               Subscription? @relation("SubscriptionRenewal", fields: [renewedFromSubscriptionId], references: [id], onDelete: SetNull)
+  renewal                   Subscription? @relation("SubscriptionRenewal")
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -5925,6 +5932,7 @@ model ConsultantPayout {
   processedAt   DateTime? @db.Timestamptz
   approvedAt    DateTime? @db.Timestamptz
   approvedBy    String?
+  createdBy     String?
 
   // UTR — Unique Transaction Reference; the bank/RBI settlement reference the
   // gateway returns on a completed NEFT/IMPS/UPI payout. Mirrors
@@ -6482,6 +6490,13 @@ model ReferralCredit {
   remainingAmount BigInt // amount - usedAmount
   expiresAt       DateTime?
   usedAt          DateTime?
+  // #1839 — backoffice manual/compensation issuance & reversal audit fields.
+  idempotencyKey  String?   @unique
+  reason          String?
+  issuedBy        String?
+  reversedAt      DateTime? @db.Timestamptz
+  reversedBy      String?
+  reversedReason  String?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
