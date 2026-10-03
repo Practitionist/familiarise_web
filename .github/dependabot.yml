@@ -17,8 +17,9 @@ updates:
     versioning-strategy: "increase"
     allow:
       - dependency-type: "direct"
-      - dependency-type: "indirect"
     ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "@types/*"
         update-types: ["version-update:semver-patch"]
       # Ignore patch updates for specific dev tools to reduce noise
