@@ -69,7 +69,10 @@ import {
   MIN_CALL_DURATION_MS,
   resolveMaxCallDurationSeconds,
 } from "../../lib/meetings/duration-cap";
-import { buildCallSettingsOverride } from "../../lib/meetings/room-ready";
+import {
+  buildCallSettingsOverride,
+  isAwaitingHostGoLive,
+} from "../../lib/meetings/room-ready";
 import {
   createDbMeeting,
   provisionAppointmentMeeting,
@@ -99,40 +102,51 @@ describe("lib/meetings/duration-cap", () => {
   });
 });
 
-describe("buildCallSettingsOverride", () => {
-  it("configures backstage, muted defaults, access requests, and spotlight recording for WEBINAR and CLASS", () => {
-    for (const appointmentType of ["WEBINAR", "CLASS"]) {
-      const override = buildCallSettingsOverride(appointmentType, 6300);
-      expect(override).toEqual({
-        limits: { max_duration_seconds: 6300 },
-        session: { inactivity_timeout_seconds: 300 },
-        backstage: { enabled: true, join_ahead_time_seconds: 900 },
-        audio: {
-          mic_default_on: false,
-          default_device: "speaker",
-          access_request_enabled: true,
-        },
-        video: {
-          camera_default_on: false,
-          access_request_enabled: true,
-          target_resolution: {
-            width: 1280,
-            height: 720,
-            bitrate: 1_500_000,
-          },
-        },
-        screensharing: { enabled: true, access_request_enabled: true },
-        recording: { mode: "available", layout: { name: "spotlight" } },
-      });
-    }
-  });
-
-  it("configures only limits.max_duration_seconds for 1:1 sessions", () => {
-    for (const appointmentType of ["CONSULTATION", "SUBSCRIPTION", "TRIAL"]) {
+describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
+  it("configures limits.max_duration_seconds across session types and returns undefined when null", () => {
+    for (const appointmentType of [
+      "WEBINAR",
+      "CLASS",
+      "CONSULTATION",
+      "SUBSCRIPTION",
+      "TRIAL",
+    ]) {
       expect(buildCallSettingsOverride(appointmentType, 4500)).toEqual({
         limits: { max_duration_seconds: 4500 },
       });
+      expect(buildCallSettingsOverride(appointmentType, null)).toBeUndefined();
     }
+  });
+
+  it("only reports awaiting Go Live when backstage is enabled on a 1-to-Many session", () => {
+    expect(
+      isAwaitingHostGoLive({
+        appointmentType: "WEBINAR",
+        isCallLive: false,
+        isBackstageEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      isAwaitingHostGoLive({
+        appointmentType: "WEBINAR",
+        isCallLive: false,
+        isBackstageEnabled: true,
+      }),
+    ).toBe(true);
+    expect(
+      isAwaitingHostGoLive({
+        appointmentType: "WEBINAR",
+        isCallLive: true,
+        isBackstageEnabled: true,
+      }),
+    ).toBe(false);
+    expect(
+      isAwaitingHostGoLive({
+        appointmentType: "CONSULTATION",
+        isCallLive: false,
+        isBackstageEnabled: true,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -19,26 +19,18 @@ interface StageControlsProps {
   isHost: boolean;
 }
 
-const SEND_AUDIO_CAPABILITY =
-  OwnCapability?.SEND_AUDIO ?? ("send-audio" as OwnCapability);
-const SEND_VIDEO_CAPABILITY =
-  OwnCapability?.SEND_VIDEO ?? ("send-video" as OwnCapability);
-
-export function StageControls({ appointmentType, isHost }: StageControlsProps) {
+export function StageControls({
+  appointmentType,
+  isHost,
+}: Readonly<StageControlsProps>) {
   const call = useCall();
   const { toast } = useToast();
-  const hooks = useCallStateHooks();
+  const { useIsCallLive, useOwnCapabilities, useCallSettings } =
+    useCallStateHooks();
 
-  const isCallLive =
-    typeof hooks.useIsCallLive === "function" ? hooks.useIsCallLive() : true;
-  const ownCapabilities =
-    typeof hooks.useOwnCapabilities === "function"
-      ? hooks.useOwnCapabilities()
-      : undefined;
-  const settings =
-    typeof hooks.useCallSettings === "function"
-      ? hooks.useCallSettings()
-      : undefined;
+  const isCallLive = useIsCallLive();
+  const ownCapabilities = useOwnCapabilities();
+  const settings = useCallSettings();
 
   const [permissionRequests, setPermissionRequests] = useState<
     PermissionRequestEvent[]
@@ -54,12 +46,9 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
         return [...filtered, event];
       });
     });
-    const unsubUpdated =
-      typeof call.on === "function"
-        ? call.on("call.permissions_updated", () => {
-            setHasRequestedStage(false);
-          })
-        : undefined;
+    const unsubUpdated = call.on("call.permissions_updated", () => {
+      setHasRequestedStage(false);
+    });
     return () => {
       unsubRequest?.();
       unsubUpdated?.();
@@ -75,10 +64,10 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
   });
 
   const canSendAudio = Boolean(
-    ownCapabilities?.includes(SEND_AUDIO_CAPABILITY),
+    ownCapabilities?.includes(OwnCapability.SEND_AUDIO),
   );
   const canSendVideo = Boolean(
-    ownCapabilities?.includes(SEND_VIDEO_CAPABILITY),
+    ownCapabilities?.includes(OwnCapability.SEND_VIDEO),
   );
   const needsStageRequest =
     isOneToMany &&
@@ -103,9 +92,6 @@ export function StageControls({ appointmentType, isHost }: StageControlsProps) {
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Could not start the live session.");
-      }
-      if (typeof call.goLive === "function") {
-        await call.goLive().catch(() => undefined);
       }
       toast({
         title: "Session is now live",

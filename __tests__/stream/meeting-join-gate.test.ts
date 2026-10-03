@@ -108,6 +108,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findMany: jest.fn(), findFirst: jest.fn() },
     appointmentParticipant: { findFirst: jest.fn() },
     collaborator: { findFirst: jest.fn() },
+    consentArtifact: { findFirst: jest.fn() },
   },
 }));
 
@@ -303,6 +304,7 @@ const db = prismaClient as unknown as {
   appointmentOccurrence: { findMany: jest.Mock; findFirst: jest.Mock };
   appointmentParticipant: { findFirst: jest.Mock };
   collaborator: { findFirst: jest.Mock };
+  consentArtifact: { findFirst: jest.Mock };
 };
 
 const MINUTE = 60 * 1000;
@@ -342,6 +344,7 @@ function seedAccess(
   db.appointmentOccurrence.findFirst.mockResolvedValue(null);
   db.collaborator.findFirst.mockResolvedValue(null);
   db.user.findUnique.mockResolvedValue({ consultantProfileId: null });
+  db.consentArtifact.findFirst.mockResolvedValue({ id: "consent-1" });
 }
 
 const consultation = (status: string) => ({

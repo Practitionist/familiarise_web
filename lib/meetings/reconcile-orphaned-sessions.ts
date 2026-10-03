@@ -23,6 +23,91 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
   );
 }
 
+interface OrphanedSessionRow {
+  id: string;
+  streamCallId: string;
+  occurrence: {
+    endsAt: Date | string;
+  };
+}
+
+async function resolveOrphanedSessionEnd(
+  session: OrphanedSessionRow,
+  result: ReconciliationResult,
+): Promise<{ endedAt: Date; endedReason: string }> {
+  const fallbackEndedAt = new Date(session.occurrence.endsAt);
+  if (!isStreamConfigured()) {
+    result.streamNotFound++;
+    return { endedAt: fallbackEndedAt, endedReason: "stream_not_configured" };
+  }
+
+  try {
+    const client = getStreamVideoClient();
+    const call = client.video.call(
+      STREAM_CALL_TYPE,
+      toCallId(session.streamCallId),
+    );
+    const response = await withStreamCircuitBreaker(() => call.get());
+    result.reconciled++;
+
+    if (response.call.ended_at) {
+      return {
+        endedAt: new Date(response.call.ended_at),
+        endedReason: "reconciled",
+      };
+    }
+    return { endedAt: fallbackEndedAt, endedReason: "reconciled_no_end" };
+  } catch (streamError) {
+    result.streamNotFound++;
+    console.warn(
+      `[reconcile-orphaned-sessions] Stream lookup failed for ${session.streamCallId}:`,
+      streamError instanceof Error
+        ? streamError.message
+        : JSON.stringify(streamError),
+    );
+    return { endedAt: fallbackEndedAt, endedReason: "stream_not_found" };
+  }
+}
+
+async function reconcileSingleOrphanedSession(
+  session: OrphanedSessionRow,
+  result: ReconciliationResult,
+): Promise<void> {
+  result.processed++;
+
+  try {
+    const { endedAt, endedReason } = await resolveOrphanedSessionEnd(
+      session,
+      result,
+    );
+
+    const updated = await prisma.meeting.updateMany({
+      where: { id: session.id, endedAt: null },
+      data: { endedAt, endedReason },
+    });
+
+    if (updated.count !== 0) {
+      await prisma.meetingPresence.updateMany({
+        where: { meetingId: session.id, leftAt: null },
+        data: { leftAt: endedAt },
+      });
+    }
+
+    result.details.push(
+      `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
+    );
+  } catch (error) {
+    result.errors++;
+    result.success = false;
+    const msg = error instanceof Error ? error.message : String(error);
+    result.details.push(`Session ${session.id} FAILED: ${msg}`);
+    console.error(
+      `[reconcile-orphaned-sessions] Failed to reconcile session ${session.id}:`,
+      msg,
+    );
+  }
+}
+
 async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
   const result: ReconciliationResult = {
     processed: 0,
@@ -62,75 +147,11 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
     `[reconcile-orphaned-sessions] Found ${orphanedSessions.length} orphaned sessions`,
   );
 
-  for (const session of orphanedSessions) {
-    result.processed++;
-
-    try {
-      let endedAt: Date;
-      let endedReason: string;
-
-      if (isStreamConfigured()) {
-        try {
-          const client = getStreamVideoClient();
-          const call = client.video.call(
-            STREAM_CALL_TYPE,
-            toCallId(session.streamCallId),
-          );
-          const response = await withStreamCircuitBreaker(() => call.get());
-
-          if (response.call.ended_at) {
-            endedAt = new Date(response.call.ended_at);
-            endedReason = "reconciled";
-            result.reconciled++;
-          } else {
-            endedAt = new Date(session.occurrence.endsAt);
-            endedReason = "reconciled_no_end";
-            result.reconciled++;
-          }
-        } catch (streamError) {
-          endedAt = new Date(session.occurrence.endsAt);
-          endedReason = "stream_not_found";
-          result.streamNotFound++;
-
-          console.warn(
-            `[reconcile-orphaned-sessions] Stream lookup failed for ${session.streamCallId}:`,
-            streamError instanceof Error
-              ? streamError.message
-              : JSON.stringify(streamError),
-          );
-        }
-      } else {
-        endedAt = new Date(session.occurrence.endsAt);
-        endedReason = "stream_not_configured";
-        result.streamNotFound++;
-      }
-
-      const updated = await prisma.meeting.updateMany({
-        where: { id: session.id, endedAt: null },
-        data: { endedAt, endedReason },
-      });
-
-      if (updated?.count !== 0 && prisma.meetingPresence?.updateMany) {
-        await prisma.meetingPresence.updateMany({
-          where: { meetingId: session.id, leftAt: null },
-          data: { leftAt: endedAt },
-        });
-      }
-
-      result.details.push(
-        `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
-      );
-    } catch (error) {
-      result.errors++;
-      result.success = false;
-      const msg = error instanceof Error ? error.message : String(error);
-      result.details.push(`Session ${session.id} FAILED: ${msg}`);
-      console.error(
-        `[reconcile-orphaned-sessions] Failed to reconcile session ${session.id}:`,
-        msg,
-      );
-    }
-  }
+  await orphanedSessions.reduce<Promise<void>>(
+    (chain, session) =>
+      chain.then(() => reconcileSingleOrphanedSession(session, result)),
+    Promise.resolve(),
+  );
 
   return result;
 }

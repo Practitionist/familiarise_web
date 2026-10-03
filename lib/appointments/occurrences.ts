@@ -331,11 +331,7 @@ export function getOccurrenceJoinState(
   if (isDeliberateEnd(occurrence.meeting)) return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
-  const rejoinGraceMs =
-    opts?.rejoinGraceMs ??
-    (occurrence.endsAt != null && occurrence.meeting !== undefined
-      ? REJOIN_GRACE_MS
-      : 0);
+  const rejoinGraceMs = opts?.rejoinGraceMs ?? 0;
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 

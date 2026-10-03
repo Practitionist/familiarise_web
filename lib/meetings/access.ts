@@ -120,15 +120,6 @@ function loadMeeting(callId: string) {
 
 /** Verifies whether the user holds active DPDP consent for Stream video/chat processing. */
 export async function hasStreamConsent(userId: string): Promise<boolean> {
-  if (
-    !(
-      prisma as unknown as {
-        consentArtifact?: { findFirst?: unknown };
-      }
-    ).consentArtifact?.findFirst
-  ) {
-    return true;
-  }
   return checkConsent({
     userId,
     purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,

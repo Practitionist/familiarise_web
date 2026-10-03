@@ -234,9 +234,9 @@ sequenceDiagram
     MeetingPage->>JoinRoute: POST /api/meetings/{streamCallId}/join
     JoinRoute->>Database: resolveMeetingAccess + DPDP checkConsent
     JoinRoute->>StreamCloud: upsertUsersToStream + call.getOrCreate + updateCallMembers(call_member)
-    JoinRoute->>Database: Record MeetingAttendance, MeetingPresence, ATTENDED
     JoinRoute-->>MeetingPage: { callType: "default", callId, role }
     MeetingPage-->>User: Show MeetingSetup -> MeetingRoom
+    StreamCloud-->>Database: Webhooks (participant_joined/left, call.ended) write attendance, presence & endedAt
 ```
 
 ### 3. Channel Creation Flow
@@ -430,9 +430,7 @@ for (let attempt = 0; attempt < 5; attempt++) {
 // Create channel AND add members in one operation
 await channel.create({
   members: [consultant, consultee],
-  data: {
-    /* channel metadata */
-  },
+  data: {/* channel metadata */},
 });
 ```
 

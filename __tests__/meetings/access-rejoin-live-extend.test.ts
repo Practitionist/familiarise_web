@@ -252,7 +252,7 @@ describe("Dashboard 30m rejoin grace & mid-slot ended_early reopen", () => {
           completionStatus: "COMPLETED",
           meeting: { id: "mtg-1", endedAt: null, endedReason: null },
         },
-        { now },
+        { rejoinGraceMs: REJOIN_GRACE_MS, now },
       ),
     ).toBe("joinable");
 
@@ -282,7 +282,7 @@ describe("Dashboard 30m rejoin grace & mid-slot ended_early reopen", () => {
           completionStatus: "COMPLETED",
           meeting: { id: "mtg-1", endedAt: endsAt, endedReason: "call_ended" },
         },
-        { now },
+        { rejoinGraceMs: REJOIN_GRACE_MS, now },
       ),
     ).toBe("ended");
   });
@@ -316,7 +316,7 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
   const params = Promise.resolve({ meetingId: "occurrence-slot-1" });
   const req = {} as never;
 
-  it("upserts user before getOrCreate and records synchronous attendance on join", async () => {
+  it("upserts user before getOrCreate and leaves attendance writes to Stream webhooks on join", async () => {
     const res = await joinPOST(req, { params });
 
     expect(res.status).toBe(200);
@@ -325,38 +325,22 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       "getOrCreate",
       "updateCallMembers",
     ]);
-    expect(mockAttendanceUpsert).toHaveBeenCalled();
-    expect(mockPresenceCreate).toHaveBeenCalled();
-    expect(mockParticipantUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { status: "ATTENDED" },
-      }),
-    );
+    expect(mockAttendanceUpsert).not.toHaveBeenCalled();
+    expect(mockPresenceCreate).not.toHaveBeenCalled();
+    expect(mockParticipantUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("stamps ended_early when host ends the call before occurrence.endsAt", async () => {
+  it("ends the Stream call for the host and leaves Meeting.endedAt to the call.ended webhook", async () => {
     const res = await endPOST(req, { params });
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.endedReason).toBe("ended_early");
-    expect(mockMeetingUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ endedReason: "ended_early" }),
-      }),
-    );
-  });
-
-  it("stamps call_ended when host ends the call at or after occurrence.endsAt", async () => {
-    mockMeetingFindUnique.mockResolvedValue(
-      makeLiveMeetingRow({ endsInMs: -5 * MINUTE }),
-    );
-
-    const res = await endPOST(req, { params });
-
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.endedReason).toBe("call_ended");
+    expect(body).toEqual({
+      ended: true,
+      callId: "occurrence-slot-1",
+    });
+    expect(mockEnd).toHaveBeenCalledTimes(1);
+    expect(mockMeetingUpdateMany).not.toHaveBeenCalled();
   });
 
   it("transitions call to live for host and refuses participant on /live", async () => {
@@ -410,6 +394,15 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     const conflictBody = await conflictRes.json();
     expect(conflictBody.hasConflictingNextBooking).toBe(true);
   });
+
+  it("fails closed with 503 and does not call call.update when call.get fails on /extend", async () => {
+    mockCallGet.mockRejectedValueOnce(new Error("stream read failed"));
+
+    const res = await extendPOST(req, { params });
+
+    expect(res.status).toBe(503);
+    expect(mockCallUpdate).not.toHaveBeenCalled();
+  });
 });
 
 describe("OverrunBanner state & Trial in-call chat guard", () => {
@@ -456,6 +449,36 @@ describe("OverrunBanner state & Trial in-call chat guard", () => {
         now: new Date("2026-10-03T11:29:00.000Z"),
       }).phase,
     ).toBe("cap-imminent");
+  });
+
+  it("honors the 45-minute base floor for 30-minute sessions and prefers Stream timer_ends_at when present", () => {
+    const startsAt = new Date("2026-10-03T10:00:00.000Z");
+    const endsAt = new Date("2026-10-03T10:30:00.000Z");
+
+    expect(
+      computeOverrunBannerState({
+        startsAt,
+        endsAt,
+        now: new Date("2026-10-03T10:59:00.000Z"),
+      }).phase,
+    ).toBe("overrun-grace");
+
+    expect(
+      computeOverrunBannerState({
+        startsAt,
+        endsAt,
+        now: new Date("2026-10-03T11:14:00.000Z"),
+      }).phase,
+    ).toBe("cap-imminent");
+
+    expect(
+      computeOverrunBannerState({
+        startsAt,
+        endsAt,
+        timerEndsAt: "2026-10-03T11:20:00.000Z",
+        now: new Date("2026-10-03T11:14:00.000Z"),
+      }).phase,
+    ).toBe("overrun-grace");
   });
 
   it("maps post-reconciliation occurrence outcomes in SessionTimeline slotStatus", () => {

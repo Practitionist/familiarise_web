@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import prisma from "@/lib/prisma";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
   getStreamVideoClient,
@@ -11,54 +10,10 @@ import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
-async function stampSynchronousMeetingEnd(meetingId?: string): Promise<string> {
-  const now = new Date();
-  let endedReason = "call_ended";
-  if (!meetingId) return endedReason;
-  if (
-    process.env.NODE_ENV === "test" &&
-    typeof (prisma as unknown as { $connect?: unknown }).$connect === "function"
-  ) {
-    return endedReason;
-  }
-
-  try {
-    if (prisma.meeting?.findUnique) {
-      const row = await prisma.meeting.findUnique({
-        where: { id: meetingId },
-        select: {
-          occurrence: {
-            select: { endsAt: true },
-          },
-        },
-      });
-      const slotEndsAt = row?.occurrence?.endsAt;
-      if (slotEndsAt && now.getTime() < new Date(slotEndsAt).getTime()) {
-        endedReason = "ended_early";
-      }
-    }
-    if (prisma.meeting?.updateMany) {
-      await prisma.meeting.updateMany({
-        where: { id: meetingId },
-        data: {
-          endedAt: now,
-          endedReason,
-          isRecording: false,
-        },
-      });
-    }
-  } catch (err) {
-    streamLogger.warn("Non-fatal failure stamping synchronous meeting end", {
-      meetingId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-  return endedReason;
-}
-
 /**
  * POST /api/meetings/[meetingId]/end
  * Ends the Stream call for all participants when invoked by an authorized host or co-presenter.
+ * `Meeting.endedAt` and `endedReason` are written exclusively by the `call.ended` webhook.
  */
 export async function POST(
   _req: NextRequest,
@@ -92,18 +47,14 @@ export async function POST(
         .end(),
     );
 
-    const endedReason = await stampSynchronousMeetingEnd(access.meetingId);
-
     streamLogger.info("Meeting ended by host", {
       userId,
       meetingId,
-      endedReason,
     });
 
     return NextResponse.json({
       ended: true,
       callId: meetingId,
-      endedReason,
     });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {

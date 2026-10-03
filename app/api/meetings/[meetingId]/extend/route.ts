@@ -19,6 +19,41 @@ const EXTENSION_SECONDS = 15 * 60;
 const EXTENSION_MS = EXTENSION_SECONDS * 1000;
 const MAX_CALL_DURATION_SECONDS = Math.floor(MAX_CALL_DURATION_MS / 1000);
 
+function resolveExtensionsUsed(
+  rawExtensionsUsed: unknown,
+  prevExtended: number,
+): number {
+  if (typeof rawExtensionsUsed === "number") return rawExtensionsUsed;
+  return prevExtended >= EXTENSION_SECONDS ? 1 : 0;
+}
+
+function buildConflictScope(
+  consultantProfileId: string | null,
+  participantUserIds: string[],
+) {
+  const participantClause = {
+    appointment: {
+      participants: {
+        some: {
+          userId: { in: participantUserIds },
+          status: {
+            in: ["HELD", "CONFIRMED", "ATTENDED"] as (
+              "HELD" | "CONFIRMED" | "ATTENDED"
+            )[],
+          },
+        },
+      },
+    },
+  };
+  if (consultantProfileId && participantUserIds.length > 0) {
+    return { OR: [{ consultantProfileId }, participantClause] };
+  }
+  if (consultantProfileId) {
+    return { consultantProfileId };
+  }
+  return participantClause;
+}
+
 /**
  * POST /api/meetings/[meetingId]/extend
  * Grants a free 15-minute duration cap extension for the host when no conflicting booking starts within 15 minutes.
@@ -56,9 +91,18 @@ export async function POST(
         occurrence: {
           select: {
             id: true,
+            appointmentId: true,
             startsAt: true,
             endsAt: true,
             consultantProfileId: true,
+            appointment: {
+              select: {
+                participants: {
+                  where: { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+                  select: { userId: true },
+                },
+              },
+            },
           },
         },
       },
@@ -81,6 +125,9 @@ export async function POST(
       appt?.class?.classPlan?.consultantProfileId ??
       appt?.trial?.consultantProfileId ??
       null;
+    const participantUserIds = (occurrence.appointment?.participants ?? [])
+      .map((p) => p.userId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
 
     const now = new Date();
     const slotEndsAt = new Date(occurrence.endsAt);
@@ -89,12 +136,17 @@ export async function POST(
       Math.max(slotEndsAt.getTime(), now.getTime()) + EXTENSION_MS,
     );
 
-    if (consultantProfileId && prisma.appointmentOccurrence?.findFirst) {
+    if (consultantProfileId || participantUserIds.length > 0) {
+      const conflictScope = buildConflictScope(
+        consultantProfileId,
+        participantUserIds,
+      );
+
       const conflictingOccurrence =
         await prisma.appointmentOccurrence.findFirst({
           where: {
             id: { not: occurrence.id },
-            consultantProfileId,
+            ...conflictScope,
             isTentative: false,
             deletedAt: null,
             completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
@@ -127,41 +179,39 @@ export async function POST(
         STREAM_CALL_TYPE,
         resolvedCallId,
       );
-      let currentCapSeconds = baseCapSeconds;
-      let existingCustom: Record<string, unknown> = {};
-
-      if (typeof call.get === "function") {
-        try {
-          const currentState = await call.get();
-          const existingCap =
-            currentState?.call?.settings?.limits?.max_duration_seconds;
-          if (typeof existingCap === "number" && existingCap > 0) {
-            currentCapSeconds = Math.max(currentCapSeconds, existingCap);
-          }
-          if (
-            currentState?.call?.custom &&
-            typeof currentState.call.custom === "object"
-          ) {
-            existingCustom = currentState.call.custom as Record<
-              string,
-              unknown
-            >;
-          }
-        } catch {
-          // Proceed with baseCapSeconds if reading live call state fails.
-        }
+      let currentState: Awaited<ReturnType<typeof call.get>>;
+      try {
+        currentState = await call.get();
+      } catch (err) {
+        throw err instanceof StreamUnavailableError
+          ? err
+          : new StreamUnavailableError();
       }
+
+      if (!currentState?.call) {
+        throw new StreamUnavailableError();
+      }
+
+      let currentCapSeconds = baseCapSeconds;
+      const existingCap =
+        currentState.call.settings?.limits?.max_duration_seconds;
+      if (typeof existingCap === "number" && existingCap > 0) {
+        currentCapSeconds = Math.max(currentCapSeconds, existingCap);
+      }
+
+      const existingCustom: Record<string, unknown> =
+        currentState.call.custom && typeof currentState.call.custom === "object"
+          ? (currentState.call.custom as Record<string, unknown>)
+          : {};
 
       const prevExtended =
         typeof existingCustom.extendedSeconds === "number"
           ? existingCustom.extendedSeconds
           : 0;
-      const extensionsUsed =
-        typeof existingCustom.extensionsUsed === "number"
-          ? existingCustom.extensionsUsed
-          : prevExtended >= EXTENSION_SECONDS
-            ? 1
-            : 0;
+      const extensionsUsed = resolveExtensionsUsed(
+        existingCustom.extensionsUsed,
+        prevExtended,
+      );
 
       if (extensionsUsed >= 1) {
         return {

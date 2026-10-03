@@ -130,10 +130,10 @@ function sessionStatusOf(
   joinWindowMs: number,
 ): SessionStatus {
   const statuses = group.slots.map((s) => slotStatus(s, joinWindowMs));
-  if (statuses.some((s) => s === "joinable")) return "joinable";
-  if (statuses.some((s) => s === "upcoming")) return "upcoming";
+  if (statuses.includes("joinable")) return "joinable";
+  if (statuses.includes("upcoming")) return "upcoming";
   if (statuses.every((s) => s === "completed")) return "completed";
-  return statuses[statuses.length - 1] ?? "noRecord";
+  return statuses.at(-1) ?? "noRecord";
 }
 
 function toSessionGroups(sessions: OccurrenceVM[]): SessionGroup[] {
@@ -253,7 +253,7 @@ export function SessionTimeline({
       if (status === "joinable") return g;
       if (status === "upcoming" && !upcoming) upcoming = g;
     }
-    return upcoming ?? groups[groups.length - 1];
+    return upcoming ?? groups.at(-1);
   }, [groups, groupStatuses]);
 
   if (groups.length === 0 && heldGroups.length === 0) return null;
@@ -402,10 +402,8 @@ export function SessionTimeline({
             {renderSessionExtra &&
             status !== "upcoming" &&
             status !== "joinable" &&
-            !DEAD_SESSION.has(
-              group.slots[group.slots.length - 1].completionStatus ?? "",
-            )
-              ? renderSessionExtra(group.slots[group.slots.length - 1])
+            !DEAD_SESSION.has(group.slots.at(-1)?.completionStatus ?? "")
+              ? renderSessionExtra(group.slots.at(-1)!)
               : null}
 
             {joinable ? (

@@ -5,7 +5,6 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
-import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
 import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
@@ -194,6 +193,158 @@ export type SessionCallProfile = {
   guestName: string | null;
 };
 
+type AuthorizedSlotRead = NonNullable<
+  Awaited<ReturnType<typeof readSlotForCaller>>
+>;
+type AuthorizedAppointment = AuthorizedSlotRead["appointment"];
+type ProfileEntry = {
+  id: string;
+  userId?: string | null;
+  user?: { id?: string | null; name?: string | null } | null;
+};
+
+function rememberProfile(
+  profile: ProfileEntry | null | undefined,
+  profileToUser: Map<string, string>,
+  userToName: Map<string, string>,
+): void {
+  if (!profile) return;
+  const resolvedUserId = profile.userId ?? profile.user?.id ?? null;
+  if (!resolvedUserId) return;
+  profileToUser.set(profile.id, resolvedUserId);
+  if (profile.user?.name) {
+    userToName.set(resolvedUserId, profile.user.name);
+  }
+}
+
+function collectAppointmentProfiles(
+  appointment: AuthorizedAppointment,
+  profileToUser: Map<string, string>,
+  userToName: Map<string, string>,
+): void {
+  const planProfiles = [
+    appointment.consultation?.consultationPlan?.consultantProfile,
+    appointment.subscription?.subscriptionPlan?.consultantProfile,
+    appointment.webinar?.webinarPlan?.consultantProfile,
+    appointment.class?.classPlan?.consultantProfile,
+    appointment.trial?.subscriptionPlan?.consultantProfile,
+  ];
+  for (const profile of planProfiles) {
+    rememberProfile(profile, profileToUser, userToName);
+  }
+  const collaborators = [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ];
+  for (const collaborator of collaborators) {
+    rememberProfile(collaborator.consultantProfile, profileToUser, userToName);
+  }
+}
+
+async function ensureOccurrenceProfileMapped(args: {
+  occurrenceProfileId: string | null;
+  callerConsultantProfileId: string | null | undefined;
+  callerUserId: string;
+  profileToUser: Map<string, string>;
+  userToName: Map<string, string>;
+}): Promise<void> {
+  const { occurrenceProfileId, profileToUser, userToName } = args;
+  if (!occurrenceProfileId || profileToUser.has(occurrenceProfileId)) return;
+  if (args.callerConsultantProfileId === occurrenceProfileId) {
+    profileToUser.set(occurrenceProfileId, args.callerUserId);
+    return;
+  }
+  const occProfile = await prisma.consultantProfile.findUnique({
+    where: { id: occurrenceProfileId },
+    ...ownerProfileSelect,
+  });
+  rememberProfile(occProfile, profileToUser, userToName);
+}
+
+function resolveOwnerProfileId(
+  appointment: AuthorizedAppointment,
+): string | null {
+  return (
+    appointment.consultation?.consultationPlan?.consultantProfile?.id ??
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.id ??
+    appointment.webinar?.webinarPlan?.consultantProfile?.id ??
+    appointment.class?.classPlan?.consultantProfile?.id ??
+    appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
+    null
+  );
+}
+
+function resolveHostIdentitySets(
+  occurrenceProfileId: string | null,
+  appointment: AuthorizedAppointment,
+  profileToUser: Map<string, string>,
+): { hostUserIds: string[]; hostControlUserIds: string[] } {
+  const hostProfileIds = [
+    ...(occurrenceProfileId ? [occurrenceProfileId] : []),
+    ...resolvePlanOwnerIds(appointment),
+  ];
+  const occurrenceAssignedUserId = occurrenceProfileId
+    ? (profileToUser.get(occurrenceProfileId) ?? null)
+    : null;
+  const hostUserIds = [
+    ...new Set([
+      ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
+      ...hostProfileIds
+        .map((profileId) => profileToUser.get(profileId))
+        .filter((userId): userId is string => Boolean(userId)),
+    ]),
+  ];
+  const presenterProfileIds = [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ]
+    .filter((collaborator) => isPresenterRole(collaborator.role))
+    .map((collaborator) => collaborator.consultantProfile?.id);
+  const ownerProfileId = resolveOwnerProfileId(appointment);
+  const hostControlUserIds = [
+    ...new Set([
+      ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
+      ...[occurrenceProfileId, ownerProfileId, ...presenterProfileIds]
+        .map((profileId) => (profileId ? profileToUser.get(profileId) : null))
+        .filter((userId): userId is string => Boolean(userId)),
+    ]),
+  ];
+  return { hostUserIds, hostControlUserIds };
+}
+
+async function resolveGuestUserIds(
+  appointmentId: string,
+  isGroupEvent: boolean,
+  hostUserIds: string[],
+  userToName: Map<string, string>,
+): Promise<string[]> {
+  if (isGroupEvent) return [];
+  const hosts = new Set(hostUserIds);
+  const attendees = await prisma.appointmentParticipant.findMany({
+    where: { appointmentId, ...liveParticipant() },
+    select: { user: { select: { id: true, name: true } } },
+  });
+  for (const { user: attendee } of attendees) {
+    if (attendee.name) userToName.set(attendee.id, attendee.name);
+  }
+  return [...new Set(attendees.map(({ user }) => user.id))].filter(
+    (userId) => !hosts.has(userId),
+  );
+}
+
+function resolveOfferingTitle(
+  appointment: AuthorizedAppointment,
+): string | null {
+  return (
+    appointment.consultation?.consultationPlan?.title ??
+    appointment.subscription?.subscriptionPlan?.title ??
+    appointment.webinar?.webinarPlan?.title ??
+    appointment.class?.classPlan?.title ??
+    appointment.trial?.subscriptionPlan?.title ??
+    null
+  );
+}
+
 /** Resolves session bounds, offering title, and Stream call members for an occurrence. */
 async function resolveSessionCallProfile(
   anchorSlotId: string,
@@ -209,147 +360,45 @@ async function resolveSessionCallProfile(
       userId: callerUserId,
       consultantProfileId: callerConsultantProfileId,
     } = authorized;
-    if (!anchor.appointmentId) return null;
+    if (!anchor.appointmentId || isDeadOccurrence(anchor)) return null;
 
     const isGroupEvent =
       appointment.appointmentType === "WEBINAR" ||
       appointment.appointmentType === "CLASS";
-    if (isDeadOccurrence(anchor)) return null;
-    const run = { startsAt: anchor.startsAt, endsAt: anchor.endsAt };
-
     const profileToUser = new Map<string, string>();
     const userToName = new Map<string, string>();
-    const remember = (
-      profile?: {
-        id: string;
-        userId?: string | null;
-        user?: { id?: string | null; name?: string | null } | null;
-      } | null,
-    ) => {
-      if (!profile) return;
-      const resolvedUserId = profile.userId ?? profile.user?.id ?? null;
-      if (!resolvedUserId) return;
-      profileToUser.set(profile.id, resolvedUserId);
-      if (profile.user?.name) userToName.set(resolvedUserId, profile.user.name);
-    };
-    remember(appointment.consultation?.consultationPlan?.consultantProfile);
-    remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
-    remember(appointment.webinar?.webinarPlan?.consultantProfile);
-    remember(appointment.class?.classPlan?.consultantProfile);
-    remember(appointment.trial?.subscriptionPlan?.consultantProfile);
-    for (const collaborator of [
-      ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
-      ...(appointment.class?.classPlan?.collaborators ?? []),
-    ]) {
-      remember(collaborator.consultantProfile);
-    }
+    collectAppointmentProfiles(appointment, profileToUser, userToName);
+    await ensureOccurrenceProfileMapped({
+      occurrenceProfileId: anchor.consultantProfileId,
+      callerConsultantProfileId,
+      callerUserId,
+      profileToUser,
+      userToName,
+    });
 
-    if (
-      anchor.consultantProfileId &&
-      !profileToUser.has(anchor.consultantProfileId)
-    ) {
-      if (callerConsultantProfileId === anchor.consultantProfileId) {
-        profileToUser.set(anchor.consultantProfileId, callerUserId);
-      } else {
-        const occProfile = await (
-          prisma as { consultantProfile?: typeof prisma.consultantProfile }
-        ).consultantProfile?.findUnique({
-          where: { id: anchor.consultantProfileId },
-          ...ownerProfileSelect,
-        });
-        remember(occProfile);
-      }
-    }
-
-    const hostProfileIds = [
-      ...(anchor.consultantProfileId ? [anchor.consultantProfileId] : []),
-      ...resolvePlanOwnerIds(appointment),
-    ];
-    const occurrenceAssignedUserId = anchor.consultantProfileId
-      ? (profileToUser.get(anchor.consultantProfileId) ?? null)
-      : null;
-    const hostUserIds = [
-      ...new Set([
-        ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
-        ...hostProfileIds
-          .map((profileId) => profileToUser.get(profileId))
-          .filter((userId): userId is string => Boolean(userId)),
-      ]),
-    ];
-    const presenterProfileIds = new Set(
-      [
-        ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
-        ...(appointment.class?.classPlan?.collaborators ?? []),
-      ]
-        .filter((collaborator) => isPresenterRole(collaborator.role))
-        .map((collaborator) => collaborator.consultantProfile?.id),
+    const { hostUserIds, hostControlUserIds } = resolveHostIdentitySets(
+      anchor.consultantProfileId,
+      appointment,
+      profileToUser,
     );
-    const ownerProfileId =
-      appointment.consultation?.consultationPlan?.consultantProfile?.id ??
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.id ??
-      appointment.webinar?.webinarPlan?.consultantProfile?.id ??
-      appointment.class?.classPlan?.consultantProfile?.id ??
-      appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
-      null;
-    const hostControlUserIds = [
-      ...new Set([
-        ...(occurrenceAssignedUserId ? [occurrenceAssignedUserId] : []),
-        ...[anchor.consultantProfileId, ownerProfileId, ...presenterProfileIds]
-          .map((profileId) => (profileId ? profileToUser.get(profileId) : null))
-          .filter((userId): userId is string => Boolean(userId)),
-      ]),
-    ];
+    const guestUserIds = await resolveGuestUserIds(
+      anchor.appointmentId,
+      isGroupEvent,
+      hostUserIds,
+      userToName,
+    );
 
-    const hosts = new Set(hostUserIds);
-    const attendees = isGroupEvent
-      ? []
-      : await prisma.appointmentParticipant.findMany({
-          where: { appointmentId: anchor.appointmentId, ...liveParticipant() },
-          select: { user: { select: { id: true, name: true } } },
-        });
-    for (const { user: attendee } of attendees) {
-      if (attendee.name) userToName.set(attendee.id, attendee.name);
-    }
-    const guestUserIds = [
-      ...new Set(attendees.map(({ user }) => user.id)),
-    ].filter((userId) => !hosts.has(userId));
-
-    const offeringTitle =
-      appointment.consultation?.consultationPlan?.title ??
-      appointment.subscription?.subscriptionPlan?.title ??
-      appointment.webinar?.webinarPlan?.title ??
-      appointment.class?.classPlan?.title ??
-      appointment.trial?.subscriptionPlan?.title ??
-      null;
-
-    // Exclude unconsented users from Stream call members while keeping session bounds for max_duration_seconds.
     const candidateUserIds = [...hostUserIds, ...guestUserIds];
-    let droppedIds = new Set<string>();
-    try {
-      const upsertResult = (await upsertUsersToStream(candidateUserIds)) as
-        { droppedIds?: string[] } | undefined;
-      if (Array.isArray(upsertResult?.droppedIds)) {
-        droppedIds = new Set(upsertResult.droppedIds);
-      }
-    } catch (err) {
-      if (err instanceof ConsentRequiredError) {
-        streamLogger.info(
-          "Filtering unconsented participants from call members while retaining session bounds",
-          { anchorSlotId: validatedSlotId, purposeCode: err.purposeCode },
-        );
-        droppedIds = new Set(candidateUserIds);
-      } else {
-        throw err;
-      }
-    }
+    const upsertResult = await upsertUsersToStream(candidateUserIds);
+    const droppedIds = new Set(upsertResult?.droppedIds ?? []);
 
     return {
-      startsAt: run.startsAt,
-      endsAt: run.endsAt,
+      startsAt: anchor.startsAt,
+      endsAt: anchor.endsAt,
       durationMinutes: Math.round(
-        (run.endsAt.getTime() - run.startsAt.getTime()) / 60_000,
+        (anchor.endsAt.getTime() - anchor.startsAt.getTime()) / 60_000,
       ),
-      offeringTitle,
+      offeringTitle: resolveOfferingTitle(appointment),
       members: candidateUserIds
         .filter((user_id) => !droppedIds.has(user_id))
         .map((user_id) => ({
@@ -668,7 +717,6 @@ function buildCallCustom(args: {
     ...(args.organizationId
       ? {
           organizationId: args.organizationId,
-          organization_id: args.organizationId,
         }
       : {}),
     ...(consultantUserId ? { consultantUserId } : {}),
@@ -748,11 +796,7 @@ export async function provisionAppointmentMeeting(
 
   try {
     await withStreamCircuitBreaker(async () => {
-      try {
-        await upsertUsersToStream([authorUserId]);
-      } catch (err) {
-        if (!(err instanceof ConsentRequiredError)) throw err;
-      }
+      await upsertUsersToStream([authorUserId]);
 
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,

@@ -129,7 +129,7 @@ All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate 
 
 ### POST /api/meetings/[meetingId]/join
 
-Admits an entitled participant to a Stream call (`call_member`), upserts the caller and host to Stream before `call.getOrCreate`, and synchronously records `MeetingAttendance`, `MeetingPresence`, and `ATTENDED` slot status in the database.
+Admits an entitled participant to a Stream call (`call_member`) and upserts the caller on Stream before `call.getOrCreate`. Attendance and presence intervals (`MeetingAttendance`, `MeetingPresence`, and `ATTENDED` participant status) are recorded exclusively by Stream participant webhooks (`call.session_participant_joined`/`left`).
 
 **Location:** `/app/api/meetings/[meetingId]/join/route.ts`
 
@@ -140,23 +140,25 @@ Admits an entitled participant to a Stream call (`call_member`), upserts the cal
 ```json
 {
   "callType": "default",
-  "callId": "slot-occ-1"
+  "callId": "occurrence-slot-1",
+  "role": "participant"
 }
 ```
 
 ### POST /api/meetings/[meetingId]/end
 
-Ends a Stream call for everyone (host-only) and synchronously stamps `Meeting.endedAt` and `Meeting.endedReason` (`ended_early` before `startsAt`, or `call_ended` with `AppointmentOccurrence.status = "COMPLETED"` at/after `startsAt`).
+Ends a Stream call for everyone (host-only). `Meeting.endedAt` and `Meeting.endedReason` are stamped exclusively by the `call.ended` webhook so Stream event timestamps remain authoritative.
 
 **Location:** `/app/api/meetings/[meetingId]/end/route.ts`
 
-**Authentication:** Required (Host only — plan owner or accepted collaborator)
+**Authentication:** Required (Host only — plan owner or accepted co-presenter)
 
 **Response (Success - 200):**
 
 ```json
 {
-  "ended": true
+  "ended": true,
+  "callId": "occurrence-slot-1"
 }
 ```
 
@@ -178,7 +180,7 @@ Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `ca
 
 ### POST /api/meetings/[meetingId]/extend
 
-Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge, bounded by `MAX_CALL_DURATION_MS` (`12 hours`).
+Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge once per session when neither the consultant nor active participants have a conflicting confirmed session starting within 15 minutes. Fails closed with `503` if reading current Stream call state via `call.get()` fails.
 
 **Location:** `/app/api/meetings/[meetingId]/extend/route.ts`
 
@@ -189,12 +191,14 @@ Extends the active call's `settings_override.limits.max_duration_seconds` by `+1
 ```json
 {
   "extended": true,
-  "maxDurationSeconds": 6300,
-  "addedSeconds": 900
+  "addedSeconds": 900,
+  "maxDurationSeconds": 7200,
+  "extensionsUsed": 1,
+  "hasConflictingNextBooking": false
 }
 ```
 
-**Response (Conflict - 409):** Returned when the call has ended (`call_ended`) or has already reached the 12-hour ceiling (`max_duration_reached`).
+**Response (Conflict - 409):** Returned when the free +15m extension has already been used (`alreadyExtended: true`) or a conflicting booking starts within 15 minutes (`hasConflictingNextBooking: true`).
 
 ---
 

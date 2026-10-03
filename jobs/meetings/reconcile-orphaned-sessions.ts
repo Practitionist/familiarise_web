@@ -8,12 +8,12 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
-import {
+import { reconcileOrphanedSessions } from "../../lib/meetings/reconcile-orphaned-sessions";
+
+export {
   reconcileOrphanedSessions,
   type ReconciliationResult,
 } from "../../lib/meetings/reconcile-orphaned-sessions";
-
-export { reconcileOrphanedSessions, type ReconciliationResult };
 
 export async function disconnectDatabase(): Promise<void> {
   await prisma.$disconnect();

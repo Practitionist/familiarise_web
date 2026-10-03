@@ -43,6 +43,11 @@ export interface SessionInfo {
   isHost: boolean;
 }
 
+function resolveExtensionsUsed(raw: unknown, extendedSeconds: number): number {
+  if (typeof raw === "number" && raw > 0) return raw;
+  return extendedSeconds > 0 ? 1 : 0;
+}
+
 /** Derives the current viewer's session role and metadata from Stream call custom data. */
 export function useSessionInfo(): SessionInfo {
   const { useCallCustomData } = useCallStateHooks();
@@ -77,14 +82,11 @@ export function useSessionInfo(): SessionInfo {
     typeof custom?.extendedSeconds === "number" && custom.extendedSeconds > 0
       ? custom.extendedSeconds
       : 0;
-  const extensionsUsed =
-    typeof custom?.extensionsUsed === "number" && custom.extensionsUsed > 0
-      ? custom.extensionsUsed
-      : extendedSeconds > 0
-        ? 1
-        : 0;
-  const organizationId =
-    str(custom?.organizationId) ?? str(custom?.organization_id);
+  const extensionsUsed = resolveExtensionsUsed(
+    custom?.extensionsUsed,
+    extendedSeconds,
+  );
+  const organizationId = str(custom?.organizationId);
 
   return {
     counterpartName: isHost ? guestName : hostName,

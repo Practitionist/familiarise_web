@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import { Clock, PlusCircle, Loader2 } from "lucide-react";
-import { CALL_DURATION_GRACE_MS } from "@/lib/meetings/duration-cap";
+import {
+  CALL_DURATION_GRACE_MS,
+  MIN_CALL_DURATION_MS,
+} from "@/lib/meetings/duration-cap";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 
 const ENDING_SOON_THRESHOLD_MS = 5 * 60 * 1000;
 const CAP_IMMINENT_THRESHOLD_MS = 2 * 60 * 1000;
+const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
 export type OverrunBannerPhase =
   "hidden" | "ending-soon" | "overrun-grace" | "cap-imminent";
@@ -19,14 +24,47 @@ export interface OverrunBannerState {
   untilCapMs: number | null;
 }
 
+function resolveCapEndsAtMs(args: {
+  startsAt: Date | null;
+  endsAt: Date;
+  extendedSeconds: number;
+  timerEndsAt?: Date | string | null;
+}): number {
+  if (args.timerEndsAt) {
+    const parsed =
+      args.timerEndsAt instanceof Date
+        ? args.timerEndsAt.getTime()
+        : new Date(args.timerEndsAt).getTime();
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  if (args.startsAt) {
+    const bookedMs = Math.max(
+      args.endsAt.getTime() - args.startsAt.getTime(),
+      MIN_CALL_DURATION_MS,
+    );
+    return (
+      args.startsAt.getTime() +
+      bookedMs +
+      CALL_DURATION_GRACE_MS +
+      args.extendedSeconds * 1000
+    );
+  }
+  return (
+    args.endsAt.getTime() + CALL_DURATION_GRACE_MS + args.extendedSeconds * 1000
+  );
+}
+
 /** Pure calculation of the non-intrusive countdown banner state at T-5m, T+0, and Cap-2m. */
 export function computeOverrunBannerState(args: {
   startsAt: Date | null;
   endsAt: Date | null;
   extendedSeconds?: number;
+  timerEndsAt?: Date | string | null;
   now: Date;
 }): OverrunBannerState {
-  const { endsAt, extendedSeconds = 0, now } = args;
+  const { startsAt, endsAt, extendedSeconds = 0, timerEndsAt, now } = args;
   if (!endsAt) {
     return {
       phase: "hidden",
@@ -38,8 +76,12 @@ export function computeOverrunBannerState(args: {
 
   const nowMs = now.getTime();
   const endsAtMs = endsAt.getTime();
-  const capEndsAtMs =
-    endsAtMs + CALL_DURATION_GRACE_MS + extendedSeconds * 1000;
+  const capEndsAtMs = resolveCapEndsAtMs({
+    startsAt,
+    endsAt,
+    extendedSeconds,
+    timerEndsAt,
+  });
   const untilEndMs = endsAtMs - nowMs;
   const untilCapMs = capEndsAtMs - nowMs;
 
@@ -75,8 +117,9 @@ export function computeOverrunBannerState(args: {
     };
   }
 
-  const graceMinsTotal = Math.round(
-    (CALL_DURATION_GRACE_MS + extendedSeconds * 1000) / 60_000,
+  const graceMinsTotal = Math.max(
+    1,
+    Math.round((capEndsAtMs - endsAtMs) / 60_000),
   );
   return {
     phase: "overrun-grace",
@@ -102,19 +145,16 @@ export function OverrunBanner({
   extendedSeconds = 0,
   extensionsUsed = 0,
   isHost,
-}: OverrunBannerProps) {
+}: Readonly<OverrunBannerProps>) {
   const { toast } = useToast();
+  const { useCallSession } = useCallStateHooks();
+  const session = useCallSession();
   const [now, setNow] = useState(() => new Date());
   const [localExtendedSeconds, setLocalExtendedSeconds] = useState(0);
   const [alreadyExtended, setAlreadyExtended] = useState(false);
   const [isExtending, setIsExtending] = useState(false);
   const [hasConflictingNextBooking, setHasConflictingNextBooking] =
     useState(false);
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const totalExtendedSeconds = Math.max(extendedSeconds, localExtendedSeconds);
   const isAlreadyExtended =
@@ -123,8 +163,24 @@ export function OverrunBanner({
     startsAt,
     endsAt,
     extendedSeconds: totalExtendedSeconds,
+    timerEndsAt: localExtendedSeconds > 0 ? null : session?.timer_ends_at,
     now,
   });
+
+  useEffect(() => {
+    if (!endsAt) return;
+    if (banner.phase === "hidden") {
+      const delayMs = Math.min(
+        Math.max(0, endsAt.getTime() - Date.now() - ENDING_SOON_THRESHOLD_MS) +
+          50,
+        MAX_TIMEOUT_DELAY_MS,
+      );
+      const timeoutId = setTimeout(() => setNow(new Date()), delayMs);
+      return () => clearTimeout(timeoutId);
+    }
+    const intervalId = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(intervalId);
+  }, [endsAt, banner.phase]);
 
   if (banner.phase === "hidden" || !banner.label) {
     return null;

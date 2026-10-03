@@ -1186,8 +1186,8 @@ orphaned objects impossible to collect.
 
 ## Deprecated & Superseded Approaches
 
-- **Webhook-only attendance and end-state tracking**: While `call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended` webhooks remain active and idempotent, `POST /api/meetings/[meetingId]/join` now synchronously records `MeetingAttendance`, `MeetingPresence`, and `ATTENDED` slot status at join time, and `POST /api/meetings/[meetingId]/end` synchronously writes `Meeting.endedAt` and `Meeting.endedReason` (`ended_early` or `call_ended`) when the host closes the room.
-- **`reconcileOrphanedSessions` leaving `MeetingPresence(leftAt: null)` open**: The orphaned-session reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`) now orders candidates oldest-first (`occurrence.endsAt: "asc"`) and closes any open `MeetingPresence` intervals when stamping `endedAt`.
+- **Synchronous attendance or end-state writes in join/end routes**: `POST /api/meetings/[meetingId]/join` and `POST /api/meetings/[meetingId]/end` do not write `MeetingAttendance`, `MeetingPresence`, `ATTENDED`, `Meeting.endedAt`, or `Meeting.endedReason`; Stream webhooks (`call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended`) are the exclusive writers for these records.
+- **`reconcileOrphanedSessions` leaving `MeetingPresence(leftAt: null)` open**: The orphaned-session reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`) orders candidates oldest-first (`occurrence.endsAt: "asc"`) and closes any open `MeetingPresence` intervals when stamping `endedAt`.
 
 ---
 

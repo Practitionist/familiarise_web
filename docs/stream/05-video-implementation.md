@@ -40,8 +40,8 @@ model Meeting {
 
 **ID Mapping**:
 
-- `occurrenceId` - The database's anchor `AppointmentOccurrence` ID
-- `streamCallId` - Stream's call ID (format: `slot-{anchorOccurrenceId}` or `slot-{anchorOccurrenceId}-r{suffix}`)
+- `occurrenceId` - The database's `AppointmentOccurrence` ID
+- `streamCallId` - Stream's call ID (format: `occurrence-{slotId}` or `occurrence-{slotId}-r{suffix}` when rebuilt after `ended_early`)
 
 **Call Types**:
 
@@ -95,51 +95,45 @@ graph TB
 ### Call Creation and Ownership
 
 The Stream call for a booking is created on the server and only on the server.
-`provisionAppointmentMeeting` in `actions/stream/meetings/meeting.action.ts` is
-the single exported writer (`findDbMeetingByOccurrence` and `createDbMeeting` are
-internal module helpers and are not exported), and `lib/meeting.ts` is a thin
-client-side wrapper that calls `provisionAppointmentMeeting`, turns a refusal
+`provisionAppointmentMeeting` (alongside `createDbMeeting`) in `actions/stream/meetings/meeting.action.ts`
+handles provisioning (`findDbMeetingBySlot` is an internal module helper), and `lib/meeting.ts` is a thin
+client-side wrapper that calls `provisionAppointmentMeeting(slot)`, turns `result.refusal`
 back into a user-facing error for the toast, and hands the call id to
 `router.push("/meetings/<id>")`. Nothing in the browser constructs a `Call` in
 order to create one.
 
 The order the action works in is load-bearing:
 
-1. Resolve the anchor occurrence. A session longer than thirty minutes is stored as
-   several consecutive `AppointmentOccurrence` rows and each dashboard hands over a
-   different one, so the room is keyed to the run's first row and both sides
-   land in the same place.
+1. Evaluate the target `MeetingSlot` (`AppointmentOccurrence`).
 2. Return early if a `Meeting` row already exists (unless `endedReason === "ended_early"`,
-   in which case the call is re-provisioned with a fresh `streamCallId` and synchronized
-   with Stream via `syncCallWindow`).
+   in which case the call is re-provisioned with a fresh `streamCallId`).
 3. Run every refusal that can block a join — maintenance, a tentative or
    cancelled occurrence, a booking whose parent row is in a terminal state — before
    anything is minted.
 4. Check entitlement (`requireEntitledCaller`) before the Stream write and again
    first inside `createDbMeeting` as defense-in-depth.
 5. Create the call with the server client (`buildCallSettingsOverride`), naming the
-   appointment's host as `created_by_id`, every entitled user (excluding dropped/no-show
-   waitlist records) as `call_member`, and setting `settings_override.limits.max_duration_seconds`
-   from `computeCallDurationCapSeconds`.
-6. Write the `Meeting` row with `scheduledMaxDurationS`.
+   appointment's host as `created_by_id`, every entitled user (excluding unconsented
+   participants returned in `droppedIds`) as `call_member`, and setting `settings_override.limits.max_duration_seconds`
+   from `resolveMaxCallDurationSeconds`.
+6. Write the `Meeting` row linked to the occurrence.
 
 ### Elastic Session Envelope & Call Settings Override
 
 Every session is provisioned with an elastic duration envelope (`lib/meetings/duration-cap.ts` and `lib/meetings/room-ready.ts`):
 
-- **Duration Cap Formula (`computeCallDurationCapSeconds`)**:
-  - `MIN_CALL_DURATION_MS = 45 * 60 * 1000` (45 minutes floor)
-  - `CALL_DURATION_GRACE_MS = 30 * 60 * 1000` (30 minutes automatic buffer)
-  - `MAX_CALL_DURATION_MS = 12 * 60 * 60 * 1000` (12 hours hard ceiling)
-  - `effectiveBookedMs = max(rawBookedMs, 45m)` (with a 2-hour fallback if `rawBookedMs <= 0`), plus 30m grace: a 30-minute Trial gets `max(30m, 45m) + 30m = 75m` (`4500s`); a 60-minute Consultation gets `60m + 30m = 90m` (`5400s`).
+- **Duration Cap Formula (`resolveMaxCallDurationSeconds`)**:
+  - `CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000` (15 minutes early-join window)
+  - `CALL_DURATION_GRACE_MS = 30 * 60 * 1000` (30 minutes automatic overrun buffer)
+  - `MIN_CALL_DURATION_MS = 45 * 60 * 1000` (45 minutes floor) and `MAX_CALL_DURATION_MS = 12 * 60 * 60 * 1000` (12 hours hard ceiling)
+  - `budgetMs = clamp(bookedMs + 15m + 30m, 45m, 12h)`: a 30-minute Trial gets `30m + 15m + 30m = 75m` (`4500s`); a 60-minute Consultation gets `60m + 15m + 30m = 105m` (`6300s`).
 - **Dashboard & API Rejoin Grace (`REJOIN_GRACE_MS = 30 * 60 * 1000`)**:
-  - Both `getOccurrenceJoinState` (`lib/appointments/occurrences.ts`) and `resolveMeetingAccess` (`lib/meetings/access.ts`) allow joining and rejoining until `endsAt + 30m` unless the session was deliberately ended (`endedReason === "call_ended"` or `"maintenance_drain"`).
-- **1-to-Many Webinars & Classes (`buildCallSettingsOverride`)**:
-  - Provisioned with `backstage: { enabled: true, join_ahead_time_seconds: 900 }`, `audio.default_device: "speaker"`, `mic_default_on: false`, `camera_default_on: false`, `access_request_enabled: true`, `recording.layout.name: "spotlight"`, and `session.inactivity_timeout_seconds: 300`.
-  - Attendees wait in the backstage lobby while `isAwaitingHostGoLive` is true until a host clicks **Go Live** (`POST /api/meetings/[meetingId]/live`).
-  - Attendees can raise their hand to request audio/video/screenshare permissions; hosts approve or revoke via `StageControls.tsx`.
+  - `getOccurrenceVMJoinState` (`lib/appointments/occurrences.ts`) and `resolveMeetingAccess` (`lib/meetings/access.ts`) allow joining and rejoining until `endsAt + 30m` unless the session was deliberately ended (`endedReason === "call_ended"` or `"maintenance"`).
+- **1-to-Many Stage Controls (`StageControls.tsx` & `isAwaitingHostGoLive`)**:
+  - `buildCallSettingsOverride` configures `limits.max_duration_seconds` on `default` calls. When backstage mode is enabled on a 1-to-Many call (`isBackstageEnabled: true`), attendees wait in the backstage lobby while `isAwaitingHostGoLive` is true until a host clicks **Go Live** (`POST /api/meetings/[meetingId]/live`).
+  - Attendees can raise their hand to request audio/video permissions; hosts approve or decline via `StageControls.tsx`.
 - **In-Call Overrun Banner & Free +15m Extension**:
-  - `OverrunBanner.tsx` surfaces a countdown inside the room when entering the final 5 minutes of the booked window, transitions to an amber grace-buffer countdown after `scheduledEndsAt`, and provides hosts with a one-click **Extend +15m (Free)** button (`POST /api/meetings/[meetingId]/extend`).
+  - `OverrunBanner.tsx` surfaces a countdown inside the room when entering the final 5 minutes of the booked window, transitions to an amber grace-buffer countdown after `endsAt` (reading `session.timer_ends_at` or falling back to `MIN_CALL_DURATION_MS` + `CALL_DURATION_GRACE_MS`), and provides hosts with a one-click **Extend +15m (Free)** button (`POST /api/meetings/[meetingId]/extend`).
 - **In-Call Ephemeral Chat**:
   - Allowed for `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, and `CLASS`; disabled for `TRIAL` (`isInCallChatAllowed` in `lib/meetings/room-ready.ts`) to prevent off-platform contact leakage before payment.
 
@@ -147,14 +141,15 @@ Every session is provisioned with an elastic duration envelope (`lib/meetings/du
 
 Every member of a call is named `call_member`, at creation and again on each
 join. `scripts/stream/ensure.ts` (and `scripts/stream/ensure-call-type-grants.ts`)
-locks the `default` call type down so `call_member` holds only the 7 participant
-capabilities (`join-call`, `create-reaction`, `read-call`, `RequestPermissions`,
-` send-Audio`, `send-video`, `screenshare`) — `join-ended-call` and
-`update-call-permissions` are revoked across all roles.
+locks the `default` call type down so `user` and `guest` lose `join-call`,
+`join-ended-call`, `update-call-permissions`, `end-call`, and all 18 billable
+permissions, while `call_member` retains `join-call`, `join-ended-call` (for
+`ended_early` and `REJOIN_GRACE_MS` rejoin), and `update-call-permissions` (for
+host stage moderation) and loses `end-call` and all 18 billable permissions.
 
 ```bash
-npx tsx scripts/stream/ensure.ts          # dry run, inspects app settings + call types
-npx tsx scripts/stream/ensure.ts --apply  # applies canonical settings + hardened grants
+npx tsx scripts/stream/ensure.ts                                      # dry run, inspects app settings + call types
+npx tsx scripts/stream/ensure.ts --apply --confirm-join-route-deployed # applies canonical settings + hardened grants
 ```
 
 ---
@@ -638,16 +633,16 @@ const handleEndCall = async () => {
 ```
 
 The button used to call `call.endCall()` directly. Routing through the server
-allows `scripts/stream/ensure-call-type-grants.ts` to strip `end-call`,
-`join-ended-call`, and `update-call-permissions` from `call_member` so no
-participant can end a call, rejoin an ended call, or elevate their own
-permissions from devtools.
+allows `scripts/stream/ensure-call-type-grants.ts` to strip `end-call` and all
+18 billable permissions from `call_member` (while retaining `join-ended-call`
+and `update-call-permissions` on `call_member` and revoking them from `user`
+and `guest`).
 
-`POST /api/meetings/[meetingId]/end` synchronously writes `Meeting.endedAt` and
+`POST /api/meetings/[meetingId]/end` calls `call.end()` on Stream, and the
+resulting `call.ended` webhook is the single writer for `Meeting.endedAt`,
 `Meeting.endedReason` (`ended_early` when ended before `startsAt`, or
-`call_ended` together with `AppointmentOccurrence.status = "COMPLETED"` when
-ended at or after `startsAt`) so the dashboard immediately reflects the closed
-state without waiting for webhook delivery.
+`call_ended` when ended at or after `startsAt`), and `AppointmentOccurrence`
+completion.
 
 ---
 
@@ -733,9 +728,9 @@ useEffect(() => {
 
 ```typescript
 // 1. Server Action: Provision or retrieve meeting session from dashboard
-const result = await provisionAppointmentMeeting(occurrenceId);
+const result = await provisionAppointmentMeeting(slot);
 if (!result.ok) {
-  toast.error(result.error);
+  toast.error(result.refusal);
   return;
 }
 router.push(`/meetings/${result.streamCallId}`);
@@ -837,10 +832,10 @@ useEffect(() => {
 
 ## Deprecated & Superseded Approaches
 
-- **Exported `findDbMeetingByOccurrence` and `createDbMeeting`**: Now internal helpers inside `actions/stream/meetings/meeting.action.ts`. External callers use `provisionAppointmentMeeting(occurrenceId)`.
+- **Exported `findDbMeetingBySlot`**: Now an internal helper inside `actions/stream/meetings/meeting.action.ts`. External callers use `provisionAppointmentMeeting(slot)`.
 - **`slotOfAppointmentId` on `Meeting`**: Replaced by `occurrenceId` referencing `AppointmentOccurrence`.
 - **Client-side `call.endCall()` and `call.goLive()`**: Replaced by server-enforced `POST /api/meetings/[meetingId]/end` and `POST /api/meetings/[meetingId]/live`.
-- **`join-ended-call` and `update-call-permissions` on `call_member`**: Revoked across all roles by `scripts/stream/ensure-call-type-grants.ts`.
+- **`end-call` and billable permissions on `call_member`, `user`, and `guest`**: Revoked by `scripts/stream/ensure-call-type-grants.ts` while retaining `join-ended-call` and `update-call-permissions` on `call_member`.
 
 ---
 
