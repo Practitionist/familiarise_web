@@ -5,6 +5,7 @@ import { liveParticipant } from "@/lib/booking/participants";
 
 import { getSession } from "@/lib/auth-server";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
+import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
 // See schemas/stream-search.ts for why the shape does not live here.
 import {
   ConsulteeSearchResultSchema,
@@ -39,9 +40,26 @@ export async function GET(req: NextRequest) {
     }
 
     const consultantProfileId = session.user.consultantProfileId;
-    const url = new URL(req.url);
-    const searchTerm = url.searchParams.get("term")?.trim().toLowerCase() || "";
-    const excludeIds = url.searchParams.get("exclude")?.split(",") || [];
+    const searchParams =
+      req.nextUrl?.searchParams ?? new URL(req.url).searchParams;
+    const searchTerm = searchParams.get("term")?.trim().toLowerCase() || "";
+    const excludeIds = searchParams.get("exclude")?.split(",") || [];
+    const consultationScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "consultationPlan",
+    );
+    const subscriptionScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "subscriptionPlan",
+    );
+    const webinarScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "webinarPlan",
+    );
+    const classScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "classPlan",
+    );
 
     // Get all consultees from different relationship types
     const results: ConsulteeSearchResult[] = [];
@@ -53,6 +71,19 @@ export async function GET(req: NextRequest) {
     // members. So they could add themselves to a channel and end up as their own
     // counterparty. Self-exclusion belongs here, not in the caller.
     const seenUserIds = new Set<string>([...excludeIds, session.user.id]);
+    const userSearchWhere =
+      searchTerm !== ""
+        ? {
+            OR: [
+              { name: { contains: searchTerm, mode: "insensitive" as const } },
+              { email: { contains: searchTerm, mode: "insensitive" as const } },
+            ],
+          }
+        : undefined;
+    const deterministicOrderBy = [
+      { createdAt: "desc" as const },
+      { id: "asc" as const },
+    ];
 
     // 1. Get consultees from active consultations
     const consultations = await prisma.consultation.findMany({
@@ -63,7 +94,11 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
+        ...(consultationScopeWhere ? { AND: [consultationScopeWhere] } : {}),
       },
+      orderBy: deterministicOrderBy,
+      take: 100,
       include: {
         requestedBy: {
           include: {
@@ -109,7 +144,11 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
+        ...(subscriptionScopeWhere ? { AND: [subscriptionScopeWhere] } : {}),
       },
+      orderBy: deterministicOrderBy,
+      take: 100,
       include: {
         requestedBy: {
           include: {
@@ -146,104 +185,95 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. Get attendees from webinars — everyone connected to a session slot.
-    const webinars = await prisma.webinar.findMany({
-      where: {
-        webinarPlan: {
-          consultantProfileId: consultantProfileId,
-        },
-        status: {
-          in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
-        },
-      },
-      include: {
-        appointment: {
-          select: {
-            participants: {
-              where: liveParticipant(),
-              select: {
-                user: {
-                  select: { id: true, name: true, email: true, image: true },
-                },
+    const participantFilter = userSearchWhere
+      ? { ...liveParticipant(), user: userSearchWhere }
+      : liveParticipant();
+
+    const eventInclude = {
+      appointment: {
+        select: {
+          participants: {
+            where: participantFilter,
+            take: 100,
+            select: {
+              user: {
+                select: { id: true, name: true, email: true, image: true },
               },
             },
           },
         },
       },
-    });
+    };
 
-    for (const webinar of webinars) {
-      const webinarAttendees = (webinar.appointment?.participants ?? []).map(
-        (seat) => seat.user,
-      );
-      for (const attendeeUser of webinarAttendees) {
-        if (
-          attendeeUser &&
-          !seenUserIds.has(attendeeUser.id) &&
-          (searchTerm === "" ||
-            attendeeUser.name?.toLowerCase().includes(searchTerm) ||
-            attendeeUser.email?.toLowerCase().includes(searchTerm))
-        ) {
-          seenUserIds.add(attendeeUser.id);
-          results.push({
-            id: attendeeUser.id,
-            name: attendeeUser.name,
-            email: attendeeUser.email,
-            image: attendeeUser.image,
-            relationshipType: "webinar",
-          });
+    const appendEventAttendees = (
+      events: {
+        appointment?: {
+          participants: {
+            user: {
+              id: string;
+              name: string | null;
+              email: string | null;
+              image: string | null;
+            } | null;
+          }[];
+        } | null;
+      }[],
+      relationshipType: "webinar" | "class",
+    ) => {
+      for (const item of events) {
+        for (const seat of item.appointment?.participants ?? []) {
+          const attendeeUser = seat.user;
+          if (
+            attendeeUser &&
+            !seenUserIds.has(attendeeUser.id) &&
+            (searchTerm === "" ||
+              attendeeUser.name?.toLowerCase().includes(searchTerm) ||
+              attendeeUser.email?.toLowerCase().includes(searchTerm))
+          ) {
+            seenUserIds.add(attendeeUser.id);
+            results.push({
+              id: attendeeUser.id,
+              name: attendeeUser.name,
+              email: attendeeUser.email,
+              image: attendeeUser.image,
+              relationshipType,
+            });
+          }
         }
       }
-    }
+    };
+
+    // 3. Get attendees from webinars — everyone connected to a session slot.
+    const webinars = await prisma.webinar.findMany({
+      where: {
+        webinarPlan: { consultantProfileId },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] },
+        ...(userSearchWhere
+          ? { appointment: { participants: { some: participantFilter } } }
+          : {}),
+        ...(webinarScopeWhere ? { AND: [webinarScopeWhere] } : {}),
+      },
+      orderBy: deterministicOrderBy,
+      take: 100,
+      include: eventInclude,
+    });
+    appendEventAttendees(webinars, "webinar");
 
     // 4. Get attendees from classes — everyone connected to a session slot.
     const classes = await prisma.class.findMany({
       where: {
-        classPlan: {
-          consultantProfileId: consultantProfileId,
-        },
-        status: {
-          in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
-        },
+        classPlan: { consultantProfileId },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] },
+        ...(userSearchWhere
+          ? { appointment: { participants: { some: participantFilter } } }
+          : {}),
+        ...(classScopeWhere ? { AND: [classScopeWhere] } : {}),
       },
-      include: {
-        appointment: {
-          select: {
-            participants: {
-              where: liveParticipant(),
-              select: {
-                user: {
-                  select: { id: true, name: true, email: true, image: true },
-                },
-              },
-            },
-          },
-        },
-      },
+      orderBy: deterministicOrderBy,
+      take: 100,
+      include: eventInclude,
     });
-
-    for (const classItem of classes) {
-      const classAttendees =
-        classItem.appointment?.participants.map((seat) => seat.user) ?? [];
-      for (const attendeeUser of classAttendees) {
-        if (
-          attendeeUser &&
-          !seenUserIds.has(attendeeUser.id) &&
-          (searchTerm === "" ||
-            attendeeUser.name?.toLowerCase().includes(searchTerm) ||
-            attendeeUser.email?.toLowerCase().includes(searchTerm))
-        ) {
-          seenUserIds.add(attendeeUser.id);
-          results.push({
-            id: attendeeUser.id,
-            name: attendeeUser.name,
-            email: attendeeUser.email,
-            image: attendeeUser.image,
-            relationshipType: "class",
-          });
-        }
-      }
-    }
+    appendEventAttendees(classes, "class");
 
     // Sort by name
     results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
