@@ -89,6 +89,9 @@ export interface SyncOutcome {
   reason?: "stream-unreachable" | "persist-failed";
 }
 
+export type ConsultantRecordingFilterType =
+  "webinar" | "class" | "consultation" | "subscription" | "trial";
+
 export class RecordingService {
   /**
    * Start recording for a call
@@ -327,7 +330,7 @@ export class RecordingService {
   static async getConsultantRecordings(
     consultantProfileId: string,
     filters?: {
-      type?: "webinar" | "class" | "consultation" | "subscription" | "trial";
+      type?: ConsultantRecordingFilterType;
       status?: RecordingStatus;
       search?: string;
       page?: number;

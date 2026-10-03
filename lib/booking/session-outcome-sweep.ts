@@ -192,7 +192,7 @@ async function backfillMissingPresencesFromStream(
   return [...presences, ...additionalPresences];
 }
 
-async function writeSlotOutcomeTransaction(
+function writeSlotOutcomeTransaction(
   slot: OutcomeSlot,
   presences: OutcomeSlot["presences"],
   to: OccurrenceCompletionStatus,

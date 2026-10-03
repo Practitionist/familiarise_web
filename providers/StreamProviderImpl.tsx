@@ -232,6 +232,24 @@ interface SettledStreamClients {
   video: StreamVideoClient | null;
 }
 
+function isConsentUpsertError(upsertError: unknown): boolean {
+  const errName =
+    typeof upsertError === "object" && upsertError !== null
+      ? (upsertError as { name?: unknown }).name
+      : undefined;
+  if (errName === "ConsentRequiredError") return true;
+  let errMessage = "";
+  if (upsertError instanceof Error) {
+    errMessage = upsertError.message;
+  } else if (typeof upsertError === "string") {
+    errMessage = upsertError;
+  }
+  return (
+    errMessage.includes("STREAM_DATA_PROCESSING") ||
+    errMessage.includes("data-processing consent for messaging")
+  );
+}
+
 const StreamProviderImpl = ({
   userId,
   enableChat = true,
@@ -578,21 +596,7 @@ const StreamProviderImpl = ({
             userId: userDetails.id,
           });
         } catch (upsertError) {
-          const errName =
-            typeof upsertError === "object" && upsertError !== null
-              ? (upsertError as { name?: unknown }).name
-              : undefined;
-          let errMessage = "";
-          if (upsertError instanceof Error) {
-            errMessage = upsertError.message;
-          } else if (typeof upsertError === "string") {
-            errMessage = upsertError;
-          }
-          if (
-            errName === "ConsentRequiredError" ||
-            errMessage.includes("STREAM_DATA_PROCESSING") ||
-            errMessage.includes("data-processing consent for messaging")
-          ) {
+          if (isConsentUpsertError(upsertError)) {
             const consentFailure = classifyConnectFailure(upsertError);
             setError(consentFailure.description);
             setFailure(consentFailure);

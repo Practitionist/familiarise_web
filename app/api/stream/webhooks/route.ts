@@ -238,37 +238,41 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status: "ok", accepted: true });
   } catch (error) {
-    streamLogger.error("Stream webhook error", error);
+    return formatWebhookErrorResponse(error);
+  }
+}
 
-    // A malformed body will never become well-formed, so 400 and stop the
-    // retries rather than burning the budget on a permanent failure.
-    //
-    // `JSON.parse` throws SyntaxError, not ZodError, so genuinely malformed JSON
-    // used to fall past this branch to the 500 below — and Stream then spent its
-    // whole retry budget redelivering a body that could never parse.
-    if (error instanceof SyntaxError) {
-      streamLogger.error("Stream webhook received unparseable JSON", error);
-      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-    }
+function formatWebhookErrorResponse(error: unknown): NextResponse {
+  streamLogger.error("Stream webhook error", error);
 
-    if (error instanceof z.ZodError) {
-      streamLogger.error("Stream webhook validation error", error);
-      return NextResponse.json(
-        { error: "Invalid event format", details: error.errors },
-        { status: 400 },
-      );
-    }
+  // A malformed body will never become well-formed, so 400 and stop the
+  // retries rather than burning the budget on a permanent failure.
+  //
+  // `JSON.parse` throws SyntaxError, not ZodError, so genuinely malformed JSON
+  // used to fall past this branch to the 500 below — and Stream then spent its
+  // whole retry budget redelivering a body that could never parse.
+  if (error instanceof SyntaxError) {
+    streamLogger.error("Stream webhook received unparseable JSON", error);
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-
+  if (error instanceof z.ZodError) {
+    streamLogger.error("Stream webhook validation error", error);
     return NextResponse.json(
-      { error: "Webhook handler failed" },
-      { status: 500 },
+      { error: "Invalid event format", details: error.errors },
+      { status: 400 },
     );
   }
+
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    { tags: { subsystem: "stream" } },
+  );
+
+  return NextResponse.json(
+    { error: "Webhook handler failed" },
+    { status: 500 },
+  );
 }
 
 /**
