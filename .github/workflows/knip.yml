@@ -49,7 +49,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Restore Knip cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./node_modules/.cache/knip
           key: knip-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
