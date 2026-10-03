@@ -88,7 +88,7 @@ type JobResult = {
   [key: string]: unknown;
 };
 
-type JobFunction = () => Promise<JobResult>;
+type JobFunction = (actorUserId?: string) => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
   "cleanup-abandoned-payments": async () => {
@@ -145,16 +145,21 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errorCount,
     };
   },
-  "create-payout-batch": async () => {
-    const batchId = await createPayoutBatchService();
+  "create-payout-batch": async (actorUserId?: string) => {
+    const batchId = await createPayoutBatchService(
+      undefined,
+      actorUserId ? { createdBy: actorUserId } : undefined,
+    );
     return {
       success: true,
       batchId,
     };
   },
-  "process-payouts": async () => {
+  "process-payouts": async (actorUserId?: string) => {
     const results = await processApprovedPayoutsService(
-      REQUEST_PAYOUT_RUN_BOUNDS,
+      actorUserId
+        ? { ...REQUEST_PAYOUT_RUN_BOUNDS, triggeredByUserId: actorUserId }
+        : REQUEST_PAYOUT_RUN_BOUNDS,
     );
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
@@ -489,7 +494,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {
         try {
-          const outcome = await jobFunction();
+          const outcome = await jobFunction(user.id);
           await logRun(outcome.success ? "SUCCEEDED" : "FAILED");
         } catch (err) {
           await logRun("FAILED");
@@ -513,7 +518,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     let result: JobResult;
     try {
-      result = await jobFunction();
+      result = await jobFunction(user.id);
     } catch (err) {
       await logRun("FAILED");
       throw err;

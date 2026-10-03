@@ -14,6 +14,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 
 const ContractStatusSchema = z.enum([
   "DRAFT",
@@ -56,28 +57,7 @@ const CreateBodySchema = z
     licenseRatePerSeatPaise: z.coerce.number().int().min(1).optional(),
     licenseCycle: LicenseCycleSchema.optional(),
   })
-  .refine(
-    (v) => v.effectiveTo === null || v.effectiveTo === undefined
-      ? true
-      : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
-    {
-      message: "effectiveTo must be strictly after effectiveFrom",
-      path: ["effectiveTo"],
-    },
-  )
-  .refine(
-    (v) =>
-      // PER_SEAT bills seats × rate, so it needs a per-seat rate and must not
-      // carry a flat fee; FLAT_FEE is the reverse. E2E-audit P1 fix — PER_SEAT
-      // was unreachable: the create route hardcoded FLAT_FEE.
-      v.licenseModel !== "PER_SEAT" ||
-      (v.licenseRatePerSeatPaise !== undefined && v.licenseFeePaise === undefined),
-    {
-      message:
-        "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
-      path: ["licenseModel"],
-    },
-  );
+  .superRefine(validateContractLicenseInput);
 
 export async function GET(
   req: NextRequest,
@@ -117,6 +97,8 @@ export async function GET(
           model: true,
           cycle: true,
           flatFeePaise: true,
+          ratePerSeatPaise: true,
+          activeSeatCount: true,
         },
       },
       _count: { select: { programs: true } },
@@ -124,7 +106,14 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: contracts });
+  return NextResponse.json({
+    data: contracts.map((c) => ({
+      ...c,
+      supersededByContractId: c.supersededByContractId ?? null,
+      supersededAt: c.supersededAt ?? null,
+      supersessionReason: c.supersessionReason ?? null,
+    })),
+  });
 }
 
 export async function POST(
@@ -247,12 +236,15 @@ export async function POST(
 
     if (wantsLicenseSubscription) {
       const cycleEnd = computeCycleEnd(body.effectiveFrom, body.licenseCycle!);
-      const isPerSeat = body.licenseModel === "PER_SEAT";
+      const isPerSeat =
+        body.licenseModel === "PER_SEAT" ||
+        (body.licenseModel === undefined &&
+          body.licenseRatePerSeatPaise !== undefined);
       await tx.billingSubscription.create({
         data: {
           contractId: created.id,
           billingAccountId: body.billingAccountId,
-          model: body.licenseModel ?? "FLAT_FEE",
+          model: isPerSeat ? "PER_SEAT" : "FLAT_FEE",
           cycle: body.licenseCycle!,
           ratePerSeatPaise: isPerSeat
             ? BigInt(body.licenseRatePerSeatPaise!)
@@ -284,7 +276,13 @@ export async function POST(
           paymentTermsDays: body.paymentTermsDays,
           ...(wantsLicenseSubscription
             ? {
+                licenseModel:
+                  body.licenseModel ??
+                  (body.licenseRatePerSeatPaise !== undefined
+                    ? "PER_SEAT"
+                    : "FLAT_FEE"),
                 licenseFeePaise: body.licenseFeePaise,
+                licenseRatePerSeatPaise: body.licenseRatePerSeatPaise,
                 licenseCycle: body.licenseCycle,
               }
             : {}),

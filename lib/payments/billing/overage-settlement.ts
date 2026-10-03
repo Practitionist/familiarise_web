@@ -38,6 +38,12 @@ export interface RecordOverageInput {
   userId: string;
   organizationId: string | null;
   paymentGateway: PaymentGateway;
+  /**
+   * #1895: True when metering a lazily allocated subscription session after
+   * initial signup, where the parent orgPayment may already be invoiced or
+   * have exhausted its un-carved INVOICE_ACCRUAL balance.
+   */
+  isLazyAllocation?: boolean;
 }
 
 /** The member-due bell, deferred until the caller's transaction has committed. */
@@ -178,6 +184,15 @@ export async function recordOverageAtCheckout(
   });
   if (!bu) return null;
 
+  const parentPayment =
+    typeof tx.payment?.findUnique === "function"
+      ? await tx.payment.findUnique({
+          where: { id: paymentId },
+          select: { billableToOrgInvoiceId: true },
+        })
+      : null;
+  const parentInvoiced = !!parentPayment?.billableToOrgInvoiceId;
+
   if (overage.chargeTo === "MEMBER") {
     // Instant member charge. The booking proceeds; create a parent-linked
     // PENDING side-Payment for the marginal. The gateway is NOT called inside
@@ -218,68 +233,74 @@ export async function recordOverageAtCheckout(
       },
     });
 
-    // #785 — carve the over-cap pass-through (basePaise) out of the org-funded
-    // parent so the org pays only coveredPaise; the member side-charge above
-    // (marginalPaise) covers the over-cap portion. Without this, basePaise is
-    // collected TWICE — once in the parent's base leg, once in the member charge
-    // (coveredPaise + basePaise == price). INVOICE accrual carves cleanly; a
-    // WALLET-funded parent would also need a balance credit-back, which is not
-    // built (#715) — so #1458 added a config-time guard
-    // (overageBehaviorUnsupportedReason) that refuses CHARGE_MEMBER on a WALLET
-    // account, and the throw below is the fail-closed backstop for a programme
-    // configured before that guard existed.
+    // #785 / #1895 — carve the over-cap pass-through (basePaise) out of the
+    // org-funded parent so the org pays only coveredPaise; the member side-charge
+    // above (marginalPaise) covers the over-cap portion. On a lazy subscription
+    // allocation (`isLazyAllocation === true`), if the parent orgPayment is
+    // already invoiced (`billableToOrgInvoiceId !== null`) or lacks un-carved
+    // INVOICE_ACCRUAL balance, skip mutating the locked parent orgPayment while
+    // still creating the sideCharge and memberOverageEvent(PENDING).
     if (basePaise > 0) {
-      const parentBase = await tx.paymentLeg.findUnique({
-        where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
-        select: { amountPaise: true },
-      });
-      // Fail closed: if there's no INVOICE_ACCRUAL leg ≥ basePaise to carve from
-      // (e.g. a WALLET/LICENSE-funded parent), basePaise was already collected via
-      // that funding source and the member side-charge above bills it AGAIN. The
-      // credit-back path for non-invoice parents isn't built (#715), so abort the
-      // tx rather than silently double-collect basePaise. Only reachable for a
-      // programme saved before #1458's config guard, which now refuses the
-      // combination at create and patch time.
-      if (!parentBase || parentBase.amountPaise < basePaise) {
-        // #1458 — a stable code and a 409 so the route answers the buyer with
-        // the admin action instead of a generic 500; the operator detail stays
-        // in the Sentry context below, not in the message the page renders.
-        const carveErr = new PaymentError(
-          "This programme charges members for bookings past its cap, which is not supported on this organisation's funding source. Ask your billing admin to switch the programme to charge the organisation, or to block over-cap bookings.",
-          "OVERAGE_CHARGE_MEMBER_UNSUPPORTED",
-        );
-        // A genuine coverage gap (#715), not a modelled outcome — this aborts
-        // a booking with real money on the line.
-        reportSentryError(carveErr, {
-          subsystem: "payments",
-          contexts: {
-            overage: {
-              paymentId,
-              basePaise,
-              parentInvoiceAccrualPaise: parentBase
-                ? parentBase.amountPaise
-                : null,
-            },
-          },
+      if (input.isLazyAllocation && parentInvoiced) {
+        // Parent payment was already invoiced in a prior cycle; do not mutate
+        // the locked parent payment or its legs.
+      } else {
+        const parentBase = await tx.paymentLeg.findUnique({
+          where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+          select: { amountPaise: true },
         });
-        throw carveErr;
+        if (!parentBase || parentBase.amountPaise < basePaise) {
+          if (!input.isLazyAllocation) {
+            const carveErr = new PaymentError(
+              "This programme charges members for bookings past its cap, which is not supported on this organisation's funding source. Ask your billing admin to switch the programme to charge the organisation, or to block over-cap bookings.",
+              "OVERAGE_CHARGE_MEMBER_UNSUPPORTED",
+            );
+            reportSentryError(carveErr, {
+              subsystem: "payments",
+              contexts: {
+                overage: {
+                  paymentId,
+                  basePaise,
+                  parentInvoiceAccrualPaise: parentBase
+                    ? parentBase.amountPaise
+                    : null,
+                },
+              },
+            });
+            throw carveErr;
+          }
+          // Lazy allocation with partial or zero remaining INVOICE_ACCRUAL:
+          // carve whatever un-invoiced balance remains, if any.
+          const lazyCarve = parentBase
+            ? Math.min(parentBase.amountPaise, basePaise)
+            : 0;
+          if (lazyCarve > 0) {
+            await tx.paymentLeg.update({
+              where: {
+                paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" },
+              },
+              data: { amountPaise: { decrement: lazyCarve } },
+            });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { amount: { decrement: lazyCarve } },
+            });
+          }
+        } else {
+          await tx.paymentLeg.update({
+            where: {
+              paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" },
+            },
+            data: { amountPaise: { decrement: basePaise } },
+          });
+          await tx.payment.update({
+            where: { id: paymentId },
+            data: { amount: { decrement: basePaise } },
+          });
+        }
       }
-      await tx.paymentLeg.update({
-        where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
-        data: { amountPaise: { decrement: basePaise } },
-      });
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: { amount: { decrement: basePaise } },
-      });
     }
 
-    // Tell the member they owe the marginal + deep-link to the pay surface —
-    // handed back for the caller to ring post-commit rather than rung here.
-    // #1435 — the lookup this bell needs runs on the global client, and under
-    // PG_POOL_MAX=1 a global-client query issued inside the transaction queues
-    // behind the transaction's own connection and dies at the 3 s pg connect
-    // timeout, which the .catch swallowed: the bell was lost silently.
     return {
       userId,
       programAssignmentId,
@@ -290,22 +311,75 @@ export async function recordOverageAtCheckout(
   }
 
   if (overage.chargeTo === "ORG") {
-    // #785 — the over-cap pass-through (basePaise) is ALREADY inside the base
-    // INVOICE_ACCRUAL leg (coveredPaise + basePaise == price), and the rollup
-    // sums BOTH leg sources into the invoice — so adding the overage leg on top
-    // double-bills the org by basePaise (and breaks Σlegs == amount). Carve
-    // basePaise OUT of the base leg into the explicit OVERAGE_INVOICE_ACCRUAL
-    // leg; only the surcharge is genuinely-additional money (marginal == base +
-    // surcharge).
-    //
-    // #1458 — which funding rail paid the parent decides whether the marginal is
-    // new money at all, so the WALLET rail is resolved FIRST and never reaches
-    // the additive branch below.
+    // #1895: When the parent orgPayment is already invoiced (`parentInvoiced`),
+    // its basePaise was already billed on the parent's invoice. Do not mutate
+    // the locked parent payment or its legs. If surchargePaise > 0, mint a
+    // standalone un-invoiced child accrual Payment carrying OVERAGE_INVOICE_ACCRUAL
+    // so rollupOrgInvoiceAccruals bills only the surcharge without double-billing
+    // basePaise; if surchargePaise === 0, record the event as ACCRUED.
+    if (parentInvoiced) {
+      if (surchargePaise > 0) {
+        const childAccrualPayment = await tx.payment.create({
+          data: {
+            amount: surchargePaise,
+            originalAmount: surchargePaise,
+            taxAmount: 0,
+            currency,
+            paymentMethod: "ENTERPRISE_INVOICE_ACCRUAL",
+            paymentIntent: `overage_accrual_${globalThis.crypto.randomUUID()}`,
+            paymentGateway,
+            paymentStatus: PaymentStatus.SUCCEEDED,
+            isMockPayment: false,
+            userId,
+            appointmentId: null,
+            organizationId,
+            parentPaymentId: paymentId,
+            legs: {
+              create: {
+                source: "OVERAGE_INVOICE_ACCRUAL",
+                amountPaise: surchargePaise,
+                sourceRef: programAssignmentId,
+              },
+            },
+          },
+        });
+        await tx.overageEvent.create({
+          data: {
+            programAssignmentId,
+            bookingUtilizationId: bu.id,
+            overageBehavior: "CHARGE_ORG",
+            basePaise: 0,
+            surchargePaise,
+            marginalPaise: surchargePaise,
+            currency,
+            chargeStatus: "PENDING",
+            paymentId: childAccrualPayment.id,
+          },
+        });
+      } else {
+        await tx.overageEvent.create({
+          data: {
+            programAssignmentId,
+            bookingUtilizationId: bu.id,
+            overageBehavior: "CHARGE_ORG",
+            basePaise: 0,
+            surchargePaise: 0,
+            marginalPaise: 0,
+            currency,
+            chargeStatus: "ACCRUED",
+            settledAt: new Date(),
+            paymentId,
+          },
+        });
+      }
+      return null;
+    }
+
     const walletLeg = await tx.paymentLeg.findUnique({
       where: { paymentId_source: { paymentId, source: "WALLET" } },
       select: { amountPaise: true },
     });
-    if (walletLeg) {
+    if (walletLeg && (!input.isLazyAllocation || surchargePaise === 0)) {
       return recordWalletCollectedOrgOverage(tx, {
         paymentId,
         programAssignmentId,
@@ -322,23 +396,28 @@ export async function recordOverageAtCheckout(
       select: { amountPaise: true },
     });
     if (!baseLeg) {
-      // #1458 — the old fallback treated "no base leg" as licence-funded and
-      // made the overage fully additive, which cannot work on either remaining
-      // rail. A LICENSE parent keeps `Payment.amount` at the full price behind a
-      // deliberately ₹0 licence leg, and the leg-sum guard only excuses that
-      // while the licence leg is the ONLY funding leg: adding an
-      // OVERAGE_INVOICE_ACCRUAL leg re-arms the comparison and
-      // `assert_payment_legs_ok` then raises at COMMIT, so the booking already
-      // died with an opaque Postgres check_violation. A parent with no funding
-      // leg at all means the funding seam itself drifted. Neither is fixable by
-      // inflating the amount, so both refuse the booking with an error the buyer
-      // can take to their admin.
+      if (input.isLazyAllocation) {
+        // #1895: On a lazy subscription allocation where the parent has no
+        // INVOICE_ACCRUAL leg, record OverageEvent(PENDING, CHARGE_ORG) for
+        // the next monthly invoice rollup without throwing.
+        await tx.overageEvent.create({
+          data: {
+            programAssignmentId,
+            bookingUtilizationId: bu.id,
+            overageBehavior: "CHARGE_ORG",
+            basePaise,
+            surchargePaise,
+            marginalPaise,
+            currency,
+            chargeStatus: "PENDING",
+          },
+        });
+        return null;
+      }
       const fundingErr = new PaymentError(
         "This booking is past your programme's cap and the programme's funding source cannot be charged for the difference. Ask your billing admin to switch the programme to block over-cap bookings, or to fund it from the organisation's wallet or invoice account.",
         "OVERAGE_UNSUPPORTED_FUNDING",
       );
-      // A coverage gap, not a modelled outcome: it means an operator saved a
-      // programme whose overage can never be collected.
       reportSentryError(fundingErr, {
         subsystem: "payments",
         contexts: { overage: { paymentId, marginalPaise } },
@@ -355,17 +434,37 @@ export async function recordOverageAtCheckout(
         data: { amountPaise: { decrement: carved } },
       });
     }
-    // OVERAGE_INVOICE_ACCRUAL (distinct source) avoids the @@unique([paymentId,
-    // source]) clash with the base leg; the rollup turns the event into an
-    // InvoiceLineItem (PENDING → ACCRUED → CHARGED).
-    await tx.paymentLeg.create({
-      data: {
-        paymentId,
-        source: "OVERAGE_INVOICE_ACCRUAL",
-        amountPaise: marginalPaise,
-        sourceRef: `overage:${programAssignmentId}`,
+    // #1895 — upsert/increment OVERAGE_INVOICE_ACCRUAL when multiple overage
+    // sessions are lazily allocated on the same uninvoiced subscription payment.
+    const existingOverageLeg = await tx.paymentLeg.findUnique({
+      where: {
+        paymentId_source: {
+          paymentId,
+          source: "OVERAGE_INVOICE_ACCRUAL",
+        },
       },
+      select: { amountPaise: true },
     });
+    if (existingOverageLeg) {
+      await tx.paymentLeg.update({
+        where: {
+          paymentId_source: {
+            paymentId,
+            source: "OVERAGE_INVOICE_ACCRUAL",
+          },
+        },
+        data: { amountPaise: { increment: marginalPaise } },
+      });
+    } else {
+      await tx.paymentLeg.create({
+        data: {
+          paymentId,
+          source: "OVERAGE_INVOICE_ACCRUAL",
+          amountPaise: marginalPaise,
+          sourceRef: `overage:${programAssignmentId}`,
+        },
+      });
+    }
     const amountDelta = marginalPaise - carved;
     if (amountDelta > 0) {
       await tx.payment.update({

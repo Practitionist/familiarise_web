@@ -18,21 +18,26 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 
-const BodySchema = z.object({
-  reason: z.enum(["AMENDMENT", "RENEWAL"]),
-  // New terms — anything omitted carries over from the old contract.
-  effectiveFrom: z.coerce.date().optional(),
-  effectiveTo: z.coerce.date().nullable().optional(),
-  paymentTermsDays: z.coerce.number().int().min(1).max(120).optional(),
-  autoRenew: z.coerce.boolean().optional(),
-  rateCardId: z.string().min(1).nullable().optional(),
-  // License overrides (E2E-audit P0 fix): when present, the carried-over
-  // BillingSubscription is re-priced with these instead of the old terms.
-  licenseCycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]).optional(),
-  licenseFeePaise: z.coerce.number().int().positive().optional(),
-});
+const BodySchema = z
+  .object({
+    reason: z.enum(["AMENDMENT", "RENEWAL"]),
+    // New terms — anything omitted carries over from the old contract.
+    effectiveFrom: z.coerce.date().optional(),
+    effectiveTo: z.coerce.date().nullable().optional(),
+    paymentTermsDays: z.coerce.number().int().min(1).max(120).optional(),
+    autoRenew: z.coerce.boolean().optional(),
+    rateCardId: z.string().min(1).nullable().optional(),
+    // License overrides (E2E-audit P0 fix): when present, the carried-over
+    // BillingSubscription is re-priced with these instead of the old terms.
+    licenseModel: z.enum(["FLAT_FEE", "PER_SEAT"]).optional(),
+    licenseCycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]).optional(),
+    licenseFeePaise: z.coerce.number().int().positive().optional(),
+    licenseRatePerSeatPaise: z.number().int().min(1).optional(),
+  })
+  .superRefine(validateContractLicenseInput);
 
 export async function POST(
   req: NextRequest,
@@ -169,15 +174,30 @@ export async function POST(
       if (oldSubscription) {
         const subCycle = body.licenseCycle ?? oldSubscription.cycle;
         const subCycleEnd = nextPeriodEnd(effectiveFrom, subCycle);
+        const nextModel =
+          body.licenseModel ??
+          (body.licenseRatePerSeatPaise !== undefined
+            ? "PER_SEAT"
+            : body.licenseFeePaise !== undefined
+              ? "FLAT_FEE"
+              : (oldSubscription.model ?? "FLAT_FEE"));
+        const isPerSeat = nextModel === "PER_SEAT";
         await tx.billingSubscription.update({
           where: { id: oldSubscription.id },
           data: {
             contractId: successor.id,
+            model: nextModel,
             cycle: subCycle,
-            flatFeePaise:
-              body.licenseFeePaise !== undefined
+            ratePerSeatPaise: isPerSeat
+              ? body.licenseRatePerSeatPaise !== undefined
+                ? BigInt(body.licenseRatePerSeatPaise)
+                : (oldSubscription.ratePerSeatPaise ?? null)
+              : null,
+            flatFeePaise: !isPerSeat
+              ? body.licenseFeePaise !== undefined
                 ? BigInt(body.licenseFeePaise)
-                : oldSubscription.flatFeePaise,
+                : (oldSubscription.flatFeePaise ?? null)
+              : null,
             currentCycleStart: effectiveFrom,
             currentCycleEnd: subCycleEnd,
             nextInvoiceDate: subCycleEnd,

@@ -173,6 +173,7 @@ export async function PATCH(
         const liveAssignmentCount = await tx.programAssignment.count({
           where: {
             program: { contractId },
+            status: { in: ["ACTIVE", "PAUSED"] },
             periodEnd: { gte: now },
           },
         });

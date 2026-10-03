@@ -4653,6 +4653,7 @@ export class SchedulingService {
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
+        subscriptionPlan: { select: { totalSessions: true } },
         appointment: {
           include: {
             payment: true,
@@ -4717,7 +4718,7 @@ export class SchedulingService {
         },
       },
       orderBy: { periodEnd: "desc" },
-      select: { id: true },
+      select: { id: true, program: { select: { type: true } } },
     });
     if (!assignment) return;
 
@@ -4784,7 +4785,7 @@ export class SchedulingService {
     // reaching it (a ProgramAssignmentLimitError cap-exceeded included,
     // correctly classified as one of its modelled outcomes). A capture here
     // too would be a dupe, so this no longer needs its own try/catch.
-    await recordBookingUtilization(tx, {
+    const utilResult = await recordBookingUtilization(tx, {
       programAssignmentId: assignment.id,
       paymentId: orgPayment.id,
       engagementsConsumed: idsToDebit.length,
@@ -4796,6 +4797,54 @@ export class SchedulingService {
       // genuinely-new ids.
       appointmentIds: idsToDebit,
     });
+
+    // #1895 — Trigger overage billing when a lazily allocated subscription
+    // session exceeds the program cap.
+    if (utilResult?.wasOverage) {
+      const totalPlanSessions = Math.max(
+        1,
+        subscription?.subscriptionPlan?.totalSessions ??
+          subscription?.sessionsTotal ??
+          1,
+      );
+      const unitSessionPricePaise = Math.round(
+        orgPayment.amount / totalPlanSessions,
+      );
+      const overageBookingPricePaise =
+        idsToDebit.length * unitSessionPricePaise;
+      const { recordOverageAtCheckout, notifyOverageDueAfterCommit } =
+        await import("@/lib/payments/billing/overage-settlement");
+      const resolvedProgramType =
+        assignment.program?.type ??
+        utilResult.programType ??
+        "LICENSED_SEAT";
+      const effectiveConsumedPaiseAfter =
+        resolvedProgramType === "CREDIT_POOL"
+          ? utilResult.consumedPaiseAfter +
+            (existingUtil ? overageBookingPricePaise : 0)
+          : utilResult.consumedPaiseAfter;
+      const pendingNotify = await recordOverageAtCheckout({
+        tx,
+        programAssignmentId: assignment.id,
+        utilization: {
+          programType: resolvedProgramType,
+          engagementsConsumedDelta: utilResult.engagementsConsumedDelta,
+          engagementsUsedAfter: utilResult.engagementsUsedAfter,
+          consumedPaiseAfter: effectiveConsumedPaiseAfter,
+          creditBudgetPaise: utilResult.creditBudgetPaise,
+        },
+        bookingPricePaise: overageBookingPricePaise,
+        currency: orgPayment.currency ?? "INR",
+        paymentId: orgPayment.id,
+        userId: consulteeUserId,
+        organizationId: orgPayment.organizationId,
+        paymentGateway: orgPayment.paymentGateway ?? "RAZORPAY",
+        isLazyAllocation: existingUtil !== null,
+      });
+      if (pendingNotify) {
+        notifyOverageDueAfterCommit(pendingNotify);
+      }
+    }
   }
 
   /**

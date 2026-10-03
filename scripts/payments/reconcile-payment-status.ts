@@ -146,18 +146,38 @@ async function getStripePaymentStatus(
         typeof intentRef === "string"
           ? await stripe.paymentIntents.retrieve(intentRef)
           : intentRef;
+      const mergedMetadata = {
+        ...(session.metadata ?? {}),
+        ...(pi.metadata ?? {}),
+      };
+      const sessionNotes = Object.fromEntries(
+        Object.entries(mergedMetadata)
+          .filter(([, v]) => v !== null && v !== undefined)
+          .map(([k, v]) => [k, String(v)]),
+      );
       return {
         kind: "status",
         status: pi.status,
         failureMessage: pi.last_payment_error?.message ?? undefined,
+        paymentId: pi.id,
+        notes: sessionNotes,
+        amountPaise: pi.amount_received ?? pi.amount,
       };
     }
 
     const pi = await stripe.paymentIntents.retrieve(paymentIntent);
+    const piNotes = Object.fromEntries(
+      Object.entries(pi.metadata ?? {})
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => [k, String(v)]),
+    );
     return {
       kind: "status",
       status: pi.status,
       failureMessage: pi.last_payment_error?.message,
+      paymentId: pi.id,
+      notes: piNotes,
+      amountPaise: pi.amount_received ?? pi.amount,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -556,18 +576,58 @@ async function reconcilePaymentStatusUnlocked(
       // skipped permanently — and none of those are covered by another cron.
       // The old code even logged "may need manual appointment creation!"
       // instead of just creating it.
-      // Razorpay only: routeCapturedPayment is the Razorpay dispatch's router,
-      // and Stripe successes are confirmed by their own webhook handler. A
-      // Stripe row still takes the CAS below, which is the pre-existing
-      // behaviour for that gateway.
-      if (
-        mappedStatus === PaymentStatus.SUCCEEDED &&
-        payment.paymentGateway === PaymentGateway.RAZORPAY
-      ) {
+      // #1905 — both Razorpay and Stripe SUCCEEDED reconciles go through
+      // routeCapturedPayment so appointment confirmation, earnings, and ledger
+      // journaling are never bypassed by a raw paymentStatus=SUCCEEDED write.
+      if (mappedStatus === PaymentStatus.SUCCEEDED) {
+        const notes = gatewayStatus.notes ?? {};
+        const isStandaloneFlow =
+          notes.type === "credit_purchase" ||
+          notes.type === "invoice_payment" ||
+          notes.type === "overage_member" ||
+          notes.type === "recording_purchase";
+        if (
+          !isStandaloneFlow &&
+          !payment.appointment?.id &&
+          !notes.appointmentType
+        ) {
+          const msg = `Cannot reconcile booking payment ${payment.id} to SUCCEEDED without linked appointment or creation notes`;
+          console.error(`   ${msg}`);
+          const missingCtxCorrelationId = `reconcile-missing-context:${payment.id}`;
+          const alreadyReportedMissingCtx =
+            typeof prisma.systemEvent?.findFirst === "function"
+              ? await prisma.systemEvent
+                  .findFirst({
+                    where: {
+                      correlationId: missingCtxCorrelationId,
+                      createdAt: {
+                        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+                      },
+                    },
+                    select: { id: true },
+                  })
+                  .catch(() => null)
+              : null;
+          if (!alreadyReportedMissingCtx) {
+            await recordSystemEvent({
+              category: "PAYMENT",
+              severity: "ERROR",
+              message: `PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT: ${msg}`,
+              correlationId: missingCtxCorrelationId,
+              context: {
+                paymentId: payment.id,
+                paymentGateway: payment.paymentGateway,
+                paymentIntent: payment.paymentIntent,
+              },
+            });
+          }
+          errors.push(`Payment ${payment.id}: ${msg}`);
+          continue;
+        }
         try {
           await routeCapturedPayment({
             orderId: payment.paymentIntent,
-            notes: gatewayStatus.notes ?? {},
+            notes,
             amountPaise: gatewayStatus.amountPaise,
             gatewayPaymentId: gatewayStatus.paymentId,
           });

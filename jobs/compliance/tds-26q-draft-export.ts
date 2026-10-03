@@ -89,20 +89,37 @@ function resolveReturnPeriod(): { financialYear: string; quarter: number } {
  * columns are BigInt in the schema and are read through `Number()`, so the
  * union keeps this compiling against either client typing.
  */
-type QuarterRecord = {
+export type QuarterRecord = {
   consultantProfileId: string | null;
   organizationId: string | null;
+  payoutId?: string | null;
+  orgPayoutId?: string | null;
   tdsSection: string | null;
+  tdsRateBps?: number | null;
   cumulativeAmountCredited: bigint | number;
   tdsDeducted: bigint | number;
   isReversal: boolean;
   reportedInForm26Q: boolean;
+  payout?: {
+    id: string;
+    amount: number;
+    status: string;
+  } | null;
+  orgPayout?: {
+    id: string;
+    netPayoutPaise: number;
+    status: string;
+  } | null;
 };
 
-type Acc = {
+export type Acc = {
   deducteeType: TdsDeducteeType;
   deducteeId: string;
   windowMaxCumulativePaise: number;
+  linkedCompletedBasePaise: number;
+  reversalBaseReductionPaise: number;
+  hasLinkedPayouts: boolean;
+  seenPayoutIds: Set<string>;
   tdsNetPaise: number;
   reversalPaise: number;
   section: string | null;
@@ -133,14 +150,17 @@ function deducteeOf(
 }
 
 /**
- * CR #1234 r5 — `cumulativeAmountCredited` is an FY RUNNING TOTAL, so a
- * quarter-scoped export must report the QUARTER DELTA, not the absolute figure
- * (Q1 ending at 10k then Q2 reaching 15k means Q2 credits are 5k). The window
- * max is half of that subtraction; the baseline is the other half. Deductions
- * stay incremental (reversals negative); only unreported rows contribute
- * theirs to this draft.
+ * #1481 — Derive each deductee's quarterly `amountCreditedPaise` directly from
+ * the sum of linked `COMPLETED` payouts (`ConsultantPayout.amount` and
+ * `OrganizationPayout.netPayoutPaise`) on non-reversal `TDSRecord`s in the
+ * quarter, net of any reversal base reductions.
+ *
+ * Previously, `windowMaxCumulativePaise - baseline` used the high-water mark of
+ * `cumulativeAmountCredited`, which dropped subsequent payouts whenever a TDS
+ * reversal lowered the running cumulative below a prior watermark. We retain
+ * `windowMaxCumulativePaise` only as a fallback for unlinked legacy rows.
  */
-function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
+export function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
   const byDeductee = new Map<string, Acc>();
   for (const r of records) {
     const deductee = deducteeOf(r);
@@ -153,6 +173,10 @@ function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
         deducteeType: deductee.type,
         deducteeId: deductee.id,
         windowMaxCumulativePaise: 0,
+        linkedCompletedBasePaise: 0,
+        reversalBaseReductionPaise: 0,
+        hasLinkedPayouts: false,
+        seenPayoutIds: new Set<string>(),
         tdsNetPaise: 0,
         reversalPaise: 0,
         section: r.tdsSection,
@@ -164,8 +188,43 @@ function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
       Number(r.cumulativeAmountCredited),
     );
     if (!r.reportedInForm26Q) {
-      if (r.isReversal) acc.reversalPaise += Number(r.tdsDeducted);
-      else acc.tdsNetPaise += Number(r.tdsDeducted);
+      if (r.isReversal) {
+        acc.reversalPaise += Number(r.tdsDeducted);
+        // Only deduct reversed base if the linked payout was not already
+        // excluded as non-COMPLETED (e.g. partial refund on a COMPLETED payout
+        // or standalone reversal adjustment).
+        const linkedPayoutStillCompleted =
+          (!r.payout || r.payout.status === "COMPLETED") &&
+          (!r.orgPayout || r.orgPayout.status === "COMPLETED");
+        if (linkedPayoutStillCompleted) {
+          if (r.tdsRateBps && r.tdsRateBps > 0) {
+            acc.reversalBaseReductionPaise += Math.round(
+              (Math.abs(Number(r.tdsDeducted)) * 10_000) / r.tdsRateBps,
+            );
+          }
+        }
+      } else {
+        acc.tdsNetPaise += Number(r.tdsDeducted);
+        if (r.payout) {
+          acc.hasLinkedPayouts = true;
+          if (
+            r.payout.status === "COMPLETED" &&
+            !acc.seenPayoutIds.has(`c:${r.payout.id}`)
+          ) {
+            acc.seenPayoutIds.add(`c:${r.payout.id}`);
+            acc.linkedCompletedBasePaise += r.payout.amount;
+          }
+        } else if (r.orgPayout) {
+          acc.hasLinkedPayouts = true;
+          if (
+            r.orgPayout.status === "COMPLETED" &&
+            !acc.seenPayoutIds.has(`o:${r.orgPayout.id}`)
+          ) {
+            acc.seenPayoutIds.add(`o:${r.orgPayout.id}`);
+            acc.linkedCompletedBasePaise += r.orgPayout.netPayoutPaise;
+          }
+        }
+      }
     }
   }
   return byDeductee;
@@ -173,11 +232,8 @@ function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
 
 /**
  * Each deductee's highest cumulative from EARLIER quarters of the same FY —
- * deliberately INCLUDING already-reported rows, because they establish where
- * the running total stood when the quarter opened.
- *
- * Baselines are per rail because the groupBy key is a different column on
- * each; the two results merge into one map keyed the way the accumulator is.
+ * retained as a fallback for unlinked legacy rows that do not carry a payout
+ * or orgPayout relation.
  */
 async function loadQuarterBaselines(
   financialYear: string,
@@ -312,7 +368,7 @@ async function loadPaymentCodesBySection(
 }
 
 /** Accumulators → the builder's source rows, one deductee at a time. */
-function buildSourceRows(
+export function buildSourceRows(
   byDeductee: Map<string, Acc>,
   baselineByDeductee: Map<string, number>,
   identityByKey: Map<string, Identity>,
@@ -333,9 +389,14 @@ function buildSourceRows(
         ? (paymentCodeBySection.get(acc.section) ?? null)
         : null,
     };
+    const rawCreditedPaise = acc.hasLinkedPayouts
+      ? acc.linkedCompletedBasePaise - acc.reversalBaseReductionPaise
+      : acc.windowMaxCumulativePaise -
+        baseline -
+        acc.reversalBaseReductionPaise;
     rows.push({
       ...shared,
-      amountCreditedPaise: Math.max(0, acc.windowMaxCumulativePaise - baseline),
+      amountCreditedPaise: Math.max(0, rawCreditedPaise),
       tdsDeductedPaise: acc.tdsNetPaise,
       isReversal: false,
     });
@@ -416,10 +477,17 @@ export async function runTdsReturnDraftExport(): Promise<{
           payoutId: true,
           orgPayoutId: true,
           tdsSection: true,
+          tdsRateBps: true,
           cumulativeAmountCredited: true,
           tdsDeducted: true,
           isReversal: true,
           reportedInForm26Q: true,
+          payout: {
+            select: { id: true, amount: true, status: true },
+          },
+          orgPayout: {
+            select: { id: true, netPayoutPaise: true, status: true },
+          },
         },
       });
 
