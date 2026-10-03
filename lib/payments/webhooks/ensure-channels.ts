@@ -16,6 +16,7 @@ export interface EnsureChannelsResult {
 /**
  * Ensures Stream chat channels for a confirmed, paid appointment and stamps
  * `Appointment.chatChannelEnsuredAt` once complete.
+ * The appointment row is the outbox (`chatChannelEnsuredAt IS NULL`).
  */
 export async function ensureChannelsForAppointment(
   appointmentId: string,
@@ -78,7 +79,9 @@ export async function ensureChannelsForAppointment(
         },
       },
       trial: {
-        select: { consultantProfile: { select: { userId: true } } },
+        select: {
+          consultantProfile: { select: { userId: true } },
+        },
       },
     },
   });
@@ -96,6 +99,7 @@ export async function ensureChannelsForAppointment(
 
   const eventType = appointment.appointmentType;
   if (eventType === "TRIAL" || appointment.trial) {
+    // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
     await prisma.appointment.updateMany({
       where: { id: appointmentId, chatChannelEnsuredAt: null },
       data: { chatChannelEnsuredAt: new Date() },
@@ -108,10 +112,12 @@ export async function ensureChannelsForAppointment(
     return { ensured: false, reason: "consultant_not_resolved" };
   }
 
+  const paidBuyerIds = appointment.payment?.map((p) => p.userId) ?? [];
+  const paidBuyerSet = new Set(paidBuyerIds);
   const buyerIds =
     buyerUserIds && buyerUserIds.length > 0
-      ? buyerUserIds
-      : (appointment.payment?.map((p) => p.userId) ?? []);
+      ? buyerUserIds.filter((id) => paidBuyerSet.has(id))
+      : paidBuyerIds;
   if (buyerIds.length === 0) {
     return { ensured: false, reason: "no_succeeded_payment" };
   }
@@ -152,6 +158,7 @@ export async function ensureChannelsForAppointment(
     }
   }
 
+  // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
   await prisma.appointment.updateMany({
     where: { id: appointmentId, chatChannelEnsuredAt: null },
     data: { chatChannelEnsuredAt: new Date() },

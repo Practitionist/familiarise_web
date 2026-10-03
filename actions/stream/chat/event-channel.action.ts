@@ -646,6 +646,55 @@ function isNormalizedEventActive(row: NormalizedEventRow): boolean {
   return !isWebinarOrClassPastRetention(endsAt, retention);
 }
 
+function resolveNormalizedEventOrgId(row: NormalizedEventRow): string | null {
+  return bookingOrgId({
+    webinarPlan: row.plan,
+    appointment: row.appointment,
+  });
+}
+
+function isRowOpenableForDm(row: NormalizedEventRow): boolean {
+  return !row.status || openableStatusSet.has(row.status);
+}
+
+function collectHostedRowDmPairs(
+  userId: string,
+  row: NormalizedEventRow,
+): DmPair[] {
+  if (!isRowOpenableForDm(row)) return [];
+  const orgId = resolveNormalizedEventOrgId(row);
+  const pairs: DmPair[] = [];
+  for (const p of row.appointment?.participants ?? []) {
+    if (p.userId && p.userId !== userId) {
+      pairs.push({
+        consultantUserId: userId,
+        consulteeUserId: p.userId,
+        organizationId: orgId,
+      });
+    }
+  }
+  return pairs;
+}
+
+function buildAttendedRowDmPair(
+  userId: string,
+  row: NormalizedEventRow,
+  requireConsulteeSeatCheck: boolean,
+): DmPair | null {
+  if (!isRowOpenableForDm(row)) return null;
+  const consultantUserId = row.plan?.consultantProfile?.user?.id;
+  if (!consultantUserId || consultantUserId === userId) return null;
+  const hasSeat = (row.appointment?.participants ?? []).some(
+    (p) => p.userId === userId,
+  );
+  if (requireConsulteeSeatCheck && !hasSeat) return null;
+  return {
+    consultantUserId,
+    consulteeUserId: userId,
+    organizationId: resolveNormalizedEventOrgId(row),
+  };
+}
+
 function collectNormalizedEventData(
   userId: string,
   hostedRows: NormalizedEventRow[],
@@ -658,18 +707,7 @@ function collectNormalizedEventData(
 
   for (const row of hostedRows.filter(isNormalizedEventActive)) {
     ids.add(row.id);
-    if (row.status && !openableStatusSet.has(row.status)) continue;
-    const orgId =
-      row.appointment?.organizationId ?? row.plan?.organizationId ?? null;
-    for (const p of row.appointment?.participants ?? []) {
-      if (p.userId && p.userId !== userId) {
-        dmPairs.push({
-          consultantUserId: userId,
-          consulteeUserId: p.userId,
-          organizationId: orgId,
-        });
-      }
-    }
+    dmPairs.push(...collectHostedRowDmPairs(userId, row));
   }
 
   for (const row of collaboratorRows.filter(isNormalizedEventActive)) {
@@ -678,22 +716,8 @@ function collectNormalizedEventData(
 
   for (const row of attendedRows.filter(isNormalizedEventActive)) {
     ids.add(row.id);
-    if (row.status && !openableStatusSet.has(row.status)) continue;
-    const consultantUserId = row.plan?.consultantProfile?.user?.id;
-    if (!consultantUserId || consultantUserId === userId) continue;
-    if (
-      requireConsulteeSeatCheck &&
-      !(row.appointment?.participants ?? []).some((p) => p.userId === userId)
-    ) {
-      continue;
-    }
-    const orgId =
-      row.appointment?.organizationId ?? row.plan?.organizationId ?? null;
-    dmPairs.push({
-      consultantUserId,
-      consulteeUserId: userId,
-      organizationId: orgId,
-    });
+    const pair = buildAttendedRowDmPair(userId, row, requireConsulteeSeatCheck);
+    if (pair) dmPairs.push(pair);
   }
 
   return { ids: Array.from(ids), dmPairs };

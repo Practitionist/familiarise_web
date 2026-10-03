@@ -31,6 +31,7 @@ import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { queryOrgTaggedChannels } from "@/lib/stream/event-channel-service";
+import { liveParticipant } from "@/lib/booking/participants";
 
 export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
 
@@ -198,122 +199,218 @@ export interface OrgStreamSurfaces {
   dmChannelIds: string[];
 }
 
+function buildOrgWebinarSurfaceWhere(
+  orgId: string,
+  userId: string | undefined,
+  onlyUnfrozen: boolean,
+): Prisma.WebinarWhereInput {
+  return {
+    deletedAt: null,
+    ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
+    AND: [
+      {
+        OR: [
+          { webinarPlan: { organizationId: orgId } },
+          { appointment: { organizationId: orgId, deletedAt: null } },
+        ],
+      },
+      ...(userId
+        ? [
+            {
+              OR: [
+                {
+                  appointment: {
+                    deletedAt: null,
+                    participants: { some: liveParticipant(userId) },
+                  },
+                },
+                { webinarPlan: { consultantProfile: { userId } } },
+                {
+                  webinarPlan: {
+                    collaborators: {
+                      some: {
+                        consultantProfile: { userId },
+                        status: "ACCEPTED" as const,
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
+function buildOrgClassSurfaceWhere(
+  orgId: string,
+  userId: string | undefined,
+  onlyUnfrozen: boolean,
+): Prisma.ClassWhereInput {
+  return {
+    deletedAt: null,
+    ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
+    AND: [
+      {
+        OR: [
+          { classPlan: { organizationId: orgId } },
+          { appointment: { organizationId: orgId, deletedAt: null } },
+        ],
+      },
+      ...(userId
+        ? [
+            {
+              OR: [
+                {
+                  appointment: {
+                    deletedAt: null,
+                    participants: { some: liveParticipant(userId) },
+                  },
+                },
+                { classPlan: { consultantProfile: { userId } } },
+                {
+                  classPlan: {
+                    collaborators: {
+                      some: {
+                        consultantProfile: { userId },
+                        status: "ACCEPTED" as const,
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
+function addOneToOneOrgDmChannels(
+  dmChannelIds: Set<string>,
+  orgId: string,
+  rows: {
+    plan: {
+      organizationId: string | null;
+      consultantProfile: { userId: string } | null;
+    };
+    requestedBy: { userId: string } | null;
+    appointment: { organizationId: string | null } | null;
+  }[],
+): void {
+  for (const row of rows) {
+    const a = row.plan.consultantProfile?.userId;
+    const b = row.requestedBy?.userId;
+    if (!a || !b || a === b) continue;
+    const resolvedOrgId = bookingOrgId({
+      consultationPlan: row.plan,
+      appointment: row.appointment,
+    });
+    if (resolvedOrgId !== orgId) continue;
+    dmChannelIds.add(getDmChannelId(a, b, orgId));
+  }
+}
+
 export async function loadOrgStreamSurfaces(
   orgId: string,
   opts: { userId?: string; onlyUnfrozen?: boolean } = {},
 ): Promise<OrgStreamSurfaces> {
   const { userId, onlyUnfrozen = false } = opts;
 
-  const [webinars, classes, consultations, subscriptions] = await Promise.all([
-    prisma.webinar?.findMany
-      ? prisma.webinar.findMany({
-          where: {
-            deletedAt: null,
-            ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
+  const webinars = await prisma.webinar.findMany({
+    where: buildOrgWebinarSurfaceWhere(orgId, userId, onlyUnfrozen),
+    select: { id: true },
+  });
+
+  const classes = await prisma.class.findMany({
+    where: buildOrgClassSurfaceWhere(orgId, userId, onlyUnfrozen),
+    select: { id: true },
+  });
+
+  const consultations = await prisma.consultation.findMany({
+    where: {
+      status: dmEligibleStatusFilter(),
+      ...(userId
+        ? {
             OR: [
-              { webinarPlan: { organizationId: orgId } },
-              { appointment: { organizationId: orgId, deletedAt: null } },
+              { consultationPlan: { consultantProfile: { userId } } },
+              { requestedBy: { userId } },
             ],
-          },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-    prisma.class?.findMany
-      ? prisma.class.findMany({
-          where: {
-            deletedAt: null,
-            ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
+          }
+        : {}),
+      AND: [
+        {
+          OR: [
+            { consultationPlan: { organizationId: orgId } },
+            { appointment: { organizationId: orgId, deletedAt: null } },
+          ],
+        },
+      ],
+    },
+    select: {
+      consultationPlan: {
+        select: {
+          organizationId: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
+      requestedBy: { select: { userId: true } },
+      appointment: { select: { organizationId: true } },
+    },
+  });
+
+  const subscriptions = await prisma.subscription.findMany({
+    where: {
+      status: dmEligibleStatusFilter(),
+      ...(userId
+        ? {
             OR: [
-              { classPlan: { organizationId: orgId } },
-              { appointment: { organizationId: orgId, deletedAt: null } },
+              { subscriptionPlan: { consultantProfile: { userId } } },
+              { requestedBy: { userId } },
             ],
-          },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-    prisma.consultation?.findMany
-      ? prisma.consultation.findMany({
-          where: {
-            status: dmEligibleStatusFilter(),
-            ...(userId
-              ? {
-                  OR: [
-                    { consultationPlan: { consultantProfile: { userId } } },
-                    { requestedBy: { userId } },
-                  ],
-                }
-              : {}),
-            AND: [
-              {
-                OR: [
-                  { consultationPlan: { organizationId: orgId } },
-                  { appointment: { organizationId: orgId, deletedAt: null } },
-                ],
-              },
-            ],
-          },
-          select: {
-            consultationPlan: {
-              select: {
-                organizationId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-            requestedBy: { select: { userId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-    prisma.subscription?.findMany
-      ? prisma.subscription.findMany({
-          where: {
-            status: dmEligibleStatusFilter(),
-            ...(userId
-              ? {
-                  OR: [
-                    { subscriptionPlan: { consultantProfile: { userId } } },
-                    { requestedBy: { userId } },
-                  ],
-                }
-              : {}),
-            AND: [
-              {
-                OR: [
-                  { subscriptionPlan: { organizationId: orgId } },
-                  { appointment: { organizationId: orgId, deletedAt: null } },
-                ],
-              },
-            ],
-          },
-          select: {
-            subscriptionPlan: {
-              select: {
-                organizationId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-            requestedBy: { select: { userId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+          }
+        : {}),
+      AND: [
+        {
+          OR: [
+            { subscriptionPlan: { organizationId: orgId } },
+            { appointment: { organizationId: orgId, deletedAt: null } },
+          ],
+        },
+      ],
+    },
+    select: {
+      subscriptionPlan: {
+        select: {
+          organizationId: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
+      requestedBy: { select: { userId: true } },
+      appointment: { select: { organizationId: true } },
+    },
+  });
 
   const dmChannelIds = new Set<string>();
-  for (const c of consultations) {
-    const a = c.consultationPlan.consultantProfile?.userId;
-    const b = c.requestedBy?.userId;
-    if (!a || !b || a === b) continue;
-    if (bookingOrgId(c) !== orgId) continue;
-    dmChannelIds.add(getDmChannelId(a, b, orgId));
-  }
-  for (const s of subscriptions) {
-    const a = s.subscriptionPlan.consultantProfile?.userId;
-    const b = s.requestedBy?.userId;
-    if (!a || !b || a === b) continue;
-    if (bookingOrgId(s) !== orgId) continue;
-    dmChannelIds.add(getDmChannelId(a, b, orgId));
-  }
+  addOneToOneOrgDmChannels(
+    dmChannelIds,
+    orgId,
+    consultations.map((c) => ({
+      plan: c.consultationPlan,
+      requestedBy: c.requestedBy,
+      appointment: c.appointment,
+    })),
+  );
+  addOneToOneOrgDmChannels(
+    dmChannelIds,
+    orgId,
+    subscriptions.map((s) => ({
+      plan: s.subscriptionPlan,
+      requestedBy: s.requestedBy,
+      appointment: s.appointment,
+    })),
+  );
 
   return {
     webinarIds: webinars.map((w) => w.id),

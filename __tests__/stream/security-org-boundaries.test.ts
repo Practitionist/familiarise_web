@@ -52,6 +52,10 @@ const mockPrisma = {
   recording: {
     findMany: jest.fn(),
   },
+  orgAuditLog: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+  },
 };
 
 jest.mock("../../lib/auth-server", () => ({
@@ -129,6 +133,9 @@ describe("Stream security, consent gates, and organization boundaries", () => {
     mockPrisma.meeting.findMany.mockResolvedValue([]);
     mockPrisma.recording.findMany.mockResolvedValue([]);
     mockPrisma.membership.findMany.mockResolvedValue([]);
+    mockPrisma.organization.findMany.mockResolvedValue([]);
+    mockPrisma.orgAuditLog.findFirst.mockResolvedValue(null);
+    mockPrisma.orgAuditLog.create.mockResolvedValue({});
   });
 
   describe("upsertUserToStream session guard and email stripping", () => {
@@ -144,26 +151,18 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       expect(mockUpsertUser).not.toHaveBeenCalled();
     });
 
-    it("omits other users' profile entries from response for non-privileged direct callers", async () => {
+    it("rejects non-privileged direct callers attempting to sync another user", async () => {
       mockGetSession.mockResolvedValueOnce({
         user: { id: "caller-1", role: "CONSULTEE" },
-      });
-      mockPrisma.user.findUnique.mockResolvedValueOnce({
-        id: "victim-id",
-        name: "Victim User",
-        email: "victim@example.com",
-        image: "https://example.com/victim.png",
-        role: "CONSULTANT",
       });
 
       const { upsertUserToStream } =
         await import("../../actions/stream/chat/user.action");
 
-      const response = await upsertUserToStream("victim-id");
-      const returnedUsers = (
-        response as { users?: Record<string, Record<string, unknown>> }
-      )?.users;
-      expect(returnedUsers).toEqual({});
+      await expect(upsertUserToStream("victim-id")).rejects.toThrow(
+        "Forbidden: cannot sync another user to Stream",
+      );
+      expect(mockUpsertUser).not.toHaveBeenCalled();
     });
 
     it("allows trusted server callers via STREAM_SERVER_TRUSTED and strips email from response", async () => {
@@ -271,7 +270,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
   });
 
   describe("tokenProvider STREAM_DATA_PROCESSING consent check", () => {
-    it("blocks token minting and revokes active access when STREAM_DATA_PROCESSING consent is missing", async () => {
+    it("blocks token minting without firing unawaited write side effects when STREAM_DATA_PROCESSING consent is missing", async () => {
       mockGetSession.mockResolvedValueOnce({
         user: { id: "user-no-consent", role: "CONSULTEE" },
       });
@@ -287,10 +286,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
           refusal: expect.objectContaining({ code: "CONSENT_REQUIRED" }),
         }),
       );
-      expect(mockRevokeUserToken).toHaveBeenCalledWith(
-        "user-no-consent",
-        expect.any(Date),
-      );
+      expect(mockRevokeUserToken).not.toHaveBeenCalled();
     });
   });
 
@@ -312,11 +308,11 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       expect(mockRevokeUserToken).not.toHaveBeenCalled();
     });
 
-    it("winds down deactivated organizations and freezes event channels", async () => {
+    it("winds down deactivated organizations and freezes event channels without revoking member global tokens", async () => {
       mockPrisma.organization.findMany.mockResolvedValueOnce([
         {
           id: "org-winddown-1",
-          deletedAt: null,
+          deletedAt: new Date("2026-01-01T00:00:00Z"),
           updatedAt: new Date("2026-01-01T00:00:00Z"),
           streamRecordingRetentionDays: 30,
         },
@@ -330,6 +326,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       const summary = await windDownDeactivatedOrgs();
       expect(summary.orgsScanned).toBe(1);
       expect(summary.eventChannelsFrozen).toBe(1);
+      expect(mockRevokeUserToken).not.toHaveBeenCalled();
     });
   });
 

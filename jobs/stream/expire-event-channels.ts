@@ -549,10 +549,27 @@ function classifyDmPairs(
  *
  * @param freezeBudget how many freeze-class calls the event stage left unspent.
  */
+interface DeletePacingState {
+  lastCallAt: number | null;
+}
+
+async function paceDeleteChannelsBatch(
+  pacing: DeletePacingState,
+): Promise<void> {
+  if (pacing.lastCallAt !== null) {
+    const elapsed = Date.now() - pacing.lastCallAt;
+    if (elapsed < DELETE_CHANNELS_PACING_MS) {
+      await pause(DELETE_CHANNELS_PACING_MS - elapsed);
+    }
+  }
+  pacing.lastCallAt = Date.now();
+}
+
 async function runDmStage(
   chat: ReturnType<typeof getStreamChatClient>,
   result: ExpireEventChannelsResult,
   freezeBudget: number,
+  deletePacing: DeletePacingState,
 ): Promise<void> {
   const { pairs, truncated } = await loadDmPairs();
   if (pairs.length === 0) return;
@@ -603,13 +620,8 @@ async function runDmStage(
   }
 
   // Same batching as the event stage; `deleteChannels` caps at 100 cids.
-  for (const [batchIdx, batch] of chunk(
-    toDelete,
-    STREAM_BATCH_LIMIT,
-  ).entries()) {
-    if (batchIdx > 0) {
-      await pause(DELETE_CHANNELS_PACING_MS);
-    }
+  for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
+    await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
       (pair) => `${getChannelTypeFromId(pair.channelId)}:${pair.channelId}`,
     );
@@ -892,13 +904,9 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   // async server-side (it returns a task id), which is fine — we are not
   // waiting on the outcome, and a re-run of an already-deleted channel is a
   // no-op.
-  for (const [batchIdx, batch] of chunk(
-    toDelete,
-    STREAM_BATCH_LIMIT,
-  ).entries()) {
-    if (batchIdx > 0) {
-      await pause(DELETE_CHANNELS_PACING_MS);
-    }
+  const deletePacing: DeletePacingState = { lastCallAt: null };
+  for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
+    await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
       (channelId) => `${getChannelTypeFromId(channelId)}:${channelId}`,
     );
@@ -931,7 +939,12 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   // function is the only writer of `frozen`/`deleted`, and the caller reports
   // them.
   try {
-    await runDmStage(chat, result, MAX_FREEZE_PER_RUN - result.frozen);
+    await runDmStage(
+      chat,
+      result,
+      MAX_FREEZE_PER_RUN - result.frozen,
+      deletePacing,
+    );
   } catch (error) {
     result.success = false;
     result.errors.push(

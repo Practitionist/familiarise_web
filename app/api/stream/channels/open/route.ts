@@ -35,6 +35,7 @@
  *
  * Both arms are idempotent — an existing channel is returned untouched.
  */
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
@@ -73,6 +74,139 @@ const bodySchema = z.discriminatedUnion("kind", [
     eventId: z.string().min(1),
   }),
 ]);
+
+const ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const EVENT_ELIGIBLE_STATUS_SET = new Set<string>([
+  ...DM_ELIGIBLE_STATUSES,
+  "IN_PROGRESS",
+]);
+
+function isMatchingUserPair(
+  userId: string,
+  counterpartyUserId: string,
+  a?: string | null,
+  b?: string | null,
+): boolean {
+  if (!a || !b) return false;
+  return (
+    (a === userId && b === counterpartyUserId) ||
+    (a === counterpartyUserId && b === userId)
+  );
+}
+
+function isMatchingHostAndAttendee(
+  userId: string,
+  counterpartyUserId: string,
+  hostId: string | null | undefined,
+  participantIds: Set<string>,
+): boolean {
+  if (!hostId || (hostId !== userId && hostId !== counterpartyUserId)) {
+    return false;
+  }
+  const attendeeId = hostId === userId ? counterpartyUserId : userId;
+  return participantIds.has(attendeeId);
+}
+
+type ContextAppointmentRow = {
+  id: string;
+  appointmentType: string;
+  occurrences?: { startsAt: Date; endsAt: Date }[];
+  participants?: { userId: string }[];
+  consultation?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    consultationPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  subscription?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    subscriptionPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  webinar?: {
+    status: string;
+    webinarPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  class?: {
+    status: string;
+    classPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+};
+
+function resolveVerifiedBookingContextTitle(
+  appt: ContextAppointmentRow,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (appt.consultation) {
+    if (!ELIGIBLE_STATUS_SET.has(appt.consultation.status)) return null;
+    const hostId =
+      appt.consultation.consultationPlan?.consultantProfile?.userId;
+    const clientId = appt.consultation.requestedBy?.userId;
+    return isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)
+      ? (appt.consultation.consultationPlan?.title ?? "Consultation")
+      : null;
+  }
+  if (appt.subscription) {
+    if (!ELIGIBLE_STATUS_SET.has(appt.subscription.status)) return null;
+    const hostId =
+      appt.subscription.subscriptionPlan?.consultantProfile?.userId;
+    const clientId = appt.subscription.requestedBy?.userId;
+    return isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)
+      ? (appt.subscription.subscriptionPlan?.title ?? "Subscription")
+      : null;
+  }
+  const participantIds = new Set(
+    (appt.participants ?? []).map((p) => p.userId),
+  );
+  if (appt.webinar) {
+    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.webinar.status)) return null;
+    const hostId = appt.webinar.webinarPlan?.consultantProfile?.userId;
+    return isMatchingHostAndAttendee(
+      userId,
+      counterpartyUserId,
+      hostId,
+      participantIds,
+    )
+      ? (appt.webinar.webinarPlan?.title ?? "Webinar")
+      : null;
+  }
+  if (appt.class) {
+    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.class.status)) return null;
+    const hostId = appt.class.classPlan?.consultantProfile?.userId;
+    return isMatchingHostAndAttendee(
+      userId,
+      counterpartyUserId,
+      hostId,
+      participantIds,
+    )
+      ? (appt.class.classPlan?.title ?? "Class")
+      : null;
+  }
+  return null;
+}
+
+function buildBookingContextMessageId(
+  channelId: string,
+  appointmentId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${channelId}:${appointmentId}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `booking-ctx-${digest}`;
+}
 
 async function postBookingContextCardIfAbsent(
   channelId: string,
@@ -152,68 +286,18 @@ async function postBookingContextCardIfAbsent(
     });
     if (!appt) return;
 
-    const matchesPair = (a?: string | null, b?: string | null) =>
-      Boolean(
-        a &&
-        b &&
-        ((a === userId && b === counterpartyUserId) ||
-          (a === counterpartyUserId && b === userId)),
-      );
-
-    const participantIds = new Set(
-      (appt.participants ?? []).map((p) => p.userId),
+    const title = resolveVerifiedBookingContextTitle(
+      appt,
+      userId,
+      counterpartyUserId,
     );
-    let title: string | null = null;
-    let verified = false;
-
-    if (appt.consultation) {
-      const hostId =
-        appt.consultation.consultationPlan?.consultantProfile?.userId;
-      const clientId = appt.consultation.requestedBy?.userId;
-      if (matchesPair(hostId, clientId)) {
-        verified = true;
-        title = appt.consultation.consultationPlan?.title ?? "Consultation";
-      }
-    } else if (appt.subscription) {
-      const hostId =
-        appt.subscription.subscriptionPlan?.consultantProfile?.userId;
-      const clientId = appt.subscription.requestedBy?.userId;
-      if (matchesPair(hostId, clientId)) {
-        verified = true;
-        title = appt.subscription.subscriptionPlan?.title ?? "Subscription";
-      }
-    } else if (appt.webinar) {
-      const hostId = appt.webinar.webinarPlan?.consultantProfile?.userId;
-      const attendeeId = hostId === userId ? counterpartyUserId : userId;
-      if (
-        hostId &&
-        (hostId === userId || hostId === counterpartyUserId) &&
-        participantIds.has(attendeeId)
-      ) {
-        verified = true;
-        title = appt.webinar.webinarPlan?.title ?? "Webinar";
-      }
-    } else if (appt.class) {
-      const hostId = appt.class.classPlan?.consultantProfile?.userId;
-      const attendeeId = hostId === userId ? counterpartyUserId : userId;
-      if (
-        hostId &&
-        (hostId === userId || hostId === counterpartyUserId) &&
-        participantIds.has(attendeeId)
-      ) {
-        verified = true;
-        title = appt.class.classPlan?.title ?? "Class";
-      }
-    }
-
-    if (!verified || !title) return;
+    if (!title) return;
 
     const client = getStreamChatClient();
     const channel = client.channel("messaging", channelId);
-    const messageId = `booking-context-${appt.id}`;
+    const messageId = buildBookingContextMessageId(channelId, appt.id);
     const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
-
-    await channel.sendMessage({
+    const messagePayload: Record<string, unknown> = {
       id: messageId,
       user_id: userId,
       text: `Booking context: ${title}`,
@@ -221,13 +305,24 @@ async function postBookingContextCardIfAbsent(
       booking_type: appt.appointmentType,
       booking_title: title,
       ...(slotStart ? { booking_starts_at: slotStart.toISOString() } : {}),
-    } as Parameters<typeof channel.sendMessage>[0]);
+    };
+
+    await channel.sendMessage(messagePayload);
   } catch (error) {
-    streamLogger.debug("Skipped or duplicate booking context card on DM open", {
-      channelId,
-      contextAppointmentId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    const isDuplicate = /already exists|duplicate/i.test(message);
+    if (isDuplicate) {
+      streamLogger.debug("Booking context card already present on DM open", {
+        channelId,
+        contextAppointmentId,
+      });
+    } else {
+      streamLogger.warn("Failed to post booking context card on DM open", {
+        channelId,
+        contextAppointmentId,
+        error: message,
+      });
+    }
   }
 }
 

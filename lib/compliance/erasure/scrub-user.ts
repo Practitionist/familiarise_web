@@ -67,6 +67,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { liveParticipant } from "@/lib/booking/participants";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -208,6 +209,7 @@ async function offboardNotificationVendor(userId: string): Promise<string[]> {
 }
 
 export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
+const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
 
 export function principalStreamPlanId(userId: string): string {
   return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
@@ -218,18 +220,13 @@ export async function eraseStreamPrincipalFootprint(
 ): Promise<void> {
   const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
     await import("@/lib/stream-client");
-  if (typeof isStreamConfigured === "function" && !isStreamConfigured()) return;
+  if (!isStreamConfigured()) {
+    throw new Error(
+      "Stream is not configured — cannot confirm principal deletion",
+    );
+  }
 
   const chat = getStreamChatClient();
-  if (
-    process.env.NODE_ENV === "test" &&
-    !(chat?.revokeUserToken as unknown as { _isMockFunction?: boolean })
-      ?._isMockFunction &&
-    !(chat?.deleteUsers as unknown as { _isMockFunction?: boolean })
-      ?._isMockFunction
-  ) {
-    return;
-  }
   try {
     await chat.revokeUserToken(userId, new Date());
   } catch (err) {
@@ -243,16 +240,114 @@ export async function eraseStreamPrincipalFootprint(
   }
 }
 
-async function cleanupUserRecordingsOnErasure(
+async function purgeSingleUserRecordingOnErasure(
+  db: Db,
+  rec: {
+    id: string;
+    storagePath: string | null;
+    previewClipStoragePath: string | null;
+  },
+): Promise<void> {
+  const { deleteRecordingObject, storageClient } =
+    await import("@/lib/stream/recording-storage");
+  if (rec.storagePath) {
+    const deleted = await deleteRecordingObject(rec.storagePath);
+    if (!deleted.success) {
+      throw new Error(
+        deleted.error ?? "Failed to delete recording object from storage",
+      );
+    }
+  }
+  if (rec.previewClipStoragePath) {
+    if (!storageClient) {
+      throw new Error(
+        "Storage client unavailable for recording preview clip deletion",
+      );
+    }
+    const { error } = await storageClient.storage
+      .from(RECORDING_PREVIEWS_BUCKET)
+      .remove([rec.previewClipStoragePath]);
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  const expiredData = {
+    status: "EXPIRED" as const,
+    recordingUrl: "",
+    storageUrl: null,
+    storagePath: null,
+    previewClipUrl: null,
+    previewClipStoragePath: null,
+  };
+  if (db.recording.update) {
+    await db.recording.update({
+      where: { id: rec.id },
+      data: expiredData,
+    });
+  } else if (db.recording.updateMany) {
+    await db.recording.updateMany({
+      where: { id: rec.id },
+      data: expiredData,
+    });
+  }
+}
+
+async function unpublishHostedGroupRecordingsOnErasure(
   db: Db,
   userId: string,
   now: Date,
 ): Promise<void> {
+  if (db.recording?.updateMany) {
+    await db.recording.updateMany({
+      where: {
+        listingStatus: "PUBLISHED",
+        meeting: {
+          occurrence: {
+            appointment: {
+              OR: [
+                {
+                  webinar: {
+                    webinarPlan: { consultantProfile: { userId } },
+                  },
+                },
+                {
+                  class: {
+                    classPlan: { consultantProfile: { userId } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      data: {
+        listingStatus: "UNPUBLISHED",
+        unpublishedAt: now,
+      },
+    });
+  }
+
+  if (db.recordingConsent?.updateMany) {
+    await db.recordingConsent.updateMany({
+      where: { userId, decision: "GRANTED" },
+      data: { decision: "DECLINED", decidedAt: now },
+    });
+  }
+}
+
+async function cleanupUserRecordingsOnErasure(
+  db: Db,
+  userId: string,
+  now: Date,
+): Promise<string[]> {
+  const failures: string[] = [];
   try {
     if (db.recording?.findMany) {
       const oneToOneRecordings = await db.recording.findMany({
         where: {
           status: { notIn: ["EXPIRED", "FAILED"] },
+          purchases: { none: {} },
           meeting: {
             occurrence: {
               appointment: {
@@ -260,12 +355,16 @@ async function cleanupUserRecordingsOnErasure(
                   in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
                 },
                 OR: [
-                  { participants: { some: { userId } } },
+                  { participants: { some: liveParticipant(userId) } },
                   {
                     consultation: {
                       OR: [
                         { requestedBy: { userId } },
-                        { consultationPlan: { consultantProfile: { userId } } },
+                        {
+                          consultationPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
                       ],
                     },
                   },
@@ -273,7 +372,11 @@ async function cleanupUserRecordingsOnErasure(
                     subscription: {
                       OR: [
                         { requestedBy: { userId } },
-                        { subscriptionPlan: { consultantProfile: { userId } } },
+                        {
+                          subscriptionPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
                       ],
                     },
                   },
@@ -282,7 +385,11 @@ async function cleanupUserRecordingsOnErasure(
                       OR: [
                         { consulteeProfile: { userId } },
                         { consultantProfile: { userId } },
-                        { subscriptionPlan: { consultantProfile: { userId } } },
+                        {
+                          subscriptionPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
                       ],
                     },
                   },
@@ -298,116 +405,122 @@ async function cleanupUserRecordingsOnErasure(
         },
       });
 
-      if (oneToOneRecordings.length > 0) {
-        const { deleteRecordingObject } =
-          await import("@/lib/stream/recording-storage");
+      if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
-          if (rec.storagePath) {
-            await deleteRecordingObject(rec.storagePath);
-          }
-          if (rec.previewClipStoragePath) {
-            try {
-              const storageMod =
-                (await import("@/lib/supabase-storage-core")) as {
-                  supabaseAdmin?: {
-                    storage: {
-                      from: (b: string) => {
-                        remove: (p: string[]) => Promise<unknown>;
-                      };
-                    };
-                  } | null;
-                  supabase?: {
-                    storage: {
-                      from: (b: string) => {
-                        remove: (p: string[]) => Promise<unknown>;
-                      };
-                    };
-                  };
-                  default?: {
-                    storage: {
-                      from: (b: string) => {
-                        remove: (p: string[]) => Promise<unknown>;
-                      };
-                    };
-                  };
-                };
-              const storageClient =
-                storageMod.default ??
-                storageMod.supabaseAdmin ??
-                storageMod.supabase;
-              await storageClient?.storage
-                .from("recordings-previews")
-                .remove([rec.previewClipStoragePath]);
-            } catch {
-              // Best-effort preview clip deletion
-            }
-          }
-          const expiredData = {
-            status: "EXPIRED" as const,
-            recordingUrl: "",
-            storageUrl: null,
-            storagePath: null,
-            previewClipUrl: null,
-            previewClipStoragePath: null,
-          };
-          if (db.recording.update) {
-            await db.recording.update({
-              where: { id: rec.id },
-              data: expiredData,
-            });
-          } else if (db.recording.updateMany) {
-            await db.recording.updateMany({
-              where: { id: rec.id },
-              data: expiredData,
+          try {
+            await purgeSingleUserRecordingOnErasure(db, rec);
+          } catch (error_) {
+            failures.push(
+              `recording_storage:${rec.id}: deletion not confirmed — re-run required`,
+            );
+            reportSentryError(error_, {
+              subsystem: "compliance",
+              op: "scrubUser.purgeSingleUserRecordingOnErasure",
+              extra: { userId, recordingId: rec.id },
             });
           }
         }
       }
     }
 
-    if (db.recording?.updateMany) {
-      await db.recording.updateMany({
-        where: {
-          listingStatus: "PUBLISHED",
-          meeting: {
-            occurrence: {
-              appointment: {
-                OR: [
-                  {
-                    webinar: {
-                      webinarPlan: { consultantProfile: { userId } },
-                    },
-                  },
-                  {
-                    class: {
-                      classPlan: { consultantProfile: { userId } },
-                    },
-                  },
-                ],
-              },
-            },
-          },
-        },
-        data: {
-          listingStatus: "UNPUBLISHED",
-          unpublishedAt: now,
-        },
-      });
-    }
-
-    if (db.recordingConsent?.updateMany) {
-      await db.recordingConsent.updateMany({
-        where: { userId, decision: "GRANTED" },
-        data: { decision: "DECLINED", decidedAt: now },
-      });
-    }
-  } catch (caught) {
-    reportSentryError(caught, {
+    await unpublishHostedGroupRecordingsOnErasure(db, userId, now);
+  } catch (error_) {
+    failures.push(
+      "recording_cleanup: could not complete recording erasure — re-run required",
+    );
+    reportSentryError(error_, {
       subsystem: "compliance",
       op: "scrubUser.cleanupUserRecordingsOnErasure",
       extra: { userId },
     });
   }
+  return failures;
+}
+
+async function retryErasedUserVendorCleanup(
+  prisma: Db,
+  userId: string,
+): Promise<string[]> {
+  const vendorFailures = await offboardNotificationVendor(userId);
+  const activeRequest = prisma.erasureRequest?.findFirst
+    ? await prisma.erasureRequest.findFirst({
+        where: { userId, status: { in: ["PENDING", "IN_PROGRESS"] } },
+        orderBy: { requestedAt: "desc" },
+        select: { id: true },
+      })
+    : null;
+  if (activeRequest?.id) {
+    try {
+      await eraseStreamPrincipalFootprint(userId);
+    } catch {
+      vendorFailures.push(
+        "stream: principal deletion not confirmed — re-run required",
+      );
+    }
+  }
+  const recordingFailures = await cleanupUserRecordingsOnErasure(
+    prisma,
+    userId,
+    new Date(),
+  );
+  vendorFailures.push(...recordingFailures);
+  return vendorFailures;
+}
+
+async function settlePrincipalStreamErasure(
+  prisma: Db,
+  userId: string,
+  erasureRequestId: string | null,
+  principalOutboxQueued: boolean,
+  now: Date,
+): Promise<string[]> {
+  if (!erasureRequestId) return [];
+
+  const principalPlanId = principalStreamPlanId(userId);
+  let principalError: string | null = null;
+  try {
+    await eraseStreamPrincipalFootprint(userId);
+  } catch (caught) {
+    principalError = caught instanceof Error ? caught.message : String(caught);
+  }
+  if (principalError) {
+    reportSentryError(new Error(`${principalError} on erasure`), {
+      subsystem: "compliance",
+      op: "scrubUser.eraseStreamPrincipalFootprint",
+      extra: { userId },
+    });
+  }
+  if (prisma.streamRevocationRetry?.update) {
+    await prisma.streamRevocationRetry
+      .update({
+        where: {
+          erasureRequestId_planType_planId: {
+            erasureRequestId,
+            planType: "WEBINAR",
+            planId: principalPlanId,
+          },
+        },
+        data: principalError
+          ? {
+              status: "FAILED",
+              attempts: 1,
+              lastError: principalError,
+              nextRetryAt: nextRetryAt(1, now),
+            }
+          : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
+      })
+      .catch((caught) =>
+        reportSentryError(caught, {
+          subsystem: "compliance",
+          op: "scrubUser.settlePrincipalRevocationOutbox",
+          extra: { userId },
+        }),
+      );
+  }
+  if (principalError && !principalOutboxQueued) {
+    return ["stream: principal deletion not confirmed — re-run required"];
+  }
+  return [];
 }
 
 /** True when any money-in-flight count is non-zero. */
@@ -453,15 +566,7 @@ export async function scrubUser(
     // process death between commit and the vendor calls — see the note on
     // `StreamRevocationRetry`, which is the pattern to extend rather than
     // reinvent.
-    const vendorFailures = await offboardNotificationVendor(userId);
-    try {
-      await eraseStreamPrincipalFootprint(userId);
-    } catch {
-      vendorFailures.push(
-        "stream: principal deletion not confirmed — re-run required",
-      );
-    }
-    await cleanupUserRecordingsOnErasure(prisma, userId, new Date());
+    const vendorFailures = await retryErasedUserVendorCleanup(prisma, userId);
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
@@ -717,49 +822,18 @@ export async function scrubUser(
       );
   }
 
-  const principalPlanId = principalStreamPlanId(userId);
-  let principalError: string | null = null;
-  try {
-    await eraseStreamPrincipalFootprint(userId);
-  } catch (caught) {
-    principalError = caught instanceof Error ? caught.message : String(caught);
-  }
-  if (principalError) {
-    reportSentryError(new Error(`${principalError} on erasure`), {
-      subsystem: "compliance",
-      op: "scrubUser.eraseStreamPrincipalFootprint",
-      extra: { userId },
-    });
-  }
-  if (erasureRequestId && prisma.streamRevocationRetry?.update) {
-    await prisma.streamRevocationRetry
-      .update({
-        where: {
-          erasureRequestId_planType_planId: {
-            erasureRequestId,
-            planType: "WEBINAR",
-            planId: principalPlanId,
-          },
-        },
-        data: principalError
-          ? {
-              status: "FAILED",
-              attempts: 1,
-              lastError: principalError,
-              nextRetryAt: nextRetryAt(1, now),
-            }
-          : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
-      })
-      .catch((caught) =>
-        reportSentryError(caught, {
-          subsystem: "compliance",
-          op: "scrubUser.settlePrincipalRevocationOutbox",
-          extra: { userId },
-        }),
-      );
-  }
-
-  await cleanupUserRecordingsOnErasure(prisma, userId, now);
+  const principalFailures = await settlePrincipalStreamErasure(
+    prisma,
+    userId,
+    erasureRequestId,
+    principalOutboxQueued,
+    now,
+  );
+  const recordingFailures = await cleanupUserRecordingsOnErasure(
+    prisma,
+    userId,
+    now,
+  );
 
   const vendorFailures = await offboardPaymentVendors(prisma, {
     userId,
@@ -767,11 +841,7 @@ export async function scrubUser(
     payoutAccounts,
   });
 
-  if (principalError && !principalOutboxQueued) {
-    vendorFailures.push(
-      "stream: principal deletion not confirmed — re-run required",
-    );
-  }
+  vendorFailures.push(...principalFailures, ...recordingFailures);
 
   const notificationFailures = await offboardNotificationVendor(userId);
   vendorFailures.push(...notificationFailures);

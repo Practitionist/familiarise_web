@@ -52,13 +52,17 @@ const SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
 type StreamActorContext = {
   trusted: boolean;
   userId: string | null;
+  role: string | null;
 };
 
-async function requireAuthenticatedStreamActor(options?: {
-  serverTrusted?: symbol;
-}): Promise<StreamActorContext> {
+async function requireAuthenticatedStreamActor(
+  targetIds: string[],
+  options?: {
+    serverTrusted?: symbol;
+  },
+): Promise<StreamActorContext> {
   if (options?.serverTrusted === SERVER_TRUSTED) {
-    return { trusted: true, userId: null };
+    return { trusted: true, userId: null, role: null };
   }
   const session = await getSession(true);
   if (!session?.user?.id) {
@@ -67,32 +71,46 @@ async function requireAuthenticatedStreamActor(options?: {
   if (session.user.banned) {
     throw new Error("Forbidden: account suspended");
   }
-  const privileged =
-    session.user.role === "ADMIN" || session.user.role === "STAFF";
-  return { trusted: privileged, userId: session.user.id };
+  const role = session.user.role ?? null;
+  const privileged = role === "ADMIN" || role === "STAFF";
+  if (
+    !privileged &&
+    role === "CONSULTEE" &&
+    !targetIds.includes(session.user.id)
+  ) {
+    throw new Error("Forbidden: cannot sync another user to Stream");
+  }
+  return { trusted: privileged, userId: session.user.id, role };
 }
 
 function stripStreamUserEmails<T>(payload: T, actor: StreamActorContext): T {
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    !("users" in payload) ||
-    !payload.users ||
-    typeof payload.users !== "object"
-  ) {
+  if (!payload || typeof payload !== "object") {
     return payload;
   }
-  const sanitizedUsers = Object.fromEntries(
-    Object.entries(payload.users as Record<string, unknown>)
-      .filter(([id]) => actor.trusted || id === actor.userId)
-      .map(([id, userObj]) => {
-        if (!userObj || typeof userObj !== "object") return [id, userObj];
-        const rest = { ...(userObj as Record<string, unknown>) };
-        delete rest.email;
-        return [id, rest];
-      }),
-  );
-  return { ...payload, users: sanitizedUsers };
+  const next = { ...(payload as Record<string, unknown>) };
+  if ("users" in next && next.users && typeof next.users === "object") {
+    next.users = Object.fromEntries(
+      Object.entries(next.users as Record<string, unknown>)
+        .filter(([id]) => actor.trusted || id === actor.userId)
+        .map(([id, userObj]) => {
+          if (!userObj || typeof userObj !== "object") return [id, userObj];
+          const rest = { ...(userObj as Record<string, unknown>) };
+          delete rest.email;
+          return [id, rest];
+        }),
+    );
+  }
+  if (
+    "droppedIds" in next &&
+    Array.isArray(next.droppedIds) &&
+    !actor.trusted &&
+    actor.role === "CONSULTEE"
+  ) {
+    next.droppedIds = (next.droppedIds as string[]).filter(
+      (id) => id === actor.userId,
+    );
+  }
+  return next as T;
 }
 
 /**
@@ -107,7 +125,10 @@ export const upsertUserToStream = async (
 ) => {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
-  const actor = await requireAuthenticatedStreamActor(options);
+  const actor = await requireAuthenticatedStreamActor(
+    [validatedUserId],
+    options,
+  );
 
   // Check cache first - skip if recently synced
   if (isUserSynced(validatedUserId)) {
@@ -233,7 +254,7 @@ export const upsertUsersToStream = async (
 ) => {
   // Validate input
   const validatedIds = userIdsSchema.parse(userIds);
-  const actor = await requireAuthenticatedStreamActor(options);
+  const actor = await requireAuthenticatedStreamActor(validatedIds, options);
 
   // Filter out already synced users
   const unsyncedIds = validatedIds.filter((id) => !isUserSynced(id));
@@ -264,7 +285,10 @@ export const upsertUsersToStream = async (
       streamLogger.warn("No users found for batch upsert", {
         requestedIds: unsyncedIds,
       });
-      return { users: {}, droppedIds: unsyncedIds };
+      return stripStreamUserEmails(
+        { users: {}, droppedIds: unsyncedIds },
+        actor,
+      );
     }
 
     // DPDP gate (batch). Filter out users who have withdrawn — or never
@@ -298,7 +322,10 @@ export const upsertUsersToStream = async (
       (id) => !users.some((u) => u.id === id),
     );
     if (consenters.length === 0) {
-      return { users: {}, droppedIds: [...droppedIds, ...unknownIds] };
+      return stripStreamUserEmails(
+        { users: {}, droppedIds: [...droppedIds, ...unknownIds] },
+        actor,
+      );
     }
 
     const client = getStreamChatClient();

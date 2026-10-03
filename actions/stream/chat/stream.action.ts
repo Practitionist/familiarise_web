@@ -4,7 +4,6 @@ import { z } from "zod";
 import {
   generateVideoToken,
   generateChatToken,
-  getStreamChatClient,
   isStreamConfigured,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -26,21 +25,6 @@ const userIdSchema = z.string().min(1, "User ID is required");
 
 const STREAM_CONSENT_REFUSAL =
   "Chat and video are unavailable because data-processing consent for real-time communication has not been granted.";
-
-async function revokeStreamAccessOnWithdrawal(userId: string): Promise<void> {
-  if (!isStreamConfigured()) return;
-  try {
-    await getStreamChatClient().revokeUserToken(userId, new Date());
-  } catch (error) {
-    streamLogger.warn(
-      "Failed to revoke Stream user token after consent denial",
-      {
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    );
-  }
-}
 
 /**
  * Tokens may only be minted for the caller's own userId (staff/admin may mint
@@ -81,7 +65,6 @@ async function assertCanMintToken(
       "Refusing Stream token mint — STREAM_DATA_PROCESSING consent not granted",
       { userId: forUserId },
     );
-    void revokeStreamAccessOnWithdrawal(forUserId);
     return new Refusal({
       code: "CONSENT_REQUIRED",
       httpStatus: 403,

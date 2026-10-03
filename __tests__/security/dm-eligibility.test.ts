@@ -26,6 +26,8 @@ const mockPrisma = {
   user: { findUnique: jest.fn() },
   consultation: { findFirst: jest.fn(), findMany: jest.fn() },
   subscription: { findFirst: jest.fn(), findMany: jest.fn() },
+  webinar: { findFirst: jest.fn(), findMany: jest.fn() },
+  class: { findFirst: jest.fn(), findMany: jest.fn() },
   appointmentOccurrence: { findFirst: jest.fn() },
 };
 
@@ -52,6 +54,10 @@ const DUAL = {
 function noRelationships() {
   mockPrisma.consultation.findFirst.mockResolvedValue(null);
   mockPrisma.subscription.findFirst.mockResolvedValue(null);
+  mockPrisma.webinar.findFirst.mockResolvedValue(null);
+  mockPrisma.class.findFirst.mockResolvedValue(null);
+  mockPrisma.webinar.findMany.mockResolvedValue([]);
+  mockPrisma.class.findMany.mockResolvedValue([]);
   mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue(null);
 }
 

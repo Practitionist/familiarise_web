@@ -368,8 +368,10 @@ function buildGroupEventData(
     ...(appointment?.participants.map((p) => p.userId) || []),
   ];
 
-  const organizationId =
-    appointment?.organizationId ?? plan.organizationId ?? null;
+  const organizationId = bookingOrgId({
+    webinarPlan: plan,
+    appointment,
+  });
 
   return {
     consultantId,
@@ -601,12 +603,57 @@ export async function queryOrgTaggedChannels(
   extraFilter?: Record<string, unknown>,
 ) {
   const filter = {
-    ...(extraFilter ?? {}),
+    ...extraFilter,
     organization_id: { $eq: organizationId },
   } as unknown as ChannelFilters;
   return queryChannelsPaged((opts) =>
     chat.queryChannels(filter, [{ last_message_at: -1 }], opts),
   );
+}
+
+async function endSingleStreamVideoCall(
+  video: ReturnType<typeof getStreamVideoClient>["video"],
+  call: { id: string; streamCallId: string },
+  options: {
+    now: Date;
+    endedReason: string | null;
+    errorPrefix: string;
+    useCircuitBreaker?: boolean;
+  },
+  errors: string[],
+): Promise<boolean> {
+  let counted = false;
+  let ended = false;
+  try {
+    const endCall = () =>
+      video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
+    await (options.useCircuitBreaker
+      ? withStreamCircuitBreaker(endCall)
+      : endCall());
+    ended = true;
+    counted = true;
+  } catch (err) {
+    if (isExpectedStreamError(err)) {
+      ended = true;
+    } else {
+      errors.push(
+        `${options.errorPrefix} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (ended && prisma.meeting?.updateMany) {
+    try {
+      await prisma.meeting.updateMany({
+        where: { id: call.id, endedAt: null },
+        data: { endedAt: options.now, endedReason: options.endedReason },
+      });
+    } catch (dbErr) {
+      errors.push(
+        `${options.errorPrefix} meeting update ${call.id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+      );
+    }
+  }
+  return counted;
 }
 
 export async function endActiveStreamVideoCalls(
@@ -625,38 +672,13 @@ export async function endActiveStreamVideoCalls(
   try {
     const video = getStreamVideoClient().video;
     for (const call of calls) {
-      let ended = false;
-      try {
-        const endCall = () =>
-          video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
-        if (options.useCircuitBreaker) {
-          await withStreamCircuitBreaker(endCall);
-        } else {
-          await endCall();
-        }
-        ended = true;
-        callsEnded++;
-      } catch (err) {
-        if (isExpectedStreamError(err)) {
-          ended = true;
-        } else {
-          errors.push(
-            `${options.errorPrefix} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-      if (ended && prisma.meeting?.updateMany) {
-        try {
-          await prisma.meeting.updateMany({
-            where: { id: call.id, endedAt: null },
-            data: { endedAt: options.now, endedReason: options.endedReason },
-          });
-        } catch (dbErr) {
-          errors.push(
-            `${options.errorPrefix} meeting update ${call.id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
-          );
-        }
-      }
+      const counted = await endSingleStreamVideoCall(
+        video,
+        call,
+        options,
+        errors,
+      );
+      if (counted) callsEnded++;
     }
   } catch (err) {
     errors.push(

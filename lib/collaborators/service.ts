@@ -384,6 +384,37 @@ export async function inviteCollaborator(
   return txResult;
 }
 
+async function runAcceptedInvitationSideEffects(
+  planType: PlanType,
+  planId: string,
+  consultantProfileId: string,
+  acceptedUserId: string | null,
+): Promise<void> {
+  try {
+    const { createCollaboratorChannel } =
+      await import("@/actions/stream/chat/channel.action");
+    await createCollaboratorChannel(planType, planId);
+  } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "stream" }, level: "warning" },
+    );
+    console.error("Failed to create collaborator channel:", err);
+  }
+
+  // #1580 — the shadow participant edge on every live appointment of the
+  // plan, so the roster reader flip (#1319 A9) finds the collaborator too.
+  await syncCollaboratorParticipants(planType, planId, consultantProfileId);
+
+  if (acceptedUserId) {
+    await syncAcceptedCollaboratorEventChannels(
+      planType,
+      planId,
+      acceptedUserId,
+    );
+  }
+}
+
 /**
  * Respond to a collaboration invitation (accept or decline).
  * When accepted, auto-creates a collaborator Stream chat channel.
@@ -403,8 +434,7 @@ export async function respondToInvitation(
   // wrong-table lookup, which returned null.
   const planId =
     planType === "webinar" ? collab.webinarPlanId : collab.classPlanId;
-  if (!planId) return null;
-  if (collab.status !== "PENDING") return null;
+  if (!planId || collab.status !== "PENDING") return null;
 
   // #1580 C-P1-9 — standing can change between invite and accept (a ban, an
   // erasure, an archive, a seat bought meanwhile), so the gates run again.
@@ -429,29 +459,12 @@ export async function respondToInvitation(
   });
 
   if (response === "ACCEPTED") {
-    try {
-      const { createCollaboratorChannel } =
-        await import("@/actions/stream/chat/channel.action");
-      await createCollaboratorChannel(planType, planId);
-    } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "stream" }, level: "warning" },
-      );
-      console.error("Failed to create collaborator channel:", err);
-    }
-
-    // #1580 — the shadow participant edge on every live appointment of the
-    // plan, so the roster reader flip (#1319 A9) finds the collaborator too.
-    await syncCollaboratorParticipants(planType, planId, consultantProfileId);
-
-    if (acceptedUserId) {
-      await syncAcceptedCollaboratorEventChannels(
-        planType,
-        planId,
-        acceptedUserId,
-      );
-    }
+    await runAcceptedInvitationSideEffects(
+      planType,
+      planId,
+      consultantProfileId,
+      acceptedUserId,
+    );
   }
 
   // The host hears either answer (#1580 C-P1-5 added the decline).
@@ -460,35 +473,40 @@ export async function respondToInvitation(
   return updated;
 }
 
+async function fetchActivePlanEvents(
+  planType: PlanType,
+  planId: string,
+): Promise<{ id: string }[]> {
+  const activeStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] as const;
+  if (planType === "webinar") {
+    if (!prisma.webinar?.findMany) return [];
+    return prisma.webinar.findMany({
+      where: {
+        webinarPlanId: planId,
+        deletedAt: null,
+        status: { in: [...activeStatuses] },
+      },
+      select: { id: true },
+    });
+  }
+  if (!prisma.class?.findMany) return [];
+  return prisma.class.findMany({
+    where: {
+      classPlanId: planId,
+      deletedAt: null,
+      status: { in: [...activeStatuses] },
+    },
+    select: { id: true },
+  });
+}
+
 async function syncAcceptedCollaboratorEventChannels(
   planType: PlanType,
   planId: string,
   userId: string,
 ): Promise<void> {
   try {
-    const activeStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] as const;
-    const events =
-      planType === "webinar"
-        ? prisma.webinar?.findMany
-          ? await prisma.webinar.findMany({
-              where: {
-                webinarPlanId: planId,
-                deletedAt: null,
-                status: { in: [...activeStatuses] },
-              },
-              select: { id: true },
-            })
-          : []
-        : prisma.class?.findMany
-          ? await prisma.class.findMany({
-              where: {
-                classPlanId: planId,
-                deletedAt: null,
-                status: { in: [...activeStatuses] },
-              },
-              select: { id: true },
-            })
-          : [];
+    const events = await fetchActivePlanEvents(planType, planId);
 
     for (const event of events) {
       if (await checkEventChannelExists(planType, event.id)) {

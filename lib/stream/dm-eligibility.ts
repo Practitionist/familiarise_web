@@ -136,7 +136,7 @@ export async function pairBookingContexts(
           },
         })
       : Promise.resolve([]),
-    eventDirections.length > 0 && prisma.webinar?.findMany
+    eventDirections.length > 0
       ? prisma.webinar.findMany({
           where: {
             status: { in: [...OPENABLE_EVENT_STATUSES] },
@@ -154,7 +154,7 @@ export async function pairBookingContexts(
           },
         })
       : Promise.resolve([]),
-    eventDirections.length > 0 && prisma.class?.findMany
+    eventDirections.length > 0
       ? prisma.class.findMany({
           where: {
             status: { in: [...OPENABLE_EVENT_STATUSES] },
@@ -291,7 +291,6 @@ async function hasWebinarLink(
   userIdA: string,
   userIdB: string,
 ): Promise<boolean> {
-  if (!prisma.webinar?.findFirst) return false;
   const directions = buildEventDirections(a, b, userIdA, userIdB);
   if (directions.length === 0) return false;
 
@@ -318,7 +317,6 @@ async function hasClassLink(
   userIdA: string,
   userIdB: string,
 ): Promise<boolean> {
-  if (!prisma.class?.findFirst) return false;
   const directions = buildEventDirections(a, b, userIdA, userIdB);
   if (directions.length === 0) return false;
 

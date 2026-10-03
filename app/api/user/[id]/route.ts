@@ -194,6 +194,118 @@ export async function PATCH(
   }
 }
 
+async function hasUserRetainedFinancialHistory(id: string): Promise<boolean> {
+  // Money-history gate (#781 §B parity with the consultant route). A hard
+  // delete cascades Payment → PaymentLeg / BookingUtilization /
+  // ReferralCreditUsage away and 500s on the first Restrict (Refund,
+  // Dispute) — destroying financial records the schema's own DPDP comment
+  // says are retained per IT Act 5–7y obligations. Users whose money ever
+  // moved get the §12 erasure scrub instead: PII pseudonymised, erasedAt
+  // tombstone set, financial rows intact.
+  // Consultant-side money lives on ConsultantProfile (earnings/payouts/TDS
+  // Restrict-delete through it), not on Payment — a consultant with payout
+  // history but no payer-side rows must also take the scrub path, or the
+  // hard delete 500s on the first Restrict (#1205-triage).
+  // A held seat counts too: AppointmentParticipant.user is Restrict, and the
+  // delivery record is retained like the payment record, so it scrubs.
+  const [paymentCount, referralCreditCount, seatCount, profile] =
+    await Promise.all([
+      prisma.payment.count({ where: { userId: id } }),
+      prisma.referralCredit.count({ where: { userId: id } }),
+      prisma.appointmentParticipant.count({ where: { userId: id } }),
+      prisma.consultantProfile.findFirst({
+        where: { userId: id },
+        select: {
+          _count: {
+            select: { earnings: true, payouts: true, tdsRecords: true },
+          },
+        },
+      }),
+    ]);
+  const consultantMoneyCount = profile
+    ? profile._count.earnings +
+      profile._count.payouts +
+      profile._count.tdsRecords
+    : 0;
+  return (
+    paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0
+  );
+}
+
+async function tryEraseStreamFootprint(id: string): Promise<boolean> {
+  try {
+    await eraseStreamPrincipalFootprint(id);
+    return true;
+  } catch (streamError) {
+    Sentry.captureException(
+      streamError instanceof Error
+        ? streamError
+        : new Error(String(streamError)),
+      { tags: { subsystem: "stream", op: "user.delete" } },
+    );
+    return false;
+  }
+}
+
+async function executeRetainedUserScrub(id: string): Promise<NextResponse> {
+  const activeRequest = prisma.erasureRequest?.findFirst
+    ? await prisma.erasureRequest.findFirst({
+        where: { userId: id, status: { in: ["PENDING", "IN_PROGRESS"] } },
+        select: { id: true },
+      })
+    : null;
+  const scrubResult = await scrubUser(prisma, id);
+  const streamErased = activeRequest?.id
+    ? !scrubResult.vendorFailures.some((f) => f.startsWith("stream:"))
+    : await tryEraseStreamFootprint(id);
+  // Erasure propagates to Novu (never throws; Sentry-reported). The local
+  // scrub is committed either way; an unacknowledged vendor delete is
+  // surfaced as pending rather than hidden behind a success message.
+  const novuErased = await deleteSubscriber(id);
+  return NextResponse.json({
+    message:
+      "Account erased (PII scrubbed; financial history retained per statutory retention)",
+    softDeleted: true,
+    novuCleanup: novuErased ? "done" : "pending",
+    streamCleanup: streamErased ? "done" : "pending",
+  });
+}
+
+async function executeUserHardDeleteOrFallbackScrub(
+  id: string,
+): Promise<NextResponse> {
+  const streamErased = await tryEraseStreamFootprint(id);
+  if (!streamErased) {
+    await scrubUser(prisma, id);
+    const novuErased = await deleteSubscriber(id);
+    return NextResponse.json({
+      message:
+        "Account erased (PII scrubbed; Stream cleanup pending retry before permanent removal)",
+      softDeleted: true,
+      novuCleanup: novuErased ? "done" : "pending",
+      streamCleanup: "pending",
+    });
+  }
+
+  // Revoke all sessions for the user before deletion (atomic)
+  await prisma.$transaction([
+    prisma.session.deleteMany({ where: { userId: id } }),
+    prisma.user.delete({ where: { id } }),
+  ]);
+  // Novu holds the same PII (email/name) — remove it too. Never throws;
+  // an unacknowledged delete is reported as pending, not as success.
+  const novuErased = await deleteSubscriber(id);
+
+  return NextResponse.json(
+    {
+      message: "User deleted successfully",
+      novuCleanup: novuErased ? "done" : "pending",
+      streamCleanup: "done",
+    },
+    { status: 200 },
+  );
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -213,89 +325,16 @@ export async function DELETE(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const user = await prisma.user.findUnique({ where: { id: id } });
+    const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Money-history gate (#781 §B parity with the consultant route). A hard
-    // delete cascades Payment → PaymentLeg / BookingUtilization /
-    // ReferralCreditUsage away and 500s on the first Restrict (Refund,
-    // Dispute) — destroying financial records the schema's own DPDP comment
-    // says are retained per IT Act 5–7y obligations. Users whose money ever
-    // moved get the §12 erasure scrub instead: PII pseudonymised, erasedAt
-    // tombstone set, financial rows intact.
-    // Consultant-side money lives on ConsultantProfile (earnings/payouts/TDS
-    // Restrict-delete through it), not on Payment — a consultant with payout
-    // history but no payer-side rows must also take the scrub path, or the
-    // hard delete 500s on the first Restrict (#1205-triage).
-    // A held seat counts too: AppointmentParticipant.user is Restrict, and the
-    // delivery record is retained like the payment record, so it scrubs.
-    const [paymentCount, referralCreditCount, seatCount, profile] =
-      await Promise.all([
-        prisma.payment.count({ where: { userId: id } }),
-        prisma.referralCredit.count({ where: { userId: id } }),
-        prisma.appointmentParticipant.count({ where: { userId: id } }),
-        prisma.consultantProfile.findFirst({
-          where: { userId: id },
-          select: {
-            _count: {
-              select: { earnings: true, payouts: true, tdsRecords: true },
-            },
-          },
-        }),
-      ]);
-    const consultantMoneyCount = profile
-      ? profile._count.earnings +
-        profile._count.payouts +
-        profile._count.tdsRecords
-      : 0;
-    const hasRetainedHistory =
-      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0;
-
-    if (hasRetainedHistory) {
-      await scrubUser(prisma, id);
-      // Erasure propagates to Novu (never throws; Sentry-reported). The local
-      // scrub is committed either way; an unacknowledged vendor delete is
-      // surfaced as pending rather than hidden behind a success message.
-      const novuErased = await deleteSubscriber(id);
-      return NextResponse.json({
-        message:
-          "Account erased (PII scrubbed; financial history retained per statutory retention)",
-        softDeleted: true,
-        novuCleanup: novuErased ? "done" : "pending",
-      });
+    if (await hasUserRetainedFinancialHistory(id)) {
+      return await executeRetainedUserScrub(id);
     }
 
-    // Revoke all sessions for the user before deletion (atomic)
-    await prisma.$transaction([
-      prisma.session.deleteMany({ where: { userId: id } }),
-      prisma.user.delete({ where: { id: id } }),
-    ]);
-    let streamErased = true;
-    try {
-      await eraseStreamPrincipalFootprint(id);
-    } catch (streamError) {
-      streamErased = false;
-      Sentry.captureException(
-        streamError instanceof Error
-          ? streamError
-          : new Error(String(streamError)),
-        { tags: { subsystem: "stream", op: "user.delete" } },
-      );
-    }
-    // Novu holds the same PII (email/name) — remove it too. Never throws;
-    // an unacknowledged delete is reported as pending, not as success.
-    const novuErased = await deleteSubscriber(id);
-
-    return NextResponse.json(
-      {
-        message: "User deleted successfully",
-        novuCleanup: novuErased ? "done" : "pending",
-        streamCleanup: streamErased ? "done" : "pending",
-      },
-      { status: 200 },
-    );
+    return await executeUserHardDeleteOrFallbackScrub(id);
   } catch (error) {
     console.error("Error deleting user:", error);
     Sentry.captureException(

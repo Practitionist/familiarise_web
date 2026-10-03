@@ -20,6 +20,14 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
+jest.mock("../../lib/stream-client", () => ({
+  isStreamConfigured: jest.fn(() => true),
+  isExpectedStreamError: jest.fn(() => false),
+  getStreamChatClient: jest.fn(() => ({
+    revokeUserToken: jest.fn(async () => ({})),
+    deleteUsers: jest.fn(async () => ({})),
+  })),
+}));
 
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
