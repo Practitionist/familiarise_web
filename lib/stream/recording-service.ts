@@ -631,7 +631,7 @@ export class RecordingService {
   }
 
   private static buildOneToOneTypeFilter(
-    type?: "webinar" | "class" | "consultation" | "subscription" | "trial",
+    type?: ConsultantRecordingFilterType,
   ): Prisma.AppointmentWhereInput {
     if (type === "consultation") return { consultation: { isNot: null } };
     if (type === "subscription") return { subscription: { isNot: null } };
@@ -640,7 +640,7 @@ export class RecordingService {
   }
 
   private static buildConsulteeWhereConditions(params: {
-    type?: "webinar" | "class" | "consultation" | "subscription" | "trial";
+    type?: ConsultantRecordingFilterType;
     webinarPlanIds: string[];
     classPlanIds: string[];
     appointmentIds: string[];

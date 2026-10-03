@@ -597,6 +597,59 @@ export class RecordingTransferService {
     return true;
   }
 
+  private static async validateRecordingForTransfer(
+    recordingId: string,
+    recording:
+      | (RecordingRow & {
+          meeting?: {
+            occurrence?: {
+              appointment?: AppointmentWithStoragePolicies;
+            } | null;
+          } | null;
+        })
+      | null,
+  ): Promise<
+    { ok: true; recordingUrl: string } | { ok: false; error: string }
+  > {
+    if (!recording) {
+      return { ok: false, error: "Recording not found" };
+    }
+    if (!recording.recordingUrl) {
+      return { ok: false, error: "Recording URL not available" };
+    }
+    if (!isAllowedStreamRecordingUrl(recording.recordingUrl)) {
+      const error = "Recording URL is not from an allowed Stream storage host";
+      await this.recordTransferFailure(recordingId, error);
+      return { ok: false, error };
+    }
+    const resolvedPolicy = resolveAppointmentStoragePolicy(
+      recording.meeting?.occurrence?.appointment,
+    );
+    if (resolvedPolicy === "STREAM_ONLY") {
+      return {
+        ok: false,
+        error: "Recording plan uses STREAM_ONLY storage policy",
+      };
+    }
+    return { ok: true, recordingUrl: recording.recordingUrl };
+  }
+
+  private static async ensureStorageDestinationReady(
+    recordingId: string,
+    useR2: boolean,
+  ): Promise<string | null> {
+    if (useR2) return null;
+    const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET, {
+      public: false,
+      allowedMimeTypes: RECORDING_MIME_TYPES,
+      fileSizeLimit: RECORDING_MAX_OBJECT_BYTES,
+    });
+    if (bucketReady) return null;
+    const error = `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`;
+    await this.recordTransferFailure(recordingId, error);
+    return error;
+  }
+
   /**
    * Transfer a recording from Stream S3 to Supabase
    * @param recordingId The recording ID to transfer
@@ -668,29 +721,12 @@ export class RecordingTransferService {
         },
       });
 
-      if (!recording) {
-        return { success: false, error: "Recording not found" };
-      }
-
-      if (!recording.recordingUrl) {
-        return { success: false, error: "Recording URL not available" };
-      }
-
-      if (!isAllowedStreamRecordingUrl(recording.recordingUrl)) {
-        const error =
-          "Recording URL is not from an allowed Stream storage host";
-        await this.recordTransferFailure(recordingId, error);
-        return { success: false, error };
-      }
-
-      const resolvedPolicy = resolveAppointmentStoragePolicy(
-        recording.meeting?.occurrence?.appointment,
+      const validation = await this.validateRecordingForTransfer(
+        recordingId,
+        recording,
       );
-      if (resolvedPolicy === "STREAM_ONLY") {
-        return {
-          success: false,
-          error: "Recording plan uses STREAM_ONLY storage policy",
-        };
+      if (!validation.ok) {
+        return { success: false, error: validation.error };
       }
 
       const claimed = await this.claimRecordingForTransfer(recordingId);
@@ -702,27 +738,22 @@ export class RecordingTransferService {
       }
 
       const useR2 = isR2Configured();
-      if (!useR2) {
-        const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET, {
-          public: false,
-          allowedMimeTypes: RECORDING_MIME_TYPES,
-          fileSizeLimit: RECORDING_MAX_OBJECT_BYTES,
-        });
-        if (!bucketReady) {
-          const error = `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`;
-          await this.recordTransferFailure(recordingId, error);
-          return { success: false, error };
-        }
+      const destinationError = await this.ensureStorageDestinationReady(
+        recordingId,
+        useR2,
+      );
+      if (destinationError) {
+        return { success: false, error: destinationError };
       }
 
       streamLogger.info("Downloading recording from Stream", {
         recordingId,
-        url: recording.recordingUrl.substring(0, 50) + "...",
+        url: validation.recordingUrl.substring(0, 50) + "...",
       });
 
       const transferred = await this.downloadAndUploadRecording(
         recordingId,
-        recording.recordingUrl,
+        validation.recordingUrl,
         useR2,
       );
       if (!transferred.ok) {

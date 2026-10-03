@@ -288,7 +288,7 @@ function presenceKey(
  * Stamp the room's end, compare-and-set on the end this event read, so two end
  * webhooks racing each other cannot overwrite a deliberate end. False when lost.
  */
-async function stampEnd(
+function stampEnd(
   meeting: { id: string; endedAt: Date | null },
   endedAt: Date,
   endedReason: string,
