@@ -44,6 +44,7 @@ export {
   getOrgPayoutEligibility,
   createOrgPayoutBatch,
   createOrgPayoutBatches,
+  approveOrgPayout,
   processOrgPayout,
   processPendingOrgPayouts,
   markOrgPayoutCompleted,
@@ -51,10 +52,12 @@ export {
   markOrgPayoutReversed,
 } from "./org-payout-service";
 export type { OrgProcessingResult, OrgBatchResult } from "./org-payout-service";
+export { PayoutMakerCheckerError } from "./shared-lifecycle";
 
 // Earnings Service
 export {
   createEarningsFromPayment,
+  planEarningsForPayment,
   resolvePaymentForEarnings,
   getConsultantEarningsSummary,
   getConsultantEarnings,
@@ -64,3 +67,4 @@ export {
   getOrgEarningsSummary,
   getOrgEarnings,
 } from "./earnings-service";
+export type { PreplannedEarningsContext } from "./earnings-service";

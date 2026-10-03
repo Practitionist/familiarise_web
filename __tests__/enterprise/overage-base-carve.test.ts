@@ -157,6 +157,66 @@ describe("recarveOverageBase", () => {
       recarveOverageBase(m.tx, { overageEventId: "ov1" }),
     ).rejects.toThrow(/missing the restored basePaise/);
   });
+
+  it("adjusts a DRAFT OrganizationInvoice and its line item in-place and returns recarved (#1900)", async () => {
+    const m = mockTx({
+      parent: { id: "parent1", billableToOrgInvoiceId: "inv_draft" },
+      parentUpdateManyCount: 0,
+    });
+    const invoiceUpdate = jest.fn().mockResolvedValue({});
+    const lineItemUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const txWithInvoice = m.tx as unknown as Record<string, unknown>;
+    txWithInvoice.organizationInvoice = {
+      findUnique: jest.fn().mockResolvedValue({
+        id: "inv_draft",
+        status: "DRAFT",
+        subtotalPaise: 1000,
+        cgstPaise: 90,
+        sgstPaise: 90,
+        igstPaise: 0,
+        totalPaise: 1180,
+      }),
+      update: invoiceUpdate,
+    };
+    txWithInvoice.invoiceLineItem = {
+      updateMany: lineItemUpdateMany,
+    };
+    // First paymentUpdateMany (billableToOrgInvoiceId: null) returns 0;
+    // second paymentUpdateMany (billableToOrgInvoiceId: "inv_draft") returns 1.
+    m.paymentUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      recarveOverageBase(m.tx, { overageEventId: "ov1" }),
+    ).resolves.toBe("recarved");
+
+    expect(invoiceUpdate).toHaveBeenCalledWith({
+      where: { id: "inv_draft" },
+      data: {
+        subtotalPaise: 700,
+        cgstPaise: 63,
+        sgstPaise: 63,
+        igstPaise: 0,
+        totalPaise: 826,
+        inrEquivalentPaise: 826,
+      },
+    });
+    expect(lineItemUpdateMany).toHaveBeenCalledWith({
+      where: { invoiceId: "inv_draft", paymentId: "parent1" },
+      data: {
+        unitPricePaise: { decrement: 300 },
+      },
+    });
+    expect(m.legUpdateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "parent1",
+        source: "INVOICE_ACCRUAL",
+        amountPaise: { gte: 300 },
+      },
+      data: { amountPaise: { decrement: 300 } },
+    });
+  });
 });
 
 describe("transitionOverage fromIn narrowing (#812)", () => {

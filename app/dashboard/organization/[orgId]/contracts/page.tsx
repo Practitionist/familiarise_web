@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState, type ReactNode } from "react";
+import { use, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -11,6 +11,7 @@ import {
   Eye,
   Pencil,
   Lock,
+  RefreshCw,
 } from "lucide-react";
 import type { ContractStatus, FundingSource } from "@prisma/client";
 
@@ -70,6 +71,9 @@ interface ContractItem {
   autoRenew: boolean;
   signedAt: string | null;
   createdAt: string;
+  supersededByContractId?: string | null;
+  supersededAt?: string | null;
+  supersessionReason?: string | null;
   billingAccount: {
     id: string;
     fundingSource: string;
@@ -86,6 +90,8 @@ interface ContractItem {
     model: "PER_SEAT" | "FLAT_FEE";
     cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
     flatFeePaise: number | null;
+    ratePerSeatPaise: number | null;
+    activeSeatCount: number;
   } | null;
   _count: { programs: number };
 }
@@ -125,7 +131,9 @@ async function createContract(
     paymentTermsDays?: number;
     autoRenew: boolean;
     status: "DRAFT" | "ACTIVE";
+    licenseModel?: "FLAT_FEE" | "PER_SEAT";
     licenseFeePaise?: number;
+    licenseRatePerSeatPaise?: number;
     licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
   },
 ) {
@@ -138,6 +146,38 @@ async function createContract(
   if (!res.ok) {
     throw new Error(
       (json as { error?: string }).error ?? "Failed to create contract",
+    );
+  }
+  return json;
+}
+
+async function supersedeContract(
+  orgId: string,
+  contractId: string,
+  body: {
+    reason: "AMENDMENT" | "RENEWAL";
+    effectiveFrom: string;
+    effectiveTo?: string | null;
+    paymentTermsDays?: number;
+    autoRenew?: boolean;
+    licenseModel?: "FLAT_FEE" | "PER_SEAT";
+    licenseFeePaise?: number;
+    licenseRatePerSeatPaise?: number;
+    licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  },
+) {
+  const res = await fetch(
+    `/api/organizations/${orgId}/contracts/${contractId}/supersede`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to supersede contract",
     );
   }
   return json;
@@ -261,10 +301,20 @@ function fmtSubscription(sub: {
   model: string;
   cycle: string;
   flatFeePaise: number | null;
+  ratePerSeatPaise?: number | null;
+  activeSeatCount?: number;
 }): string {
   const per = CYCLE_NOUN[sub.cycle] ?? humanizeEnum(sub.cycle).toLowerCase();
   if (sub.model === "FLAT_FEE" && sub.flatFeePaise !== null) {
     return `${formatCurrencyAmount(sub.flatFeePaise, "INR")} per ${per}`;
+  }
+  if (
+    sub.model === "PER_SEAT" &&
+    sub.ratePerSeatPaise !== null &&
+    sub.ratePerSeatPaise !== undefined
+  ) {
+    const seats = sub.activeSeatCount ?? 0;
+    return `${formatCurrencyAmount(sub.ratePerSeatPaise, "INR")} / seat / ${per} (${seats} active)`;
   }
   return `${humanizeEnum(sub.model)}, billed per ${per}`;
 }
@@ -273,27 +323,352 @@ function fmtSubscription(sub: {
 // Create dialog
 // ---------------------------------------------------------------------------
 
+type ContractFinancialDraft = {
+  effectiveFrom: string;
+  effectiveTo: string;
+  isLicense: boolean;
+  paymentTermsDays: string;
+  autoRenew: boolean;
+  licenseModel: "FLAT_FEE" | "PER_SEAT";
+  licenseCycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  licenseFeeINR: string;
+  ratePerSeatINR: string;
+};
+
+type ContractFinancialPayload = {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  paymentTermsDays?: number;
+  autoRenew: boolean;
+  licenseModel?: "FLAT_FEE" | "PER_SEAT";
+  licenseFeePaise?: number;
+  licenseRatePerSeatPaise?: number;
+  licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+};
+
+function parseContractTermWindow(
+  draft: Pick<ContractFinancialDraft, "effectiveFrom" | "effectiveTo">,
+): { fromDate: Date; toDate: Date | null } | { error: string } {
+  const fromDate = new Date(draft.effectiveFrom);
+  if (!draft.effectiveFrom || Number.isNaN(fromDate.getTime())) {
+    return { error: "Start date is required." };
+  }
+  const toDate = draft.effectiveTo ? new Date(draft.effectiveTo) : null;
+  if (toDate && Number.isNaN(toDate.getTime())) {
+    return { error: "End date is invalid." };
+  }
+  if (toDate && toDate <= fromDate) {
+    return { error: "End date must be after the start date." };
+  }
+  return { fromDate, toDate };
+}
+
+function parsePositiveInrToPaise(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return null;
+  }
+  const [wholePart, fracPart = ""] = trimmed.split(".");
+  const paise =
+    Number.parseInt(wholePart, 10) * 100 +
+    Number.parseInt(fracPart.padEnd(2, "0"), 10);
+  return Number.isSafeInteger(paise) && paise > 0 ? paise : null;
+}
+
+function parseLicensePricingOverride(
+  draft: Pick<
+    ContractFinancialDraft,
+    "isLicense" | "licenseModel" | "licenseFeeINR" | "ratePerSeatINR"
+  >,
+):
+  | { licenseFeePaise?: number; licenseRatePerSeatPaise?: number }
+  | { error: string } {
+  if (!draft.isLicense) {
+    return {};
+  }
+  if (draft.licenseModel === "FLAT_FEE" && draft.licenseFeeINR.trim() !== "") {
+    const licenseFeePaise = parsePositiveInrToPaise(draft.licenseFeeINR);
+    if (licenseFeePaise === null) {
+      return { error: "License fee must be a positive number (₹)." };
+    }
+    return { licenseFeePaise };
+  }
+  if (
+    draft.licenseModel === "PER_SEAT" &&
+    draft.ratePerSeatINR.trim() !== ""
+  ) {
+    const licenseRatePerSeatPaise = parsePositiveInrToPaise(
+      draft.ratePerSeatINR,
+    );
+    if (licenseRatePerSeatPaise === null) {
+      return { error: "Rate per seat must be a positive number (₹)." };
+    }
+    return { licenseRatePerSeatPaise };
+  }
+  return {};
+}
+
+function buildContractFinancialPayload(
+  draft: ContractFinancialDraft,
+): { payload: ContractFinancialPayload } | { error: string } {
+  const windowResult = parseContractTermWindow(draft);
+  if ("error" in windowResult) {
+    return windowResult;
+  }
+  const { fromDate, toDate } = windowResult;
+
+  let terms: number | undefined;
+  if (!draft.isLicense) {
+    const parsed = Number.parseInt(draft.paymentTermsDays, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
+      return { error: "Payment terms must be between 1 and 120 days." };
+    }
+    terms = parsed;
+  }
+
+  const licenseResult = parseLicensePricingOverride(draft);
+  if ("error" in licenseResult) {
+    return licenseResult;
+  }
+  const { licenseFeePaise, licenseRatePerSeatPaise } = licenseResult;
+
+  return {
+    payload: {
+      effectiveFrom: fromDate.toISOString(),
+      effectiveTo: toDate ? toDate.toISOString() : null,
+      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
+      autoRenew: draft.autoRenew,
+      ...(licenseFeePaise !== undefined
+        ? {
+            licenseModel: "FLAT_FEE",
+            licenseFeePaise,
+            licenseCycle: draft.licenseCycle,
+          }
+        : {}),
+      ...(licenseRatePerSeatPaise !== undefined
+        ? {
+            licenseModel: "PER_SEAT",
+            licenseRatePerSeatPaise,
+            licenseCycle: draft.licenseCycle,
+          }
+        : {}),
+    },
+  };
+}
+
+function ContractFinancialTermsFields({
+  idPrefix,
+  effectiveFrom,
+  onEffectiveFromChange,
+  effectiveTo,
+  onEffectiveToChange,
+  isLicense,
+  paymentTermsDays,
+  onPaymentTermsDaysChange,
+  licenseModel,
+  onLicenseModelChange,
+  licenseCycle,
+  onLicenseCycleChange,
+  licenseFeeINR,
+  onLicenseFeeINRChange,
+  ratePerSeatINR,
+  onRatePerSeatINRChange,
+  autoRenew,
+  onAutoRenewChange,
+  children,
+}: Readonly<{
+  idPrefix: string;
+  effectiveFrom: string;
+  onEffectiveFromChange: (v: string) => void;
+  effectiveTo: string;
+  onEffectiveToChange: (v: string) => void;
+  isLicense: boolean;
+  paymentTermsDays: string;
+  onPaymentTermsDaysChange: (v: string) => void;
+  licenseModel: "FLAT_FEE" | "PER_SEAT";
+  onLicenseModelChange: (v: "FLAT_FEE" | "PER_SEAT") => void;
+  licenseCycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+  onLicenseCycleChange: (v: "MONTHLY" | "QUARTERLY" | "ANNUAL") => void;
+  licenseFeeINR: string;
+  onLicenseFeeINRChange: (v: string) => void;
+  ratePerSeatINR: string;
+  onRatePerSeatINRChange: (v: string) => void;
+  autoRenew: boolean;
+  onAutoRenewChange: (v: boolean) => void;
+  children?: ReactNode;
+}>) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-effective-from`}>Effective from *</Label>
+          <Input
+            id={`${idPrefix}-effective-from`}
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => onEffectiveFromChange(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-effective-to`}>Effective to</Label>
+          <Input
+            id={`${idPrefix}-effective-to`}
+            type="date"
+            value={effectiveTo}
+            onChange={(e) => onEffectiveToChange(e.target.value)}
+            placeholder="Open-ended"
+          />
+          <p className="text-xs text-muted-foreground">
+            Leave blank for open-ended
+          </p>
+        </div>
+      </div>
+
+      {!isLicense && (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-payment-terms`}>
+            Payment terms (days) *
+          </Label>
+          <Input
+            id={`${idPrefix}-payment-terms`}
+            type="number"
+            min={1}
+            max={120}
+            value={paymentTermsDays}
+            onChange={(e) => onPaymentTermsDaysChange(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            NET-{paymentTermsDays || "?"} — how many days after invoice date the
+            org must pay.
+          </p>
+        </div>
+      )}
+
+      {isLicense && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>License model</Label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { value: "FLAT_FEE", label: "Flat fee" },
+                  { value: "PER_SEAT", label: "Per seat" },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => onLicenseModelChange(m.value)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                    licenseModel === m.value
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {licenseModel === "FLAT_FEE" ? (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${idPrefix}-license-fee`}>
+                  Flat license fee (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
+                </Label>
+                <Input
+                  id={`${idPrefix}-license-fee`}
+                  type="number"
+                  min={1}
+                  step="1"
+                  placeholder="e.g. 750000"
+                  value={licenseFeeINR}
+                  onChange={(e) => onLicenseFeeINRChange(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional. Enables renewal billing and dashboard display.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${idPrefix}-rate-per-seat`}>
+                  Rate per seat (₹/{CYCLE_NOUN[licenseCycle] ?? "cycle"})
+                </Label>
+                <Input
+                  id={`${idPrefix}-rate-per-seat`}
+                  type="number"
+                  min={1}
+                  step="1"
+                  placeholder="e.g. 1500"
+                  value={ratePerSeatINR}
+                  onChange={(e) => onRatePerSeatINRChange(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Billed per active learner seat each cycle.
+                </p>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor={`${idPrefix}-license-cycle`}>Billing cycle</Label>
+              <select
+                id={`${idPrefix}-license-cycle`}
+                className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+                value={licenseCycle}
+                onChange={(e) =>
+                  onLicenseCycleChange(
+                    e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
+                  )
+                }
+              >
+                <option value="ANNUAL">Annual</option>
+                <option value="QUARTERLY">Quarterly</option>
+                <option value="MONTHLY">Monthly</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {children}
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <Checkbox
+          checked={autoRenew}
+          onCheckedChange={(v) => onAutoRenewChange(v === true)}
+        />
+        <span className="text-sm">Auto-renew when effective-to date passes</span>
+      </label>
+    </>
+  );
+}
+
 function CreateContractDialog({
   orgId,
   billingAccountId,
   fundingSource,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   billingAccountId: string;
-  fundingSource: string | undefined;
+  fundingSource?: FundingSource | string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
+
   const today = new Date().toISOString().slice(0, 10);
   const [effectiveFrom, setEffectiveFrom] = useState(today);
   const [effectiveTo, setEffectiveTo] = useState("");
   const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [autoRenew, setAutoRenew] = useState(false);
   const [status, setStatus] = useState<"DRAFT" | "ACTIVE">("ACTIVE");
+  const [licenseModel, setLicenseModel] = useState<"FLAT_FEE" | "PER_SEAT">(
+    "FLAT_FEE",
+  );
   const [licenseFeeINR, setLicenseFeeINR] = useState("");
+  const [ratePerSeatINR, setRatePerSeatINR] = useState("");
   const [licenseCycle, setLicenseCycle] = useState<
     "MONTHLY" | "QUARTERLY" | "ANNUAL"
   >("ANNUAL");
@@ -305,7 +680,9 @@ function CreateContractDialog({
     setPaymentTermsDays("60");
     setAutoRenew(false);
     setStatus("ACTIVE");
+    setLicenseModel("FLAT_FEE");
     setLicenseFeeINR("");
+    setRatePerSeatINR("");
     setLicenseCycle("ANNUAL");
     setError(null);
   };
@@ -327,44 +704,25 @@ function CreateContractDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const isLicense = fundingSource === "LICENSE";
-    // LICENSE-funded orgs don't see the payment-terms field (annual fee
-    // is paid upfront, not on net-X terms). Skip validation and omit
-    // the field from the payload so the server's default(60) applies —
-    // otherwise stale text typed before switching to LICENSE would fire
-    // a hidden-field error.
-    let terms: number | undefined;
-    if (!isLicense) {
-      const parsed = parseInt(paymentTermsDays, 10);
-      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
-        setError("Payment terms must be between 1 and 120 days.");
-        return;
-      }
-      terms = parsed;
-    }
-    if (effectiveTo && new Date(effectiveTo) <= new Date(effectiveFrom)) {
-      setError("End date must be after the start date.");
+    const built = buildContractFinancialPayload({
+      effectiveFrom,
+      effectiveTo,
+      isLicense: fundingSource === "LICENSE",
+      paymentTermsDays,
+      autoRenew,
+      licenseModel,
+      licenseCycle,
+      licenseFeeINR,
+      ratePerSeatINR,
+    });
+    if ("error" in built) {
+      setError(built.error);
       return;
-    }
-    let licenseFeePaise: number | undefined;
-    if (isLicense && licenseFeeINR.trim() !== "") {
-      const inr = parseFloat(licenseFeeINR);
-      if (!Number.isFinite(inr) || inr <= 0) {
-        setError("License fee must be a positive number (₹).");
-        return;
-      }
-      licenseFeePaise = Math.round(inr * 100);
     }
     createMutation.mutate({
       billingAccountId,
-      effectiveFrom: new Date(effectiveFrom).toISOString(),
-      effectiveTo: effectiveTo ? new Date(effectiveTo).toISOString() : null,
-      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
-      autoRenew,
       status,
-      ...(licenseFeePaise !== undefined
-        ? { licenseFeePaise, licenseCycle }
-        : {}),
+      ...built.payload,
     });
   };
 
@@ -382,121 +740,50 @@ function CreateContractDialog({
         </ResponsiveModalHeader>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="effective-from">Effective from *</Label>
-              <Input
-                id="effective-from"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="effective-to">Effective to</Label>
-              <Input
-                id="effective-to"
-                type="date"
-                value={effectiveTo}
-                onChange={(e) => setEffectiveTo(e.target.value)}
-                placeholder="Open-ended"
-              />
+          <ContractFinancialTermsFields
+            idPrefix="create"
+            effectiveFrom={effectiveFrom}
+            onEffectiveFromChange={setEffectiveFrom}
+            effectiveTo={effectiveTo}
+            onEffectiveToChange={setEffectiveTo}
+            isLicense={fundingSource === "LICENSE"}
+            paymentTermsDays={paymentTermsDays}
+            onPaymentTermsDaysChange={setPaymentTermsDays}
+            licenseModel={licenseModel}
+            onLicenseModelChange={setLicenseModel}
+            licenseCycle={licenseCycle}
+            onLicenseCycleChange={setLicenseCycle}
+            licenseFeeINR={licenseFeeINR}
+            onLicenseFeeINRChange={setLicenseFeeINR}
+            ratePerSeatINR={ratePerSeatINR}
+            onRatePerSeatINRChange={setRatePerSeatINR}
+            autoRenew={autoRenew}
+            onAutoRenewChange={setAutoRenew}
+          >
+            <div className="space-y-2">
+              <Label>Initial status</Label>
+              <div className="flex gap-2">
+                {(["ACTIVE", "DRAFT"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatus(s)}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      status === s
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border hover:border-foreground/40"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
               <p className="text-xs text-muted-foreground">
-                Leave blank for open-ended
+                ACTIVE contracts can immediately attach Programs. DRAFT
+                contracts need to be activated first.
               </p>
             </div>
-          </div>
-
-          {fundingSource !== "LICENSE" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="payment-terms">Payment terms (days) *</Label>
-              <Input
-                id="payment-terms"
-                type="number"
-                min={1}
-                max={120}
-                value={paymentTermsDays}
-                onChange={(e) => setPaymentTermsDays(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                NET-{paymentTermsDays || "?"} — how many days after invoice date
-                the org must pay.
-              </p>
-            </div>
-          )}
-
-          {fundingSource === "LICENSE" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="license-fee">License fee (₹/year)</Label>
-                <Input
-                  id="license-fee"
-                  type="number"
-                  min={1}
-                  step="1"
-                  placeholder="e.g. 7500000"
-                  value={licenseFeeINR}
-                  onChange={(e) => setLicenseFeeINR(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Optional. Recording the fee enables annual renewal billing and
-                  dashboard display. Skipping is reversible only by terminating
-                  this contract and creating a new one.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="license-cycle">Billing cycle</Label>
-                <select
-                  id="license-cycle"
-                  className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
-                  value={licenseCycle}
-                  onChange={(e) =>
-                    setLicenseCycle(
-                      e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
-                    )
-                  }
-                >
-                  <option value="ANNUAL">Annual</option>
-                  <option value="QUARTERLY">Quarterly</option>
-                  <option value="MONTHLY">Monthly</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label>Initial status</Label>
-            <div className="flex gap-2">
-              {(["ACTIVE", "DRAFT"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatus(s)}
-                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                    status === s
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border hover:border-foreground/40"
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              ACTIVE contracts can immediately attach Programs. DRAFT contracts
-              need to be activated first.
-            </p>
-          </div>
-
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox
-              checked={autoRenew}
-              onCheckedChange={(v) => setAutoRenew(v === true)}
-            />
-            <span className="text-sm">
-              Auto-renew when effective-to date passes
-            </span>
-          </label>
+          </ContractFinancialTermsFields>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
@@ -527,6 +814,254 @@ function CreateContractDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Supersede (Amend / Renew) dialog (#770 / #1844)
+// ---------------------------------------------------------------------------
+
+function SupersedeContractDialog({
+  orgId,
+  contract,
+  open,
+  onOpenChange,
+}: Readonly<{
+  orgId: string;
+  contract: ContractItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}>) {
+  const queryClient = useQueryClient();
+  const isLicense = contract.billingAccount?.fundingSource === "LICENSE";
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [reason, setReason] = useState<"AMENDMENT" | "RENEWAL">("AMENDMENT");
+  const [effectiveFrom, setEffectiveFrom] = useState(today);
+  const [effectiveTo, setEffectiveTo] = useState(
+    contract.effectiveTo ? contract.effectiveTo.slice(0, 10) : "",
+  );
+  const [paymentTermsDays, setPaymentTermsDays] = useState(
+    String(contract.paymentTermsDays),
+  );
+  const [autoRenew, setAutoRenew] = useState(contract.autoRenew);
+  const [licenseModel, setLicenseModel] = useState<"FLAT_FEE" | "PER_SEAT">(
+    contract.subscription?.model ?? "FLAT_FEE",
+  );
+  const [licenseCycle, setLicenseCycle] = useState<
+    "MONTHLY" | "QUARTERLY" | "ANNUAL"
+  >(contract.subscription?.cycle ?? "ANNUAL");
+  const [licenseFeeINR, setLicenseFeeINR] = useState(
+    contract.subscription?.flatFeePaise !== null &&
+      contract.subscription?.flatFeePaise !== undefined
+      ? String(contract.subscription.flatFeePaise / 100)
+      : "",
+  );
+  const [ratePerSeatINR, setRatePerSeatINR] = useState(
+    contract.subscription?.ratePerSeatPaise !== null &&
+      contract.subscription?.ratePerSeatPaise !== undefined
+      ? String(contract.subscription.ratePerSeatPaise / 100)
+      : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const contractRef = useRef(contract);
+  useEffect(() => {
+    contractRef.current = contract;
+  }, [contract]);
+
+  useEffect(() => {
+    if (!open) return;
+    const current = contractRef.current;
+    setReason("AMENDMENT");
+    setEffectiveFrom(new Date().toISOString().slice(0, 10));
+    setEffectiveTo(
+      current.effectiveTo ? current.effectiveTo.slice(0, 10) : "",
+    );
+    setPaymentTermsDays(String(current.paymentTermsDays));
+    setAutoRenew(current.autoRenew);
+    setLicenseModel(current.subscription?.model ?? "FLAT_FEE");
+    setLicenseCycle(current.subscription?.cycle ?? "ANNUAL");
+    setLicenseFeeINR(
+      current.subscription?.flatFeePaise !== null &&
+        current.subscription?.flatFeePaise !== undefined
+        ? String(current.subscription.flatFeePaise / 100)
+        : "",
+    );
+    setRatePerSeatINR(
+      current.subscription?.ratePerSeatPaise !== null &&
+        current.subscription?.ratePerSeatPaise !== undefined
+        ? String(current.subscription.ratePerSeatPaise / 100)
+        : "",
+    );
+    setError(null);
+  }, [open, contract.id]);
+
+  const supersedeMutation = useMutation({
+    mutationFn: (body: Parameters<typeof supersedeContract>[2]) =>
+      supersedeContract(orgId, contract.id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contracts-active", orgId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contract", orgId, contract.id],
+      });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const handleSubmit = () => {
+    setError(null);
+    if (isLicense) {
+      const origModel = contract.subscription?.model ?? "FLAT_FEE";
+      const origCycle = contract.subscription?.cycle ?? "ANNUAL";
+      const modelOrCycleChanged =
+        licenseModel !== origModel || licenseCycle !== origCycle;
+      const activeFeeBlank =
+        licenseModel === "FLAT_FEE"
+          ? licenseFeeINR.trim() === ""
+          : ratePerSeatINR.trim() === "";
+      if (modelOrCycleChanged && activeFeeBlank) {
+        setError(
+          "Enter the license fee or rate per seat when changing the license model or billing cycle.",
+        );
+        return;
+      }
+    }
+    const built = buildContractFinancialPayload({
+      effectiveFrom,
+      effectiveTo,
+      isLicense,
+      paymentTermsDays,
+      autoRenew,
+      licenseModel,
+      licenseCycle,
+      licenseFeeINR,
+      ratePerSeatINR,
+    });
+    if ("error" in built) {
+      setError(built.error);
+      return;
+    }
+
+    supersedeMutation.mutate({
+      reason,
+      ...built.payload,
+    });
+  };
+
+  return (
+    <ResponsiveModal open={open} onOpenChange={onOpenChange}>
+      <ResponsiveModalContent className="sm:max-w-md max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Amend / Renew Contract</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
+
+        <div className="space-y-4">
+          <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+            Creates a new ACTIVE contract with updated terms, transfers all
+            attached programs and license subscriptions, and retires the current
+            contract with a supersession audit trail.
+          </p>
+
+          <div className="space-y-1.5">
+            <Label>Supersession type *</Label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { value: "AMENDMENT", label: "Mid-term amendment" },
+                  { value: "RENEWAL", label: "Term renewal" },
+                ] as const
+              ).map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => {
+                    setReason(r.value);
+                    if (r.value === "RENEWAL" && contract.effectiveTo) {
+                      const nextStartIso = contract.effectiveTo.slice(0, 10);
+                      setEffectiveFrom(nextStartIso);
+                      const oldFromMs = new Date(
+                        contract.effectiveFrom,
+                      ).getTime();
+                      const oldToMs = new Date(contract.effectiveTo).getTime();
+                      const durationMs = Math.max(
+                        86_400_000,
+                        Number.isFinite(oldToMs - oldFromMs)
+                          ? oldToMs - oldFromMs
+                          : 365 * 86_400_000,
+                      );
+                      const nextEnd = new Date(
+                        new Date(nextStartIso).getTime() + durationMs,
+                      );
+                      setEffectiveTo(nextEnd.toISOString().slice(0, 10));
+                    } else {
+                      setEffectiveFrom(today);
+                      setEffectiveTo(
+                        contract.effectiveTo
+                          ? contract.effectiveTo.slice(0, 10)
+                          : "",
+                      );
+                    }
+                  }}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                    reason === r.value
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <ContractFinancialTermsFields
+            idPrefix="supersede"
+            effectiveFrom={effectiveFrom}
+            onEffectiveFromChange={setEffectiveFrom}
+            effectiveTo={effectiveTo}
+            onEffectiveToChange={setEffectiveTo}
+            isLicense={isLicense}
+            paymentTermsDays={paymentTermsDays}
+            onPaymentTermsDaysChange={setPaymentTermsDays}
+            licenseModel={licenseModel}
+            onLicenseModelChange={setLicenseModel}
+            licenseCycle={licenseCycle}
+            onLicenseCycleChange={setLicenseCycle}
+            licenseFeeINR={licenseFeeINR}
+            onLicenseFeeINRChange={setLicenseFeeINR}
+            ratePerSeatINR={ratePerSeatINR}
+            onRatePerSeatINRChange={setRatePerSeatINR}
+            autoRenew={autoRenew}
+            onAutoRenewChange={setAutoRenew}
+          />
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+
+        <ResponsiveModalFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={supersedeMutation.isPending}
+          >
+            {supersedeMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-1" /> Superseding…
+              </>
+            ) : (
+              "Supersede contract"
+            )}
+          </Button>
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Detail drawer (#777 §B) — read-only view of a single contract: status,
 // effective window, payment terms (Prepaid for LICENSE), auto-renew, and the
 // programs / subscription riding on it.
@@ -539,6 +1074,20 @@ function fmtPaymentTerms(
 ): string {
   if (c.billingAccount?.fundingSource === "LICENSE") return "Prepaid";
   return `NET-${c.paymentTermsDays}`;
+}
+
+function formatContractTermsCell(c: ContractItem): string {
+  if (c.billingAccount?.fundingSource !== "LICENSE") {
+    return `NET-${c.paymentTermsDays}`;
+  }
+  if (
+    c.subscription &&
+    (c.subscription.flatFeePaise !== null ||
+      c.subscription.ratePerSeatPaise !== null)
+  ) {
+    return fmtSubscription(c.subscription);
+  }
+  return "—";
 }
 
 function DetailRow({
@@ -561,12 +1110,12 @@ function ContractDetailDialog({
   contractId,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   contractId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const detail = useQuery({
     queryKey: ["org-contract", orgId, contractId],
     queryFn: () => fetchContract(orgId, contractId),
@@ -607,6 +1156,18 @@ function ContractDetailDialog({
               {c.subscription && (
                 <DetailRow label="Subscription">
                   {fmtSubscription(c.subscription)}
+                </DetailRow>
+              )}
+              {c.supersededByContractId && (
+                <DetailRow label="Superseded by">
+                  <span className="font-mono text-xs">
+                    {c.supersededByContractId}
+                  </span>
+                </DetailRow>
+              )}
+              {c.supersessionReason && (
+                <DetailRow label="Supersession reason">
+                  {c.supersessionReason}
                 </DetailRow>
               )}
             </div>
@@ -667,12 +1228,12 @@ function EditContractDialog({
   contractId,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   orgId: string;
   contractId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const detail = useQuery({
     queryKey: ["org-contract", orgId, contractId],
@@ -741,7 +1302,7 @@ function EditContractDialog({
       body.effectiveTo = toDate ? toDate.toISOString() : null;
       // LICENSE terms are prepaid — don't send paymentTermsDays for them.
       if (!isLicense) {
-        const parsed = parseInt(paymentTermsDays, 10);
+        const parsed = Number.parseInt(paymentTermsDays, 10);
         if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
           setError("Payment terms must be between 1 and 120 days.");
           return;
@@ -863,9 +1424,9 @@ function EditContractDialog({
 
 export default function OrgContractsPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ orgId: string }>;
-}) {
+}>) {
   const { orgId } = use(params);
   const { can } = useOrgRole(orgId);
   // contracts.read now includes BILLING_ADMIN (reconciliation, #1527);
@@ -879,6 +1440,9 @@ export default function OrgContractsPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<ContractItem | null>(null);
   const [editTarget, setEditTarget] = useState<ContractItem | null>(null);
+  const [supersedeTarget, setSupersedeTarget] = useState<ContractItem | null>(
+    null,
+  );
   const [activateTarget, setActivateTarget] = useState<ContractItem | null>(
     null,
   );
@@ -971,11 +1535,7 @@ export default function OrgContractsPage({
       className: "text-sm text-muted-foreground",
       cell: (c) => (
         <>
-          {c.billingAccount?.fundingSource === "LICENSE"
-            ? c.subscription && c.subscription.flatFeePaise !== null
-              ? fmtSubscription(c.subscription)
-              : "—"
-            : `NET-${c.paymentTermsDays}`}
+          {formatContractTermsCell(c)}
           {c.autoRenew && (
             <span className="ml-1 text-xs text-muted-foreground/70">
               (auto-renew)
@@ -1045,17 +1605,29 @@ export default function OrgContractsPage({
         </>
       )}
       {c.status === "ACTIVE" && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-          onClick={() => {
-            setActionError(null);
-            setTerminateTarget(c);
-          }}
-        >
-          Terminate
-        </Button>
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setActionError(null);
+              setSupersedeTarget(c);
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5 mr-1" /> Amend / Renew
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+            onClick={() => {
+              setActionError(null);
+              setTerminateTarget(c);
+            }}
+          >
+            Terminate
+          </Button>
+        </>
       )}
     </div>
   );
@@ -1150,6 +1722,18 @@ export default function OrgContractsPage({
           open={!!editTarget}
           onOpenChange={(v) => {
             if (!v) setEditTarget(null);
+          }}
+        />
+      )}
+
+      {/* Supersede (Amend / Renew) dialog */}
+      {supersedeTarget && (
+        <SupersedeContractDialog
+          orgId={orgId}
+          contract={supersedeTarget}
+          open={!!supersedeTarget}
+          onOpenChange={(v) => {
+            if (!v) setSupersedeTarget(null);
           }}
         />
       )}

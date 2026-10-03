@@ -9,9 +9,9 @@ export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 /** Live payout disbursement gate (#776 §B). */
 export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
-/** Section 194-O gross withholding base (#1132). */
+/** Section 194-O gross withholding base (#1132 / #1901 — defaults to true; set to "false" for shadow-only mode). */
 export const ENABLE_TDS_194O_GROSS =
-  process.env.ENABLE_TDS_194O_GROSS === "true";
+  process.env.ENABLE_TDS_194O_GROSS !== "false";
 
 /** Admin TDS dashboard + Form 26Q filing surfaces (#737). */
 export const ENABLE_TDS_ADMIN_VIEW =

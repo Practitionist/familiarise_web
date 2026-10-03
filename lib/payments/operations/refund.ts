@@ -1989,6 +1989,72 @@ export async function mintRefundCreditNote(
   return { creditNoteId: cn.id };
 }
 
+async function computeCreditNoteAmounts(
+  tx: Tx,
+  invoice: {
+    id: string;
+    subtotalPaise: number | null;
+    totalPaise: number;
+    igstPaise: number;
+    cgstPaise: number;
+    sgstPaise: number;
+  },
+  remaining: number,
+  amountPaise: number,
+  exactSubtotalPaise?: number,
+): Promise<{
+  cnSubtotal: number;
+  cnIgst: number;
+  cnCgst: number;
+  cnSgst: number;
+  cnTotal: number;
+} | null> {
+  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
+  const invoiceSubtotal =
+    invoice.subtotalPaise ?? Math.max(0, invoice.totalPaise - invoiceTax);
+  let cnSubtotal: number;
+  let cnTax: number;
+  let cnTotal: number;
+
+  if (exactSubtotalPaise !== undefined) {
+    // #1900: Compute credit note tax directly from exactSubtotalPaise to avoid
+    // 1-paisa rounding drift on cnSubtotal vs the overage ledger reversal.
+    const issuedSub = await tx.creditNote.aggregate({
+      where: { invoiceId: invoice.id },
+      _sum: { subtotalPaise: true },
+    });
+    const remainingSubtotalPaise = Math.max(
+      0,
+      invoiceSubtotal - sumPaise(issuedSub?._sum?.subtotalPaise),
+    );
+    cnSubtotal = Math.min(exactSubtotalPaise, remainingSubtotalPaise);
+    if (cnSubtotal <= 0) return null;
+    cnTax =
+      invoiceSubtotal > 0
+        ? Math.round((cnSubtotal * invoiceTax) / invoiceSubtotal)
+        : 0;
+    cnTotal = cnSubtotal + cnTax;
+    if (cnTotal > remaining) {
+      cnTotal = remaining;
+      cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+      cnSubtotal = cnTotal - cnTax;
+    }
+  } else {
+    cnTotal = Math.min(amountPaise, invoice.totalPaise, remaining);
+    if (cnTotal <= 0) return null;
+    const taxFraction =
+      invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+    cnTax = Math.round(cnTotal * taxFraction);
+    cnSubtotal = cnTotal - cnTax;
+  }
+
+  const interState = invoice.igstPaise > 0;
+  const cnIgst = interState ? cnTax : 0;
+  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
+  const cnCgst = interState ? 0 : cnTax - cnSgst;
+  return { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal };
+}
+
 /**
  * #776 / PR#785 review — mint a GST credit note (CGST Sec 34) for a refunded
  * ORG INVOICE payment (the org paid an OrganizationInvoice via the gateway and
@@ -2002,6 +2068,7 @@ export async function mintInvoiceRefundCreditNote(
   params: {
     invoiceId: string;
     amountPaise: number;
+    exactSubtotalPaise?: number;
     reason: string;
   } & (
     | { refundId: string; overageEventId?: never }
@@ -2024,14 +2091,19 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: true,
       status: true,
       issuedAt: true,
+      subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
       cgstPaise: true,
       sgstPaise: true,
     },
   });
-  if (!invoice || invoice.totalPaise <= 0) return { creditNoteId: null };
-  if (invoice.status === "DRAFT" || !invoice.issuedAt) {
+  if (
+    !invoice ||
+    invoice.totalPaise <= 0 ||
+    invoice.status === "DRAFT" ||
+    !invoice.issuedAt
+  ) {
     return { creditNoteId: null };
   }
 
@@ -2053,19 +2125,16 @@ export async function mintInvoiceRefundCreditNote(
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
-  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise, remaining);
-  if (cnTotal <= 0) return { creditNoteId: null };
 
-  // Same proportional-tax shape as mintRefundCreditNote.
-  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-  const cnTax = Math.round(cnTotal * taxFraction);
-  const cnSubtotal = cnTotal - cnTax;
-  const interState = invoice.igstPaise > 0;
-  const cnIgst = interState ? cnTax : 0;
-  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
-  const cnCgst = interState ? 0 : cnTax - cnSgst;
+  const amounts = await computeCreditNoteAmounts(
+    tx,
+    invoice,
+    remaining,
+    params.amountPaise,
+    params.exactSubtotalPaise,
+  );
+  if (!amounts) return { creditNoteId: null };
+  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = amounts;
 
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,

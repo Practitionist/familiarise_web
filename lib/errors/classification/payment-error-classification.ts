@@ -505,12 +505,19 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
       // #1819 — class batch enrolment closed, or re-priced mid-checkout.
       "ENROLMENT_CLOSED",
       "CLASS_PRICE_CHANGED",
+      // #1743 — subscription renewal already linked to an active successor.
+      "ALREADY_RENEWED",
     ] as const
   ).map((code) => ({
     code,
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 409,
   })),
+  {
+    code: "INVALID_RENEWAL_SOURCE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
   {
     code: "BACKUP_WINDOW_PAST",
     errorType: ErrorTypes.BOOKING_RULE,

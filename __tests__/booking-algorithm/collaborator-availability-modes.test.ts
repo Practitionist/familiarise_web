@@ -285,7 +285,10 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("No requested slots found");
+    expect(result.error).toContain(
+      "Requested-slot allocation is not supported for class events",
+    );
+    expect(result.errorCode).toBe("INVALID_MODE");
     // Nothing was confirmed, so no co-host could be double-booked either way.
     expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
 

@@ -34,7 +34,10 @@ import {
   recarveOverageBase,
   restoreOverageBaseCarve,
 } from "@/lib/payments/billing/overage-base-carve";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEventSafe,
+} from "@/lib/enterprise/system-events";
 import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
 
 /**
@@ -309,6 +312,7 @@ async function neutraliseInvoicedOverageBase(
     invoiceId,
     overageEventId,
     amountPaise: grossBasePaise,
+    exactSubtotalPaise: basePaise,
     reason:
       `Overage base for side-payment ${sidePaymentId} was paid ` +
       `directly by the member; credit it back against invoice ` +
@@ -329,26 +333,42 @@ async function neutraliseInvoicedOverageBase(
     : outcome === "FULLY_CREDITED"
       ? "no note issued — the invoice is already credited in full"
       : "NO credit note (invoice not issued / not found) — manual billing adjustment still needed";
-  await recordSystemErrorSafe({
-    db: tx,
-    organizationId,
-    category: "OVERAGE",
-    summary:
-      `Late capture of overage side-payment ${sidePaymentId} after its ` +
-      `parent was invoiced — base ${basePaise}p pulled off ORG_PAYABLE by ` +
-      `reversal ${key} and credited back on the invoice by ${creditNoteLabel}`,
-    err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
-    context: {
-      sidePaymentId,
-      paymentIntentId,
-      invoiceId,
-      basePaise,
-      grossBasePaise,
-      creditNoteId,
-      creditNoteOutcome: outcome ?? null,
-      ledgerReversalKey: key,
-    },
-  });
+  const summary =
+    `Late capture of overage side-payment ${sidePaymentId} after its ` +
+    `parent was invoiced — base ${basePaise}p pulled off ORG_PAYABLE by ` +
+    `reversal ${key} and credited back on the invoice by ${creditNoteLabel}`;
+  const context = {
+    sidePaymentId,
+    paymentIntentId,
+    invoiceId,
+    basePaise,
+    grossBasePaise,
+    creditNoteId,
+    creditNoteOutcome: outcome ?? null,
+    ledgerReversalKey: key,
+  };
+  if (creditNoteId && typeof recordSystemEventSafe === "function") {
+    await recordSystemEventSafe({
+      db: tx,
+      organizationId,
+      category: "OVERAGE",
+      severity: "INFO",
+      message: summary,
+      context: {
+        action: "OVERAGE_INVOICED_BASE_NEUTRALISED",
+        ...context,
+      },
+    });
+  } else {
+    await recordSystemErrorSafe({
+      db: tx,
+      organizationId,
+      category: "OVERAGE",
+      summary,
+      err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
+      context,
+    });
+  }
 }
 
 /**

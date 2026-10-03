@@ -18,21 +18,131 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 
-const BodySchema = z.object({
-  reason: z.enum(["AMENDMENT", "RENEWAL"]),
-  // New terms — anything omitted carries over from the old contract.
-  effectiveFrom: z.coerce.date().optional(),
-  effectiveTo: z.coerce.date().nullable().optional(),
-  paymentTermsDays: z.coerce.number().int().min(1).max(120).optional(),
-  autoRenew: z.coerce.boolean().optional(),
-  rateCardId: z.string().min(1).nullable().optional(),
-  // License overrides (E2E-audit P0 fix): when present, the carried-over
-  // BillingSubscription is re-priced with these instead of the old terms.
-  licenseCycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]).optional(),
-  licenseFeePaise: z.coerce.number().int().positive().optional(),
-});
+const BodySchema = z
+  .object({
+    reason: z.enum(["AMENDMENT", "RENEWAL"]),
+    // New terms — anything omitted carries over from the old contract.
+    effectiveFrom: z.coerce.date().optional(),
+    effectiveTo: z.coerce.date().nullable().optional(),
+    paymentTermsDays: z.coerce.number().int().min(1).max(120).optional(),
+    autoRenew: z.coerce.boolean().optional(),
+    rateCardId: z.string().min(1).nullable().optional(),
+    // License overrides (E2E-audit P0 fix): when present, the carried-over
+    // BillingSubscription is re-priced with these instead of the old terms.
+    licenseModel: z.enum(["FLAT_FEE", "PER_SEAT"]).optional(),
+    licenseCycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]).optional(),
+    licenseFeePaise: z.coerce.number().int().positive().optional(),
+    licenseRatePerSeatPaise: z.number().int().min(1).optional(),
+  })
+  .superRefine(validateContractLicenseInput);
+
+type SupersedeBody = z.infer<typeof BodySchema>;
+
+function resolveEffectiveWindow(
+  old: { effectiveFrom: Date; effectiveTo: Date | null },
+  body: SupersedeBody,
+  now: Date,
+): { effectiveFrom: Date; effectiveTo: Date | null } {
+  // RENEWAL chains off the old term's end; AMENDMENT cuts over now.
+  const renewalDefaultStart = old.effectiveTo ?? now;
+  const defaultStart = body.reason === "RENEWAL" ? renewalDefaultStart : now;
+  const effectiveFrom = body.effectiveFrom ?? defaultStart;
+
+  // RENEWAL default = same duration as the old term; AMENDMENT keeps the
+  // old end date (the term length isn't changing, only the terms).
+  let defaultTo: Date | null = old.effectiveTo;
+  if (body.reason === "RENEWAL") {
+    defaultTo = old.effectiveTo
+      ? new Date(
+          effectiveFrom.getTime() +
+            (old.effectiveTo.getTime() - old.effectiveFrom.getTime()),
+        )
+      : null;
+  }
+  const effectiveTo =
+    body.effectiveTo !== undefined ? body.effectiveTo : defaultTo;
+
+  if (
+    effectiveTo !== null &&
+    effectiveTo.getTime() <= effectiveFrom.getTime()
+  ) {
+    throw Object.assign(
+      new Error("effectiveTo must be strictly after effectiveFrom"),
+      { httpStatus: 400, code: "INVALID_EFFECTIVE_WINDOW" },
+    );
+  }
+
+  return { effectiveFrom, effectiveTo };
+}
+
+function resolveNextSubscriptionModel(
+  body: SupersedeBody,
+  oldModel: "FLAT_FEE" | "PER_SEAT" | null | undefined,
+): "FLAT_FEE" | "PER_SEAT" {
+  if (body.licenseModel !== undefined) {
+    return body.licenseModel;
+  }
+  if (body.licenseRatePerSeatPaise !== undefined) {
+    return "PER_SEAT";
+  }
+  if (body.licenseFeePaise !== undefined) {
+    return "FLAT_FEE";
+  }
+  return oldModel ?? "FLAT_FEE";
+}
+
+function buildRepricedSubscriptionUpdateData(
+  oldSubscription: {
+    model: "FLAT_FEE" | "PER_SEAT" | null;
+    cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+    ratePerSeatPaise: number | bigint | null;
+    flatFeePaise: number | bigint | null;
+  },
+  successorId: string,
+  body: SupersedeBody,
+  effectiveFrom: Date,
+  effectiveTo: Date | null,
+) {
+  const subCycle = body.licenseCycle ?? oldSubscription.cycle;
+  const subCycleEnd = nextPeriodEnd(effectiveFrom, subCycle);
+  const nextModel = resolveNextSubscriptionModel(body, oldSubscription.model);
+  const isPerSeat = nextModel === "PER_SEAT";
+
+  let ratePerSeatPaise: number | null = null;
+  if (isPerSeat) {
+    if (body.licenseRatePerSeatPaise !== undefined) {
+      ratePerSeatPaise = body.licenseRatePerSeatPaise;
+    } else if (oldSubscription.ratePerSeatPaise !== null) {
+      ratePerSeatPaise = Number(oldSubscription.ratePerSeatPaise);
+    }
+  }
+
+  let flatFeePaise: number | null = null;
+  if (!isPerSeat) {
+    if (body.licenseFeePaise !== undefined) {
+      flatFeePaise = body.licenseFeePaise;
+    } else if (oldSubscription.flatFeePaise !== null) {
+      flatFeePaise = Number(oldSubscription.flatFeePaise);
+    }
+  }
+
+  return {
+    contractId: successorId,
+    model: nextModel,
+    cycle: subCycle,
+    ratePerSeatPaise,
+    flatFeePaise,
+    currentCycleStart: effectiveFrom,
+    currentCycleEnd: subCycleEnd,
+    nextInvoiceDate: subCycleEnd,
+    startsAt: effectiveFrom,
+    endsAt: effectiveTo ?? null,
+    renewalReminderSentAt: null,
+  };
+}
 
 export async function POST(
   req: NextRequest,
@@ -83,23 +193,29 @@ export async function POST(
       }
 
       const now = new Date();
-      // RENEWAL chains off the old term's end; AMENDMENT cuts over now.
-      const effectiveFrom =
-        body.effectiveFrom ??
-        (body.reason === "RENEWAL" ? (old.effectiveTo ?? now) : now);
-      // RENEWAL default = same duration as the old term; AMENDMENT keeps the
-      // old end date (the term length isn't changing, only the terms).
-      const defaultTo =
-        body.reason === "RENEWAL"
-          ? old.effectiveTo
-            ? new Date(
-                effectiveFrom.getTime() +
-                  (old.effectiveTo.getTime() - old.effectiveFrom.getTime()),
-              )
-            : null
-          : old.effectiveTo;
-      const effectiveTo =
-        body.effectiveTo !== undefined ? body.effectiveTo : defaultTo;
+      const { effectiveFrom, effectiveTo } = resolveEffectiveWindow(
+        old,
+        body,
+        now,
+      );
+
+      const hasLicenseOverride =
+        body.licenseModel !== undefined ||
+        body.licenseCycle !== undefined ||
+        body.licenseFeePaise !== undefined ||
+        body.licenseRatePerSeatPaise !== undefined;
+
+      const oldSubscription = await tx.billingSubscription.findUnique({
+        where: { contractId: old.id },
+      });
+      if (!oldSubscription && hasLicenseOverride) {
+        throw Object.assign(
+          new Error(
+            "Cannot re-price license on a contract without an existing subscription",
+          ),
+          { httpStatus: 409, code: "NO_SUBSCRIPTION_TO_REPRICE" },
+        );
+      }
 
       const successor = await tx.contract.create({
         data: {
@@ -163,28 +279,16 @@ export async function POST(
       // the same treatment — re-pricing from the override fields when given
       // and restarting the billing clock at the new effectiveFrom. No row is
       // deleted; the money trail on invoices stays untouched.
-      const oldSubscription = await tx.billingSubscription.findUnique({
-        where: { contractId: old.id },
-      });
       if (oldSubscription) {
-        const subCycle = body.licenseCycle ?? oldSubscription.cycle;
-        const subCycleEnd = nextPeriodEnd(effectiveFrom, subCycle);
         await tx.billingSubscription.update({
           where: { id: oldSubscription.id },
-          data: {
-            contractId: successor.id,
-            cycle: subCycle,
-            flatFeePaise:
-              body.licenseFeePaise !== undefined
-                ? BigInt(body.licenseFeePaise)
-                : oldSubscription.flatFeePaise,
-            currentCycleStart: effectiveFrom,
-            currentCycleEnd: subCycleEnd,
-            nextInvoiceDate: subCycleEnd,
-            startsAt: effectiveFrom,
-            endsAt: effectiveTo ?? null,
-            renewalReminderSentAt: null,
-          },
+          data: buildRepricedSubscriptionUpdateData(
+            oldSubscription,
+            successor.id,
+            body,
+            effectiveFrom,
+            effectiveTo,
+          ),
         });
       }
 

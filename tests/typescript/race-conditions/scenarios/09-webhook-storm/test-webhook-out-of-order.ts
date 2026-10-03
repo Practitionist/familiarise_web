@@ -19,19 +19,12 @@ import {
   finish,
   ensureServerOrSkip,
 } from "../../utilities/api-client";
+import {
+  buildRazorpayPaymentCapturedEnvelope,
+  buildRazorpayRefundCreatedEnvelope,
+} from "../../utilities/fixtures";
 
 const SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
-
-function envelope(event: string, payloadBody: object) {
-  return JSON.stringify({
-    entity: "event",
-    account_id: "acc_chaos",
-    event,
-    contains: [event.split(".")[0]],
-    payload: payloadBody,
-    created_at: Math.floor(Date.now() / 1000),
-  });
-}
 
 async function deliver(payload: string) {
   const signature = crypto
@@ -63,17 +56,12 @@ async function run() {
 
   // 1) Refund arrives FIRST.
   const refundFirst = await deliver(
-    envelope("refund.created", {
-      refund: {
-        entity: {
-          id: refundId,
-          entity: "refund",
-          payment_id: paymentId,
-          amount: 100,
-          currency: "INR",
-          status: "created",
-        },
-      },
+    buildRazorpayRefundCreatedEnvelope({
+      refundId,
+      paymentId,
+      amount: 100,
+      currency: "INR",
+      status: "created",
     }),
   );
   check(
@@ -84,17 +72,11 @@ async function run() {
 
   // 2) Capture lands afterwards.
   const captureLater = await deliver(
-    envelope("payment.captured", {
-      payment: {
-        entity: {
-          id: paymentId,
-          entity: "payment",
-          order_id: `order_chaos_ooo_${suffix}`,
-          status: "captured",
-          amount: 100,
-          currency: "INR",
-        },
-      },
+    buildRazorpayPaymentCapturedEnvelope({
+      paymentId,
+      orderId: `order_chaos_ooo_${suffix}`,
+      amount: 100,
+      currency: "INR",
     }),
   );
   check(
@@ -120,17 +102,12 @@ async function run() {
 
   // 4) Replaying each once more stays deduped.
   await deliver(
-    envelope("refund.created", {
-      refund: {
-        entity: {
-          id: refundId,
-          entity: "refund",
-          payment_id: paymentId,
-          amount: 100,
-          currency: "INR",
-          status: "created",
-        },
-      },
+    buildRazorpayRefundCreatedEnvelope({
+      refundId,
+      paymentId,
+      amount: 100,
+      currency: "INR",
+      status: "created",
     }),
   );
   const refundRowsAfterReplay = await prisma.webhookEvent.count({

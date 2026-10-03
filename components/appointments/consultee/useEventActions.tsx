@@ -280,7 +280,9 @@ export function useEventActions({
       return true;
     } catch (error) {
       reportActionFailure(error, "appointment.reschedule");
-      console.error("Error requesting reschedule:", error);
+      if (!isExpectedRefusal(error)) {
+        console.error("Error requesting reschedule:", error);
+      }
       const code =
         error instanceof ApiResponseError ? error.code : undefined;
       // #1863 — RESCHEDULE_ALREADY_OPEN is the one refusal here that is not a

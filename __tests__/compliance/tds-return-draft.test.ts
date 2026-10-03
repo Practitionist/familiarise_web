@@ -12,8 +12,13 @@ import {
   buildTdsReturnDraft,
   closedIndianFyQuarterOf,
   indianFyQuarterOf,
+  tdsDeducteeKey,
   type TdsReturnSourceRow,
 } from "@/lib/compliance/tds-return";
+import {
+  accumulateByDeductee,
+  buildSourceRows,
+} from "../../jobs/compliance/tds-26q-draft-export";
 
 describe("indianFyQuarterOf", () => {
   it("maps calendar months to IST fiscal quarters with the Apr-start FY label", () => {
@@ -175,4 +180,154 @@ describe("buildTdsReturnDraft", () => {
     // artifact" warning must be gone rather than merely inaccurate.
     expect(d.warnings.join(" ")).not.toMatch(/OrganizationPayout/);
   });
+
+  it("derives amountCreditedPaise directly from COMPLETED payouts net of reversal base reductions instead of cumulative watermark (#1481)", () => {
+    // Q1 ended with watermark 6_000_000.
+    // In Q2:
+    //   1. Payout po_1 (1_000_000p) -> cumulative 7_000_000p
+    //   2. Reversal (-500p at 10 bps = 500_000p base) -> lowers running total to 6_500_000p
+    //   3. Payout po_2 (400_000p) -> cumulative 6_900_000p (still below 7_000_000p watermark!)
+    // Under the old watermark-minus-baseline formula, windowMax (7_000_000) - baseline (6_000_000)
+    // - reversal (500_000) = 500_000p (dropping po_2's 400_000p!).
+    // Direct COMPLETED payout sum gives 1_000_000 + 400_000 - 500_000 = 900_000p.
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 7_000_000,
+        tdsDeducted: 1_000,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 1_000_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 6_500_000,
+        tdsDeducted: -500,
+        isReversal: true,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 1_000_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 6_900_000,
+        tdsDeducted: 400,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_2", amount: 400_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+    ]);
+
+    const rows = buildSourceRows(
+      byDeductee,
+      new Map([[tdsDeducteeKey("CONSULTANT", "c1"), 6_000_000]]),
+      new Map(),
+      new Map([["194O", "1005"]]),
+    );
+
+    const primaryRow = rows.find((r) => !r.isReversal);
+    expect(primaryRow?.amountCreditedPaise).toBe(900_000);
+    expect(primaryRow?.tdsDeductedPaise).toBe(1_400);
+  });
+
+  it("retains unlinked positive base alongside linked COMPLETED payouts and ignores non-COMPLETED payout reversals", () => {
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_000_000,
+        tdsDeducted: 1_000,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 1_000_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_300_000,
+        tdsDeducted: 300,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: null,
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_100_000,
+        tdsDeducted: -200,
+        isReversal: true,
+        reportedInForm26Q: false,
+        payout: { id: "po_failed", amount: 200_000, status: "FAILED" },
+        orgPayout: null,
+      },
+    ]);
+
+    const rows = buildSourceRows(
+      byDeductee,
+      new Map(),
+      new Map(),
+      new Map([["194O", "1005"]]),
+    );
+    const primaryRow = rows.find((r) => !r.isReversal);
+    expect(primaryRow?.amountCreditedPaise).toBe(1_300_000);
+    expect(primaryRow?.tdsDeductedPaise).toBe(1_300);
+  });
+
+  it("clamps negative rawCreditedPaise to 0 when reversal base exceeds quarter payouts", () => {
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 500_000,
+        tdsDeducted: 500,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 500_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 0,
+        tdsDeducted: -800,
+        isReversal: true,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 500_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+    ]);
+
+    const rows = buildSourceRows(
+      byDeductee,
+      new Map(),
+      new Map(),
+      new Map([["194O", "1005"]]),
+    );
+    const primaryRow = rows.find((r) => !r.isReversal);
+    expect(primaryRow?.amountCreditedPaise).toBe(0);
+  });
 });
+

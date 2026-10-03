@@ -114,9 +114,9 @@ import {
   calendarDayOf,
   footerZoneLine,
   isOnCalendarDay,
-  resolveGridZone,
   rowOf,
 } from "@/lib/time/grid-zone";
+import { resolveGridZone } from "@/lib/scheduling/intervalSelectionValidation";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -654,6 +654,90 @@ function resolvePastConfirmedSlotCount(
   return undefined;
 }
 
+function buildInteractiveSlotCellClassName(
+  statusKey: SlotStatusKey,
+  mode: UnifiedCalendarProps["mode"],
+  eventType: UnifiedCalendarProps["eventType"],
+  isInPast: boolean,
+): string {
+  let cellClassName = slotCellClassName(statusKey);
+  switch (statusKey) {
+    case "selected":
+      return `${cellClassName} cursor-pointer`;
+    case "thisEvent":
+      return `${cellClassName} cursor-pointer${isInPast ? " opacity-60" : ""}`;
+    case "rescheduling":
+      return `${cellClassName} cursor-pointer${isInPast ? " opacity-50" : ""}`;
+    case "fullyBooked":
+    case "partiallyBooked":
+      cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
+      return `${cellClassName}${isInPast ? " opacity-50" : ""}`;
+    case "available":
+      cellClassName += " cursor-pointer";
+      if (eventType === "consultation") cellClassName += " hover:shadow-md";
+      return cellClassName;
+    case "past":
+    case "outsidePeriod":
+      return `${cellClassName} cursor-pointer`;
+    case "unavailable":
+      return `${cellClassName} cursor-not-allowed`;
+  }
+}
+
+function wrapCellWithSlotTooltip(
+  buttonElement: React.ReactElement,
+  isCurrentEventSlot: boolean,
+  eventType: UnifiedCalendarProps["eventType"],
+  isInPast: boolean,
+  overlappingAppointments: AppointmentDetail[],
+): React.ReactElement {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
+        <TooltipContent
+          className="max-w-xs text-xs"
+          side="top"
+          align="center"
+        >
+          <div className="flex flex-col gap-1">
+            {isCurrentEventSlot ? (
+              <div>
+                <p className="font-semibold">This Event&apos;s Slot</p>
+                <p className="text-muted-foreground">
+                  {eventTypeLabel(eventType)}
+                </p>
+                <p className="text-muted-foreground text-[10px] mt-1">
+                  {isInPast
+                    ? "Past session (completed)"
+                    : "Click to reschedule"}
+                </p>
+              </div>
+            ) : (
+              overlappingAppointments.map(
+                (appSlot: AppointmentDetail, index: number) => (
+                  <div
+                    key={`${appSlot.id}-${index}`}
+                    className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
+                  >
+                    <p className="font-semibold">{appSlot.title}</p>
+                    <p className="text-muted-foreground">{appSlot.type}</p>
+                    {appSlot.with && (
+                      <p className="text-muted-foreground">
+                        with {appSlot.with}
+                      </p>
+                    )}
+                  </div>
+                ),
+              )
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export function UnifiedCalendar({
   consultantId,
   eventType,
@@ -688,7 +772,14 @@ export function UnifiedCalendar({
   // this component is client-only (SafeUnifiedCalendar loads it with ssr
   // false), so there is no server render to disagree with.
   const [browserTimezone] = useState(() => gridTimeZone());
-  const gridZone = resolveGridZone(viewerZone, browserTimezone);
+  const [preferViewerZone, setPreferViewerZone] = useState(false);
+  const [consultantTz, setConsultantTz] = useState<string | null>(null);
+  const effectiveSchedulingTz = schedulingTimezone ?? consultantTz ?? null;
+  const gridZone = resolveGridZone(viewerZone, browserTimezone, {
+    eventType,
+    schedulingTimezone: effectiveSchedulingTz,
+    preferViewerZone,
+  });
   // State
   const [currentDate, setCurrentDate] = useState(() => {
     if (!focus) return new Date();
@@ -749,6 +840,15 @@ export function UnifiedCalendar({
     // entire calendar over a tooltip it never draws.
     includeAppointmentDetails: mode === "allocate",
   });
+
+  const loadedConsultantTz =
+    (consultantDetails as { timezone?: string | null } | null)?.timezone ??
+    null;
+  useEffect(() => {
+    if (loadedConsultantTz && loadedConsultantTz !== consultantTz) {
+      setConsultantTz(loadedConsultantTz);
+    }
+  }, [loadedConsultantTz, consultantTz]);
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
   const handleAllocationSuccess = useCallback(
@@ -861,7 +961,7 @@ export function UnifiedCalendar({
     weeklyConfirmedCallCounts,
     initialAllocation,
     expectedTentativeSlotCount,
-    schedulingTimezone,
+    schedulingTimezone: effectiveSchedulingTz ?? undefined,
     onSuccess: handleAllocationSuccess,
     onConflict: onAllocationConflict ?? refreshGridData,
     onStaleData: refreshGridData,
@@ -987,6 +1087,7 @@ export function UnifiedCalendar({
       if (!targetSize || targetSize <= 1) return [clickedSlot];
 
       const clickedLocalStart = new Date(clickedSlot.startTime);
+      const bucketTz = effectiveSchedulingTz ?? undefined;
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
       const getEligibleSlot = (
@@ -998,11 +1099,8 @@ export function UnifiedCalendar({
         // Same-day constraint in the event's scheduling timezone — a session
         // must not straddle the limit-bucket day boundary (ADR B9).
         if (
-          ScheduleCalculationService.dayKey(targetTime, schedulingTimezone) !==
-          ScheduleCalculationService.dayKey(
-            clickedLocalStart,
-            schedulingTimezone,
-          )
+          ScheduleCalculationService.dayKey(targetTime, bucketTz) !==
+          ScheduleCalculationService.dayKey(clickedLocalStart, bucketTz)
         )
           return null;
 
@@ -1080,7 +1178,7 @@ export function UnifiedCalendar({
       selectedSlots,
       allowedStart,
       allowedEnd,
-      schedulingTimezone,
+      effectiveSchedulingTz,
       gridZone,
     ],
   );
@@ -1091,6 +1189,7 @@ export function UnifiedCalendar({
       if (mode === "view") return;
 
       const status = getSlotStatusForInterval(interval, date);
+      const bucketTz = effectiveSchedulingTz ?? undefined;
 
       const slot: CalendarInterval = {
         startTime: new Date(status.intervalStartUTCString),
@@ -1136,20 +1235,18 @@ export function UnifiedCalendar({
         const intervalStart = new Date(status.intervalStartUTCString);
         const targetDayKey = ScheduleCalculationService.dayKey(
           intervalStart,
-          schedulingTimezone,
+          bucketTz,
         );
         const isStartingNewDay = !selectedSlots.some(
           (s) =>
-            ScheduleCalculationService.dayKey(
-              s.startTime,
-              schedulingTimezone,
-            ) === targetDayKey,
+            ScheduleCalculationService.dayKey(s.startTime, bucketTz) ===
+            targetDayKey,
         );
 
         if (isStartingNewDay) {
           const targetWeekKey = ScheduleCalculationService.weekKey(
             intervalStart,
-            schedulingTimezone,
+            bucketTz,
           );
           const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
           // #997 Phase 3 — server-precomputed confirmed-call count for this
@@ -1164,7 +1261,7 @@ export function UnifiedCalendar({
             selectedSlots,
             slotsPerCall,
             targetWeekKey,
-            schedulingTimezone,
+            bucketTz,
           );
           const totalCompletedThisWeek = completedCalls + selectedCompleted;
 
@@ -1173,7 +1270,7 @@ export function UnifiedCalendar({
             toast(
               weeklyLimitReached(
                 sessionsPerWeek,
-                schedulingWeekBucket(intervalStart, schedulingTimezone),
+                schedulingWeekBucket(intervalStart, bucketTz),
               ),
             );
             return;
@@ -1263,7 +1360,7 @@ export function UnifiedCalendar({
       eventId,
       sessionsPerWeek,
       sessionDurationInHours,
-      schedulingTimezone,
+      effectiveSchedulingTz,
       allowedStart,
       allowedEnd,
       selectedSlots,
@@ -1509,30 +1606,179 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, visibleRows, gridZone]);
 
+  // #1715 — Roving tabIndex & keyboard cell navigation across the 7 × 48 grid.
+  const [focusedCell, setFocusedCell] = useState<{
+    dayIndex: number;
+    slotIndex: number;
+  }>({ dayIndex: 0, slotIndex: 0 });
+  const pendingFocusCellRef = useRef<{
+    dayIndex: number;
+    slotIndex: number;
+  } | null>(null);
+
+  const activeFocusedDayIndex = Math.max(0, Math.min(6, focusedCell.dayIndex));
+  const activeFocusedSlotIndex = useMemo(() => {
+    if (visibleRows.length === 0) return focusedCell.slotIndex;
+    if (visibleRows.includes(focusedCell.slotIndex)) {
+      return focusedCell.slotIndex;
+    }
+    return (
+      nearestVisibleRow(focusedCell.slotIndex, visibleRows) ?? visibleRows[0]
+    );
+  }, [focusedCell.slotIndex, visibleRows]);
+
+  useEffect(() => {
+    const pending = pendingFocusCellRef.current;
+    if (!pending || !weekGridEl) return;
+    const target = weekGridEl.querySelector<HTMLElement>(
+      `[data-day-index="${pending.dayIndex}"][data-slot-index="${pending.slotIndex}"]`,
+    );
+    if (target) {
+      pendingFocusCellRef.current = null;
+      target.focus();
+    }
+  }, [weekGridEl, weekDates, visibleRows, focusedCell]);
+
+  const handleCellKeyDown = useCallback(
+    (
+      event: React.KeyboardEvent<HTMLElement>,
+      dayIndex: number,
+      rowIndex: number,
+      interval: { hour: number; minute: number },
+      date: Date,
+      isDisabled: boolean,
+    ) => {
+      const moveFocus = (nextDay: number, nextSlot: number) => {
+        const clampedDay = Math.max(0, Math.min(6, nextDay));
+        const clampedSlot = Math.max(0, Math.min(47, nextSlot));
+        pendingFocusCellRef.current = {
+          dayIndex: clampedDay,
+          slotIndex: clampedSlot,
+        };
+        setFocusedCell({ dayIndex: clampedDay, slotIndex: clampedSlot });
+        const target = weekGridEl?.querySelector<HTMLElement>(
+          `[data-day-index="${clampedDay}"][data-slot-index="${clampedSlot}"]`,
+        );
+        if (target) {
+          pendingFocusCellRef.current = null;
+          target.focus();
+        }
+      };
+
+      switch (event.key) {
+        case "ArrowRight": {
+          event.preventDefault();
+          moveFocus(dayIndex + 1, rowIndex);
+          break;
+        }
+        case "ArrowLeft": {
+          event.preventDefault();
+          moveFocus(dayIndex - 1, rowIndex);
+          break;
+        }
+        case "ArrowDown": {
+          event.preventDefault();
+          const pos = visibleRows.indexOf(rowIndex);
+          const nextSlot =
+            pos >= 0 && pos + 1 < visibleRows.length
+              ? visibleRows[pos + 1]
+              : Math.min(47, rowIndex + 1);
+          moveFocus(dayIndex, nextSlot);
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const pos = visibleRows.indexOf(rowIndex);
+          const prevSlot =
+            pos > 0 ? visibleRows[pos - 1] : Math.max(0, rowIndex - 1);
+          moveFocus(dayIndex, prevSlot);
+          break;
+        }
+        case "Home": {
+          event.preventDefault();
+          const firstRow = visibleRows.length > 0 ? visibleRows[0] : 0;
+          moveFocus(dayIndex, firstRow);
+          break;
+        }
+        case "End": {
+          event.preventDefault();
+          const lastRow =
+            visibleRows.length > 0 ? visibleRows[visibleRows.length - 1] : 47;
+          moveFocus(dayIndex, lastRow);
+          break;
+        }
+        case "PageUp": {
+          event.preventDefault();
+          pendingFocusCellRef.current = {
+            dayIndex,
+            slotIndex: rowIndex,
+          };
+          setFocusedCell({ dayIndex, slotIndex: rowIndex });
+          setCurrentDate((prev) => subWeeks(prev, 1));
+          break;
+        }
+        case "PageDown": {
+          event.preventDefault();
+          pendingFocusCellRef.current = {
+            dayIndex,
+            slotIndex: rowIndex,
+          };
+          setFocusedCell({ dayIndex, slotIndex: rowIndex });
+          setCurrentDate((prev) => addWeeks(prev, 1));
+          break;
+        }
+        case "Enter":
+        case " ": {
+          event.preventDefault();
+          if (!isDisabled) {
+            handleSlotClick(interval, date);
+          }
+          break;
+        }
+      }
+    },
+    [visibleRows, weekGridEl, handleSlotClick],
+  );
+
   // Render time cell
   const renderTimeCell = useCallback(
-    (interval: { hour: number; minute: number }, date: Date) => {
+    (
+      interval: { hour: number; minute: number },
+      date: Date,
+      dayIndex: number,
+    ) => {
       const cell = describeCell(interval, date);
       const { status, statusKey, isCurrentEventSlot } = cell;
       const intervalStart = new Date(status.intervalStartUTCString);
       const token = SLOT_STATUS_TOKENS[statusKey];
+      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
+      const isFocusedCell =
+        activeFocusedDayIndex === dayIndex &&
+        activeFocusedSlotIndex === rowIndex;
+      const isSelected = statusKey === "selected";
       // Full state on every cell, so the visible word can leave the cell
       // without the screen reader or the hover losing it (#1703 F1).
       const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart, { zone: gridZone })}`;
 
       // Fast-exit: a cell with nothing published, nothing booked and already
-      // past is never interactive, so it renders as a plain block instead of a
-      // button. It paints from the same `unavailable` token as every other
-      // dead cell — it used to be its own gray-100/gray-200 pair, which is how
-      // past days and future days ended up disagreeing about what "nothing
-      // here" looks like (#1064).
+      // past is never interactive, so it renders as an aria-disabled button in
+      // the roving-tabindex grid. It paints from the same `unavailable` token
+      // as every other dead cell (#1064).
       if (!status.isAvailable && !status.isBooked && status.isInPast) {
         return (
-          <div
+          <button
+            type="button"
             className={slotCellClassName("unavailable", { faded: true })}
             title={accessibleLabel}
             aria-label={accessibleLabel}
-            role="img"
+            tabIndex={isFocusedCell ? 0 : -1}
+            aria-disabled={true}
+            data-day-index={dayIndex}
+            data-slot-index={rowIndex}
+            onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
+            onKeyDown={(e) =>
+              handleCellKeyDown(e, dayIndex, rowIndex, interval, date, true)
+            }
             // A selection that ages into this branch must stay findable by
             // "Go to selection" (#1703 F2).
             data-slot-start={status.intervalStartUTCString}
@@ -1543,55 +1789,21 @@ export function UnifiedCalendar({
       // The word stays on the first cell of a contiguous run only: the row
       // above, same column, saying the same thing means this cell is a
       // continuation and the text is noise (#1703 F1).
-      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
       const above = rowIndex > 0 ? INTERVALS[rowIndex - 1] : null;
       const continuesRun =
         above !== null && describeCell(above, date).label === cell.label;
       const buttonText = continuesRun ? "" : cell.label;
 
-      // ONE token, appended once, on top of a base string that carries no
-      // border-COLOUR. Every branch below adds cursor/opacity only — a second
-      // border-color utility on this element is structurally impossible now,
-      // which is what the reverted attempt got wrong (#1064).
-      let cellClassName = slotCellClassName(statusKey);
+      const cellClassName = buildInteractiveSlotCellClassName(
+        statusKey,
+        mode,
+        eventType,
+        status.isInPast,
+      );
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
           status.overlappingAppointments.length > 0) ||
         isCurrentEventSlot;
-
-      switch (statusKey) {
-        case "selected":
-          cellClassName += " cursor-pointer";
-          break;
-        case "thisEvent":
-          cellClassName += " cursor-pointer";
-          cellClassName += status.isInPast ? " opacity-60" : "";
-          break;
-        case "rescheduling":
-          cellClassName += " cursor-pointer";
-          cellClassName += status.isInPast ? " opacity-50" : "";
-          break;
-        case "fullyBooked":
-        case "partiallyBooked":
-          // View mode is read-only: a pointer cursor promises an action the
-          // early-returning click handler never takes.
-          cellClassName +=
-            mode === "view" ? " cursor-default" : " cursor-pointer";
-          cellClassName += status.isInPast ? " opacity-50" : "";
-          break;
-        case "available":
-          cellClassName += " cursor-pointer";
-          if (eventType === "consultation") cellClassName += " hover:shadow-md";
-          break;
-        case "past":
-        case "outsidePeriod":
-          // Still clickable: the toast says why nothing happens.
-          cellClassName += " cursor-pointer";
-          break;
-        case "unavailable":
-          cellClassName += " cursor-not-allowed";
-          break;
-      }
 
       // Only disable in view mode or if no availability at all (gray slots)
       const isButtonDisabled =
@@ -1601,10 +1813,29 @@ export function UnifiedCalendar({
         <button
           type="button"
           className={cellClassName}
-          onClick={() => handleSlotClick(interval, date)}
-          disabled={isButtonDisabled}
+          onClick={() => {
+            if (!isButtonDisabled) {
+              handleSlotClick(interval, date);
+            }
+          }}
+          tabIndex={isFocusedCell ? 0 : -1}
+          aria-pressed={isSelected}
+          aria-disabled={isButtonDisabled}
+          onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
+          onKeyDown={(e) =>
+            handleCellKeyDown(
+              e,
+              dayIndex,
+              rowIndex,
+              interval,
+              date,
+              isButtonDisabled,
+            )
+          }
           title={accessibleLabel}
           aria-label={accessibleLabel}
+          data-day-index={dayIndex}
+          data-slot-index={rowIndex}
           data-slot-start={status.intervalStartUTCString}
           data-slot-state={statusKey}
         >
@@ -1613,60 +1844,27 @@ export function UnifiedCalendar({
       );
 
       if (showTooltip) {
-        return (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-              <TooltipContent
-                className="max-w-xs text-xs"
-                side="top"
-                align="center"
-              >
-                <div className="flex flex-col gap-1">
-                  {isCurrentEventSlot ? (
-                    // Show current event details
-                    <div>
-                      <p className="font-semibold">This Event&apos;s Slot</p>
-                      <p className="text-muted-foreground">
-                        {eventTypeLabel(eventType)}
-                      </p>
-                      <p className="text-muted-foreground text-[10px] mt-1">
-                        {status.isInPast
-                          ? "Past session (completed)"
-                          : "Click to reschedule"}
-                      </p>
-                    </div>
-                  ) : (
-                    // Show overlapping appointments
-                    status.overlappingAppointments.map(
-                      (appSlot: AppointmentDetail, index: number) => (
-                        <div
-                          key={`${appSlot.id}-${index}`}
-                          className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
-                        >
-                          <p className="font-semibold">{appSlot.title}</p>
-                          <p className="text-muted-foreground">
-                            {appSlot.type}
-                          </p>
-                          {appSlot.with && (
-                            <p className="text-muted-foreground">
-                              with {appSlot.with}
-                            </p>
-                          )}
-                        </div>
-                      ),
-                    )
-                  )}
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+        return wrapCellWithSlotTooltip(
+          buttonElement,
+          isCurrentEventSlot,
+          eventType,
+          status.isInPast,
+          status.overlappingAppointments,
         );
       }
 
       return buttonElement;
     },
-    [describeCell, handleSlotClick, mode, eventType, gridZone],
+    [
+      describeCell,
+      handleSlotClick,
+      handleCellKeyDown,
+      activeFocusedDayIndex,
+      activeFocusedSlotIndex,
+      mode,
+      eventType,
+      gridZone,
+    ],
   );
 
   // Render month view
@@ -1877,7 +2075,7 @@ export function UnifiedCalendar({
           </Button>
         </div>
 
-        {showAllocationButtons && mode === "allocate" ? (
+        {mode === "allocate" ? (
           <Button
             variant="outline"
             size="sm"
@@ -1937,6 +2135,8 @@ export function UnifiedCalendar({
               cells grid structure without re-filling unavailable cells. */}
           <div
             ref={setWeekGridEl}
+            role="grid"
+            aria-label="Availability slot grid"
             className="flex-1 overflow-y-auto scrollbar-thin min-h-0 pt-1"
           >
             {folded.allDead && (
@@ -1998,6 +2198,7 @@ export function UnifiedCalendar({
                   <div
                     key={`interval-row-${interval.hour}-${interval.minute}`}
                     data-row={rowIndex}
+                    role="row"
                     className={`${GRID_COLS} gap-0.5 border-b border-border/40 md:gap-1`}
                   >
                     <div className="min-w-0">
@@ -2007,16 +2208,20 @@ export function UnifiedCalendar({
                         )}
                       </div>
                     </div>
-                    {weekDates.map((date) => {
+                    {weekDates.map((date, dayIndex) => {
                       const holdsNow =
                         isOnCalendarDay(date, now, gridZone) &&
                         nowRow === rowIndex;
+                      const isCellSelected =
+                        describeCell(interval, date).statusKey === "selected";
                       return (
                         <div
                           key={date.toISOString()}
+                          role="gridcell"
+                          aria-selected={isCellSelected}
                           className="relative col-span-1"
                         >
-                          {renderTimeCell(interval, date)}
+                          {renderTimeCell(interval, date, dayIndex)}
                           {holdsNow && (
                             // The now-line: a 2px rule across today's column at
                             // the minute, moved by the once-a-minute tick.
@@ -2042,6 +2247,11 @@ export function UnifiedCalendar({
         renderMonthView()
       )}
 
+      {/* #1715 — Visually-hidden live region announcing current slot selection */}
+      <div role="status" aria-live="polite" className="sr-only">
+        Selected {selectedSlots.length} of {requiredSlots} slots
+      </div>
+
       {/* Footer */}
       {aboveActionsSlot}
       <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
@@ -2060,8 +2270,8 @@ export function UnifiedCalendar({
                       sessionDurationInHours,
                       totalSessions,
                       pastEventSlotCount,
-                      maxSlots: slotLimits.maxSlots,
-                      schedulingTimezone,
+                      maxSlots: slotLimits.totalSessions,
+                      schedulingTimezone: effectiveSchedulingTz ?? undefined,
                       entitlement,
                       zone: gridZone,
                     });
@@ -2072,7 +2282,7 @@ export function UnifiedCalendar({
                       sessionDurationInHours,
                       totalSessions: slotLimits.totalSessions,
                       pastEventSlotCount,
-                      schedulingTimezone,
+                      schedulingTimezone: effectiveSchedulingTz ?? undefined,
                     });
                   }
 
@@ -2158,7 +2368,7 @@ export function UnifiedCalendar({
           )}
         </div>
 
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-1.5">
           {/* #1076 — the day/week caps bucket on the EVENT's scheduling
               timezone, not the viewer's. When they differ, say so here
               instead of letting the viewer assume their own midnight. Only
@@ -2171,6 +2381,23 @@ export function UnifiedCalendar({
               {footerZone.limits.label}
             </span>
           )}
+          {/* #1168 — Toggle between the recurring event's schedulingTimezone
+              and the viewer's own timezone when they differ. */}
+          {(eventType === "subscription" || eventType === "class") &&
+            effectiveSchedulingTz &&
+            viewerZone &&
+            effectiveSchedulingTz !== viewerZone && (
+              <button
+                type="button"
+                onClick={() => setPreferViewerZone((prev) => !prev)}
+                data-testid="grid-zone-toggle"
+                className="ml-1 inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                {preferViewerZone
+                  ? `Your zone (${viewerZone})`
+                  : `Expert zone (${effectiveSchedulingTz})`}
+              </button>
+            )}
           {/* #1863 — the same footer carries how old the cells are. Silent when
               fresh (the overwhelming majority of the time) so it is not noise
               the consultant learns to skip, and loud when it is not: amber for

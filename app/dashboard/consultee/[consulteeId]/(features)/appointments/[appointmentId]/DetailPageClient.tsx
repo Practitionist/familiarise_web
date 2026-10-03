@@ -56,12 +56,50 @@ function ConsulteeExtraActions({ vm }: Readonly<{ vm: AppointmentVM }>) {
     !!vm.consultantProfileId &&
     (vm.bucket === "past" || vm.bucket === "cancelled");
   const canAddToCalendar = calendarSessions(vm).length > 0;
+
+  const vmWithIds = vm as AppointmentVM & {
+    planId?: string | null;
+    sourceId?: string | null;
+  };
+  const rawSub = (
+    vm.raw?.appointment as
+      | {
+          subscription?: {
+            id?: string;
+            subscriptionPlanId?: string;
+            subscriptionPlan?: { id?: string };
+          };
+        }
+      | undefined
+  )?.subscription;
+  const subscriptionPlanId =
+    vmWithIds.planId ??
+    rawSub?.subscriptionPlan?.id ??
+    rawSub?.subscriptionPlanId ??
+    null;
+  const subscriptionId = vmWithIds.sourceId ?? rawSub?.id ?? null;
+  const canRenewSubscription =
+    vm.kind === "SUBSCRIPTION" &&
+    (vm.status === "APPROVED" || vm.status === "COMPLETED") &&
+    !!subscriptionPlanId &&
+    !!subscriptionId;
+
   return (
     <>
       {canAddToCalendar && (
         <Button variant="outline" size="sm" onClick={() => downloadIcs(vm)}>
           <CalendarPlus className="mr-1.5 h-4 w-4" />
           Add to calendar
+        </Button>
+      )}
+      {canRenewSubscription && (
+        <Button variant="outline" size="sm" asChild>
+          <Link
+            href={`/checkout/plans/subscription/${subscriptionPlanId}?renewsSubscriptionId=${subscriptionId}`}
+          >
+            <RotateCcw className="mr-1.5 h-4 w-4" />
+            Renew Subscription
+          </Link>
         </Button>
       )}
       {canRebook && (

@@ -116,7 +116,7 @@ jobs:
       WINDOW_START: ${{ vars.LOAD_GATE_WINDOW_START }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -210,7 +210,7 @@ jobs:
           echo "Marked booking window starts at ${resolved}"
 
       - name: Install k6
-        uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
+        uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
 
       # handleSummary writes load-gate-summary.json and .html into the working
       # directory. The raw per-request JSON stream is deliberately NOT captured:
@@ -311,7 +311,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: load-gate-${{ inputs.scenario }}-${{ github.run_id }}
           path: |

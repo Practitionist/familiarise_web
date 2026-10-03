@@ -67,8 +67,9 @@ jest.mock("../../lib/maintenance-cron", () => ({
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
 }));
 
+const routeCapturedPayment = jest.fn();
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
-  routeCapturedPayment: jest.fn(),
+  routeCapturedPayment: (...a: unknown[]) => routeCapturedPayment(...a),
 }));
 
 // #1757 — the orphan retire path is the abandoned-payments unit; pin the
@@ -83,6 +84,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemEvent: (...a: unknown[]) => recordSystemEvent(...a),
     recordSystemEventSafe: (...a: unknown[]) => recordSystemEvent(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => recordSystemEvent(...a),
   };
 });
 
@@ -350,3 +352,82 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
     expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-young");
   });
 });
+
+describe("reconcile-payment-status — Stripe SUCCEEDED routes through routeCapturedPayment (#1905)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.CRON_SECRET = SECRET;
+    process.env.STRIPE_SECRET_KEY = "sk_test_x";
+    routeCapturedPayment.mockResolvedValue(undefined);
+  });
+
+  it("routes a succeeded Stripe PaymentIntent with booking metadata through routeCapturedPayment instead of direct status stamp", async () => {
+    const stripeBookingRow = {
+      ...pendingStripeRow,
+      id: "pay-stripe-ok",
+      paymentIntent: "pi_test_1905",
+      appointmentId: "appt-1905",
+      appointment: { id: "appt-1905", slotsOfAppointment: [] },
+    };
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([stripeBookingRow])
+      .mockResolvedValueOnce([]);
+    mockRetrieve.mockResolvedValueOnce({
+      id: "pi_test_1905",
+      status: "succeeded",
+      amount: 50000,
+      amount_received: 50000,
+      metadata: { appointmentId: "appt-1905", consultantProfileId: "cp-1" },
+    });
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(207);
+    expect(body.reconciledCount).toBe(1);
+    expect(routeCapturedPayment).toHaveBeenCalledWith({
+      orderId: "pi_test_1905",
+      gatewayPaymentId: "pi_test_1905",
+      notes: { appointmentId: "appt-1905", consultantProfileId: "cp-1" },
+      amountPaise: 50000,
+    });
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses to stamp SUCCEEDED and records PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT when Stripe booking lacks appointment and metadata", async () => {
+    const orphanStripeRow = {
+      ...pendingStripeRow,
+      id: "pay-stripe-no-ctx",
+      paymentIntent: "pi_test_no_ctx",
+      appointmentId: null,
+      appointment: null,
+    };
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([orphanStripeRow])
+      .mockResolvedValueOnce([]);
+    mockRetrieve.mockResolvedValueOnce({
+      id: "pi_test_no_ctx",
+      status: "succeeded",
+      amount: 50000,
+      amount_received: 50000,
+      metadata: {},
+    });
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.reconciledCount).toBe(0);
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(recordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "PAYMENT",
+        message: expect.stringContaining(
+          "PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT:",
+        ),
+      }),
+    );
+  });
+});
+

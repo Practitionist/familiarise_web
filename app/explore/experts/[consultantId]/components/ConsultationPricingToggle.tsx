@@ -33,6 +33,7 @@ import {
 } from "@/utils/purchase-intent";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { BookingMode } from "@prisma/client";
 import {
   CONSULTANT_PAUSED_HINT,
@@ -68,6 +69,7 @@ interface ConsultationPricingToggleProps {
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
   timezone: string;
   onRefreshSlots?: () => void;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 export default function ConsultationPricingToggle({
@@ -84,6 +86,7 @@ export default function ConsultationPricingToggle({
   timezone,
   consultantDetails,
   onRefreshSlots,
+  onDurationChange,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -107,6 +110,10 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
+
+  useEffect(() => {
+    onDurationChange?.(selectedDuration);
+  }, [selectedDuration, onDurationChange]);
 
   // #1703 D1 — REQUEST routes every slot through approval; INSTANT keeps the
   // contended-slot-only arm. Decided once here so the button and its hint agree.
@@ -404,7 +411,10 @@ export default function ConsultationPricingToggle({
 
               <div className="flex items-end gap-2 my-5">
                 <span className="text-5xl font-bold tracking-tight text-white">
-                  {formatPrice(option.price)}
+                  {option.priceCurrency &&
+                  option.priceCurrency.toUpperCase() !== "INR"
+                    ? formatCurrencyAmount(option.price, option.priceCurrency)
+                    : formatPrice(option.price)}
                 </span>
                 <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
               </div>

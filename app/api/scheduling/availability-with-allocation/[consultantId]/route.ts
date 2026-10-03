@@ -32,6 +32,7 @@ import {
   ifNoneMatchSatisfied,
   readAvailabilityGridMarker,
 } from "@/lib/scheduling/availabilityGridMarker";
+import { isMinuteWithinWeeklySlot } from "@/utils/scheduling-engine/slotTimeUtils";
 import type { TIntervalTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
 
@@ -136,6 +137,8 @@ export async function GET(
     const includeAppointmentDetailsRequested =
       searchParams.get("includeAppointmentDetails") === "true";
     const requestedConsulteeUserId = searchParams.get("consulteeUserId");
+    const webinarId = searchParams.get("webinarId");
+    const classId = searchParams.get("classId");
 
     // Both gates below need the caller's identity, and this route is re-hit on
     // every week-slide — so resolve it ONCE rather than awaiting getSession in
@@ -323,6 +326,7 @@ export async function GET(
       consultantId,
       consulteeUserId,
       { startsAt: startDate, endsAt: endDate },
+      { webinarId, classId },
     );
     // No marker = no such consultant; fall through so the 404 below still answers.
     const etag = marker
@@ -333,9 +337,14 @@ export async function GET(
           timezone,
           includeAppointmentDetails,
           consulteeUserId,
+          webinarId,
+          classId,
         })
       : null;
-    if (etag && ifNoneMatchSatisfied(req.headers.get("if-none-match"), etag)) {
+    const ifNoneMatchHeader =
+      req.headers.get("if-none-match") ??
+      req.headers.get("x-availability-if-none-match");
+    if (etag && ifNoneMatchSatisfied(ifNoneMatchHeader, etag)) {
       return new NextResponse(null, {
         status: 304,
         headers: { "Cache-Control": GRID_CACHE_CONTROL, ETag: etag },
@@ -343,33 +352,40 @@ export async function GET(
     }
 
     // 1. Fetch consultant's availability
+    const customWindowOverlapWhere = {
+      OR: [
+        {
+          startsAt: {
+            gte: startDate,
+            lt: endDate,
+          },
+        },
+        {
+          endsAt: {
+            gt: startDate,
+            lte: endDate,
+          },
+        },
+        {
+          startsAt: { lte: startDate },
+          endsAt: { gte: endDate },
+        },
+      ],
+    };
+
+    // #1691 Item 2 — When the ETag marker probe already returned the primary
+    // consultant's `scheduleType`, only fetch the active availability window
+    // relation (`WEEKLY` or `CUSTOM`) instead of loading both tables.
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
       include: {
-        availabilityWindowsWeekly: true,
-        availabilityWindowsCustom: {
-          where: {
-            // Use comprehensive overlap check for custom slots to match appointment logic
-            OR: [
-              {
-                startsAt: {
-                  gte: startDate,
-                  lt: endDate,
-                },
-              },
-              {
-                endsAt: {
-                  gt: startDate,
-                  lte: endDate,
-                },
-              },
-              {
-                startsAt: { lte: startDate },
-                endsAt: { gte: endDate },
-              },
-            ],
-          },
-        },
+        availabilityWindowsWeekly: marker?.scheduleType
+          ? marker.scheduleType === "WEEKLY"
+          : true,
+        availabilityWindowsCustom:
+          !marker?.scheduleType || marker.scheduleType === "CUSTOM"
+            ? { where: customWindowOverlapWhere }
+            : false,
       },
     });
 
@@ -378,6 +394,111 @@ export async function GET(
         { error: "Consultant not found" },
         { status: 404 },
       );
+    }
+
+    if (
+      marker?.scheduleType &&
+      consultant.scheduleType !== marker.scheduleType
+    ) {
+      const refetched = await prisma.consultantProfile.findUnique({
+        where: { id: consultantId },
+        include: {
+          availabilityWindowsWeekly: consultant.scheduleType === "WEEKLY",
+          availabilityWindowsCustom:
+            consultant.scheduleType === "CUSTOM"
+              ? { where: customWindowOverlapWhere }
+              : false,
+        },
+      });
+      if (refetched) {
+        consultant.availabilityWindowsWeekly =
+          refetched.availabilityWindowsWeekly;
+        consultant.availabilityWindowsCustom =
+          refetched.availabilityWindowsCustom;
+      }
+    }
+
+    // #1689 — When allocating a webinar or class, load ACCEPTED co-hosts so the
+    // grid reflects both their busy commitments and their availability schedules.
+    type CoHostScheduleProfile = {
+      consultantProfileId: string;
+      userId: string;
+      scheduleType?: string;
+      availabilityWindowsWeekly?: WeeklySlot[];
+      availabilityWindowsCustom?: { id: string; startsAt: Date; endsAt: Date }[];
+    };
+    const coHostProfiles: CoHostScheduleProfile[] = [];
+    if (webinarId || classId) {
+      const collabSelect = {
+        where: { status: "ACCEPTED" as const },
+        select: {
+          consultantProfileId: true,
+          consultantProfile: {
+            select: {
+              id: true,
+              userId: true,
+              scheduleType: true,
+              availabilityWindowsWeekly: true,
+              availabilityWindowsCustom: { where: customWindowOverlapWhere },
+              user: { select: { id: true } },
+            },
+          },
+        },
+      };
+      let rawCollabs:
+        | Array<{
+            consultantProfileId: string;
+            consultantProfile?: {
+              id?: string;
+              userId?: string;
+              scheduleType?: string;
+              availabilityWindowsWeekly?: WeeklySlot[];
+              availabilityWindowsCustom?: {
+                id: string;
+                startsAt: Date;
+                endsAt: Date;
+              }[];
+              user?: { id?: string } | null;
+            } | null;
+          }>
+        | undefined;
+      if (webinarId && prisma.webinar?.findFirst) {
+        const w = await prisma.webinar.findFirst({
+          where: {
+            id: webinarId,
+            webinarPlan: { consultantProfileId: consultantId },
+          },
+          select: {
+            webinarPlan: { select: { collaborators: collabSelect } },
+          },
+        });
+        rawCollabs = w?.webinarPlan?.collaborators;
+      } else if (classId && prisma.class?.findFirst) {
+        const c = await prisma.class.findFirst({
+          where: {
+            id: classId,
+            classPlan: { consultantProfileId: consultantId },
+          },
+          select: {
+            classPlan: { select: { collaborators: collabSelect } },
+          },
+        });
+        rawCollabs = c?.classPlan?.collaborators;
+      }
+      if (Array.isArray(rawCollabs)) {
+        for (const row of rawCollabs) {
+          const cp = row.consultantProfile;
+          const uid = cp?.userId ?? cp?.user?.id;
+          if (!row.consultantProfileId || !uid) continue;
+          coHostProfiles.push({
+            consultantProfileId: row.consultantProfileId,
+            userId: uid,
+            scheduleType: cp?.scheduleType,
+            availabilityWindowsWeekly: cp?.availabilityWindowsWeekly,
+            availabilityWindowsCustom: cp?.availabilityWindowsCustom,
+          });
+        }
+      }
     }
 
     // 2. Fetch all appointments to find allocated slots.
@@ -412,6 +533,18 @@ export async function GET(
           ],
         },
       },
+    };
+
+    // #1691 Item 4 — bound child occurrences in `include` to the requested
+    // half-open window `[startDate, endDate)`. Any occurrence overlapping the
+    // window satisfies `startsAt < endDate AND endsAt > startDate` (including
+    // cross-boundary sessions that started before `startDate`), while
+    // out-of-window occurrences on multi-month subscriptions/classes are not
+    // fetched on every 60s poll.
+    const windowOccurrencesWhere = {
+      deletedAt: null,
+      startsAt: { lt: endDate },
+      endsAt: { gt: startDate },
     };
 
     const occupiedAppointmentWhere = {
@@ -458,27 +591,42 @@ export async function GET(
             ],
           },
           include: {
-            // Same tombstone exclusion as the consultant branches — the merge
-            // below flatMaps these children into the painted grid, so an
-            // unfiltered include would reintroduce deleted rows through the
-            // one arm the first pass missed (CodeRabbit triage).
-            occurrences: { where: { deletedAt: null } },
+            occurrences: { where: windowOccurrencesWhere },
             ...LIVE_OCCUPANCY_SELECT,
           },
         })
       : Promise.resolve([]);
+
+    // #1689 —ACCEPTED co-hosts' occupied appointments in `[startDate, endDate)`.
+    const coHostOccupancy =
+      coHostProfiles.length > 0
+        ? prisma.appointment.findMany({
+            where: {
+              AND: [
+                {
+                  OR: coHostProfiles.map((ch) =>
+                    buildConsultantOccupancyWhere(
+                      ch.consultantProfileId,
+                      ch.userId,
+                    ),
+                  ),
+                },
+                slotsInWindow,
+              ],
+            },
+            include: {
+              occurrences: { where: windowOccurrencesWhere },
+              ...LIVE_OCCUPANCY_SELECT,
+            },
+          })
+        : Promise.resolve([]);
 
     if (includeAppointmentDetails) {
       const [fetched] = await Promise.all([
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
           include: {
-            // Tombstone exclusion rides the include (not just the window
-            // filter): a deleted slot of a qualifying appointment must not
-            // paint busy. Deliberately NOT window-bounded — a booking that
-            // started last week overlapping an in-window cell must still
-            // paint that cell, so out-of-window children are load-bearing.
-            occurrences: { where: { deletedAt: null } },
+            occurrences: { where: windowOccurrencesWhere },
             consultation: {
               select: {
                 status: true,
@@ -501,6 +649,7 @@ export async function GET(
           },
         }),
         consulteeOccupancy,
+        coHostOccupancy,
       ]);
       detailAppointments = fetched.filter((appt) =>
         isOccupiedByLiveAppointment(appt, occupancyNow),
@@ -513,13 +662,14 @@ export async function GET(
       const [appointments] = await Promise.all([
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
-          // Same tombstone exclusion as the detail branch above.
+          // Same tombstone + window exclusion as the detail branch above.
           include: {
-            occurrences: { where: { deletedAt: null } },
+            occurrences: { where: windowOccurrencesWhere },
             ...LIVE_OCCUPANCY_SELECT,
           },
         }),
         consulteeOccupancy,
+        coHostOccupancy,
       ]);
       rawSlotsOfAppointment = appointments
         .filter((appt) => isOccupiedByLiveAppointment(appt, occupancyNow))
@@ -529,11 +679,14 @@ export async function GET(
     // No overlap metadata is attached to these: the consultant may see that the
     // time is taken, not what it is taken by (ADR 20). Already resolved by the
     // Promise.all above — this await does not add a round-trip.
-    if (consulteeUserId) {
-      const consulteeAppointments = await consulteeOccupancy;
+    if (consulteeUserId || coHostProfiles.length > 0) {
+      const [consulteeAppointments, coHostAppointments] = await Promise.all([
+        consulteeOccupancy,
+        coHostOccupancy,
+      ]);
 
       const seen = new Set(rawSlotsOfAppointment.map((s) => s.id));
-      for (const appt of consulteeAppointments) {
+      for (const appt of [...consulteeAppointments, ...coHostAppointments]) {
         if (!isOccupiedByLiveAppointment(appt, occupancyNow)) continue;
         for (const slot of appt.occurrences) {
           if (!seen.has(slot.id)) {
@@ -615,7 +768,9 @@ export async function GET(
 
     // Convert to utility interfaces with defensive validation
     // Weekly slots now use Int (minutes since midnight UTC 0-1439) instead of DateTime
-    const weeklySlots: WeeklySlot[] = consultant.availabilityWindowsWeekly
+    const weeklySlots: WeeklySlot[] = (
+      consultant.availabilityWindowsWeekly ?? []
+    )
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (
@@ -683,7 +838,9 @@ export async function GET(
         utcOffsetMinutes: slot.utcOffsetMinutes,
       }));
 
-    const customSlots: CustomSlot[] = consultant.availabilityWindowsCustom
+    const customSlots: CustomSlot[] = (
+      consultant.availabilityWindowsCustom ?? []
+    )
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (!slot.startsAt || !slot.endsAt) {
@@ -766,19 +923,65 @@ export async function GET(
         timezone,
       );
 
-    // #997 Phase 2 — attach per-interval tooltip metadata AND synthesize
-    // "orphan" cells: a booked appointment slot whose availability row was
-    // edited/removed after booking has no availability-derived entry above,
-    // so without this the consultant calendar would silently show it as
-    // pickable. This mirrors the client patch it replaces (previously in
-    // useCalendarData.ts's slotStatusMap: "ensure appointments without
-    // availability slots still show as booked").
-    if (includeAppointmentDetails) {
-      const coveredStartsMs = new Set<number>();
+    // #1689 — When allocating a webinar or class with ACCEPTED co-hosts whose
+    // schedules were loaded, an unallocated slot is only available if every
+    // co-host with schedule data also covers that 30-min atom.
+    const coHostsWithSchedule = coHostProfiles.filter(
+      (ch) =>
+        ch.scheduleType &&
+        (Array.isArray(ch.availabilityWindowsWeekly) ||
+          Array.isArray(ch.availabilityWindowsCustom)),
+    );
+    if (coHostsWithSchedule.length > 0) {
+      const isCoveredByCoHost = (
+        slotStart: Date,
+        slotEnd: Date,
+        ch: (typeof coHostsWithSchedule)[number],
+      ): boolean => {
+        if (ch.scheduleType === "WEEKLY") {
+          const day = slotStart.getUTCDay();
+          const mins = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+          return (ch.availabilityWindowsWeekly ?? []).some((w) =>
+            isMinuteWithinWeeklySlot(
+              day,
+              mins,
+              30,
+              w.startDay,
+              w.startTimeUtc,
+              w.endTimeUtc,
+              w.utcOffsetMinutes ?? 0,
+            ),
+          );
+        }
+        return (ch.availabilityWindowsCustom ?? []).some(
+          (c) =>
+            new Date(c.startsAt) <= slotStart && new Date(c.endsAt) >= slotEnd,
+        );
+      };
+
       for (const dateKey of Object.keys(slotsByDate)) {
-        for (const slot of slotsByDate[dateKey]) {
-          const startMs = new Date(slot.startsAt).getTime();
-          coveredStartsMs.add(startMs);
+        slotsByDate[dateKey] = slotsByDate[dateKey].filter((slot) => {
+          if (slot.isAllocated) return true;
+          const s = new Date(slot.startsAt);
+          const e = new Date(slot.endsAt);
+          return coHostsWithSchedule.every((ch) => isCoveredByCoHost(s, e, ch));
+        });
+      }
+    }
+
+    // #997 Phase 2 & #1691 Item 3 — synthesize "orphan" booked cells for ALL
+    // callers (not only `includeAppointmentDetails=true`): a booked appointment
+    // slot whose availability row was edited/removed after booking (or a
+    // consultee/co-host busy interval outside the host's published hours) must
+    // still show as `isAllocated: true, bookingStatus: "fully-booked"`. Per-slot
+    // `overlappingAppointments` tooltip metadata stays gated on
+    // `includeAppointmentDetails` (ADR 20).
+    const coveredStartsMs = new Set<number>();
+    for (const dateKey of Object.keys(slotsByDate)) {
+      for (const slot of slotsByDate[dateKey]) {
+        const startMs = new Date(slot.startsAt).getTime();
+        coveredStartsMs.add(startMs);
+        if (includeAppointmentDetails) {
           const endMs = new Date(slot.endsAt).getTime();
           slot.overlappingAppointments = overlapMetaCandidatesFor(
             overlapMetaIndex,
@@ -787,7 +990,9 @@ export async function GET(
           );
         }
       }
+    }
 
+    if (rawSlotsOfAppointment.length > 0) {
       const loc = makeLocalizer(timezone);
       for (const apptSlot of rawSlotsOfAppointment) {
         const start = new Date(apptSlot.startsAt);
@@ -812,11 +1017,15 @@ export async function GET(
           type: "CUSTOM",
           isAllocated: true,
           bookingStatus: "fully-booked",
-          overlappingAppointments: overlapMetaCandidatesFor(
-            overlapMetaIndex,
-            startMs,
-            end.getTime(),
-          ),
+          ...(includeAppointmentDetails
+            ? {
+                overlappingAppointments: overlapMetaCandidatesFor(
+                  overlapMetaIndex,
+                  startMs,
+                  end.getTime(),
+                ),
+              }
+            : {}),
         };
         (slotsByDate[dateKey] ||= []).push(synthetic);
       }

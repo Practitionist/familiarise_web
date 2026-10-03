@@ -50,6 +50,7 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
+  buildCohostCommitmentFilter,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -233,7 +234,13 @@ async function validateSlotAvailability(
     where: {
       appointment: {
         AND: [
-          { OR: occupiedFilter },
+          {
+            OR: [
+              ...occupiedFilter,
+              ...buildCohostCommitmentFilter(consultantProfileId),
+            ],
+          },
+          { OR: buildOccupiedAppointmentFilter() },
           // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
           { NOT: buildDeadHoldFilter(new Date()) },
         ],
@@ -254,6 +261,10 @@ async function validateSlotAvailability(
       appointment: {
         deletedAt: null,
         participants: { some: liveParticipant(consulteeUserId) },
+        AND: [
+          { OR: buildOccupiedAppointmentFilter() },
+          { NOT: buildDeadHoldFilter(new Date()) },
+        ],
       },
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },

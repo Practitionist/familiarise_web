@@ -833,10 +833,6 @@ export default function ConsultationCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -847,6 +843,10 @@ export default function ConsultationCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>

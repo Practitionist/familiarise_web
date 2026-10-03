@@ -37,7 +37,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
@@ -66,7 +66,9 @@ import {
 } from "@/lib/email";
 import {
   createEarningsFromPayment,
+  planEarningsForPayment,
   resolvePaymentForEarnings,
+  type PreplannedEarningsContext,
 } from "@/lib/payments/payouts";
 import {
   attemptTrigger,
@@ -128,6 +130,7 @@ type PaymentSuccessTxResult =
       doubleBookingBlocked: boolean;
       // The capture's webinar/class seat was released before the money landed.
       seatReleased: boolean;
+      earningsCreatedInPhase1: boolean;
       appointmentForEmails: AppointmentForEmails | null;
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
@@ -206,8 +209,26 @@ export async function handlePaymentSuccess(
   options?: { recover?: boolean },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
-  const metadata = normalizeLegacySlotKeys(rawMetadata);
+  const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
+
+  // #1758 — Pre-plan earnings context (rate card, consultant profile, trust-park
+  // status, collaborator splits, subscription tranches, and payment legs) before
+  // opening the Phase-1 Serializable transaction when payment.appointmentId is
+  // already known, so Phase 1 can commit ConsultantEarnings + booking journal
+  // atomically with appointment confirmation without holding Serializable locks
+  // across read-heavy rate-card resolution queries.
+  let preplannedEarnings: PreplannedEarningsContext | null = null;
+  if (typeof planEarningsForPayment === "function") {
+    try {
+      preplannedEarnings = await planEarningsForPayment(
+        { paymentIntent: paymentIntentId },
+        metadata.appointmentType,
+      );
+    } catch {
+      preplannedEarnings = null;
+    }
+  }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
   let txResult: PaymentSuccessTxResult | null;
@@ -372,6 +393,21 @@ export async function handlePaymentSuccess(
               extra: { paymentIntentId },
             });
             return null; // Signal: already processed, skip Phase 2
+          }
+
+          if (payment.appointmentId) {
+            if (!metadata.userId && payment.userId) {
+              metadata.userId = payment.userId;
+            }
+            if (!metadata.appointmentType) {
+              const existingAppt = await tx.appointment.findUnique({
+                where: { id: payment.appointmentId },
+                select: { appointmentType: true },
+              });
+              if (existingAppt?.appointmentType) {
+                metadata.appointmentType = existingAppt.appointmentType;
+              }
+            }
           }
 
           try {
@@ -615,6 +651,7 @@ export async function handlePaymentSuccess(
           const blocked =
             confirmResult.capturedAfterTerminal ||
             confirmResult.doubleBookingBlocked;
+          let earningsCreatedInPhase1 = false;
           if (blocked) {
             await tx.payment.update({
               where: { id: payment.id },
@@ -628,6 +665,72 @@ export async function handlePaymentSuccess(
                 ),
               },
             });
+          } else if (typeof createEarningsFromPayment === "function") {
+            const rawTx = tx as {
+              $executeRawUnsafe?: (query: string) => Promise<unknown>;
+            };
+            const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
+            if (hasSavepoint) {
+              await rawTx.$executeRawUnsafe!("SAVEPOINT sp_phase1_earnings");
+            }
+            try {
+              const resolvedInTx =
+                preplannedEarnings?.resolvedPayment ??
+                (typeof resolvePaymentForEarnings === "function"
+                  ? await resolvePaymentForEarnings(
+                      { id: payment.id },
+                      metadata.appointmentType,
+                      tx,
+                    )
+                  : null);
+              if (resolvedInTx) {
+                await createEarningsFromPayment({
+                  payment: resolvedInTx.paymentForEarnings,
+                  appointmentType: resolvedInTx.earningsAppointmentType,
+                  tx,
+                  preplanned: preplannedEarnings ?? undefined,
+                });
+                earningsCreatedInPhase1 = true;
+                console.log(
+                  `💰 Earnings record created atomically in Phase 1 for payment ${payment.id}, consultant ${resolvedInTx.consultantProfileId}`,
+                );
+              }
+              if (hasSavepoint) {
+                await rawTx.$executeRawUnsafe!(
+                  "RELEASE SAVEPOINT sp_phase1_earnings",
+                );
+              }
+            } catch (phase1EarningsErr) {
+              if (hasSavepoint) {
+                await rawTx
+                  .$executeRawUnsafe!(
+                    "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
+                  )
+                  .catch(() => undefined);
+              }
+              const isRetryableSerialization =
+                phase1EarningsErr instanceof
+                  Prisma.PrismaClientKnownRequestError &&
+                phase1EarningsErr.code === "P2034";
+              if (isRetryableSerialization) {
+                throw phase1EarningsErr;
+              }
+              if (hasSavepoint) {
+                console.warn(
+                  `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
+                  phase1EarningsErr,
+                );
+                earningsCreatedInPhase1 = false;
+              } else if (
+                "consultantEarnings" in tx &&
+                typeof (tx as { consultantEarnings?: unknown })
+                  .consultantEarnings === "object" &&
+                (tx as { consultantEarnings?: unknown }).consultantEarnings !==
+                  null
+              ) {
+                throw phase1EarningsErr;
+              }
+            }
           }
           const appointmentForEmails = blocked
             ? null
@@ -661,6 +764,7 @@ export async function handlePaymentSuccess(
             capturedAfterTerminal: confirmResult.capturedAfterTerminal,
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
             seatReleased: confirmResult.seatReleased ?? false,
+            earningsCreatedInPhase1,
             appointmentForEmails,
             successEmail,
             bookedEmails,
@@ -872,38 +976,40 @@ export async function handlePaymentSuccess(
   const { paymentId, appointmentId, userId, userName, amount, currency } =
     txResult;
 
-  try {
-    const resolved = await resolvePaymentForEarnings(
-      { id: paymentId },
-      metadata.appointmentType,
-    );
+  if (!txResult.earningsCreatedInPhase1) {
+    try {
+      const resolved = await resolvePaymentForEarnings(
+        { id: paymentId },
+        metadata.appointmentType,
+      );
 
-    if (resolved) {
-      await createEarningsFromPayment({
-        payment: resolved.paymentForEarnings,
-        appointmentType: resolved.earningsAppointmentType,
+      if (resolved) {
+        await createEarningsFromPayment({
+          payment: resolved.paymentForEarnings,
+          appointmentType: resolved.earningsAppointmentType,
+        });
+
+        console.log(
+          `💰 Earnings record created for payment ${paymentId}, consultant ${resolved.consultantProfileId}`,
+        );
+      }
+    } catch (earningsError) {
+      reportSentryError(earningsError, {
+        subsystem: "payments",
+        extra: { paymentId, appointmentId, userId, path: "webhook" },
       });
-
-      console.log(
-        `💰 Earnings record created for payment ${paymentId}, consultant ${resolved.consultantProfileId}`,
+      await recordSystemError({
+        category: "PAYOUT",
+        summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
+        err: earningsError,
+        correlationId: paymentId,
+        context: { paymentId, appointmentId, userId, path: "webhook" },
+      });
+      console.error(
+        `⚠️ Failed to create earnings for payment ${paymentId}:`,
+        earningsError,
       );
     }
-  } catch (earningsError) {
-    reportSentryError(earningsError, {
-      subsystem: "payments",
-      extra: { paymentId, appointmentId, userId, path: "webhook" },
-    });
-    await recordSystemError({
-      category: "PAYOUT",
-      summary: `Earnings + booking journal not written for committed payment ${paymentId} (webhook path)`,
-      err: earningsError,
-      correlationId: paymentId,
-      context: { paymentId, appointmentId, userId, path: "webhook" },
-    });
-    console.error(
-      `⚠️ Failed to create earnings for payment ${paymentId}:`,
-      earningsError,
-    );
   }
 
   try {
@@ -1552,10 +1658,26 @@ export async function confirmExistingAppointment(
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
+      consultation: {
+        include: {
+          consultationPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      subscription: {
+        include: {
+          subscriptionPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      class: {
+        include: {
+          classPlan: { select: { consultantProfileId: true } },
+        },
+      },
     },
   });
 
@@ -1578,6 +1700,17 @@ export async function confirmExistingAppointment(
     )
       .map((p) => p.userId)
       .filter((id) => id !== userId);
+    const consultantProfileId =
+      appointment.consultation?.consultationPlan?.consultantProfileId ??
+      appointment.subscription?.subscriptionPlan?.consultantProfileId ??
+      appointment.webinar?.webinarPlan?.consultantProfileId ??
+      appointment.class?.classPlan?.consultantProfileId;
+    const { buildCohostCommitmentFilter } = await import(
+      "@/utils/scheduling-engine/occupancyPolicy"
+    );
+    const cohostCommitments = consultantProfileId
+      ? buildCohostCommitmentFilter(consultantProfileId)
+      : [];
     const holdExpired = opts?.holdExpired === true;
     const now = opts?.now ?? new Date();
     const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
@@ -1594,19 +1727,48 @@ export async function confirmExistingAppointment(
         }
       : { isTentative: false };
     for (const slot of mySlots) {
-      if (participantIds.length === 0) continue;
+      if (participantIds.length === 0 && cohostCommitments.length === 0) {
+        continue;
+      }
       const conflict = await tx.appointmentOccurrence.findFirst({
         where: {
           id: { not: slot.id },
           startsAt: { lt: slot.endsAt },
           endsAt: { gt: slot.startsAt },
           ...conflictStates,
-          appointment: {
-            OR: buildOccupiedAppointmentFilter(),
-            participants: {
-              some: { userId: { in: participantIds }, ...liveParticipant() },
-            },
-          },
+          appointment:
+            cohostCommitments.length > 0
+              ? {
+                  AND: [
+                    { OR: buildOccupiedAppointmentFilter() },
+                    {
+                      OR: [
+                        ...(participantIds.length > 0
+                          ? [
+                              {
+                                participants: {
+                                  some: {
+                                    userId: { in: participantIds },
+                                    ...liveParticipant(),
+                                  },
+                                },
+                              },
+                            ]
+                          : []),
+                        ...cohostCommitments,
+                      ],
+                    },
+                  ],
+                }
+              : {
+                  OR: buildOccupiedAppointmentFilter(),
+                  participants: {
+                    some: {
+                      userId: { in: participantIds },
+                      ...liveParticipant(),
+                    },
+                  },
+                },
         },
         select: { id: true, appointmentId: true },
       });

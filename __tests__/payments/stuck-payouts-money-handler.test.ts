@@ -190,4 +190,57 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
     expect(recordTDSDeduction).not.toHaveBeenCalled();
     expect(postLedgerTxn).not.toHaveBeenCalled();
   });
+
+  it("accrues clawbackAmountPaise and logs PAYOUT_COMPLETION_EARNINGS_SHORTFALL when a late refund cascaded in-flight (#1898)", async () => {
+    payoutRow.earnings = [
+      {
+        id: "ce_1",
+        payoutId: "po_1",
+        status: "BATCHED",
+        consultantSharePaise: 100000,
+        refundedShareAmount: 0,
+      },
+    ];
+    const completionEarnings = prismaStub.consultantEarnings as Record<
+      string,
+      unknown
+    >;
+    completionEarnings.findMany = jest
+      .fn()
+      .mockResolvedValue([
+        { consultantSharePaise: 100000, refundedShareAmount: 25000 },
+      ]);
+    const systemEventCreate = jest.fn().mockResolvedValue({ id: "se_1898" });
+    (prismaStub as Record<string, unknown>).systemEvent = {
+      create: systemEventCreate,
+    };
+
+    try {
+      await handlePayoutWebhook("RAZORPAY", "pout_live_1", "COMPLETED");
+
+      expect(completionEarnings.findMany).toHaveBeenCalledWith({
+        where: { payoutId: "po_1" },
+        select: { consultantSharePaise: true, refundedShareAmount: true },
+      });
+      expect(prismaStub.consultantPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: "po_1" },
+        data: { clawbackAmountPaise: { increment: 25000 } },
+      });
+      expect(systemEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            category: "PAYOUT",
+            severity: "WARN",
+            message: expect.stringContaining(
+              "PAYOUT_COMPLETION_EARNINGS_SHORTFALL",
+            ),
+          }),
+        }),
+      );
+    } finally {
+      delete completionEarnings.findMany;
+      delete (prismaStub as Record<string, unknown>).systemEvent;
+    }
+  });
 });
+

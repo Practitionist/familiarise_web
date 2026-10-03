@@ -144,3 +144,104 @@ export function generateConsultationPlanId(): string {
 export function generateSlotAvailabilityWeeklyId(): string {
   return "test-slot-availability-weekly-123";
 }
+
+export interface RazorpayPaymentCapturedFixtureParams {
+  paymentId: string;
+  orderId: string;
+  amount?: number;
+  currency?: string;
+  notes?: Record<string, string>;
+  accountId?: string;
+  createdAt?: number;
+}
+
+/**
+ * #1737 — Build a schema-valid Razorpay `payment.captured` webhook envelope
+ * that satisfies every required field of `razorpayPaymentEntitySchema`.
+ */
+export function buildRazorpayPaymentCapturedEnvelope(
+  params: RazorpayPaymentCapturedFixtureParams,
+): string {
+  const createdAt = params.createdAt ?? Math.floor(Date.now() / 1000);
+  return JSON.stringify({
+    entity: "event",
+    account_id: params.accountId ?? "acc_chaos",
+    event: "payment.captured",
+    contains: ["payment"],
+    payload: {
+      payment: {
+        entity: {
+          id: params.paymentId,
+          entity: "payment",
+          amount: params.amount ?? 100,
+          currency: params.currency ?? "INR",
+          status: "captured",
+          order_id: params.orderId,
+          invoice_id: null,
+          international: false,
+          method: "card",
+          amount_refunded: 0,
+          refund_status: null,
+          captured: true,
+          description: null,
+          card_id: null,
+          bank: null,
+          wallet: null,
+          vpa: null,
+          email: "chaos@familiarise.com",
+          contact: "+919999999999",
+          ...(params.notes ? { notes: params.notes } : {}),
+          fee: 200,
+          tax: 36,
+          error_code: null,
+          error_description: null,
+          error_source: null,
+          error_step: null,
+          error_reason: null,
+          created_at: createdAt,
+        },
+      },
+    },
+    created_at: createdAt,
+  });
+}
+
+export interface RazorpayRefundCreatedFixtureParams {
+  refundId: string;
+  paymentId: string;
+  amount?: number;
+  currency?: string;
+  status?: string;
+  accountId?: string;
+  createdAt?: number;
+}
+
+/**
+ * #1737 — Build a schema-valid Razorpay `refund.created` webhook envelope.
+ */
+export function buildRazorpayRefundCreatedEnvelope(
+  params: RazorpayRefundCreatedFixtureParams,
+): string {
+  const createdAt = params.createdAt ?? Math.floor(Date.now() / 1000);
+  return JSON.stringify({
+    entity: "event",
+    account_id: params.accountId ?? "acc_chaos",
+    event: "refund.created",
+    contains: ["refund"],
+    payload: {
+      refund: {
+        entity: {
+          id: params.refundId,
+          entity: "refund",
+          payment_id: params.paymentId,
+          amount: params.amount ?? 100,
+          currency: params.currency ?? "INR",
+          status: params.status ?? "created",
+          created_at: createdAt,
+        },
+      },
+    },
+    created_at: createdAt,
+  });
+}
+
