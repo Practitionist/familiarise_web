@@ -7,8 +7,7 @@ import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useOrgScope } from "@/hooks/useOrgScope";
-import { scopeOrgId } from "@/lib/api/scope/parse";
+import { scopeOrgId, type AccountScope } from "@/lib/api/scope/parse";
 import type { AppointmentSearchResult } from "@/schemas/stream-search";
 
 // Type badge configuration for events (webinars/classes)
@@ -72,13 +71,16 @@ type GroupedConversation = {
   planTitles: string[];
 };
 
-export const ChannelSearch = () => {
+export const ChannelSearch = ({
+  scope = "personal",
+}: {
+  scope?: AccountScope;
+} = {}) => {
   const { client, setActiveChannel } = useChatContext();
   // Below `md` the conversation pane is `hidden` until this runs — see
   // ChatLayout. Selecting a channel without it leaves the person staring at
   // the list they just searched, with the channel silently active behind it.
   const { openConversation } = useChatPane();
-  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const pinnedOrgId = scopeOrgId(scope);
   const scopeParam = pinnedOrgId ? `org:${pinnedOrgId}` : "personal";
   const [query, setQuery] = useState("");

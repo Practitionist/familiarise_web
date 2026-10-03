@@ -935,7 +935,7 @@ export const ChatSidebar = () => {
 
       {/* Search Bar */}
       <div className="p-4">
-        <ChannelSearch />
+        <ChannelSearch scope={scope} />
       </div>
 
       {/* Channel Sections */}
