@@ -1015,6 +1015,143 @@ async function stepSplitSums(ctx: StepCtx): Promise<void> {
   }
 }
 
+type MemberOverageEventRow = {
+  id: string;
+  chargeStatus: string;
+  basePaise: number;
+  marginalPaise: number;
+  paymentId: string | null;
+  settledAt: Date | null;
+  payment: {
+    paymentStatus: string;
+    amount: number;
+    parentPaymentId: string | null;
+    organizationId: string | null;
+  } | null;
+  creditNote?: { subtotalPaise: number | bigint } | null;
+};
+
+function inspectOverageEventLedgerState(
+  ev: MemberOverageEventRow,
+  txnKeys: Set<string>,
+  recarveReversalAmounts: Map<string, number>,
+  creditNoteByOverageEventId: Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >,
+  findings: StepCtx["findings"],
+): void {
+  const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+  const flag = (
+    note: string,
+    expected = ev.marginalPaise,
+    actual = ev.payment?.amount ?? 0,
+  ) =>
+    findings.push({
+      kind: "OVERAGE_SETTLEMENT_MISMATCH",
+      paymentId: ev.paymentId ?? undefined,
+      organizationId: ev.payment?.organizationId ?? undefined,
+      expectedPaise: expected,
+      actualPaise: actual,
+      deltaPaise: actual - expected,
+      details: {
+        overageEventId: ev.id,
+        chargeStatus: ev.chargeStatus,
+        unit: "paise",
+        note,
+      },
+    });
+
+  if (ev.chargeStatus === "CHARGED") {
+    if (ev.payment?.paymentStatus !== "SUCCEEDED") {
+      flag("CHARGED member overage without a SUCCEEDED side-payment.");
+    } else if (!hasTxn) {
+      flag(
+        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+      );
+    } else if (ev.payment.amount !== ev.marginalPaise) {
+      flag("Side-payment amount diverges from the event's marginalPaise.");
+    } else if (!ev.settledAt) {
+      flag("CHARGED member overage missing settledAt.");
+    }
+  } else if (
+    (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+    hasTxn
+  ) {
+    flag(
+      "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+    );
+  }
+
+  if (
+    !ev.paymentId ||
+    !recarveReversalAmounts.has(`overage-recarve-invoice:${ev.paymentId}`)
+  ) {
+    return;
+  }
+
+  const reversalPaise = recarveReversalAmounts.get(
+    `overage-recarve-invoice:${ev.paymentId}`,
+  );
+  const creditNote =
+    ev.creditNote ?? creditNoteByOverageEventId.get(ev.id) ?? null;
+  if (reversalPaise === undefined || reversalPaise <= 0) {
+    flag(
+      "overage-recarve-invoice ledger reversal has non-positive DEBIT sum.",
+      ev.basePaise,
+      reversalPaise ?? 0,
+    );
+  } else if (!creditNote) {
+    flag(
+      "overage-recarve-invoice ledger reversal exists without a corresponding CreditNote on the OverageEvent.",
+      reversalPaise,
+      0,
+    );
+  } else if (Number(creditNote.subtotalPaise) !== reversalPaise) {
+    flag(
+      `CreditNote subtotalPaise (${Number(creditNote.subtotalPaise)}) does not match overage-recarve-invoice ledger reversal (${reversalPaise}).`,
+      reversalPaise,
+      Number(creditNote.subtotalPaise),
+    );
+  }
+}
+
+async function loadRecarveCreditNotes(
+  memberEvents: MemberOverageEventRow[],
+  recarveReversalAmounts: Map<string, number>,
+): Promise<Map<string, { id: string; subtotalPaise: number | bigint }>> {
+  const creditNoteByOverageEventId = new Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >();
+  if (
+    recarveReversalAmounts.size === 0 ||
+    typeof (prisma as unknown as { creditNote?: { findMany?: unknown } })
+      .creditNote?.findMany !== "function"
+  ) {
+    return creditNoteByOverageEventId;
+  }
+  const recarveEventIds = memberEvents
+    .filter(
+      (e) =>
+        !!e.paymentId &&
+        recarveReversalAmounts.has(`overage-recarve-invoice:${e.paymentId}`),
+    )
+    .map((e) => e.id);
+  if (recarveEventIds.length === 0) return creditNoteByOverageEventId;
+
+  const notes = await prisma.creditNote.findMany({
+    where: { overageEventId: { in: recarveEventIds } },
+    select: { id: true, overageEventId: true, subtotalPaise: true },
+  });
+  for (const cn of notes) {
+    if (cn.overageEventId) {
+      creditNoteByOverageEventId.set(cn.overageEventId, cn);
+    }
+  }
+  return creditNoteByOverageEventId;
+}
+
 // --- (Q) #775/#782/#1900 — CHARGE_MEMBER overage settlement coherence ---
 async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   const memberEvents = await prisma.overageEvent.findMany({
@@ -1078,110 +1215,18 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
       }
     }
   }
-  const creditNoteByOverageEventId = new Map<
-    string,
-    { id: string; subtotalPaise: number | bigint }
-  >();
-  if (
-    recarveReversalAmounts.size > 0 &&
-    typeof (prisma as unknown as { creditNote?: { findMany?: unknown } })
-      .creditNote?.findMany === "function"
-  ) {
-    const recarveEventIds = memberEvents
-      .filter(
-        (e) =>
-          !!e.paymentId &&
-          recarveReversalAmounts.has(`overage-recarve-invoice:${e.paymentId}`),
-      )
-      .map((e) => e.id);
-    if (recarveEventIds.length > 0) {
-      const notes = await prisma.creditNote.findMany({
-        where: { overageEventId: { in: recarveEventIds } },
-        select: { id: true, overageEventId: true, subtotalPaise: true },
-      });
-      for (const cn of notes) {
-        if (cn.overageEventId) {
-          creditNoteByOverageEventId.set(cn.overageEventId, cn);
-        }
-      }
-    }
-  }
+  const creditNoteByOverageEventId = await loadRecarveCreditNotes(
+    memberEvents,
+    recarveReversalAmounts,
+  );
   for (const ev of memberEvents) {
-    const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
-    const flag = (
-      note: string,
-      expected = ev.marginalPaise,
-      actual = ev.payment?.amount ?? 0,
-    ) =>
-      ctx.findings.push({
-        kind: "OVERAGE_SETTLEMENT_MISMATCH",
-        paymentId: ev.paymentId ?? undefined,
-        organizationId: ev.payment?.organizationId ?? undefined,
-        expectedPaise: expected,
-        actualPaise: actual,
-        deltaPaise: actual - expected,
-        details: {
-          overageEventId: ev.id,
-          chargeStatus: ev.chargeStatus,
-          unit: "paise",
-          note,
-        },
-      });
-    if (ev.chargeStatus === "CHARGED") {
-      if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
-        flag("CHARGED member overage without a SUCCEEDED side-payment.");
-      } else if (!hasTxn) {
-        flag(
-          "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
-        );
-      } else if (ev.payment.amount !== ev.marginalPaise) {
-        flag("Side-payment amount diverges from the event's marginalPaise.");
-      } else if (!ev.settledAt) {
-        flag("CHARGED member overage missing settledAt.");
-      }
-    } else if (
-      (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
-      hasTxn
-    ) {
-      flag(
-        "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
-      );
-    }
-
-    if (
-      ev.paymentId &&
-      recarveReversalAmounts.has(`overage-recarve-invoice:${ev.paymentId}`)
-    ) {
-      const txRef = `overage-recarve-invoice:${ev.paymentId}`;
-      const reversalPaise = recarveReversalAmounts.get(txRef);
-      const creditNote =
-        (
-          ev as unknown as {
-            creditNote?: { subtotalPaise: number | bigint } | null;
-          }
-        ).creditNote ??
-        creditNoteByOverageEventId.get(ev.id) ??
-        null;
-      if (reversalPaise === undefined || reversalPaise <= 0) {
-        flag(
-          "overage-recarve-invoice ledger reversal has non-positive DEBIT sum.",
-          ev.basePaise,
-          reversalPaise ?? 0,
-        );
-      } else if (!creditNote) {
-        flag(
-          "overage-recarve-invoice ledger reversal exists without a corresponding CreditNote on the OverageEvent.",
-          reversalPaise,
-          0,
-        );
-      } else if (Number(creditNote.subtotalPaise) !== reversalPaise) {
-        flag(
-          `CreditNote subtotalPaise (${Number(creditNote.subtotalPaise)}) does not match overage-recarve-invoice ledger reversal (${reversalPaise}).`,
-          reversalPaise,
-          Number(creditNote.subtotalPaise),
-        );
-      }
-    }
+    inspectOverageEventLedgerState(
+      ev,
+      txnKeys,
+      recarveReversalAmounts,
+      creditNoteByOverageEventId,
+      ctx.findings,
+    );
   }
 }
 

@@ -90,6 +90,146 @@ export async function restoreOverageBaseCarve(
   return "restored";
 }
 
+type RecarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
+  Partial<Pick<Tx, "organizationInvoice" | "invoiceLineItem">>;
+
+function computeRecarvedDraftInvoiceTotals(
+  invoice: {
+    subtotalPaise: number | bigint;
+    igstPaise?: number | bigint | null;
+    cgstPaise?: number | bigint | null;
+    sgstPaise?: number | bigint | null;
+  },
+  basePaise: number,
+) {
+  const oldSubtotal = Math.max(0, Number(invoice.subtotalPaise));
+  const newSubtotal = Math.max(0, oldSubtotal - basePaise);
+  const oldIgst = Number(invoice.igstPaise ?? 0);
+  const oldCgst = Number(invoice.cgstPaise ?? 0);
+  const oldSgst = Number(invoice.sgstPaise ?? 0);
+  const oldTax = oldIgst + oldCgst + oldSgst;
+  const standardGstRateBps = 1800;
+  let newTax = 0;
+  if (oldTax > 0 && newSubtotal > 0) {
+    const matchesStandardGst =
+      Math.round((oldSubtotal * standardGstRateBps) / 10_000) === oldTax;
+    newTax = matchesStandardGst
+      ? Math.round((newSubtotal * standardGstRateBps) / 10_000)
+      : Math.round((oldTax * newSubtotal) / Math.max(1, oldSubtotal));
+  }
+  const interState = oldIgst > 0;
+  const newIgst = interState ? newTax : 0;
+  const newSgst = interState ? 0 : Math.floor(newTax / 2);
+  const newCgst = interState ? 0 : newTax - newSgst;
+  const newTotal = newSubtotal + newTax;
+
+  return {
+    subtotalPaise: newSubtotal,
+    igstPaise: newIgst,
+    cgstPaise: newCgst,
+    sgstPaise: newSgst,
+    totalPaise: newTotal,
+    inrEquivalentPaise: newTotal,
+  };
+}
+
+async function persistRecarvedDraftInvoice(
+  tx: RecarveTx,
+  invoiceId: string,
+  updatedInvoiceData: ReturnType<typeof computeRecarvedDraftInvoiceTotals>,
+): Promise<void> {
+  if (typeof tx.organizationInvoice?.updateMany === "function") {
+    const invoiceUpdated = await tx.organizationInvoice.updateMany({
+      where: { id: invoiceId, status: "DRAFT" },
+      data: updatedInvoiceData,
+    });
+    if (invoiceUpdated.count === 0) {
+      throw new Error(
+        `recarveOverageBase: invoice ${invoiceId} transitioned out of DRAFT during recarve — rolling back`,
+      );
+    }
+    if (typeof tx.organizationInvoice.update === "function") {
+      await tx.organizationInvoice.update({
+        where: { id: invoiceId },
+        data: updatedInvoiceData,
+      });
+    }
+    return;
+  }
+  if (typeof tx.organizationInvoice?.update === "function") {
+    await tx.organizationInvoice.update({
+      where: { id: invoiceId },
+      data: updatedInvoiceData,
+    });
+  }
+}
+
+async function recarveDraftInvoiceBase(
+  tx: RecarveTx,
+  parentId: string,
+  basePaise: number,
+  invoiceId: string | null,
+): Promise<CarveOutcome> {
+  if (
+    !invoiceId ||
+    typeof tx.organizationInvoice?.findUnique !== "function" ||
+    (typeof tx.organizationInvoice?.updateMany !== "function" &&
+      typeof tx.organizationInvoice?.update !== "function")
+  ) {
+    return "invoiced";
+  }
+
+  const invoice = await tx.organizationInvoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true,
+      status: true,
+      subtotalPaise: true,
+      igstPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+      totalPaise: true,
+    },
+  });
+  if (invoice?.status !== "DRAFT") {
+    return "invoiced";
+  }
+
+  const draftParentCut = await tx.payment.updateMany({
+    where: { id: parentId, billableToOrgInvoiceId: invoice.id },
+    data: { amount: { decrement: basePaise } },
+  });
+  if (draftParentCut.count === 0) return "invoiced";
+
+  const draftCarved = await tx.paymentLeg.updateMany({
+    where: {
+      paymentId: parentId,
+      source: "INVOICE_ACCRUAL",
+      amountPaise: { gte: basePaise },
+    },
+    data: { amountPaise: { decrement: basePaise } },
+  });
+  if (draftCarved.count === 0) {
+    throw new Error(
+      `recarveOverageBase: INVOICE_ACCRUAL leg on payment ${parentId} is missing the restored basePaise=${basePaise} — rolling back`,
+    );
+  }
+
+  if (typeof tx.invoiceLineItem?.updateMany === "function") {
+    await tx.invoiceLineItem.updateMany({
+      where: { invoiceId: invoice.id, paymentId: parentId },
+      data: { unitPricePaise: { decrement: basePaise } },
+    });
+  }
+
+  const updatedInvoiceData = computeRecarvedDraftInvoiceTotals(
+    invoice,
+    basePaise,
+  );
+  await persistRecarvedDraftInvoice(tx, invoice.id, updatedInvoiceData);
+  return "recarved";
+}
+
 /**
  * Recovery edges (FAILED→PENDING retry, FAILED→CHARGED late capture): carve
  * basePaise back out. Call ONLY after a successful CAS from FAILED, in the
@@ -98,8 +238,7 @@ export async function restoreOverageBaseCarve(
  * capture, because the member paying now would double-collect basePaise.
  */
 export async function recarveOverageBase(
-  tx: Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
-    Partial<Pick<Tx, "organizationInvoice" | "invoiceLineItem">>,
+  tx: RecarveTx,
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
@@ -115,83 +254,12 @@ export async function recarveOverageBase(
     // status. If DRAFT, adjust the DRAFT invoice, its line item, the parent
     // payment, and the INVOICE_ACCRUAL leg in-place; only ISSUED/PAID/OVERDUE
     // invoices take the post-invoice credit-note path ("invoiced").
-    const invoiceId = ctx.parent.billableToOrgInvoiceId;
-    if (
-      !invoiceId ||
-      typeof tx.organizationInvoice?.findUnique !== "function" ||
-      typeof tx.organizationInvoice?.update !== "function"
-    ) {
-      return "invoiced";
-    }
-    const invoice = await tx.organizationInvoice.findUnique({
-      where: { id: invoiceId },
-      select: {
-        id: true,
-        status: true,
-        subtotalPaise: true,
-        igstPaise: true,
-        cgstPaise: true,
-        sgstPaise: true,
-        totalPaise: true,
-      },
-    });
-    if (!invoice || invoice.status !== "DRAFT") {
-      return "invoiced";
-    }
-
-    const draftParentCut = await tx.payment.updateMany({
-      where: { id: ctx.parent.id, billableToOrgInvoiceId: invoice.id },
-      data: { amount: { decrement: ctx.event.basePaise } },
-    });
-    if (draftParentCut.count === 0) return "invoiced";
-
-    const draftCarved = await tx.paymentLeg.updateMany({
-      where: {
-        paymentId: ctx.parent.id,
-        source: "INVOICE_ACCRUAL",
-        amountPaise: { gte: ctx.event.basePaise },
-      },
-      data: { amountPaise: { decrement: ctx.event.basePaise } },
-    });
-    if (draftCarved.count === 0) {
-      throw new Error(
-        `recarveOverageBase: INVOICE_ACCRUAL leg on payment ${ctx.parent.id} is missing the restored basePaise=${ctx.event.basePaise} — rolling back`,
-      );
-    }
-
-    if (typeof tx.invoiceLineItem?.updateMany === "function") {
-      await tx.invoiceLineItem.updateMany({
-        where: { invoiceId: invoice.id, paymentId: ctx.parent.id },
-        data: { unitPricePaise: { decrement: ctx.event.basePaise } },
-      });
-    }
-
-    const oldSubtotal = Math.max(0, Number(invoice.subtotalPaise));
-    const newSubtotal = Math.max(0, oldSubtotal - ctx.event.basePaise);
-    const oldIgst = Number(invoice.igstPaise ?? 0);
-    const oldCgst = Number(invoice.cgstPaise ?? 0);
-    const oldSgst = Number(invoice.sgstPaise ?? 0);
-    const oldTax = oldIgst + oldCgst + oldSgst;
-    const newTax =
-      oldSubtotal > 0 ? Math.round((newSubtotal * oldTax) / oldSubtotal) : 0;
-    const interState = oldIgst > 0;
-    const newIgst = interState ? newTax : 0;
-    const newSgst = interState ? 0 : Math.floor(newTax / 2);
-    const newCgst = interState ? 0 : newTax - newSgst;
-    const newTotal = newSubtotal + newTax;
-
-    await tx.organizationInvoice.update({
-      where: { id: invoice.id },
-      data: {
-        subtotalPaise: newSubtotal,
-        igstPaise: newIgst,
-        cgstPaise: newCgst,
-        sgstPaise: newSgst,
-        totalPaise: newTotal,
-        inrEquivalentPaise: newTotal,
-      },
-    });
-    return "recarved";
+    return recarveDraftInvoiceBase(
+      tx,
+      ctx.parent.id,
+      ctx.event.basePaise,
+      ctx.parent.billableToOrgInvoiceId,
+    );
   }
 
   // Guarded decrement — mirrors the original carve's fail-closed stance.

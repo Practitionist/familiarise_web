@@ -65,6 +65,56 @@ function normalizeSlotForBreakdown(
   };
 }
 
+type RawDaySlotsInput =
+  | Date
+  | readonly DayMarkSlot[]
+  | Record<string, readonly DayMarkSlot[]>
+  | null
+  | undefined;
+
+function resolveDaySlots(
+  date: Date,
+  rawSlots: RawDaySlotsInput,
+  timezone: string,
+): readonly DayMarkSlot[] | null {
+  if (rawSlots === null || rawSlots === undefined || rawSlots instanceof Date) {
+    return null;
+  }
+  if (Array.isArray(rawSlots)) {
+    return rawSlots as readonly DayMarkSlot[];
+  }
+  const key = formatInTimeZone(date, timezone, "yyyy-MM-dd");
+  return (rawSlots as Record<string, readonly DayMarkSlot[]>)[key] ?? [];
+}
+
+function hasBookableSlot(
+  daySlots: readonly DayMarkSlot[],
+  durationInHours: number,
+  timezone: string,
+  cutoff: number,
+): boolean {
+  if (durationInHours > 0.5) {
+    const normalized = daySlots.map((slot, idx) =>
+      normalizeSlotForBreakdown(slot, idx),
+    );
+    const contiguousWindows = breakDownSlotsPreservingStatus(
+      normalized,
+      durationInHours,
+      timezone,
+    );
+    return contiguousWindows.some(
+      (slot) =>
+        slot.bookingStatus === "available" &&
+        new Date(slot.startsAt).getTime() >= cutoff,
+    );
+  }
+  return daySlots.some(
+    (slot) =>
+      slot.bookingStatus !== "fully-booked" &&
+      new Date(slot.startsAt).getTime() >= cutoff,
+  );
+}
+
 /**
  * A day is bookable when at least one of its slots is neither past (inside
  * the checkout lead time) nor fully booked — the cal.diy#2329 rule: published
@@ -103,44 +153,13 @@ export function dayState(
   const rawSlots =
     nowOrSlots instanceof Date ? slotsOrNow : nowOrSlots;
 
-  let daySlots: readonly DayMarkSlot[] | null = null;
-  if (rawSlots === null || rawSlots === undefined) {
-    daySlots = null;
-  } else if (Array.isArray(rawSlots)) {
-    daySlots = rawSlots as readonly DayMarkSlot[];
-  } else if (!(rawSlots instanceof Date)) {
-    const key = formatInTimeZone(date, timezone, "yyyy-MM-dd");
-    daySlots =
-      (rawSlots as Record<string, readonly DayMarkSlot[]>)[key] ?? [];
-  }
-
+  const daySlots = resolveDaySlots(date, rawSlots, timezone);
   const today = isSameDay(date, now);
   if (!today && startOfDay(date) < startOfDay(now)) return "past";
   if (daySlots === null) return today ? "today+unknown" : "unknown";
-  const cutoff = now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS;
 
-  let bookable: boolean;
-  if (durationInHours > 0.5) {
-    const normalized = daySlots.map((slot, idx) =>
-      normalizeSlotForBreakdown(slot, idx),
-    );
-    const contiguousWindows = breakDownSlotsPreservingStatus(
-      normalized,
-      durationInHours,
-      timezone,
-    );
-    bookable = contiguousWindows.some(
-      (slot) =>
-        slot.bookingStatus === "available" &&
-        new Date(slot.startsAt).getTime() >= cutoff,
-    );
-  } else {
-    bookable = daySlots.some(
-      (slot) =>
-        slot.bookingStatus !== "fully-booked" &&
-        new Date(slot.startsAt).getTime() >= cutoff,
-    );
-  }
+  const cutoff = now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS;
+  const bookable = hasBookableSlot(daySlots, durationInHours, timezone, cutoff);
 
   if (today) return bookable ? "today+bookable" : "today+none";
   return bookable ? "bookable" : "none";

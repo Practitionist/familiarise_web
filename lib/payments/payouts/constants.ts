@@ -38,7 +38,9 @@ export const PAYOUT_CONSTANTS = {
  */
 export const INSTANT_PAYOUT_AUTO_APPROVE_PAISE = (() => {
   const fromEnv = Number(process.env.INSTANT_PAYOUT_AUTO_APPROVE_PAISE);
-  return Number.isSafeInteger(fromEnv) && fromEnv > 0 ? fromEnv : 2_500_000;
+  return Number.isSafeInteger(fromEnv) && fromEnv > 0
+    ? fromEnv
+    : PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
 })();
 
 // ============================================================================

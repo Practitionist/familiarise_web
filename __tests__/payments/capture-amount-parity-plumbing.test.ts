@@ -26,93 +26,98 @@
  * still bypassed, which is exactly the bug being pinned.
  */
 
-const captureException = jest.fn((..._a: unknown[]): unknown => undefined);
-const captureMessage = jest.fn((..._a: unknown[]): unknown => undefined);
+type PaymentStampArgs = {
+  where: { paymentStatus?: string };
+  data: {
+    paymentStatus?: string;
+    description?: string;
+    gatewayPaymentId?: string | null;
+  };
+};
+
+const mockParityState = {
+  body: "{}",
+  captureException: jest.fn((..._a: unknown[]): unknown => undefined),
+  captureMessage: jest.fn((..._a: unknown[]): unknown => undefined),
+  paymentUpdateMany: jest.fn(async (_args: PaymentStampArgs) => ({ count: 1 })),
+  paymentFindUnique: jest.fn(
+    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  appointmentFindUnique: jest.fn(
+    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  txPaymentUpdate: jest.fn(async (..._a: unknown[]) => ({})),
+  trialUpdateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
+  trialFindUnique: jest.fn((..._a: unknown[]): unknown => undefined),
+  occurrenceFindMany: jest.fn(),
+  prismaPaymentUpdate: jest.fn(async (..._a: unknown[]) => ({})),
+  createEarningsFromPayment: jest.fn(),
+  refundPayment: jest.fn(
+    (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
+  ),
+  refundBookingPayment: jest.fn((..._a: unknown[]): unknown => undefined),
+  recordSystemEvent: jest.fn(async (..._a: unknown[]) => undefined),
+  validateWebhookMetadata: jest.fn((..._a: unknown[]): unknown => undefined),
+};
+
+const mockParityTx = {
+  payment: {
+    findUnique: mockParityState.paymentFindUnique,
+    updateMany: mockParityState.paymentUpdateMany,
+    update: mockParityState.txPaymentUpdate,
+  },
+  appointment: { findUnique: mockParityState.appointmentFindUnique },
+  trial: {
+    updateMany: mockParityState.trialUpdateMany,
+    findUnique: mockParityState.trialFindUnique,
+  },
+  appointmentOccurrence: { findMany: mockParityState.occurrenceFindMany },
+};
+
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   setTag: jest.fn(),
-  captureException: (...a: unknown[]) => captureException(...a),
-  captureMessage: (...a: unknown[]) => captureMessage(...a),
+  captureException: (...a: unknown[]) =>
+    mockParityState.captureException(...a),
+  captureMessage: (...a: unknown[]) => mockParityState.captureMessage(...a),
   logger: {
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
-    fmt: (strings: TemplateStringsArray) => strings.join(""),
+    fmt: (s: TemplateStringsArray) => s.join(""),
   },
   getCurrentScope: () => ({ setTag: jest.fn() }),
 }));
 
 jest.mock("../../lib/db/serializable-retry", () => ({
   __esModule: true,
-  withSerializableRetry: async (fn: () => unknown) => fn(),
+  withSerializableRetry: async (run: () => unknown) => run(),
 }));
 
-// #1439 — every in-tx status stamp is a CAS, so the writer is `updateMany`
-// and its count decides whether the flow continues.
-const paymentUpdateMany = jest.fn(
-  async (_args: {
-    where: { paymentStatus?: string };
-    // CAS-in-WHERE (#1439): the stamp carries a full Prisma `data` payload.
-    // Typing the arg without it made every `stamp.data.*` assertion a compile
-    // error — and a runtime `undefined` had the reader not checked.
-    data: {
-      paymentStatus?: string;
-      description?: string;
-      gatewayPaymentId?: string | null;
-    };
-  }) => ({ count: 1 }),
-);
-const paymentFindUnique = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
-const appointmentFindUnique = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
-const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
-const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
-const trialFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
-const occurrenceFindMany = jest.fn();
-const txStub = {
-  payment: {
-    findUnique: paymentFindUnique,
-    updateMany: paymentUpdateMany,
-    update: txPaymentUpdate,
-  },
-  appointment: { findUnique: appointmentFindUnique },
-  trial: { updateMany: trialUpdateMany, findUnique: trialFindUnique },
-  appointmentOccurrence: { findMany: occurrenceFindMany },
-};
-// The Phase-2 settle-marker write runs on the base client, outside the tx.
-const prismaPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: async (fn: (tx: unknown) => unknown) => fn(txStub),
+    $transaction: async (run: (tx: unknown) => unknown) => run(mockParityTx),
     payment: {
-      update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
+      update: (...a: unknown[]) =>
+        mockParityState.prismaPaymentUpdate(...(a as [never])),
     },
     webhookEvent: {
-      updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
   },
 }));
 
-// Side-effectful import graph — present so the modules load. The mismatch and
-// redelivery paths return before any of it runs.
-const createEarningsFromPayment = jest.fn();
 jest.mock("../../lib/payments/payouts", () => ({
   createEarningsFromPayment: (...a: unknown[]) =>
-    createEarningsFromPayment(...a),
+    mockParityState.createEarningsFromPayment(...a),
 }));
-const refundPayment = jest.fn(
-  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
-);
 jest.mock("../../lib/payments/operations/refund", () => ({
-  refundPayment: (...a: unknown[]) => refundPayment(...a),
+  refundPayment: (...a: unknown[]) => mockParityState.refundPayment(...a),
 }));
-const refundBookingPayment = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
-  refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
+  refundBookingPayment: (...a: unknown[]) =>
+    mockParityState.refundBookingPayment(...a),
 }));
 jest.mock("../../lib/email", () => ({
   sendPaymentSuccessEmail: jest.fn(),
@@ -136,24 +141,19 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-const recordSystemEvent = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => recordSystemEvent(...(a as [never])),
+  recordSystemError: (...a: unknown[]) =>
+    mockParityState.recordSystemEvent(...(a as [never])),
   recordSystemErrorSafe: (...a: unknown[]) =>
-    recordSystemEvent(...(a as [never])),
+    mockParityState.recordSystemEvent(...(a as [never])),
   recordSystemEventSafe: (...a: unknown[]) =>
-    recordSystemEvent(...(a as [never])),
+    mockParityState.recordSystemEvent(...(a as [never])),
 }));
-const validateWebhookMetadata = jest.fn(
-  (..._a: unknown[]): unknown => undefined,
-);
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
-  validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
+  validateWebhookMetadata: (...a: unknown[]) =>
+    mockParityState.validateWebhookMetadata(...a),
 }));
-
-// razorpay-dispatch imports the razorpay client at module scope; the only
-// family that constructs one is `refund.*`, which these tests never reach.
 jest.mock("../../lib/payments/core/razorpay", () => ({}));
 jest.mock("../../lib/payments/webhooks/overage-handlers", () => ({
   handleOverageMemberSuccess: jest.fn(),
@@ -164,36 +164,32 @@ jest.mock("../../lib/payments/webhooks/recording-purchase", () => ({
   handleRecordingPurchaseFailure: jest.fn(),
 }));
 
-// The webhook transport edges. handlePaymentSuccess is deliberately the REAL
-// one: stubbing it would let a door pass a wrong amount and still look fine.
-// `mock` prefix is required — jest.mock factories may only close over
-// variables whose names begin with it.
-let mockWebhookBody = "{}";
 jest.mock("../../app/api/webhooks/utils", () => {
-  const real = jest.requireActual("../../lib/payments/webhooks/handlers");
+  const realHandlers = jest.requireActual("../../lib/payments/webhooks/handlers");
+  const noopAsync = () => jest.fn(async () => undefined);
   return {
     __esModule: true,
-    handlePaymentSuccess: real.handlePaymentSuccess,
-    handlePaymentFailure: jest.fn(async () => undefined),
-    handleOrgPaymentSuccess: jest.fn(async () => undefined),
-    handleOrgPaymentFailure: jest.fn(async () => undefined),
-    handleRefundCreated: jest.fn(async () => undefined),
-    handleDisputeCreated: jest.fn(async () => undefined),
-    handleDisputeUpdated: jest.fn(async () => undefined),
-    handleRazorpayPayoutWebhook: jest.fn(async () => undefined),
-    handleStripePayoutWebhook: jest.fn(async () => undefined),
+    handlePaymentSuccess: realHandlers.handlePaymentSuccess,
+    handlePaymentFailure: noopAsync(),
+    handleOrgPaymentSuccess: noopAsync(),
+    handleOrgPaymentFailure: noopAsync(),
+    handleRefundCreated: noopAsync(),
+    handleDisputeCreated: noopAsync(),
+    handleDisputeUpdated: noopAsync(),
+    handleRazorpayPayoutWebhook: noopAsync(),
+    handleStripePayoutWebhook: noopAsync(),
     DeferSignal: class DeferSignal {},
     isDbHealthy: jest.fn(async () => true),
     verifyWebhookSignature: jest.fn(async () => ({
       isValid: true,
-      body: mockWebhookBody,
+      body: mockParityState.body,
       oversized: false,
     })),
     logWebhookEvent: jest.fn(async () => ({
       isNew: true,
       claim: { id: "we1" },
     })),
-    markWebhookEventProcessed: jest.fn(async () => undefined),
+    markWebhookEventProcessed: noopAsync(),
   };
 });
 
@@ -201,7 +197,16 @@ import { NextRequest } from "next/server";
 import { POST as stripeWebhook } from "../../app/api/webhooks/stripe/route";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 
-/** The Payment row every capture resolves to: 10000p. */
+const {
+  captureException,
+  paymentUpdateMany,
+  paymentFindUnique,
+  appointmentFindUnique,
+  createEarningsFromPayment,
+  refundPayment,
+  validateWebhookMetadata,
+} = mockParityState;
+
 const pendingPayment = {
   id: "pay1",
   paymentIntent: "pi_capture_1",
@@ -227,9 +232,6 @@ function stripeIntentEvent(overrides: Record<string, unknown> = {}) {
       object: {
         id: "pi_capture_1",
         object: "payment_intent",
-        // The AUTHORISED figure, and the figure metadata echoes. Deliberately
-        // 10000 — the order total — so a door that read either of them would
-        // look identical to a correct one and pass this suite.
         amount: 10000,
         amount_received: 6000,
         currency: "inr",
@@ -243,12 +245,12 @@ function stripeIntentEvent(overrides: Record<string, unknown> = {}) {
 }
 
 async function postStripe(event: unknown) {
-  mockWebhookBody = JSON.stringify(event);
+  mockParityState.body = JSON.stringify(event);
   return stripeWebhook(
     new NextRequest("http://localhost/api/webhooks/stripe", {
       method: "POST",
       headers: { "stripe-signature": "t=1,v1=deadbeef" },
-      body: mockWebhookBody,
+      body: mockParityState.body,
     }),
   );
 }
@@ -286,6 +288,14 @@ function orderPaidEvent(orderTotalPaise: number, withPaymentEntity: boolean) {
   };
 }
 
+function expectNoMismatchStamp() {
+  expect(
+    paymentUpdateMany.mock.calls.find((c) =>
+      String(c[0].data.description ?? "").includes("≠"),
+    ),
+  ).toBeUndefined();
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
@@ -298,8 +308,6 @@ beforeEach(() => {
 
 describe("Stripe enters the confirmation router with the amount it actually took", () => {
   it("refuses a capture below the order amount instead of booking it at full value", async () => {
-    // `amount_received` is 6000; Payment.amount is 10000. Booking this at 10000
-    // is the silent under-collection this pins shut.
     const res = await postStripe(stripeIntentEvent());
 
     expect(res.status).toBe(200);
@@ -311,40 +319,25 @@ describe("Stripe enters the confirmation router with the amount it actually took
       "gateway=6000 expected=10000",
     );
 
-    // The auto-refund marker is stamped under the PENDING predicate, then the
-    // capture is auto-refunded through the front door.
     const stamp = paymentUpdateMany.mock.calls[0][0];
     expect(stamp.where.paymentStatus).toBe("PENDING");
     expect(stamp.data.paymentStatus).toBe("SUCCEEDED");
     expect(stamp.data.description).toMatch(/^Auto-refund pending:/);
     expect(stamp.data.description).toContain("6000p ≠ expected 10000p");
-    // #1353 — the refund webhook that comes back carries only the `pay_…`
-    // analogue, so this branch is the one that most needs the id persisted.
     expect(stamp.data.gatewayPaymentId).toBe("pi_capture_1");
 
     expect(refundPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay1", initiatedByUserId: null }),
     );
-
-    // Nothing was confirmed and no earnings were booked.
     expect(appointmentFindUnique).not.toHaveBeenCalled();
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
   });
 
   it("leaves the guard inert on a capture that matches the order", async () => {
-    // The counterpart to the refusal above: with `amount_received` == 10000 the
-    // guard must not fire, which is only true if the door read
-    // `amount_received` (6000 in the test above would have fired) rather than
-    // `intent.amount`, the metadata order total, or nothing at all.
     await postStripe(
       stripeIntentEvent({ amount_received: 10000, amount: 10000 }),
     );
 
-    // Assert the GUARD is inert, not that nothing threw. A matching capture
-    // runs on past the guard into Phase 2, and this suite's stub graph does not
-    // complete that far — it reports "Failed to create or find appointment".
-    // A blanket `captureException` count conflates the guard with unrelated
-    // downstream stub gaps, so scope the assertion to the guard's own markers.
     expect(
       captureException.mock.calls.some((c) =>
         String(c[0]).includes("Capture amount mismatch"),
@@ -397,29 +390,12 @@ describe("Stripe enters the confirmation router with the amount it actually took
       },
     });
 
-    // NOT `expect(res.status).toBe(200)`. This suite runs the real router into a
-    // stub graph that stops in Phase 2 ("Failed to create or find appointment"),
-    // and the route turns that into a 500. Asserting the status would pin the
-    // stub graph's completeness, not the door. What matters is that the session
-    // total reached the guard and matched, so no remediation ran and the flow
-    // proceeded PAST the guard into Phase 2 — which is what
-    // `appointmentFindUnique` being called proves.
     expect(
       captureException.mock.calls.some((c) =>
         String(c[0]).includes("Capture amount mismatch"),
       ),
     ).toBe(false);
-    // The door WITHHOLDS the amount, so the parity check is skipped by
-    // construction. Pinned two ways, because "the guard did not fire" is only
-    // meaningful if the guard could have:
-    //   1. no remediation ran;
-    expect(
-      paymentUpdateMany.mock.calls.find((c) =>
-        String(c[0].data.description ?? "").includes("≠"),
-      ),
-    ).toBeUndefined();
-    //   2. and the route still asks for the pi_ id, so a later refund or
-    //      dispute can be resolved against the right gateway object.
+    expectNoMismatchStamp();
     expect(paymentUpdateMany.mock.calls.length).toBeGreaterThanOrEqual(0);
     expect(refundPayment).not.toHaveBeenCalled();
     expect(appointmentFindUnique).toHaveBeenCalled();
@@ -428,10 +404,6 @@ describe("Stripe enters the confirmation router with the amount it actually took
 
 describe("order.paid must not pass the order TOTAL as a captured amount", () => {
   it("withholds the amount when Razorpay ships no payment entity, so parity is skipped not faked", async () => {
-    // The order total (9999) deliberately differs from Payment.amount (10000).
-    // The old `?? order.entity.amount` fallback fed 9999 in as "the captured
-    // amount" and the guard compared the gateway against itself, so this case
-    // tripped a FALSE mismatch — the mirror image of the bug, and equally wrong.
     paymentFindUnique.mockResolvedValue({
       ...pendingPayment,
       paymentIntent: "order_1",
@@ -443,16 +415,8 @@ describe("order.paid must not pass the order TOTAL as a captured amount", () => 
       "evt_rzp_1",
     );
 
-    // No mismatch remediation ran: no auto-refund marker, no auto-refund call.
-    expect(
-      paymentUpdateMany.mock.calls.find((c) =>
-        String(c[0].data.description ?? "").includes("≠"),
-      ),
-    ).toBeUndefined();
+    expectNoMismatchStamp();
     expect(refundPayment).not.toHaveBeenCalled();
-    // …and the flow got PAST the guard to the tentative appointment lookup, so
-    // parity was SKIPPED for want of a figure — the pre-#1582 posture — rather
-    // than decided on the order total.
     expect(appointmentFindUnique).toHaveBeenCalled();
   });
 
@@ -468,12 +432,7 @@ describe("order.paid must not pass the order TOTAL as a captured amount", () => 
       "evt_rzp_2",
     );
 
-    // 10000 == Payment.amount, so the guard is inert and the flow proceeded.
-    expect(
-      paymentUpdateMany.mock.calls.find((c) =>
-        String(c[0].data.description ?? "").includes("≠"),
-      ),
-    ).toBeUndefined();
+    expectNoMismatchStamp();
     expect(appointmentFindUnique).toHaveBeenCalled();
   });
 });
@@ -491,14 +450,10 @@ describe("a redelivery still re-validates the captured amount", () => {
     const res = await postStripe(stripeIntentEvent());
 
     expect(res.status).toBe(200);
-    // The short-circuit used to fire here and return null before the
-    // comparison, so a replay of a wrong-amount capture looked like agreement.
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(String(captureException.mock.calls[0][0])).toContain(
       "Capture amount mismatch",
     );
-    // …and the first delivery already stamped and refunded, so the redelivery
-    // must not stamp again or issue a second refund.
     expect(paymentUpdateMany).not.toHaveBeenCalled();
     expect(refundPayment).not.toHaveBeenCalled();
     expect(appointmentFindUnique).not.toHaveBeenCalled();
@@ -513,8 +468,6 @@ describe("a redelivery still re-validates the captured amount", () => {
     );
 
     expect(res.status).toBe(200);
-    // Reaching the short-circuit at all is the point: the amount was compared
-    // first and AGREED, so "nothing to do" is a real verdict, not a skip.
     expect(captureException).not.toHaveBeenCalled();
     expect(paymentUpdateMany).not.toHaveBeenCalled();
     expect(refundPayment).not.toHaveBeenCalled();

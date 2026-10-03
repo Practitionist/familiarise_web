@@ -837,7 +837,7 @@ export function useEventSlotAllocation(
               slotsPerCall,
             );
 
-            const maxTotalCalls = slotLimits.maxSlots;
+            const maxTotalCalls = slotLimits.totalSessions;
 
             // If this slot would complete a call, check total limits
             const slotsByDayPost = groupSlotsByDay(
@@ -958,7 +958,7 @@ export function useEventSlotAllocation(
           if (eventType === "subscription" && options.sessionDurationInHours) {
             const slotsPerCall = slotLimits.slotsPerSession;
             const sessionsPerWeek = options.sessionsPerWeek || 1;
-            const maxTotalCalls = slotLimits.maxSlots;
+            const maxTotalCalls = slotLimits.totalSessions;
 
             const slotsByDay = groupSlotsByDay(
               newSelection,
@@ -1358,6 +1358,7 @@ export function useEventSlotAllocation(
             strategy: "server-auto",
           });
         } else {
+          attemptKeyRef.current = null;
           // #1206 — a shortage that could still place SOMETHING is a question
           // for the consultant, not a dead end. The offer replaces the toast
           // on the first attempt only; answering it re-runs with allowPartial
@@ -1388,6 +1389,7 @@ export function useEventSlotAllocation(
           );
         }
       } catch (error) {
+        attemptKeyRef.current = null;
         const errorMessage =
           error instanceof Error ? error.message : "Auto allocation failed";
         setAllocationError(errorMessage);

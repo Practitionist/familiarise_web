@@ -118,6 +118,10 @@ export type Acc = {
   windowMaxCumulativePaise: number;
   linkedCompletedBasePaise: number;
   reversalBaseReductionPaise: number;
+  linkedReversalBaseReductionPaise: number;
+  unlinkedPositiveBasePaise: number;
+  firstUnlinkedCumPaise: number | null;
+  prevCumulativePaise: number;
   hasLinkedPayouts: boolean;
   seenPayoutIds: Set<string>;
   tdsNetPaise: number;
@@ -149,6 +153,87 @@ function deducteeOf(
   return null;
 }
 
+function createEmptyDeducteeAcc(
+  deductee: { type: TdsDeducteeType; id: string },
+  section: string | null,
+): Acc {
+  return {
+    deducteeType: deductee.type,
+    deducteeId: deductee.id,
+    windowMaxCumulativePaise: 0,
+    linkedCompletedBasePaise: 0,
+    reversalBaseReductionPaise: 0,
+    linkedReversalBaseReductionPaise: 0,
+    unlinkedPositiveBasePaise: 0,
+    firstUnlinkedCumPaise: null,
+    prevCumulativePaise: 0,
+    hasLinkedPayouts: false,
+    seenPayoutIds: new Set<string>(),
+    tdsNetPaise: 0,
+    reversalPaise: 0,
+    section,
+  };
+}
+
+function accumulateReversalRecord(acc: Acc, r: QuarterRecord): void {
+  acc.reversalPaise += Number(r.tdsDeducted);
+  if (!r.tdsRateBps || r.tdsRateBps <= 0) {
+    return;
+  }
+  const baseReduction = Math.round(
+    (Math.abs(Number(r.tdsDeducted)) * 10_000) / r.tdsRateBps,
+  );
+  const hasCompletedLinkedPayout =
+    r.payout?.status === "COMPLETED" || r.orgPayout?.status === "COMPLETED";
+  if (hasCompletedLinkedPayout) {
+    acc.linkedReversalBaseReductionPaise += baseReduction;
+    acc.reversalBaseReductionPaise += baseReduction;
+    return;
+  }
+  if (!r.payout && !r.orgPayout) {
+    acc.reversalBaseReductionPaise += baseReduction;
+  }
+}
+
+function accumulatePositiveRecord(
+  acc: Acc,
+  r: QuarterRecord,
+  cum: number,
+): void {
+  acc.tdsNetPaise += Number(r.tdsDeducted);
+  if (r.payout) {
+    acc.hasLinkedPayouts = true;
+    if (
+      r.payout.status === "COMPLETED" &&
+      !acc.seenPayoutIds.has(`c:${r.payout.id}`)
+    ) {
+      acc.seenPayoutIds.add(`c:${r.payout.id}`);
+      acc.linkedCompletedBasePaise += r.payout.amount;
+    }
+    return;
+  }
+  if (r.orgPayout) {
+    acc.hasLinkedPayouts = true;
+    if (
+      r.orgPayout.status === "COMPLETED" &&
+      !acc.seenPayoutIds.has(`o:${r.orgPayout.id}`)
+    ) {
+      acc.seenPayoutIds.add(`o:${r.orgPayout.id}`);
+      acc.linkedCompletedBasePaise += r.orgPayout.netPayoutPaise;
+    }
+    return;
+  }
+  if (acc.prevCumulativePaise > 0) {
+    acc.unlinkedPositiveBasePaise += Math.max(0, cum - acc.prevCumulativePaise);
+  } else if (r.tdsRateBps && r.tdsRateBps > 0 && Number(r.tdsDeducted) > 0) {
+    acc.unlinkedPositiveBasePaise += Math.round(
+      (Math.max(0, Number(r.tdsDeducted)) * 10_000) / r.tdsRateBps,
+    );
+  } else if (acc.firstUnlinkedCumPaise === null) {
+    acc.firstUnlinkedCumPaise = cum;
+  }
+}
+
 /**
  * #1481 — Derive each deductee's quarterly `amountCreditedPaise` directly from
  * the sum of linked `COMPLETED` payouts (`ConsultantPayout.amount` and
@@ -160,7 +245,9 @@ function deducteeOf(
  * reversal lowered the running cumulative below a prior watermark. We retain
  * `windowMaxCumulativePaise` only as a fallback for unlinked legacy rows.
  */
-export function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc> {
+export function accumulateByDeductee(
+  records: QuarterRecord[],
+): Map<string, Acc> {
   const byDeductee = new Map<string, Acc>();
   for (const r of records) {
     const deductee = deducteeOf(r);
@@ -169,63 +256,19 @@ export function accumulateByDeductee(records: QuarterRecord[]): Map<string, Acc>
     const key = tdsDeducteeKey(deductee.type, deductee.id);
     let acc = byDeductee.get(key);
     if (!acc) {
-      acc = {
-        deducteeType: deductee.type,
-        deducteeId: deductee.id,
-        windowMaxCumulativePaise: 0,
-        linkedCompletedBasePaise: 0,
-        reversalBaseReductionPaise: 0,
-        hasLinkedPayouts: false,
-        seenPayoutIds: new Set<string>(),
-        tdsNetPaise: 0,
-        reversalPaise: 0,
-        section: r.tdsSection,
-      };
+      acc = createEmptyDeducteeAcc(deductee, r.tdsSection);
       byDeductee.set(key, acc);
     }
-    acc.windowMaxCumulativePaise = Math.max(
-      acc.windowMaxCumulativePaise,
-      Number(r.cumulativeAmountCredited),
-    );
+    const cum = Number(r.cumulativeAmountCredited);
+    acc.windowMaxCumulativePaise = Math.max(acc.windowMaxCumulativePaise, cum);
     if (!r.reportedInForm26Q) {
       if (r.isReversal) {
-        acc.reversalPaise += Number(r.tdsDeducted);
-        // Only deduct reversed base if the linked payout was not already
-        // excluded as non-COMPLETED (e.g. partial refund on a COMPLETED payout
-        // or standalone reversal adjustment).
-        const linkedPayoutStillCompleted =
-          (!r.payout || r.payout.status === "COMPLETED") &&
-          (!r.orgPayout || r.orgPayout.status === "COMPLETED");
-        if (linkedPayoutStillCompleted) {
-          if (r.tdsRateBps && r.tdsRateBps > 0) {
-            acc.reversalBaseReductionPaise += Math.round(
-              (Math.abs(Number(r.tdsDeducted)) * 10_000) / r.tdsRateBps,
-            );
-          }
-        }
+        accumulateReversalRecord(acc, r);
       } else {
-        acc.tdsNetPaise += Number(r.tdsDeducted);
-        if (r.payout) {
-          acc.hasLinkedPayouts = true;
-          if (
-            r.payout.status === "COMPLETED" &&
-            !acc.seenPayoutIds.has(`c:${r.payout.id}`)
-          ) {
-            acc.seenPayoutIds.add(`c:${r.payout.id}`);
-            acc.linkedCompletedBasePaise += r.payout.amount;
-          }
-        } else if (r.orgPayout) {
-          acc.hasLinkedPayouts = true;
-          if (
-            r.orgPayout.status === "COMPLETED" &&
-            !acc.seenPayoutIds.has(`o:${r.orgPayout.id}`)
-          ) {
-            acc.seenPayoutIds.add(`o:${r.orgPayout.id}`);
-            acc.linkedCompletedBasePaise += r.orgPayout.netPayoutPaise;
-          }
-        }
+        accumulatePositiveRecord(acc, r, cum);
       }
     }
+    acc.prevCumulativePaise = cum;
   }
   return byDeductee;
 }
@@ -389,11 +432,26 @@ export function buildSourceRows(
         ? (paymentCodeBySection.get(acc.section) ?? null)
         : null,
     };
+    const firstUnlinkedBasePaise =
+      acc.firstUnlinkedCumPaise !== null
+        ? Math.max(0, acc.firstUnlinkedCumPaise - baseline)
+        : 0;
     const rawCreditedPaise = acc.hasLinkedPayouts
-      ? acc.linkedCompletedBasePaise - acc.reversalBaseReductionPaise
+      ? acc.linkedCompletedBasePaise +
+        acc.unlinkedPositiveBasePaise +
+        firstUnlinkedBasePaise -
+        acc.reversalBaseReductionPaise
       : acc.windowMaxCumulativePaise -
         baseline -
         acc.reversalBaseReductionPaise;
+    if (rawCreditedPaise < 0) {
+      Sentry.logger.warn("tds-return-draft:negative-credited-base-clamped", {
+        deducteeKey: key,
+        deducteeType: acc.deducteeType,
+        deducteeId: acc.deducteeId,
+        rawCreditedPaise,
+      });
+    }
     rows.push({
       ...shared,
       amountCreditedPaise: Math.max(0, rawCreditedPaise),
@@ -470,7 +528,11 @@ export async function runTdsReturnDraftExport(): Promise<{
 
       const records = await prisma.tDSRecord.findMany({
         where: { financialYear, quarter },
-        orderBy: { createdAt: "asc" },
+        orderBy: [
+          { createdAt: "asc" },
+          { cumulativeAmountCredited: "asc" },
+          { id: "asc" },
+        ],
         select: {
           consultantProfileId: true,
           organizationId: true,
