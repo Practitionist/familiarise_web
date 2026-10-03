@@ -80,7 +80,7 @@ const initializeStripeClient = () => {
   }
 
   return new Stripe(apiKey, {
-    apiVersion: "2026-02-25.clover",
+    apiVersion: "2026-02-25.clover" as Stripe.LatestApiVersion,
     // Parity with the explicit 30 s budget withRazorpaySdkTimeout enforces:
     // webhook after() callbacks and every refund phase await these calls, so
     // an unbounded hang is a correctness problem, not just a latency one.

@@ -35,7 +35,9 @@ describe("statutory PDF JSX runtime", () => {
     const expected = reconcilerJsxRuntime().jsx("div", {});
     const actual = pdfJsxRuntime.jsx("div", {});
 
-    expect(actual.$$typeof).toBe(expected.$$typeof);
+    expect(Reflect.get(actual, "$$typeof")).toBe(
+      Reflect.get(expected, "$$typeof"),
+    );
     expect(pdfJsxRuntime.Fragment).toBe(reconcilerJsxRuntime().Fragment);
   });
 
@@ -44,8 +46,8 @@ describe("statutory PDF JSX runtime", () => {
       "next/dist/compiled/react/jsx-runtime",
     ) as typeof import("react/jsx-runtime");
 
-    expect(vendored.jsx("div", {}).$$typeof).not.toBe(
-      pdfJsxRuntime.jsx("div", {}).$$typeof,
+    expect(Reflect.get(vendored.jsx("div", {}), "$$typeof")).not.toBe(
+      Reflect.get(pdfJsxRuntime.jsx("div", {}), "$$typeof"),
     );
   });
 
