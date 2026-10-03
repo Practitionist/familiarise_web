@@ -109,50 +109,76 @@ export default async function Home() {
       <TrustedBySection />
 
       {/* Our Offerings - Dark charcoal with dot pattern */}
-      <FeaturesSection />
+      <div className="cv-auto">
+        <FeaturesSection />
+      </div>
 
       {/* Browse by Category - Light gradient */}
-      <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+      <div className="cv-auto">
+        <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+      </div>
 
       {/* Why Familiarise / Benefits - Light silver gradient */}
-      <Suspense fallback={<BenefitsSkeleton />}>
-        <BenefitsLoader />
-      </Suspense>
+      <div className="cv-auto">
+        <Suspense fallback={<BenefitsSkeleton />}>
+          <BenefitsLoader />
+        </Suspense>
+      </div>
 
       {/* Success Stories - Dark gradient */}
-      <SuccessStoriesSection />
+      <div className="cv-auto">
+        <SuccessStoriesSection />
+      </div>
 
       {/* Featured Experts Marquee - White with dot pattern */}
-      <Suspense fallback={<FeaturedExpertsSkeleton />}>
-        <FeaturedExpertsLoader />
-      </Suspense>
+      <div className="cv-auto">
+        <Suspense fallback={<FeaturedExpertsSkeleton />}>
+          <FeaturedExpertsLoader />
+        </Suspense>
+      </div>
 
       {/* Platform Features - Light with diagonal stripes */}
-      <PlatformFeaturesSection />
+      <div className="cv-auto">
+        <PlatformFeaturesSection />
+      </div>
 
       {/* Testimonials Marquee + Upcoming Events - Dark */}
-      <Suspense fallback={<TestimonialsSkeleton />}>
-        <ReviewsLoader />
-      </Suspense>
+      <div className="cv-auto">
+        <Suspense fallback={<TestimonialsSkeleton />}>
+          <ReviewsLoader />
+        </Suspense>
+      </div>
 
       {/* Trust & Security Badges - Dark strip */}
-      <TrustBadgesSection />
+      <div className="cv-auto">
+        <TrustBadgesSection />
+      </div>
 
       {/* How It Works - Light with circles */}
-      <HowItWorksSection />
+      <div className="cv-auto">
+        <HowItWorksSection />
+      </div>
 
       {/* For teams & organisations - Dark. Sits next to the expert CTA so the
           two "which side are you on?" paths are adjacent at the page's end. */}
-      <EnterpriseSection />
+      <div className="cv-auto">
+        <EnterpriseSection />
+      </div>
 
       {/* Become an Expert CTA - Light mesh gradient */}
-      <BecomeExpertSection />
+      <div className="cv-auto">
+        <BecomeExpertSection />
+      </div>
 
       {/* Explore Testimonials - Dark */}
-      <SatisfiedTestimonial />
+      <div className="cv-auto">
+        <SatisfiedTestimonial />
+      </div>
 
       {/* FAQ - Clean white */}
-      <FAQSection />
+      <div className="cv-auto">
+        <FAQSection />
+      </div>
     </main>
   );
 }
