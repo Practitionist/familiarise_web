@@ -156,7 +156,9 @@ function signR2Request(opts: {
     }
   }
 
-  const sortedHeaderKeys = Object.keys(rawHeaders).sort();
+  const sortedHeaderKeys = Object.keys(rawHeaders).sort((a, b) =>
+    a.localeCompare(b),
+  );
   const canonicalHeaders = sortedHeaderKeys
     .map((k) => `${k}:${rawHeaders[k]}\n`)
     .join("");
