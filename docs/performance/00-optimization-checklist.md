@@ -4,6 +4,8 @@
 > For current real-time dashboard and caching strategies, see [`realtime-caching-strategy.md`](./realtime-caching-strategy.md).
 >
 > **Update (2026-06-17):** The route-level caching, bundle-optimization, and loading-boundary items below were substantially addressed by the navigation-performance round in PR #887. That round is documented in full — including the per-route loading boundaries, client-router cache tuning, bundle trimming, bounded dashboard queries, additive indexes, and slow-query observability — in [`01-navigation-performance.md`](./01-navigation-performance.md), which is now the canonical record for navigation and bundle performance. The statuses in Phase 3 and Phase 4 have been updated accordingly; see that document for the details and the deferred follow-ups.
+>
+> **Update (2026-10-03):** Following the Netlify cold-start preload fix (`experimental.preloadEntriesOnStart: false` and `experimental.appDocumentPreloading: false` in PR #1972), baseline Lighthouse 13.5.0 scores, Core Web Vitals measurements, root-cause analysis, and the prioritized P0–P2 optimization roadmap are documented in [`05-lighthouse-audit-and-cwv-playbook.md`](./05-lighthouse-audit-and-cwv-playbook.md).
 
 ## 🎯 Overview
 
