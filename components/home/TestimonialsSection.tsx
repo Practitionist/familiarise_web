@@ -29,7 +29,10 @@ function TestimonialCard({ review }: { review: TPublicConsultantReview }) {
         </p>
         <div className="flex items-center gap-3">
           <Avatar className="w-10 h-10 border border-zinc-700">
-            <AvatarImage src={review.consulteeProfile?.user?.image ?? ""} />
+            <AvatarImage
+              src={review.consulteeProfile?.user?.image ?? ""}
+              alt={review.consulteeProfile?.user?.name || "Consultee"}
+            />
             <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">
               {review.consulteeProfile?.user?.name?.charAt(0) ?? "U"}
             </AvatarFallback>
@@ -38,7 +41,7 @@ function TestimonialCard({ review }: { review: TPublicConsultantReview }) {
             <p className="font-medium text-white text-sm">
               {review.consulteeProfile?.user?.name || "Anonymous"}
             </p>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-zinc-400">
               Session with {review.consultantProfile?.user?.name}
             </p>
           </div>
@@ -65,12 +68,8 @@ export function TestimonialsSection({
   reviews,
   isLoading,
 }: TestimonialsSectionProps) {
-  // Ensure enough items for smooth marquee
-  const displayReviews = useMemo(
-    () =>
-      reviews.length >= 3 ? reviews : [...reviews, ...reviews, ...reviews],
-    [reviews],
-  );
+  // Duplicate once per row (2x per row, 4x total across both rows) for seamless CSS marquee loop
+  const marqueeReviews = useMemo(() => [...reviews, ...reviews], [reviews]);
 
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black overflow-hidden relative">
@@ -97,7 +96,7 @@ export function TestimonialsSection({
           <h2 className="text-fluid-4xl font-bold text-white mb-4 tracking-tight">
             Loved by <span className="text-zinc-400">professionals</span>
           </h2>
-          <p className="text-lg text-zinc-500 max-w-2xl mx-auto">
+          <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
             See what our community has to say about their experience
           </p>
         </motion.div>
@@ -115,14 +114,12 @@ export function TestimonialsSection({
             ))
           ) : (
             <>
-              {[...displayReviews, ...displayReviews, ...displayReviews].map(
-                (review, i) => (
-                  <TestimonialCard
-                    key={`ltr-${review.id}-${i}`}
-                    review={review}
-                  />
-                ),
-              )}
+              {marqueeReviews.map((review, i) => (
+                <TestimonialCard
+                  key={`ltr-${review.id}-${i}`}
+                  review={review}
+                />
+              ))}
             </>
           )}
         </div>
@@ -140,14 +137,12 @@ export function TestimonialsSection({
             ))
           ) : (
             <>
-              {[...displayReviews, ...displayReviews, ...displayReviews]
-                .reverse()
-                .map((review, i) => (
-                  <TestimonialCard
-                    key={`rtl-${review.id}-${i}`}
-                    review={review}
-                  />
-                ))}
+              {[...marqueeReviews].reverse().map((review, i) => (
+                <TestimonialCard
+                  key={`rtl-${review.id}-${i}`}
+                  review={review}
+                />
+              ))}
             </>
           )}
         </div>
