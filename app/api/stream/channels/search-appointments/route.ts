@@ -303,6 +303,20 @@ export async function GET(request: NextRequest) {
                   },
                 },
               },
+              // User is an accepted collaborator
+              {
+                webinarPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfile: {
+                        userId: userId,
+                        deletedAt: null,
+                      },
+                      status: "ACCEPTED",
+                    },
+                  },
+                },
+              },
             ],
           },
         ],
@@ -356,6 +370,20 @@ export async function GET(request: NextRequest) {
                 classPlan: {
                   consultantProfile: {
                     userId: userId,
+                  },
+                },
+              },
+              // User is an accepted collaborator
+              {
+                classPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfile: {
+                        userId: userId,
+                        deletedAt: null,
+                      },
+                      status: "ACCEPTED",
+                    },
                   },
                 },
               },

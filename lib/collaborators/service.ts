@@ -3,7 +3,11 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma, type CollaboratorRole } from "@prisma/client";
 import type { Collaborator, CollaboratorStatus } from "@prisma/client";
-import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
+import {
+  addUserToEventChannel,
+  checkEventChannelExists,
+  removeUserFromEventChannel,
+} from "@/lib/stream/event-channel-service";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -404,11 +408,13 @@ export async function respondToInvitation(
 
   // #1580 C-P1-9 — standing can change between invite and accept (a ban, an
   // erasure, an archive, a seat bought meanwhile), so the gates run again.
+  let acceptedUserId: string | null = null;
   if (response === "ACCEPTED") {
     await assertPlanOpen(planType, planId);
     const invitee = await assertInviteeEligible(consultantProfileId);
     if (!invitee) return null;
     await assertNotAttendee(planType, planId, invitee.userId);
+    acceptedUserId = invitee.userId;
   }
 
   // CAS in the WHERE: an owner's removal landing between the read and this
@@ -438,12 +444,65 @@ export async function respondToInvitation(
     // #1580 — the shadow participant edge on every live appointment of the
     // plan, so the roster reader flip (#1319 A9) finds the collaborator too.
     await syncCollaboratorParticipants(planType, planId, consultantProfileId);
+
+    if (acceptedUserId) {
+      await syncAcceptedCollaboratorEventChannels(
+        planType,
+        planId,
+        acceptedUserId,
+      );
+    }
   }
 
   // The host hears either answer (#1580 C-P1-5 added the decline).
   await notifyHostOfResponse(planType, planId, consultantProfileId, updated);
 
   return updated;
+}
+
+async function syncAcceptedCollaboratorEventChannels(
+  planType: PlanType,
+  planId: string,
+  userId: string,
+): Promise<void> {
+  try {
+    const activeStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] as const;
+    const events =
+      planType === "webinar"
+        ? prisma.webinar?.findMany
+          ? await prisma.webinar.findMany({
+              where: {
+                webinarPlanId: planId,
+                deletedAt: null,
+                status: { in: [...activeStatuses] },
+              },
+              select: { id: true },
+            })
+          : []
+        : prisma.class?.findMany
+          ? await prisma.class.findMany({
+              where: {
+                classPlanId: planId,
+                deletedAt: null,
+                status: { in: [...activeStatuses] },
+              },
+              select: { id: true },
+            })
+          : [];
+
+    for (const event of events) {
+      if (await checkEventChannelExists(planType, event.id)) {
+        await addUserToEventChannel(planType, event.id, userId);
+      }
+    }
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "collaborators",
+      op: "respondToInvitation.syncEventChannels",
+      level: "warning",
+      extra: { planId, planType, userId },
+    });
+  }
 }
 
 /**

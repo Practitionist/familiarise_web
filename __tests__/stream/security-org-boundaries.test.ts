@@ -1,0 +1,285 @@
+/**
+ * @jest-environment node
+ */
+
+const mockGetSession = jest.fn();
+const mockCheckConsent = jest.fn();
+const mockRevokeUserToken = jest.fn();
+const mockUpsertUser = jest.fn();
+const mockUpsertUsers = jest.fn();
+const mockQueryChannels = jest.fn();
+const mockDeleteChannels = jest.fn();
+const mockChannelRemoveMembers = jest.fn();
+
+const mockPrisma = {
+  user: {
+    findUnique: jest.fn(),
+    findMany: jest.fn(),
+  },
+  organization: {
+    findMany: jest.fn(),
+    update: jest.fn(),
+  },
+  organizationMembership: {
+    findMany: jest.fn(),
+    update: jest.fn(),
+  },
+  webinar: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  class: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  consultation: {
+    findMany: jest.fn(),
+  },
+  subscription: {
+    findMany: jest.fn(),
+  },
+  appointment: {
+    findMany: jest.fn(),
+  },
+  meeting: {
+    findMany: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  recording: {
+    findMany: jest.fn(),
+  },
+};
+
+jest.mock("../../lib/auth-server", () => ({
+  getSession: () => mockGetSession(),
+}));
+
+jest.mock("../../lib/auth-helpers", () => ({
+  isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
+}));
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: mockPrisma,
+}));
+
+jest.mock("../../lib/compliance/dpdp", () => ({
+  checkConsent: (...args: unknown[]) => mockCheckConsent(...args),
+  requireConsent: jest.fn().mockResolvedValue(undefined),
+  ConsentRequiredError: class ConsentRequiredError extends Error {},
+}));
+
+jest.mock("../../lib/stream-client", () => ({
+  isStreamConfigured: () => true,
+  isStreamVideoConfigured: () => false,
+  generateVideoToken: () => "video-token-123",
+  generateChatToken: () => "chat-token-123",
+  withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
+  StreamUnavailableError: class StreamUnavailableError extends Error {},
+  isExpectedStreamError: () => false,
+  getStreamChatClient: () => ({
+    upsertUser: (...args: unknown[]) => mockUpsertUser(...args),
+    upsertUsers: (...args: unknown[]) => mockUpsertUsers(...args),
+    queryChannels: (...args: unknown[]) => mockQueryChannels(...args),
+    deleteChannels: (...args: unknown[]) => mockDeleteChannels(...args),
+    revokeUserToken: (...args: unknown[]) => mockRevokeUserToken(...args),
+    channel: (_type: string, id: string) => ({
+      id,
+      removeMembers: (...args: unknown[]) => mockChannelRemoveMembers(...args),
+      updatePartial: jest.fn().mockResolvedValue({}),
+      sendMessage: jest.fn().mockResolvedValue({}),
+    }),
+  }),
+}));
+
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
+
+describe("Stream security, consent gates, and organization boundaries", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCheckConsent.mockResolvedValue(true);
+    mockUpsertUser.mockResolvedValue({
+      users: {
+        "target-u1": {
+          id: "target-u1",
+          name: "Target User",
+          email: "leak@example.com",
+          role: "user",
+        },
+      },
+    });
+    mockUpsertUsers.mockResolvedValue({ users: {} });
+    mockQueryChannels.mockResolvedValue([]);
+    mockDeleteChannels.mockResolvedValue({});
+    mockRevokeUserToken.mockResolvedValue(undefined);
+    mockChannelRemoveMembers.mockResolvedValue({});
+    mockPrisma.webinar.findMany.mockResolvedValue([]);
+    mockPrisma.class.findMany.mockResolvedValue([]);
+    mockPrisma.consultation.findMany.mockResolvedValue([]);
+    mockPrisma.subscription.findMany.mockResolvedValue([]);
+    mockPrisma.appointment.findMany.mockResolvedValue([]);
+    mockPrisma.meeting.findMany.mockResolvedValue([]);
+    mockPrisma.recording.findMany.mockResolvedValue([]);
+    mockPrisma.organizationMembership.findMany.mockResolvedValue([]);
+  });
+
+  describe("upsertUserToStream session guard and email stripping", () => {
+    it("rejects unauthenticated upsertUserToStream calls when not serverTrusted", async () => {
+      mockGetSession.mockResolvedValueOnce(null);
+
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
+
+      await expect(upsertUserToStream("victim-id")).rejects.toThrow(
+        "Unauthorized: sign in to sync Stream user",
+      );
+      expect(mockUpsertUser).not.toHaveBeenCalled();
+    });
+
+    it("allows trusted server callers via STREAM_SERVER_TRUSTED and strips email from response", async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce({
+        id: "target-u1",
+        name: "Target User",
+        email: "secret@example.com",
+        image: null,
+        role: "CONSULTANT",
+        deletedAt: null,
+        deactivatedAt: null,
+      });
+
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
+      const { STREAM_SERVER_TRUSTED } =
+        await import("../../lib/stream/event-channel-service");
+
+      const response = await upsertUserToStream("target-u1", {
+        serverTrusted: STREAM_SERVER_TRUSTED,
+      });
+      expect(mockUpsertUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "target-u1",
+          name: "Target User",
+        }),
+      );
+      const returnedUsers = (
+        response as { users?: Record<string, Record<string, unknown>> }
+      )?.users;
+      expect("email" in (returnedUsers?.["target-u1"] ?? {})).toBe(false);
+    });
+  });
+
+  describe("event-channel.action session authorization", () => {
+    it("refuses unauthenticated addUserToEventChannel server action calls", async () => {
+      mockGetSession.mockResolvedValueOnce(null);
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      const result = await addUserToEventChannel("webinar", "web-1", "u-1");
+      expect(result.success).toBe(false);
+      expect(result.refusal).toEqual(
+        expect.objectContaining({
+          code: "UNAUTHENTICATED",
+        }),
+      );
+    });
+
+    it("rejects non-host/non-self removeUserFromEventChannel calls", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "stranger-1", role: "CONSULTEE" },
+      });
+      mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+        webinarPlan: {
+          consultantProfile: { userId: "host-1" },
+          collaborators: [],
+        },
+      });
+
+      const { removeUserFromEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(
+        removeUserFromEventChannel("webinar", "web-1", "victim-1"),
+      ).rejects.toThrow("Forbidden");
+    });
+  });
+
+  describe("tokenProvider STREAM_DATA_PROCESSING consent check", () => {
+    it("blocks token minting and revokes active access when STREAM_DATA_PROCESSING consent is missing", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "user-no-consent", role: "CONSULTEE" },
+      });
+      mockCheckConsent.mockResolvedValueOnce(false);
+
+      const { tokenProvider } =
+        await import("../../actions/stream/chat/stream.action");
+
+      const result = await tokenProvider("user-no-consent");
+      expect(result).toEqual(
+        expect.objectContaining({
+          ok: false,
+          refusal: expect.objectContaining({ code: "CONSENT_REQUIRED" }),
+        }),
+      );
+      expect(mockRevokeUserToken).toHaveBeenCalledWith(
+        "user-no-consent",
+        expect.any(Date),
+      );
+    });
+  });
+
+  describe("Enterprise organization Stream revocation and wind-down", () => {
+    it("revokes org-scoped channels and user tokens on member removal", async () => {
+      mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
+
+      const { revokeMemberStreamAccess } =
+        await import("../../lib/enterprise/member-removal");
+
+      const res = await revokeMemberStreamAccess({
+        orgId: "org123456789",
+        userId: "u1",
+      });
+      expect(res.complete).toBe(true);
+      expect(res.tokenRevoked).toBe(true);
+      expect(res.channelsRemoved).toBe(1);
+      expect(mockChannelRemoveMembers).toHaveBeenCalledWith(["u1"]);
+      expect(mockRevokeUserToken).toHaveBeenCalledWith("u1", expect.any(Date));
+    });
+
+    it("winds down deactivated organizations and freezes event channels", async () => {
+      mockPrisma.organization.findMany.mockResolvedValueOnce([
+        {
+          id: "org-winddown-1",
+          deletedAt: null,
+          updatedAt: new Date("2026-01-01T00:00:00Z"),
+          streamRecordingRetentionDays: 30,
+        },
+      ]);
+      mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
+      mockPrisma.webinar.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      const { windDownDeactivatedOrgs } =
+        await import("../../jobs/stream/wind-down-deactivated-orgs");
+
+      const summary = await windDownDeactivatedOrgs();
+      expect(summary.orgsScanned).toBe(1);
+      expect(summary.eventChannelsFrozen).toBe(1);
+    });
+  });
+
+  describe("Rate-limit pacing constants", () => {
+    it("enforces 10_000ms pacing on deleteChannels and deleteUsers batches", async () => {
+      const { DELETE_CHANNELS_PACING_MS } =
+        await import("../../jobs/stream/expire-event-channels");
+      const { DELETE_USERS_PACING_MS } =
+        await import("../../scripts/stream/stream-sync");
+
+      expect(DELETE_CHANNELS_PACING_MS).toBe(10_000);
+      expect(DELETE_USERS_PACING_MS).toBe(10_000);
+    });
+  });
+});

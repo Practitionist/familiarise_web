@@ -47,15 +47,57 @@ const SEARCH_RESULT_LIMIT = 20;
  */
 const SEARCH_CANDIDATE_LIMIT = 200;
 
+const SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
+
+async function requireAuthenticatedStreamActor(options?: {
+  serverTrusted?: symbol;
+}): Promise<void> {
+  if (options?.serverTrusted === SERVER_TRUSTED) return;
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to sync Stream user");
+  }
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
+  }
+}
+
+function stripStreamUserEmails<T>(payload: T): T {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("users" in payload) ||
+    !payload.users ||
+    typeof payload.users !== "object"
+  ) {
+    return payload;
+  }
+  const sanitizedUsers = Object.fromEntries(
+    Object.entries(payload.users as Record<string, unknown>).map(
+      ([id, userObj]) => {
+        if (!userObj || typeof userObj !== "object") return [id, userObj];
+        const rest = { ...(userObj as Record<string, unknown>) };
+        delete rest.email;
+        return [id, rest];
+      },
+    ),
+  );
+  return { ...payload, users: sanitizedUsers };
+}
+
 /**
  * Upserts a user to Stream Chat
  * Uses caching to avoid redundant upserts
  * @param userId The ID of the user to upsert
  * @returns The upserted user or null if already synced
  */
-export const upsertUserToStream = async (userId: string) => {
+export const upsertUserToStream = async (
+  userId: string,
+  options?: { serverTrusted?: symbol },
+) => {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
+  await requireAuthenticatedStreamActor(options);
 
   // Check cache first - skip if recently synced
   if (isUserSynced(validatedUserId)) {
@@ -135,7 +177,7 @@ export const upsertUserToStream = async (userId: string) => {
     // Mark as synced in cache
     markUserSynced(user.id);
 
-    return streamUser;
+    return stripStreamUserEmails(streamUser);
   } catch (error) {
     // A consent gate is a deliberate refusal (already warn-logged above), not
     // an infra failure — rethrow without an error-level log so it doesn't
@@ -175,9 +217,13 @@ export const upsertUserToStream = async (userId: string) => {
  * @param userIds The IDs of the users to upsert
  * @returns The upserted users
  */
-export const upsertUsersToStream = async (userIds: string[]) => {
+export const upsertUsersToStream = async (
+  userIds: string[],
+  options?: { serverTrusted?: symbol },
+) => {
   // Validate input
   const validatedIds = userIdsSchema.parse(userIds);
+  await requireAuthenticatedStreamActor(options);
 
   // Filter out already synced users
   const unsyncedIds = validatedIds.filter((id) => !isUserSynced(id));
@@ -286,7 +332,10 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     // Mark all as synced
     consenters.forEach((user) => markUserSynced(user.id));
 
-    return { ...result, droppedIds: [...droppedIds, ...unknownIds] };
+    return stripStreamUserEmails({
+      ...result,
+      droppedIds: [...droppedIds, ...unknownIds],
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

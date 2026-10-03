@@ -6,7 +6,10 @@ import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
-import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import {
+  eraseStreamPrincipalFootprint,
+  scrubUser,
+} from "@/lib/compliance/erasure/scrub-user";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 
 /**
@@ -269,6 +272,16 @@ export async function DELETE(
       prisma.session.deleteMany({ where: { userId: id } }),
       prisma.user.delete({ where: { id: id } }),
     ]);
+    try {
+      await eraseStreamPrincipalFootprint(id);
+    } catch (streamError) {
+      Sentry.captureException(
+        streamError instanceof Error
+          ? streamError
+          : new Error(String(streamError)),
+        { tags: { subsystem: "stream", op: "user.delete" } },
+      );
+    }
     // Novu holds the same PII (email/name) — remove it too. Never throws;
     // an unacknowledged delete is reported as pending, not as success.
     const novuErased = await deleteSubscriber(id);

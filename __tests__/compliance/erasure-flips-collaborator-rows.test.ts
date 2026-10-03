@@ -94,7 +94,14 @@ describe("DPDP erasure flips collaborator rows", () => {
     await scrubUser(db as never, "u1");
 
     expect(tx.streamRevocationRetry.createMany).toHaveBeenCalledWith({
-      data: [{ erasureRequestId: "er-1", planType: "WEBINAR", planId: "wp-1" }],
+      data: [
+        { erasureRequestId: "er-1", planType: "WEBINAR", planId: "wp-1" },
+        {
+          erasureRequestId: "er-1",
+          planType: "WEBINAR",
+          planId: "principal:u1",
+        },
+      ],
       skipDuplicates: true,
     });
     expect(db.streamRevocationRetry.update).toHaveBeenCalledWith(

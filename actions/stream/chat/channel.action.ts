@@ -116,7 +116,11 @@ export async function createChannel(input: {
   });
 
   // Ensure all members exist in Stream before channel creation
-  await upsertUsersToStream(allMembers);
+  const upsertResult = await upsertUsersToStream(allMembers, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = new Set(upsertResult?.droppedIds ?? []);
+  const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
 
   // Merge the optional org stamp into additionalData. Use snake_case
   // (`organization_id`) to match Stream's chat field convention and the
@@ -139,7 +143,7 @@ export async function createChannel(input: {
   const createChannelData = {
     name: validated.channelName,
     created_by_id: validated.createdById,
-    members: createMemberChunk(allMembers),
+    members: createMemberChunk(syncedMembers),
     ...mergedAdditionalData,
   };
   const channel = client.channel(
@@ -174,7 +178,7 @@ export async function createChannel(input: {
   // on the adopted path too: the winner created the same channel from the same
   // roster, so the same remainder is owed either way and `addMembers` is
   // idempotent for anyone already in.
-  await addRemainingMembers(channel, allMembers);
+  await addRemainingMembers(channel, syncedMembers);
 
   // Channel-scoped moderation replaces the old global-admin Stream role
   // (#899). Only the channel HOST may moderate — never an arbitrary creator:
@@ -198,12 +202,12 @@ export async function createChannel(input: {
 
   streamLogger.debug("Channel created successfully", {
     channelId: validated.channelId,
-    memberCount: allMembers.length,
+    memberCount: syncedMembers.length,
   });
 
   return {
     channelId: validated.channelId,
-    members: allMembers,
+    members: syncedMembers,
     channelData,
   };
 }
@@ -474,8 +478,6 @@ export async function createWebinarChannel(
     totalUnique: allMembers.length,
   });
 
-  await upsertUsersToStream(allMembers);
-
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
 
@@ -506,8 +508,6 @@ export async function createClassChannel(
     classId,
     totalUnique: allMembers.length,
   });
-
-  await upsertUsersToStream(allMembers);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -542,8 +542,6 @@ export async function createConsultationChannel(
     );
     return null;
   }
-
-  await upsertUsersToStream([consultantId, consulteeId]);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -580,8 +578,6 @@ export async function createSubscriptionChannel(
     );
     return null;
   }
-
-  await upsertUsersToStream([consultantId, consulteeId]);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -692,7 +688,10 @@ export async function createCollaboratorChannel(
   // creator here upserts first, and this one did not (FAMILIARISE_WEB-37, #1580).
   // The roster is whoever the upsert could sync: a member without
   // STREAM_DATA_PROCESSING consent is left out of create, add and remove alike.
-  const { droppedIds } = await upsertUsersToStream(expectedMemberIds);
+  const upsertResult = await upsertUsersToStream(expectedMemberIds, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = upsertResult?.droppedIds ?? [];
   const roster = expectedMemberIds.filter((id) => !droppedIds.includes(id));
   if (roster.length < 2 || !roster.includes(hostUserId)) {
     streamLogger.warn("Skipping collaborator channel - roster not syncable", {

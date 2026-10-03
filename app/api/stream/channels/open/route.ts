@@ -52,10 +52,14 @@ import {
   DM_ELIGIBLE_STATUSES,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
-import { DEFAULT_RETENTION_DAYS, isPastRetention } from "@/lib/stream/channel-lifecycle";
+import {
+  DEFAULT_RETENTION_DAYS,
+  isPastRetention,
+} from "@/lib/stream/channel-lifecycle";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
+import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
 const bodySchema = z.discriminatedUnion("kind", [
@@ -64,6 +68,8 @@ const bodySchema = z.discriminatedUnion("kind", [
     counterpartyUserId: z.string().min(1),
     /** Funding context. Absent or null = personal. */
     organizationId: z.string().min(1).nullable().optional(),
+    /** Optional appointment context to post a booking receipt card in the shared 1:1 DM. */
+    contextAppointmentId: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal("event"),
@@ -72,9 +78,166 @@ const bodySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+async function postBookingContextCardIfAbsent(
+  channelId: string,
+  userId: string,
+  counterpartyUserId: string,
+  contextAppointmentId: string,
+): Promise<void> {
+  if (!prisma.appointment?.findFirst) return;
+
+  try {
+    const appt = await prisma.appointment.findFirst({
+      where: { id: contextAppointmentId, deletedAt: null },
+      select: {
+        id: true,
+        appointmentType: true,
+        occurrences: {
+          where: { deletedAt: null },
+          orderBy: { startsAt: "asc" },
+          take: 1,
+          select: { startsAt: true, endsAt: true },
+        },
+        participants: {
+          where: liveParticipant(),
+          select: { userId: true },
+        },
+        consultation: {
+          select: {
+            id: true,
+            status: true,
+            requestedBy: { select: { userId: true } },
+            consultationPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        subscription: {
+          select: {
+            id: true,
+            status: true,
+            requestedBy: { select: { userId: true } },
+            subscriptionPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        webinar: {
+          select: {
+            id: true,
+            status: true,
+            webinarPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        class: {
+          select: {
+            id: true,
+            status: true,
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!appt) return;
+
+    const matchesPair = (a?: string | null, b?: string | null) =>
+      Boolean(
+        a &&
+        b &&
+        ((a === userId && b === counterpartyUserId) ||
+          (a === counterpartyUserId && b === userId)),
+      );
+
+    const participantIds = new Set(
+      (appt.participants ?? []).map((p) => p.userId),
+    );
+    let title: string | null = null;
+    let verified = false;
+
+    if (appt.consultation) {
+      const hostId =
+        appt.consultation.consultationPlan?.consultantProfile?.userId;
+      const clientId = appt.consultation.requestedBy?.userId;
+      if (matchesPair(hostId, clientId)) {
+        verified = true;
+        title = appt.consultation.consultationPlan?.title ?? "Consultation";
+      }
+    } else if (appt.subscription) {
+      const hostId =
+        appt.subscription.subscriptionPlan?.consultantProfile?.userId;
+      const clientId = appt.subscription.requestedBy?.userId;
+      if (matchesPair(hostId, clientId)) {
+        verified = true;
+        title = appt.subscription.subscriptionPlan?.title ?? "Subscription";
+      }
+    } else if (appt.webinar) {
+      const hostId = appt.webinar.webinarPlan?.consultantProfile?.userId;
+      const attendeeId = hostId === userId ? counterpartyUserId : userId;
+      if (
+        hostId &&
+        (hostId === userId || hostId === counterpartyUserId) &&
+        participantIds.has(attendeeId)
+      ) {
+        verified = true;
+        title = appt.webinar.webinarPlan?.title ?? "Webinar";
+      }
+    } else if (appt.class) {
+      const hostId = appt.class.classPlan?.consultantProfile?.userId;
+      const attendeeId = hostId === userId ? counterpartyUserId : userId;
+      if (
+        hostId &&
+        (hostId === userId || hostId === counterpartyUserId) &&
+        participantIds.has(attendeeId)
+      ) {
+        verified = true;
+        title = appt.class.classPlan?.title ?? "Class";
+      }
+    }
+
+    if (!verified || !title) return;
+
+    const client = getStreamChatClient();
+    const channel = client.channel("messaging", channelId);
+    const messageId = `booking-context-${appt.id}`;
+    const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
+
+    await channel.sendMessage({
+      id: messageId,
+      user_id: userId,
+      text: `Booking context: ${title}`,
+      booking_appointment_id: appt.id,
+      booking_type: appt.appointmentType,
+      booking_title: title,
+      ...(slotStart ? { booking_starts_at: slotStart.toISOString() } : {}),
+    } as Parameters<typeof channel.sendMessage>[0]);
+  } catch (error) {
+    streamLogger.debug("Skipped or duplicate booking context card on DM open", {
+      channelId,
+      contextAppointmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /**
  * Is the caller a participant in this event — an attendee on one of its slots,
- * or the host consultant?
+ * the host consultant, or an accepted collaborator?
  *
  * Deliberately NOT `authorizeEventAccess` from lib/auth-helpers: for webinars
  * and classes that helper authorizes the plan owner and ACCEPTED collaborators
@@ -107,6 +270,16 @@ async function isEventParticipant(
             },
           },
           { webinarPlan: { consultantProfile: { userId } } },
+          {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfile: { userId, deletedAt: null },
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
         ],
       },
       select: {
@@ -138,12 +311,22 @@ async function isEventParticipant(
       OR: [
         {
           appointment: {
-              deletedAt: null,
-              occurrences: { some: { deletedAt: null } },
-              participants: { some: liveParticipant(userId) },
-            },
+            deletedAt: null,
+            occurrences: { some: { deletedAt: null } },
+            participants: { some: liveParticipant(userId) },
+          },
         },
         { classPlan: { consultantProfile: { userId } } },
+        {
+          classPlan: {
+            collaborators: {
+              some: {
+                consultantProfile: { userId, deletedAt: null },
+                status: "ACCEPTED",
+              },
+            },
+          },
+        },
       ],
     },
     select: {
@@ -198,7 +381,7 @@ export async function POST(request: NextRequest) {
 
   try {
     if (body.kind === "dm") {
-      const { counterpartyUserId } = body;
+      const { counterpartyUserId, contextAppointmentId } = body;
       const requestedOrgId = body.organizationId ?? null;
 
       // Covers the self case too — `canDirectMessage` returns false for
@@ -232,8 +415,7 @@ export async function POST(request: NextRequest) {
         if (!contexts.organizations.includes(requestedOrgId)) {
           return NextResponse.json(
             {
-              error:
-                "No booking ties this conversation to that organization.",
+              error: "No booking ties this conversation to that organization.",
             },
             { status: 403 },
           );
@@ -270,6 +452,15 @@ export async function POST(request: NextRequest) {
         counterpartyUserId,
         organizationId,
       );
+
+      if (contextAppointmentId) {
+        await postBookingContextCardIfAbsent(
+          channelId,
+          userId,
+          counterpartyUserId,
+          contextAppointmentId,
+        );
+      }
 
       return NextResponse.json({ channelType: "messaging", channelId });
     }

@@ -38,21 +38,28 @@ export interface SyncSummary {
   totalStreamUsersProcessed: number;
   totalStaleUsersIdentified: number;
   totalStaleUsersDeleted: number;
+  totalHardDeletedUsers?: number;
   totalFailedDeletions: number;
   failedDeletionDetails: FailedDeletionEntry[];
   timestamp: string;
 }
 
 export interface SyncOptions {
-  /** Number of users to fetch per page (default: 100) */
+  /** Number of users to fetch per page (default: 100, capped at 100) */
   pageLimit?: number;
   /** Dry run mode - identify but don't delete (default: false) */
   dryRun?: boolean;
   /** Additional user IDs to exclude from deletion */
   excludeUserIds?: string[];
-  /** Delay between batch deletions in ms (default: 500) */
+  /** Delay between batch deletions in ms (default: 10000 for 6/min DeleteUsers cap) */
   batchDelayMs?: number;
 }
+
+/**
+ * Stream's DeleteUsers endpoint is capped at 6 requests/minute app-wide,
+ * requiring at least 10 seconds between consecutive batch calls.
+ */
+export const DELETE_USERS_PACING_MS = 10_000;
 
 // User IDs that should never be deleted (from env or defaults)
 function getExcludedUserIds(): Set<string> {
@@ -149,31 +156,10 @@ function sleep(ms: number): Promise<void> {
 export async function performStreamUserSync(
   options: SyncOptions = {},
 ): Promise<SyncSummary> {
-  // #1270 — was a bespoke `acquireLock`/`releaseLock` pair. It excluded
-  // correctly, but it was invisible: `withCronLock` is what writes the
-  // `SystemJobExecution` row and refreshes the fleet heartbeat, so for as long
-  // as this job held its own lock it appeared in no operator surface, had no
-  // recorded last run and no recorded duration, and the staff Jobs page could
-  // only ever show it as never having run.
-  //
-  // Fail-closed, and stated as a literal rather than derived from the old
-  // `requireLock` option, for two reasons. #1134 P1-21 already decided this job
-  // must refuse to run rather than risk two concurrent deletion sweeps, so a
-  // caller-supplied override was a knob nobody wanted and nobody set. And the
-  // fleet's fail modes are audited statically by
-  // __tests__/maintenance/cron-lock-registry.test.ts, which cannot read a
-  // fail mode that is computed at runtime.
-  //
-  // One behaviour changes: under mock Redis — a laptop with no Upstash
-  // credentials — fail-closed throws instead of proceeding unlocked. That is
-  // the right answer for a job that soft-deletes Stream users.
   return withCronLock(
     "stream-sync",
     {
       failMode: "closed",
-      // The walk takes 15-30 minutes at 100k users, so the lock has to outlive
-      // any run that can exist or a second scheduled run starts deleting
-      // concurrently (#1134 P1-21).
       ttlMs: SYNC_LOCK_TTL,
     },
     () => performStreamUserSyncUnlocked(options),
@@ -187,8 +173,9 @@ async function performStreamUserSyncUnlocked(
     pageLimit = 100,
     dryRun = false,
     excludeUserIds = [],
-    batchDelayMs = 500,
+    batchDelayMs = DELETE_USERS_PACING_MS,
   } = options;
+  const effectivePageLimit = Math.min(Math.max(pageLimit, 1), 100);
 
   const excludedSet = getExcludedUserIds();
 
@@ -202,11 +189,61 @@ async function performStreamUserSyncUnlocked(
   let totalStreamUsersProcessed = 0;
   let totalStaleUsersIdentified = 0;
   let totalStaleUsersDeleted = 0;
+  let totalHardDeletedUsers = 0;
   const allFailedDeletions: FailedDeletionEntry[] = [];
   let lastStreamUserId: string | undefined = undefined;
+  let deleteCallsIssued = 0;
+
+  const runDeleteUsersBatch = async (
+    userIds: string[],
+    mode: "soft" | "hard",
+  ) => {
+    for (let i = 0; i < userIds.length; i += 100) {
+      const batch = userIds.slice(i, i + 100);
+      if (deleteCallsIssued > 0 && batchDelayMs > 0) {
+        await sleep(batchDelayMs);
+      }
+      deleteCallsIssued++;
+      try {
+        const deleteResponse = await serverStreamClient.deleteUsers(batch, {
+          user: mode,
+          messages: mode,
+        });
+
+        const sdkFailedDeletions: FailedDeletionFromSDK[] =
+          (deleteResponse as { failed_delete_users?: FailedDeletionFromSDK[] })
+            .failed_delete_users || [];
+
+        if (sdkFailedDeletions.length > 0) {
+          const failures = sdkFailedDeletions.map((f) => ({
+            id: f.user_id,
+            error: f.message || "Unknown error",
+          }));
+          allFailedDeletions.push(...failures);
+          console.warn(
+            `   ⚠️ ${failures.length} ${mode}-deletions failed:`,
+            failures.map((f) => f.id).join(", "),
+          );
+        }
+
+        const succeeded = batch.length - sdkFailedDeletions.length;
+        totalStaleUsersDeleted += succeeded;
+        if (mode === "hard") {
+          totalHardDeletedUsers += succeeded;
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Batch deletion failed";
+        console.error(`   ❌ Batch ${mode}-deletion error: ${errorMessage}`);
+        allFailedDeletions.push(
+          ...batch.map((id) => ({ id, error: errorMessage })),
+        );
+      }
+    }
+  };
 
   try {
-    // Paginate through all Stream users
+    // Paginate through all Stream users (including deactivated/soft-deleted)
     while (true) {
       console.log(
         `   Fetching users (after: ${lastStreamUserId || "start"})...`,
@@ -215,7 +252,11 @@ async function performStreamUserSyncUnlocked(
       const streamUsersResponse = await serverStreamClient.queryUsers(
         lastStreamUserId ? { id: { $gt: lastStreamUserId } } : {},
         { id: 1 }, // Sort by ID for consistent pagination
-        { limit: pageLimit, presence: false },
+        {
+          limit: effectivePageLimit,
+          presence: false,
+          include_deactivated_users: true,
+        },
       );
 
       const currentPageUsers: UserResponse[] = streamUsersResponse.users;
@@ -232,94 +273,64 @@ async function performStreamUserSyncUnlocked(
         `   Processing ${currentPageUsers.length} users. Total: ${totalStreamUsersProcessed}`,
       );
 
-      // Get IDs from current page
       const streamUserIds = currentPageUsers.map((user) => user.id);
 
-      // Find which users exist in our database
-      const activePrismaUsers = await prisma.user.findMany({
+      const dbUsers = await prisma.user.findMany({
         where: { id: { in: streamUserIds } },
-        select: { id: true },
+        select: { id: true, erasedAt: true },
       });
 
-      const activeUserIdSet = new Set(activePrismaUsers.map((u) => u.id));
-
-      console.log(
-        `   ${activeUserIdSet.size}/${streamUserIds.length} users exist in database`,
+      const activeUserIdSet = new Set(
+        dbUsers.filter((u) => !u.erasedAt).map((u) => u.id),
+      );
+      const erasedUserIdSet = new Set(
+        dbUsers.filter((u) => Boolean(u.erasedAt)).map((u) => u.id),
       );
 
-      // Identify stale users (in Stream but not in database)
-      const staleUsers = streamUserIds.filter((userId) => {
-        if (activeUserIdSet.has(userId)) return false;
-        if (shouldExcludeUser(userId, excludedSet, excludeUserIds))
-          return false;
-        return true;
-      });
+      console.log(
+        `   ${activeUserIdSet.size}/${streamUserIds.length} active users exist in database`,
+      );
 
-      if (staleUsers.length === 0) {
+      const softDeleteUsers: string[] = [];
+      const hardDeleteUsers: string[] = [];
+
+      for (const streamUser of currentPageUsers) {
+        const userId = streamUser.id;
+        if (activeUserIdSet.has(userId)) continue;
+        if (shouldExcludeUser(userId, excludedSet, excludeUserIds)) continue;
+
+        const raw = streamUser as UserResponse & {
+          deactivated_at?: string;
+          deleted_at?: string;
+        };
+        const isAlreadyDeactivatedOrSoftDeleted = Boolean(
+          raw.deactivated_at || raw.deleted_at,
+        );
+        if (erasedUserIdSet.has(userId) || isAlreadyDeactivatedOrSoftDeleted) {
+          hardDeleteUsers.push(userId);
+        } else {
+          softDeleteUsers.push(userId);
+        }
+      }
+
+      const staleCount = softDeleteUsers.length + hardDeleteUsers.length;
+      if (staleCount === 0) {
         console.log("   No stale users in this page.");
         continue;
       }
 
-      totalStaleUsersIdentified += staleUsers.length;
-      console.log(
-        `   Found ${staleUsers.length} stale users: ${staleUsers.slice(0, 5).join(", ")}${staleUsers.length > 5 ? "..." : ""}`,
-      );
+      totalStaleUsersIdentified += staleCount;
 
       if (dryRun) {
         console.log("   Skipping deletion (dry run mode)");
         continue;
       }
 
-      // Soft-delete stale users from Stream (preserves data for 30-day grace period).
-      // TODO: Add a separate job to hard-delete soft-deleted users older than 30 days.
-      try {
-        const deleteResponse = await serverStreamClient.deleteUsers(
-          staleUsers,
-          {
-            user: "soft",
-            messages: "soft",
-          },
-        );
-
-        // Check for failed deletions
-        const sdkFailedDeletions: FailedDeletionFromSDK[] =
-          (deleteResponse as { failed_delete_users?: FailedDeletionFromSDK[] })
-            .failed_delete_users || [];
-
-        if (sdkFailedDeletions.length > 0) {
-          const failures = sdkFailedDeletions.map((f) => ({
-            id: f.user_id,
-            error: f.message || "Unknown error",
-          }));
-          allFailedDeletions.push(...failures);
-          console.warn(
-            `   ⚠️ ${failures.length} deletions failed:`,
-            failures.map((f) => f.id).join(", "),
-          );
-        }
-
-        const successfullySoftDeleted =
-          staleUsers.length - sdkFailedDeletions.length;
-        totalStaleUsersDeleted += successfullySoftDeleted;
-
-        console.log(
-          `   ✅ Soft-deleted ${successfullySoftDeleted}/${staleUsers.length} users`,
-        );
-
-        // Rate limiting between batches
-        if (batchDelayMs > 0) {
-          await sleep(batchDelayMs);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Batch deletion failed";
-        console.error(`   ❌ Batch soft-deletion error: ${errorMessage}`);
-
-        const failures = staleUsers.map((id) => ({
-          id,
-          error: errorMessage,
-        }));
-        allFailedDeletions.push(...failures);
+      if (softDeleteUsers.length > 0) {
+        await runDeleteUsersBatch(softDeleteUsers, "soft");
+      }
+      if (hardDeleteUsers.length > 0) {
+        await runDeleteUsersBatch(hardDeleteUsers, "hard");
       }
     }
 
@@ -330,6 +341,7 @@ async function performStreamUserSyncUnlocked(
       totalStreamUsersProcessed,
       totalStaleUsersIdentified,
       totalStaleUsersDeleted,
+      totalHardDeletedUsers,
       totalFailedDeletions: allFailedDeletions.length,
       failedDeletionDetails: allFailedDeletions,
       timestamp: new Date().toISOString(),

@@ -255,21 +255,31 @@ async function drainErasureRevocations(
   });
   if (rows.length === 0) return;
 
+  const { STREAM_PRINCIPAL_PLAN_ID_PREFIX, eraseStreamPrincipalFootprint } =
+    await import("@/lib/compliance/erasure/scrub-user");
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
   for (const row of rows) {
-    const planType = row.planType === "WEBINAR" ? "webinar" : "class";
     let error: string | null = null;
-    try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        row.planId,
-        row.erasureRequest.userId,
-        { notify: false },
-      );
-      if (!success) error = "Collaborator Stream access not fully revoked";
-    } catch (caught) {
-      error = errMsg(caught);
+    if (row.planId.startsWith(STREAM_PRINCIPAL_PLAN_ID_PREFIX)) {
+      try {
+        await eraseStreamPrincipalFootprint(row.erasureRequest.userId);
+      } catch (caught) {
+        error = errMsg(caught);
+      }
+    } else {
+      const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+      try {
+        const { success } = await revokeCollaboratorAccess(
+          planType,
+          row.planId,
+          row.erasureRequest.userId,
+          { notify: false },
+        );
+        if (!success) error = "Collaborator Stream access not fully revoked";
+      } catch (caught) {
+        error = errMsg(caught);
+      }
     }
     const attempts = row.attempts + 1;
     await prisma.streamRevocationRetry.update({

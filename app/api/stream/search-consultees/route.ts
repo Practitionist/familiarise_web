@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
           ...dmEligibleStatusFilter(),
         },
       },
+      take: 100,
       include: {
         requestedBy: {
           include: {
@@ -110,6 +111,7 @@ export async function GET(req: NextRequest) {
           ...dmEligibleStatusFilter(),
         },
       },
+      take: 100,
       include: {
         requestedBy: {
           include: {
@@ -156,6 +158,7 @@ export async function GET(req: NextRequest) {
           in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
         },
       },
+      take: 100,
       include: {
         appointment: {
           select: {
@@ -206,6 +209,7 @@ export async function GET(req: NextRequest) {
           in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
         },
       },
+      take: 100,
       include: {
         appointment: {
           select: {

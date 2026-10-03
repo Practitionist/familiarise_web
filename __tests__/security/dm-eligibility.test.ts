@@ -95,7 +95,9 @@ describe("canDirectMessage", () => {
     // peer DM, which the moderation ADR forbids. Host↔attendee DMs are not
     // offered by any surface either — event rows open the team channel.
     bothUsersExist(CONSULTEE, CONSULTEE);
-    mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue({ id: "slot-1" });
+    mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue({
+      id: "slot-1",
+    });
 
     const { canDirectMessage } = await load();
     await expect(canDirectMessage("attendee-a", "attendee-b")).resolves.toBe(
@@ -164,12 +166,9 @@ describe("the status set the gate queries", () => {
     );
   });
 
-  it("includes COMPLETED and APPROVED_PENDING_PAYMENT", () => {
-    // The two the reconciler and the old gate omitted while search included
-    // them. That gap is what produced search rows whose channel had never been
-    // created — which `channel.watch()` then created, memberless.
+  it("includes COMPLETED and excludes APPROVED_PENDING_PAYMENT", () => {
     expect(DM_ELIGIBLE_STATUSES).toContain("COMPLETED");
-    expect(DM_ELIGIBLE_STATUSES).toContain("APPROVED_PENDING_PAYMENT");
+    expect(DM_ELIGIBLE_STATUSES).not.toContain("APPROVED_PENDING_PAYMENT");
   });
 
   it("excludes PENDING", () => {
@@ -276,7 +275,6 @@ describe("buildDirections is shared, not duplicated", () => {
   });
 });
 
-
 describe("pairBookingContexts (org-forgery guard)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -295,7 +293,10 @@ describe("pairBookingContexts (org-forgery guard)", () => {
 
     // The whole point: an arbitrary org id ("org-fake") can never be named,
     // because the allowed set is derived from the bookings themselves.
-    expect(ctx).toEqual({ personalAllowed: false, organizations: ["org-real"] });
+    expect(ctx).toEqual({
+      personalAllowed: false,
+      organizations: ["org-real"],
+    });
   });
 
   it("marks personal context when a booking has no org", async () => {

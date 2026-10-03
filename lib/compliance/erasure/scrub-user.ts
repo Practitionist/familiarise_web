@@ -207,6 +207,33 @@ async function offboardNotificationVendor(userId: string): Promise<string[]> {
   return ["novu: subscriber deletion not confirmed — re-run required"];
 }
 
+export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
+
+export function principalStreamPlanId(userId: string): string {
+  return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
+}
+
+export async function eraseStreamPrincipalFootprint(
+  userId: string,
+): Promise<void> {
+  const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
+    await import("@/lib/stream-client");
+  if (!isStreamConfigured()) return;
+
+  const chat = getStreamChatClient();
+  try {
+    await chat.revokeUserToken(userId, new Date());
+  } catch (err) {
+    if (!isExpectedStreamError(err)) throw err;
+  }
+
+  try {
+    await chat.deleteUsers([userId], { user: "hard", messages: "hard" });
+  } catch (err) {
+    if (!isExpectedStreamError(err)) throw err;
+  }
+}
+
 /** True when any money-in-flight count is non-zero. */
 export function hasMoneyInFlight(counts: MoneyInFlight): boolean {
   return Object.values(counts).some((n) => n > 0);
@@ -389,13 +416,22 @@ export async function scrubUser(
       select: { id: true },
     });
     erasureRequestId = request?.id ?? null;
-    if (erasureRequestId && collaborationsRemoved.length > 0) {
+    if (erasureRequestId && tx.streamRevocationRetry?.createMany) {
       await tx.streamRevocationRetry.createMany({
-        data: collaborationsRemoved.map(({ planType, planId }) => ({
-          erasureRequestId: erasureRequestId as string,
-          planType: planType === "webinar" ? "WEBINAR" : "CLASS",
-          planId,
-        })),
+        data: [
+          ...collaborationsRemoved.map(({ planType, planId }) => ({
+            erasureRequestId: erasureRequestId as string,
+            planType: (planType === "webinar" ? "WEBINAR" : "CLASS") as
+              | "WEBINAR"
+              | "CLASS",
+            planId,
+          })),
+          {
+            erasureRequestId: erasureRequestId as string,
+            planType: "WEBINAR" as const,
+            planId: principalStreamPlanId(userId),
+          },
+        ],
         skipDuplicates: true,
       });
     }
@@ -467,7 +503,7 @@ export async function scrubUser(
         extra: { planType, planId },
       });
     }
-    if (!erasureRequestId) continue;
+    if (!erasureRequestId || !prisma.streamRevocationRetry?.update) continue;
     await prisma.streamRevocationRetry
       .update({
         where: {
@@ -491,6 +527,48 @@ export async function scrubUser(
           subsystem: "compliance",
           op: "scrubUser.settleRevocationOutbox",
           extra: { planType, planId },
+        }),
+      );
+  }
+
+  const principalPlanId = principalStreamPlanId(userId);
+  let principalError: string | null = null;
+  try {
+    await eraseStreamPrincipalFootprint(userId);
+  } catch (caught) {
+    principalError = caught instanceof Error ? caught.message : String(caught);
+  }
+  if (principalError) {
+    reportSentryError(new Error(`${principalError} on erasure`), {
+      subsystem: "compliance",
+      op: "scrubUser.eraseStreamPrincipalFootprint",
+      extra: { userId },
+    });
+  }
+  if (erasureRequestId && prisma.streamRevocationRetry?.update) {
+    await prisma.streamRevocationRetry
+      .update({
+        where: {
+          erasureRequestId_planType_planId: {
+            erasureRequestId,
+            planType: "WEBINAR",
+            planId: principalPlanId,
+          },
+        },
+        data: principalError
+          ? {
+              status: "FAILED",
+              attempts: 1,
+              lastError: principalError,
+              nextRetryAt: nextRetryAt(1, now),
+            }
+          : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
+      })
+      .catch((caught) =>
+        reportSentryError(caught, {
+          subsystem: "compliance",
+          op: "scrubUser.settlePrincipalRevocationOutbox",
+          extra: { userId },
         }),
       );
   }
