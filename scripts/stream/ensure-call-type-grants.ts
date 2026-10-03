@@ -129,25 +129,32 @@ async function requireSomeoneHoldsMemberRole(
   return false;
 }
 
+function computeRestoredGrants(
+  existingGrants: Record<string, string[]>,
+): Record<string, string[]> {
+  const grants: Record<string, string[]> = { ...existingGrants };
+  for (const role of JOIN_REVOKED_ROLES) {
+    const roleGrants = grants[role];
+    if (roleGrants && !roleGrants.includes(JOIN_CALL)) {
+      grants[role] = [...roleGrants, JOIN_CALL];
+    }
+  }
+  const restoreMember = grants[MEMBER_ROLE];
+  if (restoreMember && !restoreMember.includes(END_CALL)) {
+    grants[MEMBER_ROLE] = [...restoreMember, END_CALL];
+  }
+  return grants;
+}
+
 function computeUpdatedGrants(
   existingGrants: Record<string, string[]>,
   restore: boolean,
 ): Record<string, string[]> {
-  const grants: Record<string, string[]> = { ...existingGrants };
-
   if (restore) {
-    for (const role of JOIN_REVOKED_ROLES) {
-      const roleGrants = grants[role];
-      if (roleGrants && !roleGrants.includes(JOIN_CALL)) {
-        grants[role] = [...roleGrants, JOIN_CALL];
-      }
-    }
-    const restoreMember = grants[MEMBER_ROLE];
-    if (restoreMember && !restoreMember.includes(END_CALL)) {
-      grants[MEMBER_ROLE] = [...restoreMember, END_CALL];
-    }
-    return grants;
+    return computeRestoredGrants(existingGrants);
   }
+
+  const grants: Record<string, string[]> = { ...existingGrants };
 
   for (const role of JOIN_REVOKED_ROLES) {
     const roleGrants = grants[role];

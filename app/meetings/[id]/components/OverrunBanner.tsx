@@ -5,14 +5,16 @@ import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import { Clock, PlusCircle, Loader2 } from "lucide-react";
 import {
   CALL_DURATION_GRACE_MS,
-  MIN_CALL_DURATION_MS,
+  resolveMaxCallDurationSeconds,
 } from "@/lib/meetings/duration-cap";
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 
 const ENDING_SOON_THRESHOLD_MS = 5 * 60 * 1000;
 const CAP_IMMINENT_THRESHOLD_MS = 2 * 60 * 1000;
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
+const useDefaultCallSession = () => undefined;
 
 export type OverrunBannerPhase =
   "hidden" | "ending-soon" | "overrun-grace" | "cap-imminent";
@@ -40,15 +42,13 @@ function resolveCapEndsAtMs(args: {
     }
   }
   if (args.startsAt) {
-    const bookedMs = Math.max(
-      args.endsAt.getTime() - args.startsAt.getTime(),
-      MIN_CALL_DURATION_MS,
-    );
+    const capSeconds =
+      resolveMaxCallDurationSeconds({ endsAt: args.endsAt }, args.startsAt) ??
+      Math.ceil(CALL_DURATION_GRACE_MS / 1000);
     return (
-      args.startsAt.getTime() +
-      bookedMs +
-      CALL_DURATION_GRACE_MS +
-      args.extendedSeconds * 1000
+      args.startsAt.getTime() -
+      CONSULTANT_JOIN_WINDOW_MS +
+      (capSeconds + args.extendedSeconds) * 1000
     );
   }
   return (
@@ -147,7 +147,8 @@ export function OverrunBanner({
   isHost,
 }: Readonly<OverrunBannerProps>) {
   const { toast } = useToast();
-  const { useCallSession } = useCallStateHooks();
+  const hooks = useCallStateHooks();
+  const useCallSession = hooks.useCallSession ?? useDefaultCallSession;
   const session = useCallSession();
   const [now, setNow] = useState(() => new Date());
   const [localExtendedSeconds, setLocalExtendedSeconds] = useState(0);

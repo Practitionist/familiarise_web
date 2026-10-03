@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  streamHttpStatus,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
@@ -31,10 +32,18 @@ interface OrphanedSessionRow {
   };
 }
 
+function isStreamCallNotFoundError(err: unknown): boolean {
+  const status = streamHttpStatus(err);
+  if (status === 404) return true;
+  if (status !== undefined) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return /not[\s_-]*found|404|does not exist/i.test(message);
+}
+
 async function resolveOrphanedSessionEnd(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
-): Promise<{ endedAt: Date; endedReason: string }> {
+): Promise<{ endedAt: Date; endedReason: string } | null> {
   const fallbackEndedAt = new Date(session.occurrence.endsAt);
   if (!isStreamConfigured()) {
     result.streamNotFound++;
@@ -48,19 +57,43 @@ async function resolveOrphanedSessionEnd(
       toCallId(session.streamCallId),
     );
     const response = await withStreamCircuitBreaker(() => call.get());
-    result.reconciled++;
 
     if (response.call.ended_at) {
+      result.reconciled++;
       return {
         endedAt: new Date(response.call.ended_at),
         endedReason: "reconciled",
       };
     }
+
+    const callSession = (
+      response.call as {
+        session?: { ended_at?: string | Date | null; participants?: unknown[] };
+      }
+    ).session;
+    if (callSession?.ended_at) {
+      result.reconciled++;
+      return {
+        endedAt: new Date(callSession.ended_at),
+        endedReason: "reconciled",
+      };
+    }
+    if ((callSession?.participants?.length ?? 0) > 0) {
+      result.details.push(
+        `Session ${session.id} (call: ${session.streamCallId}): skipped_active_session`,
+      );
+      return null;
+    }
+
+    result.reconciled++;
     return { endedAt: fallbackEndedAt, endedReason: "reconciled_no_end" };
   } catch (streamError) {
+    if (!isStreamCallNotFoundError(streamError)) {
+      throw streamError;
+    }
     result.streamNotFound++;
     console.warn(
-      `[reconcile-orphaned-sessions] Stream lookup failed for ${session.streamCallId}:`,
+      `[reconcile-orphaned-sessions] Stream call not found for ${session.streamCallId}:`,
       streamError instanceof Error
         ? streamError.message
         : JSON.stringify(streamError),
@@ -76,21 +109,30 @@ async function reconcileSingleOrphanedSession(
   result.processed++;
 
   try {
-    const { endedAt, endedReason } = await resolveOrphanedSessionEnd(
-      session,
-      result,
-    );
+    const resolved = await resolveOrphanedSessionEnd(session, result);
+    if (!resolved) return;
+    const { endedAt, endedReason } = resolved;
 
-    const updated = await prisma.meeting.updateMany({
-      where: { id: session.id, endedAt: null },
-      data: { endedAt, endedReason },
-    });
-
-    if (updated.count !== 0) {
-      await prisma.meetingPresence.updateMany({
-        where: { meetingId: session.id, leftAt: null },
-        data: { leftAt: endedAt },
+    const closeMeetingAndPresence = async (
+      db: Pick<typeof prisma, "meeting" | "meetingPresence">,
+    ) => {
+      const updated = await db.meeting.updateMany({
+        where: { id: session.id, endedAt: null },
+        data: { endedAt, endedReason },
       });
+
+      if (updated.count !== 0) {
+        await db.meetingPresence.updateMany({
+          where: { meetingId: session.id, leftAt: null },
+          data: { leftAt: endedAt },
+        });
+      }
+    };
+
+    if (typeof prisma.$transaction === "function") {
+      await prisma.$transaction((tx) => closeMeetingAndPresence(tx));
+    } else {
+      await closeMeetingAndPresence(prisma);
     }
 
     result.details.push(

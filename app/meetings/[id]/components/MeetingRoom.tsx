@@ -55,18 +55,15 @@ import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
+import { isInCallChatAllowed } from "@/lib/meetings/room-ready";
+
+export { isInCallChatAllowed };
+
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
 type CallLayoutProps = {
   layout: string;
 };
-
-/** In-call chat is blocked for Trial sessions until a paid consultation or subscription is booked. */
-export function isInCallChatAllowed(
-  appointmentType: string | null | undefined,
-): boolean {
-  return appointmentType !== "TRIAL";
-}
 
 const CallLayout = ({ layout }: CallLayoutProps) => {
   switch (layout) {

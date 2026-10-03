@@ -1104,7 +1104,7 @@ railway variables set STREAM_API_SECRET=xxx
 ## Deprecated & Superseded Approaches
 
 - **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
-- **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts`, `ensure-call-type-grants.ts`, `harden-unused-call-types.ts`), which writes pre-image backups to `.stream-backups/` and verifies post-write state against drift.
+- **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts` and `harden-unused-call-types.ts` write pre-image backups to `.stream-backups/`, while `ensure-call-type-grants.ts` writes a drift snapshot to `os.tmpdir()` when settings drift is detected and verifies post-write state).
 
 ---
 

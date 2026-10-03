@@ -363,7 +363,7 @@ function rowLabel(
       ? `Held · ${Math.floor(hours / 24)}d`
       : `Held · ${Math.max(hours, 1)}h`;
   }
-  return occurrenceEnd(o) < now.getTime() ? "Completed" : "Scheduled";
+  return isOccurrencePastGrace(o, now) ? "Completed" : "Scheduled";
 }
 
 function deriveBooking(

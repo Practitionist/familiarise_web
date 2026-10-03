@@ -174,7 +174,8 @@ Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `ca
 
 ```json
 {
-  "live": true
+  "live": true,
+  "callId": "occurrence-550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 

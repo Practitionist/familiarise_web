@@ -19,14 +19,19 @@ interface StageControlsProps {
   isHost: boolean;
 }
 
+const useDefaultTrue = () => true;
+const useDefaultUndefined = () => undefined;
+
 export function StageControls({
   appointmentType,
   isHost,
 }: Readonly<StageControlsProps>) {
   const call = useCall();
   const { toast } = useToast();
-  const { useIsCallLive, useOwnCapabilities, useCallSettings } =
-    useCallStateHooks();
+  const hooks = useCallStateHooks();
+  const useIsCallLive = hooks.useIsCallLive ?? useDefaultTrue;
+  const useOwnCapabilities = hooks.useOwnCapabilities ?? useDefaultUndefined;
+  const useCallSettings = hooks.useCallSettings ?? useDefaultUndefined;
 
   const isCallLive = useIsCallLive();
   const ownCapabilities = useOwnCapabilities();

@@ -389,8 +389,22 @@ async function resolveSessionCallProfile(
     );
 
     const candidateUserIds = [...hostUserIds, ...guestUserIds];
-    const upsertResult = await upsertUsersToStream(candidateUserIds);
-    const droppedIds = new Set(upsertResult?.droppedIds ?? []);
+    let droppedIds = new Set<string>();
+    try {
+      const upsertResult = await upsertUsersToStream(candidateUserIds);
+      droppedIds = new Set(upsertResult?.droppedIds ?? []);
+    } catch (upsertError) {
+      streamLogger.warn(
+        "Best-effort member upsert failed while resolving session call profile",
+        {
+          slotId: validatedSlotId,
+          error:
+            upsertError instanceof Error
+              ? upsertError.message
+              : String(upsertError),
+        },
+      );
+    }
 
     return {
       startsAt: anchor.startsAt,
@@ -774,12 +788,17 @@ export async function provisionAppointmentMeeting(
 
   const startsAt =
     callProfile?.startsAt ??
-    (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date());
+    (anchorSlot.startsAt
+      ? new Date(anchorSlot.startsAt)
+      : authorized.slot.startsAt);
+  const endsAt =
+    callProfile?.endsAt ??
+    (anchorSlot.endsAt ? new Date(anchorSlot.endsAt) : authorized.slot.endsAt);
 
   const authorUserId = callProfile?.hostUserIds[0] ?? authorized.userId;
 
   const maxDurationSeconds = resolveMaxCallDurationSeconds(
-    callProfile,
+    callProfile ?? (endsAt ? { endsAt } : null),
     startsAt,
   );
   if (!callProfile?.hostUserIds.length) {
