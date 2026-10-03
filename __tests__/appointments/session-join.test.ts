@@ -138,9 +138,9 @@ describe("the join window spans the whole occurrence", () => {
       now: at(now),
     }) !== null;
 
-  it("opens 10 minutes before the call starts", () => {
-    expect(joinable("09:45")).toBe(false);
-    expect(joinable("09:52")).toBe(true);
+  it("opens 15 minutes before the call starts", () => {
+    expect(joinable("09:44")).toBe(false);
+    expect(joinable("09:46")).toBe(true);
   });
 
   it("stays open through the second half hour", () => {

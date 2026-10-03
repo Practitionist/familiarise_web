@@ -40,19 +40,47 @@ export const REACH_PERMISSIONS = [
 
 export const BILLABLE_PERMISSIONS = [
   "start-recording",
+  "stop-recording",
   "start-frame-recording",
+  "stop-frame-recording",
+  "start-raw-recording",
+  "stop-raw-recording",
+  "start-individual-recording",
+  "stop-individual-recording",
   "start-transcription",
+  "stop-transcription",
   "start-closed-captions",
+  "stop-closed-captions",
   "start-broadcasting",
+  "stop-broadcasting",
+  "start-rtmp-broadcasts",
+  "stop-rtmp-broadcast",
+  "stop-all-rtmp-broadcasts",
+  "use-noise-cancellation",
 ];
 
-const STRIP = new Set([...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS]);
+/** Matches a permission or its `-owner` / `-any-team` scoped variants against a base permission list. */
+export function matchesPermissionWithScope(
+  perm: string,
+  basePermissions: readonly string[],
+): boolean {
+  return basePermissions.some(
+    (base) =>
+      perm === base || perm === `${base}-owner` || perm === `${base}-any-team`,
+  );
+}
 
-interface Options {
+const STRIP_BASE = [...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS];
+
+export function shouldStripFromUnusedCallType(perm: string): boolean {
+  return matchesPermissionWithScope(perm, STRIP_BASE);
+}
+
+export interface HardenUnusedOptions {
   apply: boolean;
 }
 
-function parseArgs(argv: string[]): Options {
+function parseArgs(argv: string[]): HardenUnusedOptions {
   return { apply: argv.includes("--apply") };
 }
 
@@ -68,11 +96,11 @@ async function hardenOne(
   for (const role of END_USER_ROLES) {
     const held = grants[role];
     if (!held) continue;
-    const kept = held.filter((perm) => !STRIP.has(perm));
+    const kept = held.filter((perm) => !shouldStripFromUnusedCallType(perm));
     if (kept.length === held.length) continue;
     removals.push(
       `  ${typeName}/${role}: -${held.length - kept.length} (${held
-        .filter((p) => STRIP.has(p))
+        .filter((p) => shouldStripFromUnusedCallType(p))
         .join(", ")})`,
     );
     grants[role] = kept;
@@ -98,7 +126,7 @@ async function hardenOne(
   const after = await client.video.getCallType({ name: typeName });
   const leaked = END_USER_ROLES.flatMap((role) =>
     (after.grants[role] ?? [])
-      .filter((perm) => STRIP.has(perm))
+      .filter((perm) => shouldStripFromUnusedCallType(perm))
       .map((perm) => `${role}:${perm}`),
   );
   if (leaked.length > 0) {
@@ -112,8 +140,9 @@ async function hardenOne(
   return { changed: true, failed: false };
 }
 
-async function main(): Promise<number> {
-  const opts = parseArgs(process.argv.slice(2));
+export async function hardenUnusedCallTypes(
+  opts: HardenUnusedOptions,
+): Promise<number> {
   const client = getStreamVideoClient();
 
   if ((UNUSED_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {
@@ -145,7 +174,7 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1] && /harden-unused-call-types/.test(process.argv[1])) {
-  main()
+  hardenUnusedCallTypes(parseArgs(process.argv.slice(2)))
     .then((code) => process.exit(code))
     .catch((err) => {
       console.error("Failed:", err instanceof Error ? err.message : err);

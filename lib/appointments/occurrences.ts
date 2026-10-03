@@ -1,18 +1,6 @@
 /**
- * One `AppointmentOccurrence` row per held call (#1554).
- *
- * Before the reset a booking longer than 30 minutes was stored as N half-hour
- * rows and every reader grouped them back into "runs" (#1061). The row now
- * carries the real `endsAt`, so the grouping layer is gone: an occurrence IS
- * the session, the video room is keyed to it, and the join window is read off
- * its own bounds. The 30-minute unit survives only as the scheduling engine's
- * unit of arithmetic (`SCHEDULING_INTERVAL_MS`), which this module exposes so
- * an occurrence can still be expanded into the interval starts it covers.
- *
- * Writers (`buildOccurrence`, `buildOccurrenceForWindow`, `replaceOccurrence`)
- * and the join-state predicates share this file so the shape and its rules
- * cannot drift apart again. Who attends is never on the row: the roster is
- * `AppointmentParticipant` (lib/booking/participants.ts).
+ * Occurrence builders, interval helpers, and join-window state predicates.
+ * Each AppointmentOccurrence row represents one scheduled session with [startsAt, endsAt] bounds.
  */
 
 import type { PrismaLike } from "@/lib/prisma";
@@ -39,31 +27,16 @@ export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
-/**
- * Consultee join window (pre-start).
- *
- * #1270 — this and its consultant sibling are the ONLY two join windows in the
- * product. Six surfaces used to declare their own, landing on four different
- * answers, so the same booking opened at four different times depending on
- * which page the user happened to be looking at. Every caller imports one of
- * these two; nobody re-declares a literal.
- */
-export const CONSULTEE_JOIN_WINDOW_MS = 10 * 60 * 1000;
-/** Consultant join window (pre-start) — hosts get in earlier to set up. */
+/** Pre-start join window for consultees/attendees (15 minutes, symmetric with hosts and backstage). */
+export const CONSULTEE_JOIN_WINDOW_MS = 15 * 60 * 1000;
+/** Pre-start join window for consultants/hosts (15 minutes). */
 export const CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000;
+/** Post-end rejoin and overrun grace window (30 minutes). */
+export const REJOIN_GRACE_MS = 30 * 60 * 1000;
 
 export type OccurrenceJoinState =
-  | "disabled"
-  | "countdown"
-  | "joinable"
-  | "ended";
+  "disabled" | "countdown" | "joinable" | "ended";
 
-/**
- * Structural occurrence shape the join helpers accept. Deliberately looser
- * than `OccurrenceLike`: the join surfaces also hand us `lib/meeting`'s
- * `MeetingSlot` and planner rows, which carry no `completionStatus` and an
- * optional `isTentative`.
- */
 export interface JoinableOccurrence {
   id: string;
   appointmentId?: string | null;
@@ -75,29 +48,15 @@ export interface JoinableOccurrence {
   meeting?: {
     id: string;
     endedAt: Date | string | null;
-    /**
-     * #1270 — REQUIRED, not optional, and deliberately so. `isDeliberateEnd`
-     * treats an absent reason as deliberate, which is the safe reading for a
-     * historical row written before the column existed. But it is the WRONG
-     * reading for a projection that simply forgot to select it: every
-     * timed-out session would read as deliberately ended and lock people out
-     * of their own booking, which is the bug this predicate exists to prevent.
-     * Making it required means a query that omits it fails to compile instead.
-     */
     endedReason: string | null;
   } | null;
 }
-
-// ---------------------------------------------------------------------------
-// Writers
-// ---------------------------------------------------------------------------
 
 export type OccurrenceInput = {
   startsAt: Date;
   durationInHours: number;
   consultantProfileId: string;
   isTentative?: boolean;
-  /** 1-based position inside the appointment; defaults to 1 (a one-call booking). */
   ordinal?: number;
 };
 
@@ -109,12 +68,6 @@ export type OccurrenceCreate = {
   consultantProfileId: string;
 };
 
-/**
- * Pure: one create payload for a call. The end is the start plus the whole
- * number of intervals the duration needs (`getSlotsPerCall` rounds a partial
- * interval UP), so a 45-minute booking still occupies the consultant's calendar
- * for the hour the engine reserved.
- */
 export function buildOccurrence(input: OccurrenceInput): OccurrenceCreate {
   const { startsAt, durationInHours, consultantProfileId } = input;
   if (!(startsAt instanceof Date) || Number.isNaN(startsAt.getTime())) {
@@ -133,12 +86,6 @@ export function buildOccurrence(input: OccurrenceInput): OccurrenceCreate {
   };
 }
 
-/**
- * The same row, expressed as the [startsAt, endsAt) window the money paths
- * carry. #1319 — checkout and the webhook capture fallback both hold a session
- * as a start/end pair rather than a duration; one entry point so a future edit
- * cannot land on one writer and miss the other.
- */
 export function buildOccurrenceForWindow(
   input: Omit<OccurrenceInput, "startsAt" | "durationInHours"> & {
     startsAt: Date;
@@ -163,11 +110,6 @@ export function buildOccurrenceForWindow(
   });
 }
 
-/**
- * How many scheduling intervals a row COVERS. The engine's counts (the approval
- * gate, `getSlotsPerCall`) are in intervals, so a reader that compares them to
- * a row count would read every booking as one.
- */
 export function intervalCountOf(occurrence: {
   startsAt: Date | string;
   endsAt: Date | string;
@@ -175,14 +117,11 @@ export function intervalCountOf(occurrence: {
   const start = new Date(occurrence.startsAt).getTime();
   const end = new Date(occurrence.endsAt).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    // A zero/negative-width row is malformed, not weightless: it is still one
-    // row somebody has to reconcile, so it counts as the interval it occupies.
     return 1;
   }
   return Math.ceil((end - start) / SCHEDULING_INTERVAL_MS);
 }
 
-/** The interval STARTS a row covers — the shape the validator consumes. */
 export function intervalStartsOf(occurrence: {
   startsAt: Date | string;
   endsAt: Date | string;
@@ -194,11 +133,6 @@ export function intervalStartsOf(occurrence: {
   );
 }
 
-/**
- * The next free ordinal on an appointment, for a genuinely NEW call (an
- * allocation top-up). A replacement after a reschedule inherits the replaced
- * row's ordinal instead; the live-row partial unique ignores dead rows.
- */
 export async function nextOrdinal(
   tx: PrismaLike,
   appointmentId: string,
@@ -210,21 +144,8 @@ export async function nextOrdinal(
   return (agg._max.ordinal ?? 0) + 1;
 }
 
-/**
- * Move the appointment's live occurrence to `startsAt` + duration (planner
- * Manage Timings and duration edits).
- *
- * In place, never delete + recreate: `Meeting` / `Recording` cascade on
- * occurrence delete, so a host who opened the room once would lose recordings
- * to a duration-only edit. The live row keeps its id (Stream room key), a
- * surplus live row (a legacy atom) is soft-retired RESCHEDULED, and a booking
- * with no live row gets one. Dead rows are left alone — they are not the live
- * call and must not donate their `startsAt` to a duration-only rewrite.
- */
+/** Updates an appointment's live occurrence in place to preserve linked Meeting and Recording rows. */
 export async function replaceOccurrence(
-  // PrismaLike (not Prisma.TransactionClient): the app client is `$extends`,
-  // and interactive-tx clients fail assignability against the bare generated
-  // type (excessive stack depth / incompatible tx shape in CI).
   tx: PrismaLike,
   args: {
     appointmentId: string;
@@ -247,9 +168,6 @@ export async function replaceOccurrence(
   });
 
   if (live.length === 0) {
-    // The replacement keeps the position of the call it replaces: the row the
-    // reschedule most recently released. Only a booking with no call at all
-    // takes a new number.
     const replaced = existing
       .filter((row) => row.completionStatus === "RESCHEDULED")
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
@@ -261,23 +179,15 @@ export async function replaceOccurrence(
           replaced?.ordinal ?? (await nextOrdinal(tx, args.appointmentId)),
       },
     });
-    // #1569 — the earnings hold anchors on the call's end, which just moved.
     await recomputeEarningsHold(tx, args.appointmentId);
     return { occurrenceId: created.id };
   }
 
   const [kept, ...surplus] = live;
-  // #1780 decision 9 — a real move of the kept row is stamped; the seat-leave
-  // rule waives the refund window for a session moved after the purchase.
   const moved =
     kept.startsAt.getTime() !== target.startsAt.getTime() ||
     kept.endsAt.getTime() !== target.endsAt.getTime();
 
-  // #1846 SM-B8 — a session that took place (COMPLETED), is held for review
-  // (UNVERIFIED) or was voided is history, not the live call: restamping its
-  // times or retiring it would rewrite the record earnings and attendance hang
-  // off. The planner re-sends the same time on every save, so an edit that
-  // changes nothing still succeeds; anything else is refused before a write.
   if (
     live.some((row) => SETTLED_COMPLETION_STATUSES.has(row.completionStatus))
   ) {
@@ -289,9 +199,6 @@ export async function replaceOccurrence(
     return { occurrenceId: kept.id };
   }
 
-  // `occurrence_no_confirmed_overlap` is NOT DEFERRABLE and checks each UPDATE
-  // against sibling rows still holding their old times, so a legacy multi-row
-  // booking is flipped tentative first; the kept row is restored below.
   if (live.length > 1) {
     await tx.appointmentOccurrence.updateMany({
       where: { id: { in: live.map((row) => row.id) } },
@@ -308,9 +215,6 @@ export async function replaceOccurrence(
       ...(moved ? { movedAt: new Date() } : {}),
     },
   });
-  // Soft-retire, never delete: history and Stream children stay queryable.
-  // #1846 SM-B8 / SM-B13 — through the CAS helper, so the retirement is
-  // guarded by the RESCHEDULED from-set and writes its history row.
   if (surplus.length > 0) {
     await transitionOccurrenceCompletion(tx, {
       reason: "planner time edit",
@@ -323,42 +227,23 @@ export async function replaceOccurrence(
   return { occurrenceId: kept.id };
 }
 
-// ---------------------------------------------------------------------------
-// Predicates
-// ---------------------------------------------------------------------------
-
-// A mutable array: Prisma's `notIn` rejects a readonly tuple.
 const DEAD_COMPLETION_STATUS_LIST: OccurrenceCompletionStatus[] = [
   "CANCELLED",
   "RESCHEDULED",
 ];
 const DEAD_COMPLETION_STATUSES = new Set<string>(DEAD_COMPLETION_STATUS_LIST);
 
-/** A session with an outcome: delivered, held for review, or voided (#1846). */
 const SETTLED_COMPLETION_STATUSES = new Set<string>([
   "COMPLETED",
   "UNVERIFIED",
   "VOIDED",
 ] satisfies OccurrenceCompletionStatus[]);
 
-/**
- * Prisma `where` twin of `isDeadOccurrence` — a live row on the appointment.
- * A reschedule releases a row IN PLACE (`isTentative: true` + RESCHEDULED),
- * so any `isTentative` filter that omits this re-selects or resurrects it
- * (FAMILIARISE_WEB-46).
- */
 export const liveOccurrenceWhere = {
   deletedAt: null,
   completionStatus: { notIn: DEAD_COMPLETION_STATUS_LIST },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-/**
- * Non-live for planner rewrites and join math.
- *
- * `completionStatus` alone used to be enough, but A10 also soft-deletes via
- * `deletedAt`. A tombstoned row with a still-"SCHEDULED" status would otherwise
- * count as live. Treat either signal as dead.
- */
 export function isDeadOccurrence(occurrence: {
   completionStatus?: string | null;
   deletedAt?: Date | string | null;
@@ -370,93 +255,34 @@ export function isDeadOccurrence(occurrence: {
   );
 }
 
-/**
- * Occurrence-derived half of "may this booking be rescheduled".
- *
- * The status, role and route checks genuinely differ per side and stay with
- * their adapter. These three do not, and they drifted: the consultant's menu
- * offered Reschedule on a booking with nothing allocated and on one already
- * awaiting a new time, both of which the API then rejects.
- */
 export function occurrencesAllowReschedule(
   occurrences: Array<{
     isTentative?: boolean | null;
     completionStatus?: string | null;
   }>,
 ): boolean {
-  // An APPROVED booking with nothing allocated ("Not scheduled · 0/0") has no
-  // time to move, and the proposal window is derived from the earliest released
-  // occurrence — so this fails with PROPOSAL_WINDOW_CLOSED rather than opening
-  // an empty picker.
   if (occurrences.length === 0) return false;
-  // Tentative means the request is still awaiting allocation, not booked.
   if (occurrences[0]?.isTentative) return false;
-  // A released occurrence awaiting a new time IS the open reschedule: at most
-  // one may be live per appointment (the nullable-unique openForAppointmentId,
-  // claimed by preference-only rows too — #1065), so offering the action again
-  // only earns a 409.
   return !occurrences.some((row) => row.completionStatus === "RESCHEDULED");
 }
 
-/**
- * Whether Manage Timings may be offered at all — the menu item AND the page,
- * since that URL is linkable (#1082).
- *
- * Manage Timings writes new times straight onto the calendar: no notice
- * requirement, no acceptance from anyone. That is honest only while nobody
- * else has committed to a time, so the deciding question is whether a
- * counterparty already holds one — not who owns the calendar.
- *
- * The exact complement of `occurrencesAllowReschedule` for the surfaces that
- * offer both, so a consultant is never handed the unilateral surface and the
- * negotiated one for the same booking.
- */
 export function allowsManageTimings(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
 ): boolean {
-  // A webinar or class is a published schedule attendees buy into rather than
-  // a time anyone negotiated, so the organiser keeps this surface even once
-  // the instance is confirmed — there is no single counterparty to propose to,
-  // and asking every attendee to accept is not a coherent flow.
   if (kind === "WEBINAR" || kind === "CLASS") return true;
-  // Nothing placed: an offering that was never scheduled, or a booking whose
-  // calls are not allocated yet. Still the consultant's own calendar.
   if (occurrences.length === 0) return true;
-  // EVERY upcoming occurrence, not just the earliest. A partial reschedule
-  // releases one call of a multi-call booking and leaves the rest confirmed,
-  // so the first row chronologically can be the released one while a consultee
-  // still holds a committed time later in the same booking.
   return occurrences.every((row) => Boolean(row.isTentative));
 }
 
-/**
- * Whether Unschedule may be offered — pulling a placed group event off the
- * calendar and back into the allocate queue, without cancelling it (#1082).
- *
- * Orthogonal to the Timings/Reschedule pair rather than a third branch of it.
- * A confirmed webinar offers Timings AND this; a 1:1 never offers it, because
- * releasing a time a counterparty holds is the negotiation Reschedule already
- * runs. It is emphatically NOT Cancel: the booking stays sold, attendees stay
- * enrolled, and no money, earnings or ledger row moves.
- */
 export function allowsUnschedule(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
 ): boolean {
   if (kind !== "WEBINAR" && kind !== "CLASS") return false;
-  // Nothing placed yet — an offering that was never scheduled, or one already
-  // unscheduled (the release leaves every row tentative). No date to withdraw,
-  // and Timings is the surface for setting one.
   return occurrences.some((row) => !row.isTentative);
 }
 
-/**
- * The occurrences a time-change decision acts on: still ahead of now,
- * chronological. A finished call is not what "has someone committed to a time"
- * is asking about, and the first entry has to be the earliest for the
- * tentative test.
- */
 export function upcomingOccurrences<
   T extends { startsAt: Date | string; endsAt: Date | string },
 >(occurrences: T[], now: Date = new Date()): T[] {
@@ -480,24 +306,7 @@ function occurrenceTimes(occurrence: JoinableOccurrence): {
   };
 }
 
-/**
- * Reasons a call is over FOR GOOD, as opposed to merely not currently live.
- *
- * #1270 — every gate used to read `endedAt` alone, and `endedAt` is written by
- * four different things. Stream fires `call.session_ended` after
- * `inactivity_timeout_seconds` (900s on the live call type) once the LAST
- * participant leaves, which stamps `session_timeout`. So both people in a 1:1
- * losing signal for that long — a wifi handoff, a tunnel, a closed lid —
- * ended their paid consultation permanently, for both of them, mid-session.
- * The reconciler's guesses (`reconciled_no_end`, `stream_not_found`) had the
- * same effect, and so did a host pressing "End for everyone" during the
- * pre-start device check — now stamped `ended_early`, which is not deliberate:
- * the next participant join clears it (#1607).
- *
- * A deliberate end is the host closing the room, or maintenance draining it.
- * Everything else means "nobody is in there right now", which is a very
- * different question from "you may not come back".
- */
+/** Terminal reasons that permanently close a room without allowing rejoin. */
 const DELIBERATE_END_REASONS = new Set(["call_ended", "maintenance"]);
 
 export function isDeliberateEnd(
@@ -507,33 +316,32 @@ export function isDeliberateEnd(
   } | null,
 ): boolean {
   if (!session?.endedAt) return false;
-  // A row with no reason predates the reason column; treat it as deliberate,
-  // which is the conservative reading for historical data.
   return session.endedReason
     ? DELIBERATE_END_REASONS.has(session.endedReason)
     : true;
 }
 
-/** Join state of one occurrence, evaluated over its own [startsAt, endsAt]. */
+/** Join state of one occurrence over [startsAt - joinWindowMs, endsAt + rejoinGraceMs). */
 export function getOccurrenceJoinState(
   occurrence: JoinableOccurrence,
-  opts?: { joinWindowMs?: number; now?: Date },
+  opts?: { joinWindowMs?: number; rejoinGraceMs?: number; now?: Date },
 ): OccurrenceJoinState {
   if (occurrence.isTentative) return "disabled";
   if (isDeadOccurrence(occurrence)) return "disabled";
-  // The host closed the room (or maintenance drained it).
   if (isDeliberateEnd(occurrence.meeting)) return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const rejoinGraceMs = opts?.rejoinGraceMs ?? 0;
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 
-  if (now > end) return "ended";
+  if (rejoinGraceMs > 0 ? now >= end + rejoinGraceMs : now > end) {
+    return "ended";
+  }
   if (now >= start - joinWindowMs) return "joinable";
   return "countdown";
 }
 
-/** Live occurrences, chronological. */
 export function liveOccurrencesOf<T extends JoinableOccurrence>(
   occurrences: T[],
 ): T[] {
@@ -542,13 +350,9 @@ export function liveOccurrencesOf<T extends JoinableOccurrence>(
     .sort((a, b) => occurrenceTimes(a).start - occurrenceTimes(b).start);
 }
 
-/**
- * Earliest occurrence currently inside its join window, or null — the row the
- * Stream call is keyed to, handed straight to `getOrCreateAppointmentMeeting`.
- */
 export function getJoinableOccurrence<T extends JoinableOccurrence>(
   occurrences: T[],
-  opts?: { joinWindowMs?: number; now?: Date },
+  opts?: { joinWindowMs?: number; rejoinGraceMs?: number; now?: Date },
 ): T | null {
   for (const row of liveOccurrencesOf(occurrences)) {
     if (getOccurrenceJoinState(row, opts) === "joinable") return row;
@@ -556,10 +360,6 @@ export function getJoinableOccurrence<T extends JoinableOccurrence>(
   return null;
 }
 
-/**
- * The occurrence that is live or next up, else the most recent past one. Used
- * by surfaces that must render *a* call even outside the join window.
- */
 export function getCurrentOrNextOccurrence<T extends JoinableOccurrence>(
   occurrences: T[],
   now: Date = new Date(),
@@ -572,14 +372,10 @@ export function getCurrentOrNextOccurrence<T extends JoinableOccurrence>(
   );
 }
 
-/**
- * Join state for a mapper-emitted `OccurrenceVM`. It exists because the
- * timeline used to answer "is this joinable?" from the clock alone and
- * therefore could not see a call the host had already ended (#1270).
- */
+/** Evaluates join state for an OccurrenceVM, keeping the Join button active through REJOIN_GRACE_MS. */
 export function getOccurrenceVMJoinState(
   occurrence: OccurrenceVM,
-  opts?: { joinWindowMs?: number; now?: Date },
+  opts?: { joinWindowMs?: number; rejoinGraceMs?: number; now?: Date },
 ): OccurrenceJoinState {
   return getOccurrenceJoinState(
     {
@@ -597,16 +393,15 @@ export function getOccurrenceVMJoinState(
           }
         : null,
     },
-    opts,
+    {
+      ...opts,
+      rejoinGraceMs:
+        opts?.rejoinGraceMs ??
+        (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0),
+    },
   );
 }
 
-/**
- * When the host closed the room (or maintenance drained it), else null. An
- * inactivity timeout or a pre-start `ended_early` is not the call's end: the
- * gates re-admit, so the buckets and the timeline must not call it over
- * (#1607).
- */
 export function meetingClosedAt(occurrence: OccurrenceVM): Date | null {
   return isDeliberateEnd({
     endedAt: occurrence.meetingEndedAt,
@@ -633,7 +428,16 @@ export function isOccurrenceOver(
   occurrence: OccurrenceVM,
   now = new Date(),
 ): boolean {
-  return occurrenceEnd(occurrence) < now.getTime();
+  const closedAt = meetingClosedAt(occurrence);
+  if (closedAt) return closedAt.getTime() < now.getTime();
+  if (
+    occurrence.completionStatus === "COMPLETED" ||
+    occurrence.completionStatus === "VOIDED"
+  ) {
+    return occurrenceEnd(occurrence) < now.getTime();
+  }
+  const graceMs = occurrence.endsAt ? REJOIN_GRACE_MS : 0;
+  return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
 /** True when the timeline has occurrences and every live one is over. */

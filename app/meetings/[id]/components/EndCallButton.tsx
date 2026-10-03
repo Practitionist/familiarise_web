@@ -26,9 +26,15 @@ const EndCallButton = ({ onEnding }: EndCallButtonProps = {}) => {
   const [isEnding, setIsEnding] = useState(false);
   const endingRef = useRef(false);
 
+  const info = useSessionInfo();
+
   // Get proper dashboard URL based on user role and profile
   const getDashboardUrl = useCallback(() => {
     if (!session?.user) return "/";
+
+    if (info.organizationId) {
+      return `/dashboard/organization/${info.organizationId}/appointments`;
+    }
 
     const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
       session.user;
@@ -44,7 +50,7 @@ const EndCallButton = ({ onEnding }: EndCallButtonProps = {}) => {
     }
 
     return "/"; // Fallback to home page
-  }, [session]);
+  }, [info.organizationId, session]);
 
   const endCall = useCallback(async () => {
     // #1270 — a ref, not the `isEnding` state. This is invoked from inside a
@@ -132,7 +138,7 @@ const EndCallButton = ({ onEnding }: EndCallButtonProps = {}) => {
   // Only the host (delivering side) may end the call for everyone. The
   // derivation lives in useSessionInfo — this gates a destructive action, so
   // it must not be a second opinion about who the host is.
-  const isHost = useSessionInfo().isHost;
+  const isHost = info.isHost;
 
   if (!isHost) return null;
 

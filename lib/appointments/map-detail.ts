@@ -14,11 +14,13 @@ import type { TAppointment } from "@/types/appointment";
 import { detailEntitlement } from "./presentation-input";
 import { deriveBucket } from "./bucket";
 import {
+  REJOIN_GRACE_MS,
   getAnchorTime,
+  isDeliberateEnd,
   isOccurrenceOver,
   liveOccurrences,
+  occurrencesOfAppointment,
 } from "./occurrences";
-import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
@@ -161,8 +163,10 @@ export function mapAppointmentDetail(
       a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
     )
     .filter((slot) => {
+      if (isDeliberateEnd(slot.meeting)) return false;
       const end = toDate(slot.endsAt ?? slot.startsAt);
-      return end.getTime() >= now.getTime();
+      const graceMs = slot.endsAt ? REJOIN_GRACE_MS : 0;
+      return end.getTime() + graceMs >= now.getTime();
     })
     .sort(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),

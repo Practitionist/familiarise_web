@@ -46,6 +46,13 @@ export interface ConsultantTrialLike {
       startsAt: string | Date;
       endsAt: string | Date;
       isTentative?: boolean;
+      completionStatus?: string | null;
+      outcome?: string | null;
+      meeting?: {
+        id: string;
+        endedAt: Date | string | null;
+        endedReason: string | null;
+      } | null;
     }>;
   } | null;
 }

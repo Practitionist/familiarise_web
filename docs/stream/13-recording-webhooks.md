@@ -1184,4 +1184,11 @@ orphaned objects impossible to collect.
 
 ---
 
-**Last Updated:** 2026-09-01
+## Deprecated & Superseded Approaches
+
+- **Synchronous attendance or end-state writes in join/end routes**: `POST /api/meetings/[meetingId]/join` and `POST /api/meetings/[meetingId]/end` do not write `MeetingAttendance`, `MeetingPresence`, `ATTENDED`, `Meeting.endedAt`, or `Meeting.endedReason`; Stream webhooks (`call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended`) own normal call lifecycle writes, while `reconcileOrphanedSessions` repairs orphaned records if a terminal webhook never arrives.
+- **`reconcileOrphanedSessions` leaving `MeetingPresence(leftAt: null)` open**: The orphaned-session reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`) orders candidates oldest-first (`occurrence.endsAt: "asc"`) and closes any open `MeetingPresence` intervals when stamping `endedAt`.
+
+---
+
+**Last Updated:** 2026-10-03

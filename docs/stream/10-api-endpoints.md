@@ -6,17 +6,19 @@ This document provides a comprehensive reference for all Stream-related API endp
 
 - [Overview](#overview)
 - [Authentication](#authentication)
+- [Meeting Lifecycle Endpoints](#meeting-lifecycle-endpoints)
 - [Channel Management](#channel-management)
 - [User Search](#user-search)
 - [Debug and Monitoring](#debug-and-monitoring)
 - [Synchronization](#synchronization)
 - [Error Handling](#error-handling)
+- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
 
 ## Overview
 
-All Stream API endpoints are located under the `/api/stream/*` path and follow REST conventions.
+Stream and meeting API endpoints are located under `/api/stream/*` and `/api/meetings/[meetingId]/*` and follow REST conventions.
 
 ### Base URL
 
@@ -64,6 +66,7 @@ https://your-domain.com/api/stream
 | 401  | Unauthorized          | Missing or invalid authentication |
 | 403  | Forbidden             | Insufficient permissions          |
 | 404  | Not Found             | Resource doesn't exist            |
+| 409  | Conflict              | Ceiling reached / invalid state   |
 | 500  | Internal Server Error | Server-side error                 |
 
 ---
@@ -80,7 +83,6 @@ Most endpoints require an authenticated Better Auth session.
 import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 // In API route
 const session = await auth.api.getSession({ headers: await headers() });
@@ -118,6 +120,86 @@ if (secret !== process.env.STREAM_SYNC_SECRET) {
 ```bash
 curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-secret-here"
 ```
+
+---
+
+## Meeting Lifecycle Endpoints
+
+All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate `meetingId` via `guardMeetingRoute`, and resolve caller entitlement via `resolveMeetingAccess`.
+
+### POST /api/meetings/[meetingId]/join
+
+Admits an entitled participant to a Stream call (`call_member`) and upserts the caller on Stream before `call.getOrCreate`. Attendance and presence intervals (`MeetingAttendance`, `MeetingPresence`, and `ATTENDED` participant status) are recorded exclusively by Stream participant webhooks (`call.session_participant_joined`/`left`).
+
+**Location:** `/app/api/meetings/[meetingId]/join/route.ts`
+
+**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + booking entitlement)
+
+**Response (Success - 200):**
+
+```json
+{
+  "callType": "default",
+  "callId": "occurrence-slot-1",
+  "role": "participant"
+}
+```
+
+### POST /api/meetings/[meetingId]/end
+
+Ends a Stream call for everyone (host-only). `Meeting.endedAt` and `Meeting.endedReason` are stamped exclusively by the `call.ended` webhook so Stream event timestamps remain authoritative.
+
+**Location:** `/app/api/meetings/[meetingId]/end/route.ts`
+
+**Authentication:** Required (Host only — plan owner or accepted co-presenter)
+
+**Response (Success - 200):**
+
+```json
+{
+  "ended": true,
+  "callId": "occurrence-slot-1"
+}
+```
+
+### POST /api/meetings/[meetingId]/live
+
+Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `call.goLive()` so waiting attendees can enter the room.
+
+**Location:** `/app/api/meetings/[meetingId]/live/route.ts`
+
+**Authentication:** Required (Host only)
+
+**Response (Success - 200):**
+
+```json
+{
+  "live": true,
+  "callId": "occurrence-550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### POST /api/meetings/[meetingId]/extend
+
+Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge once per session when neither the consultant nor active participants have a conflicting confirmed session starting within 15 minutes. Fails closed with `503` if reading current Stream call state via `call.get()` fails.
+
+**Location:** `/app/api/meetings/[meetingId]/extend/route.ts`
+
+**Authentication:** Required (Host only)
+
+**Response (Success - 200):**
+
+```json
+{
+  "extended": true,
+  "addedSeconds": 900,
+  "maxDurationSeconds": 7200,
+  "extensionsUsed": 1,
+  "hasConflictingNextBooking": false
+}
+```
+
+**Response (Conflict - 409):** Returned when the free +15m extension has already been used (`alreadyExtended: true`) or a conflicting booking starts within 15 minutes (`hasConflictingNextBooking: true`).
 
 ---
 
@@ -1153,6 +1235,13 @@ const results = await Promise.all(
   ),
 );
 ```
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **NextAuth `authOptions` / `getServerSession`**: Replaced by `auth.api.getSession({ headers: await headers() })` from `@/lib/auth`.
+- **Direct client-side call lifecycle (`call.endCall()`, `call.goLive()`, client-side `call.getOrCreate()`)**: Replaced by `/api/meetings/[meetingId]/{join,end,live,extend}`.
 
 ---
 
