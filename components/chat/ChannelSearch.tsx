@@ -7,7 +7,7 @@ import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { scopeOrgId, type AccountScope } from "@/lib/api/scope/parse";
+import { scopeOrgId, type Scope } from "@/lib/api/scope/parse";
 import type { AppointmentSearchResult } from "@/schemas/stream-search";
 
 // Type badge configuration for events (webinars/classes)
@@ -71,10 +71,12 @@ type GroupedConversation = {
   planTitles: string[];
 };
 
+const DEFAULT_PERSONAL_SCOPE: Scope = { kind: "personal" };
+
 export const ChannelSearch = ({
-  scope = "personal",
+  scope = DEFAULT_PERSONAL_SCOPE,
 }: {
-  scope?: AccountScope;
+  scope?: Scope;
 } = {}) => {
   const { client, setActiveChannel } = useChatContext();
   // Below `md` the conversation pane is `hidden` until this runs — see
