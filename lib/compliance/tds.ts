@@ -65,6 +65,7 @@
  */
 
 import type { ConsultantProfile } from "@prisma/client";
+import { reportSentryError } from "@/lib/observability/report";
 import dtaaRatesJson from "./dtaa-rates.json";
 
 /** Default rates per section in integer basis points (10000 = 100%, 10 = 0.1%). (#1367) */
@@ -151,6 +152,27 @@ function isEcoSection(section: string): boolean {
   return section === "194O" || section === "393-8(v)";
 }
 
+function defaultThresholdPaiseForSection(section: string): bigint | null {
+  if (isEcoSection(section)) {
+    return BigInt(50_000_000);
+  }
+  if (section === "194J") {
+    return BigInt(3_000_000);
+  }
+  return null;
+}
+
+function shouldRethrowTdsRateDbError(
+  err: unknown,
+  db: TdsRateReader | null | undefined,
+): boolean {
+  const code = (err as { code?: string })?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  const isInteractiveTx =
+    typeof db === "object" && db !== null && "$executeRawUnsafe" in db;
+  return code === "P2034" || message.includes("25P02") || isInteractiveTx;
+}
+
 /**
  * #1368 — Resolve the effective statutory TDS rate from the `TdsRate` table at
  * `atDate`, falling back deterministically to `TDS_SECTION_DEFAULT_BPS` when
@@ -196,8 +218,15 @@ export async function resolveEffectiveTdsRate(
           source: "db",
         };
       }
-    } catch {
-      // Fall back to statutory constants if the lookup fails in a non-DB test context.
+    } catch (err) {
+      reportSentryError(err, {
+        subsystem: "compliance",
+        level: "warning",
+        extra: { section: normalizedSection },
+      });
+      if (shouldRethrowTdsRateDbError(err, db)) {
+        throw err;
+      }
     }
   }
 
@@ -206,11 +235,7 @@ export async function resolveEffectiveTdsRate(
     lawCode: defaultLawCode,
     rateBps: defaultRateBps,
     noPanRateBps: defaultNoPanBps,
-    thresholdPaise: isEcoSection(normalizedSection)
-      ? BigInt(50_000_000)
-      : normalizedSection === "194J"
-        ? BigInt(3_000_000)
-        : null,
+    thresholdPaise: defaultThresholdPaiseForSection(normalizedSection),
     paymentCode: null,
     source: "default",
   };

@@ -3,6 +3,10 @@
 # Custom MCP Server
 .mcp.json*
 !.mcp.json.example
+mcp_config.json*
+!mcp_config.json.example
+.agents/mcp_config.json*
+!.agents/mcp_config.json.example
 
 # logs
 logs/

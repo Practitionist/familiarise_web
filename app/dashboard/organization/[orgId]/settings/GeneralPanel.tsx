@@ -881,22 +881,39 @@ interface ActiveMemberCandidate {
 async function fetchActiveMembers(
   orgId: string,
 ): Promise<{ data: ActiveMemberCandidate[] }> {
-  const res = await fetch(
-    `/api/organizations/${orgId}/members?status=ACTIVE&perPage=100`,
-  );
-  if (!res.ok) throw new Error("Failed to load active members");
-  return res.json();
+  const perPage = 100;
+  const maxPages = 1000;
+  const allMembers: ActiveMemberCandidate[] = [];
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const res = await fetch(
+      `/api/organizations/${orgId}/members?status=ACTIVE&page=${page}&perPage=${perPage}`,
+    );
+    if (!res.ok) throw new Error("Failed to load active members");
+    const json = (await res.json()) as {
+      data?: ActiveMemberCandidate[];
+      meta?: { total?: number; page?: number; perPage?: number };
+    };
+    const batch = json.data ?? [];
+    allMembers.push(...batch);
+    const total = json.meta?.total ?? allMembers.length;
+    if (batch.length < perPage || allMembers.length >= total) {
+      break;
+    }
+  }
+
+  return { data: allMembers };
 }
 
 function DangerZoneCard({
   orgId,
   orgSlug,
   orgStatus,
-}: {
+}: Readonly<{
   orgId: string;
   orgSlug: string;
   orgStatus: OrgStatus;
-}) {
+}>) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -978,8 +995,8 @@ function DangerZoneCard({
       return json as { softDeleted?: boolean };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
-      queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) });
+      queryClient.removeQueries({ queryKey: ["org-settings", orgId] });
+      queryClient.removeQueries({ queryKey: orgDetailsQueryKey(orgId) });
       setDeactivateOpen(false);
       setDeactivateConfirmSlug("");
       setDeactivateError(null);
@@ -1109,8 +1126,7 @@ function DangerZoneCard({
                     {selectedCandidate?.user.name ||
                       selectedCandidate?.user.email ||
                       "this member"}
-                  </strong>
-                  .
+                  </strong>.
                 </p>
                 <div className="space-y-1.5">
                   <Label htmlFor="confirm-transfer-slug">

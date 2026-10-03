@@ -224,6 +224,7 @@ export async function POST(
         paymentGateway: PAYOUT_GATEWAY,
         notes: body.notes,
         actorMembershipId: access.member.id,
+        createdBy: access.session.user.id,
       },
     );
 
