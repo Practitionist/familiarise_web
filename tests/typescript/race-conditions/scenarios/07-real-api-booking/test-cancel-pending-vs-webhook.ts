@@ -99,16 +99,25 @@ async function pollPaymentTerminal(paymentId: string): Promise<string> {
   return "PENDING";
 }
 
-async function pollWebhookProcessed(eventId: string): Promise<boolean> {
-  for (let i = 0; i < 40; i++) {
+async function pollWebhookProcessed(
+  eventId: string,
+  maxAttempts = 40,
+): Promise<{ settled: boolean; processed: boolean; error: string | null }> {
+  for (let i = 0; i < maxAttempts; i++) {
     const ev = await prisma.webhookEvent.findUnique({
       where: { eventId },
       select: { processed: true, error: true },
     });
-    if (ev && (ev.processed || ev.error !== null)) return true;
+    if (ev && (ev.processed || ev.error !== null)) {
+      return {
+        settled: true,
+        processed: ev.processed === true && ev.error === null,
+        error: ev.error,
+      };
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
-  return false;
+  return { settled: false, processed: false, error: null };
 }
 
 async function run() {
@@ -248,13 +257,18 @@ async function run() {
         cancelRes,
       );
 
-      const leg1Processed = await pollWebhookProcessed(expectedEventId);
+      let leg1Result = await pollWebhookProcessed(expectedEventId);
+      if (!leg1Result.settled) {
+        // Bounded drain so an in-flight background webhook finishes before
+        // Leg 2 mutates or finally cleans up the shared fixture.
+        leg1Result = await pollWebhookProcessed(expectedEventId, 30);
+      }
       check(
         "Leg 1 webhook settled before cleanup",
-        leg1Processed,
-        `orderId=${leg1.paymentIntent}`,
+        leg1Result.processed,
+        { orderId: leg1.paymentIntent, error: leg1Result.error },
       );
-      if (leg1Processed) {
+      if (leg1Result.processed) {
         const finalStatus = await pollPaymentTerminal(leg1.paymentId);
         check("leg1: payment never stays PENDING", finalStatus !== "PENDING", {
           finalStatus,

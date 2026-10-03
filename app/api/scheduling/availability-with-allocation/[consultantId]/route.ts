@@ -396,6 +396,28 @@ export async function GET(
       );
     }
 
+    if (
+      marker?.scheduleType &&
+      consultant.scheduleType !== marker.scheduleType
+    ) {
+      const refetched = await prisma.consultantProfile.findUnique({
+        where: { id: consultantId },
+        include: {
+          availabilityWindowsWeekly: consultant.scheduleType === "WEEKLY",
+          availabilityWindowsCustom:
+            consultant.scheduleType === "CUSTOM"
+              ? { where: customWindowOverlapWhere }
+              : false,
+        },
+      });
+      if (refetched) {
+        consultant.availabilityWindowsWeekly =
+          refetched.availabilityWindowsWeekly;
+        consultant.availabilityWindowsCustom =
+          refetched.availabilityWindowsCustom;
+      }
+    }
+
     // #1689 — When allocating a webinar or class, load ACCEPTED co-hosts so the
     // grid reflects both their busy commitments and their availability schedules.
     type CoHostScheduleProfile = {

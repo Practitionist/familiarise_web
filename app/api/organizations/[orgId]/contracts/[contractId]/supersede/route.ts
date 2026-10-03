@@ -201,6 +201,7 @@ export async function POST(
 
       const hasLicenseOverride =
         body.licenseModel !== undefined ||
+        body.licenseCycle !== undefined ||
         body.licenseFeePaise !== undefined ||
         body.licenseRatePerSeatPaise !== undefined;
 

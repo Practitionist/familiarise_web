@@ -581,7 +581,7 @@ async function reconcilePaymentStatusUnlocked(
       // journaling are never bypassed by a raw paymentStatus=SUCCEEDED write.
       if (mappedStatus === PaymentStatus.SUCCEEDED) {
         const notes: Record<string, string> = {
-          ...(gatewayStatus.notes ?? {}),
+          ...gatewayStatus.notes,
         };
         if (payment.appointment?.id) {
           if (!notes.userId && payment.userId) {

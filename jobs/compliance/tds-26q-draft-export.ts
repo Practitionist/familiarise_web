@@ -120,6 +120,7 @@ export type Acc = {
   reversalBaseReductionPaise: number;
   linkedReversalBaseReductionPaise: number;
   unlinkedPositiveBasePaise: number;
+  firstUnlinkedCumPaise: number | null;
   prevCumulativePaise: number;
   hasLinkedPayouts: boolean;
   seenPayoutIds: Set<string>;
@@ -164,6 +165,7 @@ function createEmptyDeducteeAcc(
     reversalBaseReductionPaise: 0,
     linkedReversalBaseReductionPaise: 0,
     unlinkedPositiveBasePaise: 0,
+    firstUnlinkedCumPaise: null,
     prevCumulativePaise: 0,
     hasLinkedPayouts: false,
     seenPayoutIds: new Set<string>(),
@@ -223,10 +225,12 @@ function accumulatePositiveRecord(
   }
   if (acc.prevCumulativePaise > 0) {
     acc.unlinkedPositiveBasePaise += Math.max(0, cum - acc.prevCumulativePaise);
-  } else if (r.tdsRateBps && r.tdsRateBps > 0) {
+  } else if (r.tdsRateBps && r.tdsRateBps > 0 && Number(r.tdsDeducted) > 0) {
     acc.unlinkedPositiveBasePaise += Math.round(
       (Math.max(0, Number(r.tdsDeducted)) * 10_000) / r.tdsRateBps,
     );
+  } else if (acc.firstUnlinkedCumPaise === null) {
+    acc.firstUnlinkedCumPaise = cum;
   }
 }
 
@@ -428,10 +432,15 @@ export function buildSourceRows(
         ? (paymentCodeBySection.get(acc.section) ?? null)
         : null,
     };
+    const firstUnlinkedBasePaise =
+      acc.firstUnlinkedCumPaise !== null
+        ? Math.max(0, acc.firstUnlinkedCumPaise - baseline)
+        : 0;
     const rawCreditedPaise = acc.hasLinkedPayouts
       ? acc.linkedCompletedBasePaise +
-        acc.unlinkedPositiveBasePaise -
-        acc.linkedReversalBaseReductionPaise
+        acc.unlinkedPositiveBasePaise +
+        firstUnlinkedBasePaise -
+        acc.reversalBaseReductionPaise
       : acc.windowMaxCumulativePaise -
         baseline -
         acc.reversalBaseReductionPaise;
@@ -519,7 +528,11 @@ export async function runTdsReturnDraftExport(): Promise<{
 
       const records = await prisma.tDSRecord.findMany({
         where: { financialYear, quarter },
-        orderBy: { createdAt: "asc" },
+        orderBy: [
+          { createdAt: "asc" },
+          { cumulativeAmountCredited: "asc" },
+          { id: "asc" },
+        ],
         select: {
           consultantProfileId: true,
           organizationId: true,

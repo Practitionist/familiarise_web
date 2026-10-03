@@ -319,6 +319,7 @@ beforeEach(() => {
         // #780 — the extended client reads bigint money back as Number.
         amount: data.amount,
       })),
+      updateManyAndReturn: jest.fn(async () => []),
     },
     paymentLeg: {
       create: jest.fn(async () => ({})),

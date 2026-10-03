@@ -882,7 +882,7 @@ async function fetchActiveMembers(
   orgId: string,
 ): Promise<{ data: ActiveMemberCandidate[] }> {
   const perPage = 100;
-  const maxPages = 10;
+  const maxPages = 1000;
   const allMembers: ActiveMemberCandidate[] = [];
 
   for (let page = 1; page <= maxPages; page += 1) {

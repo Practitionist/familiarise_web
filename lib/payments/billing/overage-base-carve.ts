@@ -93,6 +93,77 @@ export async function restoreOverageBaseCarve(
 type RecarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
   Partial<Pick<Tx, "organizationInvoice" | "invoiceLineItem">>;
 
+function computeRecarvedDraftInvoiceTotals(
+  invoice: {
+    subtotalPaise: number | bigint;
+    igstPaise?: number | bigint | null;
+    cgstPaise?: number | bigint | null;
+    sgstPaise?: number | bigint | null;
+  },
+  basePaise: number,
+) {
+  const oldSubtotal = Math.max(0, Number(invoice.subtotalPaise));
+  const newSubtotal = Math.max(0, oldSubtotal - basePaise);
+  const oldIgst = Number(invoice.igstPaise ?? 0);
+  const oldCgst = Number(invoice.cgstPaise ?? 0);
+  const oldSgst = Number(invoice.sgstPaise ?? 0);
+  const oldTax = oldIgst + oldCgst + oldSgst;
+  const standardGstRateBps = 1800;
+  let newTax = 0;
+  if (oldTax > 0 && newSubtotal > 0) {
+    const matchesStandardGst =
+      Math.round((oldSubtotal * standardGstRateBps) / 10_000) === oldTax;
+    newTax = matchesStandardGst
+      ? Math.round((newSubtotal * standardGstRateBps) / 10_000)
+      : Math.round((oldTax * newSubtotal) / Math.max(1, oldSubtotal));
+  }
+  const interState = oldIgst > 0;
+  const newIgst = interState ? newTax : 0;
+  const newSgst = interState ? 0 : Math.floor(newTax / 2);
+  const newCgst = interState ? 0 : newTax - newSgst;
+  const newTotal = newSubtotal + newTax;
+
+  return {
+    subtotalPaise: newSubtotal,
+    igstPaise: newIgst,
+    cgstPaise: newCgst,
+    sgstPaise: newSgst,
+    totalPaise: newTotal,
+    inrEquivalentPaise: newTotal,
+  };
+}
+
+async function persistRecarvedDraftInvoice(
+  tx: RecarveTx,
+  invoiceId: string,
+  updatedInvoiceData: ReturnType<typeof computeRecarvedDraftInvoiceTotals>,
+): Promise<void> {
+  if (typeof tx.organizationInvoice?.updateMany === "function") {
+    const invoiceUpdated = await tx.organizationInvoice.updateMany({
+      where: { id: invoiceId, status: "DRAFT" },
+      data: updatedInvoiceData,
+    });
+    if (invoiceUpdated.count === 0) {
+      throw new Error(
+        `recarveOverageBase: invoice ${invoiceId} transitioned out of DRAFT during recarve — rolling back`,
+      );
+    }
+    if (typeof tx.organizationInvoice.update === "function") {
+      await tx.organizationInvoice.update({
+        where: { id: invoiceId },
+        data: updatedInvoiceData,
+      });
+    }
+    return;
+  }
+  if (typeof tx.organizationInvoice?.update === "function") {
+    await tx.organizationInvoice.update({
+      where: { id: invoiceId },
+      data: updatedInvoiceData,
+    });
+  }
+}
+
 async function recarveDraftInvoiceBase(
   tx: RecarveTx,
   parentId: string,
@@ -151,58 +222,11 @@ async function recarveDraftInvoiceBase(
     });
   }
 
-  const oldSubtotal = Math.max(0, Number(invoice.subtotalPaise));
-  const newSubtotal = Math.max(0, oldSubtotal - basePaise);
-  const oldIgst = Number(invoice.igstPaise ?? 0);
-  const oldCgst = Number(invoice.cgstPaise ?? 0);
-  const oldSgst = Number(invoice.sgstPaise ?? 0);
-  const oldTax = oldIgst + oldCgst + oldSgst;
-  const standardGstRateBps = 1800;
-  let newTax = 0;
-  if (oldTax > 0 && newSubtotal > 0) {
-    const matchesStandardGst =
-      Math.round((oldSubtotal * standardGstRateBps) / 10_000) === oldTax;
-    newTax = matchesStandardGst
-      ? Math.round((newSubtotal * standardGstRateBps) / 10_000)
-      : Math.round((oldTax * newSubtotal) / Math.max(1, oldSubtotal));
-  }
-  const interState = oldIgst > 0;
-  const newIgst = interState ? newTax : 0;
-  const newSgst = interState ? 0 : Math.floor(newTax / 2);
-  const newCgst = interState ? 0 : newTax - newSgst;
-  const newTotal = newSubtotal + newTax;
-
-  const updatedInvoiceData = {
-    subtotalPaise: newSubtotal,
-    igstPaise: newIgst,
-    cgstPaise: newCgst,
-    sgstPaise: newSgst,
-    totalPaise: newTotal,
-    inrEquivalentPaise: newTotal,
-  };
-
-  if (typeof tx.organizationInvoice.updateMany === "function") {
-    const invoiceUpdated = await tx.organizationInvoice.updateMany({
-      where: { id: invoice.id, status: "DRAFT" },
-      data: updatedInvoiceData,
-    });
-    if (invoiceUpdated.count === 0) {
-      throw new Error(
-        `recarveOverageBase: invoice ${invoice.id} transitioned out of DRAFT during recarve — rolling back`,
-      );
-    }
-    if (typeof tx.organizationInvoice.update === "function") {
-      await tx.organizationInvoice.update({
-        where: { id: invoice.id },
-        data: updatedInvoiceData,
-      });
-    }
-  } else if (typeof tx.organizationInvoice.update === "function") {
-    await tx.organizationInvoice.update({
-      where: { id: invoice.id },
-      data: updatedInvoiceData,
-    });
-  }
+  const updatedInvoiceData = computeRecarvedDraftInvoiceTotals(
+    invoice,
+    basePaise,
+  );
+  await persistRecarvedDraftInvoice(tx, invoice.id, updatedInvoiceData);
   return "recarved";
 }
 

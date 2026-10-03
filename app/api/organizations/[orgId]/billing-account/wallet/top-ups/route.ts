@@ -153,7 +153,7 @@ export async function POST(
     if (!notes?.includes("razorpay_order=claiming")) {
       return false;
     }
-    const tsMatch = notes.match(/claiming_at=(\d+)/);
+    const tsMatch = /claiming_at=(\d+)/.exec(notes);
     if (!tsMatch) {
       return false;
     }
@@ -325,23 +325,22 @@ export async function POST(
     }
   }
 
+  let claimNotes: string | null = null;
   if (
     reusedPendingPlaceholder &&
     typeof prisma.walletTopUp?.updateMany === "function"
   ) {
-    const expectedNoteToken = isStaleClaimNote(reusedNotes)
-      ? "razorpay_order=claiming"
-      : "razorpay_order=pending";
+    claimNotes = `client_key=${clientIdempotencyKey};razorpay_order=claiming;claiming_at=${Date.now()};claim_id=${globalThis.crypto.randomUUID()}`;
     const claimed = await prisma.walletTopUp.updateMany({
       where: {
         ...(reusedPlaceholderId
           ? { id: reusedPlaceholderId }
           : { providerOrderId: walletEntryOrderId }),
         status: "PENDING",
-        notes: { contains: expectedNoteToken },
+        notes: reusedNotes ?? { contains: "razorpay_order=pending" },
       },
       data: {
-        notes: `client_key=${clientIdempotencyKey};razorpay_order=claiming;claiming_at=${Date.now()}`,
+        notes: claimNotes,
       },
     });
     if (claimed.count !== 1) {
@@ -391,7 +390,7 @@ export async function POST(
               ...(reusedPlaceholderId
                 ? { id: reusedPlaceholderId }
                 : { providerOrderId: walletEntryOrderId }),
-              notes: { contains: "razorpay_order=claiming" },
+              notes: claimNotes ?? { contains: "razorpay_order=claiming" },
             },
             data: {
               notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
@@ -444,14 +443,39 @@ export async function POST(
   let notesSaved = false;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await prisma.walletTopUp.update({
-        where: { providerOrderId: walletEntryOrderId },
-        data: {
-          notes: persistedNotes,
-        },
-      });
-      notesSaved = true;
-      break;
+      if (
+        reusedPendingPlaceholder &&
+        claimNotes &&
+        typeof prisma.walletTopUp?.updateMany === "function"
+      ) {
+        const updated = await prisma.walletTopUp.updateMany({
+          where: {
+            ...(reusedPlaceholderId
+              ? { id: reusedPlaceholderId }
+              : { providerOrderId: walletEntryOrderId }),
+            notes: { in: [claimNotes, persistedNotes] },
+          },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        if (updated.count === 1) {
+          notesSaved = true;
+          break;
+        }
+        throw new Error(
+          "Concurrent caller reclaimed stale top-up placeholder before order notes were persisted",
+        );
+      } else {
+        await prisma.walletTopUp.update({
+          where: { providerOrderId: walletEntryOrderId },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        notesSaved = true;
+        break;
+      }
     } catch (err) {
       if (attempt === 3) {
         Sentry.captureException(

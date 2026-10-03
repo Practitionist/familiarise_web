@@ -289,7 +289,7 @@ async function recordMemberOverageCharge(
     surchargePaise: number;
     parentInvoiced: boolean;
   },
-): Promise<PendingOverageNotification> {
+): Promise<PendingOverageNotification | null> {
   const {
     tx,
     programAssignmentId,
@@ -312,6 +312,11 @@ async function recordMemberOverageCharge(
     input.isLazyAllocation,
   );
   const effectiveMarginalPaise = carvedBasePaise + ctx.surchargePaise;
+  if (effectiveMarginalPaise <= 0) {
+    // Base already billed to the org (or not carvable) and no surcharge:
+    // the member owes nothing, so mint no side-payment and send no notice.
+    return null;
+  }
 
   // Instant member charge. The booking proceeds; create a parent-linked
   // PENDING side-Payment for the effective marginal. The gateway is NOT called
@@ -361,7 +366,14 @@ async function recordMemberOverageCharge(
   };
 }
 
-async function mintChildOverageAccrualPayment(
+/**
+ * Mint a child `ENTERPRISE_INVOICE_ACCRUAL` Payment carrying an
+ * `OVERAGE_INVOICE_ACCRUAL` leg. Like all enterprise invoice accrual payments,
+ * `paymentStatus` is `SUCCEEDED` at birth because the booking is confirmed on
+ * enterprise credit and the monthly invoice generator only rolls up legs whose
+ * parent payment has `paymentStatus = SUCCEEDED` and `invoiceLineItemId = null`.
+ */
+function mintChildOverageAccrualPayment(
   input: RecordOverageInput,
   accrualPaise: number,
 ) {
@@ -400,6 +412,50 @@ async function mintChildOverageAccrualPayment(
   });
 }
 
+async function recordParentInvoicedOrgOverage(
+  input: RecordOverageInput,
+  bookingUtilizationId: string,
+  surchargePaise: number,
+): Promise<null> {
+  const { tx, programAssignmentId, currency, paymentId } = input;
+  if (surchargePaise > 0) {
+    const childAccrualPayment = await mintChildOverageAccrualPayment(
+      input,
+      surchargePaise,
+    );
+    await tx.overageEvent.create({
+      data: {
+        programAssignmentId,
+        bookingUtilizationId,
+        overageBehavior: "CHARGE_ORG",
+        basePaise: 0,
+        surchargePaise,
+        marginalPaise: surchargePaise,
+        currency,
+        chargeStatus: "PENDING",
+        paymentId: childAccrualPayment.id,
+      },
+    });
+    return null;
+  }
+
+  await tx.overageEvent.create({
+    data: {
+      programAssignmentId,
+      bookingUtilizationId,
+      overageBehavior: "CHARGE_ORG",
+      basePaise: 0,
+      surchargePaise: 0,
+      marginalPaise: 0,
+      currency,
+      chargeStatus: "ACCRUED",
+      settledAt: new Date(),
+      paymentId,
+    },
+  });
+  return null;
+}
+
 async function recordOrgOverageCharge(
   input: RecordOverageInput,
   ctx: {
@@ -415,46 +471,13 @@ async function recordOrgOverageCharge(
 
   // #1895: When the parent orgPayment is already invoiced (`parentInvoiced`),
   // its basePaise was already billed on the parent's invoice. Do not mutate
-  // the locked parent payment or its legs. If surchargePaise > 0, mint a
-  // standalone un-invoiced child accrual Payment carrying OVERAGE_INVOICE_ACCRUAL
-  // so rollupOrgInvoiceAccruals bills only the surcharge without double-billing
-  // basePaise; if surchargePaise === 0, record the event as ACCRUED.
+  // the locked parent payment or its legs.
   if (parentInvoiced) {
-    if (surchargePaise > 0) {
-      const childAccrualPayment = await mintChildOverageAccrualPayment(
-        input,
-        surchargePaise,
-      );
-      await tx.overageEvent.create({
-        data: {
-          programAssignmentId,
-          bookingUtilizationId: ctx.bookingUtilizationId,
-          overageBehavior: "CHARGE_ORG",
-          basePaise: 0,
-          surchargePaise,
-          marginalPaise: surchargePaise,
-          currency,
-          chargeStatus: "PENDING",
-          paymentId: childAccrualPayment.id,
-        },
-      });
-    } else {
-      await tx.overageEvent.create({
-        data: {
-          programAssignmentId,
-          bookingUtilizationId: ctx.bookingUtilizationId,
-          overageBehavior: "CHARGE_ORG",
-          basePaise: 0,
-          surchargePaise: 0,
-          marginalPaise: 0,
-          currency,
-          chargeStatus: "ACCRUED",
-          settledAt: new Date(),
-          paymentId,
-        },
-      });
-    }
-    return null;
+    return recordParentInvoicedOrgOverage(
+      input,
+      ctx.bookingUtilizationId,
+      surchargePaise,
+    );
   }
 
   const walletLeg = await tx.paymentLeg.findUnique({

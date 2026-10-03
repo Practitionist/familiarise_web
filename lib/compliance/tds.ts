@@ -162,6 +162,17 @@ function defaultThresholdPaiseForSection(section: string): bigint | null {
   return null;
 }
 
+function shouldRethrowTdsRateDbError(
+  err: unknown,
+  db: TdsRateReader | null | undefined,
+): boolean {
+  const code = (err as { code?: string })?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  const isInteractiveTx =
+    typeof db === "object" && db !== null && "$executeRawUnsafe" in db;
+  return code === "P2034" || message.includes("25P02") || isInteractiveTx;
+}
+
 /**
  * #1368 — Resolve the effective statutory TDS rate from the `TdsRate` table at
  * `atDate`, falling back deterministically to `TDS_SECTION_DEFAULT_BPS` when
@@ -213,13 +224,7 @@ export async function resolveEffectiveTdsRate(
         level: "warning",
         extra: { section: normalizedSection },
       });
-      const code = (err as { code?: string })?.code;
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        code === "P2034" ||
-        message.includes("25P02") ||
-        (typeof db === "object" && db !== null && "$executeRawUnsafe" in db)
-      ) {
+      if (shouldRethrowTdsRateDbError(err, db)) {
         throw err;
       }
     }

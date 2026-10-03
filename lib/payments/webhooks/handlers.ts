@@ -715,7 +715,7 @@ export async function handlePaymentSuccess(
               if (isRetryableSerialization) {
                 throw phase1EarningsErr;
               }
-              if (hasSavepoint || isUniqueViolation(phase1EarningsErr)) {
+              if (hasSavepoint) {
                 console.warn(
                   `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
                   phase1EarningsErr,

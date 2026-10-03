@@ -354,7 +354,7 @@ export class ScheduleValidationService {
       excludeOccurrenceIds?: string[];
       ownAppointmentIds?: string[];
     };
-    initialConflicts?: ValidationResult["conflicts"];
+    initialConflicts?: NonNullable<ValidationResult["conflicts"]>;
   }): Promise<ValidationResult> {
     const {
       eventType,
@@ -1509,13 +1509,10 @@ export class ScheduleValidationService {
         sessionsPerWeek: config.sessionsPerWeek,
         schedulingTimezone: config.schedulingTimezone,
       }),
-    );
-
-    // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
-    // at allocation-selection time + the client guard, so a hand-crafted manual
-    // allocate could stack same-day sessions. Constant shared with the
-    // allocator (utils/scheduling-engine/sessionCaps.ts).
-    errors.push(
+      // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
+      // at allocation-selection time + the client guard, so a hand-crafted manual
+      // allocate could stack same-day sessions. Constant shared with the
+      // allocator (utils/scheduling-engine/sessionCaps.ts).
       ...this.validatePerDaySessionCap(
         classOccurrences,
         excludedAppointments,

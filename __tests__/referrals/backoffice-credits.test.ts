@@ -352,6 +352,7 @@ describe("#1839 — Backoffice Referral Credits API", () => {
         source: "MANUAL",
         expiresAt: null,
         idempotencyKey: "idem_match",
+        reason: "Idempotent retry with identical payload",
         user: { id: "u_1", name: "Asha Learner", email: "asha@example.com" },
         usages: [],
       };
@@ -401,6 +402,29 @@ describe("#1839 — Backoffice Referral Credits API", () => {
       expect(mismatchRes.status).toBe(409);
       const mismatchBody = await mismatchRes.json();
       expect(mismatchBody.code).toBe("DUPLICATE_IDEMPOTENCY_KEY");
+
+      // Mismatched reason with identical amount on same idempotencyKey -> 409 Conflict
+      mockReferralCreditFindUnique.mockResolvedValueOnce(existingMatchingCredit);
+      const mismatchReasonReq = new NextRequest(
+        "http://localhost/api/admin/referrals/credits",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: "u_1",
+            amountPaise: 50000,
+            source: "MANUAL",
+            idempotencyKey: "idem_match",
+            reason: "Different audit reason on same idempotency key",
+          }),
+        },
+      );
+      const mismatchReasonRes = await issueCredit(mismatchReasonReq, {
+        params: Promise.resolve({}),
+      });
+      expect(mismatchReasonRes.status).toBe(409);
+      const mismatchReasonBody = await mismatchReasonRes.json();
+      expect(mismatchReasonBody.code).toBe("DUPLICATE_IDEMPOTENCY_KEY");
 
       // Concurrent P2002 unique violation on idempotencyKey with mismatched winner -> 409
       mockReferralCreditFindUnique

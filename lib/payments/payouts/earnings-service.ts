@@ -882,6 +882,22 @@ export async function planEarningsForPayment(
   };
 }
 
+function computeShareBpsList(
+  splits: RevenueSplit[],
+  totalConsultantPool: number,
+): number[] {
+  const shareBpsList = splits.map((s) =>
+    totalConsultantPool > 0
+      ? Math.floor((s.share / totalConsultantPool) * 10_000)
+      : 0,
+  );
+  if (totalConsultantPool > 0 && shareBpsList.length > 0) {
+    const assigned = shareBpsList.reduce((a, b) => a + b, 0);
+    shareBpsList[shareBpsList.length - 1] += 10_000 - assigned;
+  }
+  return shareBpsList;
+}
+
 async function createMultiPartyConsultantEarnings(
   tx: Tx,
   params: {
@@ -913,40 +929,31 @@ async function createMultiPartyConsultantEarnings(
     orgSplit,
   } = params;
 
-  // #812 — floor every collaborator's shareBps and let the LAST split
-  // absorb the remainder, so the cached bps sum to exactly 10000.
-  const shareBpsList = splits.map((s) =>
-    totalConsultantPool > 0
-      ? Math.floor((s.share / totalConsultantPool) * 10_000)
-      : 0,
-  );
-  if (totalConsultantPool > 0) {
-    const assigned = shareBpsList.reduce((a, b) => a + b, 0);
-    shareBpsList[shareBpsList.length - 1] += 10_000 - assigned;
-  }
-
+  const shareBpsList = computeShareBpsList(splits, totalConsultantPool);
+  const hostSplitNote = orgSplit ? " [HOST 3-way split]" : "";
   let ownerId: string | null = null;
+
   for (let i = 0; i < splits.length; i++) {
     const split = splits[i];
     const isOwner = split.role === "OWNER";
-    const shareBps = shareBpsList[i];
     const settlement = isOwner
       ? undefined
       : collabSettlements.get(split.consultantProfileId);
     const creditedShare = settlement
       ? settlement.orgSplit.consultantSharePaise
       : split.share;
+    const splitPlatformFee = isOwner
+      ? platformFeePaise
+      : (settlement?.orgSplit.platformFeePaise ?? 0);
     const earnings = await tx.consultantEarnings.create({
       data: {
         consultantProfileId: split.consultantProfileId,
         paymentId,
         grossAmount: isOwner ? grossAmount : 0,
-        platformFeePaise: isOwner
-          ? platformFeePaise
-          : (settlement?.orgSplit.platformFeePaise ?? 0),
+        platformFeePaise: splitPlatformFee,
         consultantSharePaise: creditedShare,
         role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-        shareBps,
+        shareBps: shareBpsList[i],
         appointmentOccurrenceId,
         status: initialEarningStatus,
         holdUntil,
@@ -956,7 +963,6 @@ async function createMultiPartyConsultantEarnings(
     if (isOwner) {
       ownerId = earnings.id;
     }
-    const hostSplitNote = orgSplit ? " [HOST 3-way split]" : "";
     const collabSettledNote = settlement ? " [collab org-settled]" : "";
     console.log(
       `Earnings created for ${split.role} (${split.consultantProfileId}): ${creditedShare / 100} from payment ${paymentId}${hostSplitNote}${collabSettledNote}`,
@@ -1153,6 +1159,40 @@ async function createPrimaryAndCollabOrgEarnings(
   }
 }
 
+function tallyPaymentLegsBySource(
+  legs: ReadonlyArray<{ source: string; amountPaise: number }>,
+) {
+  let card = 0;
+  let wallet = 0;
+  let receivable = 0;
+  let promo = 0;
+  let overageAccrualPaise = 0;
+  for (const leg of legs) {
+    if (leg.amountPaise <= 0) continue;
+    switch (leg.source) {
+      case "CARD":
+        card += leg.amountPaise;
+        break;
+      case "WALLET":
+        wallet += leg.amountPaise;
+        break;
+      case "INVOICE_ACCRUAL":
+        receivable += leg.amountPaise;
+        break;
+      case "OVERAGE_INVOICE_ACCRUAL":
+        receivable += leg.amountPaise;
+        overageAccrualPaise += leg.amountPaise;
+        break;
+      case "REFERRAL_CREDIT":
+        promo += leg.amountPaise;
+        break;
+      default:
+        break;
+    }
+  }
+  return { card, wallet, receivable, promo, overageAccrualPaise };
+}
+
 async function resolveBookingJournalDebits(
   tx: Tx,
   payment: CreateEarningsParams["payment"],
@@ -1176,49 +1216,30 @@ async function resolveBookingJournalDebits(
   };
 
   if (legs.length > 0) {
-    let card = 0;
-    let wallet = 0;
-    let receivable = 0;
-    let promo = 0;
-    for (const leg of legs) {
-      if (leg.amountPaise <= 0) continue;
-      switch (leg.source) {
-        case "CARD":
-          card += leg.amountPaise;
-          break;
-        case "WALLET":
-          wallet += leg.amountPaise;
-          break;
-        case "INVOICE_ACCRUAL":
-          receivable += leg.amountPaise;
-          break;
-        case "OVERAGE_INVOICE_ACCRUAL":
-          receivable += leg.amountPaise;
-          overageAccrualPaise += leg.amountPaise;
-          break;
-        case "REFERRAL_CREDIT":
-          promo += leg.amountPaise;
-          break;
-        default:
-          break;
-      }
-    }
-    pushDebit({ kind: "CASH" }, card);
+    const tallied = tallyPaymentLegsBySource(legs);
+    overageAccrualPaise = tallied.overageAccrualPaise;
+    pushDebit({ kind: "CASH" }, tallied.card);
+
     let walletLegOrgId = orgId;
-    if (!walletLegOrgId && wallet > 0 && payment.billingAccountId) {
-      if (preplanned !== null && preplanned !== undefined) {
-        walletLegOrgId = preplanned.walletLegOrgId;
-      } else {
-        const walletOwner = await tx.billingAccount.findUnique({
-          where: { id: payment.billingAccountId },
-          select: { ownerOrgId: true },
-        });
-        walletLegOrgId = walletOwner?.ownerOrgId ?? null;
-      }
+    if (!walletLegOrgId && tallied.wallet > 0 && payment.billingAccountId) {
+      walletLegOrgId = preplanned
+        ? preplanned.walletLegOrgId
+        : ((
+            await tx.billingAccount.findUnique({
+              where: { id: payment.billingAccountId },
+              select: { ownerOrgId: true },
+            })
+          )?.ownerOrgId ?? null);
     }
-    pushDebit({ kind: "WALLET", organizationId: walletLegOrgId }, wallet);
-    pushDebit({ kind: "ORG_RECEIVABLE", organizationId: orgId }, receivable);
-    pushDebit({ kind: "PLATFORM_PROMO" }, promo);
+    pushDebit(
+      { kind: "WALLET", organizationId: walletLegOrgId },
+      tallied.wallet,
+    );
+    pushDebit(
+      { kind: "ORG_RECEIVABLE", organizationId: orgId },
+      tallied.receivable,
+    );
+    pushDebit({ kind: "PLATFORM_PROMO" }, tallied.promo);
   } else {
     pushDebit({ kind: "CASH" }, payment.amount);
   }
@@ -1232,6 +1253,29 @@ async function resolveBookingJournalDebits(
     ),
   );
   return { debits, overageAccrualPaise };
+}
+
+async function resolveOverageSurchargeForCredits(
+  tx: Tx,
+  paymentId: string,
+  overageAccrualPaise: number,
+  preplanned?: PreplannedEarningsContext | null,
+): Promise<number> {
+  if (overageAccrualPaise <= 0) return 0;
+  if (
+    typeof tx.overageEvent?.findFirst === "function" &&
+    (!preplanned || preplanned.orgOverageSurchargePaise === 0)
+  ) {
+    const orgOverage = await tx.overageEvent.findFirst({
+      where: {
+        bookingUtilization: { paymentId },
+        overageBehavior: "CHARGE_ORG",
+      },
+      select: { surchargePaise: true },
+    });
+    return sumPaise(orgOverage?.surchargePaise);
+  }
+  return preplanned?.orgOverageSurchargePaise ?? 0;
 }
 
 async function resolveBookingJournalCredits(
@@ -1274,23 +1318,12 @@ async function resolveBookingJournalCredits(
   for (const s of Array.from(collabSettlements.values())) {
     platformFeeCreditPaise += s.orgSplit.platformFeePaise;
   }
-  if (overageAccrualPaise > 0) {
-    if (
-      typeof tx.overageEvent?.findFirst === "function" &&
-      (!preplanned || preplanned.orgOverageSurchargePaise === 0)
-    ) {
-      const orgOverage = await tx.overageEvent.findFirst({
-        where: {
-          bookingUtilization: { paymentId: payment.id },
-          overageBehavior: "CHARGE_ORG",
-        },
-        select: { surchargePaise: true },
-      });
-      platformFeeCreditPaise += sumPaise(orgOverage?.surchargePaise);
-    } else if (preplanned) {
-      platformFeeCreditPaise += preplanned.orgOverageSurchargePaise;
-    }
-  }
+  platformFeeCreditPaise += await resolveOverageSurchargeForCredits(
+    tx,
+    payment.id,
+    overageAccrualPaise,
+    preplanned,
+  );
   pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
 
   if (splits.length > 0) {
@@ -1324,15 +1357,13 @@ async function resolveBookingJournalCredits(
     );
   }
   for (const s of Array.from(collabSettlements.values())) {
-    if (s.orgSplit.orgShare > 0) {
-      pushCredit(
-        {
-          kind: "ORG_PAYABLE",
-          organizationId: s.orgSplit.organizationId,
-        },
-        s.orgSplit.orgShare,
-      );
-    }
+    pushCredit(
+      {
+        kind: "ORG_PAYABLE",
+        organizationId: s.orgSplit.organizationId,
+      },
+      s.orgSplit.orgShare,
+    );
   }
   pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount ?? 0);
   return credits;

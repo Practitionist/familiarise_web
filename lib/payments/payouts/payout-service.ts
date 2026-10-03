@@ -1668,7 +1668,7 @@ async function loadCompletionEarningsForShortfall(
   Array<{ consultantSharePaise: number; refundedShareAmount?: number | null }>
 > {
   if (typeof tx.consultantEarnings.findMany === "function") {
-    return tx.consultantEarnings.findMany({
+    return await tx.consultantEarnings.findMany({
       where: { payoutId },
       select: {
         consultantSharePaise: true,
@@ -1731,7 +1731,10 @@ async function completeConsultantPayoutInTx(
     matched.id,
     matched.earnings,
   );
-  if (completionEarnings.length > 0) {
+  const loaderAvailable =
+    typeof tx.consultantEarnings.findMany === "function" ||
+    completionEarnings.length > 0;
+  if (loaderAvailable) {
     const owedPaise = completionEarnings.reduce(
       (sum, e) =>
         sum +
@@ -1935,21 +1938,32 @@ export async function handlePayoutWebhook(
 
   const didTransition = await prisma.$transaction(async (tx) => {
     // Terminal events claim any non-terminal row; non-terminal events only update PROCESSING rows.
+    // Exclude FAILED when the incoming event is FAILED or CANCELLED so duplicate
+    // failure webhooks do not re-trigger notifications.
     const terminalIncoming =
       payoutStatus === PayoutStatus.COMPLETED ||
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED;
+    const excludedStatuses: PayoutStatus[] =
+      payoutStatus === PayoutStatus.COMPLETED
+        ? [
+            PayoutStatus.COMPLETED,
+            PayoutStatus.CANCELLED,
+            PayoutStatus.REVERSED,
+          ]
+        : [
+            PayoutStatus.COMPLETED,
+            PayoutStatus.CANCELLED,
+            PayoutStatus.REVERSED,
+            PayoutStatus.FAILED,
+          ];
     const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: matched.id,
         ...stampWhere,
         status: terminalIncoming
           ? {
-              notIn: [
-                PayoutStatus.COMPLETED,
-                PayoutStatus.CANCELLED,
-                PayoutStatus.REVERSED,
-              ],
+              notIn: excludedStatuses,
             }
           : { in: [PayoutStatus.PROCESSING] },
       },

@@ -4998,6 +4998,7 @@ export class SchedulingService {
           totalPlanSessions,
         },
       });
+      return;
     }
 
     const overageBookingPricePaise = idsToDebit.length * unitSessionPricePaise;

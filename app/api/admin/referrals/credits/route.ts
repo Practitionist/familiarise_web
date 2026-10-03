@@ -197,6 +197,7 @@ function matchesIdempotentCreditReplay(
     currency: string;
     source: string;
     expiresAt?: Date | string | null;
+    reason?: string | null;
   },
   userId: string,
   body: {
@@ -204,6 +205,7 @@ function matchesIdempotentCreditReplay(
     currency: string;
     source: string;
     expiresAt?: string | null;
+    reason: string;
   },
 ): boolean {
   const existingExpiryMs = existing.expiresAt
@@ -217,7 +219,8 @@ function matchesIdempotentCreditReplay(
     Number(existing.amount) === body.amountPaise &&
     existing.currency === body.currency &&
     existing.source === body.source &&
-    existingExpiryMs === requestedExpiryMs
+    existingExpiryMs === requestedExpiryMs &&
+    (existing.reason ?? "") === body.reason
   );
 }
 
@@ -292,8 +295,18 @@ export const POST = withOpsAction(
         );
       }
 
+      const rawTx = tx as {
+        $executeRawUnsafe?: (query: string) => Promise<unknown>;
+      };
+      const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
+
       let credit;
       try {
+        if (hasSavepoint) {
+          await rawTx.$executeRawUnsafe!(
+            "SAVEPOINT sp_issue_referral_credit",
+          );
+        }
         credit = await tx.referralCredit.create({
           data: {
             userId: user.id,
@@ -318,7 +331,19 @@ export const POST = withOpsAction(
             usages: true,
           },
         });
+        if (hasSavepoint) {
+          await rawTx.$executeRawUnsafe!(
+            "RELEASE SAVEPOINT sp_issue_referral_credit",
+          );
+        }
       } catch (err) {
+        if (hasSavepoint) {
+          await rawTx
+            .$executeRawUnsafe!(
+              "ROLLBACK TO SAVEPOINT sp_issue_referral_credit",
+            )
+            .catch(() => undefined);
+        }
         if (isUniqueViolationOn(err, "idempotencyKey")) {
           const raced = await tx.referralCredit.findUnique({
             where: { idempotencyKey },

@@ -221,10 +221,9 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
  * APPROVED_PENDING_PAYMENT / SCHEDULED request has not run yet and cannot
  * anchor a successor cycle.
  */
-const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlyArray<AppointmentStatus> = [
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.COMPLETED,
-];
+const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
+  [AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED],
+);
 
 /** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
 const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
@@ -651,14 +650,11 @@ async function releaseSupersededHolds(params: {
       paymentStatus: PaymentStatus.EXPIRED,
       expiresAt: new Date(),
     };
-    const claimed =
-      typeof tx.payment?.updateManyAndReturn === "function"
-        ? ((await tx.payment.updateManyAndReturn({
-            where: claimWhere,
-            data: claimData,
-            select: { id: true, appointmentId: true },
-          })) ?? [])
-        : [];
+    const claimed = await tx.payment.updateManyAndReturn({
+      where: claimWhere,
+      data: claimData,
+      select: { id: true, appointmentId: true },
+    });
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
@@ -2803,7 +2799,7 @@ async function resolvePriorRenewalEndsAt(
     priorSub?.deletedAt !== null ||
     priorSub.requestedById !== consulteeProfileId ||
     priorSub.subscriptionPlanId !== planId ||
-    !RENEWABLE_SUBSCRIPTION_STATUSES.includes(priorSub.status)
+    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSub.status)
   ) {
     return null;
   }
@@ -2838,7 +2834,7 @@ async function resolvePriorSubscriptionForRenewal(
     priorSubscription?.deletedAt !== null ||
     priorSubscription.requestedById !== consulteeProfileId ||
     priorSubscription.subscriptionPlanId !== planId ||
-    !RENEWABLE_SUBSCRIPTION_STATUSES.includes(priorSubscription.status)
+    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSubscription.status)
   ) {
     throw Object.assign(
       new Error(
@@ -2863,32 +2859,24 @@ async function resolvePriorSubscriptionForRenewal(
     }
     // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
     // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
-    const cleared =
-      typeof tx.subscription.updateMany === "function"
-        ? await tx.subscription.updateMany({
-            where: {
-              id: child.id,
-              OR: [
-                { deletedAt: { not: null } },
-                {
-                  status: {
-                    in: [
-                      AppointmentStatus.CANCELLED,
-                      AppointmentStatus.REJECTED,
-                      AppointmentStatus.EXPIRED,
-                    ],
-                  },
-                },
+    const cleared = await tx.subscription.updateMany({
+      where: {
+        id: child.id,
+        OR: [
+          { deletedAt: { not: null } },
+          {
+            status: {
+              in: [
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.REJECTED,
+                AppointmentStatus.EXPIRED,
               ],
             },
-            data: { renewedFromSubscriptionId: null },
-          })
-        : await tx.subscription
-            .update({
-              where: { id: child.id },
-              data: { renewedFromSubscriptionId: null },
-            })
-            .then(() => ({ count: 1 }));
+          },
+        ],
+      },
+      data: { renewedFromSubscriptionId: null },
+    });
     if (cleared.count !== 1) {
       throw Object.assign(
         new PaymentError(

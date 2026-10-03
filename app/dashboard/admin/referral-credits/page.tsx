@@ -298,7 +298,14 @@ function IssueGoodwillCreditDialog({
   const [idempotencyKey, setIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
   );
+  const [hasUncertainFailure, setHasUncertainFailure] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const rotateKeyIfCertain = () => {
+    if (!hasUncertainFailure) {
+      setIdempotencyKey(crypto.randomUUID());
+    }
+  };
 
   const reset = () => {
     setUserId("");
@@ -306,6 +313,7 @@ function IssueGoodwillCreditDialog({
     setSource("COMPENSATION");
     setExpiresAt("");
     setReason("");
+    setHasUncertainFailure(false);
     setIdempotencyKey(crypto.randomUUID());
     setError(null);
   };
@@ -319,17 +327,30 @@ function IssueGoodwillCreditDialog({
       reason: string;
       idempotencyKey: string;
     }) => {
-      const res = await fetch("/api/admin/referrals/credits", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/admin/referrals/credits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (networkErr) {
+        setHasUncertainFailure(true);
+        throw networkErr;
+      }
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status >= 500) {
+          setHasUncertainFailure(true);
+        } else {
+          setHasUncertainFailure(false);
+          setIdempotencyKey(crypto.randomUUID());
+        }
         throw new Error(
           (json as { error?: string }).error ?? "Failed to issue credit",
         );
       }
+      setHasUncertainFailure(false);
       return json;
     },
     onSuccess: () => {
@@ -398,7 +419,7 @@ function IssueGoodwillCreditDialog({
               value={userId}
               onChange={(e) => {
                 setUserId(e.target.value);
-                setIdempotencyKey(crypto.randomUUID());
+                rotateKeyIfCertain();
               }}
               placeholder="user_123 or learner@example.com"
             />
@@ -415,7 +436,7 @@ function IssueGoodwillCreditDialog({
                 value={amountINR}
                 onChange={(e) => {
                   setAmountINR(e.target.value);
-                  setIdempotencyKey(crypto.randomUUID());
+                  rotateKeyIfCertain();
                 }}
                 placeholder="e.g. 500"
               />
@@ -428,7 +449,7 @@ function IssueGoodwillCreditDialog({
                 value={source}
                 onChange={(e) => {
                   setSource(e.target.value as "COMPENSATION" | "MANUAL");
-                  setIdempotencyKey(crypto.randomUUID());
+                  rotateKeyIfCertain();
                 }}
               >
                 <option value="COMPENSATION">Compensation</option>
@@ -445,7 +466,7 @@ function IssueGoodwillCreditDialog({
               value={expiresAt}
               onChange={(e) => {
                 setExpiresAt(e.target.value);
-                setIdempotencyKey(crypto.randomUUID());
+                rotateKeyIfCertain();
               }}
             />
           </div>
@@ -455,7 +476,10 @@ function IssueGoodwillCreditDialog({
             <Input
               id="issue-reason"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) => {
+                setReason(e.target.value);
+                rotateKeyIfCertain();
+              }}
               placeholder="Ticket #1234 — goodwill credit for missed session"
             />
             <p className="text-xs text-muted-foreground">

@@ -38,7 +38,9 @@ function getBookedSlotDate(
   slot: PickerInterval,
   rawDaySlots: PickerInterval[],
 ): string {
-  const slotStartMs = slot.startsAt ? new Date(slot.startsAt).getTime() : NaN;
+  const slotStartMs = slot.startsAt
+    ? new Date(slot.startsAt).getTime()
+    : Number.NaN;
   const slotEndMs = slot.endsAt ? new Date(slot.endsAt).getTime() : slotStartMs;
   const underlying =
     !Number.isNaN(slotStartMs) && rawDaySlots.length > 0
