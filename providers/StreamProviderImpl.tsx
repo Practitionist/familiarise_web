@@ -38,20 +38,71 @@ import * as Sentry from "@sentry/nextjs";
 /** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
 const MAX_CONNECT_ATTEMPTS = 5;
 
+/** Grace period before app-level reconnect kicks in after a continuous offline state. */
+const RECONNECT_GRACE_MS = 8_000;
+
 const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
   result.status === "fulfilled" ? result.value : null;
+
+type ChatLiveness = {
+  wsConnection: Pick<
+    NonNullable<StreamChat["wsConnection"]>,
+    "isHealthy" | "connectionID"
+  > | null;
+  wsFallback?: Pick<
+    NonNullable<StreamChat["wsFallback"]>,
+    "isHealthy" | "connectionID"
+  >;
+  _hasConnectionID: StreamChat["_hasConnectionID"];
+};
+
+export function isChatClientLive(client: ChatLiveness): boolean {
+  const wsHealthy = client.wsConnection?.isHealthy === true;
+  const fallbackHealthy = client.wsFallback?.isHealthy() === true;
+  return (wsHealthy || fallbackHealthy) && client._hasConnectionID();
+}
+
+type VideoLiveness = {
+  streamClient: {
+    wsConnection: Pick<
+      NonNullable<StreamVideoClient["streamClient"]["wsConnection"]>,
+      "isHealthy" | "connectionID"
+    > | null;
+    _hasConnectionID: StreamVideoClient["streamClient"]["_hasConnectionID"];
+  };
+};
+
+export function isVideoClientLive(client: VideoLiveness): boolean {
+  const coordinator = client.streamClient;
+  return (
+    coordinator.wsConnection?.isHealthy === true &&
+    coordinator._hasConnectionID()
+  );
+}
 
 /**
  * The token action answered "no session" — a state to show, not an outage to
  * retry or report. Shaped like a Stream failure so ChatUnavailable renders it.
  */
 function refusedConnectFailure(refusal: Refusal): ConnectFailure {
+  if (refusal.code === "CONSENT_REQUIRED") {
+    return {
+      kind: "consent",
+      code: null,
+      detail: refusal.devMessage,
+      title: "Enable live chat & video",
+      description: refusal.userMessage,
+      message: refusal.userMessage,
+      action: "grant_consent",
+    };
+  }
   return {
     kind: "not-retryable",
     code: null,
     detail: refusal.devMessage,
     title: "Please sign in again",
     description: refusal.userMessage,
+    message: refusal.userMessage,
     action: "reload",
   };
 }
@@ -181,6 +232,24 @@ interface SettledStreamClients {
   video: StreamVideoClient | null;
 }
 
+function isConsentUpsertError(upsertError: unknown): boolean {
+  const errName =
+    typeof upsertError === "object" && upsertError !== null
+      ? (upsertError as { name?: unknown }).name
+      : undefined;
+  if (errName === "ConsentRequiredError") return true;
+  let errMessage = "";
+  if (upsertError instanceof Error) {
+    errMessage = upsertError.message;
+  } else if (typeof upsertError === "string") {
+    errMessage = upsertError;
+  }
+  return (
+    errMessage.includes("STREAM_DATA_PROCESSING") ||
+    errMessage.includes("data-processing consent for messaging")
+  );
+}
+
 const StreamProviderImpl = ({
   userId,
   enableChat = true,
@@ -223,10 +292,7 @@ const StreamProviderImpl = ({
   // exactly what the prefetch effect below exists to remove (#248).
   const { data: clientSession, isPending: isSessionPending } = useSession();
   const signedOut = !isSessionPending && !clientSession?.user?.id;
-  // The video SDK calls `tokenProvider` again on its own schedule, long after
-  // this render; the ref is how that callback sees the current answer without
-  // changing `getCachedToken`'s identity and re-firing the connect effect.
-  const signedOutRef = useRef(false);
+  const signedOutRef = useRef(signedOut);
   useEffect(() => {
     signedOutRef.current = signedOut;
   }, [signedOut]);
@@ -377,7 +443,7 @@ const StreamProviderImpl = ({
   // failures are handled by the normal connect paths, which re-request via
   // getCachedToken (cleared promise ref → fresh attempt).
   useEffect(() => {
-    if (!apiKey || !userId || signedOut) return;
+    if (!apiKey || !userId || isSessionPending || signedOut) return;
     if (enableChat && !isTokenValid("chat", userId)) {
       void getCachedToken("chat").catch(() => {});
     }
@@ -390,6 +456,7 @@ const StreamProviderImpl = ({
     enableVideo,
     getCachedToken,
     isTokenValid,
+    isSessionPending,
     signedOut,
   ]);
 
@@ -398,15 +465,100 @@ const StreamProviderImpl = ({
     return Math.min(1000 * Math.pow(2, attempt), 30000); // Max 30 seconds
   }, []);
 
+  const kickChannelSync = useCallback((targetUserId: string): void => {
+    const syncKey = `stream_sync_${targetUserId}`;
+    const alreadySynced =
+      clientSyncCompletedUsers.has(targetUserId) ||
+      (typeof sessionStorage !== "undefined" &&
+        sessionStorage.getItem(syncKey) === "1");
+
+    if (alreadySynced) {
+      streamLogger.debug("Skipping channel sync (already completed)", {
+        userId: targetUserId,
+      });
+      return;
+    }
+
+    streamLogger.info("Starting initial channel sync (background)", {
+      userId: targetUserId,
+    });
+    clientSyncCompletedUsers.add(targetUserId);
+    void syncUserEventChannels(targetUserId)
+      .then((result) => {
+        if (!result?.success) {
+          markSyncIncomplete(targetUserId, syncKey);
+          streamLogger.warn("Channel sync reported failure", {
+            userId: targetUserId,
+            error: result?.error,
+          });
+          return;
+        }
+        if (typeof sessionStorage !== "undefined") {
+          sessionStorage.setItem(syncKey, "1");
+        }
+        streamLogger.info("Initial channel sync completed", {
+          userId: targetUserId,
+        });
+      })
+      .catch((syncError) => {
+        markSyncIncomplete(targetUserId, syncKey);
+        streamLogger.warn("Channel sync failed", {
+          userId: targetUserId,
+          error: syncError,
+        });
+      });
+  }, []);
+
+  const adoptOrReopenChatSingleton = useCallback(
+    async (client: StreamChat, targetUserId: string) => {
+      if (!client.userID || client.userID !== targetUserId) return null;
+
+      setGlobalChatClient(client);
+      setCurrentStreamUserId(targetUserId);
+
+      if (isChatClientLive(client)) {
+        streamLogger.debug("Adopting already-connected Stream Chat singleton", {
+          userId: targetUserId,
+        });
+        setChatConnected(true);
+        kickChannelSync(targetUserId);
+        return client;
+      }
+
+      if (client.wsConnection?.isConnecting) {
+        streamLogger.debug(
+          "Chat socket already reconnecting; awaiting the event",
+          {
+            userId: targetUserId,
+          },
+        );
+        kickChannelSync(targetUserId);
+        return client;
+      }
+
+      streamLogger.info("Reopening chat socket for an existing user", {
+        userId: targetUserId,
+      });
+      await client.openConnection();
+      setChatConnected(true);
+      kickChannelSync(targetUserId);
+      return client;
+    },
+    [kickChannelSync],
+  );
+
   // connectChat/connectVideo RESOLVE to their client (or null) instead of each
   // setting its own state, so the caller can commit both at once and the tree
   // changes shape a single time. See SettledStreamClients.
   const connectChat = useCallback(async () => {
     if (!enableChat || !userDetails || !apiKey) return null;
 
-    // Check if we already have a global client for this user - adopt it
     const adoptable = getGlobalChatClient();
-    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
+    if (
+      getCurrentStreamUserId() === userDetails.id &&
+      adoptable &&
+      isChatClientLive(adoptable)
+    ) {
       streamLogger.debug("Adopting existing chat client", {
         userId: userDetails.id,
       });
@@ -414,7 +566,6 @@ const StreamProviderImpl = ({
       return adoptable;
     }
 
-    // Prevent concurrent connectUser calls (e.g. connectVideo re-render race)
     if (isChatConnectingRef.current) {
       streamLogger.debug("Chat connection already in progress, skipping", {
         userId: userDetails.id,
@@ -430,20 +581,14 @@ const StreamProviderImpl = ({
       });
 
       const client = StreamChat.getInstance(apiKey);
-
-      // If the singleton is already connected to this user (e.g. StreamVideoClient
-      // connected it internally), adopt it directly without calling connectUser again.
-      if (client.userID && client.userID === userDetails.id) {
-        streamLogger.debug("Adopting already-connected Stream Chat singleton", {
-          userId: userDetails.id,
-        });
-        setGlobalChatClient(client);
-        setCurrentStreamUserId(userDetails.id);
-        setChatConnected(true);
-        return client;
+      const adoptedSingleton = await adoptOrReopenChatSingleton(
+        client,
+        userDetails.id,
+      );
+      if (adoptedSingleton) {
+        return adoptedSingleton;
       }
 
-      // Ensure user exists in Stream's database (only if not synced before)
       if (!clientSyncCompletedUsers.has(userDetails.id)) {
         try {
           await upsertUserToStream(userDetails.id);
@@ -451,6 +596,13 @@ const StreamProviderImpl = ({
             userId: userDetails.id,
           });
         } catch (upsertError) {
+          if (isConsentUpsertError(upsertError)) {
+            const consentFailure = classifyConnectFailure(upsertError);
+            setError(consentFailure.description);
+            setFailure(consentFailure);
+            setChatConnected(false);
+            return null;
+          }
           streamLogger.warn("User upsert failed, continuing", {
             userId: userDetails.id,
             error: upsertError,
@@ -470,75 +622,10 @@ const StreamProviderImpl = ({
         () => getCachedToken("chat"),
       );
 
-      // Store in global references
       setGlobalChatClient(client);
       setCurrentStreamUserId(userDetails.id);
-
       setChatConnected(true);
-
-      // Initial channel sync — once per user per browser session.
-      // The in-memory Set resets on page reload (client module re-evaluation),
-      // so we persist to sessionStorage to survive refreshes within the same tab.
-      const syncKey = `stream_sync_${userDetails.id}`;
-      const alreadySynced =
-        clientSyncCompletedUsers.has(userDetails.id) ||
-        (typeof sessionStorage !== "undefined" &&
-          sessionStorage.getItem(syncKey) === "1");
-
-      if (!alreadySynced) {
-        // #1134 P1-19 — NOT awaited. This used to block the connect: the sync
-        // costs roughly `1 + W + C + D + ceil(N/100)` Stream round-trips in
-        // batches of five, so a consultant with 200 clients waited 8-20 seconds
-        // with chat apparently dead before `chatConnected` ever went true.
-        //
-        // Chat is usable the moment the socket is up; channels stream into the
-        // sidebar as they land, because it already re-renders on Stream events.
-        // A tab closed mid-sync is caught by the reconcile cron, which is where
-        // eventual correctness belongs — not on the critical path of every
-        // dashboard load.
-        streamLogger.info("Starting initial channel sync (background)", {
-          userId: userDetails.id,
-        });
-        // Marked BEFORE the call, not after: this flag means "we have kicked
-        // the sync for this user", and marking on completion let a re-render
-        // start a second one while the first was still in flight.
-        clientSyncCompletedUsers.add(userDetails.id);
-        void syncUserEventChannels(userDetails.id)
-          .then((result) => {
-            // `syncUserEventChannels` reports failure by RESOLVING with
-            // `{ success: false }` rather than rejecting, so a `.then` that
-            // ignores its argument treats a failed sync as a completed one —
-            // and `sessionStorage` then suppresses the retry for the rest of
-            // the tab's life. The `.catch` below only ever saw the thrown case.
-            if (!result?.success) {
-              markSyncIncomplete(userDetails.id, syncKey);
-              streamLogger.warn("Channel sync reported failure", {
-                userId: userDetails.id,
-                error: result?.error,
-              });
-              return;
-            }
-            if (typeof sessionStorage !== "undefined") {
-              sessionStorage.setItem(syncKey, "1");
-            }
-            streamLogger.info("Initial channel sync completed", {
-              userId: userDetails.id,
-            });
-          })
-          .catch((syncError) => {
-            // Deliberately not persisted to sessionStorage, so the next load
-            // retries rather than assuming this user is reconciled.
-            markSyncIncomplete(userDetails.id, syncKey);
-            streamLogger.warn("Channel sync failed", {
-              userId: userDetails.id,
-              error: syncError,
-            });
-          });
-      } else {
-        streamLogger.debug("Skipping channel sync (already completed)", {
-          userId: userDetails.id,
-        });
-      }
+      kickChannelSync(userDetails.id);
 
       streamLogger.info("Chat connection established", {
         userId: userDetails.id,
@@ -553,31 +640,61 @@ const StreamProviderImpl = ({
     } finally {
       isChatConnectingRef.current = false;
     }
-  }, [enableChat, userDetails, getCachedToken]);
+  }, [
+    enableChat,
+    userDetails,
+    getCachedToken,
+    kickChannelSync,
+    adoptOrReopenChatSingleton,
+  ]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey) return null;
 
-    // Check if we already have a global client for this user - adopt it
+    // Check if we already have a live global client for this user - adopt it
     const adoptable = getGlobalVideoClient();
-    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
+    const adoptableUserId =
+      getCurrentStreamUserId() ??
+      (adoptable?.streamClient as { userID?: string } | undefined)?.userID;
+    const sameUser = adoptableUserId === userDetails.id;
+    if (sameUser && adoptable && isVideoClientLive(adoptable)) {
       streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
+      setCurrentStreamUserId(userDetails.id);
       setVideoConnected(true);
       return adoptable;
     }
 
     try {
+      if (sameUser && adoptable) {
+        const coordinator = adoptable.streamClient;
+        setCurrentStreamUserId(userDetails.id);
+
+        if (coordinator.wsConnection?.isConnecting) {
+          streamLogger.debug(
+            "Video coordinator already reconnecting; awaiting the event",
+            { userId: userDetails.id },
+          );
+          return adoptable;
+        }
+
+        streamLogger.info("Reopening video coordinator for an existing user", {
+          userId: userDetails.id,
+        });
+        await coordinator.openConnection();
+        setVideoConnected(true);
+        return adoptable;
+      }
+
+      if (adoptable) {
+        await adoptable.disconnectUser().catch(() => undefined);
+      }
+
       streamLogger.debug("Connecting to Stream Video", {
         userId: userDetails.id,
       });
 
-      // No `user` in the constructor: that path connects in the background,
-      // retries five times inside the SDK, and leaks one unhandled rejection
-      // per attempt to Sentry — while this function reported "connected"
-      // without ever awaiting it. One attempt, awaited; the outer catch owns
-      // classification, retry and reporting, exactly as for chat.
       const client = new StreamVideoClient({
         apiKey: apiKey,
         options: { maxConnectUserRetries: 1 },
@@ -608,8 +725,6 @@ const StreamProviderImpl = ({
       });
       return client;
     } catch (error) {
-      // Warn, not error: the outer catch reports once per outcome. Capturing
-      // here as well sent an event per backoff attempt.
       streamLogger.warn("Video connection failed", {
         userId: userDetails.id,
       });
@@ -671,7 +786,9 @@ const StreamProviderImpl = ({
         // Stream said this cannot succeed as-is (deactivated user, bad token,
         // suspended app). Report once and stop: the five backoff retries per
         // client per page were the Sentry noise.
-        if (!signedOut) reportNonRetryableConnectFailure(error, classified);
+        if (!signedOut && classified.kind !== "consent") {
+          reportNonRetryableConnectFailure(error, classified);
+        }
         return;
       }
       if (signedOut) {
@@ -681,8 +798,6 @@ const StreamProviderImpl = ({
         return;
       }
       if (currentAttempts >= MAX_CONNECT_ATTEMPTS) {
-        // warn, not error: streamLogger.error captures at error level itself,
-        // which is the FAMILIARISE_WEB-4A/3N noise this report replaces.
         streamLogger.warn("Max connection attempts reached", {
           attempts: currentAttempts,
           detail: classified.detail,
@@ -703,9 +818,6 @@ const StreamProviderImpl = ({
     } finally {
       setIsConnecting(false);
     }
-    // enableChat/enableVideo are not read here any more: each connect returns
-    // null when its own flag is off, and both are already deps of those
-    // callbacks, so listing them again only invalidates this one needlessly.
   }, [isLoading, userDetails, connectChat, connectVideo, getRetryDelay]);
 
   const retryConnection = useCallback(() => {
@@ -715,19 +827,14 @@ const StreamProviderImpl = ({
     connectServices();
   }, [connectServices]);
 
-  // Initialize connections.
-  // connectServices is in deps and may cause re-fires when its useCallback
-  // identity changes, but this is safe because:
-  // - connectChat guards with globalChatClient + currentUserId check (no-op if already connected)
-  // - syncUserEventChannels is guarded by sessionStorage (no-op after first sync)
-  //
-  // #248: this impl is only mounted via next/dynamic, so the SDK + this connect
-  // logic are already deferred off the home critical path. We additionally
-  // schedule the initial connect in requestIdleCallback (with a setTimeout
-  // fallback) so the connect-storm (connectUser + syncUserEventChannels) doesn't
-  // compete with first paint of whatever dashboard route mounted the provider.
   useEffect(() => {
-    if (!(!isLoading && userDetails && apiKey)) {
+    if (!(!isLoading && userDetails && apiKey) || signedOut) {
+      return;
+    }
+    const hasSeededTokens =
+      (!enableChat || isTokenValid("chat", userDetails.id)) &&
+      (!enableVideo || isTokenValid("video", userDetails.id));
+    if (isSessionPending && !hasSeededTokens) {
       return;
     }
 
@@ -735,12 +842,6 @@ const StreamProviderImpl = ({
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     const run = () => {
-      // Check if user changed - if so, disconnect old user first.
-      // Use disconnectStreamClients (global refs) rather than any local
-      // teardown: on a fresh remount for a different user the local `clients`
-      // state is null while the GLOBAL clients still point at the PREVIOUS
-      // user, so a local teardown would no-op and leak the prior user's
-      // connection, which the new connect would then adopt.
       if (
         getCurrentStreamUserId() &&
         getCurrentStreamUserId() !== userDetails.id
@@ -749,14 +850,10 @@ const StreamProviderImpl = ({
           from: getCurrentStreamUserId(),
           to: userDetails.id,
         });
-        // Reset local token cache + attempt counter so the new user connects
-        // with fresh tokens (disconnectStreamClients owns the global teardown).
         tokenCacheRef.current = {};
         connectionAttemptsRef.current = 0;
         disconnectStreamClients()
           .catch((err) => {
-            // Never block the new user's connect on a prior-user disconnect
-            // failure; disconnectStreamClients already clears global refs.
             streamLogger.warn(
               "Prior-user disconnect failed, connecting anyway",
               {
@@ -772,19 +869,6 @@ const StreamProviderImpl = ({
       }
     };
 
-    // Defer the connect off the critical path (#248) — but only briefly.
-    //
-    // The timeout was 2000ms, and on a cold load that is not a ceiling, it is
-    // the ACTUAL wait: the main thread is saturated by dashboard hydration and
-    // by evaluating the Stream Chat + Video chunk, so the browser never finds
-    // an idle period and fires at the deadline every time. Two seconds of the
-    // Messages skeleton were this line.
-    //
-    // The deferral still earns its place — it keeps the socket handshake from
-    // competing with first paint of the dashboard behind it — so it stays, at a
-    // budget that yields to hydration without becoming the dominant cost. If
-    // this ever needs tuning again, measure with `streamLogger.timing()` rather
-    // than guessing; it warns above 5s and currently has no callers.
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
       idleHandle = (
         window as Window & {
@@ -798,11 +882,7 @@ const StreamProviderImpl = ({
       timeoutHandle = setTimeout(run, 0);
     }
 
-    // Don't disconnect on unmount - keep global clients alive for tab switching
-    // Only disconnect when user explicitly logs out or changes
     return () => {
-      // Cancel pending scheduled connect + any pending retry timeout to avoid
-      // state updates after unmount.
       if (
         idleHandle !== undefined &&
         typeof window !== "undefined" &&
@@ -819,19 +899,18 @@ const StreamProviderImpl = ({
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = undefined;
       }
-      // Intentionally not calling disconnect() here
-      // Global clients are reused across component remounts
     };
-    // `userDetails` is listed (not just its id) as the rule requires: no new
-    // re-fires, because `connectServices` already depends on `userDetails` and
-    // changes identity whenever it does.
-  }, [userDetails, isLoading, connectServices]);
+  }, [
+    userDetails,
+    isLoading,
+    enableChat,
+    enableVideo,
+    isTokenValid,
+    isSessionPending,
+    signedOut,
+    connectServices,
+  ]);
 
-  // Publish to the store rather than wrapping children. The wrapper set used to
-  // be derived here — `children` → `<StreamVideo>` → `<Chat>` — which changed
-  // the element type at that position once the sockets settled and remounted
-  // the whole dashboard (#248). The SDK contexts are now mounted by the
-  // surfaces that consume them; this component only reports state.
   useEffect(() => {
     setStreamConnection({
       clients,
@@ -843,16 +922,108 @@ const StreamProviderImpl = ({
     });
   }, [clients, chatConnected, videoConnected, isConnecting, error, failure]);
 
-  // The shell exposes `retryConnection` without importing the SDK bundle, so it
-  // asks for a retry by event rather than by calling into here directly.
+  const createConnectionChangeObserver = useCallback(
+    (opts: {
+      label: "Chat socket" | "Video coordinator";
+      setConnected: (connected: boolean) => void;
+      onBeforeReconnect?: () => void;
+    }) => {
+      let graceTimeout: ReturnType<typeof setTimeout> | undefined;
+      let cancelled = false;
+
+      const cancelGrace = () => {
+        if (graceTimeout !== undefined) {
+          clearTimeout(graceTimeout);
+          graceTimeout = undefined;
+        }
+      };
+
+      const onConnectionChanged = (online: boolean | undefined) => {
+        if (online) {
+          cancelGrace();
+          streamLogger.debug(`${opts.label} recovered`, {
+            userId: userDetails?.id,
+          });
+          opts.setConnected(true);
+          return;
+        }
+
+        streamLogger.warn(`${opts.label} dropped; waiting to reconnect`, {
+          userId: userDetails?.id,
+        });
+        opts.setConnected(false);
+        cancelGrace();
+        graceTimeout = setTimeout(() => {
+          if (cancelled || signedOutRef.current) return;
+          streamLogger.info(
+            `${opts.label} still offline after the grace window; reconnecting`,
+            { userId: userDetails?.id },
+          );
+          opts.onBeforeReconnect?.();
+          void connectServices().catch(() => {});
+        }, RECONNECT_GRACE_MS);
+      };
+
+      const dispose = () => {
+        cancelled = true;
+        cancelGrace();
+      };
+
+      return { onConnectionChanged, dispose };
+    },
+    [userDetails?.id, connectServices],
+  );
+
+  useEffect(() => {
+    const chat = clients?.chat;
+    if (!chat) return;
+
+    const observer = createConnectionChangeObserver({
+      label: "Chat socket",
+      setConnected: setChatConnected,
+      onBeforeReconnect: () => {
+        if (userDetails?.id) {
+          markSyncIncomplete(userDetails.id, `stream_sync_${userDetails.id}`);
+        }
+      },
+    });
+
+    const handler = chat.on((event) => {
+      if (event.type !== "connection.changed") return;
+      observer.onConnectionChanged(event.online);
+    });
+
+    return () => {
+      observer.dispose();
+      handler.unsubscribe();
+    };
+  }, [clients?.chat, userDetails?.id, createConnectionChangeObserver]);
+
+  useEffect(() => {
+    const video = clients?.video;
+    if (!video) return;
+
+    const observer = createConnectionChangeObserver({
+      label: "Video coordinator",
+      setConnected: setVideoConnected,
+    });
+
+    const unsubscribe = video.on("connection.changed", (event) => {
+      observer.onConnectionChanged(event.online);
+    });
+
+    return () => {
+      observer.dispose();
+      unsubscribe();
+    };
+  }, [clients?.video, createConnectionChangeObserver]);
+
   useEffect(() => {
     const onRetry = () => retryConnection();
     window.addEventListener("stream:retry-connection", onRetry);
     return () => window.removeEventListener("stream:retry-connection", onRetry);
   }, [retryConnection]);
 
-  // Renders nothing: it is a sibling of `children`, not a wrapper. Consumers
-  // read connection state from the context in providers/StreamProvider.tsx.
   return null;
 };
 

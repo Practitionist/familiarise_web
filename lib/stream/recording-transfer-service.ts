@@ -19,6 +19,13 @@ import {
   generateStorageFileName,
 } from "@/lib/supabase-storage-core";
 import {
+  getR2RecordingsBucket,
+  isR2Configured,
+  streamMultipartToR2,
+  uploadR2Object,
+} from "@/lib/storage/r2-client";
+import {
+  deleteRecordingObject,
   RECORDINGS_BUCKET,
   RECORDING_MAX_OBJECT_BYTES,
   RECORDING_MIME_TYPES,
@@ -35,18 +42,160 @@ import {
 // Supabase blips); at/above it the recording is likely stuck and at risk of
 // silently expiring, so it warrants a system_events alert.
 const TRANSFER_FAILURE_ALERT_THRESHOLD = 3;
+export const MAX_TRANSFER_ATTEMPTS = 5;
+const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
+export const STALE_TRANSFER_MS = 15 * 60 * 1000;
 
+const ALLOWED_STREAM_STORAGE_HOST_SUFFIXES = [
+  "cloudfront.net",
+  "stream-io-api.com",
+  "stream-io-cdn.com",
+  "getstream.io",
+] as const;
+
+const AWS_S3_HOST_REGEX =
+  /^([a-z0-9-]+\.)?s3([.-][a-z0-9-]+)?\.amazonaws\.com$/i;
 
 /**
- * Recording Transfer Service for moving recordings to permanent storage
+ * Validate that a recording URL points to an HTTPS Stream/S3/CloudFront host
+ * and not an internal, loopback, or link-local address.
  */
+export function isAllowedStreamRecordingUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "https:") return false;
+  if (parsed.username || parsed.password) return false;
+
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+  ) {
+    return false;
+  }
+
+  if (AWS_S3_HOST_REGEX.test(host)) {
+    return true;
+  }
+
+  return ALLOWED_STREAM_STORAGE_HOST_SUFFIXES.some(
+    (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+  );
+}
+
+type StoragePolicyCarrier = {
+  recordingStoragePolicy?: string | null;
+} | null;
+
+type AppointmentWithStoragePolicies = {
+  webinar?: { webinarPlan?: StoragePolicyCarrier } | null;
+  class?: { classPlan?: StoragePolicyCarrier } | null;
+  consultation?: { consultationPlan?: StoragePolicyCarrier } | null;
+  subscription?: { subscriptionPlan?: StoragePolicyCarrier } | null;
+  trial?: { subscriptionPlan?: StoragePolicyCarrier } | null;
+} | null;
+
+export function resolveAppointmentStoragePolicy(
+  appointment: AppointmentWithStoragePolicies | undefined,
+): "PERMANENT" | "SUPABASE_PERMANENT" | "STREAM_ONLY" | null {
+  if (!appointment) return null;
+  const raw =
+    appointment.webinar?.webinarPlan?.recordingStoragePolicy ??
+    appointment.class?.classPlan?.recordingStoragePolicy ??
+    appointment.consultation?.consultationPlan?.recordingStoragePolicy ??
+    appointment.subscription?.subscriptionPlan?.recordingStoragePolicy ??
+    appointment.trial?.subscriptionPlan?.recordingStoragePolicy ??
+    null;
+
+  if (
+    raw === "PERMANENT" ||
+    raw === "SUPABASE_PERMANENT" ||
+    raw === "STREAM_ONLY"
+  ) {
+    return raw;
+  }
+  return null;
+}
+
+function createSizeLimitedStream(
+  source: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): ReadableStream<Uint8Array> {
+  let bytesRead = 0;
+  const limiter = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytesRead += chunk.byteLength;
+      if (bytesRead > maxBytes) {
+        controller.error(
+          new Error(
+            `RECORDING_OBJECT_CEILING: Recording stream exceeded maximum size (${Math.round(maxBytes / 1024 / 1024)}MB)`,
+          ),
+        );
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+  return source.pipeThrough(limiter);
+}
+
+/**
+ * Check whether an upload error represents an unrecoverable payload-too-large
+ * rejection (direct 413, ceiling marker, or wrapped in `.cause` / `.originalError`).
+ */
+export function isPayloadTooLargeUploadError(error: unknown): boolean {
+  const visited = new Set<unknown>();
+  const matchesSingle = (candidate: unknown): boolean => {
+    if (!candidate || typeof candidate !== "object") return false;
+    if (visited.has(candidate)) return false;
+    visited.add(candidate);
+    const obj = candidate as {
+      message?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      cause?: unknown;
+      originalError?: unknown;
+    };
+    if (
+      obj.status === 413 ||
+      obj.statusCode === 413 ||
+      obj.statusCode === "413"
+    ) {
+      return true;
+    }
+    const msg = typeof obj.message === "string" ? obj.message : "";
+    if (
+      msg.includes("RECORDING_OBJECT_CEILING") ||
+      /too large|payload too large|entity too large|exceeded (?:the )?maximum (?:allowed )?size|maximum (?:allowed )?size exceeded/i.test(
+        msg,
+      )
+    ) {
+      return true;
+    }
+    return matchesSingle(obj.cause) || matchesSingle(obj.originalError);
+  };
+  return matchesSingle(error);
+}
+
 /**
  * Build Prisma where-clause to filter recordings by their plan's storage policy.
  * Joins through Recording → Meeting → AppointmentOccurrence → Appointment → Event → Plan.
  */
-function buildStoragePolicyFilter(
-  policyFilter: "PERMANENT" | "ALL",
-): object {
+function buildStoragePolicyFilter(policyFilter: "PERMANENT" | "ALL"): object {
   if (policyFilter === "ALL") return {};
 
   return {
@@ -68,6 +217,27 @@ function buildStoragePolicyFilter(
                 },
               },
             },
+            {
+              consultation: {
+                consultationPlan: {
+                  recordingStoragePolicy: "PERMANENT" as const,
+                },
+              },
+            },
+            {
+              subscription: {
+                subscriptionPlan: {
+                  recordingStoragePolicy: "PERMANENT" as const,
+                },
+              },
+            },
+            {
+              trial: {
+                subscriptionPlan: {
+                  recordingStoragePolicy: "PERMANENT" as const,
+                },
+              },
+            },
           ],
         },
       },
@@ -78,13 +248,6 @@ function buildStoragePolicyFilter(
 export class RecordingTransferService {
   /**
    * Queue a recording for transfer to Supabase.
-   *
-   * #899 — no broker: "queueing" is an immediate best-effort transfer,
-   * fired from the recording_ready webhook so permanent recordings move
-   * near-ready instead of near-expiry. Every failure path in
-   * transferRecordingToSupabase reverts status to READY, and the stale-
-   * TRANSFERRING sweep in processExpiringRecordings recovers kicks that die
-   * mid-flight, so the 6-hourly cron always backstops this.
    * @param recordingId The recording ID to queue
    */
   static async queueRecordingTransfer(recordingId: string): Promise<boolean> {
@@ -100,36 +263,74 @@ export class RecordingTransferService {
   }
 
   /**
-   * STR-2/3 — record a failed transfer attempt on the Recording row and, once
-   * attempts cross the threshold, page engineering exactly once.
-   *
-   * Reverts status to READY (the existing retry contract — see
-   * transferRecordingToSupabase docstring), bumps transferAttempts, stamps
-   * lastTransferError. When the post-increment count >= the threshold and we
-   * have not alerted before (transferFailureAlertedAt null), fires a
-   * recordSystemError and stamps transferFailureAlertedAt to dedupe the page.
+   * Record a failed transfer attempt on the Recording row, transition to FAILED
+   * once MAX_TRANSFER_ATTEMPTS is reached or when terminal is true, and page
+   * engineering once attempts cross the alert threshold.
    */
   private static async recordTransferFailure(
     recordingId: string,
     errorMessage: string,
+    opts?: { terminal?: boolean },
   ): Promise<void> {
     try {
-      const updated = await prisma.recording.update({
-        where: { id: recordingId },
-        data: {
-          status: RecordingStatus.READY,
-          transferAttempts: { increment: 1 },
-          lastTransferError: errorMessage,
-        },
-        select: {
-          organizationId: true,
-          transferAttempts: true,
-          transferFailureAlertedAt: true,
-        },
-      });
+      const failureData = {
+        status: opts?.terminal ? RecordingStatus.FAILED : RecordingStatus.READY,
+        transferAttempts: opts?.terminal
+          ? MAX_TRANSFER_ATTEMPTS
+          : { increment: 1 },
+        lastTransferError: errorMessage,
+      };
+
+      let updated: {
+        organizationId: string | null;
+        transferAttempts: number;
+        transferFailureAlertedAt: Date | null;
+      } | null = null;
+
+      if (typeof prisma.recording.updateMany === "function") {
+        const guarded = await prisma.recording.updateMany({
+          where: {
+            id: recordingId,
+            status: { not: RecordingStatus.AVAILABLE },
+          },
+          data: failureData,
+        });
+        if (guarded.count === 0) return;
+        updated = await prisma.recording.findUnique({
+          where: { id: recordingId },
+          select: {
+            organizationId: true,
+            transferAttempts: true,
+            transferFailureAlertedAt: true,
+          },
+        });
+      } else {
+        updated = await prisma.recording.update({
+          where: { id: recordingId },
+          data: failureData,
+          select: {
+            organizationId: true,
+            transferAttempts: true,
+            transferFailureAlertedAt: true,
+          },
+        });
+      }
+
+      if (!updated) return;
 
       if (
-        updated.transferAttempts >= TRANSFER_FAILURE_ALERT_THRESHOLD &&
+        !opts?.terminal &&
+        updated.transferAttempts >= MAX_TRANSFER_ATTEMPTS
+      ) {
+        await prisma.recording.update({
+          where: { id: recordingId },
+          data: { status: RecordingStatus.FAILED },
+        });
+      }
+
+      if (
+        (opts?.terminal ||
+          updated.transferAttempts >= TRANSFER_FAILURE_ALERT_THRESHOLD) &&
         !updated.transferFailureAlertedAt
       ) {
         await recordSystemError({
@@ -157,76 +358,153 @@ export class RecordingTransferService {
     }
   }
 
-  /**
-   * Transfer a recording from Stream S3 to Supabase
-   * @param recordingId The recording ID to transfer
-   *
-   * **Failure strategy:** All failure paths revert status to READY (not FAILED)
-   * so that both the cron job and the manual /transfer API endpoint can retry.
-   * A FAILED status would permanently dead-end the recording since the manual
-   * transfer route only accepts READY recordings. The only exceptions are
-   * "bucket missing" and "file too large" which also revert to READY since
-   * the underlying issue is environmental, not permanent.
-   */
-  static async transferRecordingToSupabase(
+  private static async claimRecordingForTransfer(
     recordingId: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    let recording: RecordingRow | null = null;
-
-    try {
-      // Get the recording
-      recording = await prisma.recording.findUnique({
-        where: { id: recordingId },
-      });
-
-      if (!recording) {
-        return { success: false, error: "Recording not found" };
-      }
-
-      if (!recording.recordingUrl) {
-        return { success: false, error: "Recording URL not available" };
-      }
-
-      // Update status to TRANSFERRING
-      await prisma.recording.update({
-        where: { id: recordingId },
+  ): Promise<boolean> {
+    const staleCutoff = new Date(Date.now() - STALE_TRANSFER_MS);
+    if (typeof prisma.recording.updateMany === "function") {
+      const claimed = await prisma.recording.updateMany({
+        where: {
+          id: recordingId,
+          OR: [
+            {
+              status: {
+                in: [RecordingStatus.READY, RecordingStatus.PROCESSING],
+              },
+            },
+            {
+              status: "TRANSFERRING" as RecordingStatus,
+              updatedAt: { lt: staleCutoff },
+            },
+          ],
+        },
         data: { status: "TRANSFERRING" as RecordingStatus },
       });
+      return claimed.count > 0;
+    }
 
-      // Ensure the recordings bucket exists
-      const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET, {
-        public: false,
-        allowedMimeTypes: RECORDING_MIME_TYPES,
-        fileSizeLimit: RECORDING_MAX_OBJECT_BYTES,
+    await prisma.recording.update({
+      where: { id: recordingId },
+      data: { status: "TRANSFERRING" as RecordingStatus },
+    });
+    return true;
+  }
+
+  private static async uploadToR2Storage(params: {
+    recordingId: string;
+    storagePath: string;
+    response: Response;
+    contentType: string;
+    initialFileSize: bigint | null;
+  }): Promise<bigint> {
+    const { recordingId, storagePath, response, contentType } = params;
+    let fileSize = params.initialFileSize;
+    streamLogger.info("Uploading recording to Cloudflare R2", {
+      recordingId,
+      storagePath,
+    });
+    const bucket = getR2RecordingsBucket();
+    if (response.body) {
+      const uploaded = await streamMultipartToR2({
+        bucket,
+        key: storagePath,
+        stream: response.body,
+        contentType,
+        maxBytes: RECORDING_MAX_OBJECT_BYTES,
       });
-      if (!bucketReady) {
-        const error = `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`;
-        await this.recordTransferFailure(recordingId, error);
-        return { success: false, error };
-      }
+      fileSize ??= BigInt(uploaded.size);
+      return fileSize;
+    }
 
-      // Download the recording from Stream S3
-      streamLogger.info("Downloading recording from Stream", {
+    const rawBytes = new Uint8Array(await response.arrayBuffer());
+    if (rawBytes.byteLength > RECORDING_MAX_OBJECT_BYTES) {
+      throw new Error(
+        `RECORDING_OBJECT_CEILING: Recording stream exceeded maximum size (${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB)`,
+      );
+    }
+    await uploadR2Object({
+      bucket,
+      key: storagePath,
+      body: rawBytes,
+      contentType,
+    });
+    fileSize ??= BigInt(rawBytes.byteLength);
+    return fileSize;
+  }
+
+  private static async uploadToSupabaseStorage(params: {
+    recordingId: string;
+    storagePath: string;
+    response: Response;
+    contentType: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const { recordingId, storagePath, response, contentType } = params;
+    streamLogger.info("Uploading recording to Supabase", {
+      recordingId,
+      storagePath,
+    });
+
+    const uploadBody = response.body
+      ? createSizeLimitedStream(response.body, RECORDING_MAX_OBJECT_BYTES)
+      : await response.blob();
+
+    const { error: uploadError } = await storageClient.storage
+      .from(RECORDINGS_BUCKET)
+      .upload(storagePath, uploadBody, {
+        contentType,
+        cacheControl: "31536000", // 1 year cache
+        upsert: true,
+      });
+
+    if (uploadError) {
+      streamLogger.error("Failed to upload to Supabase", uploadError, {
         recordingId,
-        url: recording.recordingUrl.substring(0, 50) + "...",
+        storagePath,
       });
+      await this.recordTransferFailure(
+        recordingId,
+        uploadError.message,
+        isPayloadTooLargeUploadError(uploadError)
+          ? { terminal: true }
+          : undefined,
+      );
+      return { ok: false, error: uploadError.message };
+    }
+    return { ok: true };
+  }
 
-      const response = await fetch(recording.recordingUrl);
+  private static async downloadAndUploadRecording(
+    recordingId: string,
+    recordingUrl: string,
+    useR2: boolean,
+  ): Promise<
+    | { ok: true; storagePath: string; fileSize: bigint | null }
+    | { ok: false; error: string }
+  > {
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(
+      () => abortController.abort(),
+      TRANSFER_TIMEOUT_MS,
+    );
+    try {
+      const response = await fetch(recordingUrl, {
+        redirect: "error",
+        signal: abortController.signal,
+      });
 
       if (!response.ok) {
-        // Revert to READY so cron and manual retries can re-attempt
         const error = `Failed to download recording: ${response.status} ${response.statusText}`;
         await this.recordTransferFailure(recordingId, error);
-        return { success: false, error };
+        return { ok: false, error };
       }
 
-      // Get file data
       const contentType = response.headers.get("content-type") || "video/mp4";
       const contentLength = response.headers.get("content-length");
-      const fileSize = contentLength ? BigInt(contentLength) : null;
-      const fileSizeNumber = contentLength ? parseInt(contentLength, 10) : null;
+      let fileSize = contentLength ? BigInt(contentLength) : null;
+      const fileSizeNumber = contentLength
+        ? Number.parseInt(contentLength, 10)
+        : null;
 
-      // Check file size before attempting transfer to prevent OOM
       if (fileSizeNumber && fileSizeNumber > RECORDING_MAX_OBJECT_BYTES) {
         streamLogger.warn("Recording too large for direct transfer", {
           recordingId,
@@ -234,11 +512,12 @@ export class RecordingTransferService {
           maxSize: RECORDING_MAX_OBJECT_BYTES,
         });
         const error = `Recording is too large for direct transfer (${Math.round(fileSizeNumber / 1024 / 1024)}MB). Maximum is ${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB.`;
-        await this.recordTransferFailure(recordingId, error);
-        return { success: false, error };
+        await this.recordTransferFailure(recordingId, error, {
+          terminal: true,
+        });
+        return { ok: false, error };
       }
 
-      // Validate content type
       if (!RECORDING_MIME_TYPES.includes(contentType)) {
         streamLogger.warn("Unexpected content type for recording", {
           recordingId,
@@ -246,63 +525,256 @@ export class RecordingTransferService {
         });
       }
 
-      // Create file path: recordings/{year}/{month}/{recordingId}/{uuid}.{ext}
       const now = new Date();
       const year = now.getFullYear();
       const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      // Strip content-type params (e.g. "video/mp4; charset=utf-8" → "video/mp4")
       const mimeType = contentType.split(";")[0].trim();
       const filename = generateStorageFileName(mimeType);
       const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
 
-      // Upload to Supabase
-      streamLogger.info("Uploading recording to Supabase", {
-        recordingId,
-        storagePath,
-      });
-
-      // #899 — pipe the download straight into the storage upload instead of
-      // materializing the file (response.blob() buffered up to 500MB in
-      // memory). storage-js accepts ReadableStream and sets duplex:"half"
-      // itself; blob() is only the fallback for a body-less response.
-      const uploadBody = response.body ?? (await response.blob());
-
-      const { error: uploadError } = await storageClient.storage
-        .from(RECORDINGS_BUCKET)
-        .upload(storagePath, uploadBody, {
-          contentType,
-          cacheControl: "31536000", // 1 year cache
-          upsert: true,
-        });
-
-      if (uploadError) {
-        // Revert to READY so cron and manual retries can re-attempt
-        streamLogger.error("Failed to upload to Supabase", uploadError, {
+      if (useR2) {
+        fileSize = await this.uploadToR2Storage({
           recordingId,
           storagePath,
+          response,
+          contentType,
+          initialFileSize: fileSize,
         });
-        await this.recordTransferFailure(recordingId, uploadError.message);
-        return { success: false, error: uploadError.message };
+      } else {
+        const uploaded = await this.uploadToSupabaseStorage({
+          recordingId,
+          storagePath,
+          response,
+          contentType,
+        });
+        if (!uploaded.ok) {
+          return { ok: false, error: uploaded.error };
+        }
       }
 
-      // Store the path (NOT a public URL) — presigned URLs are generated on access.
-      // Clear the failure trail so a recovered recording stops looking stuck.
-      await prisma.recording.update({
+      return { ok: true, storagePath, fileSize };
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  private static async completeRecordingTransfer(
+    recordingId: string,
+    storagePath: string,
+    fileSize: bigint | null,
+  ): Promise<boolean> {
+    const completionData = {
+      storagePath,
+      storageType: "PLATFORM" as const,
+      status: "AVAILABLE" as RecordingStatus,
+      transferredAt: new Date(),
+      fileSize,
+      streamUrlExpiresAt: null,
+      transferAttempts: 0,
+      lastTransferError: null,
+      transferFailureAlertedAt: null,
+    };
+
+    if (typeof prisma.recording.updateMany === "function") {
+      const completed = await prisma.recording.updateMany({
+        where: {
+          id: recordingId,
+          status: "TRANSFERRING" as RecordingStatus,
+        },
+        data: completionData,
+      });
+      if (completed.count === 0) {
+        await deleteRecordingObject(storagePath).catch(() => undefined);
+        return false;
+      }
+      return true;
+    }
+
+    await prisma.recording.update({
+      where: { id: recordingId },
+      data: completionData,
+    });
+    return true;
+  }
+
+  private static async validateRecordingForTransfer(
+    recordingId: string,
+    recording:
+      | (RecordingRow & {
+          meeting?: {
+            occurrence?: {
+              appointment?: AppointmentWithStoragePolicies;
+            } | null;
+          } | null;
+        })
+      | null,
+  ): Promise<
+    { ok: true; recordingUrl: string } | { ok: false; error: string }
+  > {
+    if (!recording) {
+      return { ok: false, error: "Recording not found" };
+    }
+    if (!recording.recordingUrl) {
+      return { ok: false, error: "Recording URL not available" };
+    }
+    if (!isAllowedStreamRecordingUrl(recording.recordingUrl)) {
+      const error = "Recording URL is not from an allowed Stream storage host";
+      await this.recordTransferFailure(recordingId, error);
+      return { ok: false, error };
+    }
+    const resolvedPolicy = resolveAppointmentStoragePolicy(
+      recording.meeting?.occurrence?.appointment,
+    );
+    if (resolvedPolicy === "STREAM_ONLY") {
+      return {
+        ok: false,
+        error: "Recording plan uses STREAM_ONLY storage policy",
+      };
+    }
+    return { ok: true, recordingUrl: recording.recordingUrl };
+  }
+
+  private static async ensureStorageDestinationReady(
+    recordingId: string,
+    useR2: boolean,
+  ): Promise<string | null> {
+    if (useR2) return null;
+    const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET, {
+      public: false,
+      allowedMimeTypes: RECORDING_MIME_TYPES,
+      fileSizeLimit: RECORDING_MAX_OBJECT_BYTES,
+    });
+    if (bucketReady) return null;
+    const error = `Recordings bucket not found. Please create a '${RECORDINGS_BUCKET}' bucket in Supabase.`;
+    await this.recordTransferFailure(recordingId, error);
+    return error;
+  }
+
+  /**
+   * Transfer a recording from Stream S3 to Supabase
+   * @param recordingId The recording ID to transfer
+   */
+  static async transferRecordingToSupabase(
+    recordingId: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    let recording:
+      | (RecordingRow & {
+          meeting?: {
+            occurrence?: {
+              appointment?: AppointmentWithStoragePolicies;
+            } | null;
+          } | null;
+        })
+      | null = null;
+
+    try {
+      recording = await prisma.recording.findUnique({
         where: { id: recordingId },
-        data: {
-          storagePath: storagePath,
-          storageType: "PLATFORM",
-          status: "AVAILABLE" as RecordingStatus,
-          transferredAt: new Date(),
-          fileSize: fileSize,
-          lastTransferError: null,
-          transferFailureAlertedAt: null,
+        include: {
+          meeting: {
+            select: {
+              occurrence: {
+                select: {
+                  appointment: {
+                    select: {
+                      webinar: {
+                        select: {
+                          webinarPlan: {
+                            select: { recordingStoragePolicy: true },
+                          },
+                        },
+                      },
+                      class: {
+                        select: {
+                          classPlan: {
+                            select: { recordingStoragePolicy: true },
+                          },
+                        },
+                      },
+                      consultation: {
+                        select: {
+                          consultationPlan: {
+                            select: { recordingStoragePolicy: true },
+                          },
+                        },
+                      },
+                      subscription: {
+                        select: {
+                          subscriptionPlan: {
+                            select: { recordingStoragePolicy: true },
+                          },
+                        },
+                      },
+                      trial: {
+                        select: {
+                          subscriptionPlan: {
+                            select: { recordingStoragePolicy: true },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       });
 
+      const validation = await this.validateRecordingForTransfer(
+        recordingId,
+        recording,
+      );
+      if (!validation.ok) {
+        return { success: false, error: validation.error };
+      }
+
+      const claimed = await this.claimRecordingForTransfer(recordingId);
+      if (!claimed) {
+        return {
+          success: false,
+          error: "Recording is already transferring or transferred",
+        };
+      }
+
+      const useR2 = isR2Configured();
+      const destinationError = await this.ensureStorageDestinationReady(
+        recordingId,
+        useR2,
+      );
+      if (destinationError) {
+        return { success: false, error: destinationError };
+      }
+
+      streamLogger.info("Downloading recording from Stream", {
+        recordingId,
+        url: validation.recordingUrl.substring(0, 50) + "...",
+      });
+
+      const transferred = await this.downloadAndUploadRecording(
+        recordingId,
+        validation.recordingUrl,
+        useR2,
+      );
+      if (!transferred.ok) {
+        return { success: false, error: transferred.error };
+      }
+
+      const finalized = await this.completeRecordingTransfer(
+        recordingId,
+        transferred.storagePath,
+        transferred.fileSize,
+      );
+      if (!finalized) {
+        return {
+          success: false,
+          error: "Recording transfer claim was superseded before completion",
+        };
+      }
+
       streamLogger.info("Recording transferred successfully", {
         recordingId,
-        storagePath,
+        storagePath: transferred.storagePath,
       });
 
       return { success: true };
@@ -314,21 +786,17 @@ export class RecordingTransferService {
       streamLogger.error("Failed to transfer recording", error, {
         recordingId,
       });
-      // Revert to READY + track the attempt so cron/manual retries can re-attempt
-      // (only when the recording row was actually loaded — otherwise nothing to bump).
       if (recording) {
-        await this.recordTransferFailure(recordingId, errorMessage);
+        await this.recordTransferFailure(
+          recordingId,
+          errorMessage,
+          isPayloadTooLargeUploadError(error) ? { terminal: true } : undefined,
+        );
       }
       return { success: false, error: errorMessage };
     }
   }
 
-  /**
-   * Process all recordings that are expiring soon
-   * This should be run as a cron job
-   * @param daysBeforeExpiry Days before expiry to start transferring
-   * @param batchSize Maximum number of recordings to process in one batch
-   */
   /**
    * Process expiring recordings that should be transferred to Supabase.
    * @param policyFilter - "PERMANENT" to only auto-transfer premium plans,
@@ -355,14 +823,11 @@ export class RecordingTransferService {
     };
 
     try {
-      // #899 — recover transfers killed mid-flight (serverless webhook kick,
-      // crashed cron run): TRANSFERRING with no update for 2h is stuck, and
-      // nothing else ever revisits it. Revert to READY so this sweep retries.
       const stale = await prisma.recording.updateMany({
         where: {
           status: "TRANSFERRING",
           storageType: "STREAM_S3",
-          updatedAt: { lt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+          updatedAt: { lt: new Date(Date.now() - STALE_TRANSFER_MS) },
         },
         data: { status: "READY" as RecordingStatus },
       });
@@ -376,6 +841,7 @@ export class RecordingTransferService {
         where: {
           storageType: "STREAM_S3",
           status: "READY",
+          transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
           streamUrlExpiresAt: {
             lte: expiryThreshold,
           },
@@ -393,9 +859,6 @@ export class RecordingTransferService {
         policyFilter,
       });
 
-      // #899 — network-bound transfers in chunks of 3: cuts sweep latency
-      // without piling memory/connection pressure onto one invocation.
-      // transferRecordingToSupabase never throws, so Promise.all is safe.
       const CONCURRENCY = 3;
       for (let i = 0; i < expiringRecordings.length; i += CONCURRENCY) {
         const chunk = expiringRecordings.slice(i, i + CONCURRENCY);
@@ -424,22 +887,18 @@ export class RecordingTransferService {
       return results;
     } catch (error) {
       streamLogger.error("Failed to process expiring recordings", error);
-      return results;
+      throw error;
     }
   }
 
   /**
-   * #899 — count permanent-policy recordings still on Stream S3 with less
-   * than `hoursBeforeExpiry` of URL life left. Non-zero after a sweep means
-   * the pipeline is falling behind or failing repeatedly; the transfer job
-   * pages on it before the bytes lapse.
+   * Count permanent-policy recordings still on Stream S3 with less
+   * than `hoursBeforeExpiry` of URL life left.
    */
   static async countAtRiskPermanentRecordings(
     hoursBeforeExpiry: number = 72,
   ): Promise<number> {
-    const threshold = new Date(
-      Date.now() + hoursBeforeExpiry * 60 * 60 * 1000,
-    );
+    const threshold = new Date(Date.now() + hoursBeforeExpiry * 60 * 60 * 1000);
     return prisma.recording.count({
       where: {
         storageType: "STREAM_S3",
@@ -466,11 +925,31 @@ export class RecordingTransferService {
   > {
     const expiryThreshold = new Date();
     expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
+    const staleCutoff = new Date(Date.now() - STALE_TRANSFER_MS);
+
+    if (typeof prisma.recording.updateMany === "function") {
+      await prisma.recording
+        .updateMany({
+          where: {
+            status: "TRANSFERRING",
+            storageType: "STREAM_S3",
+            updatedAt: { lt: staleCutoff },
+          },
+          data: { status: "READY" as RecordingStatus },
+        })
+        .catch(() => undefined);
+    }
 
     const recordings = await prisma.recording.findMany({
       where: {
         storageType: "STREAM_S3",
-        status: "READY",
+        OR: [
+          { status: "READY" },
+          {
+            status: "TRANSFERRING" as RecordingStatus,
+            updatedAt: { lt: staleCutoff },
+          },
+        ],
         streamUrlExpiresAt: {
           lte: expiryThreshold,
           gt: new Date(), // Not yet expired
@@ -489,6 +968,27 @@ export class RecordingTransferService {
                 {
                   class: {
                     classPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+                {
+                  consultation: {
+                    consultationPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+                {
+                  subscription: {
+                    subscriptionPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+                {
+                  trial: {
+                    subscriptionPlan: {
                       recordingStoragePolicy: "STREAM_ONLY",
                     },
                   },
@@ -519,6 +1019,27 @@ export class RecordingTransferService {
                         },
                       },
                     },
+                    consultation: {
+                      include: {
+                        consultationPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                    subscription: {
+                      include: {
+                        subscriptionPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                    trial: {
+                      include: {
+                        subscriptionPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -533,6 +1054,9 @@ export class RecordingTransferService {
       const consultantUserId =
         apt.webinar?.webinarPlan?.consultantProfile?.userId ||
         apt.class?.classPlan?.consultantProfile?.userId ||
+        apt.consultation?.consultationPlan?.consultantProfile?.userId ||
+        apt.subscription?.subscriptionPlan?.consultantProfile?.userId ||
+        apt.trial?.subscriptionPlan?.consultantProfile?.userId ||
         "";
       return {
         recordingId: r.id,
@@ -578,7 +1102,7 @@ export class RecordingTransferService {
   }
 
   /**
-   * Delete a recording from Supabase storage
+   * Delete a recording from platform storage
    * @param recordingId The recording ID to delete
    */
   static async deleteRecordingFromSupabase(
@@ -597,17 +1121,9 @@ export class RecordingTransferService {
         return { success: false, error: "Recording not stored in Supabase" };
       }
 
-      // Delete from Supabase
-      const { error: deleteError } = await storageClient.storage
-        .from(RECORDINGS_BUCKET)
-        .remove([recording.storagePath]);
-
-      if (deleteError) {
-        streamLogger.error("Failed to delete from Supabase", deleteError, {
-          recordingId,
-          path: recording.storagePath,
-        });
-        return { success: false, error: deleteError.message };
+      const deleted = await deleteRecordingObject(recording.storagePath);
+      if (!deleted.success) {
+        return { success: false, error: deleted.error };
       }
 
       // Update recording record
