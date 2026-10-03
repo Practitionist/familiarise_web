@@ -67,6 +67,13 @@ export interface AvailabilityGridMarker {
    * though no row was written. Null when nothing is pending.
    */
   nextHoldExpiry: Date | null;
+  /**
+   * #1691 Item 2 — the primary consultant's active scheduleType and userId,
+   * returned alongside the ETag probe so the availability route only loads the
+   * active availability window relation (weekly OR custom) on a cache miss.
+   */
+  scheduleType?: "WEEKLY" | "CUSTOM" | null;
+  consultantUserId?: string | null;
 }
 
 /** The half-open window the grid was asked for; the marker is scoped to it. */
@@ -220,6 +227,8 @@ export async function readAvailabilityGridMarker(
         THEN (SELECT max(c."updatedAt") FROM consultant c)
         ELSE NULL
       END AS "profileUpdatedAt",
+      (SELECT cp."scheduleType"::text FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "scheduleType",
+      (SELECT cp."userId" FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "consultantUserId",
       (SELECT max(t) FROM (
           SELECT max(w."updatedAt") AS t
             FROM "AvailabilityWindowWeekly" w

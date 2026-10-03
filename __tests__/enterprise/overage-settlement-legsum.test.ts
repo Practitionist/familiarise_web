@@ -364,8 +364,8 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
       { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
     ]);
     expect(state.payment.amount).toBe(100_000);
-    // Side-charge Payment and OverageEvent ARE created for the marginal
-    expect(state.children).toEqual([{ amount: 125_000 }]);
+    // Side-charge Payment and OverageEvent ARE created for the surcharge only
+    expect(state.children).toEqual([{ amount: 25_000 }]);
     expect(tx.overageEvent.create).toHaveBeenCalledTimes(1);
   });
 

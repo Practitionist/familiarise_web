@@ -198,9 +198,18 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
         payoutId: "po_1",
         status: "BATCHED",
         consultantSharePaise: 100000,
-        refundedShareAmount: 25000,
+        refundedShareAmount: 0,
       },
     ];
+    const completionEarnings = prismaStub.consultantEarnings as Record<
+      string,
+      unknown
+    >;
+    completionEarnings.findMany = jest
+      .fn()
+      .mockResolvedValue([
+        { consultantSharePaise: 100000, refundedShareAmount: 25000 },
+      ]);
     const systemEventCreate = jest.fn().mockResolvedValue({ id: "se_1898" });
     (prismaStub as Record<string, unknown>).systemEvent = {
       create: systemEventCreate,
@@ -209,6 +218,10 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
     try {
       await handlePayoutWebhook("RAZORPAY", "pout_live_1", "COMPLETED");
 
+      expect(completionEarnings.findMany).toHaveBeenCalledWith({
+        where: { payoutId: "po_1" },
+        select: { consultantSharePaise: true, refundedShareAmount: true },
+      });
       expect(prismaStub.consultantPayout.updateMany).toHaveBeenCalledWith({
         where: { id: "po_1" },
         data: { clawbackAmountPaise: { increment: 25000 } },
@@ -225,6 +238,7 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
         }),
       );
     } finally {
+      delete completionEarnings.findMany;
       delete (prismaStub as Record<string, unknown>).systemEvent;
     }
   });

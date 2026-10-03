@@ -141,12 +141,29 @@ export async function POST(
   // (`createRazorpayOrder`) and Step 3 (`update` `notes`) instead of stranding
   // the idempotency key.
   const extractMintedOrderId = (notes: string | null | undefined): string | null => {
-    const match = notes?.match(/razorpay_order=(order_[A-Za-z0-9_]+)/);
+    const match = notes?.match(/razorpay_order=(order_\w+)/);
     return match?.[1] ?? null;
+  };
+
+  const isStaleClaimNote = (
+    notes: string | null | undefined,
+    nowMs = Date.now(),
+    staleMs = 60_000,
+  ): boolean => {
+    if (!notes?.includes("razorpay_order=claiming")) {
+      return false;
+    }
+    const tsMatch = /claiming_at=(\d+)/.exec(notes);
+    if (!tsMatch) {
+      return false;
+    }
+    const claimedAtMs = Number.parseInt(tsMatch[1], 10);
+    return Number.isFinite(claimedAtMs) && nowMs - claimedAtMs >= staleMs;
   };
 
   let reusedPendingPlaceholder = false;
   let reusedPlaceholderId: string | undefined;
+  let reusedNotes: string | null | undefined;
   let effectiveAmountPaise = amountPaise;
 
   if (clientIdempotencyKey) {
@@ -173,6 +190,15 @@ export async function POST(
           { status: 409 },
         );
       }
+      if (existing.status !== "PENDING") {
+        return NextResponse.json(
+          {
+            error: "This top-up is no longer payable",
+            code: "TOPUP_NOT_PENDING",
+          },
+          { status: 409 },
+        );
+      }
       const existingOrderId = extractMintedOrderId(existing.notes);
       if (existingOrderId) {
         return NextResponse.json(
@@ -190,6 +216,7 @@ export async function POST(
       }
       reusedPendingPlaceholder = true;
       reusedPlaceholderId = existing.id;
+      reusedNotes = existing.notes;
       effectiveAmountPaise = existing.amountPaise;
     }
   }
@@ -242,6 +269,15 @@ export async function POST(
           },
         });
         if (winner?.billingAccount.ownerOrgId === orgId) {
+          if (winner.status !== "PENDING") {
+            return NextResponse.json(
+              {
+                error: "This top-up is no longer payable",
+                code: "TOPUP_NOT_PENDING",
+              },
+              { status: 409 },
+            );
+          }
           const winnerOrderId = extractMintedOrderId(winner.notes);
           if (winnerOrderId) {
             return NextResponse.json(
@@ -259,6 +295,7 @@ export async function POST(
           }
           reusedPendingPlaceholder = true;
           reusedPlaceholderId = winner.id;
+          reusedNotes = winner.notes;
           effectiveAmountPaise = winner.amountPaise;
         } else {
           return NextResponse.json(
@@ -288,19 +325,22 @@ export async function POST(
     }
   }
 
+  let claimNotes: string | null = null;
   if (
     reusedPendingPlaceholder &&
     typeof prisma.walletTopUp?.updateMany === "function"
   ) {
+    claimNotes = `client_key=${clientIdempotencyKey};razorpay_order=claiming;claiming_at=${Date.now()};claim_id=${globalThis.crypto.randomUUID()}`;
     const claimed = await prisma.walletTopUp.updateMany({
       where: {
         ...(reusedPlaceholderId
           ? { id: reusedPlaceholderId }
           : { providerOrderId: walletEntryOrderId }),
-        notes: { contains: "razorpay_order=pending" },
+        status: "PENDING",
+        notes: reusedNotes ?? { contains: "razorpay_order=pending" },
       },
       data: {
-        notes: `client_key=${clientIdempotencyKey};razorpay_order=claiming`,
+        notes: claimNotes,
       },
     });
     if (claimed.count !== 1) {
@@ -350,7 +390,7 @@ export async function POST(
               ...(reusedPlaceholderId
                 ? { id: reusedPlaceholderId }
                 : { providerOrderId: walletEntryOrderId }),
-              notes: { contains: "razorpay_order=claiming" },
+              notes: claimNotes ?? { contains: "razorpay_order=claiming" },
             },
             data: {
               notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
@@ -399,36 +439,88 @@ export async function POST(
     );
   }
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      await tx.walletTopUp.update({
-        where: { providerOrderId: walletEntryOrderId },
-        data: {
-          notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,
-        },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "WALLET",
-          action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
-          description: `Top-up initiated: ₹${(effectiveAmountPaise / 100).toLocaleString("en-IN")}`,
-          details: {
-            walletEntryOrderId,
-            razorpayOrderId,
-            amountPaise: effectiveAmountPaise,
+  const persistedNotes = `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`;
+  let notesSaved = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (
+        reusedPendingPlaceholder &&
+        claimNotes &&
+        typeof prisma.walletTopUp?.updateMany === "function"
+      ) {
+        const updated = await prisma.walletTopUp.updateMany({
+          where: {
+            ...(reusedPlaceholderId
+              ? { id: reusedPlaceholderId }
+              : { providerOrderId: walletEntryOrderId }),
+            notes: { in: [claimNotes, persistedNotes] },
           },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        if (updated.count === 1) {
+          notesSaved = true;
+          break;
+        }
+        throw new Error(
+          "Concurrent caller reclaimed stale top-up placeholder before order notes were persisted",
+        );
+      } else {
+        await prisma.walletTopUp.update({
+          where: { providerOrderId: walletEntryOrderId },
+          data: {
+            notes: persistedNotes,
+          },
+        });
+        notesSaved = true;
+        break;
+      }
+    } catch (err) {
+      if (attempt === 3) {
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "enterprise" } },
+        );
+        console.error(
+          "[wallet/top-ups] notes write failed after 3 attempts:",
+          err,
+        );
+      }
+    }
+  }
+  if (!notesSaved) {
+    return NextResponse.json(
+      {
+        error: "Failed to persist payment order reference; please retry",
+        errorType: "TOPUP_ORDER_PERSIST_FAILED",
+      },
+      { status: 500 },
+    );
+  }
+
+  try {
+    await prisma.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "WALLET",
+        action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
+        description: `Top-up initiated: ₹${(effectiveAmountPaise / 100).toLocaleString("en-IN")}`,
+        details: {
+          walletEntryOrderId,
+          razorpayOrderId,
+          amountPaise: effectiveAmountPaise,
         },
-      });
+      },
     });
   } catch (err) {
-    // Notes/audit-log write failed, but the WalletEntry already exists
-    // and the Razorpay order is live — the top-up will still settle on
-    // webhook capture. Return 201 and log for operators.
+    // Audit-log write failed, but the WalletEntry notes already persist
+    // razorpayOrderId and the Razorpay order is live — the top-up will still
+    // settle on webhook capture. Return 201 and log for operators.
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     console.error(
-      "[wallet/top-ups] notes/audit-log write failed (top-up still valid):",
+      "[wallet/top-ups] audit-log write failed (top-up still valid):",
       err,
     );
   }

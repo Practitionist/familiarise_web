@@ -532,6 +532,41 @@ export class AllocationService {
   /**
    * Fetches consultant availability slots (weekly and custom)
    */
+  private static buildAvailabilitySlotsUrl(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date,
+    timezone?: string,
+    includeAppointmentDetails?: boolean,
+    consulteeUserId?: string,
+    options?: { webinarId?: string; classId?: string },
+  ): string {
+    const tz =
+      timezone ||
+      (typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined) ||
+      "UTC";
+    const params = new URLSearchParams({
+      startDateInUtc: startDate.toISOString(),
+      endDateInUtc: endDate.toISOString(),
+      timezone: tz,
+    });
+    if (includeAppointmentDetails) {
+      params.set("includeAppointmentDetails", "true");
+    }
+    if (consulteeUserId) {
+      params.set("consulteeUserId", consulteeUserId);
+    }
+    if (options?.webinarId) {
+      params.set("webinarId", options.webinarId);
+    }
+    if (options?.classId) {
+      params.set("classId", options.classId);
+    }
+    return `/api/scheduling/availability-with-allocation/${consultantId}?${params}`;
+  }
+
   static async fetchAvailabilitySlots(
     consultantId: string,
     startDate: Date,
@@ -584,35 +619,16 @@ export class AllocationService {
       throw new Error("Consultant ID is required");
     }
 
-    // Resolve the timezone to send to the server.  Priority:
-    //   1. Explicit argument
-    //   2. Browser-reported tz (client-side)
-    //   3. "UTC" (safe default on server or SSR)
-    const tz =
-      timezone ||
-      (typeof Intl !== "undefined"
-        ? Intl.DateTimeFormat().resolvedOptions().timeZone
-        : undefined) ||
-      "UTC";
-
     try {
-      const params = new URLSearchParams({
-        startDateInUtc: startDate.toISOString(),
-        endDateInUtc: endDate.toISOString(),
-        timezone: tz,
-      });
-      if (includeAppointmentDetails) {
-        params.set("includeAppointmentDetails", "true");
-      }
-      if (consulteeUserId) {
-        params.set("consulteeUserId", consulteeUserId);
-      }
-      if (options?.webinarId) {
-        params.set("webinarId", options.webinarId);
-      }
-      if (options?.classId) {
-        params.set("classId", options.classId);
-      }
+      const url = AllocationService.buildAvailabilitySlotsUrl(
+        consultantId,
+        startDate,
+        endDate,
+        timezone,
+        includeAppointmentDetails,
+        consulteeUserId,
+        options,
+      );
       // Sending a conditional header makes fetch treat the request as
       // `no-store` (Fetch spec §4.6), so the browser's own 30s freshness
       // shortcut no longer short-circuits it. That is the trade: one cheap
@@ -630,7 +646,7 @@ export class AllocationService {
             }
           : undefined;
       const response = await fetch(
-        `/api/scheduling/availability-with-allocation/${consultantId}?${params}`,
+        url,
         bypassHttpCache ? { cache: "no-store" } : conditional,
       );
       // 304 — the marker says nothing this grid reads has changed. The caller

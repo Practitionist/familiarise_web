@@ -240,5 +240,94 @@ describe("buildTdsReturnDraft", () => {
     expect(primaryRow?.amountCreditedPaise).toBe(900_000);
     expect(primaryRow?.tdsDeductedPaise).toBe(1_400);
   });
+
+  it("retains unlinked positive base alongside linked COMPLETED payouts and ignores non-COMPLETED payout reversals", () => {
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_000_000,
+        tdsDeducted: 1_000,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 1_000_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_300_000,
+        tdsDeducted: 300,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: null,
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 1_100_000,
+        tdsDeducted: -200,
+        isReversal: true,
+        reportedInForm26Q: false,
+        payout: { id: "po_failed", amount: 200_000, status: "FAILED" },
+        orgPayout: null,
+      },
+    ]);
+
+    const rows = buildSourceRows(
+      byDeductee,
+      new Map(),
+      new Map(),
+      new Map([["194O", "1005"]]),
+    );
+    const primaryRow = rows.find((r) => !r.isReversal);
+    expect(primaryRow?.amountCreditedPaise).toBe(1_300_000);
+    expect(primaryRow?.tdsDeductedPaise).toBe(1_300);
+  });
+
+  it("clamps negative rawCreditedPaise to 0 when reversal base exceeds quarter payouts", () => {
+    const byDeductee = accumulateByDeductee([
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 500_000,
+        tdsDeducted: 500,
+        isReversal: false,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 500_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+      {
+        consultantProfileId: "c1",
+        organizationId: null,
+        tdsSection: "194O",
+        tdsRateBps: 10,
+        cumulativeAmountCredited: 0,
+        tdsDeducted: -800,
+        isReversal: true,
+        reportedInForm26Q: false,
+        payout: { id: "po_1", amount: 500_000, status: "COMPLETED" },
+        orgPayout: null,
+      },
+    ]);
+
+    const rows = buildSourceRows(
+      byDeductee,
+      new Map(),
+      new Map(),
+      new Map([["194O", "1005"]]),
+    );
+    const primaryRow = rows.find((r) => !r.isReversal);
+    expect(primaryRow?.amountCreditedPaise).toBe(0);
+  });
 });
 

@@ -552,6 +552,19 @@ ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_and_window_sane"
     AND ("thresholdPaise" IS NULL OR "thresholdPaise" >= 0)
     AND ("effectiveTo" IS NULL OR "effectiveTo" >= "effectiveFrom")
   );
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tds_rate_bps_bounds'
+  ) THEN
+    ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_bounds"
+      CHECK (
+        "rateBps" >= 0 AND "rateBps" <= 10000
+        AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+      );
+  END IF;
+END $$;
 
 -- SPLIT
 -- #1549 — one review per (consultant, consultee, track, event). ratingUnitId is NULL on
