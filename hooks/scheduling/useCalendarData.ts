@@ -491,7 +491,15 @@ export function useCalendarData(
         // route re-verifies ownership regardless of this flag, and 403s rather
         // than downgrading, so only a surface that KNOWS it is the owning
         // consultant may ask for it.
-        const data = await AllocationService.fetchAvailabilitySlots(
+        type FetchAvailabilityFn = (
+          ...args: [
+            ...Parameters<typeof AllocationService.fetchAvailabilitySlots>,
+            { webinarId?: string; classId?: string }?,
+          ]
+        ) => ReturnType<typeof AllocationService.fetchAvailabilitySlots>;
+        const data = await (
+          AllocationService as { fetchAvailabilitySlots: FetchAvailabilityFn }
+        ).fetchAvailabilitySlots(
           consultantId,
           startDate,
           endDate,
@@ -500,6 +508,10 @@ export function useCalendarData(
           consulteeUserId,
           options?.fresh,
           availabilityEtagRef.current,
+          {
+            webinarId: eventType === "webinar" ? eventId : undefined,
+            classId: eventType === "class" ? eventId : undefined,
+          },
         );
 
         // A newer request was issued (user moved on) while this one was in
@@ -610,6 +622,8 @@ export function useCalendarData(
     },
     [
       consultantId,
+      eventType,
+      eventId,
       toast,
       view,
       currentDate,

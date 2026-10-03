@@ -1,6 +1,7 @@
 import { CalendarInterval, calculateRequiredSlots } from "./calendarUtils";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { isValidTimeZone } from "@/lib/time/viewer-zone";
 
 /**
  * Pure client-side selection validation for the Allocate Slots calendar.
@@ -871,3 +872,32 @@ export function validateEventSlots(
 
   return result;
 }
+
+export interface GridZoneOptions {
+  eventType?: string;
+  schedulingTimezone?: string | null;
+  preferViewerZone?: boolean;
+}
+
+/**
+ * #1168 — Draw recurring slot grids (subscription, class) in the event's
+ * `schedulingTimezone` by default so grid day columns and Monday-start week
+ * boundaries align with `ScheduleCalculationService.dayKey/weekKey` bucket
+ * validation, while allowing the user to toggle back to `preferViewerZone`.
+ */
+export function resolveGridZone(
+  viewerZone: string | null | undefined,
+  browserZone: string,
+  options?: GridZoneOptions,
+): string {
+  if (
+    (options?.eventType === "subscription" || options?.eventType === "class") &&
+    options?.schedulingTimezone &&
+    isValidTimeZone(options.schedulingTimezone) &&
+    !options?.preferViewerZone
+  ) {
+    return options.schedulingTimezone;
+  }
+  return isValidTimeZone(viewerZone) ? viewerZone : browserZone;
+}
+

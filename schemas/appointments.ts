@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { CancellationReasonEnum } from "./enums";
 
 export const CancelAppointmentSchema = z.object({
@@ -13,9 +14,6 @@ export const CancelAppointmentSchema = z.object({
  * request, and it is the only shape group events accept. `.passthrough()`
  * because the same body also carries `slotIds`, which the route parses itself.
  */
-/** ADR B1 — the calendar's atomic unit. */
-const SLOT_MS = 30 * 60 * 1000;
-
 export const RescheduleProposalSchema = z
   .object({
     proposedSlots: z
@@ -39,7 +37,9 @@ export const RescheduleProposalSchema = z
           // COUNTS on both sides, so the two measures are commensurable and the
           // same total coverage is required of both.
           .refine(
-            (s) => new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() === SLOT_MS,
+            (s) =>
+              new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() ===
+              SCHEDULING_INTERVAL_MS,
             { message: "Each proposed time must be exactly one 30-minute slot" },
           ),
       )

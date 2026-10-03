@@ -114,9 +114,9 @@ import {
   calendarDayOf,
   footerZoneLine,
   isOnCalendarDay,
-  resolveGridZone,
   rowOf,
 } from "@/lib/time/grid-zone";
+import { resolveGridZone } from "@/lib/scheduling/intervalSelectionValidation";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -688,7 +688,14 @@ export function UnifiedCalendar({
   // this component is client-only (SafeUnifiedCalendar loads it with ssr
   // false), so there is no server render to disagree with.
   const [browserTimezone] = useState(() => gridTimeZone());
-  const gridZone = resolveGridZone(viewerZone, browserTimezone);
+  const [preferViewerZone, setPreferViewerZone] = useState(false);
+  const [consultantTz, setConsultantTz] = useState<string | null>(null);
+  const effectiveSchedulingTz = schedulingTimezone ?? consultantTz ?? null;
+  const gridZone = resolveGridZone(viewerZone, browserTimezone, {
+    eventType,
+    schedulingTimezone: effectiveSchedulingTz,
+    preferViewerZone,
+  });
   // State
   const [currentDate, setCurrentDate] = useState(() => {
     if (!focus) return new Date();
@@ -749,6 +756,15 @@ export function UnifiedCalendar({
     // entire calendar over a tooltip it never draws.
     includeAppointmentDetails: mode === "allocate",
   });
+
+  const loadedConsultantTz =
+    (consultantDetails as { timezone?: string | null } | null)?.timezone ??
+    null;
+  useEffect(() => {
+    if (loadedConsultantTz && loadedConsultantTz !== consultantTz) {
+      setConsultantTz(loadedConsultantTz);
+    }
+  }, [loadedConsultantTz, consultantTz]);
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
   const handleAllocationSuccess = useCallback(
@@ -1509,13 +1525,156 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, visibleRows, gridZone]);
 
+  // #1715 — Roving tabIndex & keyboard cell navigation across the 7 × 48 grid.
+  const [focusedCell, setFocusedCell] = useState<{
+    dayIndex: number;
+    slotIndex: number;
+  }>({ dayIndex: 0, slotIndex: 0 });
+  const pendingFocusCellRef = useRef<{
+    dayIndex: number;
+    slotIndex: number;
+  } | null>(null);
+
+  const activeFocusedDayIndex = Math.max(0, Math.min(6, focusedCell.dayIndex));
+  const activeFocusedSlotIndex = useMemo(() => {
+    if (visibleRows.length === 0) return focusedCell.slotIndex;
+    if (visibleRows.includes(focusedCell.slotIndex)) {
+      return focusedCell.slotIndex;
+    }
+    return (
+      nearestVisibleRow(focusedCell.slotIndex, visibleRows) ?? visibleRows[0]
+    );
+  }, [focusedCell.slotIndex, visibleRows]);
+
+  useEffect(() => {
+    const pending = pendingFocusCellRef.current;
+    if (!pending || !weekGridEl) return;
+    const target = weekGridEl.querySelector<HTMLElement>(
+      `[data-day-index="${pending.dayIndex}"][data-slot-index="${pending.slotIndex}"]`,
+    );
+    if (target) {
+      pendingFocusCellRef.current = null;
+      target.focus();
+    }
+  }, [weekGridEl, weekDates, visibleRows, focusedCell]);
+
+  const handleCellKeyDown = useCallback(
+    (
+      event: React.KeyboardEvent<HTMLElement>,
+      dayIndex: number,
+      rowIndex: number,
+      interval: { hour: number; minute: number },
+      date: Date,
+      isDisabled: boolean,
+    ) => {
+      const moveFocus = (nextDay: number, nextSlot: number) => {
+        const clampedDay = Math.max(0, Math.min(6, nextDay));
+        const clampedSlot = Math.max(0, Math.min(47, nextSlot));
+        pendingFocusCellRef.current = {
+          dayIndex: clampedDay,
+          slotIndex: clampedSlot,
+        };
+        setFocusedCell({ dayIndex: clampedDay, slotIndex: clampedSlot });
+        const target = weekGridEl?.querySelector<HTMLElement>(
+          `[data-day-index="${clampedDay}"][data-slot-index="${clampedSlot}"]`,
+        );
+        if (target) {
+          pendingFocusCellRef.current = null;
+          target.focus();
+        }
+      };
+
+      switch (event.key) {
+        case "ArrowRight": {
+          event.preventDefault();
+          moveFocus(dayIndex + 1, rowIndex);
+          break;
+        }
+        case "ArrowLeft": {
+          event.preventDefault();
+          moveFocus(dayIndex - 1, rowIndex);
+          break;
+        }
+        case "ArrowDown": {
+          event.preventDefault();
+          const pos = visibleRows.indexOf(rowIndex);
+          const nextSlot =
+            pos >= 0 && pos + 1 < visibleRows.length
+              ? visibleRows[pos + 1]
+              : Math.min(47, rowIndex + 1);
+          moveFocus(dayIndex, nextSlot);
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const pos = visibleRows.indexOf(rowIndex);
+          const prevSlot =
+            pos > 0 ? visibleRows[pos - 1] : Math.max(0, rowIndex - 1);
+          moveFocus(dayIndex, prevSlot);
+          break;
+        }
+        case "Home": {
+          event.preventDefault();
+          const firstRow = visibleRows.length > 0 ? visibleRows[0] : 0;
+          moveFocus(dayIndex, firstRow);
+          break;
+        }
+        case "End": {
+          event.preventDefault();
+          const lastRow =
+            visibleRows.length > 0 ? visibleRows[visibleRows.length - 1] : 47;
+          moveFocus(dayIndex, lastRow);
+          break;
+        }
+        case "PageUp": {
+          event.preventDefault();
+          pendingFocusCellRef.current = {
+            dayIndex,
+            slotIndex: rowIndex,
+          };
+          setFocusedCell({ dayIndex, slotIndex: rowIndex });
+          setCurrentDate((prev) => subWeeks(prev, 1));
+          break;
+        }
+        case "PageDown": {
+          event.preventDefault();
+          pendingFocusCellRef.current = {
+            dayIndex,
+            slotIndex: rowIndex,
+          };
+          setFocusedCell({ dayIndex, slotIndex: rowIndex });
+          setCurrentDate((prev) => addWeeks(prev, 1));
+          break;
+        }
+        case "Enter":
+        case " ": {
+          event.preventDefault();
+          if (!isDisabled) {
+            handleSlotClick(interval, date);
+          }
+          break;
+        }
+      }
+    },
+    [visibleRows, weekGridEl, handleSlotClick],
+  );
+
   // Render time cell
   const renderTimeCell = useCallback(
-    (interval: { hour: number; minute: number }, date: Date) => {
+    (
+      interval: { hour: number; minute: number },
+      date: Date,
+      dayIndex: number,
+    ) => {
       const cell = describeCell(interval, date);
       const { status, statusKey, isCurrentEventSlot } = cell;
       const intervalStart = new Date(status.intervalStartUTCString);
       const token = SLOT_STATUS_TOKENS[statusKey];
+      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
+      const isFocusedCell =
+        activeFocusedDayIndex === dayIndex &&
+        activeFocusedSlotIndex === rowIndex;
+      const isSelected = statusKey === "selected";
       // Full state on every cell, so the visible word can leave the cell
       // without the screen reader or the hover losing it (#1703 F1).
       const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart, { zone: gridZone })}`;
@@ -1533,6 +1692,14 @@ export function UnifiedCalendar({
             title={accessibleLabel}
             aria-label={accessibleLabel}
             role="img"
+            tabIndex={isFocusedCell ? 0 : -1}
+            aria-disabled={true}
+            data-day-index={dayIndex}
+            data-slot-index={rowIndex}
+            onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
+            onKeyDown={(e) =>
+              handleCellKeyDown(e, dayIndex, rowIndex, interval, date, true)
+            }
             // A selection that ages into this branch must stay findable by
             // "Go to selection" (#1703 F2).
             data-slot-start={status.intervalStartUTCString}
@@ -1543,7 +1710,6 @@ export function UnifiedCalendar({
       // The word stays on the first cell of a contiguous run only: the row
       // above, same column, saying the same thing means this cell is a
       // continuation and the text is noise (#1703 F1).
-      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
       const above = rowIndex > 0 ? INTERVALS[rowIndex - 1] : null;
       const continuesRun =
         above !== null && describeCell(above, date).label === cell.label;
@@ -1601,10 +1767,29 @@ export function UnifiedCalendar({
         <button
           type="button"
           className={cellClassName}
-          onClick={() => handleSlotClick(interval, date)}
-          disabled={isButtonDisabled}
+          onClick={() => {
+            if (!isButtonDisabled) {
+              handleSlotClick(interval, date);
+            }
+          }}
+          tabIndex={isFocusedCell ? 0 : -1}
+          aria-pressed={isSelected}
+          aria-disabled={isButtonDisabled}
+          onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
+          onKeyDown={(e) =>
+            handleCellKeyDown(
+              e,
+              dayIndex,
+              rowIndex,
+              interval,
+              date,
+              isButtonDisabled,
+            )
+          }
           title={accessibleLabel}
           aria-label={accessibleLabel}
+          data-day-index={dayIndex}
+          data-slot-index={rowIndex}
           data-slot-start={status.intervalStartUTCString}
           data-slot-state={statusKey}
         >
@@ -1666,7 +1851,16 @@ export function UnifiedCalendar({
 
       return buttonElement;
     },
-    [describeCell, handleSlotClick, mode, eventType, gridZone],
+    [
+      describeCell,
+      handleSlotClick,
+      handleCellKeyDown,
+      activeFocusedDayIndex,
+      activeFocusedSlotIndex,
+      mode,
+      eventType,
+      gridZone,
+    ],
   );
 
   // Render month view
@@ -1937,6 +2131,8 @@ export function UnifiedCalendar({
               cells grid structure without re-filling unavailable cells. */}
           <div
             ref={setWeekGridEl}
+            role="grid"
+            aria-label="Availability slot grid"
             className="flex-1 overflow-y-auto scrollbar-thin min-h-0 pt-1"
           >
             {folded.allDead && (
@@ -1998,6 +2194,7 @@ export function UnifiedCalendar({
                   <div
                     key={`interval-row-${interval.hour}-${interval.minute}`}
                     data-row={rowIndex}
+                    role="row"
                     className={`${GRID_COLS} gap-0.5 border-b border-border/40 md:gap-1`}
                   >
                     <div className="min-w-0">
@@ -2007,16 +2204,20 @@ export function UnifiedCalendar({
                         )}
                       </div>
                     </div>
-                    {weekDates.map((date) => {
+                    {weekDates.map((date, dayIndex) => {
                       const holdsNow =
                         isOnCalendarDay(date, now, gridZone) &&
                         nowRow === rowIndex;
+                      const isCellSelected =
+                        describeCell(interval, date).statusKey === "selected";
                       return (
                         <div
                           key={date.toISOString()}
+                          role="gridcell"
+                          aria-selected={isCellSelected}
                           className="relative col-span-1"
                         >
-                          {renderTimeCell(interval, date)}
+                          {renderTimeCell(interval, date, dayIndex)}
                           {holdsNow && (
                             // The now-line: a 2px rule across today's column at
                             // the minute, moved by the once-a-minute tick.
@@ -2041,6 +2242,11 @@ export function UnifiedCalendar({
       ) : (
         renderMonthView()
       )}
+
+      {/* #1715 — Visually-hidden live region announcing current slot selection */}
+      <div role="status" aria-live="polite" className="sr-only">
+        Selected {selectedSlots.length} of {requiredSlots} slots
+      </div>
 
       {/* Footer */}
       {aboveActionsSlot}
@@ -2158,7 +2364,7 @@ export function UnifiedCalendar({
           )}
         </div>
 
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-1.5">
           {/* #1076 — the day/week caps bucket on the EVENT's scheduling
               timezone, not the viewer's. When they differ, say so here
               instead of letting the viewer assume their own midnight. Only
@@ -2171,6 +2377,23 @@ export function UnifiedCalendar({
               {footerZone.limits.label}
             </span>
           )}
+          {/* #1168 — Toggle between the recurring event's schedulingTimezone
+              and the viewer's own timezone when they differ. */}
+          {(eventType === "subscription" || eventType === "class") &&
+            effectiveSchedulingTz &&
+            viewerZone &&
+            effectiveSchedulingTz !== viewerZone && (
+              <button
+                type="button"
+                onClick={() => setPreferViewerZone((prev) => !prev)}
+                data-testid="grid-zone-toggle"
+                className="ml-1 inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                {preferViewerZone
+                  ? `Your zone (${viewerZone})`
+                  : `Expert zone (${effectiveSchedulingTz})`}
+              </button>
+            )}
           {/* #1863 — the same footer carries how old the cells are. Silent when
               fresh (the overwhelming majority of the time) so it is not noise
               the consultant learns to skip, and loud when it is not: amber for

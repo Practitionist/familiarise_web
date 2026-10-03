@@ -310,6 +310,7 @@ export class SchedulingService {
           // The consultant explicitly accepting these times as-is. Gated to
           // the event consultant by the route (canOverride) before dispatch.
           request.override,
+          request.allowPartial,
         );
 
       case "requested":
@@ -865,6 +866,7 @@ export class SchedulingService {
     eventId: string,
     idempotencyKey: string | undefined,
     fresh: boolean,
+    expectedSlotStarts?: string[],
   ): Promise<AllocationResult | null> {
     // #1518 — `$executeRaw`, not `$queryRaw`: `pg_advisory_xact_lock` returns
     // `void`, and the Prisma 7 driver adapter throws "Failed to deserialize
@@ -875,7 +877,7 @@ export class SchedulingService {
       eventType,
       eventId,
       idempotencyKey,
-      undefined,
+      expectedSlotStarts,
       tx,
     );
     if (lockedReplay) return lockedReplay;
@@ -1119,6 +1121,7 @@ export class SchedulingService {
     const stamped = await db.appointment.findUnique({
       where: { allocationIdempotencyKey: idempotencyKey },
       select: {
+        id: true,
         consultationId: true,
         subscriptionId: true,
         webinarId: true,
@@ -1161,18 +1164,98 @@ export class SchedulingService {
       // carries every 30-minute atom — an exact retry of a multi-slot
       // session would otherwise mismatch on row count alone.
       const now = new Date();
-      const stampedStarts = appointments
+      const allLiveOccurrences = appointments
         .flatMap((a) => a.occurrences ?? [])
-        .filter((o) => !o.deletedAt && o.endsAt > now)
-        .flatMap((o) => intervalStartsOf(o))
-        .map((start) => start.getTime())
-        .sort((a, b) => a - b);
+        .filter((o) => !o.deletedAt && !isDeadOccurrence(o));
+      const liveFutureOccurrences = allLiveOccurrences.filter(
+        (o) => o.endsAt > now,
+      );
+      const candidateOccurrences =
+        liveFutureOccurrences.length > 0
+          ? liveFutureOccurrences
+          : allLiveOccurrences;
+      const startsOfOccurrences = (
+        rows: typeof allLiveOccurrences,
+      ): number[] =>
+        rows
+          .flatMap((o) => intervalStartsOf(o))
+          .map((start) => start.getTime())
+          .sort((a, b) => a - b);
+
+      const stampedStarts = startsOfOccurrences(liveFutureOccurrences);
+      const allStampedStarts = startsOfOccurrences(allLiveOccurrences);
       const attemptedStarts = expectedSlotStarts
         .map((s) => new Date(s).getTime())
         .sort((a, b) => a - b);
-      const samePayload =
-        stampedStarts.length === attemptedStarts.length &&
-        stampedStarts.every((t, i) => t === attemptedStarts[i]);
+      const arraysEqual = (a: number[], b: number[]) =>
+        a.length === b.length && a.every((t, i) => t === b[i]);
+
+      let samePayload =
+        arraysEqual(stampedStarts, attemptedStarts) ||
+        arraysEqual(allStampedStarts, attemptedStarts);
+
+      // #1692 Item 6 — On a multi-batch recurring event (top-up cycle or
+      // partial reschedule), the wrapper (or sibling wrappers) also holds
+      // pre-existing confirmed future occurrences from earlier cycles. Match
+      // against the stamped appointment's occurrences or the latest batch's
+      // whole occurrences when multiple recurring occurrences exist.
+      if (
+        !samePayload &&
+        isRecurringEventType(eventType) &&
+        candidateOccurrences.length > 1
+      ) {
+        const stampedAppt = appointments.find(
+          (a) =>
+            (stamped.id && a.id === stamped.id) ||
+            a.allocationIdempotencyKey === idempotencyKey,
+        );
+        if (stampedAppt && appointments.length > 1) {
+          const apptOccurrences = (stampedAppt.occurrences ?? []).filter(
+            (o) =>
+              !o.deletedAt &&
+              !isDeadOccurrence(o) &&
+              (liveFutureOccurrences.length === 0 || o.endsAt > now),
+          );
+          if (
+            arraysEqual(startsOfOccurrences(apptOccurrences), attemptedStarts)
+          ) {
+            samePayload = true;
+          }
+        }
+        if (!samePayload) {
+          const movedRows = candidateOccurrences.filter(
+            (o) => (o as { movedAt?: Date | null }).movedAt != null,
+          );
+          if (
+            movedRows.length > 0 &&
+            arraysEqual(startsOfOccurrences(movedRows), attemptedStarts)
+          ) {
+            samePayload = true;
+          }
+        }
+        if (!samePayload) {
+          const withOrdinals = candidateOccurrences.filter(
+            (o) => typeof (o as { ordinal?: number }).ordinal === "number",
+          );
+          if (withOrdinals.length === candidateOccurrences.length) {
+            const byOrdinal = [...candidateOccurrences].sort(
+              (a, b) =>
+                ((a as { ordinal?: number }).ordinal ?? 0) -
+                ((b as { ordinal?: number }).ordinal ?? 0),
+            );
+            for (let startIdx = 1; startIdx < byOrdinal.length; startIdx++) {
+              const suffixStarts = startsOfOccurrences(
+                byOrdinal.slice(startIdx),
+              );
+              if (arraysEqual(suffixStarts, attemptedStarts)) {
+                samePayload = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+
       if (!samePayload) {
         throw new AllocationIdempotencyMismatchError(
           "This idempotency key was already used with different slots. " +
@@ -2185,6 +2268,11 @@ export class SchedulingService {
      * and future-time all still apply.
      */
     override?: boolean,
+    /**
+     * #1692 Item 4 — allow manual placement of fewer than the full required
+     * sessions on recurring events (matching autoAllocate's #1206 behavior).
+     */
+    allowPartial = false,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     // A same-key submit with different slots is a client bug, not a retry:
@@ -2431,6 +2519,14 @@ export class SchedulingService {
         this.releasedOccurrenceIdsOf(existingAppointments);
 
       // Validate total slot count for recurring event types
+      let manualPartialInfo:
+        | {
+            partial: boolean;
+            placedSessions: number;
+            requiredSessions: number;
+            unplacedSessions: number;
+          }
+        | undefined;
       if (isRecurringEventType(eventType)) {
         if (isReschedule) {
           // Expected count = (live RELEASED sessions) × slotsPerCall, i.e. the
@@ -2451,19 +2547,42 @@ export class SchedulingService {
             );
           }
         } else if (isTopUp) {
-          // #1766 — exactly this cycle's batch; the held sessions stay put.
-          const cycleTarget =
-            this.topUpTargetSessions(
-              eventType,
-              config,
-              existingConfirmedSessionCount,
-              slotsPerCall,
-            ) - existingConfirmedSessionCount;
-          if (slots.length !== cycleTarget * slotsPerCall) {
+          // #1766 & #1692 Item 4 — this cycle's batch; the held sessions stay put.
+          const topUpTotalSessions = this.topUpTargetSessions(
+            eventType,
+            config,
+            existingConfirmedSessionCount,
+            slotsPerCall,
+          );
+          const cycleTarget = topUpTotalSessions - existingConfirmedSessionCount;
+          const requiredTopUpSlots = cycleTarget * slotsPerCall;
+          if (slots.length > requiredTopUpSlots) {
             throw new AllocationValidationError(
               `This cycle takes exactly ${cycleTarget} session(s) ` +
-                `(${cycleTarget * slotsPerCall} slots), but ${slots.length} were provided.`,
+                `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
             );
+          }
+          if (slots.length < requiredTopUpSlots) {
+            if (!allowPartial) {
+              throw new SlotShortageError(
+                `This cycle takes exactly ${cycleTarget} session(s) ` +
+                  `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
+                Math.floor(slots.length / slotsPerCall),
+                cycleTarget,
+              );
+            }
+            const placedSessions =
+              existingConfirmedSessionCount +
+              Math.floor(slots.length / slotsPerCall);
+            manualPartialInfo = {
+              partial: placedSessions < topUpTotalSessions,
+              placedSessions,
+              requiredSessions: topUpTotalSessions,
+              unplacedSessions: Math.max(
+                0,
+                topUpTotalSessions - placedSessions,
+              ),
+            };
           }
         } else if (isInProgressReallocation) {
           // In-progress: only future slots expected, past ones are preserved
@@ -2488,12 +2607,31 @@ export class SchedulingService {
               eventType,
               config,
             );
-          if (slots.length !== requiredSlots) {
+          if (slots.length > requiredSlots) {
             throw new AllocationValidationError(
               `This ${eventType} requires exactly ${requiredSlots} slots ` +
                 `(based on the scheduling period and session configuration), ` +
                 `but ${slots.length} were provided.`,
             );
+          }
+          if (slots.length < requiredSlots) {
+            const placedSessions = Math.floor(slots.length / slotsPerCall);
+            const requiredSessions = Math.ceil(requiredSlots / slotsPerCall);
+            if (!allowPartial) {
+              throw new SlotShortageError(
+                `This ${eventType} requires exactly ${requiredSlots} slots ` +
+                  `(based on the scheduling period and session configuration), ` +
+                  `but ${slots.length} were provided.`,
+                placedSessions,
+                requiredSessions,
+              );
+            }
+            manualPartialInfo = {
+              partial: placedSessions < requiredSessions,
+              placedSessions,
+              requiredSessions,
+              unplacedSessions: Math.max(0, requiredSessions - placedSessions),
+            };
           }
         }
       }
@@ -2534,6 +2672,7 @@ export class SchedulingService {
             eventId,
             idempotencyKey,
             isFreshAllocation,
+            slotStrings,
           );
           if (lockedReplay) return lockedReplay;
           // #1766 — see autoAllocate: a stale tab must not append twice.
@@ -2655,11 +2794,12 @@ export class SchedulingService {
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
+            ...(manualPartialInfo ?? {}),
             stagedNotices: await SchedulingService.stageAllocationNotices(
               tx,
               eventType,
               eventId,
-              undefined,
+              manualPartialInfo,
               outcome,
             ),
           };
@@ -2706,6 +2846,14 @@ export class SchedulingService {
     overrideAvailabilityWindow?: boolean,
     expectedTentativeSlotCount?: number,
   ): Promise<AllocationResult> {
+    // #1692 Item 7 — group events (webinar, class) never have consultee-requested
+    // slots; reject upfront before touching idempotency or locks.
+    if (eventType === "webinar" || eventType === "class") {
+      throw new AllocationValidationError(
+        `Requested-slot allocation is not supported for ${eventType} events; only consultations and subscriptions have consultee-requested slots.`,
+        "INVALID_MODE",
+      );
+    }
     // #837 — a retry whose first response was lost must replay the approved
     // batch, not trip the initial-allocation guard with a 409.
     const replay = await this.findIdempotentAllocation(

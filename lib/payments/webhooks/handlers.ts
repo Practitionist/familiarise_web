@@ -1645,10 +1645,26 @@ export async function confirmExistingAppointment(
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
+      consultation: {
+        include: {
+          consultationPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      subscription: {
+        include: {
+          subscriptionPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      class: {
+        include: {
+          classPlan: { select: { consultantProfileId: true } },
+        },
+      },
     },
   });
 
@@ -1671,6 +1687,17 @@ export async function confirmExistingAppointment(
     )
       .map((p) => p.userId)
       .filter((id) => id !== userId);
+    const consultantProfileId =
+      appointment.consultation?.consultationPlan?.consultantProfileId ??
+      appointment.subscription?.subscriptionPlan?.consultantProfileId ??
+      appointment.webinar?.webinarPlan?.consultantProfileId ??
+      appointment.class?.classPlan?.consultantProfileId;
+    const { buildCohostCommitmentFilter } = await import(
+      "@/utils/scheduling-engine/occupancyPolicy"
+    );
+    const cohostCommitments = consultantProfileId
+      ? buildCohostCommitmentFilter(consultantProfileId)
+      : [];
     const holdExpired = opts?.holdExpired === true;
     const now = opts?.now ?? new Date();
     const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
@@ -1687,19 +1714,48 @@ export async function confirmExistingAppointment(
         }
       : { isTentative: false };
     for (const slot of mySlots) {
-      if (participantIds.length === 0) continue;
+      if (participantIds.length === 0 && cohostCommitments.length === 0) {
+        continue;
+      }
       const conflict = await tx.appointmentOccurrence.findFirst({
         where: {
           id: { not: slot.id },
           startsAt: { lt: slot.endsAt },
           endsAt: { gt: slot.startsAt },
           ...conflictStates,
-          appointment: {
-            OR: buildOccupiedAppointmentFilter(),
-            participants: {
-              some: { userId: { in: participantIds }, ...liveParticipant() },
-            },
-          },
+          appointment:
+            cohostCommitments.length > 0
+              ? {
+                  AND: [
+                    { OR: buildOccupiedAppointmentFilter() },
+                    {
+                      OR: [
+                        ...(participantIds.length > 0
+                          ? [
+                              {
+                                participants: {
+                                  some: {
+                                    userId: { in: participantIds },
+                                    ...liveParticipant(),
+                                  },
+                                },
+                              },
+                            ]
+                          : []),
+                        ...cohostCommitments,
+                      ],
+                    },
+                  ],
+                }
+              : {
+                  OR: buildOccupiedAppointmentFilter(),
+                  participants: {
+                    some: {
+                      userId: { in: participantIds },
+                      ...liveParticipant(),
+                    },
+                  },
+                },
         },
         select: { id: true, appointmentId: true },
       });

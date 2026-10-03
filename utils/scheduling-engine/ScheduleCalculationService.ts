@@ -191,11 +191,29 @@ export class ScheduleCalculationService {
    * - Week 5: Sunday Jan 26
    * = 5 weeks total
    */
-  static countWeeks(startDate: Date, endDate: Date): number {
+  static countWeeks(
+    startDate: Date,
+    endDate: Date,
+    timeZone?: string,
+  ): number {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
     if (end < start) return 0;
+
+    if (timeZone) {
+      const startKey = this.weekKey(start, timeZone);
+      const endKey = this.weekKey(end, timeZone);
+      const [sy, sm, sd] = startKey.split("-").map(Number);
+      const [ey, em, ed] = endKey.split("-").map(Number);
+      const startSundayMs = Date.UTC(sy, sm - 1, sd);
+      const endSundayMs = Date.UTC(ey, em - 1, ed);
+      if (endSundayMs < startSundayMs) return 0;
+      return (
+        Math.round((endSundayMs - startSundayMs) / (7 * 24 * 60 * 60 * 1000)) +
+        1
+      );
+    }
 
     // Find the Sunday of the week containing start and end (UTC-based)
     const startSunday = this.startOfWeekSunday(start);
@@ -431,6 +449,7 @@ export class ScheduleCalculationService {
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
+          config.schedulingTimezone,
         );
         const totalCalls = totalWeeks * (config.sessionsPerWeek || 1);
         return totalCalls * slotsPerCall;
@@ -470,6 +489,7 @@ export class ScheduleCalculationService {
         const totalWeeks = this.countWeeks(
           config.schedulingPeriodStartsAt,
           config.schedulingPeriodEndsAt,
+          config.schedulingTimezone,
         );
         const totalSessions = totalWeeks * config.sessionsPerWeek;
         return totalSessions * slotsPerSession;
@@ -534,6 +554,7 @@ export class ScheduleCalculationService {
           const weeks = this.countWeeks(
             config.schedulingPeriodStartsAt,
             config.schedulingPeriodEndsAt,
+            config.schedulingTimezone,
           );
           required = weeks * config.sessionsPerWeek;
         }
