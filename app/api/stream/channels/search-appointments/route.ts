@@ -8,6 +8,7 @@ import {
   dmEligibleStatusFilter,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
+import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
 import {
   AppointmentSearchResultSchema,
   type AppointmentSearchResult,
@@ -51,7 +52,8 @@ export async function GET(request: NextRequest) {
     }
 
     const userId = session.user.id;
-    const searchParams = request.nextUrl.searchParams;
+    const searchParams =
+      request.nextUrl?.searchParams ?? new URL(request.url).searchParams;
     const query = searchParams.get("q")?.trim().toLowerCase();
 
     if (!query || query.length < 2) {
@@ -59,6 +61,22 @@ export async function GET(request: NextRequest) {
     }
 
     const results: AppointmentSearchResult[] = [];
+    const consultationScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "consultationPlan",
+    );
+    const subscriptionScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "subscriptionPlan",
+    );
+    const webinarScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "webinarPlan",
+    );
+    const classScopeWhere = buildBookingOrgScopeWhere(
+      searchParams,
+      "classPlan",
+    );
 
     // Search Consultations (by plan title OR consultant name)
     // The four searches are independent — none reads another's result — so they
@@ -140,6 +158,7 @@ export async function GET(request: NextRequest) {
               },
             ],
           },
+          ...(consultationScopeWhere ? [consultationScopeWhere] : []),
         ],
       },
       include: {
@@ -235,6 +254,7 @@ export async function GET(request: NextRequest) {
               },
             ],
           },
+          ...(subscriptionScopeWhere ? [subscriptionScopeWhere] : []),
         ],
       },
       include: {
@@ -303,8 +323,23 @@ export async function GET(request: NextRequest) {
                   },
                 },
               },
+              // User is an accepted collaborator
+              {
+                webinarPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfile: {
+                        userId: userId,
+                        deletedAt: null,
+                      },
+                      status: "ACCEPTED",
+                    },
+                  },
+                },
+              },
             ],
           },
+          ...(webinarScopeWhere ? [webinarScopeWhere] : []),
         ],
       },
       include: {
@@ -359,8 +394,23 @@ export async function GET(request: NextRequest) {
                   },
                 },
               },
+              // User is an accepted collaborator
+              {
+                classPlan: {
+                  collaborators: {
+                    some: {
+                      consultantProfile: {
+                        userId: userId,
+                        deletedAt: null,
+                      },
+                      status: "ACCEPTED",
+                    },
+                  },
+                },
+              },
             ],
           },
+          ...(classScopeWhere ? [classScopeWhere] : []),
         ],
       },
       include: {
