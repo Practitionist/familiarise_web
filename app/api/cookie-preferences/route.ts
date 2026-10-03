@@ -21,7 +21,7 @@ const PrefsSchema = z.object({
   functional: z.boolean(),
 });
 
-async function resolveIdentity(): Promise<{
+async function resolveIdentity(mintCookie = false): Promise<{
   userId: string | null;
   sessionId: string | null;
 }> {
@@ -30,7 +30,7 @@ async function resolveIdentity(): Promise<{
 
   const jar = await cookies();
   let sid = jar.get(SESSION_COOKIE)?.value ?? null;
-  if (!sid) {
+  if (!sid && mintCookie) {
     sid = crypto.randomUUID();
     try {
       jar.set(SESSION_COOKIE, sid, {
@@ -46,18 +46,37 @@ async function resolveIdentity(): Promise<{
 }
 
 export async function GET() {
-  const { userId, sessionId } = await resolveIdentity();
+  const { userId, sessionId } = await resolveIdentity(false);
   if (!userId && !sessionId) {
-    return NextResponse.json({ error: "No identity" }, { status: 401 });
+    return NextResponse.json(
+      {
+        essential: true,
+        analytics: false,
+        marketing: false,
+        functional: false,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 
   const pref = await prisma.cookiePreference.findFirst({
     where: userId ? { userId } : { sessionId },
-    select: { essential: true, analytics: true, marketing: true, functional: true },
+    select: {
+      essential: true,
+      analytics: true,
+      marketing: true,
+      functional: true,
+    },
   });
 
   return NextResponse.json(
-    pref ?? { essential: true, analytics: false, marketing: false, functional: false },
+    pref ?? {
+      essential: true,
+      analytics: false,
+      marketing: false,
+      functional: false,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
   );
 }
 
@@ -67,7 +86,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const { userId, sessionId } = await resolveIdentity();
+  const { userId, sessionId } = await resolveIdentity(true);
   if (!userId && !sessionId) {
     return NextResponse.json({ error: "No identity" }, { status: 401 });
   }

@@ -7,6 +7,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { initSentry } from "./sentry.shared.config";
 
-initSentry();
+if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+  window.requestIdleCallback(() => initSentry(), { timeout: 3000 });
+} else if (typeof window !== "undefined") {
+  setTimeout(() => initSentry(), 1);
+} else {
+  initSentry();
+}
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

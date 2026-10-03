@@ -19,20 +19,36 @@ import {
 
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 
+export function resolveDefaultTracesSampleRate(): number {
+  const rawOverride = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+  if (rawOverride !== undefined && rawOverride !== "") {
+    const parsed = Number(rawOverride);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+      return parsed;
+    }
+  }
+  if (
+    isProductionEnvironment() ||
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview"
+  ) {
+    return 0.1;
+  }
+  return 0.2;
+}
+
 /**
  * Route-aware trace sampling (#1926):
- * - Non-production: 100%
+ * - Non-production: 20% (or NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE override)
  * - Health probes & static assets (`/api/health`, `/_next/`, `/favicon.ico`, `/robots.txt`): 0%
  * - Background cleanup cron endpoints (`/api/cleanup/`): 2%
  * - Critical payment, checkout, and webhook routes (`/api/webhooks/`, `/api/payments/`, `/api/checkout`): 50% (or parent decision)
- * - Default production baseline: 10% (or parent decision)
+ * - Default production / preview baseline: 10% (or parent decision)
  */
 export function tracesSampler(
   samplingContext: Parameters<
     NonNullable<SentryInitOptions["tracesSampler"]>
   >[0],
 ): number {
-  if (!isProductionEnvironment()) return 1;
   const rawName =
     samplingContext.name ||
     (typeof samplingContext.attributes?.["http.target"] === "string"
@@ -48,6 +64,7 @@ export function tracesSampler(
   ) {
     return 0;
   }
+  if (!isProductionEnvironment()) return resolveDefaultTracesSampleRate();
   if (rawName.includes("/api/cleanup/")) {
     return 0.02;
   }
@@ -64,7 +81,7 @@ export function tracesSampler(
   if (typeof samplingContext.parentSampled === "boolean") {
     return samplingContext.parentSampled ? 1 : 0;
   }
-  return 0.1;
+  return resolveDefaultTracesSampleRate();
 }
 
 /**
@@ -261,8 +278,7 @@ export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
  */
 function stripUngatedPII(event: Sentry.Event): Sentry.Event {
   const culture = event.contexts?.culture as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (culture && "timezone" in culture) {
     // Reassign rather than mutate: the event object may be frozen downstream,
     // and a silent no-op on a frozen object is how this would go unnoticed.
@@ -345,9 +361,10 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       },
     },
 
-    // Sample 10% of traces in production (with route-aware overrides via
-    // tracesSampler); everything outside production.
-    tracesSampleRate: isProductionEnvironment() ? 0.1 : 1,
+    // Sample 10% of traces in production/preview (with route-aware overrides via
+    // tracesSampler) and 20% in non-production unless overridden via
+    // NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE.
+    tracesSampleRate: resolveDefaultTracesSampleRate(),
     ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 
     // Send structured logs to Sentry.

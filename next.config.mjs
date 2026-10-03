@@ -417,6 +417,9 @@ const nextConfig = {
       {
         hostname: "img.logo.dev",
       },
+      {
+        hostname: "cdn.jsdelivr.net",
+      },
     ],
   },
 
@@ -453,6 +456,24 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source: "/avif/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/fonts/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
       },
     ];
   },

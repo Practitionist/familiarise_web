@@ -96,10 +96,7 @@ type RedisStatus = {
   status: "ok" | "degraded";
   /** Generic code only: the route is public, so no vendor class or message. #1822 */
   reason?:
-    | "QUOTA_EXCEEDED"
-    | "UNAVAILABLE"
-    | "CIRCUIT_OPEN"
-    | "MOCK_IN_PRODUCTION";
+    "QUOTA_EXCEEDED" | "UNAVAILABLE" | "CIRCUIT_OPEN" | "MOCK_IN_PRODUCTION";
 };
 
 function redisOk(): RedisStatus {
@@ -296,26 +293,38 @@ export async function GET(request: Request) {
       ? "degraded"
       : "healthy";
 
-  return NextResponse.json({
-    status,
-    database,
-    // #1124's stall is a platform latency, not a dependency failure: it is
-    // reported here, and in the Sentry log above, but never changes `status`.
-    platform: {
-      eventLoopStallMs,
-      processUptimeMs,
-      databaseLatencyMs,
-      databaseProbeRetried: retried,
+  const cacheControl =
+    status === "healthy" && !includeBetterStack
+      ? "public, s-maxage=30, stale-while-revalidate=60"
+      : "no-store";
+
+  return NextResponse.json(
+    {
+      status,
+      database,
+      // #1124's stall is a platform latency, not a dependency failure: it is
+      // reported here, and in the Sentry log above, but never changes `status`.
+      platform: {
+        eventLoopStallMs,
+        processUptimeMs,
+        databaseLatencyMs,
+        databaseProbeRetried: retried,
+      },
+      maintenance: {
+        phase: maintenanceState.phase,
+        reason: maintenanceState.reason,
+        estimatedEnd: maintenanceState.estimatedEnd,
+      },
+      stream,
+      betterstack,
+      cron,
+      redis: redisStatus,
+      timestamp: new Date().toISOString(),
     },
-    maintenance: {
-      phase: maintenanceState.phase,
-      reason: maintenanceState.reason,
-      estimatedEnd: maintenanceState.estimatedEnd,
+    {
+      headers: {
+        "Cache-Control": cacheControl,
+      },
     },
-    stream,
-    betterstack,
-    cron,
-    redis: redisStatus,
-    timestamp: new Date().toISOString(),
-  });
+  );
 }

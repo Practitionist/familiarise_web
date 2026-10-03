@@ -79,53 +79,33 @@ export function HeroSection({
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
           {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8"
-          >
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8">
             <Sparkles className="w-4 h-4 text-zinc-300" />
             {/* #1490 — was "Trusted by 10,000+ professionals worldwide", a
                 number nothing produced. What replaces it is enforced by the
                 directory reads themselves: only VERIFIED profiles are public. */}
             <span>Every expert is verified before they are listed</span>
-          </motion.div>
+          </div>
 
           {/* Main headline */}
-          <motion.h1
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight"
-          >
+          <h1 className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight">
             Learn from the{" "}
             <span className="relative inline-block">
               <span className="silver-text">best minds</span>
             </span>
             <br />
             <span className="text-zinc-400">in your industry</span>
-          </motion.h1>
+          </h1>
 
           {/* Subheadline */}
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg md:text-xl text-zinc-500 mb-10 max-w-2xl mx-auto leading-relaxed"
-          >
+          <p className="text-lg md:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto leading-relaxed">
             Connect with world-class experts for personalized 1-on-1 sessions,
             interactive classes, and live webinars. Your career transformation
             starts here.
-          </motion.p>
+          </p>
 
           {/* CTAs */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
-          >
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
             <Button
               size="lg"
               className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
@@ -150,7 +130,7 @@ export function HeroSection({
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
             </Button>
-          </motion.div>
+          </div>
 
           {/* Stats with animated counters. #1490 — every counter here is read
               from the database now, and a figure that is still zero produces no
@@ -158,19 +138,14 @@ export function HeroSection({
               row is absent, which is why it is rendered conditionally: an empty
               grid would leave a stray divider under the CTAs. */}
           {stats.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.4 }}
-              className="grid grid-cols-2 md:grid-cols-3 gap-8 md:gap-12 pt-8 border-t border-zinc-800"
-            >
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-8 md:gap-12 pt-8 border-t border-zinc-800">
               {stats.map((stat) => (
                 <div key={stat.key} className="text-center">
                   <AnimatedNumber value={stat.value} />
-                  <div className="text-zinc-600 text-sm mt-1">{stat.label}</div>
+                  <div className="text-zinc-400 text-sm mt-1">{stat.label}</div>
                 </div>
               ))}
-            </motion.div>
+            </div>
           )}
         </div>
       </div>
