@@ -63,7 +63,6 @@ export function toOccurrenceLike(row: OccurrenceLike): OccurrenceLike {
     endsAt: row.endsAt ?? null,
     isTentative: row.isTentative,
     completionStatus: row.completionStatus ?? null,
-    outcome: row.outcome ?? null,
     deletedAt: row.deletedAt ?? null,
   };
 }
