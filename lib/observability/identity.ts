@@ -461,10 +461,10 @@ function mergeUser(
  * (browser bundle, where Next.js only inlines `NEXT_PUBLIC_*` variables).
  */
 export function isSentryIdentityEnabled(): boolean {
-  return (
-    process.env.SENTRY_IDENTITY_ENABLED === "on" ||
-    process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED === "on"
-  );
+  if (process.env.SENTRY_IDENTITY_ENABLED !== undefined) {
+    return process.env.SENTRY_IDENTITY_ENABLED === "on";
+  }
+  return process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED === "on";
 }
 
 /**

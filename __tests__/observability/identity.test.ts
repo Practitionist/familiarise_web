@@ -409,11 +409,13 @@ describe("the disclosure switch, which is DEFAULT OFF", () => {
     expect(isSentryIdentityEnabled()).toBe(true);
   });
 
-  it("also accepts NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED='on' for client bundles", () => {
+  it("also accepts NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED='on' for client bundles without overriding explicit server 'off'", () => {
     delete process.env.SENTRY_IDENTITY_ENABLED;
     process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED = "on";
     try {
       expect(isSentryIdentityEnabled()).toBe(true);
+      process.env.SENTRY_IDENTITY_ENABLED = "off";
+      expect(isSentryIdentityEnabled()).toBe(false);
     } finally {
       delete process.env.NEXT_PUBLIC_SENTRY_IDENTITY_ENABLED;
     }
