@@ -121,6 +121,17 @@ export async function createChannel(input: {
   });
   const droppedIds = new Set(upsertResult?.droppedIds ?? []);
   const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
+  if (
+    droppedIds.has(validated.createdById) ||
+    syncedMembers.length === 0 ||
+    (validated.channelType === "messaging" &&
+      allMembers.length >= 2 &&
+      syncedMembers.length < 2)
+  ) {
+    throw new Error(
+      "Stream channel requires consented creator and participants",
+    );
+  }
 
   // Merge the optional org stamp into additionalData. Use snake_case
   // (`organization_id`) to match Stream's chat field convention and the

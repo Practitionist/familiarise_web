@@ -53,6 +53,19 @@ export async function GET(req: NextRequest) {
     // members. So they could add themselves to a channel and end up as their own
     // counterparty. Self-exclusion belongs here, not in the caller.
     const seenUserIds = new Set<string>([...excludeIds, session.user.id]);
+    const userSearchWhere =
+      searchTerm !== ""
+        ? {
+            OR: [
+              { name: { contains: searchTerm, mode: "insensitive" as const } },
+              { email: { contains: searchTerm, mode: "insensitive" as const } },
+            ],
+          }
+        : undefined;
+    const deterministicOrderBy = [
+      { createdAt: "desc" as const },
+      { id: "asc" as const },
+    ];
 
     // 1. Get consultees from active consultations
     const consultations = await prisma.consultation.findMany({
@@ -63,7 +76,9 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
       },
+      orderBy: deterministicOrderBy,
       take: 100,
       include: {
         requestedBy: {
@@ -110,7 +125,9 @@ export async function GET(req: NextRequest) {
         status: {
           ...dmEligibleStatusFilter(),
         },
+        ...(userSearchWhere ? { requestedBy: { user: userSearchWhere } } : {}),
       },
+      orderBy: deterministicOrderBy,
       take: 100,
       include: {
         requestedBy: {
@@ -148,6 +165,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const participantFilter = userSearchWhere
+      ? { ...liveParticipant(), user: userSearchWhere }
+      : liveParticipant();
+
     // 3. Get attendees from webinars — everyone connected to a session slot.
     const webinars = await prisma.webinar.findMany({
       where: {
@@ -157,13 +178,18 @@ export async function GET(req: NextRequest) {
         status: {
           in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
         },
+        ...(userSearchWhere
+          ? { appointment: { participants: { some: participantFilter } } }
+          : {}),
       },
+      orderBy: deterministicOrderBy,
       take: 100,
       include: {
         appointment: {
           select: {
             participants: {
-              where: liveParticipant(),
+              where: participantFilter,
+              take: 100,
               select: {
                 user: {
                   select: { id: true, name: true, email: true, image: true },
@@ -208,13 +234,18 @@ export async function GET(req: NextRequest) {
         status: {
           in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
         },
+        ...(userSearchWhere
+          ? { appointment: { participants: { some: participantFilter } } }
+          : {}),
       },
+      orderBy: deterministicOrderBy,
       take: 100,
       include: {
         appointment: {
           select: {
             participants: {
-              where: liveParticipant(),
+              where: participantFilter,
+              take: 100,
               select: {
                 user: {
                   select: { id: true, name: true, email: true, image: true },

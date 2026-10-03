@@ -306,9 +306,9 @@ async function performStreamUserSyncUnlocked(
         const isAlreadyDeactivatedOrSoftDeleted = Boolean(
           raw.deactivated_at || raw.deleted_at,
         );
-        if (erasedUserIdSet.has(userId) || isAlreadyDeactivatedOrSoftDeleted) {
+        if (erasedUserIdSet.has(userId)) {
           hardDeleteUsers.push(userId);
-        } else {
+        } else if (!isAlreadyDeactivatedOrSoftDeleted) {
           softDeleteUsers.push(userId);
         }
       }

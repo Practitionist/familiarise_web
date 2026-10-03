@@ -49,10 +49,17 @@ const SEARCH_CANDIDATE_LIMIT = 200;
 
 const SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
 
+type StreamActorContext = {
+  trusted: boolean;
+  userId: string | null;
+};
+
 async function requireAuthenticatedStreamActor(options?: {
   serverTrusted?: symbol;
-}): Promise<void> {
-  if (options?.serverTrusted === SERVER_TRUSTED) return;
+}): Promise<StreamActorContext> {
+  if (options?.serverTrusted === SERVER_TRUSTED) {
+    return { trusted: true, userId: null };
+  }
   const session = await getSession(true);
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to sync Stream user");
@@ -60,9 +67,12 @@ async function requireAuthenticatedStreamActor(options?: {
   if (session.user.banned) {
     throw new Error("Forbidden: account suspended");
   }
+  const privileged =
+    session.user.role === "ADMIN" || session.user.role === "STAFF";
+  return { trusted: privileged, userId: session.user.id };
 }
 
-function stripStreamUserEmails<T>(payload: T): T {
+function stripStreamUserEmails<T>(payload: T, actor: StreamActorContext): T {
   if (
     !payload ||
     typeof payload !== "object" ||
@@ -73,14 +83,14 @@ function stripStreamUserEmails<T>(payload: T): T {
     return payload;
   }
   const sanitizedUsers = Object.fromEntries(
-    Object.entries(payload.users as Record<string, unknown>).map(
-      ([id, userObj]) => {
+    Object.entries(payload.users as Record<string, unknown>)
+      .filter(([id]) => actor.trusted || id === actor.userId)
+      .map(([id, userObj]) => {
         if (!userObj || typeof userObj !== "object") return [id, userObj];
         const rest = { ...(userObj as Record<string, unknown>) };
         delete rest.email;
         return [id, rest];
-      },
-    ),
+      }),
   );
   return { ...payload, users: sanitizedUsers };
 }
@@ -97,7 +107,7 @@ export const upsertUserToStream = async (
 ) => {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
-  await requireAuthenticatedStreamActor(options);
+  const actor = await requireAuthenticatedStreamActor(options);
 
   // Check cache first - skip if recently synced
   if (isUserSynced(validatedUserId)) {
@@ -177,7 +187,7 @@ export const upsertUserToStream = async (
     // Mark as synced in cache
     markUserSynced(user.id);
 
-    return stripStreamUserEmails(streamUser);
+    return stripStreamUserEmails(streamUser, actor);
   } catch (error) {
     // A consent gate is a deliberate refusal (already warn-logged above), not
     // an infra failure — rethrow without an error-level log so it doesn't
@@ -223,7 +233,7 @@ export const upsertUsersToStream = async (
 ) => {
   // Validate input
   const validatedIds = userIdsSchema.parse(userIds);
-  await requireAuthenticatedStreamActor(options);
+  const actor = await requireAuthenticatedStreamActor(options);
 
   // Filter out already synced users
   const unsyncedIds = validatedIds.filter((id) => !isUserSynced(id));
@@ -332,10 +342,13 @@ export const upsertUsersToStream = async (
     // Mark all as synced
     consenters.forEach((user) => markUserSynced(user.id));
 
-    return stripStreamUserEmails({
-      ...result,
-      droppedIds: [...droppedIds, ...unknownIds],
-    });
+    return stripStreamUserEmails(
+      {
+        ...result,
+        droppedIds: [...droppedIds, ...unknownIds],
+      },
+      actor,
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

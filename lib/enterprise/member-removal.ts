@@ -30,7 +30,7 @@ import { markMembership } from "@/lib/stream-cache";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
-import { queryChannelsPaged } from "@/lib/stream/batch";
+import { queryOrgTaggedChannels } from "@/lib/stream/event-channel-service";
 
 export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
 
@@ -345,25 +345,8 @@ export async function revokeMemberStreamAccess(input: {
 
   const chat = getStreamChatClient();
   const failures: string[] = [];
-  let tokenRevoked = false;
+  const tokenRevoked = false;
   let channelsRemoved = 0;
-
-  try {
-    await chat.revokeUserToken(userId, new Date());
-    tokenRevoked = true;
-  } catch (err) {
-    if (isExpectedStreamError(err)) {
-      tokenRevoked = true;
-    } else {
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push(`revokeUserToken:${msg}`);
-      streamLogger.warn("Failed to revoke Stream token for removed member", {
-        userId,
-        orgId,
-        error: msg,
-      });
-    }
-  }
 
   let surfaces: OrgStreamSurfaces;
   try {
@@ -396,16 +379,17 @@ export async function revokeMemberStreamAccess(input: {
   }
 
   try {
-    const { channels: taggedChannels } = await queryChannelsPaged((opts) =>
-      chat.queryChannels(
-        {
-          members: { $in: [userId] },
-          organization_id: { $eq: orgId },
-        },
-        [{ last_message_at: -1 }],
-        opts,
-      ),
-    );
+    const { channels: taggedChannels, truncated } =
+      await queryOrgTaggedChannels(chat, orgId, {
+        members: { $in: [userId] },
+      });
+    if (truncated) {
+      failures.push("queryChannels:truncated");
+      streamLogger.warn(
+        "Org-tagged Stream channel query truncated during member removal",
+        { userId, orgId, examined: taggedChannels.length },
+      );
+    }
     for (const ch of taggedChannels) {
       if (ch.id) {
         targets.set(ch.id, ch.type === "team" ? "team" : "messaging");
@@ -413,12 +397,14 @@ export async function revokeMemberStreamAccess(input: {
     }
   } catch (err) {
     if (!isExpectedStreamError(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failures.push(`queryChannels:${msg}`);
       streamLogger.warn(
         "Failed to query org-tagged Stream channels during member removal",
         {
           userId,
           orgId,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
         },
       );
     }

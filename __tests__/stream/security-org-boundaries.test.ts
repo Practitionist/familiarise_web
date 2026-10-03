@@ -20,16 +20,18 @@ const mockPrisma = {
     findMany: jest.fn(),
     update: jest.fn(),
   },
-  organizationMembership: {
+  membership: {
     findMany: jest.fn(),
     update: jest.fn(),
   },
   webinar: {
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     findUnique: jest.fn(),
     updateMany: jest.fn(),
   },
   class: {
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     findUnique: jest.fn(),
     updateMany: jest.fn(),
@@ -117,14 +119,16 @@ describe("Stream security, consent gates, and organization boundaries", () => {
     mockDeleteChannels.mockResolvedValue({});
     mockRevokeUserToken.mockResolvedValue(undefined);
     mockChannelRemoveMembers.mockResolvedValue({});
+    mockPrisma.webinar.findFirst.mockResolvedValue(null);
     mockPrisma.webinar.findMany.mockResolvedValue([]);
+    mockPrisma.class.findFirst.mockResolvedValue(null);
     mockPrisma.class.findMany.mockResolvedValue([]);
     mockPrisma.consultation.findMany.mockResolvedValue([]);
     mockPrisma.subscription.findMany.mockResolvedValue([]);
     mockPrisma.appointment.findMany.mockResolvedValue([]);
     mockPrisma.meeting.findMany.mockResolvedValue([]);
     mockPrisma.recording.findMany.mockResolvedValue([]);
-    mockPrisma.organizationMembership.findMany.mockResolvedValue([]);
+    mockPrisma.membership.findMany.mockResolvedValue([]);
   });
 
   describe("upsertUserToStream session guard and email stripping", () => {
@@ -138,6 +142,28 @@ describe("Stream security, consent gates, and organization boundaries", () => {
         "Unauthorized: sign in to sync Stream user",
       );
       expect(mockUpsertUser).not.toHaveBeenCalled();
+    });
+
+    it("omits other users' profile entries from response for non-privileged direct callers", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "caller-1", role: "CONSULTEE" },
+      });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({
+        id: "victim-id",
+        name: "Victim User",
+        email: "victim@example.com",
+        image: "https://example.com/victim.png",
+        role: "CONSULTANT",
+      });
+
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
+
+      const response = await upsertUserToStream("victim-id");
+      const returnedUsers = (
+        response as { users?: Record<string, Record<string, unknown>> }
+      )?.users;
+      expect(returnedUsers).toEqual({});
     });
 
     it("allows trusted server callers via STREAM_SERVER_TRUSTED and strips email from response", async () => {
@@ -188,15 +214,31 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       );
     });
 
-    it("rejects non-host/non-self removeUserFromEventChannel calls", async () => {
+    it("rejects self-join addUserToEventChannel when caller is not enrolled in the event", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "stranger-1", role: "CONSULTEE" },
+      });
+      mockPrisma.webinar.findFirst.mockResolvedValueOnce(null);
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(
+        addUserToEventChannel("webinar", "web-1", "stranger-1"),
+      ).rejects.toThrow("Forbidden: not a participant in this event");
+    });
+
+    it("rejects non-host/non-self removeUserFromEventChannel calls and allows event host", async () => {
       mockGetSession.mockResolvedValueOnce({
         user: { id: "stranger-1", role: "CONSULTEE" },
       });
       mockPrisma.webinar.findUnique.mockResolvedValueOnce({
         webinarPlan: {
-          consultantProfile: { userId: "host-1" },
+          title: "Security Webinar",
+          consultantProfile: { user: { id: "host-1" } },
           collaborators: [],
         },
+        appointment: { participants: [] },
       });
 
       const { removeUserFromEventChannel } =
@@ -205,6 +247,26 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       await expect(
         removeUserFromEventChannel("webinar", "web-1", "victim-1"),
       ).rejects.toThrow("Forbidden");
+
+      mockGetSession.mockResolvedValueOnce({
+        user: { id: "host-1", role: "CONSULTANT" },
+      });
+      mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+        webinarPlan: {
+          title: "Security Webinar",
+          consultantProfile: { user: { id: "host-1" } },
+          collaborators: [],
+        },
+        appointment: { participants: [] },
+      });
+
+      const hostResult = await removeUserFromEventChannel(
+        "webinar",
+        "web-1",
+        "victim-1",
+      );
+      expect(hostResult.success).toBe(true);
+      expect(mockChannelRemoveMembers).toHaveBeenCalledWith(["victim-1"]);
     });
   });
 
@@ -233,7 +295,7 @@ describe("Stream security, consent gates, and organization boundaries", () => {
   });
 
   describe("Enterprise organization Stream revocation and wind-down", () => {
-    it("revokes org-scoped channels and user tokens on member removal", async () => {
+    it("revokes org-scoped channels on member removal without revoking global user token", async () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([{ id: "web-org-1" }]);
 
       const { revokeMemberStreamAccess } =
@@ -244,10 +306,10 @@ describe("Stream security, consent gates, and organization boundaries", () => {
         userId: "u1",
       });
       expect(res.complete).toBe(true);
-      expect(res.tokenRevoked).toBe(true);
+      expect(res.tokenRevoked).toBe(false);
       expect(res.channelsRemoved).toBe(1);
       expect(mockChannelRemoveMembers).toHaveBeenCalledWith(["u1"]);
-      expect(mockRevokeUserToken).toHaveBeenCalledWith("u1", expect.any(Date));
+      expect(mockRevokeUserToken).not.toHaveBeenCalled();
     });
 
     it("winds down deactivated organizations and freezes event channels", async () => {

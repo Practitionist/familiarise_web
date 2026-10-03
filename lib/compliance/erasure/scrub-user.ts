@@ -277,11 +277,19 @@ export async function scrubUser(
     // process death between commit and the vendor calls — see the note on
     // `StreamRevocationRetry`, which is the pattern to extend rather than
     // reinvent.
+    const vendorFailures = await offboardNotificationVendor(userId);
+    try {
+      await eraseStreamPrincipalFootprint(userId);
+    } catch {
+      vendorFailures.push(
+        "stream: principal deletion not confirmed — re-run required",
+      );
+    }
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
       affectedOrganizationIds: [],
-      vendorFailures: await offboardNotificationVendor(userId),
+      vendorFailures,
     };
   }
 
@@ -312,6 +320,7 @@ export async function scrubUser(
 
   let collaborationsRemoved: CollaborationRef[] = [];
   let erasureRequestId: string | null = null;
+  let principalOutboxQueued = false;
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -434,6 +443,7 @@ export async function scrubUser(
         ],
         skipDuplicates: true,
       });
+      principalOutboxQueued = true;
     }
 
     // Hard-delete sessions + accounts so SSO and password-based logins
@@ -578,6 +588,12 @@ export async function scrubUser(
     razorpayCustomerId: existing.razorpayCustomerId,
     payoutAccounts,
   });
+
+  if (principalError && !principalOutboxQueued) {
+    vendorFailures.push(
+      "stream: principal deletion not confirmed — re-run required",
+    );
+  }
 
   const notificationFailures = await offboardNotificationVendor(userId);
   vendorFailures.push(...notificationFailures);

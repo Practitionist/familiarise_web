@@ -1,10 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
-import type { StreamChat } from "stream-chat";
+import type { ChannelFilters, StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
   withStreamCircuitBreaker,
   StreamUnavailableError,
@@ -21,7 +22,17 @@ import {
   upsertUsersToStream,
 } from "@/actions/stream/chat/user.action";
 import { bookingOrgId, isChannelAlreadyExistsError } from "@/lib/stream-utils";
-import { addRemainingMembers, createMemberChunk } from "@/lib/stream/batch";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  queryChannelsPaged,
+} from "@/lib/stream/batch";
+import {
+  DEFAULT_RETENTION_DAYS,
+  isPastRetention,
+} from "@/lib/stream/channel-lifecycle";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
 
@@ -499,4 +510,190 @@ export async function getEventData(eventType: EventType, eventId: string) {
       };
     }
   }
+}
+
+export interface OrgRetentionSource {
+  chatRetentionDays?: number | null;
+  streamRecordingRetentionDays?: number | null;
+}
+
+export function resolveEventRetentionDays(
+  planOrg?: OrgRetentionSource | null,
+  appointmentOrg?: OrgRetentionSource | null,
+): number {
+  return (
+    planOrg?.chatRetentionDays ??
+    appointmentOrg?.chatRetentionDays ??
+    planOrg?.streamRecordingRetentionDays ??
+    appointmentOrg?.streamRecordingRetentionDays ??
+    DEFAULT_RETENTION_DAYS
+  );
+}
+
+export async function isEventParticipant(
+  eventType: "webinar" | "class",
+  eventId: string,
+  userId: string,
+): Promise<boolean> {
+  const collaboratorFilter = {
+    collaborators: {
+      some: {
+        consultantProfile: { userId, deletedAt: null },
+        status: "ACCEPTED" as const,
+      },
+    },
+  };
+  const appointmentFilter = {
+    deletedAt: null,
+    occurrences: { some: { deletedAt: null } },
+    participants: { some: liveParticipant(userId) },
+  };
+  const appointmentSelect = {
+    organization: {
+      select: {
+        chatRetentionDays: true,
+        streamRecordingRetentionDays: true,
+      },
+    },
+    occurrences: {
+      orderBy: { endsAt: "desc" as const },
+      take: 1,
+      select: { endsAt: true },
+    },
+  };
+  const planOrgSelect = {
+    organization: {
+      select: {
+        chatRetentionDays: true,
+        streamRecordingRetentionDays: true,
+      },
+    },
+  };
+
+  if (eventType === "webinar") {
+    const hit = await prisma.webinar.findFirst({
+      where: {
+        id: eventId,
+        status: { in: [...OPENABLE_EVENT_STATUSES] },
+        OR: [
+          { appointment: appointmentFilter },
+          { webinarPlan: { consultantProfile: { userId } } },
+          { webinarPlan: collaboratorFilter },
+        ],
+      },
+      select: {
+        id: true,
+        webinarPlan: { select: planOrgSelect },
+        appointment: { select: appointmentSelect },
+      },
+    });
+    if (!hit) return false;
+    return !isPastRetention(
+      hit.appointment?.occurrences[0]?.endsAt ?? null,
+      resolveEventRetentionDays(
+        hit.webinarPlan?.organization,
+        hit.appointment?.organization,
+      ),
+    );
+  }
+
+  const hit = await prisma.class.findFirst({
+    where: {
+      id: eventId,
+      status: { in: [...OPENABLE_EVENT_STATUSES] },
+      OR: [
+        { appointment: appointmentFilter },
+        { classPlan: { consultantProfile: { userId } } },
+        { classPlan: collaboratorFilter },
+      ],
+    },
+    select: {
+      id: true,
+      schedulingPeriodEndsAt: true,
+      classPlan: { select: planOrgSelect },
+      appointment: { select: appointmentSelect },
+    },
+  });
+  if (!hit) return false;
+  return !isPastRetention(
+    hit.appointment?.occurrences[0]?.endsAt ??
+      hit.schedulingPeriodEndsAt ??
+      null,
+    resolveEventRetentionDays(
+      hit.classPlan?.organization,
+      hit.appointment?.organization,
+    ),
+  );
+}
+
+export async function queryOrgTaggedChannels(
+  chat: StreamChat,
+  organizationId: string,
+  extraFilter?: Record<string, unknown>,
+) {
+  const filter = {
+    ...(extraFilter ?? {}),
+    organization_id: { $eq: organizationId },
+  } as unknown as ChannelFilters;
+  return queryChannelsPaged((opts) =>
+    chat.queryChannels(filter, [{ last_message_at: -1 }], opts),
+  );
+}
+
+export async function endActiveStreamVideoCalls(
+  calls: { id: string; streamCallId: string }[],
+  options: {
+    now: Date;
+    endedReason: string | null;
+    errorPrefix: string;
+    useCircuitBreaker?: boolean;
+  },
+): Promise<{ callsEnded: number; errors: string[] }> {
+  let callsEnded = 0;
+  const errors: string[] = [];
+  if (calls.length === 0) return { callsEnded, errors };
+
+  try {
+    const video = getStreamVideoClient().video;
+    for (const call of calls) {
+      let ended = false;
+      try {
+        const endCall = () =>
+          video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
+        if (options.useCircuitBreaker) {
+          await withStreamCircuitBreaker(endCall);
+        } else {
+          await endCall();
+        }
+        ended = true;
+        callsEnded++;
+      } catch (err) {
+        if (isExpectedStreamError(err)) {
+          ended = true;
+        } else {
+          errors.push(
+            `${options.errorPrefix} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (ended && prisma.meeting?.updateMany) {
+        try {
+          await prisma.meeting.updateMany({
+            where: { id: call.id, endedAt: null },
+            data: { endedAt: options.now, endedReason: options.endedReason },
+          });
+        } catch (dbErr) {
+          errors.push(
+            `${options.errorPrefix} meeting update ${call.id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+          );
+        }
+      }
+    }
+  } catch (err) {
+    errors.push(
+      `${options.errorPrefix} video client: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return { callsEnded, errors };
 }

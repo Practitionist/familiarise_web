@@ -5,17 +5,14 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import {
   getStreamChatClient,
-  getStreamVideoClient,
   isExpectedStreamError,
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "../../lib/stream-channel-ids";
-import { STREAM_CALL_TYPE, toCallId } from "../../lib/stream/call-cid";
 import {
   chunk,
   pause,
-  queryChannelsPaged,
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
@@ -23,6 +20,10 @@ import {
   DAY_MS,
   DEFAULT_RETENTION_DAYS,
 } from "../../lib/stream/channel-lifecycle";
+import {
+  endActiveStreamVideoCalls,
+  queryOrgTaggedChannels,
+} from "../../lib/stream/event-channel-service";
 import {
   loadOrgStreamSurfaces,
   revokeMemberStreamAccess,
@@ -92,39 +93,17 @@ async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrg
       take: 250,
     });
 
-    if (strandedHardDeletedCalls.length > 0) {
-      try {
-        const video = getStreamVideoClient().video;
-        for (const call of strandedHardDeletedCalls) {
-          let ended = false;
-          try {
-            await withStreamCircuitBreaker(() =>
-              video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end(),
-            );
-            ended = true;
-            result.callsEnded++;
-          } catch (err) {
-            if (isExpectedStreamError(err)) {
-              ended = true;
-            } else {
-              result.errors.push(
-                `stranded call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
-          if (ended) {
-            await prisma.meeting.updateMany({
-              where: { id: call.id, endedAt: null },
-              data: { endedAt: now, endedReason: null },
-            });
-          }
-        }
-      } catch (err) {
-        result.errors.push(
-          `stranded call video client: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    const strandedRes = await endActiveStreamVideoCalls(
+      strandedHardDeletedCalls,
+      {
+        now,
+        endedReason: null,
+        errorPrefix: "stranded",
+        useCircuitBreaker: true,
+      },
+    );
+    result.callsEnded += strandedRes.callsEnded;
+    result.errors.push(...strandedRes.errors);
   }
 
   const orgs = await prisma.organization.findMany({
@@ -144,7 +123,13 @@ async function windDownDeactivatedOrgsUnlocked(): Promise<WindDownDeactivatedOrg
   result.orgsScanned = orgs.length;
 
   for (const org of orgs) {
-    await windDownSingleOrg(chat, org, now, result);
+    try {
+      await windDownSingleOrg(chat, org, now, result);
+    } catch (err) {
+      result.errors.push(
+        `org ${org.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   await drainPendingMemberRemovals(now, result);
@@ -173,39 +158,14 @@ async function windDownSingleOrg(
       select: { id: true, streamCallId: true },
     });
 
-    if (activeCalls.length > 0) {
-      try {
-        const video = getStreamVideoClient().video;
-        for (const call of activeCalls) {
-          let ended = false;
-          try {
-            await withStreamCircuitBreaker(() =>
-              video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end(),
-            );
-            ended = true;
-            result.callsEnded++;
-          } catch (err) {
-            if (isExpectedStreamError(err)) {
-              ended = true;
-            } else {
-              result.errors.push(
-                `org ${org.id} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
-          if (ended) {
-            await prisma.meeting.updateMany({
-              where: { id: call.id, endedAt: null },
-              data: { endedAt: now, endedReason: "org_deactivated" },
-            });
-          }
-        }
-      } catch (err) {
-        result.errors.push(
-          `org ${org.id} video client: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    const callsRes = await endActiveStreamVideoCalls(activeCalls, {
+      now,
+      endedReason: "org_deactivated",
+      errorPrefix: `org ${org.id}`,
+      useCircuitBreaker: true,
+    });
+    result.callsEnded += callsRes.callsEnded;
+    result.errors.push(...callsRes.errors);
   }
 
   const surfaces = await loadOrgStreamSurfaces(org.id, { onlyUnfrozen: true });
@@ -274,15 +234,10 @@ async function windDownSingleOrg(
 
   const dmChannelIds = new Set<string>(surfaces.dmChannelIds);
   try {
-    const { channels: taggedChannels } = await queryChannelsPaged((opts) =>
-      chat.queryChannels(
-        {
-          organization_id: { $eq: org.id },
-          frozen: false,
-        },
-        [{ last_message_at: -1 }],
-        opts,
-      ),
+    const { channels: taggedChannels } = await queryOrgTaggedChannels(
+      chat,
+      org.id,
+      { frozen: false },
     );
     for (const ch of taggedChannels) {
       if (ch.id && ch.type === "messaging") {
@@ -387,9 +342,12 @@ async function windDownSingleOrg(
     for (const rec of expiredRecordings) {
       try {
         if (rec.previewClipStoragePath) {
-          await storageClient.storage
+          const { error: previewRemoveError } = await storageClient.storage
             .from(RECORDING_PREVIEWS_BUCKET)
             .remove([rec.previewClipStoragePath]);
+          if (previewRemoveError) {
+            throw new Error(previewRemoveError.message);
+          }
         }
         const del = rec.storagePath
           ? await deleteRecordingObject(rec.storagePath)
@@ -442,8 +400,34 @@ async function drainPendingMemberRemovals(
     take: MAX_REMOVED_MEMBERS_PER_RUN,
     orderBy: { updatedAt: "desc" },
   });
+  if (!removedRows || removedRows.length === 0) return;
 
+  const uniqueByKey = new Map<
+    string,
+    { userId: string; organizationId: string }
+  >();
   for (const row of removedRows) {
+    uniqueByKey.set(`${row.userId}:${row.organizationId}`, row);
+  }
+  const uniquePairs = Array.from(uniqueByKey.values());
+
+  const rejoinedRows =
+    (await prisma.membership.findMany({
+      where: {
+        status: { in: ["ACTIVE", "PENDING"] },
+        OR: uniquePairs.map((p) => ({
+          userId: p.userId,
+          organizationId: p.organizationId,
+        })),
+      },
+      select: { userId: true, organizationId: true },
+    })) ?? [];
+  const rejoinedKeys = new Set(
+    rejoinedRows.map((r) => `${r.userId}:${r.organizationId}`),
+  );
+
+  for (const row of uniquePairs) {
+    if (rejoinedKeys.has(`${row.userId}:${row.organizationId}`)) continue;
     try {
       const outcome = await revokeMemberStreamAccess({
         userId: row.userId,

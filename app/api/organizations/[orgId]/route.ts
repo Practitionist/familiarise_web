@@ -28,20 +28,11 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { numericStateCode } from "@/lib/compliance/state-codes";
-import {
-  getStreamVideoClient,
-  isExpectedStreamError,
-  isStreamConfigured,
-} from "@/lib/stream-client";
+import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
-import {
-  deleteRecordingObject,
-  storageClient,
-} from "@/lib/stream/recording-storage";
+import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
 
 const ORG_DELETED_CALL_REASON = "org_deleted";
-const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
 
 const SizeBucketSchema = z.enum([
   "SMALL_1_50",
@@ -772,30 +763,15 @@ export async function DELETE(
               0 || history.billingAccountId !== null;
 
           if (!hasHistory) {
-            const [strandedCalls, strandedRecordings] = await Promise.all([
-              tx.meeting?.findMany
-                ? tx.meeting.findMany({
-                    where: { organizationId: orgId, endedAt: null },
-                    select: {
-                      id: true,
-                      streamCallId: true,
-                    },
-                  })
-                : Promise.resolve([]),
-              tx.recording?.findMany
-                ? tx.recording.findMany({
-                    where: {
-                      organizationId: orgId,
-                      status: { notIn: ["EXPIRED", "FAILED"] },
-                    },
-                    select: {
-                      id: true,
-                      storagePath: true,
-                      previewClipStoragePath: true,
-                    },
-                  })
-                : Promise.resolve([]),
-            ]);
+            const strandedCalls = tx.meeting?.findMany
+              ? await tx.meeting.findMany({
+                  where: { organizationId: orgId, endedAt: null },
+                  select: {
+                    id: true,
+                    streamCallId: true,
+                  },
+                })
+              : [];
 
             if (strandedCalls.length > 0 && tx.meeting?.updateMany) {
               await tx.meeting.updateMany({
@@ -806,21 +782,11 @@ export async function DELETE(
                 data: { endedReason: ORG_DELETED_CALL_REASON },
               });
             }
-            if (strandedRecordings.length > 0 && tx.recording?.updateMany) {
-              await tx.recording.updateMany({
-                where: { id: { in: strandedRecordings.map((r) => r.id) } },
-                data: {
-                  listingStatus: "UNPUBLISHED",
-                  unpublishedAt: new Date(),
-                },
-              });
-            }
 
             await tx.organization.delete({ where: { id: orgId } });
             return {
               kind: "hard" as const,
               strandedCalls,
-              strandedRecordings,
             };
           }
 
@@ -884,82 +850,18 @@ export async function DELETE(
 
 async function settleHardDeleteStreamTeardown(outcome: {
   strandedCalls: { id: string; streamCallId: string }[];
-  strandedRecordings: {
-    id: string;
-    storagePath: string | null;
-    previewClipStoragePath: string | null;
-  }[];
 }): Promise<void> {
-  const now = new Date();
+  if (outcome.strandedCalls.length === 0 || !isStreamConfigured()) return;
 
-  if (outcome.strandedCalls.length > 0 && isStreamConfigured()) {
-    try {
-      const video = getStreamVideoClient().video;
-      for (const call of outcome.strandedCalls) {
-        let ended = false;
-        try {
-          await video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
-          ended = true;
-        } catch (err) {
-          if (isExpectedStreamError(err)) {
-            ended = true;
-          } else {
-            streamLogger.warn(
-              "Failed to end Stream call on org hard-delete; leaving marker for wind-down cron",
-              {
-                meetingId: call.id,
-                streamCallId: call.streamCallId,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            );
-          }
-        }
-        if (ended && prisma.meeting?.updateMany) {
-          await prisma.meeting.updateMany({
-            where: { id: call.id, endedAt: null },
-            data: { endedAt: now, endedReason: null },
-          });
-        }
-      }
-    } catch (err) {
-      streamLogger.warn("Stream Video client unavailable on org hard-delete", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  for (const rec of outcome.strandedRecordings) {
-    try {
-      if (rec.previewClipStoragePath) {
-        await storageClient.storage
-          .from(RECORDING_PREVIEWS_BUCKET)
-          .remove([rec.previewClipStoragePath]);
-      }
-      const del = rec.storagePath
-        ? await deleteRecordingObject(rec.storagePath)
-        : { success: true };
-      if (del.success && prisma.recording?.update) {
-        await prisma.recording.update({
-          where: { id: rec.id },
-          data: {
-            status: "EXPIRED",
-            storageUrl: null,
-            storagePath: null,
-            storageType: "STREAM_S3",
-            previewClipUrl: null,
-            previewClipStoragePath: null,
-            previewClipDuration: null,
-            thumbnailUrl: null,
-            listingStatus: "UNPUBLISHED",
-            unpublishedAt: now,
-          },
-        });
-      }
-    } catch (err) {
-      streamLogger.warn("Failed to purge recording on org hard-delete", {
-        recordingId: rec.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  const { errors } = await endActiveStreamVideoCalls(outcome.strandedCalls, {
+    now: new Date(),
+    endedReason: null,
+    errorPrefix: "org hard-delete",
+  });
+  for (const error of errors) {
+    streamLogger.warn(
+      "Failed to settle Stream call teardown on org hard-delete; leaving marker for wind-down cron",
+      { error },
+    );
   }
 }

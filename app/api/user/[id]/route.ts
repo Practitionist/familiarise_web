@@ -272,9 +272,11 @@ export async function DELETE(
       prisma.session.deleteMany({ where: { userId: id } }),
       prisma.user.delete({ where: { id: id } }),
     ]);
+    let streamErased = true;
     try {
       await eraseStreamPrincipalFootprint(id);
     } catch (streamError) {
+      streamErased = false;
       Sentry.captureException(
         streamError instanceof Error
           ? streamError
@@ -290,6 +292,7 @@ export async function DELETE(
       {
         message: "User deleted successfully",
         novuCleanup: novuErased ? "done" : "pending",
+        streamCleanup: streamErased ? "done" : "pending",
       },
       { status: 200 },
     );

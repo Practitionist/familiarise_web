@@ -36,7 +36,9 @@ import {
   eventTypeSchema,
   getChannelId,
   getEventData,
+  isEventParticipant,
   removeUserFromEventChannel as removeUserFromEventChannelInternal,
+  resolveEventRetentionDays,
   STREAM_SERVER_TRUSTED,
   userIdSchema,
   type EventType,
@@ -62,11 +64,32 @@ async function isEventChannelHost(
   }
 }
 
+async function isUserEnrolledInEvent(
+  userId: string,
+  eventType: EventType,
+  eventId: string,
+): Promise<boolean> {
+  if (eventType === "webinar" || eventType === "class") {
+    return isEventParticipant(eventType, eventId, userId);
+  }
+  const eventData = await getEventData(eventType, eventId);
+  if (!eventData) return false;
+  return (
+    eventData.consultantId === userId || eventData.members.includes(userId)
+  );
+}
+
 async function requireEventChannelActor(
   forUserId: string,
   eventType: EventType,
   eventId: string,
-  { allowEventHost = false }: { allowEventHost?: boolean } = {},
+  {
+    allowEventHost = false,
+    allowSelfWithoutEnrollment = false,
+  }: {
+    allowEventHost?: boolean;
+    allowSelfWithoutEnrollment?: boolean;
+  } = {},
 ): Promise<EventChannelActorCheck> {
   const session = await getSession(true);
   if (!session?.user?.id) {
@@ -84,12 +107,20 @@ async function requireEventChannelActor(
     throw new Error("Forbidden: account suspended");
   }
   if (
-    session.user.id === forUserId ||
     isPrivileged(session.user.role) ||
     (allowEventHost &&
       (await isEventChannelHost(session.user.id, eventType, eventId)))
   ) {
     return { ok: true };
+  }
+  if (session.user.id === forUserId) {
+    if (
+      allowSelfWithoutEnrollment ||
+      (await isUserEnrolledInEvent(session.user.id, eventType, eventId))
+    ) {
+      return { ok: true };
+    }
+    throw new Error("Forbidden: not a participant in this event");
   }
   throw new Error(
     "Forbidden: cannot manage event channel membership for another user",
@@ -151,6 +182,7 @@ export async function removeUserFromEventChannel(
 
   const actor = await requireEventChannelActor(userId, eventType, eventId, {
     allowEventHost: true,
+    allowSelfWithoutEnrollment: true,
   });
   if (!actor.ok) {
     streamLogger.warn("Refused event channel removal", {
@@ -615,11 +647,10 @@ async function getWebinarDataForUser(
 
   const keepIfActive = (w: WebinarRow): boolean => {
     const endsAt = w.appointment?.occurrences?.[0]?.endsAt;
-    const retention =
-      w.webinarPlan?.organization?.chatRetentionDays ??
-      w.appointment?.organization?.chatRetentionDays ??
-      w.webinarPlan?.organization?.streamRecordingRetentionDays ??
-      w.appointment?.organization?.streamRecordingRetentionDays;
+    const retention = resolveEventRetentionDays(
+      w.webinarPlan?.organization,
+      w.appointment?.organization,
+    );
     return !isWebinarOrClassPastRetention(endsAt, retention);
   };
 
@@ -774,11 +805,10 @@ async function getClassDataForUser(
   const keepIfActive = (c: ClassRow): boolean => {
     const slotEnd = c.appointment?.occurrences?.[0]?.endsAt ?? null;
     const endsAt = slotEnd ?? c.schedulingPeriodEndsAt;
-    const retention =
-      c.classPlan?.organization?.chatRetentionDays ??
-      c.appointment?.organization?.chatRetentionDays ??
-      c.classPlan?.organization?.streamRecordingRetentionDays ??
-      c.appointment?.organization?.streamRecordingRetentionDays;
+    const retention = resolveEventRetentionDays(
+      c.classPlan?.organization,
+      c.appointment?.organization,
+    );
     return !isWebinarOrClassPastRetention(endsAt, retention);
   };
 

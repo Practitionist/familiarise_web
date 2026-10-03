@@ -48,17 +48,13 @@ import {
   DmNotPermittedError,
   pairBookingContexts,
 } from "@/lib/stream/dm-eligibility";
-import {
-  DM_ELIGIBLE_STATUSES,
-  OPENABLE_EVENT_STATUSES,
-} from "@/lib/stream/dm-eligibility-statuses";
-import {
-  DEFAULT_RETENTION_DAYS,
-  isPastRetention,
-} from "@/lib/stream/channel-lifecycle";
+import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
-import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
+import {
+  addUserToEventChannel,
+  isEventParticipant,
+} from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -233,128 +229,6 @@ async function postBookingContextCardIfAbsent(
       error: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-/**
- * Is the caller a participant in this event — an attendee on one of its slots,
- * the host consultant, or an accepted collaborator?
- *
- * Deliberately NOT `authorizeEventAccess` from lib/auth-helpers: for webinars
- * and classes that helper authorizes the plan owner and ACCEPTED collaborators
- * only, and returns 403 for attendees. Attendees are exactly who needs the
- * event chat. This mirrors the predicate the search route already applies, so
- * the two cannot disagree about which rows are clickable.
- *
- * The retention guard (second query) is F-HIGH-2's other half: dev's fix keeps
- * past-retention events out of the sync expected-set, but create-on-miss here
- * would resurrect the hard-deleted channel anyway — writable until the expire
- * cron's next pass re-freezes it. An event whose last slot ended more than
- * `retentionDays` ago is not openable, full stop.
- */
-async function isEventParticipant(
-  eventType: "webinar" | "class",
-  eventId: string,
-  userId: string,
-): Promise<boolean> {
-  if (eventType === "webinar") {
-    const hit = await prisma.webinar.findFirst({
-      where: {
-        id: eventId,
-        status: { in: [...OPENABLE_EVENT_STATUSES] },
-        OR: [
-          {
-            appointment: {
-              deletedAt: null,
-              occurrences: { some: { deletedAt: null } },
-              participants: { some: liveParticipant(userId) },
-            },
-          },
-          { webinarPlan: { consultantProfile: { userId } } },
-          {
-            webinarPlan: {
-              collaborators: {
-                some: {
-                  consultantProfile: { userId, deletedAt: null },
-                  status: "ACCEPTED",
-                },
-              },
-            },
-          },
-        ],
-      },
-      select: {
-        id: true,
-        appointment: {
-          select: {
-            organization: { select: { streamRecordingRetentionDays: true } },
-            occurrences: {
-              orderBy: { endsAt: "desc" },
-              take: 1,
-              select: { endsAt: true },
-            },
-          },
-        },
-      },
-    });
-    if (!hit) return false;
-    return !isPastRetention(
-      hit.appointment?.occurrences[0]?.endsAt ?? null,
-      hit.appointment?.organization?.streamRecordingRetentionDays ??
-        DEFAULT_RETENTION_DAYS,
-    );
-  }
-
-  const hit = await prisma.class.findFirst({
-    where: {
-      id: eventId,
-      status: { in: [...OPENABLE_EVENT_STATUSES] },
-      OR: [
-        {
-          appointment: {
-            deletedAt: null,
-            occurrences: { some: { deletedAt: null } },
-            participants: { some: liveParticipant(userId) },
-          },
-        },
-        { classPlan: { consultantProfile: { userId } } },
-        {
-          classPlan: {
-            collaborators: {
-              some: {
-                consultantProfile: { userId, deletedAt: null },
-                status: "ACCEPTED",
-              },
-            },
-          },
-        },
-      ],
-    },
-    select: {
-      id: true,
-      appointment: {
-        // A class spans one appointment per cohort but ONE channel; age is the
-        // latest end across cohorts, carrying that cohort's org dial — same
-        // collapse rule as the expire cron. Each appointment contributes only
-        // its own latest slot (orderBy+take below), so this stays one row per
-        // cohort.
-        select: {
-          organization: { select: { streamRecordingRetentionDays: true } },
-          occurrences: {
-            orderBy: { endsAt: "desc" },
-            take: 1,
-            select: { endsAt: true },
-          },
-        },
-      },
-    },
-  });
-  if (!hit) return false;
-  // #1554 — a class is one wrapper, so its window reads like the webinar's.
-  return !isPastRetention(
-    hit.appointment?.occurrences[0]?.endsAt ?? null,
-    hit.appointment?.organization?.streamRecordingRetentionDays ??
-      DEFAULT_RETENTION_DAYS,
-  );
 }
 
 export async function POST(request: NextRequest) {
