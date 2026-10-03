@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -9,7 +9,6 @@ import {
   ArrowLeft,
   CalendarX,
   CreditCard,
-  ExternalLink,
   FileText,
   LifeBuoy,
   Users,
@@ -84,6 +83,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
+import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -267,6 +267,14 @@ export function AppointmentDetailClient({
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [activeRecording, setActiveRecording] = useState<{
+    id: string;
+    title: string;
+    url: string | null;
+    status: string;
+    durationInMinutes: number;
+    recordedAt: Date;
+  } | null>(null);
   const {
     data: detail,
     isLoading,
@@ -566,6 +574,11 @@ export function AppointmentDetailClient({
                 {sponsoredBy && (
                   <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
                     Sponsored · {sponsoredBy}
+                  </span>
+                )}
+                {vm.kind === "TRIAL" && (
+                  <span className="rounded bg-muted text-muted-foreground px-1.5 py-px text-[10px] font-medium">
+                    Chat unavailable for trials
                   </span>
                 )}
               </div>
@@ -1129,16 +1142,15 @@ export function AppointmentDetailClient({
                               {...recordingStatusBadge(rec.status)}
                               size="sm"
                             />
-                            {rec.url && (
-                              <Button variant="outline" size="sm" asChild>
-                                <a
-                                  href={rec.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  Watch
-                                  <ExternalLink className="ml-1 h-3 w-3" />
-                                </a>
+                            {(rec.url ||
+                              rec.status === "AVAILABLE" ||
+                              rec.status === "READY") && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setActiveRecording(rec)}
+                              >
+                                Watch
                               </Button>
                             )}
                           </div>
@@ -1152,6 +1164,25 @@ export function AppointmentDetailClient({
           </aside>
         </div>
       </div>
+
+      <RecordingPlayerModal
+        open={Boolean(activeRecording)}
+        onOpenChange={(open) => {
+          if (!open) setActiveRecording(null);
+        }}
+        recording={
+          activeRecording
+            ? {
+                id: activeRecording.id,
+                title: activeRecording.title,
+                recordedAt: activeRecording.recordedAt,
+                durationInMinutes: activeRecording.durationInMinutes,
+                playbackUrl: activeRecording.url,
+                planTitle: vm.title,
+              }
+            : null
+        }
+      />
 
       {/* Mounted HERE, not by each caller. This component renders the overflow
           menu whose every item opens one of these dialogs, so making the host

@@ -8,13 +8,9 @@ import {
   eventStatusPayload,
   positioningPayload,
   priceToPaise,
+  recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
-import {
-  CreateClassPayload,
-  UpdateClassPayload,
-  ClassRequestBody,
-  ClassContentInput,
-} from "../types";
+import { ClassRequestBody, ClassContentInput } from "../types";
 
 export class ClassService {
   /**
@@ -181,7 +177,7 @@ export class ClassService {
    * Build request body for API
    * API accepts topic names directly - no ID conversion needed
    */
-  private static buildRequestBody(
+  static buildRequestBody(
     classData: Partial<ClassEvent>,
     consultantId: string,
     topicNames: string[],
@@ -189,7 +185,9 @@ export class ClassService {
     planId: string,
     classId: string,
     startDate?: string | null,
-  ): ClassRequestBody {
+  ): ClassRequestBody & {
+    sessionDurationInHours?: number;
+  } {
     const plan = classData.classPlan;
 
     if (!plan && isUpdate) {
@@ -198,8 +196,10 @@ export class ClassService {
       );
     }
 
+    const recording = recordingPayload(plan);
+
     // Build base payload with required fields
-    const basePayload: CreateClassPayload = {
+    const basePayload = {
       title: plan?.title ?? "",
       description: plan?.description ?? "",
       // The form edits rupees; the DB stores paise (#780 money model).
@@ -207,9 +207,12 @@ export class ClassService {
       priceCurrency: plan?.priceCurrency,
       durationInMonths: plan?.durationInMonths ?? 1,
       sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
+      sessionDurationInHours: plan?.sessionDurationInHours,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
-      recordingEnabled: plan?.recordingEnabled,
+      recordingEnabled: recording.recordingEnabled,
+      recordingStoragePolicy: recording.recordingStoragePolicy as
+        "STREAM_ONLY" | "PERMANENT",
       emailSupport: plan?.emailSupport,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,
@@ -236,12 +239,11 @@ export class ClassService {
     };
 
     if (isUpdate) {
-      const updatePayload: UpdateClassPayload = {
+      return {
         ...basePayload,
         id: planId,
         classId: classId || undefined,
       };
-      return updatePayload;
     }
 
     return basePayload;

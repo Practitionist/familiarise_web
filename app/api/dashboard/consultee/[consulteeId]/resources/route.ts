@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
 import { extractRecordings } from "@/lib/stream/session-recordings";
 import {
@@ -325,6 +326,60 @@ export async function GET(
         }),
       ]);
 
+    const purchasedRecordings = prisma.recordingPurchase?.findMany
+      ? await prisma.recordingPurchase.findMany({
+          where: {
+            buyerId: userId,
+            status: "SUCCEEDED",
+          },
+          include: {
+            recording: {
+              include: {
+                meeting: {
+                  include: {
+                    occurrence: {
+                      include: {
+                        appointment: {
+                          include: {
+                            webinar: {
+                              include: {
+                                webinarPlan: {
+                                  include: {
+                                    consultantProfile: {
+                                      include: {
+                                        user: { select: consultantUserSelect },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                            class: {
+                              include: {
+                                classPlan: {
+                                  include: {
+                                    consultantProfile: {
+                                      include: {
+                                        user: { select: consultantUserSelect },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
+
     // Include if COMPLETED or has at least 1 material/recording
     type TransformedEvent = {
       status: string;
@@ -424,6 +479,37 @@ export async function GET(
           })),
         )
       ).filter(shouldInclude),
+      purchased: await Promise.all(
+        purchasedRecordings.map(async (p) => {
+          const rec = p.recording;
+          const apt = rec.meeting?.occurrence?.appointment;
+          const plan =
+            apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
+          const consultantUser = plan?.consultantProfile?.user;
+          const playbackUrl = await getBestRecordingUrl(rec);
+          return {
+            id: `purchased-${p.id}`,
+            planTitle: rec.listingTitle || plan?.title || rec.title,
+            consultantName: consultantUser?.name ?? null,
+            consultantImage: consultantUser?.image ?? null,
+            status: "COMPLETED",
+            date: rec.recordedAt,
+            eventType: "purchased" as const,
+            materials: [],
+            recordings: [
+              {
+                id: rec.id,
+                title: rec.listingTitle || rec.title,
+                durationInMinutes: rec.durationInMinutes,
+                recordedAt: rec.recordedAt,
+                playbackUrl,
+                thumbnailUrl: rec.thumbnailUrl,
+                status: rec.status,
+              },
+            ],
+          };
+        }),
+      ),
     };
 
     return NextResponse.json({ data: transform, success: true });

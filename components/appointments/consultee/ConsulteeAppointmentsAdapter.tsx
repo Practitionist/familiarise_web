@@ -92,6 +92,63 @@ function sourceId(vm: AppointmentVM): string | null {
   }
 }
 
+function consultantUserIdOf(vm: AppointmentVM): string | null {
+  const src = vm.raw.source as
+    | {
+        consultationPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        subscriptionPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        webinarPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        classPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+      }
+    | undefined;
+  const fromSource =
+    src?.consultationPlan?.consultantProfile?.user?.id ??
+    src?.subscriptionPlan?.consultantProfile?.user?.id ??
+    src?.webinarPlan?.consultantProfile?.user?.id ??
+    src?.classPlan?.consultantProfile?.user?.id;
+  if (fromSource) return fromSource;
+
+  const appt = vm.raw.appointment as
+    | {
+        consultation?: {
+          consultationPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        subscription?: {
+          subscriptionPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        webinar?: {
+          webinarPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        class?: {
+          classPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+      }
+    | undefined;
+  return (
+    appt?.consultation?.consultationPlan?.consultantProfile?.user?.id ??
+    appt?.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
+    appt?.webinar?.webinarPlan?.consultantProfile?.user?.id ??
+    appt?.class?.classPlan?.consultantProfile?.user?.id ??
+    null
+  );
+}
+
 /**
  * The open reschedule proposal on this row, and which appointment carries it.
  *
@@ -314,6 +371,61 @@ export function useConsulteeAppointmentsAdapter(options?: {
         label: "Documents",
         onClick: () => openDialog(vm, "documents"),
       });
+    }
+    const chatAllowed =
+      vm.kind !== "TRIAL" &&
+      !isPendingPaymentStatus(vm.status) &&
+      (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status));
+
+    if (
+      chatAllowed &&
+      consulteeId &&
+      vm.appointmentId &&
+      (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION")
+    ) {
+      const counterpartyUserId = consultantUserIdOf(vm);
+      const messageHref = `/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
+        counterpartyUserId
+          ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
+          : ""
+      }`;
+      items.push({
+        key: "message",
+        label: "Message Consultant",
+        href: messageHref,
+        onClick: () => router.push(messageHref),
+      });
+    }
+
+    if (
+      chatAllowed &&
+      consulteeId &&
+      (vm.kind === "WEBINAR" || vm.kind === "CLASS")
+    ) {
+      const eventId = sourceId(vm);
+      if (eventId) {
+        const eventChatHref = `/dashboard/consultee/${consulteeId}/messages?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+        items.push({
+          key: "event-chat",
+          label: "Open Event Chat",
+          href: eventChatHref,
+          onClick: () => router.push(eventChatHref),
+        });
+      }
+      if (vm.appointmentId) {
+        const counterpartyUserId = consultantUserIdOf(vm);
+        const dmHref = `/dashboard/consultee/${consulteeId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
+          counterpartyUserId
+            ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
+            : ""
+        }`;
+        items.push({
+          key: "message",
+          label: "Message Consultant",
+          href: dmHref,
+          onClick: () => router.push(dmHref),
+        });
+      }
     }
     if (vm.appointmentId && consulteeId) {
       // #1527 — one verb for help everywhere, and one place: the booking's

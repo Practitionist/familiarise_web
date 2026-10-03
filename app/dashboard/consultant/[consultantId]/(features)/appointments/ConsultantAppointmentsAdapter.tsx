@@ -63,6 +63,41 @@ function actionableRawSlots(vm: AppointmentVM) {
   return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
 }
 
+function counterpartyUserIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment;
+  if (appt?.consultation?.requestedBy?.user?.id) {
+    return appt.consultation.requestedBy.user.id;
+  }
+  if (appt?.subscription?.requestedBy?.user?.id) {
+    return appt.subscription.requestedBy.user.id;
+  }
+  const src = vm.raw.source as
+    | {
+        requestedBy?: { user?: { id?: string } };
+        consulteeProfile?: { user?: { id?: string } };
+      }
+    | undefined;
+  return src?.requestedBy?.user?.id ?? src?.consulteeProfile?.user?.id ?? null;
+}
+
+function groupEventIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment as
+    | {
+        webinar?: { id?: string } | null;
+        class?: { id?: string } | null;
+        webinarId?: string | null;
+        classId?: string | null;
+      }
+    | undefined;
+  if (vm.kind === "WEBINAR") {
+    return appt?.webinar?.id ?? appt?.webinarId ?? null;
+  }
+  if (vm.kind === "CLASS") {
+    return appt?.class?.id ?? appt?.classId ?? null;
+  }
+  return null;
+}
+
 export function useConsultantAppointmentsAdapter(
   consultantId: string,
 ): AppointmentActionAdapter {
@@ -94,11 +129,7 @@ export function useConsultantAppointmentsAdapter(
     rawOccurrences,
     title: activeVm?.title ?? "",
     type: typeLabel as
-      | "Consultation"
-      | "Subscription"
-      | "Webinar"
-      | "Class"
-      | "Trial",
+      "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial",
   });
 
   const openDialog = (vm: AppointmentVM, kind: DialogKind) => {
@@ -331,6 +362,41 @@ export function useConsultantAppointmentsAdapter(
         label: "Upload document",
         onClick: () => openDialog(vm, "documents"),
       });
+    }
+
+    const chatAllowed =
+      !isTrial && (isConfirmedStatus(vm.status) || vm.status === "COMPLETED");
+
+    if (
+      chatAllowed &&
+      vm.appointmentId &&
+      (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION")
+    ) {
+      const counterpartyUserId = counterpartyUserIdOf(vm);
+      const messageHref = `/dashboard/consultant/${consultantId}/messages?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}${
+        counterpartyUserId
+          ? `&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`
+          : ""
+      }`;
+      items.push({
+        key: "message",
+        label: "Message Consultee",
+        href: messageHref,
+        onClick: () => router.push(messageHref),
+      });
+    }
+
+    if (chatAllowed && (vm.kind === "WEBINAR" || vm.kind === "CLASS")) {
+      const eventId = groupEventIdOf(vm);
+      if (eventId) {
+        const eventChatHref = `/dashboard/consultant/${consultantId}/messages?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+        items.push({
+          key: "event-chat",
+          label: "Open Event Chat",
+          href: eventChatHref,
+          onClick: () => router.push(eventChatHref),
+        });
+      }
     }
 
     // #1270 — the dev backdoor is ADDITIVE: a separately-labelled overflow

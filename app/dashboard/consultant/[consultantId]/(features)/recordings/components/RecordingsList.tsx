@@ -12,7 +12,9 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { RecordingCard } from "./RecordingCard";
+import { RecordingCard, type ExtendedRecordingData } from "./RecordingCard";
+import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
+import { RecordingManageSheet } from "@/components/recordings/RecordingManageSheet";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,14 +22,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 
+export type ConsultantRecordingFilterType =
+  "webinar" | "class" | "consultation" | "subscription" | "trial";
+
 interface RecordingsListProps {
   consultantId: string;
-  type?: "webinar" | "class" | null;
+  type?: ConsultantRecordingFilterType | null;
 }
 
 export function RecordingsList({ consultantId, type }: RecordingsListProps) {
   const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [activePlayerRecording, setActivePlayerRecording] =
+    useState<ExtendedRecordingData | null>(null);
+  const [activeManageRecording, setActiveManageRecording] =
+    useState<ExtendedRecordingData | null>(null);
 
   // Search + pagination state
   const [search, setSearch] = useState("");
@@ -49,15 +58,9 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
     setPage(1);
   }, [type]);
 
-  const {
-    data,
-    isPending,
-    isError,
-    error,
-    refetch,
-  } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     ...createConsultantQueries(consultantId).recordings({
-      type,
+      type: (type as "webinar" | "class" | null) ?? null,
       page,
       limit,
       search: debouncedSearch,
@@ -67,7 +70,7 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
     placeholderData: keepPreviousData,
   });
 
-  const recordings = data?.recordings ?? [];
+  const recordings = (data?.recordings ?? []) as ExtendedRecordingData[];
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
 
@@ -171,12 +174,15 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
             ? "Webinar recordings will appear here after you record a session."
             : type === "class"
               ? "Class recordings will appear here after you record a session."
-              : "Your recorded sessions will appear here."}
+              : type === "consultation"
+                ? "Consultation recordings will appear here after you record a session."
+                : type === "subscription"
+                  ? "Subscription recordings will appear here after you record a session."
+                  : "Your recorded sessions will appear here."}
         </p>
         <p className="text-sm text-muted-foreground mt-2 max-w-md">
           Recordings are created automatically when you enable recording during
-          a webinar or class session. Use the button below to check for new
-          recordings.
+          a session. Use the button below to check for new recordings.
         </p>
         <Button
           onClick={handleSync}
@@ -267,6 +273,8 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
               key={recording.id}
               recording={recording}
               onTransfer={handleTransfer}
+              onWatch={(rec) => setActivePlayerRecording(rec)}
+              onManage={(rec) => setActiveManageRecording(rec)}
             />
           ))}
         </div>
@@ -301,6 +309,40 @@ export function RecordingsList({ consultantId, type }: RecordingsListProps) {
           </div>
         </div>
       )}
+
+      <RecordingPlayerModal
+        open={Boolean(activePlayerRecording)}
+        onOpenChange={(open) => {
+          if (!open) setActivePlayerRecording(null);
+        }}
+        recording={
+          activePlayerRecording
+            ? {
+                id: activePlayerRecording.id,
+                title: activePlayerRecording.title,
+                recordedAt: activePlayerRecording.recordedAt,
+                durationInMinutes: activePlayerRecording.durationInMinutes,
+                resolution: activePlayerRecording.resolution,
+                playbackUrl: activePlayerRecording.playbackUrl,
+                storageType: activePlayerRecording.storageType,
+                streamUrlExpiresAt: activePlayerRecording.streamUrlExpiresAt,
+                planTitle: activePlayerRecording.planTitle,
+                previewTranscript: activePlayerRecording.previewTranscript,
+              }
+            : null
+        }
+      />
+
+      <RecordingManageSheet
+        open={Boolean(activeManageRecording)}
+        onOpenChange={(open) => {
+          if (!open) setActiveManageRecording(null);
+        }}
+        recording={activeManageRecording}
+        onUpdated={() => {
+          void refetch();
+        }}
+      />
     </div>
   );
 }
