@@ -412,7 +412,7 @@ export async function scrubUser(
     consentRetainedUntil.setUTCFullYear(
       consentRetainedUntil.getUTCFullYear() + 7,
     );
-    await tx.consentArtifact?.updateMany({
+    await tx.consentArtifact.updateMany({
       where: { userId, withdrawnAt: null },
       data: { withdrawnAt: now, auditRetainedUntil: consentRetainedUntil },
     });

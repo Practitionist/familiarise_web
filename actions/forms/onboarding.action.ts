@@ -393,31 +393,43 @@ export async function completeOrgWorkspaceOnboardingAction(
     };
   }
 
-  const now = new Date();
+  if (options?.acceptTermsAndPrivacy) {
+    const now = new Date();
+    const { buildSignupConsentArtifacts } = await import(
+      "@/lib/compliance/dpdp"
+    );
+    const { SIGNUP_PURPOSES } = await import("@/lib/compliance/purpose-codes");
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          onboardingCompleted: true,
+          termsAcceptedAt: now,
+          privacyAcceptedAt: now,
+        },
+      });
+      const existingConsent = await tx.consentArtifact.findFirst({
+        where: {
+          userId,
+          dataFiduciary: "Familiarise",
+          withdrawnAt: null,
+          purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
+        },
+        select: { id: true },
+      });
+      if (!existingConsent) {
+        await tx.consentArtifact.createMany({
+          data: buildSignupConsentArtifacts(userId),
+        });
+      }
+    });
+    return { success: true };
+  }
+
   await prisma.user.update({
     where: { id: userId },
-    data: {
-      onboardingCompleted: true,
-      ...(options?.acceptTermsAndPrivacy
-        ? { termsAcceptedAt: now, privacyAcceptedAt: now }
-        : {}),
-    },
+    data: { onboardingCompleted: true },
   });
-
-  if (options?.acceptTermsAndPrivacy && prisma.consentArtifact?.findFirst) {
-    const existingConsent = await prisma.consentArtifact.findFirst({
-      where: { userId, withdrawnAt: null },
-      select: { id: true },
-    });
-    if (!existingConsent) {
-      const { buildSignupConsentArtifacts } = await import(
-        "@/lib/compliance/dpdp"
-      );
-      await prisma.consentArtifact.createMany({
-        data: buildSignupConsentArtifacts(userId),
-      });
-    }
-  }
 
   return { success: true };
 }

@@ -135,31 +135,35 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    const consent = await prisma.consentArtifact.create({ data: draft });
+    const consent = await prisma.$transaction(async (tx) => {
+      const created = await tx.consentArtifact.create({ data: draft });
 
-    // Sync downstream preference tables so marketing mailers and cookie gates
-    // honour the DPDP consent grant immediately.
-    if (purposeCodes.includes(PURPOSE_CODES.MARKETING_COMMS)) {
-      await Promise.all([
-        prisma.notificationPreference.upsert({
+      // Sync downstream preference tables so marketing mailers and cookie gates
+      // honour the DPDP consent grant immediately.
+      if (purposeCodes.includes(PURPOSE_CODES.MARKETING_COMMS)) {
+        await Promise.all([
+          tx.notificationPreference.upsert({
+            where: { userId },
+            create: { userId, marketingEmails: true },
+            update: { marketingEmails: true },
+          }),
+          tx.cookiePreference.upsert({
+            where: { userId },
+            create: { userId, marketing: true },
+            update: { marketing: true },
+          }),
+        ]);
+      }
+      if (purposeCodes.includes(PURPOSE_CODES.ANALYTICS)) {
+        await tx.cookiePreference.upsert({
           where: { userId },
-          create: { userId, marketingEmails: true },
-          update: { marketingEmails: true },
-        }),
-        prisma.cookiePreference.upsert({
-          where: { userId },
-          create: { userId, marketing: true },
-          update: { marketing: true },
-        }),
-      ]);
-    }
-    if (purposeCodes.includes(PURPOSE_CODES.ANALYTICS)) {
-      await prisma.cookiePreference.upsert({
-        where: { userId },
-        create: { userId, analytics: true },
-        update: { analytics: true },
-      });
-    }
+          create: { userId, analytics: true },
+          update: { analytics: true },
+        });
+      }
+
+      return created;
+    });
 
     return NextResponse.json({ consent }, { status: 201 });
   } catch (error) {

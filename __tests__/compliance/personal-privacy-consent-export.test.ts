@@ -60,6 +60,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: {
       findMany: jest.fn(),
     },
+    $transaction: jest.fn(),
   },
 }));
 
@@ -89,6 +90,7 @@ const mockPrisma = prisma as unknown as {
   dpdpGrievance: { findMany: jest.Mock };
   consumerInvoice: { findMany: jest.Mock };
   appointmentParticipant: { findMany: jest.Mock };
+  $transaction: jest.Mock;
 };
 
 describe("Personal DPDP Consent & §11 Data Export Routes", () => {
@@ -102,6 +104,9 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
     };
     mockGetSession.mockResolvedValue(session);
     mockRequireApiAuth.mockResolvedValue({ session, error: null });
+    mockPrisma.$transaction.mockImplementation(
+      (fn: (tx: unknown) => unknown) => fn(mockPrisma),
+    );
   });
 
   afterAll(() => {

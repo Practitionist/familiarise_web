@@ -310,6 +310,17 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   ORG_WORKSPACE: [
     personalInfoStep,
     {
+      key: "agreement",
+      label: "Agreement",
+      render: (ctx) => (
+        <ConsulteeAgreementForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+        />
+      ),
+    },
+    {
       key: "org",
       label: "Create Organization",
       // The shared wizard owns the remaining 5-6 screens (Org Info → Review)
@@ -331,7 +342,9 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
             // draft row is deleted below.
             await ctx.onQuiesceDraftSaves();
             await completeOrgWorkspaceOnboardingAction(userId, {
-              acceptTermsAndPrivacy: true,
+              acceptTermsAndPrivacy: Boolean(
+                ctx.formData.termsAccepted && ctx.formData.privacyAccepted,
+              ),
             });
             await clearOnboardingDraftAction();
           }}

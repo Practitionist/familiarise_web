@@ -204,12 +204,6 @@ export function ConsentSection() {
   });
 
   const personalGranted = grantedPurposes(personalConsent.data?.data ?? []);
-  if (personalConsent.data?.preferences?.marketingEmails) {
-    personalGranted.add("MARKETING_COMMS");
-  }
-  if (personalConsent.data?.preferences?.cookieAnalytics) {
-    personalGranted.add("ANALYTICS");
-  }
 
   return (
     <Section
