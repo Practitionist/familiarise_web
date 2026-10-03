@@ -12,7 +12,7 @@ import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
 
-import { sora } from "@/lib/fonts";
+import { instrumentSerif, sora } from "@/lib/fonts";
 
 import "./globals.css";
 
@@ -73,7 +73,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={sora.variable}>
+    <html lang="en" className={`${sora.variable} ${instrumentSerif.variable}`}>
       <body
         className={`${sora.className} flex flex-col min-h-svh antialiased`}
       >

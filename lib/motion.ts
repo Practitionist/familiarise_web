@@ -86,3 +86,23 @@ export const stepTransition: Transition = {
  * common ancestor) for the shared-layout measurement to be meaningful.
  */
 export const indicatorTransition: Transition = { ...SPRING_SOFT };
+
+/**
+ * Marketing-surface entrance: a short fade + rise as a block scrolls into
+ * view. Same curve as the wizard so the product reads as one motion language.
+ * Use with `initial="hidden" whileInView="visible" viewport={revealViewport}`
+ * under a `<MotionConfig reducedMotion="user">` boundary.
+ */
+export const reveal = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0 },
+} as const;
+
+export const revealTransition = (delay = 0): Transition => ({
+  duration: DURATION.enter,
+  ease: EASE,
+  delay,
+});
+
+/** Fire once, slightly before the block is fully on screen. */
+export const revealViewport = { once: true, margin: "0px 0px -10% 0px" };

@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import NextError from "next/error";
 import { useEffect } from "react";
 
-import { sora } from "@/lib/fonts";
+import { instrumentSerif, sora } from "@/lib/fonts";
 
 import "./globals.css";
 
@@ -21,7 +21,7 @@ export default function GlobalError({
     // global-error legitimately replaces the root layout, so it owns the only
     // <html>/<body> on this render — hence the font class here rather than
     // inherited. Without it this surface fell back to the UA default font.
-    <html lang="en" className={sora.variable}>
+    <html lang="en" className={`${sora.variable} ${instrumentSerif.variable}`}>
       <body className={`${sora.className} antialiased`}>
         {/* `NextError` is the default Next.js error page component. Its type
         definition requires a `statusCode` prop. However, since the App Router

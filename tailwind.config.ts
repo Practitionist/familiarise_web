@@ -20,6 +20,7 @@ const config: Config = {
       fontFamily: {
         sans: ["var(--font-sora)", "system-ui", "sans-serif"],
         display: ["var(--font-sora)", "system-ui", "sans-serif"],
+        serif: ["var(--font-instrument-serif)", "Georgia", "serif"],
       },
       backgroundImage: {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",

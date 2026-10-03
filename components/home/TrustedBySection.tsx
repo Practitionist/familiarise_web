@@ -1,35 +1,28 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { cn } from "@/utils/tailwind";
 import { COMPANY_LOGOS } from "./data";
+import { Reveal, container } from "./primitives";
 
 export function TrustedBySection() {
   return (
-    <section className="py-16 bg-zinc-950 border-b border-zinc-900">
-      <div className="container mx-auto px-4 md:px-6">
-        <motion.p
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center text-zinc-500 text-sm mb-8"
-        >
-          Our experts have worked at leading companies
-        </motion.p>
-        <div className="flex flex-wrap items-center justify-center gap-8 md:gap-16">
-          {COMPANY_LOGOS.map((company, i) => (
-            <motion.div
-              key={company}
-              initial={{ opacity: 0, y: 10 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: i * 0.05 }}
-              viewport={{ once: true }}
-              className="text-zinc-600 font-semibold text-lg md:text-xl hover:text-zinc-400 transition-colors cursor-default"
-            >
-              {company}
-            </motion.div>
-          ))}
-        </div>
+    <section className="border-t border-white/[0.06] py-14">
+      <div className={cn(container)}>
+        <Reveal className="flex flex-col items-center gap-8 lg:flex-row lg:gap-16">
+          <p className="shrink-0 text-center text-sm text-zinc-400 lg:max-w-[14rem] lg:text-left">
+            Our experts have worked at leading companies
+          </p>
+          <ul className="grid w-full grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4 lg:grid-cols-8">
+            {COMPANY_LOGOS.map((company) => (
+              <li
+                key={company}
+                className="text-center text-lg font-semibold tracking-tight text-zinc-500 transition-colors hover:text-zinc-200"
+              >
+                {company}
+              </li>
+            ))}
+          </ul>
+        </Reveal>
       </div>
     </section>
   );
