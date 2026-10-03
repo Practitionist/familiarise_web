@@ -2,7 +2,6 @@ import prisma from "@/lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
-  streamHttpStatus,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
@@ -33,9 +32,18 @@ interface OrphanedSessionRow {
 }
 
 function isStreamCallNotFoundError(err: unknown): boolean {
-  const status = streamHttpStatus(err);
-  if (status === 404) return true;
-  if (status !== undefined) return false;
+  if (typeof err === "object" && err !== null) {
+    const tagged = err as {
+      status?: unknown;
+      statusCode?: unknown;
+      metadata?: { responseCode?: unknown };
+    };
+    const code =
+      tagged.status ?? tagged.statusCode ?? tagged.metadata?.responseCode;
+    if (typeof code === "number") {
+      return code === 404;
+    }
+  }
   const message = err instanceof Error ? err.message : String(err);
   return /not[\s_-]*found|404|does not exist/i.test(message);
 }

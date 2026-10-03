@@ -5,9 +5,8 @@ import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import { Clock, PlusCircle, Loader2 } from "lucide-react";
 import {
   CALL_DURATION_GRACE_MS,
-  resolveMaxCallDurationSeconds,
+  MIN_CALL_DURATION_MS,
 } from "@/lib/meetings/duration-cap";
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 
@@ -42,13 +41,15 @@ function resolveCapEndsAtMs(args: {
     }
   }
   if (args.startsAt) {
-    const capSeconds =
-      resolveMaxCallDurationSeconds({ endsAt: args.endsAt }, args.startsAt) ??
-      Math.ceil(CALL_DURATION_GRACE_MS / 1000);
+    const bookedMs = Math.max(
+      args.endsAt.getTime() - args.startsAt.getTime(),
+      MIN_CALL_DURATION_MS,
+    );
     return (
-      args.startsAt.getTime() -
-      CONSULTANT_JOIN_WINDOW_MS +
-      (capSeconds + args.extendedSeconds) * 1000
+      args.startsAt.getTime() +
+      bookedMs +
+      CALL_DURATION_GRACE_MS +
+      args.extendedSeconds * 1000
     );
   }
   return (
