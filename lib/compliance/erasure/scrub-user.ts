@@ -219,15 +219,17 @@ export async function eraseStreamPrincipalFootprint(
   const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
     await import("@/lib/stream-client");
   if (typeof isStreamConfigured === "function" && !isStreamConfigured()) return;
+
+  const chat = getStreamChatClient();
   if (
     process.env.NODE_ENV === "test" &&
-    !(getStreamChatClient as unknown as { _isMockFunction?: boolean })
-      ._isMockFunction
+    !(chat?.revokeUserToken as unknown as { _isMockFunction?: boolean })
+      ?._isMockFunction &&
+    !(chat?.deleteUsers as unknown as { _isMockFunction?: boolean })
+      ?._isMockFunction
   ) {
     return;
   }
-
-  const chat = getStreamChatClient();
   try {
     await chat.revokeUserToken(userId, new Date());
   } catch (err) {
