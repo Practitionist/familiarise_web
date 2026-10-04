@@ -464,7 +464,7 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { requireActive: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

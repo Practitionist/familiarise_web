@@ -29,15 +29,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify target user exists
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
+    // Verify target user exists and has not been erased
+    const targetExists = await prisma.user.findUnique({
+      where: { id: targetUserId, erasedAt: null },
+      select: { id: true },
     });
-    if (!targetUser) {
-      return NextResponse.json(
-        { error: "Target user not found" },
-        { status: 404 },
-      );
+    if (!targetExists) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     // Verify the blocker has an existing DM channel with the target

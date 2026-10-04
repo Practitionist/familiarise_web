@@ -65,6 +65,26 @@ export async function POST(
 
   try {
     const result = await scrubUser(prisma, request.userId);
+    if (result.vendorFailures.length > 0) {
+      await prisma.erasureRequest.update({
+        where: { id },
+        data: {
+          status: "IN_PROGRESS",
+          notes: `PII scrubbed (pseudonymousId=${result.pseudonymousId.slice(0, 12)}…); vendor erasure pending retry: ${result.vendorFailures.join("; ")}`,
+        },
+      });
+      return NextResponse.json(
+        {
+          ok: true,
+          status: "IN_PROGRESS",
+          affectedOrganizationIds: result.affectedOrganizationIds,
+          pseudonymousId: result.pseudonymousId,
+          vendorFailures: result.vendorFailures,
+        },
+        { status: 202 },
+      );
+    }
+
     await prisma.erasureRequest.update({
       where: { id },
       data: {
@@ -90,7 +110,10 @@ export async function POST(
         notes: err instanceof Error ? err.message : String(err),
       },
     });
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "admin" } },
+    );
     return NextResponse.json(
       {
         error: "Erasure failed; request returned to PENDING",

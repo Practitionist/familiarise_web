@@ -193,6 +193,7 @@ export async function PATCH(
   const { orgId, payoutId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

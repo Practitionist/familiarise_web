@@ -29,6 +29,7 @@ export async function DELETE(
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

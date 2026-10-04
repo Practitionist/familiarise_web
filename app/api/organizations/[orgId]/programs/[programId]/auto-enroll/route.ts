@@ -37,15 +37,15 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { claimProgramAssignment, ProgramAssignmentOverlapError } from "@/lib/api/organizations/program-helpers";
+import {
+  claimProgramAssignment,
+  ProgramAssignmentOverlapError,
+} from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/lib/api/organizations/auto-enroll-config";
-import {
-  applyRateLimit,
-  orgAutoEnrollLimiter,
-} from "@/lib/rate-limit";
+import { applyRateLimit, orgAutoEnrollLimiter } from "@/lib/rate-limit";
 
 const BodySchema = z.object({
   membershipIds: z.array(z.string().min(1)).min(1).max(200),
@@ -67,7 +67,9 @@ interface RowResult {
  */
 function parseAutoEnrollBody(
   raw: unknown,
-): { ok: true; body: z.infer<typeof BodySchema> } | { ok: false; error: NextResponse } {
+):
+  | { ok: true; body: z.infer<typeof BodySchema> }
+  | { ok: false; error: NextResponse } {
   const parsed = BodySchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -141,6 +143,7 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.assign",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

@@ -202,7 +202,7 @@ export async function POST(
 ) {
   const { orgId } = await params;
   // Any active member — granting is the data principal's own act.
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { requireActive: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -387,35 +387,41 @@ export async function DELETE(
     );
   }
 
-  const { withdrawnCount } = await withdrawConsent({ userId, purposeCode });
-
-  if (withdrawnCount > 0) {
-    await prisma.orgAuditLog
-      .create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          targetMembershipId: member.id,
-          category: "CONSENT",
-          action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWN,
-          // Same PII-hygiene rule as CONSENT_GRANTED: no raw userId
-          // in the description; the membership FK is the pivot.
-          description: `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`,
-          details: {
-            membershipId: member.id,
-            purposeCode,
-            withdrawnCount,
+  try {
+    const { withdrawnCount } = await prisma.$transaction(async (tx) => {
+      const result = await withdrawConsent({ userId, purposeCode }, tx);
+      if (result.withdrawnCount > 0) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            targetMembershipId: member.id,
+            category: "CONSENT",
+            action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWN,
+            // Same PII-hygiene rule as CONSENT_GRANTED: no raw userId
+            // in the description; the membership FK is the pivot.
+            description: `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`,
+            details: {
+              membershipId: member.id,
+              purposeCode,
+              withdrawnCount: result.withdrawnCount,
+            },
           },
-        },
-      })
-      .catch((err) => {
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          { tags: { subsystem: "enterprise" } },
-        );
-        console.error("[consent DELETE] audit write failed", err);
-      });
-  }
+        });
+      }
+      return result;
+    });
 
-  return NextResponse.json({ withdrawnCount });
+    return NextResponse.json({ withdrawnCount });
+  } catch (err) {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
+    console.error("[consent DELETE] withdrawal transaction failed", err);
+    return NextResponse.json(
+      { error: "Failed to withdraw consent" },
+      { status: 500 },
+    );
+  }
 }

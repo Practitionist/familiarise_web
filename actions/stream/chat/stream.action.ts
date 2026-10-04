@@ -17,6 +17,7 @@ import {
   type ActionResult,
 } from "@/lib/errors/action-result";
 import { Refusal } from "@/lib/errors/refusal";
+import prisma from "@/lib/prisma";
 import { STREAM_TOKEN_TTL_SECONDS } from "@/lib/stream/token-ttl";
 import * as Sentry from "@sentry/nextjs";
 
@@ -28,9 +29,9 @@ const STREAM_CONSENT_REFUSAL =
 
 /**
  * Tokens may only be minted for the caller's own userId (staff/admin may mint
- * for anyone), and never for a banned user — Stream's server-side API skips all
- * permission checks, so this session bind is the only gate against identity
- * spoofing and re-minting a revoked/suspended identity (#693/#899).
+ * for anyone), and never for a banned or erased user — Stream's server-side API
+ * skips all permission checks, so this session bind is the only gate against
+ * identity spoofing and re-minting a revoked/suspended/erased identity.
  */
 async function assertCanMintToken(
   forUserId: string,
@@ -49,12 +50,25 @@ async function assertCanMintToken(
       devMessage: "Unauthorized: sign in to request a Stream token",
     });
   }
-  // Never mint for a banned/suspended user (#693).
+  // Never mint for a banned/suspended user or erased account.
   if (session.user.banned) {
     throw new Error("Forbidden: account suspended");
   }
+  if ((session.user as { erasedAt?: Date | string | null }).erasedAt) {
+    throw new Error("Forbidden: account erased");
+  }
   if (session.user.id !== forUserId && !isPrivileged(session.user.role)) {
     throw new Error("Forbidden: cannot mint a token for another user");
+  }
+  const targetUser = await prisma.user?.findUnique?.({
+    where: { id: forUserId },
+    select: { id: true, erasedAt: true, banned: true },
+  });
+  if (targetUser === null || targetUser?.erasedAt) {
+    throw new Error("Forbidden: account erased");
+  }
+  if (targetUser?.banned) {
+    throw new Error("Forbidden: account suspended");
   }
   const hasStreamConsent = await checkConsent({
     userId: forUserId,

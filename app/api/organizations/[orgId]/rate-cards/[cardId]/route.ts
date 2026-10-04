@@ -50,10 +50,7 @@ export async function GET(
   const card = await prisma.rateCard.findFirst({
     where: {
       id: cardId,
-      OR: [
-        { ownerOrgId: orgId },
-        { ownerContract: { organizationId: orgId } },
-      ],
+      OR: [{ ownerOrgId: orgId }, { ownerContract: { organizationId: orgId } }],
     },
     include: {
       ownerContract: {
@@ -85,6 +82,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.manage",
     canHost: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -177,11 +175,13 @@ export async function PATCH(
     return NextResponse.json({ rateCard: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

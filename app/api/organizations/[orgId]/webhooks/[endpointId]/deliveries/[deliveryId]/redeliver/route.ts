@@ -43,6 +43,7 @@ export async function POST(
   const { orgId, endpointId, deliveryId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "integrations.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -138,7 +139,10 @@ export async function POST(
         { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

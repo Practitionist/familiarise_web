@@ -1166,6 +1166,7 @@ model Organization {
   // #support-hub — tickets attributed to this org (operator intake + escalated
   // org-appointment threads). Powers the org-filtered ops queue.
   supportTickets            SupportTicket[]
+  moderationReports         ModerationReport[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
@@ -2883,20 +2884,22 @@ model LedgerReconciliationReport {
 //////////////////////////////////////////////////// DPDP + HRIS (stubs) ////////////////////////////////////////////////////
 
 model ConsentArtifact {
-  id                 String    @id @default(uuid())
-  userId             String
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataFiduciary      String
-  purposeCodes       String[]
-  grantedAt          DateTime
-  withdrawnAt        DateTime?
-  language           String // one of 22 Schedule VIII languages
-  consentManager     String?
-  version            Int
-  hash               String // tamper-evident
-  auditRetainedUntil DateTime // grantedAt + 7y
+  id                    String    @id @default(uuid())
+  userId                String?
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  subjectPseudonymousId String?
+  dataFiduciary         String
+  purposeCodes          String[]
+  grantedAt             DateTime
+  withdrawnAt           DateTime?
+  language              String // one of 22 Schedule VIII languages
+  consentManager        String?
+  version               Int
+  hash                  String // tamper-evident
+  auditRetainedUntil    DateTime // grantedAt + 7y
 
   @@index([userId, grantedAt])
+  @@index([subjectPseudonymousId])
 }
 
 model DataBreach {
@@ -5280,6 +5283,7 @@ model MeetingPresence {
   @@unique([meetingId, userSessionId])
   @@index([appointmentOccurrenceId])
   @@index([meetingId, userId])
+  @@index([joinedAt])
 }
 
 // Recording storage types
@@ -6491,10 +6495,10 @@ model ReferralCredit {
   expiresAt       DateTime?
   usedAt          DateTime?
   // #1839 — backoffice manual/compensation issuance & reversal audit fields.
-  idempotencyKey  String?   @unique
+  idempotencyKey  String?      @unique
   reason          String?
   issuedBy        String?
-  reversedAt      DateTime? @db.Timestamptz
+  reversedAt      DateTime?    @db.Timestamptz
   reversedBy      String?
   reversedReason  String?
 
@@ -6797,6 +6801,10 @@ model ModerationReport {
   targetUserId String
   targetUser   User   @relation("ReportsReceived", fields: [targetUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
+  // Enterprise tenant attribution when reported inside an org context
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
   // Optional entity references
   // #1300 — a real relation, not a bare string. SetNull: a report is a record of what
   // someone objected to even if the row it named is gone.
@@ -6827,6 +6835,7 @@ model ModerationReport {
   @@index([type])
   @@index([reportedById])
   @@index([targetUserId])
+  @@index([organizationId, status])
   @@index([assignedToId])
   @@index([createdAt])
   // #1270 — the per-message dedup lookup in POST /api/report.
@@ -7359,6 +7368,7 @@ model ErasureRequest {
   notes                   String?                 @db.Text
   /// #1593 — the Stream revocations the scrub still owes, one outbox row each.
   streamRevocationRetries StreamRevocationRetry[]
+  vendorErasureRetries    VendorErasureRetry[]
 
   @@index([status, requestedAt])
   @@index([processedByAdminId])
@@ -7382,6 +7392,34 @@ model StreamRevocationRetry {
   updatedAt        DateTime         @updatedAt @db.Timestamptz
 
   @@unique([erasureRequestId, planType, planId])
+  @@index([status, nextRetryAt])
+}
+
+enum ErasureVendor {
+  STREAM
+  NOVU
+  RAZORPAY
+}
+
+/// Durable outbox row for external vendor erasure steps (Novu subscriber,
+/// RazorpayX contact/fund-account/customer, Stream principal) staged inside
+/// scrubUserInTransaction before local vendor identifiers are cleared.
+model VendorErasureRetry {
+  id               String         @id @default(cuid())
+  erasureRequest   ErasureRequest @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
+  erasureRequestId String
+  vendor           ErasureVendor
+  vendorRef        String
+  payload          Json?
+  status           RetryStatus    @default(PENDING)
+  attempts         Int            @default(0)
+  nextRetryAt      DateTime?      @db.Timestamptz
+  lastError        String?        @db.Text
+  completedAt      DateTime?      @db.Timestamptz
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+
+  @@unique([erasureRequestId, vendor, vendorRef])
   @@index([status, nextRetryAt])
 }
 

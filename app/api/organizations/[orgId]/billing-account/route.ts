@@ -51,7 +51,12 @@ const PatchBodySchema = z
     creditLimit: z.coerce.number().int().min(0).nullable().optional(),
     minBalancePaise: z.coerce.number().int().min(0).nullable().optional(),
     autoTopUpEnabled: z.boolean().optional(),
-    autoTopUpAmountPaise: z.coerce.number().int().positive().nullable().optional(),
+    autoTopUpAmountPaise: z.coerce
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
@@ -70,7 +75,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const org = await prisma.organization.findUnique({
@@ -92,7 +100,9 @@ export async function GET(
   });
   if (!org?.billingAccount) {
     return NextResponse.json(
-      { error: "Organization does not have a BillingAccount (canSponsor=false)" },
+      {
+        error: "Organization does not have a BillingAccount (canSponsor=false)",
+      },
       { status: 404 },
     );
   }
@@ -107,6 +117,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "billing.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -184,14 +195,8 @@ export async function PATCH(
       // INVOICE with outstanding invoices — either would orphan money
       // in the old mode. The reverse transitions (INTO WALLET/INVOICE)
       // are always fine because we're starting fresh in the new mode.
-      if (
-        body.fundingSource &&
-        body.fundingSource !== ba.fundingSource
-      ) {
-        if (
-          ba.fundingSource === "WALLET" &&
-          (ba.walletBalance ?? 0) > 0
-        ) {
+      if (body.fundingSource && body.fundingSource !== ba.fundingSource) {
+        if (ba.fundingSource === "WALLET" && (ba.walletBalance ?? 0) > 0) {
           throw Object.assign(
             new Error(
               "Cannot switch funding source with a non-zero wallet balance. Drain or refund the wallet first.",
@@ -237,9 +242,7 @@ export async function PATCH(
             // when moving AWAY. Keeps the column NULL for non-wallet
             // accounts so callers can't accidentally read it.
             walletBalance:
-              body.fundingSource === "WALLET"
-                ? ba.walletBalance ?? 0
-                : null,
+              body.fundingSource === "WALLET" ? (ba.walletBalance ?? 0) : null,
           }),
           ...(body.creditLimit !== undefined && {
             creditLimit: body.creditLimit,
@@ -304,8 +307,7 @@ export async function PATCH(
     return NextResponse.json({ billingAccount: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       const code =
         "code" in err && typeof err.code === "string" ? err.code : undefined;
       return NextResponse.json(
@@ -313,7 +315,10 @@ export async function PATCH(
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

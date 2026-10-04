@@ -41,7 +41,6 @@ export async function estimateStreamVideoUsage(
   const rows = await prisma.meetingPresence.findMany({
     where: {
       joinedAt: {
-        gte: from,
         lte: to,
       },
     },
@@ -69,12 +68,19 @@ export async function estimateStreamVideoUsage(
 
   let oneOnOneParticipantMinutes = 0;
   let groupParticipantMinutes = 0;
+  let totalIntervals = 0;
 
   for (const row of rows) {
     const effectiveLeftAt =
       row.leftAt ?? row.meeting?.endedAt ?? row.occurrence?.endsAt ?? now;
+    const intervalStart = row.joinedAt > from ? row.joinedAt : from;
+    const intervalEnd = effectiveLeftAt < to ? effectiveLeftAt : to;
+    if (intervalEnd <= intervalStart) {
+      continue;
+    }
+    totalIntervals += 1;
     const rawMinutes =
-      (effectiveLeftAt.getTime() - row.joinedAt.getTime()) / 60_000;
+      (intervalEnd.getTime() - intervalStart.getTime()) / 60_000;
     const durationMinutes = Math.min(
       MAX_INTERVAL_MINUTES,
       Math.max(0, rawMinutes),
@@ -101,7 +107,7 @@ export async function estimateStreamVideoUsage(
   return {
     from,
     to,
-    totalIntervals: rows.length,
+    totalIntervals,
     oneOnOneParticipantMinutes:
       Math.round(oneOnOneParticipantMinutes * 100) / 100,
     groupParticipantMinutes: Math.round(groupParticipantMinutes * 100) / 100,

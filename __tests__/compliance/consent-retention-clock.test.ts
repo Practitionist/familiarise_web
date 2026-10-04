@@ -232,4 +232,35 @@ describe("consent audit retention clock", () => {
       }),
     ).resolves.toBe(false);
   });
+
+  it("never shortens an existing auditRetainedUntil deadline and supports an interactive transaction client", async () => {
+    const farFuture = new Date("2040-01-01T00:00:00.000Z");
+    const txUpdateMany = jest.fn(async () => ({ count: 1 }));
+    const txFindMany = jest.fn(async () => [{ auditRetainedUntil: farFuture }]);
+    const txClient = {
+      consentArtifact: {
+        findMany: txFindMany,
+        updateMany: txUpdateMany,
+      },
+    };
+
+    await withdrawConsent(
+      {
+        userId: "u1",
+        purposeCode: PURPOSE_CODES.MARKETING_COMMS,
+        now: new Date("2026-06-01T00:00:00.000Z"),
+      },
+      txClient as never,
+    );
+
+    expect(txFindMany).toHaveBeenCalledTimes(1);
+    expect(txUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          auditRetainedUntil: farFuture,
+        }),
+      }),
+    );
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
 });
