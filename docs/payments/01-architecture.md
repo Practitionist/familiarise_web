@@ -19,15 +19,12 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway. Stripe is implemented but fenced off, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses both a placeholder and a fenced-off gateway at runtime.
+The payment system uses **Razorpay** as the sole payment gateway. Stripe was removed from the code on 2026-10-04 and survives only as an enum label until the pre-MVP reset, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses every gateway on that list (including `STRIPE`) at runtime.
 
 | Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
 | ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Razorpay**      | Live, primary           | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT.                                                                                                                                                                                                                   |
-| **Stripe**        | Implemented, fenced off | `STRIPE_ENABLED=true` on the server and `NEXT_PUBLIC_STRIPE_ENABLED=true` in the checkout UI. Auto-routing never selects it; only an explicit request reaches it, and `assertGatewayUsable` throws a `DisabledGatewayError` when the flag is unset. Refunds of existing Stripe payments are deliberately outside the fence. |
 | **Dodo Payments** | Schema placeholder      | Listed in `POST_MVP_GATEWAY_STUBS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
-
-Stripe is retained as a contingency rail in case RBI rules make Razorpay unusable for a class of collections, and for Connect transfers if international payouts are ever turned on. It is not a live payment method, so no customer should ever see the Stripe button.
 
 The system handles four appointment types:
 
@@ -274,7 +271,7 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 | `netlify/functions/cron-tick.mts`         | `*/5 * * * *`               | 5-min & 15-min staggered operational sweeps via `/api/cleanup/[job]` |
 | `.github/workflows/cron-intra-day.yml`    | Sub-daily (`30m`/`1h`/`2h`/`4h`/`6h`) | Gateway & external vendor reconciliation sweeps            |
 | `.github/workflows/cron-daily.yml`        | Daily (`00:00`–`09:30` UTC) | Daily ledger integrity, pruning, dunning, and notifications|
-| `.github/workflows/cron-weekly.yml`       | Weekly / Monthly            | Weekly payout pipeline, GSTR-8 export, backup verification |
+| `.github/workflows/cron-weekly.yml`       | Weekly / Monthly            | Weekly payout pipeline, backup verification               |
 | `.github/workflows/race-condition-tests.yml` | On push to `dev` / PR    | Concurrent booking & payment race-condition verification   |
 | `.github/workflows/ci.yaml`               | On PR / push                | Typecheck, lint, tests, and hermetic Postgres schema/sidecar verification |
 
@@ -614,12 +611,6 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 
 | Gateway      | Event                           | Handler                  |
 | ------------ | ------------------------------- | ------------------------ |
-| **Stripe**   | `payment_intent.succeeded`      | `handlePaymentSuccess()` |
-| **Stripe**   | `payment_intent.payment_failed` | `handlePaymentFailure()` |
-| **Stripe**   | `charge.refunded`               | `handleRefundCreated()`  |
-| **Stripe**   | `charge.dispute.created`        | `handleDisputeCreated()` |
-| **Stripe**   | `charge.dispute.updated`        | `handleDisputeUpdated()` |
-| **Stripe**   | `charge.dispute.closed`         | `handleDisputeUpdated()` |
 | **Razorpay** | `payment.captured`              | `razorpay-dispatch.ts` → routes by `notes.type`: `credit_purchase`/`invoice_payment` → `handleOrgPaymentSuccess()`; `overage_member` → `handleOverageMemberSuccess()`; B2C → `handlePaymentSuccess()` |
 | **Razorpay** | `order.paid`                    | `razorpay-dispatch.ts` → same routing by `notes.type` as `payment.captured` |
 | **Razorpay** | `payment.failed`                | `razorpay-dispatch.ts` → routes by `notes.type`: org paths → `handleOrgPaymentFailure()`; B2C → `handlePaymentFailure()` |
@@ -1447,11 +1438,6 @@ Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions
 DATABASE_URL=
 DIRECT_URL=
 
-# Stripe
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-
 # Razorpay (Payments)
 RAZORPAY_KEY_ID=
 RAZORPAY_SECRET=
@@ -1476,7 +1462,6 @@ VERCEL_CRON_SECRET=
 | -------------------------- | -------- | ---------------------------------------------------------------- |
 | `/api/checkout`            | POST     | Create payment intent & tentative appointment                    |
 | `/api/checkout/verify`     | GET      | Verify payment status                                            |
-| `/api/webhooks/stripe`     | POST     | Stripe webhook handler                                           |
 | `/api/webhooks/razorpay`   | POST     | Razorpay webhook handler                                         |
 | `/api/payments/refunds`    | GET/POST | List/create refunds                                              |
 | `/api/payments/disputes`   | GET/POST | List disputes/submit evidence                                    |

@@ -1390,7 +1390,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Data use",
         paragraphs: [
-          "We process your data to run the marketplace — accounts, bookings, payments (via Razorpay/Stripe), and video (via Stream) — as described in the Privacy Policy. Payment and video providers receive only what they need to complete their function.",
+          "We process your data to run the marketplace — accounts, bookings, payments (via Razorpay), and video (via Stream) — as described in the Privacy Policy. Payment and video providers receive only what they need to complete their function.",
         ],
       },
       {

@@ -161,8 +161,10 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
+  // Only Razorpay disputes have an evidence form.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
+    dispute.paymentGateway === "RAZORPAY" &&
     ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
       dispute.status,
     );
@@ -435,15 +437,13 @@ export function DisputeDetailPage({
       </Card>
 
       {/* #1771 K-7 — Razorpay evidence goes through its own form. */}
-      {showEvidenceForm &&
-        canSubmitEvidence &&
-        dispute.paymentGateway === "RAZORPAY" && (
-          <RazorpayEvidenceForm
-            disputeId={dispute.id}
-            dueBy={dispute.dueBy}
-            queryKey={[queryKeyPrefix, disputeId]}
-          />
-        )}
+      {showEvidenceForm && canSubmitEvidence && (
+        <RazorpayEvidenceForm
+          disputeId={dispute.id}
+          dueBy={dispute.dueBy}
+          queryKey={[queryKeyPrefix, disputeId]}
+        />
+      )}
 
       {/* Gateway-specific Notes (admin only) */}
       {allowEvidenceSubmission && (
