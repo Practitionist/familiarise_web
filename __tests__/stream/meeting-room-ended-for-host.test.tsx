@@ -21,6 +21,8 @@ const push = jest.fn();
 let sessionUser: Record<string, unknown> | null = null;
 let callingState = "left";
 let endedAt: Date | undefined;
+let isCallLive = true;
+let callSettings: Record<string, unknown> | undefined;
 const custom: Record<string, unknown> = {
   hostUserIds: ["owner", "co-host"],
   consultantUserId: "owner",
@@ -62,6 +64,10 @@ jest.mock("@stream-io/video-react-sdk", () => {
       RINGING: "ringing",
       UNKNOWN: "unknown",
     },
+    OwnCapability: {
+      SEND_AUDIO: "send-audio",
+      SEND_VIDEO: "send-video",
+    },
     SfuModels: { ConnectionQuality: { POOR: 1 }, TrackType: { VIDEO: 2 } },
     useCall: () => call,
     useCallStateHooks: () => ({
@@ -72,6 +78,9 @@ jest.mock("@stream-io/video-react-sdk", () => {
       useParticipants: () => [],
       useLocalParticipant: () => undefined,
       useIncomingVideoSettings: () => ({ enabled: true }),
+      useIsCallLive: () => isCallLive,
+      useCallSettings: () => callSettings,
+      useOwnCapabilities: () => [],
     }),
     SpeakerLayout: stub("speaker-layout"),
     PaginatedGridLayout: stub("grid-layout"),
@@ -101,6 +110,8 @@ beforeEach(() => {
   push.mockReset();
   call.setIncomingVideoEnabled.mockReset();
   call.setPreferredIncomingVideoResolution.mockReset();
+  isCallLive = true;
+  callSettings = undefined;
   custom.appointmentType = "WEBINAR";
   global.fetch = jest.fn(() =>
     Promise.resolve({ ok: false, status: 404 }),
@@ -178,5 +189,59 @@ describe("the room after the call is ended by someone else", () => {
       width: 640,
       height: 480,
     });
+  });
+});
+
+describe("MeetingRoom backstage isolation for 1-to-Many sessions", () => {
+  beforeEach(() => {
+    callingState = "joined";
+    endedAt = undefined;
+    callSettings = {
+      backstage: { enabled: true, join_ahead_time_seconds: 900 },
+    };
+  });
+
+  it("hides CallLayout from waiting attendees before Go Live while keeping StageControls visible", async () => {
+    sessionUser = { id: "guest", role: "CONSULTEE" };
+    isCallLive = false;
+
+    await render();
+
+    expect(
+      host.querySelector('[data-testid="backstage-waiting-room"]'),
+    ).not.toBeNull();
+    expect(host.querySelector('[data-testid="speaker-layout"]')).toBeNull();
+    expect(host.querySelector('[data-testid="grid-layout"]')).toBeNull();
+    expect(
+      host.querySelector('[data-testid="backstage-banner"]'),
+    ).not.toBeNull();
+    expect(host.textContent).toContain(
+      "Waiting for host to start the live session...",
+    );
+  });
+
+  it("keeps CallLayout and Go Live controls visible for the host during backstage prep", async () => {
+    sessionUser = { id: "owner", role: "CONSULTANT" };
+    isCallLive = false;
+
+    await render();
+
+    expect(
+      host.querySelector('[data-testid="backstage-waiting-room"]'),
+    ).toBeNull();
+    expect(host.querySelector('[data-testid="speaker-layout"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="go-live-button"]')).not.toBeNull();
+  });
+
+  it("renders CallLayout for attendees once the host transitions the call to live", async () => {
+    sessionUser = { id: "guest", role: "CONSULTEE" };
+    isCallLive = true;
+
+    await render();
+
+    expect(
+      host.querySelector('[data-testid="backstage-waiting-room"]'),
+    ).toBeNull();
+    expect(host.querySelector('[data-testid="speaker-layout"]')).not.toBeNull();
   });
 });
