@@ -57,7 +57,7 @@ jest.mock("../../lib/stream/recording-listing-access", () => ({
   loadOwnedListingRecording: jest.fn(async () => ({
     status: "ok",
     listingStatus: "PUBLISHED",
-    listPricePaise: BigInt(49_900),
+    listPricePaise: 49_900,
     recordingStatus: "AVAILABLE",
     storageType: "SUPABASE",
     plan: { plan: { consultantProfileId: "cp_owner" } },
@@ -94,6 +94,7 @@ const purchaseCreate = jest.fn(async ({ data }: { data: (typeof rows)[0] }) => {
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: { findUnique: async () => ({ country: "IN" }) },
     recordingPurchase: {
       findFirst: async ({
         where,

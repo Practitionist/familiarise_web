@@ -146,6 +146,8 @@ describe("the cohort has no age window", () => {
     const where = mockPaymentFindMany.mock.calls[0][0].where;
     expect(where).toEqual({
       paymentStatus: "SUCCEEDED",
+      // Synchronous rails settle earnings in their own checkout tx.
+      isMockPayment: false,
       earnings: { none: {} },
       // #1583 C-P0-05 — money that already left is not owed to anyone.
       refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },

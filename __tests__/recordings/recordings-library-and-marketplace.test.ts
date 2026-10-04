@@ -63,6 +63,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: async (cb: (tx: typeof mockTx) => Promise<unknown>) =>
       cb(mockTx),
+    user: { findUnique: async () => ({ country: "IN" }) },
     consultantProfile: {
       findUnique: (...args: unknown[]) =>
         mockConsultantProfileFindUnique(...args),
@@ -105,6 +106,12 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...args: unknown[]) => mockTrialFindMany(...args),
     },
   },
+}));
+
+const mockMintConsumerInvoice = jest.fn();
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerInvoiceBestEffort: (...args: unknown[]) =>
+    mockMintConsumerInvoice(...args),
 }));
 
 jest.mock("../../lib/payments/payouts/earnings-service", () => ({
@@ -857,7 +864,13 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       mockCreateEarningsFromPayment.mockResolvedValueOnce("earn-1");
 
-      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1");
+      // The mint stamps the GST split on the order notes; it sums to the charge.
+      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1", {
+        type: "recording_purchase",
+        originalAmountPaise: "84661",
+        taxAmountPaise: "15239",
+        buyerCountry: "IN",
+      });
 
       expect(mockRecordingPurchaseUpdateMany).toHaveBeenCalledWith({
         where: { id: "rp-1", status: "PENDING" },
@@ -868,7 +881,9 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           userId: "u-buyer-1",
           appointmentId: null,
           amount: 99900,
-          originalAmount: 99900,
+          originalAmount: 84661,
+          taxAmount: 15239,
+          buyerCountry: "IN",
           paymentIntent: "order_rec_1",
           paymentStatus: "SUCCEEDED",
           gatewayPaymentId: "pay_rzp_1",
@@ -889,6 +904,9 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           }),
         }),
       );
+      expect(mockMintConsumerInvoice).toHaveBeenCalledWith({
+        paymentId: "pay-rec-1",
+      });
 
       // Replay when already SUCCEEDED does not create duplicate Payment or earnings
       jest.clearAllMocks();

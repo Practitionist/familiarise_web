@@ -108,9 +108,11 @@ jest.mock("../../lib/novu", () => ({
   notifyPaymentFailed: jest.fn(),
   notifyAppointmentBooked: jest.fn(),
 }));
+const reverseCreditsForPayment = jest.fn();
 jest.mock("../../lib/referrals/service", () => ({
   processQualifyingAction: jest.fn(),
   processConsultantBookingReferral: jest.fn(),
+  reverseCreditsForPayment: (...a: unknown[]) => reverseCreditsForPayment(...a),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   addUserToEventChannel: jest.fn(),
@@ -341,6 +343,25 @@ describe("#1582 B-P0-01 — handlePaymentFailure is a CAS write", () => {
       "payment.failed lost the race to a capture",
       expect.anything(),
     );
+    expect(reverseCreditsForPayment).not.toHaveBeenCalled();
+  });
+
+  it("restores the order's credits inside the transaction that wins PENDING → FAILED", async () => {
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentStatus: "PENDING",
+      userId: "u1",
+      appointmentId: null,
+      amount: 10000,
+      currency: "INR",
+      description: null,
+      user: { email: "buyer@example.com", name: "Buyer" },
+      appointment: null,
+    });
+
+    await handlePaymentFailure("order1").catch(() => undefined);
+
+    expect(reverseCreditsForPayment).toHaveBeenCalledWith("pay1", txStub);
   });
 });
 
