@@ -362,14 +362,29 @@ export async function handleRecordingPurchaseSuccess(
         });
 
       if (purchase.status === "SUCCEEDED" || purchase.status === "REFUNDED") {
-        // Same payment redelivered; a different one is a duplicate charge.
-        if (
-          !gatewayPaymentId ||
-          !purchase.gatewayPaymentId ||
-          gatewayPaymentId === purchase.gatewayPaymentId
-        ) {
-          return null;
+        if (!gatewayPaymentId) return null;
+        let settledBy = purchase.gatewayPaymentId;
+        if (!settledBy) {
+          // Settled without a payment id: the first id seen is the settling capture.
+          const stamped = await tx.recordingPurchase.updateMany({
+            where: { id: purchase.id, gatewayPaymentId: null },
+            data: { gatewayPaymentId },
+          });
+          if (stamped.count === 1) {
+            await tx.payment.updateMany({
+              where: { paymentIntent: orderId, gatewayPaymentId: null },
+              data: { gatewayPaymentId },
+            });
+            return null;
+          }
+          const current = await tx.recordingPurchase.findUnique({
+            where: { id: purchase.id },
+            select: { gatewayPaymentId: true },
+          });
+          settledBy = current?.gatewayPaymentId ?? null;
         }
+        // Same payment redelivered; a different one is a duplicate charge.
+        if (settledBy === gatewayPaymentId) return null;
         return refundCapture(
           gatewayPaymentId,
           `duplicate capture on settled replay order ${orderId}`,

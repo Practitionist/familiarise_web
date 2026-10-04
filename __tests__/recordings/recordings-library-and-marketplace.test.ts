@@ -915,6 +915,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         buyerId: "u-buyer-1",
         amountPaise: 99900,
         status: "SUCCEEDED",
+        gatewayPaymentId: "pay_rzp_1",
         recording: null,
       });
       await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1");
