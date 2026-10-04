@@ -20,6 +20,7 @@ jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: (...a: unknown[]) => captureThrottled(...a),
 }));
 const recording = { current: null as { id: string } | null };
+const seatUpdate = jest.fn().mockResolvedValue({ count: 1 });
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     // A class whose plan records, with one present and one absent seat.
@@ -33,6 +34,9 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     recording: { findFirst: async () => recording.current },
+    appointmentParticipant: {
+      updateMany: (...a: unknown[]) => seatUpdate(...a),
+    },
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
@@ -89,6 +93,33 @@ it.each([
         where: expect.objectContaining({ id: "occ-1", voidedAt: null }),
         data: expect.objectContaining(data),
       }),
+    );
+  },
+);
+
+it.each([
+  [60, 1],
+  [30, 0],
+])(
+  "host leaves at %i → %i seat write: present learners move CONFIRMED → ATTENDED only on COMPLETED",
+  async (hostLeaves, writes) => {
+    await decideSlotOutcome(slot(hostLeaves), { now: at(120), outages: [] });
+    expect(seatUpdate.mock.calls).toEqual(
+      Array.from({ length: writes }, () => [
+        {
+          where: {
+            AND: [
+              {
+                appointmentId: "apt-1",
+                role: "CONSULTEE",
+                userId: { in: ["host", "learner"] },
+              },
+              { status: { in: ["CONFIRMED"] } },
+            ],
+          },
+          data: { status: "ATTENDED" },
+        },
+      ]),
     );
   },
 );
