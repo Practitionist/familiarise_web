@@ -34,7 +34,7 @@ describe("harden-unused-call-types", () => {
     }
   });
 
-  it("strips all 18 billable permissions", () => {
+  it("strips all 19 billable permissions", () => {
     const expectedBillable = [
       "start-recording",
       "stop-recording",
@@ -54,8 +54,9 @@ describe("harden-unused-call-types", () => {
       "stop-rtmp-broadcast",
       "stop-all-rtmp-broadcasts",
       "use-noise-cancellation",
+      "enable-noise-cancellation",
     ];
-    expect(BILLABLE_PERMISSIONS).toHaveLength(18);
+    expect(BILLABLE_PERMISSIONS).toHaveLength(19);
     for (const perm of expectedBillable) {
       expect(BILLABLE_PERMISSIONS).toContain(perm);
     }
@@ -71,6 +72,12 @@ describe("harden-unused-call-types", () => {
     expect(
       matchesPermissionWithScope(
         "start-rtmp-broadcasts-any-team",
+        BILLABLE_PERMISSIONS,
+      ),
+    ).toBe(true);
+    expect(
+      matchesPermissionWithScope(
+        "enable-noise-cancellation-any-team",
         BILLABLE_PERMISSIONS,
       ),
     ).toBe(true);

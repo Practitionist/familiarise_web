@@ -27,6 +27,7 @@ import {
   matchesPermissionWithScope,
 } from "./harden-unused-call-types";
 
+const CREATE_CALL = "create-call";
 const JOIN_CALL = "join-call";
 const JOIN_REVOKED_ROLES = ["user", "guest"];
 const END_CALL = "end-call";
@@ -37,6 +38,7 @@ const NON_MEMBER_REVOKED_PERMISSIONS = [
 ];
 export const DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS = [
   ...BILLABLE_PERMISSIONS,
+  CREATE_CALL,
   END_CALL,
 ];
 const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
@@ -67,7 +69,8 @@ function parseArgs(argv: string[]): EnsureCallTypeGrantsOptions {
     restore: argv.includes("--restore-user-join"),
     deployConfirmed:
       argv.includes("--routes-are-deployed") ||
-      argv.includes("--join-route-is-deployed"),
+      argv.includes("--join-route-is-deployed") ||
+      argv.includes("--confirm-join-route-deployed"),
   };
 }
 
@@ -190,10 +193,15 @@ function logGrantChanges(
     console.log(`  ${role.padEnd(12)} join-call: ${had} → ${now}${suffix}`);
   }
   for (const role of RECORDING_REVOKED_ROLES) {
-    for (const perm of DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS) {
+    const allPerms = new Set([
+      ...(existingGrants[role] ?? []),
+      ...(grants[role] ?? []),
+    ]);
+    for (const perm of allPerms) {
+      if (perm === JOIN_CALL) continue;
       const had = (existingGrants[role] ?? []).includes(perm);
       const now = (grants[role] ?? []).includes(perm);
-      if (had === now && !had) continue;
+      if (had === now) continue;
       console.log(`  ${role.padEnd(12)} ${perm.padEnd(28)}: ${had} → ${now}`);
     }
   }

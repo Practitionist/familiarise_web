@@ -40,7 +40,10 @@ if (require.main === module) {
         streamNotFound: result.streamNotFound,
         errors: result.errors,
       });
-      if (!result.success) process.exitCode = 1;
+      if (!result.success) {
+        await disconnectDatabase();
+        process.exit(1);
+      }
     } finally {
       await disconnectDatabase();
     }
