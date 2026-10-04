@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type") as ModerationReportType | null;
     const status = searchParams.get("status") as ModerationReportStatus | null;
     const assignedToId = searchParams.get("assignedToId");
+    const organizationId = searchParams.get("organizationId");
     const search = searchParams.get("search");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
@@ -39,6 +40,10 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (assignedToId) {
       where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
+    }
+    if (organizationId) {
+      where.organizationId =
+        organizationId === "personal" ? null : organizationId;
     }
     // #997 secondary findings — the client used to fetch every PENDING
     // report and substring-search on every keystroke. Search server-side
@@ -143,6 +148,7 @@ export async function GET(req: NextRequest) {
       targetUser: report.targetUser,
       reviewId: report.reviewId,
       review: report.review,
+      organizationId: report.organizationId ?? null,
       assignedToId: report.assignedToId,
       actionCount: report._count.actions,
       latestAction: report.actions[0] ?? null,

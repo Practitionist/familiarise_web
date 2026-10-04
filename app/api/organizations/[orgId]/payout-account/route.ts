@@ -59,7 +59,6 @@ export async function GET(
       ifscCode: true,
       routingNumber: true,
       swiftCode: true,
-      stripeConnectId: true,
       razorpayContactId: true,
       razorpayFundAccountId: true,
       status: true,
@@ -180,6 +179,7 @@ export async function PUT(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.account.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

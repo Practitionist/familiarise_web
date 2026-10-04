@@ -318,12 +318,13 @@ if (staleUsersInPage.length > 0) {
 - Can handle thousands of users without issues
 
 **Typical Execution Times:**
-| User Count | Estimated Time |
-|------------|----------------|
-| 100 users | < 1 minute |
-| 1,000 users | 2-3 minutes |
-| 10,000 users | 5-10 minutes |
-| 50,000 users | 20-30 minutes |
+
+| User Count   | Estimated Time |
+| ------------ | -------------- |
+| 100 users    | < 1 minute     |
+| 1,000 users  | 2-3 minutes    |
+| 10,000 users | 5-10 minutes   |
+| 50,000 users | 20-30 minutes  |
 
 **API Calls:**
 

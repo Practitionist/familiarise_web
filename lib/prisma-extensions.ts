@@ -41,7 +41,6 @@ export const moneyResultExtensions = {
     walletBalance: fn("walletBalance"),
     creditLimit: fn("creditLimit"),
     minBalancePaise: fn("minBalancePaise"),
-    autoTopUpAmountPaise: fn("autoTopUpAmountPaise"),
   },
   billingSubscription: {
     ratePerSeatPaise: fn("ratePerSeatPaise"),
@@ -117,7 +116,6 @@ export const moneyResultExtensions = {
     amount: f("amount"),
     originalAmount: f("originalAmount"),
     taxAmount: f("taxAmount"),
-    gstTcsCollectedPaise: fn("gstTcsCollectedPaise"),
     exchangeRateAtCheckout: dn("exchangeRateAtCheckout"),
   },
   paymentLeg: { amountPaise: f("amountPaise") },
@@ -131,7 +129,6 @@ export const moneyResultExtensions = {
     platformFeePaise: f("platformFeePaise"),
     consultantSharePaise: f("consultantSharePaise"),
     refundedShareAmount: f("refundedShareAmount"),
-    gstTcsAccruedPaise: fn("gstTcsAccruedPaise"),
   },
   consultantPayout: {
     amount: f("amount"),
@@ -168,11 +165,6 @@ export const moneyResultExtensions = {
     totalPaise: f("totalPaise"),
   },
   tdsAdjustment: { amountPaise: f("amountPaise") },
-  gstTcsBatch: {
-    netSupplyPaise: f("netSupplyPaise"),
-    tcsCollectedPaise: f("tcsCollectedPaise"),
-  },
-  gstTcsAdjustment: { amountPaise: f("amountPaise") },
   discountCode: { maxDiscount: fn("maxDiscount") },
   referralProgramConfig: {
     monthlyBudgetPaise: fn("monthlyBudgetPaise"),

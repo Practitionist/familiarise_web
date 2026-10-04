@@ -151,7 +151,7 @@ someone next looks at this:
    special client-side role at all, and every moderation or support action would
    go through the server clients in `lib/stream-client.ts`, which present the
    API secret and bypass Stream's permission system anyway — so nothing is lost
-   operationally *unless* a support surface needs to read channels directly in
+   operationally _unless_ a support surface needs to read channels directly in
    the browser. This is the least-privilege answer and removes the skeleton key
    entirely. It is the option to take if a staff account is ever compromised, or
    before the platform holds conversations it would be damaging to leak in bulk.
@@ -538,7 +538,7 @@ There is no hard-delete follow-up job yet — the `TODO` in
 **What that means concretely, for a DPDP §12 erasure request.**
 `lib/compliance/erasure/scrub-user.ts` pseudonymises the local `User` row and
 makes no Stream call at all. Stream-side removal is therefore incidental: the
-nightly reaper notices the local row is gone and issues a *soft* delete, which
+nightly reaper notices the local row is gone and issues a _soft_ delete, which
 is the state the data then stays in.
 
 - **Retention window:** the soft delete is described in the code as a 30-day

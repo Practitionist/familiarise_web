@@ -31,12 +31,12 @@ import {
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
-  refundBookingPayment,
   type FundingRail,
-} from "@/lib/payments/operations/booking-refund";
+} from "@/lib/payments/funding-rail";
 import {
   isModelledRefundRefusal,
   RefundGatewayError,

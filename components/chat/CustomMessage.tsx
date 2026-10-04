@@ -7,7 +7,7 @@ import {
   Attachment,
   useChatContext,
   useMessageContext,
-  useMessageComposer,
+  useMessageComposerController,
 } from "stream-chat-react";
 import {
   SmileIcon,
@@ -18,6 +18,7 @@ import {
   CheckIcon,
   XIcon,
   FlagIcon,
+  CalendarIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,7 @@ import {
 export const CustomMessage = () => {
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
-  const messageComposer = useMessageComposer();
+  const messageComposer = useMessageComposerController();
   const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -118,8 +119,46 @@ export const CustomMessage = () => {
   // Check if this message is a reply to another message
   const hasQuotedMessage = !!message.quoted_message;
 
+  // Inspect message for booking context metadata
+  const msgRecord = message as unknown as Record<string, unknown>;
+  const customRecord =
+    typeof msgRecord.custom === "object" && msgRecord.custom !== null
+      ? (msgRecord.custom as Record<string, unknown>)
+      : undefined;
+  const readMessageString = (key: string): string | null => {
+    const direct = msgRecord[key];
+    if (typeof direct === "string") return direct;
+    const nested = customRecord?.[key];
+    return typeof nested === "string" ? nested : null;
+  };
+  const bookingAppointmentId = readMessageString("booking_appointment_id");
+  const isBookingContext = Boolean(
+    bookingAppointmentId ||
+    msgRecord.kind === "booking_context" ||
+    customRecord?.kind === "booking_context",
+  );
+  const bookingType = (
+    readMessageString("booking_type") ?? "CONSULTATION"
+  ).toUpperCase();
+  const bookingTitle =
+    readMessageString("booking_title") ?? "Scheduled Session";
+  const bookingStartsAtRaw = readMessageString("booking_starts_at");
+  const bookingStartsAtDate = bookingStartsAtRaw
+    ? new Date(bookingStartsAtRaw)
+    : null;
+  const formattedBookingStartsAt =
+    bookingStartsAtDate && !Number.isNaN(bookingStartsAtDate.getTime())
+      ? format(bookingStartsAtDate, "PPp")
+      : null;
+
   // Avoid rendering empty messages
-  if (!hasText && !hasAttachments && message.type !== "system" && !isDeleted) {
+  if (
+    !hasText &&
+    !hasAttachments &&
+    !isBookingContext &&
+    message.type !== "system" &&
+    !isDeleted
+  ) {
     return null;
   }
 
@@ -197,7 +236,7 @@ export const CustomMessage = () => {
 
   // WhatsApp/Telegram style reply - sets the message as quoted for the input
   const handleReplyClick = () => {
-    // Use Stream Chat v13's MessageComposer API to set quoted message
+    // Use Stream Chat's MessageComposer controller API to set quoted message
     messageComposer.setQuotedMessage(message);
   };
 
@@ -416,6 +455,48 @@ export const CustomMessage = () => {
             </div>
           )}
 
+          {/* Booking Context Card */}
+          {isBookingContext && (
+            <div
+              data-testid="booking-context-card"
+              className={cn(
+                "mb-2 rounded-md border p-2.5 text-left",
+                isMyMessage
+                  ? "border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+                  : "border-border bg-background/80 text-foreground",
+              )}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                    isMyMessage
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-secondary text-secondary-foreground",
+                  )}
+                >
+                  {bookingType}
+                </span>
+              </div>
+              <div className="text-xs font-semibold leading-snug">
+                {bookingTitle}
+              </div>
+              {formattedBookingStartsAt && (
+                <div
+                  className={cn(
+                    "mt-0.5 text-[11px]",
+                    isMyMessage
+                      ? "text-primary-foreground/80"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {formattedBookingStartsAt}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Render Attachments if they exist */}
           {hasAttachments && (
             <div className={`attachments ${hasText ? "mb-1" : ""} grid gap-2`}>
@@ -487,7 +568,9 @@ export const CustomMessage = () => {
                         key={reactionType}
                         type="button"
                         className={`text-sm px-2 py-0.5 rounded-full hover:opacity-80 ${
-                          isMyMessage ? "bg-primary-foreground/20" : "bg-background"
+                          isMyMessage
+                            ? "bg-primary-foreground/20"
+                            : "bg-background"
                         }`}
                         onClick={() => handleReactionClick(reactionType)}
                         aria-label={`React with ${reactionType} (${count} so far)`}

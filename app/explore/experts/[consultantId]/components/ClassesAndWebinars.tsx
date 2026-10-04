@@ -55,7 +55,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         ...plan,
         type: "class" as const,
         classes: [],
-        imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+        imageUrl: generateProgramImageUrl(plan.imageUrl),
         isRegistered: enrolledClassPlanIds.has(plan.id),
       })),
     [classPlans, enrolledClassPlanIds],
@@ -67,7 +67,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         ...plan,
         type: "webinar" as const,
         webinars: [],
-        imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
+        imageUrl: generateProgramImageUrl(plan.imageUrl),
         isRegistered: registeredWebinarPlanIds.has(plan.id),
       })),
     [webinarPlans, registeredWebinarPlanIds],
@@ -84,7 +84,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     return null;
   }
 
-  const renderPrograms = (programs: (ClassPlanProgram | WebinarPlanProgram)[]) =>
+  const renderPrograms = (
+    programs: (ClassPlanProgram | WebinarPlanProgram)[],
+  ) =>
     programs.length > RAIL_THRESHOLD ? (
       <ProgramRow programs={programs} />
     ) : (

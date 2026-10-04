@@ -3,11 +3,10 @@
  *
  * Walks the double-entry journal + derived balances to flag drift across:
  *   1. LedgerTransaction/Entry       ← the authoritative double-entry journal
- *   2. LedgerAccountBalance          ← maintained running-balance snapshot
- *   3. BillingAccount.walletBalance  ← derived cache of the WALLET account
- *   4. ProgramAssignment             ← per-(member, cycle) meters & overage counts
- *   5. BillingSubscription           ← activeSeatCount cache
- *   6. ConsultantEarnings / OrganizationEarnings / Payouts ← settlement & split parity
+ *   2. BillingAccount.walletBalance  ← derived cache of the WALLET account
+ *   3. ProgramAssignment             ← per-(member, cycle) meters & overage counts
+ *   4. BillingSubscription           ← activeSeatCount cache
+ *   5. ConsultantEarnings / OrganizationEarnings / Payouts ← settlement & split parity
  *
  * Checks that are 100% enforced by active Postgres CHECK constraints, exclusion
  * constraints, or DEFERRABLE constraint triggers (per-txn Dr=Cr balance,
@@ -40,7 +39,6 @@ export type Finding = {
     | "CREDIT_POOL_CONSUMED_DRIFT"
     | "OVERAGE_COUNT_DRIFT"
     | "OVERAGE_CHARGESTATUS_INTEGRITY"
-    | "LEDGER_BALANCE_SNAPSHOT_DRIFT"
     | "REFUND_BOOKING_COHERENCE"
     | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
@@ -134,22 +132,6 @@ export function clawbackDualWriteGapFindings(
     });
   }
   return out;
-}
-
-const DEFAULT_UNJOURNALED_GRACE_MS = 60 * 1000;
-const configuredGraceMs = Number(process.env.RECONCILE_UNJOURNALED_GRACE_MS);
-export const RECONCILE_UNJOURNALED_GRACE_MS =
-  Number.isFinite(configuredGraceMs) && configuredGraceMs >= 0
-    ? configuredGraceMs
-    : DEFAULT_UNJOURNALED_GRACE_MS;
-
-/** Q2 — an unjournaled payment is a finding only once the grace has lapsed. */
-export function isPastUnjournaledGrace(
-  paymentUpdatedAt: Date,
-  now: Date = new Date(),
-  graceMs: number = RECONCILE_UNJOURNALED_GRACE_MS,
-): boolean {
-  return now.getTime() - paymentUpdatedAt.getTime() >= graceMs;
 }
 
 type StepCtx = {
@@ -550,53 +532,6 @@ async function stepSeatCounts(ctx: StepCtx): Promise<void> {
   }
 }
 
-// --- (H2) #776 — LedgerAccountBalance snapshot integrity ---
-async function stepLedgerSnapshots(ctx: StepCtx): Promise<void> {
-  const entrySums = await prisma.ledgerEntry.groupBy({
-    by: ["accountId", "direction"],
-    _sum: { amountPaise: true },
-  });
-  const journalByAccount = new Map<string, number>();
-  for (const row of entrySums) {
-    const amt = sumPaise(row._sum.amountPaise);
-    const cur = journalByAccount.get(row.accountId) ?? 0;
-    journalByAccount.set(
-      row.accountId,
-      row.direction === "DEBIT" ? cur + amt : cur - amt,
-    );
-  }
-  const snapshots = await prisma.ledgerAccountBalance.findMany({
-    select: { accountId: true, balancePaise: true },
-  });
-  const snapshotByAccount = new Map<string, number>(
-    snapshots.map((s) => [s.accountId, s.balancePaise]),
-  );
-  const allAccountIds = new Set<string>(
-    Array.from(journalByAccount.keys()).concat(
-      Array.from(snapshotByAccount.keys()),
-    ),
-  );
-  for (const accountId of Array.from(allAccountIds)) {
-    const journal = journalByAccount.get(accountId) ?? 0;
-    const snapshot = snapshotByAccount.get(accountId);
-    const snapshotVal = snapshot ?? 0;
-    if (snapshotVal !== journal) {
-      ctx.findings.push({
-        kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
-        expectedPaise: journal,
-        actualPaise: snapshotVal,
-        deltaPaise: snapshotVal - journal,
-        details: {
-          ledgerAccountId: accountId,
-          unit: "paise",
-          snapshotMissing: snapshot === undefined,
-          note: "LedgerAccountBalance snapshot disagrees with the journal-derived balance.",
-        },
-      });
-    }
-  }
-}
-
 // --- (H3) #776 §C — refund ↔ utilization coherence ---
 async function stepRefundCoherence(ctx: StepCtx): Promise<void> {
   const utilizations = await prisma.bookingUtilization.findMany({
@@ -744,6 +679,12 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
 
 // --- #773/#778 §G — earnings-bearing payments with no booking journal txn ---
 async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
+  // Earnings first: a row and its booking journal commit in one transaction, so
+  // any earnings row read here has its journal visible to the read below.
+  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+  });
   const bookingTxns = await prisma.ledgerTransaction.findMany({
     where: { kind: "BOOKING", paymentId: { not: null } },
     select: { paymentId: true },
@@ -751,24 +692,9 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
   const coveredPaymentIds = new Set(
     bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
   );
-  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
-    select: { paymentId: true },
-    distinct: ["paymentId"],
-  });
-  const candidates = earningsPaymentRows.filter(
+  const unjournaled = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   );
-  const candidateRows = await prisma.payment.findMany({
-    where: { id: { in: candidates.map((e) => e.paymentId!) } },
-    select: { id: true, updatedAt: true },
-  });
-  const now = new Date();
-  const settledIds = new Set(
-    candidateRows
-      .filter((p) => isPastUnjournaledGrace(p.updatedAt, now))
-      .map((p) => p.id),
-  );
-  const unjournaled = candidates.filter((e) => settledIds.has(e.paymentId!));
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
   const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
   if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
@@ -780,7 +706,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
       details: {
         unit: "payments",
         samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments older than the post-commit grace window missing a BOOKING ledger transaction exceed the allowed threshold (#773; Q2 grace via RECONCILE_UNJOURNALED_GRACE_MS).",
+        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold.",
       },
     });
   }
@@ -1199,14 +1125,8 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
     });
     for (const t of overageTxns) {
       if (t.idempotencyKey.startsWith("overage-recarve-invoice:")) {
-        const debitLines =
-          t.entries ??
-          (t as unknown as { postings?: Array<{ amountPaise: number | bigint }> })
-            .postings ??
-          [];
-        const debitSum = debitLines.reduce(
-          (s: number, p: { amountPaise: number | bigint }) =>
-            s + Number(p.amountPaise),
+        const debitSum = t.entries.reduce(
+          (s, p) => s + Number(p.amountPaise),
           0,
         );
         recarveReversalAmounts.set(t.idempotencyKey, debitSum);
@@ -1390,7 +1310,6 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   await stepPayoutTotals(ctx);
   await stepSeatCounts(ctx);
   if (!opts.organizationId) {
-    await stepLedgerSnapshots(ctx);
     await stepRefundCoherence(ctx);
   }
   await stepEarningsLedger(ctx);

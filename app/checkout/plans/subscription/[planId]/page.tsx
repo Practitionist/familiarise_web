@@ -36,11 +36,9 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   paymentGateways,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
@@ -277,7 +275,6 @@ export default function SubscriptionCheckoutPage({
 
   // Create utility functions using the toast instance
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
@@ -389,7 +386,7 @@ export default function SubscriptionCheckoutPage({
         const data = validationResult.data;
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        // Real payments go through the RazorpayCheckout component.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
         if (
           data.success &&
@@ -935,29 +932,6 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            renewsSubscriptionId:
-                              effectiveSearchParams.renewsSubscriptionId,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}

@@ -31,7 +31,11 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
-import { addRemainingMembers, createMemberChunk } from "@/lib/stream/batch";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  forEachChunk,
+} from "@/lib/stream/batch";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -116,7 +120,22 @@ export async function createChannel(input: {
   });
 
   // Ensure all members exist in Stream before channel creation
-  await upsertUsersToStream(allMembers);
+  const upsertResult = await upsertUsersToStream(allMembers, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = new Set(upsertResult?.droppedIds ?? []);
+  const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
+  if (
+    droppedIds.has(validated.createdById) ||
+    syncedMembers.length === 0 ||
+    (validated.channelType === "messaging" &&
+      allMembers.length >= 2 &&
+      syncedMembers.length < 2)
+  ) {
+    throw new Error(
+      "Stream channel requires consented creator and participants",
+    );
+  }
 
   // Merge the optional org stamp into additionalData. Use snake_case
   // (`organization_id`) to match Stream's chat field convention and the
@@ -139,7 +158,10 @@ export async function createChannel(input: {
   const createChannelData = {
     name: validated.channelName,
     created_by_id: validated.createdById,
-    members: createMemberChunk(allMembers),
+    members: createMemberChunk(syncedMembers),
+    ...(validated.channelType === "team" && syncedMembers.length >= 100
+      ? { cooldown: 3 }
+      : {}),
     ...mergedAdditionalData,
   };
   const channel = client.channel(
@@ -174,7 +196,7 @@ export async function createChannel(input: {
   // on the adopted path too: the winner created the same channel from the same
   // roster, so the same remainder is owed either way and `addMembers` is
   // idempotent for anyone already in.
-  await addRemainingMembers(channel, allMembers);
+  await addRemainingMembers(channel, syncedMembers);
 
   // Channel-scoped moderation replaces the old global-admin Stream role
   // (#899). Only the channel HOST may moderate — never an arbitrary creator:
@@ -198,12 +220,12 @@ export async function createChannel(input: {
 
   streamLogger.debug("Channel created successfully", {
     channelId: validated.channelId,
-    memberCount: allMembers.length,
+    memberCount: syncedMembers.length,
   });
 
   return {
     channelId: validated.channelId,
-    members: allMembers,
+    members: syncedMembers,
     channelData,
   };
 }
@@ -263,10 +285,7 @@ const ACCEPTED_COLLABORATORS_INCLUDE = {
 };
 
 export type EventChannelType =
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
+  "webinar" | "class" | "consultation" | "subscription";
 
 async function loadEventChannelData(
   eventType: EventChannelType,
@@ -474,8 +493,6 @@ export async function createWebinarChannel(
     totalUnique: allMembers.length,
   });
 
-  await upsertUsersToStream(allMembers);
-
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
 
@@ -506,8 +523,6 @@ export async function createClassChannel(
     classId,
     totalUnique: allMembers.length,
   });
-
-  await upsertUsersToStream(allMembers);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -542,8 +557,6 @@ export async function createConsultationChannel(
     );
     return null;
   }
-
-  await upsertUsersToStream([consultantId, consulteeId]);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -580,8 +593,6 @@ export async function createSubscriptionChannel(
     );
     return null;
   }
-
-  await upsertUsersToStream([consultantId, consulteeId]);
 
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
@@ -625,6 +636,7 @@ export async function createCollaboratorChannel(
   let title: string;
   let hostUserId: string | undefined;
   let collaboratorUserIds: string[];
+  let organizationId: string | null = null;
 
   if (planType === "webinar") {
     const plan = await prisma.webinarPlan.findUnique({
@@ -642,6 +654,7 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Webinar plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
     collaboratorUserIds = plan.collaborators
       .map((c) => c.consultantProfile.user.id)
@@ -662,6 +675,7 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Class plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
     collaboratorUserIds = plan.collaborators
       .map((c) => c.consultantProfile.user.id)
@@ -692,7 +706,10 @@ export async function createCollaboratorChannel(
   // creator here upserts first, and this one did not (FAMILIARISE_WEB-37, #1580).
   // The roster is whoever the upsert could sync: a member without
   // STREAM_DATA_PROCESSING consent is left out of create, add and remove alike.
-  const { droppedIds } = await upsertUsersToStream(expectedMemberIds);
+  const upsertResult = await upsertUsersToStream(expectedMemberIds, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = upsertResult?.droppedIds ?? [];
   const roster = expectedMemberIds.filter((id) => !droppedIds.includes(id));
   if (roster.length < 2 || !roster.includes(hostUserId)) {
     streamLogger.warn("Skipping collaborator channel - roster not syncable", {
@@ -706,13 +723,15 @@ export async function createCollaboratorChannel(
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
     created_by_id: hostUserId,
-    members: roster,
+    members: createMemberChunk(roster),
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
+    ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
   // Idempotent create — no-op if channel already exists
   await channel.create();
+  await addRemainingMembers(channel, roster);
   markChannelExists("messaging", channelId);
 
   // Host moderates their own collab channel — this path bypasses
@@ -728,7 +747,9 @@ export async function createCollaboratorChannel(
   // Add members present in DB but missing from channel
   const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
   if (toAdd.length > 0) {
-    await channel.addMembers(toAdd);
+    await forEachChunk(toAdd, async (chunk) => {
+      await channel.addMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: added missing members", {
       channelId,
       added: toAdd,
@@ -738,7 +759,9 @@ export async function createCollaboratorChannel(
   // Remove channel members no longer in the DB set
   const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
   if (toRemove.length > 0) {
-    await channel.removeMembers(toRemove);
+    await forEachChunk(toRemove, async (chunk) => {
+      await channel.removeMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: removed departed members", {
       channelId,
       removed: toRemove,

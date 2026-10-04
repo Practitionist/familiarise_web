@@ -2,16 +2,17 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useCall } from "@stream-io/video-react-sdk";
-import { useSession } from "@/lib/auth-client";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionInfo } from "../session-info";
 
 interface RecordingControlsProps {
   meetingId: string;
   recordingEnabled: boolean;
   showOnlyButton?: boolean;
   showOnlyIndicator?: boolean;
+  isHost?: boolean;
 }
 
 const RecordingControls = ({
@@ -19,17 +20,17 @@ const RecordingControls = ({
   recordingEnabled: _recordingEnabled,
   showOnlyButton = false,
   showOnlyIndicator = false,
+  isHost: isHostProp,
 }: RecordingControlsProps) => {
   const call = useCall();
   const { toast } = useToast();
-  const { data: session } = useSession();
+  const { isHost: sessionIsHost } = useSessionInfo();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
-  // Only consultants (hosts) should be able to control recordings
-  // Use session role instead of Stream's createdBy, as consultee might join first
-  const isConsultant = session?.user?.role === "CONSULTANT";
+  // Derive host control from call metadata (`useSessionInfo`) so org experts and co-presenters can record.
+  const isHost = isHostProp ?? sessionIsHost;
 
   // Ref to avoid stale closure in call event handlers
   const isRecordingRef = useRef(isRecording);
@@ -41,7 +42,6 @@ const RecordingControls = ({
   useEffect(() => {
     if (!call) return;
 
-    // Get initial recording state from call
     const checkRecordingState = () => {
       const callState = call.state;
       const recording = callState.recording;
@@ -50,7 +50,6 @@ const RecordingControls = ({
 
     checkRecordingState();
 
-    // Listen for recording state changes
     const unsubscribe = call.on("call.recording_started", () => {
       setIsRecording(true);
       setIsLoading(false);
@@ -80,7 +79,6 @@ const RecordingControls = ({
       });
     });
 
-    // Also subscribe to general call state updates to catch recording changes
     const unsubscribeUpdated = call.on("call.updated", () => {
       const recording = call.state.recording;
       if (recording && !isRecordingRef.current) {
@@ -116,7 +114,6 @@ const RecordingControls = ({
     };
   }, [isRecording]);
 
-  // Format duration as MM:SS or HH:MM:SS
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -149,8 +146,6 @@ const RecordingControls = ({
       if (!response.ok) {
         throw new Error(data.error || "Failed to start recording");
       }
-
-      // The recording state will be updated via call events
     } catch (error) {
       console.error("Error starting recording:", error);
       setIsLoading(false);
@@ -184,8 +179,6 @@ const RecordingControls = ({
       if (!response.ok) {
         throw new Error(data.error || "Failed to stop recording");
       }
-
-      // The recording state will be updated via call events
     } catch (error) {
       console.error("Error stopping recording:", error);
       setIsLoading(false);
@@ -198,9 +191,7 @@ const RecordingControls = ({
     }
   };
 
-  // For non-consultants (consultees), show recording indicator when recording is active
-  if (!isConsultant) {
-    // Show recording indicator when recording is active (so consultee knows they're being recorded)
+  if (!isHost) {
     if (isRecording) {
       return (
         <div
@@ -217,9 +208,6 @@ const RecordingControls = ({
     return null;
   }
 
-  // For consultants - render based on props
-
-  // If showOnlyIndicator is true, only render the REC time indicator (when recording)
   if (showOnlyIndicator) {
     if (!isRecording) return null;
     return (

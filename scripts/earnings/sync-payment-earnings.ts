@@ -32,15 +32,13 @@ const BATCH_SIZE = 100;
 /**
  * #1319 — the cohort has no age window any more, so the run needs a ceiling.
  *
- * Settlement for an org-funded checkout runs after the checkout transaction
- * commits, and a failure there is recorded and moved past. This sweep is the
- * only thing that repairs it — and it used to look back thirty days, so a
- * payment that stayed unaccrued for a month left the cohort silently and the
- * consultant was never paid for a session they had already delivered. There is
- * no age at which money stops being owed, so there is no window here now. The
- * ceiling bounds the runtime instead, and the ordering is oldest-first because
- * the payments that have gone unaccrued longest are the ones somebody has been
- * waiting on.
+ * The cohort is the gateway captures whose Phase-1 earnings write rolled back
+ * to its savepoint and whose post-commit retry also failed; the synchronous
+ * rails (org-funded, credit-funded, mock) write earnings inside the checkout
+ * transaction and never land here. There is no age at which money stops being
+ * owed, so there is no window. The ceiling bounds the runtime instead, and the
+ * ordering is oldest-first because the payments that have gone unaccrued
+ * longest are the ones somebody has been waiting on.
  *
  * Refunded and charged-back money is out of the cohort (#1583 C-P0-05): the
  * money already left, and the refund cascade ran before any earning existed,
@@ -245,6 +243,10 @@ async function syncPaymentEarningsUnlocked(
     const payments = await prisma.payment.findMany({
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
+        // Synchronous rails carry the flag and settle earnings in their own tx.
+        isMockPayment: false,
+        // An appointment-less row is never healed here, so it must not hold a cohort slot.
+        appointmentId: { not: null },
         earnings: { none: {} }, // No linked earnings
         refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
         disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },

@@ -91,6 +91,49 @@ const HOME_NEXT_CYCLE_TAKE = 5;
 /** Candidates read before the JS `remaining > 0` filter (#1766). */
 const HOME_NEXT_CYCLE_SCAN = 50;
 
+export const NON_HOST_UNVERIFIED_REASONS: readonly string[] = [
+  "OFFLINE",
+  "INCONCLUSIVE",
+  "NOBODY_JOINED",
+  "CONSULTEE_NO_SHOW",
+];
+
+/**
+ * Computes the consultant's 30-day session completion rate percentage from
+ * grouped occurrence counts, excluding non-host-fault UNVERIFIED outcomes
+ * (maintenance windows, inconclusive Stream outages, nobody joined, or
+ * consultee no-shows) and platform-outage voids from the denominator.
+ */
+export function computeConsultantCompletionRate(
+  slotCounts: ReadonlyArray<{
+    completionStatus: string;
+    outcome?: string | null;
+    unverifiedReason?: string | null;
+    _count: number;
+  }>,
+): number | null {
+  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
+    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
+  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
+  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
+  const unverifiedSlots = countOf((s) => {
+    if (s.completionStatus !== "UNVERIFIED") return false;
+    const reason = s.outcome ?? s.unverifiedReason ?? null;
+    return !reason || !NON_HOST_UNVERIFIED_REASONS.includes(reason);
+  });
+  const hostVoidedSlots = countOf(
+    (s) =>
+      s.completionStatus === "VOIDED" &&
+      !!s.outcome &&
+      (HOST_ATTRIBUTED_OUTCOMES as readonly string[]).includes(s.outcome),
+  );
+  const completionDenom =
+    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
+  return completionDenom > 0
+    ? Math.round((completedSlots / completionDenom) * 100)
+    : null;
+}
+
 /**
  * #1766 — subscriptions whose live cycle is finished and whose entitlement
  * is not: derived at read time, no job. Two steps because the predicate can
@@ -1007,24 +1050,7 @@ export async function getConsultantDashboard(
         : 0;
 
   // Session completion rate from slot counts
-  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
-    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
-  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
-  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
-  const unverifiedSlots = countOf((s) => s.completionStatus === "UNVERIFIED");
-  // D6 — a platform outage is not the consultant's miss.
-  const hostVoidedSlots = countOf(
-    (s) =>
-      s.completionStatus === "VOIDED" &&
-      !!s.outcome &&
-      HOST_ATTRIBUTED_OUTCOMES.includes(s.outcome),
-  );
-  const completionDenom =
-    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
-  const completionRate =
-    completionDenom > 0
-      ? Math.round((completedSlots / completionDenom) * 100)
-      : null;
+  const completionRate = computeConsultantCompletionRate(slotCounts);
 
   // Trial conversion rate
   const trialCountMap = new Map(trialCounts.map((t) => [t.status, t._count]));

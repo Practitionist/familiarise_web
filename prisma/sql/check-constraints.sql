@@ -36,10 +36,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
 -- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
--- #1582 A-P1-04 — GST-TCS collected rides the same floor as the other amounts.
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0
-    AND ("gstTcsCollectedPaise" IS NULL OR "gstTcsCollectedPaise" >= 0));
+  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0);
 -- SPLIT
 -- #1582 A-P0-02 — a funding leg is non-negative unless it is a *_REVERSAL
 -- sibling (INVOICE_ACCRUAL_REVERSAL / OVERAGE_INVOICE_ACCRUAL_REVERSAL), the
@@ -168,7 +166,6 @@ ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_amounts_non
     AND "platformFeePaise" >= 0
     AND "consultantSharePaise" >= 0
     AND "refundedShareAmount" >= 0
-    AND ("gstTcsAccruedPaise" IS NULL OR "gstTcsAccruedPaise" >= 0)
   );
 -- SPLIT
 ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_amounts_nonnegative";

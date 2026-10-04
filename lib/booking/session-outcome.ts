@@ -18,7 +18,8 @@ import type { OccurrenceOutcome } from "@prisma/client";
 
 export const VOID_LOSS_MINUTES = 15;
 export const OVERRUN_CREDIT_MINUTES = 30;
-export const RECONNECT_GRACE_MINUTES = 2;
+export const EARLY_START_BUFFER_MINUTES = 15;
+export const RECONNECT_GRACE_MINUTES = 5;
 
 const MIN_MS = 60_000;
 
@@ -184,6 +185,16 @@ function countLoss(sides: Sides, start: number, from: number, booked: number) {
   return { hostLoss, platformLoss };
 }
 
+/** Pre-start minutes both sides spent together inside [startsAt - 15m, startsAt). */
+function earlyStartCredit(sides: Sides, start: number): number {
+  let credit = 0;
+  for (let i = -EARLY_START_BUFFER_MINUTES; i < 0; i++) {
+    const t = start + i * MIN_MS + MIN_MS / 2;
+    if (covers(sides.host, t) && covers(sides.learner, t)) credit++;
+  }
+  return credit;
+}
+
 /** Overrun minutes both sides spent together, up to the credit cap. */
 function overrunCredit(sides: Sides, start: number, booked: number): number {
   let credit = 0;
@@ -224,30 +235,37 @@ export function classifySessionOutcome(
 
   const start = input.startsAt.getTime();
   const end = input.endsAt.getTime();
+  const earlyHorizon = start - EARLY_START_BUFFER_MINUTES * MIN_MS;
   const horizon = end + OVERRUN_CREDIT_MINUTES * MIN_MS;
   const hosts = new Set(input.hostUserIds);
   const endedAt = input.meeting?.endedAt?.getTime() ?? null;
   const sides: Sides = {
     host: mergeSide(
       input.intervals.filter((i) => hosts.has(i.userId)),
-      start,
+      earlyHorizon,
       horizon,
     ),
     learner: mergeSide(
       input.intervals.filter((i) => !hosts.has(i.userId)),
-      start,
+      earlyHorizon,
       horizon,
     ),
     outages: outageSegments(input),
     deliberateEndAt:
       input.meeting?.endedReason === "call_ended" &&
       endedAt !== null &&
+      endedAt >= start &&
       endedAt < end
         ? endedAt
         : null,
   };
-  const hostEver = sides.host.some((s) => s.start < end);
-  const learnerEver = sides.learner.some((s) => s.start < end);
+  const preStartCredit = earlyStartCredit(sides, start);
+  const hostEver = sides.host.some(
+    (s) => s.start < end && (s.end > start || preStartCredit > 0),
+  );
+  const learnerEver = sides.learner.some(
+    (s) => s.start < end && (s.end > start || preStartCredit > 0),
+  );
   if (!learnerEver) {
     return hostEver
       ? verdict("LEARNER_ABSENT", 0, 0)
@@ -255,12 +273,14 @@ export function classifySessionOutcome(
   }
 
   const booked = Math.max(1, Math.round((end - start) / MIN_MS));
+  const firstInWindowLearner =
+    sides.learner.find((s) => s.end > start) ?? sides.learner[0];
   const lossFrom = Math.max(
     0,
-    Math.floor((sides.learner[0].start - start) / MIN_MS),
+    Math.floor((firstInWindowLearner.start - start) / MIN_MS),
   );
   const { hostLoss, platformLoss } = countLoss(sides, start, lossFrom, booked);
-  const credit = overrunCredit(sides, start, booked);
+  const credit = preStartCredit + overrunCredit(sides, start, booked);
   const lost = Math.max(0, hostLoss + platformLoss - credit);
   const delivered = Math.max(0, booked - lost);
   const isVoid = lost > 0 && lost >= Math.min(VOID_LOSS_MINUTES, booked / 2);

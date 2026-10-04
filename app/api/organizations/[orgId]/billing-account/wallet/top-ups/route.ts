@@ -30,7 +30,10 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { initiateTopUp } from "@/lib/api/organizations/wallet";
+import {
+  initiateTopUp,
+  parseMintedOrderId,
+} from "@/lib/api/organizations/wallet";
 import { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
@@ -133,34 +136,8 @@ export async function POST(
     );
   }
 
-  // #1438 — Idempotent by client key: reuse an open pending entry instead of
-  // minting a second Razorpay order on a duplicate POST. Extract the minted
-  // `razorpay_order=(order_...)` from `notes` so the replay returns the full
-  // usable checkout payload (`razorpayOrderId`, `keyId`, `currency`), or if
-  // the placeholder was left at `razorpay_order=pending`, complete Step 2
-  // (`createRazorpayOrder`) and Step 3 (`update` `notes`) instead of stranding
-  // the idempotency key.
-  const extractMintedOrderId = (notes: string | null | undefined): string | null => {
-    const match = notes?.match(/razorpay_order=(order_\w+)/);
-    return match?.[1] ?? null;
-  };
-
-  const isStaleClaimNote = (
-    notes: string | null | undefined,
-    nowMs = Date.now(),
-    staleMs = 60_000,
-  ): boolean => {
-    if (!notes?.includes("razorpay_order=claiming")) {
-      return false;
-    }
-    const tsMatch = /claiming_at=(\d+)/.exec(notes);
-    if (!tsMatch) {
-      return false;
-    }
-    const claimedAtMs = Number.parseInt(tsMatch[1], 10);
-    return Number.isFinite(claimedAtMs) && nowMs - claimedAtMs >= staleMs;
-  };
-
+  // Idempotent by client key: a replay reuses the minted order, or completes a
+  // placeholder still at `razorpay_order=pending` instead of stranding the key.
   let reusedPendingPlaceholder = false;
   let reusedPlaceholderId: string | undefined;
   let reusedNotes: string | null | undefined;
@@ -199,7 +176,7 @@ export async function POST(
           { status: 409 },
         );
       }
-      const existingOrderId = extractMintedOrderId(existing.notes);
+      const existingOrderId = parseMintedOrderId(existing.notes);
       if (existingOrderId) {
         return NextResponse.json(
           {
@@ -278,7 +255,7 @@ export async function POST(
               { status: 409 },
             );
           }
-          const winnerOrderId = extractMintedOrderId(winner.notes);
+          const winnerOrderId = parseMintedOrderId(winner.notes);
           if (winnerOrderId) {
             return NextResponse.json(
               {

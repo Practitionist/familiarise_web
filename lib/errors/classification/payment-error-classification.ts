@@ -73,6 +73,7 @@ export const ErrorTypes = {
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
+  DISCOUNT_EXHAUSTED: "DISCOUNT_EXHAUSTED_ERROR",
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
@@ -248,23 +249,19 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
  * Errors that carry a machine-readable `code` are classified on that code
  * rather than on their prose, so rewording a message can never re-route it.
  *
- * #1351 — a rail this deployment fences off, and a gateway that exists in the
- * enum with nothing behind it, are both the caller asking for a payment method
- * we do not offer. That is a rejection the buyer can act on by choosing another
+ * A gateway that exists in the enum with nothing behind it is the caller
+ * asking for a payment method we do not offer. That is a rejection the buyer can act on by choosing another
  * method, not the 500 the message-only classifier fell through to.
  */
-export const BUSINESS_ERROR_CODES: ReadonlyArray<{
+interface BusinessErrorEntry {
   code: string;
   errorType: ErrorType;
   httpStatus: number;
   /** Replaces the thrown message when that message names ids or internals. */
   userMessage?: string;
-}> = [
-  {
-    code: "GATEWAY_DISABLED",
-    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
-    httpStatus: 422,
-  },
+}
+
+const BUSINESS_ERROR_ENTRIES = [
   {
     code: "UNSUPPORTED_GATEWAY",
     errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
@@ -488,6 +485,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     userMessage:
       "This discount code is for a different currency and cannot be applied to this plan.",
   },
+  {
+    code: "DISCOUNT_EXHAUSTED",
+    errorType: ErrorTypes.DISCOUNT_EXHAUSTED,
+    httpStatus: 409,
+    userMessage:
+      "This discount code has been fully redeemed. Remove it and try again — your card was not charged.",
+  },
   // #1775 / #1780 — BookingRuleError codes; the thrown sentence is the copy.
   ...(
     [
@@ -535,7 +539,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 502,
   },
-] as const;
+] as const satisfies ReadonlyArray<BusinessErrorEntry>;
+
+export type BusinessErrorCode = (typeof BUSINESS_ERROR_ENTRIES)[number]["code"];
+
+export const BUSINESS_ERROR_CODES: ReadonlyArray<
+  BusinessErrorEntry & { code: BusinessErrorCode }
+> = BUSINESS_ERROR_ENTRIES;
 
 /**
  * True when an error's `code` is one this module already resolves to a status
@@ -546,7 +556,7 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
  * question the classifier answers a moment later, so the two can never disagree
  * about which refusals reach the buyer intact.
  */
-export function isBusinessErrorCode(code: unknown): boolean {
+export function isBusinessErrorCode(code: unknown): code is BusinessErrorCode {
   return (
     typeof code === "string" &&
     BUSINESS_ERROR_CODES.some((entry) => entry.code === code)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import { cn } from "@/utils/tailwind";
 
 interface CountdownBadgeProps {
@@ -10,11 +11,13 @@ interface CountdownBadgeProps {
 
 type Tier = "far" | "soon" | "imminent" | "now" | "live" | "ended";
 
+const LIVE_BEFORE_MINUTES = 15;
+
 function getTier(diffMs: number, isOngoing: boolean): Tier {
   if (isOngoing) return "live";
   if (diffMs <= 0) return "now";
   const minutes = diffMs / 60000;
-  if (minutes <= 10) return "now";
+  if (minutes <= LIVE_BEFORE_MINUTES) return "now";
   if (minutes <= 30) return "imminent";
   if (minutes <= 180) return "soon";
   return "far";
@@ -49,8 +52,8 @@ export function CountdownBadge({
   const target = new Date(targetDate).getTime();
   const end = sessionEndDate ? new Date(sessionEndDate).getTime() : null;
   const diffMs = target - now;
-  const isOngoing = diffMs <= 0 && end !== null && now <= end;
-  const isEnded = end !== null && now > end;
+  const isOngoing = diffMs <= 0 && end !== null && now <= end + REJOIN_GRACE_MS;
+  const isEnded = end !== null && now > end + REJOIN_GRACE_MS;
 
   useEffect(() => {
     if (isEnded) return;

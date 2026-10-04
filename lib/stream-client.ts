@@ -6,6 +6,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
+import { Refusal } from "@/lib/errors/refusal";
 import { createCircuitBreaker } from "@/lib/redis";
 
 // Environment validation
@@ -178,74 +179,54 @@ export class StreamUnavailableError extends Error {
  * circuit breaker or be reported to Sentry as an error — only genuine outages
  * (network/timeout/5xx) should. (stream-chat ErrorFromResponse exposes .code/.status.)
  */
+export function streamHttpStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const e = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    metadata?: { responseCode?: unknown };
+  };
+  if (typeof e.status === "number") return e.status;
+  if (typeof e.metadata?.responseCode === "number")
+    return e.metadata.responseCode;
+  if (typeof e.statusCode === "number") return e.statusCode;
+  return null;
+}
+
+export function streamErrorCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "number" ? code : null;
+}
+
 export function isExpectedStreamError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { code?: number | null; status?: number };
-  return e.code === 16 || e.status === 404;
+  return streamErrorCode(error) === 16 || streamHttpStatus(error) === 404;
 }
 
-/**
- * A Stream rate-limit rejection (HTTP 429) means the app exhausted a per-minute
- * quota — quota, not availability. The 2026-08-23 incident showed why the two
- * must not be conflated: the daily expire cron burned through its
- * UpdateChannelPartial budget, and the resulting 429s tripped this breaker,
- * which then fast-failed the UNRELATED deleteChannels stage too. Rate limits
- * therefore neither trip the breaker nor page Sentry as errors; callers that
- * pace themselves (see jobs/stream/expire-event-channels.ts FREEZE_PACING_MS)
- * should stay under the cap in the first place.
- */
 export function isRateLimitError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { status?: number };
-  return e.status === 429;
+  return streamHttpStatus(error) === 429;
 }
 
-/**
- * A Stream refusal to serve because the APP IS SUSPENDED is not an outage, and
- * treating it as one is how the most likely real incident at a pre-revenue
- * company presents as an unreadable flap.
- *
- * #1280 2.2 — only 404 and 429 were classified, so a suspended account fell
- * into the generic branch: Sentry error, breaker trips, 30-second reset,
- * half-open probe, trips again, forever. Nothing in that loop says "we owe
- * Stream money", which is the only fact a human can act on.
- *
- * ## Exactly one code, checked against Stream's published table
- *
- * Read from <https://getstream.io/chat/docs/node/api_errors_response/>:
- *
- *   | code | HTTP | meaning              |
- *   |------|------|----------------------|
- *   |   99 |  403 | App suspended        |
- *   |    2 |  401 | Access Key invalid   |
- *   |   17 |  403 | Insufficient perms   |
- *   |   70 |  403 | No channel access    |
- *
- * An earlier revision of this matched `402 || 403 || code 99 || code 2`, and
- * three quarters of that was wrong in a way that mattered:
- *
- *   - **code 2 is authentication, not billing.** A rotated-away or mistyped
- *     API key would have been excluded from the breaker and reported as "we owe
- *     Stream money" — the single most misleading diagnosis available for a
- *     misconfiguration, because it sends someone to the billing page instead of
- *     the env vars.
- *   - **a bare 403 is not billing either.** Codes 17 and 70 share it, so an
- *     ordinary permission refusal would have been laundered into a billing
- *     alert.
- *   - **Stream documents no 402 at all.** Keeping it implied knowledge of a
- *     contract that does not exist.
- *
- * So: code 99, and nothing else. Narrow and cited beats broad and guessed —
- * anything this does not catch still reaches the generic branch, which pages.
- *
- * Treated like 429 for the breaker: it does NOT trip, because retrying cannot
- * fix it and opening the breaker only hides the cause. Unlike 429 it does not
- * self-resolve, so it escalates to its own alert.
- */
 export function isStreamBillingError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { code?: number | null };
-  return e.code === 99;
+  return streamErrorCode(error) === 99;
+}
+
+export const STREAM_QUOTA_RETRY_AFTER_SECONDS = 60;
+
+export function streamQuotaRefusal(): Refusal {
+  return new Refusal({
+    code: "STREAM_QUOTA",
+    httpStatus: 503,
+    userMessage: "Video is busy right now. Please wait a moment and try again.",
+    devMessage: `Stream rate limit (HTTP 429) — the app-level per-minute budget for this endpoint is spent. Retry-After: ${STREAM_QUOTA_RETRY_AFTER_SECONDS}s.`,
+  });
+}
+
+export function isStreamQuotaError(error: unknown): boolean {
+  return isRateLimitError(error);
 }
 
 /**

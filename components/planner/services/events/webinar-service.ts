@@ -8,12 +8,9 @@ import {
   eventStatusPayload,
   positioningPayload,
   priceToPaise,
+  recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
-import {
-  CreateWebinarPayload,
-  UpdateWebinarPayload,
-  WebinarRequestBody,
-} from "../types";
+import { WebinarRequestBody } from "../types";
 
 export class WebinarService {
   /**
@@ -198,7 +195,7 @@ export class WebinarService {
    * Build request body for API
    * API accepts topic names directly - no ID conversion needed
    */
-  private static buildRequestBody(
+  static buildRequestBody(
     webinarData: Partial<WebinarEvent>,
     consultantId: string,
     topicNames: string[],
@@ -208,9 +205,27 @@ export class WebinarService {
     webinarId: string,
   ): WebinarRequestBody {
     const plan = webinarData.webinarPlan;
+    const defaultRecording = recordingPayload(plan);
+    const recordingFields = isUpdate
+      ? {
+          ...(plan?.recordingEnabled !== undefined
+            ? { recordingEnabled: plan.recordingEnabled }
+            : {}),
+          ...(plan?.recordingStoragePolicy !== undefined
+            ? {
+                recordingStoragePolicy: plan.recordingStoragePolicy as
+                  "STREAM_ONLY" | "PERMANENT",
+              }
+            : {}),
+        }
+      : {
+          recordingEnabled: defaultRecording.recordingEnabled,
+          recordingStoragePolicy: defaultRecording.recordingStoragePolicy as
+            "STREAM_ONLY" | "PERMANENT",
+        };
 
     // Build base payload with required fields
-    const basePayload: CreateWebinarPayload = {
+    const basePayload = {
       title: plan?.title ?? "",
       description: plan?.description ?? undefined,
       // The form edits rupees; the DB stores paise (#780 money model).
@@ -219,7 +234,7 @@ export class WebinarService {
       durationInHours: plan?.durationInHours ?? 1,
       maxParticipants: plan?.maxParticipants ?? 1,
       certificateProvided: plan?.certificateProvided,
-      recordingEnabled: plan?.recordingEnabled,
+      ...recordingFields,
       language: plan?.language ?? undefined,
       level: plan?.level ?? undefined,
       prerequisites: plan?.prerequisites ?? undefined,
@@ -234,12 +249,11 @@ export class WebinarService {
     };
 
     if (isUpdate) {
-      const updatePayload: UpdateWebinarPayload = {
+      return {
         ...basePayload,
         id: planId,
         webinarId: webinarId || undefined,
       };
-      return updatePayload;
     }
 
     return basePayload;

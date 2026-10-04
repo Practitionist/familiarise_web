@@ -18,7 +18,11 @@ import {
   generateRecordingTitle,
   getEventAttendeeIds,
 } from "@/lib/stream/recording-utils";
-import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { toCallId } from "@/lib/stream/call-cid";
+import {
+  RecordingTransferService,
+  resolveAppointmentStoragePolicy,
+} from "@/lib/stream/recording-transfer-service";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -68,8 +72,7 @@ export async function handleRecordingStarted(
 ): Promise<void> {
   const { call_cid, user, created_at } = event;
 
-  // Extract call ID from call_cid (format: "default:callId")
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Recording started", {
     streamCallId,
@@ -129,7 +132,7 @@ export async function handleRecordingStopped(
 ): Promise<void> {
   const { call_cid } = event;
 
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Recording stopped", { streamCallId });
 
@@ -172,12 +175,140 @@ export async function handleRecordingStopped(
  * Handle call.recording_ready event
  * Creates a Recording record in the database
  */
+type RecordingNotificationAppointment = Parameters<
+  typeof getEventAttendeeIds
+>[0] & {
+  organizationId?: string | null;
+  consultation?: {
+    consultationPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  subscription?: {
+    subscriptionPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  trial?: {
+    subscriptionPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  webinar?: {
+    webinarPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+  class?: {
+    classPlan?: {
+      consultantProfile?: { user?: { name?: string | null } | null } | null;
+    } | null;
+  } | null;
+};
+
+function resolveRecordingNotificationMeta(
+  appointment: RecordingNotificationAppointment | null | undefined,
+): { appointmentType: string; consultantName: string } {
+  if (appointment?.consultation) {
+    return {
+      appointmentType: "consultation",
+      consultantName:
+        appointment.consultation.consultationPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant",
+    };
+  }
+  if (appointment?.subscription) {
+    return {
+      appointmentType: "subscription",
+      consultantName:
+        appointment.subscription.subscriptionPlan?.consultantProfile?.user
+          ?.name ?? "Unknown Consultant",
+    };
+  }
+  if (appointment?.trial) {
+    return {
+      appointmentType: "trial",
+      consultantName:
+        appointment.trial.subscriptionPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  if (appointment?.webinar) {
+    return {
+      appointmentType: "webinar",
+      consultantName:
+        appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  if (appointment?.class) {
+    return {
+      appointmentType: "class",
+      consultantName:
+        appointment.class.classPlan?.consultantProfile?.user?.name ??
+        "Unknown Consultant",
+    };
+  }
+  return {
+    appointmentType: "consultation",
+    consultantName: "Unknown Consultant",
+  };
+}
+
+async function stageAndSendRecordingReadyNotifications(
+  appointment: RecordingNotificationAppointment | null | undefined,
+  url: string,
+  recordingId: string,
+  streamCallId: string,
+): Promise<void> {
+  const userIds = await getEventAttendeeIds(appointment);
+  if (userIds.length === 0) return;
+
+  const { appointmentType, consultantName } =
+    resolveRecordingNotificationMeta(appointment);
+
+  const staged =
+    (await notifyRecordingAvailable(
+      userIds,
+      {
+        ...notificationScope(appointment?.organizationId),
+        appointmentType,
+        consultantName,
+        recordingUrl: url,
+        dashboardUrl: notificationHref(
+          appointment?.organizationId,
+          "recordings",
+        ),
+      },
+      `recording.ready:${recordingId}`,
+      { deferAttempt: true, entityRef: `recording:${recordingId}` },
+    )) ?? [];
+
+  const stagedRows = staged
+    .map((r) => r.staged)
+    .filter((row): row is StagedTrigger => Boolean(row));
+
+  if (stagedRows.length > 0) {
+    await runAfterOrInline(() =>
+      Promise.all(
+        stagedRows.map((row) =>
+          attemptTrigger(row).catch((err) =>
+            streamLogger.error("Failed to send recording notification", err, {
+              streamCallId,
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 export async function handleRecordingReady(
   event: StreamRecordingReadyEvent,
 ): Promise<void> {
   const { call_cid, call_recording, created_at: _created_at } = event;
 
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
   const { filename, url, start_time, end_time } = call_recording;
 
   streamLogger.info("Recording ready", {
@@ -207,6 +338,17 @@ export async function handleRecordingReady(
                   },
                 },
                 subscription: {
+                  include: {
+                    subscriptionPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
+                  },
+                },
+                trial: {
                   include: {
                     subscriptionPlan: {
                       include: {
@@ -253,12 +395,13 @@ export async function handleRecordingReady(
       return;
     }
 
-    // Calculate duration in minutes
+    // Calculate duration in minutes (clamped to >= 0)
     const startDate = new Date(start_time);
     const endDate = new Date(end_time);
-    const durationInMinutes = Math.round(
-      (endDate.getTime() - startDate.getTime()) / (1000 * 60),
-    );
+    const rawDurationMs = endDate.getTime() - startDate.getTime();
+    const durationInMinutes = Number.isFinite(rawDurationMs)
+      ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))
+      : 0;
 
     const appointment = meeting.occurrence.appointment;
     const title = generateRecordingTitle(appointment, startDate);
@@ -267,40 +410,101 @@ export async function handleRecordingReady(
     const streamUrlExpiresAt = new Date();
     streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
 
-    // Check if recording already exists (idempotency)
-    const existingRecording = await prisma.recording.findFirst({
-      where: {
-        meetingId: meeting.id,
-        streamRecordingId: filename,
-      },
-    });
+    // Check if recording already exists by streamRecordingId or active placeholder
+    const existingRecording =
+      (await prisma.recording.findFirst({
+        where: {
+          meetingId: meeting.id,
+          streamRecordingId: filename,
+        },
+      })) ??
+      (await prisma.recording.findFirst({
+        where: {
+          meetingId: meeting.id,
+          status: {
+            in: [RecordingStatus.PROCESSING, RecordingStatus.RECORDING],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }));
 
+    let recording: NonNullable<typeof existingRecording>;
     if (existingRecording) {
-      streamLogger.info("Recording already exists, skipping creation", {
-        recordingId: existingRecording.id,
-        streamRecordingId: filename,
-      });
-      return;
+      const existingAlreadyTransferred =
+        existingRecording.storageType === "PLATFORM" ||
+        existingRecording.status === "AVAILABLE";
+      if (
+        !existingAlreadyTransferred &&
+        existingRecording.status !== "TRANSFERRING" &&
+        (existingRecording.status === "PROCESSING" ||
+          existingRecording.status === "RECORDING" ||
+          existingRecording.status === "EXPIRED" ||
+          existingRecording.status === "FAILED")
+      ) {
+        recording = await prisma.recording.update({
+          where: { id: existingRecording.id },
+          data: {
+            title,
+            recordingUrl: url,
+            durationInMinutes,
+            recordedAt: startDate,
+            streamRecordingId: filename,
+            streamCallId,
+            storageType: "STREAM_S3",
+            status: "READY",
+            streamUrlExpiresAt,
+            organizationId: appointment?.organizationId ?? null,
+          },
+        });
+      } else {
+        streamLogger.info("Recording already exists, adopting existing row", {
+          recordingId: existingRecording.id,
+          streamRecordingId: filename,
+        });
+        recording = existingRecording;
+      }
+    } else {
+      try {
+        recording = await prisma.recording.create({
+          data: {
+            title,
+            recordingUrl: url,
+            durationInMinutes,
+            recordedAt: startDate,
+            streamRecordingId: filename,
+            streamCallId,
+            storageType: "STREAM_S3",
+            status: "READY",
+            streamUrlExpiresAt,
+            meetingId: meeting.id,
+            organizationId: appointment?.organizationId ?? null,
+          },
+        });
+      } catch (createError) {
+        if ((createError as { code?: string })?.code === "P2002") {
+          const racedRecording = await prisma.recording.findFirst({
+            where: {
+              meetingId: meeting.id,
+              streamRecordingId: filename,
+            },
+          });
+          if (racedRecording) {
+            streamLogger.info(
+              "Concurrent recording create detected, adopting existing row",
+              {
+                recordingId: racedRecording.id,
+                streamRecordingId: filename,
+              },
+            );
+            recording = racedRecording;
+          } else {
+            throw createError;
+          }
+        } else {
+          throw createError;
+        }
+      }
     }
-
-    // Create recording record. `organizationId` mirrors the parent
-    // appointment's org tag so the org dashboard's recording library
-    // can scope to "events I host" without joining through Appointment.
-    const recording = await prisma.recording.create({
-      data: {
-        title,
-        recordingUrl: url,
-        durationInMinutes,
-        recordedAt: startDate,
-        streamRecordingId: filename,
-        streamCallId,
-        storageType: "STREAM_S3",
-        status: "READY",
-        streamUrlExpiresAt,
-        meetingId: meeting.id,
-        organizationId: appointment?.organizationId ?? null,
-      },
-    });
 
     // Also update the meeting session to stop recording state if still active
     if (meeting.isRecording) {
@@ -310,112 +514,38 @@ export async function handleRecordingReady(
       });
     }
 
-    streamLogger.info("Recording created successfully", {
-      recordingId: recording.id,
+    const recordingId = recording.id;
+    streamLogger.info("Recording ready processed", {
+      recordingId,
       sessionId: meeting.id,
       title,
       durationInMinutes,
     });
 
-    // #899 — permanent-policy recordings start transferring at ready-time
-    // instead of waiting for the near-expiry window. The transfer is the heavy
-    // Stream-S3-download + Supabase-upload, so it runs via `after()` (not a bare
-    // `void`) — on serverless an unawaited promise is killed once the webhook
-    // response returns, which would drop the kick; `after()` keeps it alive past
-    // the response. The 6-hourly cron sweep still backstops any kick that dies
-    // with the function.
-    const storagePolicy =
-      appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
-      appointment?.class?.classPlan?.recordingStoragePolicy;
-    if (storagePolicy === "PERMANENT") {
-      // #1589 M-P0-04 — inline when re-driven outside a request scope.
+    const alreadyTransferred =
+      recording.storageType === "PLATFORM" || recording.status === "AVAILABLE";
+    const storagePolicy = resolveAppointmentStoragePolicy(appointment);
+    if (
+      !alreadyTransferred &&
+      recording.status !== "TRANSFERRING" &&
+      (storagePolicy === "PERMANENT" || storagePolicy === "SUPABASE_PERMANENT")
+    ) {
       await runAfterOrInline(() =>
-        RecordingTransferService.queueRecordingTransfer(recording.id).catch(
+        RecordingTransferService.queueRecordingTransfer(recordingId).catch(
           (err) =>
             streamLogger.error("Ready-time transfer kick threw", err, {
-              recordingId: recording.id,
+              recordingId,
             }),
         ),
       );
     }
 
-    // Build recipient list — every live seat holder of the booking (#1554)
-    const userIds = await getEventAttendeeIds(appointment);
-
-    if (userIds.length > 0) {
-      let appointmentType = "consultation";
-      let consultantName = "Unknown Consultant";
-
-      if (appointment?.consultation) {
-        consultantName =
-          appointment.consultation.consultationPlan?.consultantProfile?.user
-            ?.name ?? "Unknown Consultant";
-      } else if (appointment?.subscription) {
-        appointmentType = "subscription";
-        consultantName =
-          appointment.subscription.subscriptionPlan?.consultantProfile?.user
-            ?.name ?? "Unknown Consultant";
-      } else if (appointment?.webinar) {
-        appointmentType = "webinar";
-        consultantName =
-          appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
-          "Unknown Consultant";
-      } else if (appointment?.class) {
-        appointmentType = "class";
-        consultantName =
-          appointment.class.classPlan?.consultantProfile?.user?.name ??
-          "Unknown Consultant";
-      }
-
-      // #1861 P2r — the Recording row above committed outside any open
-      // transaction, so stage the outbox rows now (awaited, before the
-      // response) rather than inside `after()`: an instance freeze between
-      // the webhook response and `after()` firing used to lose the bell with
-      // no trace. Only the delivery attempt is deferred, same serverless
-      // rationale as the transfer kick above.
-      const staged = await notifyRecordingAvailable(
-        userIds,
-        {
-          // ADR 20 still holds: `userIds` here is the participant list from
-          // getEventAttendeeIds, never an org roster, so the recordingUrl below
-          // does not reach an operator. The scope tag is attribution only — it
-          // does not widen who receives this.
-          ...notificationScope(appointment?.organizationId),
-          appointmentType,
-          consultantName,
-          recordingUrl: url,
-          dashboardUrl: notificationHref(
-            appointment?.organizationId,
-            "recordings",
-          ),
-        },
-        { deferAttempt: true },
-      ).catch((err) => {
-        streamLogger.error("Failed to stage recording notification", err, {
-          streamCallId,
-        });
-        return [];
-      });
-      const stagedRows = staged
-        .map((r) => r.staged)
-        .filter((row): row is StagedTrigger => Boolean(row));
-
-      if (stagedRows.length > 0) {
-        await runAfterOrInline(() =>
-          Promise.all(
-            stagedRows.map((row) =>
-              attemptTrigger(row).catch((err) =>
-                streamLogger.error(
-                  "Failed to send recording notification",
-                  err,
-                  { streamCallId },
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-    }
+    await stageAndSendRecordingReadyNotifications(
+      appointment,
+      recording.recordingUrl || url,
+      recordingId,
+      streamCallId,
+    );
   } catch (error) {
     streamLogger.error("Failed to handle recording ready event", error, {
       streamCallId,
@@ -434,7 +564,7 @@ export async function handleRecordingFailed(
 ): Promise<void> {
   const { call_cid, error: eventError } = event;
 
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.error(
     "Recording failed",

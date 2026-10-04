@@ -138,7 +138,12 @@ export async function routeCapturedPayment(params: {
   if (notes.type === "recording_purchase") {
     // #366 — standalone replay sale; not a Payment row, settled on its own
     // RecordingPurchase record (idempotent per gatewayOrderId).
-    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId);
+    await handleRecordingPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      notes,
+      amountPaise,
+    );
     return;
   }
   // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is
@@ -292,7 +297,6 @@ export async function processRazorpayWebhookEvent(
           refundEvent.amount,
           refundEvent.currency || "INR",
           refundEvent.status,
-          "RAZORPAY",
           refundEvent.payment_id,
         );
         if (refundResult instanceof DeferSignal) {
@@ -352,7 +356,6 @@ export async function processRazorpayWebhookEvent(
           failedRefundEvent.amount,
           failedRefundEvent.currency || "INR",
           "failed",
-          "RAZORPAY",
           failedRefundEvent.payment_id,
         );
         if (failedRefundResult instanceof DeferSignal) {
@@ -388,7 +391,6 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
-          "RAZORPAY",
         );
         break;
       }

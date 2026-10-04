@@ -20,7 +20,6 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 jest.mock("../../app/api/webhooks/utils", () => ({
-  verifyWebhookSignature: jest.fn(),
   logWebhookEvent: jest.fn(),
   isDbHealthy: jest.fn(),
 }));

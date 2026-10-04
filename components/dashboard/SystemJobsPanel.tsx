@@ -70,7 +70,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-refunds",
     name: "Reconcile Pending Refunds",
-    description: "Sync refund status with payment gateways (Stripe, Razorpay)",
+    description: "Sync refund status with Razorpay",
     schedule: "Every 15 minutes",
     category: "Refunds",
   },
@@ -78,7 +78,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-disputes",
     name: "Reconcile Disputes",
-    description: "Sync dispute status with Stripe and track urgent deadlines",
+    description: "Sync dispute status with Razorpay and track urgent deadlines",
     schedule: "Every 6 hours",
     category: "Disputes",
   },
@@ -108,7 +108,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "process-payouts",
     name: "Process Payouts",
-    description: "Send approved payouts via RazorpayX and Stripe Connect",
+    description: "Send approved payouts via RazorpayX",
     schedule: "Weekly (Mon 9PM UTC)",
     category: "Payouts",
   },
@@ -176,8 +176,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
-    description:
-      "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    description: "Query Razorpay for actual status on stale PENDING payments",
     schedule: "Every 30 minutes",
     category: "Reconciliation",
   },

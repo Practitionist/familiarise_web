@@ -9,6 +9,11 @@
 - [Data Flow](#data-flow)
 - [Integration Points](#integration-points)
 - [Key Design Patterns](#key-design-patterns)
+- [Architecture Decisions](#architecture-decisions)
+- [Security Considerations](#security-considerations)
+- [Performance Considerations](#performance-considerations)
+- [Scalability](#scalability)
+- [Architectural Non-Goals & Deferred Capabilities](#architectural-non-goals--deferred-capabilities)
 
 ---
 
@@ -216,34 +221,27 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User
+    participant Dashboard
+    participant MeetingAction as provisionAppointmentMeeting
     participant MeetingPage
-    participant Hook
-    participant VideoClient
+    participant JoinRoute as POST /api/meetings/[id]/join
     participant Database
     participant StreamCloud
 
-    User->>MeetingPage: Navigate to /meetings/{slotId}
-    MeetingPage->>Hook: useGetCallById(callId)
+    User->>Dashboard: Click Join Session
+    Dashboard->>MeetingAction: provisionAppointmentMeeting(slot)
+    MeetingAction->>Database: Verify entitlement & booking status
+    MeetingAction->>StreamCloud: call.getOrCreate (author=host, settings_override)
+    MeetingAction->>Database: Persist Meeting (streamCallId: occurrence-<slotId>)
+    MeetingAction-->>Dashboard: { ok: true, streamCallId }
 
-    Hook->>VideoClient: queryCalls({id: callId})
-    VideoClient->>StreamCloud: Query for call
-
-    alt Call exists
-        StreamCloud-->>VideoClient: Return call
-    else Call not found
-        VideoClient->>StreamCloud: Create call
-        StreamCloud-->>VideoClient: New call created
-        Hook->>Database: Save Meeting
-    end
-
-    VideoClient-->>Hook: Call object
-    Hook-->>MeetingPage: Call ready
-    MeetingPage-->>User: Show MeetingSetup
-
-    User->>MeetingPage: Join meeting
-    MeetingPage->>VideoClient: call.join()
-    VideoClient->>StreamCloud: Join call
-    StreamCloud-->>User: In meeting
+    User->>MeetingPage: Navigate to /meetings/{streamCallId}
+    MeetingPage->>JoinRoute: POST /api/meetings/{streamCallId}/join
+    JoinRoute->>Database: resolveMeetingAccess + DPDP checkConsent
+    JoinRoute->>StreamCloud: upsertUsersToStream + call.getOrCreate + updateCallMembers(call_member)
+    JoinRoute-->>MeetingPage: { callType: "default", callId, role }
+    MeetingPage-->>User: Show MeetingSetup -> MeetingRoom
+    StreamCloud-->>Database: Webhooks (participant_joined/left, call.ended) write attendance, presence & endedAt
 ```
 
 ### 3. Channel Creation Flow
@@ -351,15 +349,16 @@ if (session?.user?.id) {
 
 ### 3. Event System Integration
 
-Channels are automatically created for:
+Channels are provisioned deterministically across booking modalities:
 
-| Event Type     | Channel ID Format     | Channel Type | Members                  |
-| -------------- | --------------------- | ------------ | ------------------------ |
-| Consultation   | `consultation-{id}`   | `messaging`  | Consultee + Consultant   |
-| Subscription   | `subscription-{id}`   | `messaging`  | Consultee + Consultant   |
-| Webinar        | `webinar-{id}`        | `team`       | All participants + host  |
-| Class          | `class-{id}`          | `team`       | All participants + host  |
-| Direct Message | `{userId1}-{userId2}` | `messaging`  | Two users (alphabetical) |
+| Modality / Scope            | Channel ID Format                  | Channel Type | Members                                                       |
+| --------------------------- | ---------------------------------- | ------------ | ------------------------------------------------------------- |
+| Consultation / Subscription | `dm-{userIdA}-{userIdB}`           | `messaging`  | Consultant + Consultee (1 canonical thread per human pair)    |
+| Enterprise Org DM           | `dmo-{orgHash}-{pairHash}`         | `messaging`  | Consultant + Consultee (`custom.organization_id = orgId`)     |
+| Webinar                     | `webinar-{id}` + `dm-{a}-{b}`      | `team` + DM  | Group `team` channel (host + co-hosts + enrollees) AND 1:1 DM |
+| Class                       | `class-{id}` + `dm-{a}-{b}`        | `team` + DM  | Group `team` channel (host + co-hosts + enrollees) AND 1:1 DM |
+| Collaborator Coordination   | `collab-{webinar\|class}-{planId}` | `messaging`  | Plan owner + `ACCEPTED` collaborators                         |
+| Free Trial (`TRIAL`)        | _(none — chat blocked)_            | —            | All Stream Chat channels, DMs, and in-call chat are disabled  |
 
 ---
 
@@ -437,9 +436,7 @@ for (let attempt = 0; attempt < 5; attempt++) {
 // Create channel AND add members in one operation
 await channel.create({
   members: [consultant, consultee],
-  data: {
-    /* channel metadata */
-  },
+  data: {/* channel metadata */},
 });
 ```
 
@@ -536,9 +533,9 @@ export async function tokenProvider(userId: string) {
 
 ## Security Considerations
 
-### Least-Privilege Stream Roles (#899)
+### Least-Privilege Stream Roles
 
-**Current:** Only platform staff and admins get Stream's global `admin` role. Everyone else, consultants included, is mapped to the plain `user` role.
+Only platform staff and admins get Stream's global `admin` role. Everyone else, consultants included, is mapped to the plain `user` role.
 
 ```typescript
 // File: lib/user.ts
@@ -561,20 +558,11 @@ export function mapRoleToStream(role: string | null | undefined): string {
 
 **See:** [Troubleshooting - Universal Admin Role](./troubleshooting.md#universal-admin-role-critical)
 
-### Token Security
+### Token & Consent Security
 
-✅ **Good Practices:**
-
-- Tokens generated server-side only
-- Short expiry (1 hour)
-- User validation before generation
-- Secure storage (not in localStorage)
-
-⚠️ **Areas for Improvement:**
-
-- No token revocation mechanism
-- No audit logging for token generation
-- No rate limiting on token endpoints
+- **Server-Side Minting with Required `iat` & TTL**: Tokens are minted server-side (`actions/stream/chat/stream.action.ts`, `lib/stream/initial-tokens.ts`) with explicit `exp` (1 hour) and `iat` (60s clock-skew buffer) so `revokeUserToken` immediately invalidates active sessions on ban, org removal, or consent withdrawal.
+- **DPDP `STREAM_DATA_PROCESSING` Consent Gate**: Both `assertCanMintToken` (for chat/video token generation) and `resolveMeetingAccess` (`hasStreamConsent` in `POST /api/meetings/[meetingId]/join`) verify active `STREAM_DATA_PROCESSING` consent before any user data or media reaches Stream.
+- **Server-Action Boundary Lockdown**: Internal mutation modules (`actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`) do not expose unauthenticated `"use server"` endpoints, and `upsertUsersToStream` strips email PII from non-privileged responses.
 
 ---
 
@@ -594,23 +582,23 @@ Promise.all([
 
 **Result:** ~2-3 second total connection time instead of 4-6 seconds
 
-**Deferred initial connect (PR #887, #248):** The initial connect (`connectUser` plus the one-time `syncUserEventChannels`) is deferred off the dashboard-home critical path via `requestIdleCallback` (with a `setTimeout` fallback). This removes the prior storm of roughly 50–100 `queryChannels` and video-connect calls that fired on dashboard load. The chat sidebar's channel fetch is now split into an initial fetch keyed on the client plus the org scope, and a separate listener effect keyed on the client alone. An in-flight fetch-key guard ensures that rapid channel clicks and mid-fetch org-scope switches no longer refire the storm or strand the wrong tenant's data: a duplicate fetch for the same key is skipped, while a fetch for a new key (an org-scope switch during an in-flight fetch) proceeds so the new scope actually loads. See [Navigation Performance](../performance/01-navigation-performance.md) for the measured impact.
+**Deferred initial connect:** The initial connect (`connectUser` plus the one-time `syncUserEventChannels`) is deferred off the dashboard-home critical path via `requestIdleCallback` (with a `setTimeout` fallback) and gated on `!isSessionPending && !!sessionUserId` so client token prefetch never races Better Auth session hydration. The chat sidebar's channel fetch is split into an initial fetch keyed on the client plus the org scope, and a separate listener effect keyed on the client alone. An in-flight fetch-key guard ensures that rapid channel clicks and mid-fetch org-scope switches no longer refire the storm or strand the wrong tenant's data: a duplicate fetch for the same key is skipped, while a fetch for a new key (an org-scope switch during an in-flight fetch) proceeds so the new scope actually loads. See [Navigation Performance](../performance/01-navigation-performance.md) for the measured impact.
 
-**Connection robustness (PR #887):** On a user switch the _global_ clients are disconnected, not just local React state, so a stale connection cannot survive the swap. Logout teardown uses `Promise.allSettled` and always clears global state even if an individual disconnect rejects. A Join click awaits a short readiness window (`waitForGlobalVideoClient`) so a click that lands during the deferred connect does not fail; if the client is still not ready it falls back to a soft "Connecting…" toast. `useStreamConnection` returns a safe default when called outside the provider, which keeps consumers from crashing during the lazy-load window (only the development `DebugDialog` relies on this hook).
+**Connection robustness:** On a user switch the _global_ clients are disconnected, not just local React state, so a stale connection cannot survive the swap. Logout teardown uses `Promise.allSettled` and always clears global state even if an individual disconnect rejects. A Join click awaits a short readiness window (`waitForGlobalVideoClient`) so a click that lands during the deferred connect does not fail; if the client is still not ready it falls back to a soft "Connecting…" toast. `useStreamConnection` returns a safe default when called outside the provider, which keeps consumers from crashing during the lazy-load window.
 
 ### Token Caching
 
 **Impact:**
 
 - **Without cache:** 2 API calls per page load
-- **With cache:** ~2 API calls per hour
+- **With cache:** ~2 API calls per hour (plus server-seeded `mintInitialStreamTokens` on `/dashboard` and `/meetings`)
 - **Savings:** 95% reduction in token generation calls
 
 ### Channel Query Optimization
 
-**Pagination:** 100 users per page for background sync
-**Filtering:** Only fetch relevant channels
-**Caching:** Channels cached client-side
+**Pagination:** `queryChannelsPaged` (`lib/stream/batch.ts`) pages at Stream's hard 30-channel ceiling sorted by `created_at` ascending; user upserts and channel creation chunk rosters at 100 members per request.
+**Filtering:** Only fetch relevant channels scoped via `buildOrgChannelFilter(scope)`.
+**Caching:** Channels cached client-side; server existence/membership caches bounded via `BoundedTtlSet` (`lib/stream-cache.ts`).
 
 ---
 
@@ -622,20 +610,30 @@ Promise.all([
 | ---------------------- | -------------------- | --------------------------- |
 | Concurrent connections | Unlimited (per plan) | Based on Stream pricing     |
 | Channels per user      | ~100 recommended     | Performance degrades beyond |
-| Messages per channel   | Unlimited            | Archived after 30 days      |
+| Messages per channel   | Unlimited            | Frozen +7d, deleted +90d    |
 | Call participants      | 100 (default)        | Configurable per call type  |
 
 ### Horizontal Scaling
 
 **Client-side:** Fully scalable (stateless)
 **Server-side:** Stateless actions (easily scaled)
-**Background jobs:** Single instance (cron-based)
+**Background jobs:** Single instance (`withCronLock` Postgres lease)
 
-### Bottlenecks
+---
 
-1. **Token generation:** Could become bottleneck at scale → Solution: Token caching
-2. **Channel sync:** O(n) per user → Solution: Batch operations
-3. **User sync job:** Sequential processing → Solution: Parallel batch deletion
+## Architectural Non-Goals & Deferred Capabilities
+
+The following capabilities are intentionally excluded or deferred at the current launch stage so engineers and AI agents do not build speculative infrastructure:
+
+| Capability / Pattern                                           | Current Architectural Rule & Guardrail                                                                                                                                                                                                                                                                                                                                       | Revisit Trigger                                                                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Guest or Magic-Link Video Call Access**                      | `guest_user_creation_disabled: true` is enforced on the Stream app (`scripts/stream/ensure-app-settings.ts`). Every participant must authenticate via Better Auth and pass the DPDP `STREAM_DATA_PROCESSING` consent gate (`hasStreamConsent` in `lib/meetings/access.ts`).                                                                                                  | Never for unconsented guests; external attendees must sign in and grant consent before joining.                  |
+| **Consultee-to-Consultee Peer DMs**                            | `canDirectMessage` (`lib/stream/dm-eligibility.ts`) strictly requires a consultant ↔ consultee relationship on an eligible booking (`DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`). Learners can converse with peers only inside moderated `team` channels (`webinar-`/`class-`).                                                                          | Only if a dedicated moderated community product is introduced.                                                   |
+| **Per-Call `call_cids` Scoped Tokens on `StreamVideoClient`**  | `providers/StreamProviderImpl.tsx` maintains a singleton `StreamVideoClient` per browser tab. Until the client lifecycle is refactored per-call, video tokens remain user-scoped (`generateUserToken` with `iat` and `exp`), and call admission is enforced by `resolveMeetingAccess` + `members`-only `call_member` role grants (`join-call` stripped from `user`/`guest`). | Only if `StreamVideoClient` is refactored from an app-wide singleton to a per-call instance on `/meetings/[id]`. |
+| **Stream Native Multi-Tenant `teams` Isolation**               | Stream's `multi_tenant_enabled` is a one-way control-plane setting. Enterprise B2B tenant isolation is enforced at the application layer via `custom.organization_id` on channels and video calls, deterministic `dmo-<orgHash>-<pairHash>` DM IDs, and `buildOrgChannelFilter(scope)`.                                                                                      | Deferred until Stream Elevate tier and contractual hard-multi-tenancy requirements.                              |
+| **`livestream` Call Type + HLS Playback for Group Sessions**   | All 1:1 and 1-to-Many sessions up to ~100 seats use the `default` WebRTC call type with Backstage (`join_ahead_time_seconds: 900`), muted/camera-off attendee defaults, and `<StageControls />`. Stream Dynascale automatically bills muted/camera-off WebRTC viewers at the Livestream rate (`$1.50 / 1,000 min`) without HLS latency (`10–15s`) or HLS egress surcharges.  | When webinar cohort sizes regularly exceed ~100 concurrent viewers.                                              |
+| **Resumable TUS Uploads & Dedicated Transfer Queues**          | Stream retains recordings on its CDN for 14 days while `uploadRecordingStream` (`lib/stream/recording-storage.ts`) streams multipart chunks directly to Cloudflare R2 (`@aws-sdk/lib-storage`) with `TRANSFERRING` CAS claims and 5 retries (`jobs/stream/transfer-expiring-recordings.ts`).                                                                                 | Not needed while 14-day CDN retention + 6-hourly retry cron + 5 attempts provide ample recovery margin.          |
+| **Cross-Tab `BroadcastChannel` / `SharedWorker` Coordination** | `MeetingPresence` tracks individual join/leave intervals and `evaluateOccurrenceFromPresence` merges overlapping stays with a 5-minute reconnect grace (`RECONNECT_GRACE_MINUTES = 5`).                                                                                                                                                                                      | Not needed; duplicate-tab audio echo is self-correcting and intervals are merged server-side.                    |
 
 ---
 
@@ -652,6 +650,14 @@ Promise.all([
 **For troubleshooting:**
 
 - [Troubleshooting](./troubleshooting.md) - Common problems and known issues
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **NextAuth (`getServerSession`, `authOptions`)**: Replaced across all client and server boundaries by Better Auth (`auth.api.getSession` on the server and `useSession` from `@/lib/auth-client` on the client).
+- **Synchronous `StreamProvider` wrapping `children`**: Superseded by the SDK-free shell `providers/StreamProvider.tsx` + `next/dynamic(..., { ssr: false })` `StreamProviderImpl` publishing into `lib/stream/connection-store.ts` so server-rendered HTML is never stripped from dashboard routes.
+- **Browser-initiated `call.getOrCreate()` in `useGetCallById`**: Superseded by server-side `provisionAppointmentMeeting` and `POST /api/meetings/[meetingId]/join`.
 
 ---
 

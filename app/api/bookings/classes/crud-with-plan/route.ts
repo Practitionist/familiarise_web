@@ -67,7 +67,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
     .min(1, "At least one topic is required"),
-  status: z.nativeEnum(ClassStatus).optional().default(ClassStatus.SCHEDULED),
+  // Defaults to SCHEDULED with a startDate and DRAFT without one.
+  status: z.nativeEnum(ClassStatus).optional(),
   startDate: z
     .string()
     .optional()
@@ -241,6 +242,8 @@ export async function POST(request: NextRequest) {
     } else {
       start = undefined; // Treat invalid start date string as undefined
     }
+    const classStatus =
+      status ?? (start ? ClassStatus.SCHEDULED : ClassStatus.DRAFT);
 
     // #784 — the session start times, computed once so the AE-2 co-host guard
     // and the appointment create below cannot drift apart.
@@ -331,7 +334,7 @@ export async function POST(request: NextRequest) {
           // 2. Create the class instance with appointments
           const classEvent = await tx.class.create({
             data: {
-              status,
+              status: classStatus,
               schedulingPeriodStartsAt: start, // Will be undefined if not provided
               schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
               schedulingTimezone: resolveSchedulingTimezone(

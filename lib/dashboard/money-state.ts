@@ -16,7 +16,11 @@
 import { format } from "date-fns";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
+  isDeadOccurrence,
+} from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
@@ -33,26 +37,30 @@ export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 // The tones moved to lib/ui/tone.ts (#1527); re-exported so importers keep working.
 export { TONE_CLASS, type Tone } from "@/lib/ui/tone";
 
-export type BookingStateKind =
-  | "REQUESTED"
-  | "AWAITING_PAYMENT"
-  | "PAYMENT_LAPSED"
-  | "CONFIRMED"
-  | "AWAITING_ALLOCATION"
-  | "COMPLETED"
-  | "CANCELLED"
-  | "DECLINED";
+export const BOOKING_STATE_KINDS = [
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+  "PAYMENT_LAPSED",
+  "CONFIRMED",
+  "AWAITING_ALLOCATION",
+  "COMPLETED",
+  "CANCELLED",
+  "DECLINED",
+] as const;
+export type BookingStateKind = (typeof BOOKING_STATE_KINDS)[number];
 
-export type MoneyStateKind =
-  | "NOT_DUE"
-  | "DUE"
-  | "PAID"
-  | "REFUND_PENDING"
-  | "REFUNDED"
-  | "PARTIALLY_REFUNDED"
-  | "SPONSORED"
-  | "DISPUTED"
-  | "FREE";
+export const MONEY_STATE_KINDS = [
+  "NOT_DUE",
+  "DUE",
+  "PAID",
+  "REFUND_PENDING",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+  "SPONSORED",
+  "DISPUTED",
+  "FREE",
+] as const;
+export type MoneyStateKind = (typeof MONEY_STATE_KINDS)[number];
 
 export type NextActionKind =
   | "APPROVE_OR_DECLINE"
@@ -324,6 +332,15 @@ function occurrenceEnd(o: OccurrenceInput): number {
   ).getTime();
 }
 
+function isOccurrencePastGrace(o: OccurrenceInput, now: Date): boolean {
+  const status = normalizeStatus(o.completionStatus);
+  if (status === "COMPLETED" || status === "VOIDED") {
+    return occurrenceEnd(o) < now.getTime();
+  }
+  const graceMs = o.endsAt ? REJOIN_GRACE_MS : 0;
+  return occurrenceEnd(o) + graceMs < now.getTime();
+}
+
 /** Held / Released / Scheduled / Completed / Cancelled — the schedule words. */
 function rowLabel(
   o: OccurrenceInput,
@@ -350,7 +367,7 @@ function rowLabel(
       ? `Held · ${Math.floor(hours / 24)}d`
       : `Held · ${Math.max(hours, 1)}h`;
   }
-  return occurrenceEnd(o) < now.getTime() ? "Completed" : "Scheduled";
+  return isOccurrencePastGrace(o, now) ? "Completed" : "Scheduled";
 }
 
 function deriveBooking(
@@ -476,7 +493,7 @@ function deriveBooking(
             why: "The slots are held until the booking is paid.",
           };
     }
-    if (live.every((o) => occurrenceEnd(o) < now.getTime())) {
+    if (live.every((o) => isOccurrencePastGrace(o, now))) {
       return { state: "COMPLETED", why: "Every session has been held." };
     }
     const noun =
@@ -667,7 +684,7 @@ function deriveNext(
     return (
       !o.isTentative &&
       start - joinWindowMs <= now.getTime() &&
-      now.getTime() <= occurrenceEnd(o)
+      !isOccurrencePastGrace(o, now)
     );
   });
   if (viewer === "CONSULTANT") {
@@ -896,7 +913,7 @@ export function deriveBookingPresentation(
   options: DeriveOptions = {},
 ): BookingPresentation {
   const now = options.now ?? new Date();
-  const joinWindowMs = options.joinWindowMs ?? 10 * 60 * 1000;
+  const joinWindowMs = options.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const live = input.occurrences.filter((o) => !isDeadOccurrence(o));
   const paidRow =
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;

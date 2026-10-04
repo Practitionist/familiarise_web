@@ -26,6 +26,9 @@ jest.mock("../../app/checkout/CheckoutSkeletons", () => ({
 jest.mock("../../app/checkout/plans/utils", () => ({
   reportPaymentsError: jest.fn(),
 }));
+jest.mock("../../lib/auth-client", () => ({
+  useSession: () => ({ data: null }),
+}));
 
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";

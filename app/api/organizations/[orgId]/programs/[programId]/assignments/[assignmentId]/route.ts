@@ -63,12 +63,17 @@ export async function GET(
       ...(!canReadAll && { membershipId: access.member.id }),
     },
     include: {
-      membership: { include: { user: { select: { id: true, name: true, email: true } } } },
+      membership: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
       utilizations: { orderBy: { createdAt: "desc" }, take: 50 },
     },
   });
   if (!assignment) {
-    return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Assignment not found" },
+      { status: 404 },
+    );
   }
   if (canReadAll) return NextResponse.json({ assignment });
   const { consumedPaise: _spend, utilizations, ...own } = assignment;
@@ -106,7 +111,9 @@ async function cancelAssignment(
   current: { membershipId: string; periodStart: Date },
 ) {
   const { orgId, programId, assignmentId, actorMembershipId } = ctx;
-  const cancelEnd = new Date(Math.max(Date.now(), current.periodStart.getTime()));
+  const cancelEnd = new Date(
+    Math.max(Date.now(), current.periodStart.getTime()),
+  );
   const claimed = await tx.programAssignment.updateMany({
     where: { id: assignmentId, status: "ACTIVE" },
     data: { status: "CANCELLED", periodEnd: cancelEnd },
@@ -247,6 +254,46 @@ async function editAssignmentPeriod(
   return next;
 }
 
+async function authorizeAssignmentMutation(
+  params: Promise<{ orgId: string; programId: string; assignmentId: string }>,
+  options: { permission: "programs.assign" },
+) {
+  const { orgId, programId, assignmentId } = await params;
+  const access = await requireOrgAccess(orgId, {
+    permission: options.permission,
+    canSponsor: true,
+    requireActive: true,
+  });
+  if (access.error) return { error: access.error };
+  return {
+    error: null,
+    orgId,
+    programId,
+    assignmentId,
+    member: access.member,
+  };
+}
+
+function handleAssignmentError(assignmentError: unknown): NextResponse {
+  if (assignmentError instanceof Error && "httpStatus" in assignmentError) {
+    const { message, httpStatus, code } = assignmentError as Error & {
+      httpStatus?: unknown;
+      code?: unknown;
+    };
+    return NextResponse.json(
+      code ? { error: message, code } : { error: message },
+      { status: typeof httpStatus === "number" ? httpStatus : 500 },
+    );
+  }
+  Sentry.captureException(
+    assignmentError instanceof Error
+      ? assignmentError
+      : new Error(String(assignmentError)),
+    { tags: { subsystem: "enterprise" } },
+  );
+  throw assignmentError;
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -255,14 +302,11 @@ export async function PATCH(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const { orgId, programId, assignmentId } = await params;
-  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
-  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
-  const access = await requireOrgAccess(orgId, {
+  const auth = await authorizeAssignmentMutation(params, {
     permission: "programs.assign",
-    canSponsor: true,
   });
-  if (access.error) return access.error;
+  if (auth.error) return auth.error;
+  const { orgId, programId, assignmentId, member } = auth;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -279,7 +323,7 @@ export async function PATCH(
   // (programs.assign), which includes ending a seat early with `cancel`.
   if (
     (body.periodStart !== undefined || body.periodEnd !== undefined) &&
-    !hasOrgPermission(access.member.role, "programs.seat.period")
+    !hasOrgPermission(member.role, "programs.seat.period")
   ) {
     return NextResponse.json(
       {
@@ -296,26 +340,14 @@ export async function PATCH(
         orgId,
         programId,
         assignmentId,
-        actorMembershipId: access.member.id,
+        actorMembershipId: member.id,
         body,
       }),
     );
 
     return NextResponse.json({ assignment: updated });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      // Code passthrough so clients can branch on ASSIGNMENT_NOT_LIVE etc.
-      // without string-matching messages (parity with supersede/invoices).
-      const code = "code" in err ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code ? { code } : {}) },
-        { status },
-      );
-    }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    throw err;
+    return handleAssignmentError(err);
   }
 }
 
@@ -327,14 +359,11 @@ export async function DELETE(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const { orgId, programId, assignmentId } = await params;
-  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
-  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
-  const access = await requireOrgAccess(orgId, {
+  const auth = await authorizeAssignmentMutation(params, {
     permission: "programs.assign",
-    canSponsor: true,
   });
-  if (access.error) return access.error;
+  if (auth.error) return auth.error;
+  const { orgId, programId, assignmentId, member } = auth;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -368,7 +397,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: member.id,
           targetMembershipId: current.membershipId,
           category: "PROGRAM",
           action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
@@ -379,12 +408,6 @@ export async function DELETE(
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    throw err;
+    return handleAssignmentError(err);
   }
 }

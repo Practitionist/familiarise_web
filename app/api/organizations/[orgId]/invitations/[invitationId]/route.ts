@@ -51,6 +51,7 @@ export async function DELETE(
   const { orgId, invitationId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

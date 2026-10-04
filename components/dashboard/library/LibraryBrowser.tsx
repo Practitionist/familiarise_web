@@ -11,7 +11,7 @@
 import Link from "next/link";
 import { useId, useState, type ReactNode } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, FolderOpen } from "lucide-react";
+import { ChevronDown, ExternalLink, FolderOpen, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,10 @@ import { ErrorState } from "@/components/dashboard/ErrorState";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
+import {
+  RecordingPlayerModal,
+  type RecordingPlayerItem,
+} from "@/components/recordings/RecordingPlayerModal";
 import { useListParams } from "@/hooks/useListParams";
 import {
   documentReviewStatusBadge,
@@ -53,6 +57,17 @@ type LibraryFile = LibraryDocument | LibraryRecording;
 type FlatRow = LibraryFile & { session: LibrarySession };
 
 const FILTER_KEYS = ["kind", "from", "to", "source", "view"] as const;
+
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  ...LIBRARY_KIND_LABEL,
+  TRIAL: "Trial",
+  consultation: "Consultation",
+  subscription: "Subscription",
+  webinar: "Webinar",
+  class: "Class",
+  trial: "Trial",
+  purchased: "Purchased",
+};
 
 const DATE = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
@@ -79,9 +94,50 @@ function isDocument(file: LibraryFile): file is LibraryDocument {
   return "source" in file;
 }
 
-function FileCell({ file }: Readonly<{ file: LibraryFile }>) {
-  const name = isDocument(file) ? file.name : file.title;
-  const href = isDocument(file) ? file.url : file.playbackUrl;
+export function toLibraryPlayerItem(
+  recording: LibraryRecording,
+  session?: Pick<LibrarySession, "title" | "kind">,
+): RecordingPlayerItem {
+  return {
+    id: recording.id,
+    title: recording.title,
+    recordedAt: recording.recordedAt,
+    durationInMinutes: recording.durationInMinutes,
+    playbackUrl: recording.playbackUrl,
+    planTitle: session?.title ?? null,
+    planType: session?.kind
+      ? (EVENT_TYPE_LABELS[session.kind] ?? session.kind)
+      : null,
+  };
+}
+
+function FileCell({
+  file,
+  onWatchRecording,
+}: Readonly<{
+  file: LibraryFile;
+  onWatchRecording?: (recording: LibraryRecording) => void;
+}>) {
+  if (!isDocument(file)) {
+    if (!file.playbackUrl || !onWatchRecording) {
+      return <span className="text-foreground">{file.title}</span>;
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => onWatchRecording(file)}
+        className="inline-flex max-w-full items-center gap-1.5 text-left font-medium text-foreground underline-offset-4 hover:underline"
+      >
+        <Play
+          className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+          aria-hidden
+        />
+        <span className="truncate">{file.title}</span>
+      </button>
+    );
+  }
+  const name = file.name;
+  const href = file.url;
   if (!href) return <span className="text-foreground">{name}</span>;
   return (
     <a
@@ -121,6 +177,7 @@ function detailCells(file: LibraryFile) {
 function fileColumns<T extends LibraryFile>(
   artifact: Artifact,
   session?: ResponsiveColumn<T>,
+  onWatchRecording?: (row: T) => void,
 ): ResponsiveColumn<T>[] {
   const docs = artifact === "documents";
   return [
@@ -128,7 +185,14 @@ function fileColumns<T extends LibraryFile>(
       key: "name",
       header: docs ? "File" : "Recording",
       primary: true,
-      cell: (f) => <FileCell file={f} />,
+      cell: (f) => (
+        <FileCell
+          file={f}
+          onWatchRecording={
+            onWatchRecording ? () => onWatchRecording(f) : undefined
+          }
+        />
+      ),
     },
     ...(session ? [session] : []),
     {
@@ -159,10 +223,15 @@ function SessionGroup({
   group,
   artifact,
   href,
+  onWatchRecording,
 }: Readonly<{
   group: LibraryGroup<LibraryFile>;
   artifact: Artifact;
   href: string;
+  onWatchRecording?: (
+    recording: LibraryRecording,
+    session: LibrarySession,
+  ) => void;
 }>) {
   const [open, setOpen] = useState(true);
   const { session, files } = group;
@@ -191,7 +260,10 @@ function SessionGroup({
                 {session.title}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {LIBRARY_KIND_LABEL[session.kind]} · {fmt(session.startsAt)}
+                {EVENT_TYPE_LABELS[session.kind] ??
+                  LIBRARY_KIND_LABEL[session.kind] ??
+                  session.kind}{" "}
+                · {fmt(session.startsAt)}
                 {session.expertName && ` · ${session.expertName}`} ·{" "}
                 {files.length} {files.length === 1 ? noun : `${noun}s`}
               </span>
@@ -207,7 +279,17 @@ function SessionGroup({
       </div>
       <CollapsibleContent className="border-t border-border px-2 pb-2">
         <ResponsiveTable<LibraryFile>
-          columns={fileColumns<LibraryFile>(artifact)}
+          columns={fileColumns<LibraryFile>(
+            artifact,
+            undefined,
+            onWatchRecording
+              ? (file) => {
+                  if (!isDocument(file)) {
+                    onWatchRecording(file, session);
+                  }
+                }
+              : undefined,
+          )}
           rows={files}
           getRowId={(f) => f.id}
         />
@@ -251,6 +333,8 @@ export function LibraryBrowser({
   sources,
   emptyDescription,
 }: Readonly<LibraryBrowserProps>) {
+  const [activeRecording, setActiveRecording] =
+    useState<RecordingPlayerItem | null>(null);
   const list = useListParams({ filterKeys: FILTER_KEYS });
   const { q, page, filters } = list;
   const flat = filters.view === "flat";
@@ -313,7 +397,11 @@ export function LibraryBrowser({
   } else if (flat || (isLoading && !data)) {
     body = (
       <ResponsiveTable<FlatRow>
-        columns={fileColumns<FlatRow>(artifact, sessionColumn)}
+        columns={fileColumns<FlatRow>(artifact, sessionColumn, (row) => {
+          if (!isDocument(row)) {
+            setActiveRecording(toLibraryPlayerItem(row, row.session));
+          }
+        })}
         rows={data ? (flattenLibrary(data.groups) as FlatRow[]) : []}
         getRowId={(row) => `${row.session.appointmentId}:${row.id}`}
         isLoading={isLoading && !data}
@@ -331,6 +419,9 @@ export function LibraryBrowser({
             group={group}
             artifact={artifact}
             href={sessionHref(group.session.appointmentId)}
+            onWatchRecording={(recording, session) =>
+              setActiveRecording(toLibraryPlayerItem(recording, session))
+            }
           />
         ))}
       </div>
@@ -439,6 +530,16 @@ export function LibraryBrowser({
           pageSize={data.pageSize}
           total={data.total}
           onPageChange={list.setPage}
+        />
+      )}
+
+      {artifact === "recordings" && (
+        <RecordingPlayerModal
+          open={Boolean(activeRecording)}
+          onOpenChange={(open) => {
+            if (!open) setActiveRecording(null);
+          }}
+          recording={activeRecording}
         />
       )}
     </div>

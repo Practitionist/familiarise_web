@@ -47,6 +47,7 @@ type SlotAtom = {
 const webhookAppointmentCreate = jest.fn();
 const consultationCreate = jest.fn();
 const webhookTx = {
+  $executeRaw: jest.fn(async () => 0),
   // #1439 — the confirmation stamp is a CAS, so the tx writer is updateMany.
   payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   consultation: {
@@ -100,6 +101,8 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
+  resolvePaymentForEarnings: jest.fn(async () => null),
   reverseEarningsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/email", () => ({

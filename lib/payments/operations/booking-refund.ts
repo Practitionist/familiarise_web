@@ -61,6 +61,7 @@ import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
@@ -91,6 +92,11 @@ import {
   applyCappedEarningReversal,
   applyCappedOrgEarningReversal,
 } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  type FundingRail,
+  isFreeCreditIntent,
+  isInternalFundedIntent,
+} from "@/lib/payments/funding-rail";
 
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
@@ -148,44 +154,12 @@ async function attemptRefundNotice(
   );
 }
 
-/** Which rail a booking's money travels on, in or out. */
-export type FundingRail = "GATEWAY" | "INTERNAL" | "CREDITS";
-
 export type BookingRefundResult = {
   refundId: string;
   amountRefundedPaise: number;
   /** Which rail actually returned the money (CREDITS = referral restoration). */
   rail: FundingRail;
 };
-
-/** Org-funded bookings carry a synthetic paymentIntent no gateway can refund. */
-export function isInternalFundedIntent(paymentIntent: string): boolean {
-  return paymentIntent.startsWith("org_");
-}
-
-/** Fully credit-funded bookings — zero gateway money, credits to restore. */
-export function isFreeCreditIntent(paymentIntent: string): boolean {
-  return paymentIntent.startsWith("free_");
-}
-
-/**
- * The rail a payment WILL refund on, decided before anything moves.
- *
- * `refundBookingPayment` answers the same question after the fact, from the
- * same two prefixes. The cancellation quote has to answer it beforehand — the
- * dialog was promising every learner that "refunds reach your original payment
- * method in 5–7 working days", which is a sentence about a card nobody
- * charged on the org rails. Both readings come from here so the quote and the
- * charge cannot describe different rails.
- */
-export function fundingRailForIntent(
-  paymentIntent: string | null | undefined,
-): FundingRail {
-  if (!paymentIntent) return "GATEWAY";
-  if (isFreeCreditIntent(paymentIntent)) return "CREDITS";
-  if (isInternalFundedIntent(paymentIntent)) return "INTERNAL";
-  return "GATEWAY";
-}
 
 export async function refundBookingPayment(input: {
   paymentId: string;
@@ -373,6 +347,7 @@ async function refundFreeCreditPayment(input: {
           paymentId: payment.id,
           refundId: refundRow.id,
           initiatedByUserId: input.initiatedByUserId ?? null,
+          reason: input.reason,
         });
 
         await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
@@ -547,6 +522,7 @@ export async function restoreClassSeatCredits(input: {
             paymentId: payment.id,
             refundId: refundRow.id,
             initiatedByUserId: input.initiatedByUserId,
+            reason: input.reason,
             share: { num: restoredPaise, den: creditValue },
           });
           notice = await stageRefundNotice(tx, payment, restoredPaise);
@@ -674,8 +650,8 @@ function assertReturnable(
  * The payables' source rows net first (earnings → REFUNDED, org clawback when
  * already paid out) so payout math and ledger stay coherent — EARNINGS_LEDGER_
  * DRIFT reconciles exactly this pairing. A free_ booking carries no overage
- * side-charges and no invoice, so there is no Step-7.6 credit-back or GST
- * credit note to mirror.
+ * side-charges, so there is no Step-7.6 credit-back; its consumer invoice is
+ * reversed by a credit note for the same share of the credit-funded value.
  *
  * No-op when no earnings rows exist: without them neither did the consultant
  * pipeline nor the booking journal run, so there is nothing to invert —
@@ -688,6 +664,7 @@ async function reverseFreeCreditSettlement(
     paymentId: string;
     refundId: string;
     initiatedByUserId: string | null;
+    reason: string;
     /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
     share?: { num: number; den: number };
   },
@@ -725,6 +702,28 @@ async function reverseFreeCreditSettlement(
         },
       },
     },
+  });
+
+  // The tax-inclusive value the credits funded, which is what the invoice billed.
+  const promoTotal = part(
+    payment.legs.reduce(
+      (s, l) =>
+        l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
+          ? s + l.amountPaise
+          : s,
+      0,
+    ),
+  );
+  const discountBack =
+    promoTotal > 0
+      ? 0
+      : part(payment.originalAmount + (payment.taxAmount ?? 0));
+
+  await mintConsumerCreditNote(tx, {
+    paymentId: input.paymentId,
+    refundId: input.refundId,
+    amountPaise: promoTotal + discountBack,
+    reason: input.reason,
   });
 
   if (
@@ -837,15 +836,6 @@ async function reverseFreeCreditSettlement(
   // The counter-posting. Funding returns to PLATFORM_PROMO (the account the
   // REFERRAL_CREDIT legs were debited to); legacy pre-legs payments booked
   // their gross as DISCOUNT instead (#1003 shape).
-  const promoTotal = part(
-    payment.legs.reduce(
-      (s, l) =>
-        l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
-          ? s + l.amountPaise
-          : s,
-      0,
-    ),
-  );
   const credits: Posting[] = [];
   if (promoTotal > 0) {
     credits.push({
@@ -853,17 +843,12 @@ async function reverseFreeCreditSettlement(
       direction: "CREDIT",
       amountPaise: promoTotal,
     });
-  } else {
-    const discountBack = part(
-      payment.originalAmount + (payment.taxAmount ?? 0),
-    );
-    if (discountBack > 0) {
-      credits.push({
-        account: { kind: "DISCOUNT" },
-        direction: "CREDIT",
-        amountPaise: discountBack,
-      });
-    }
+  } else if (discountBack > 0) {
+    credits.push({
+      account: { kind: "DISCOUNT" },
+      direction: "CREDIT",
+      amountPaise: discountBack,
+    });
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);

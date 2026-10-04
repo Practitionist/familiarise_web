@@ -102,7 +102,6 @@ This is a forward-looking note: the auto-top-up cron exists in schema, but live 
 | Item                                               | What it does                                                                                   | State   |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
 | `lib/payments/payouts/razorpay-payouts.ts`         | RazorpayX Bulk Payouts API client                                                              | ✅ live |
-| `lib/payments/payouts/stripe-connect.ts`           | Stripe Connect for cross-border consultant payouts                                             | ✅ live |
 | `lib/payments/payouts/payout-service.ts` (B2C)     | Consultant payout pipeline                                                                     | ✅ live |
 | `lib/payments/payouts/org-payout-service.ts` (B2B) | Org payout pipeline                                                                            | ✅ live |
 | Razorpay PG checkout                               | ✅ live                                                                                        |         |

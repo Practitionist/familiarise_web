@@ -17,33 +17,24 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
-type TargetRequest = (
-  baseUrl: string,
-  name: string,
-) => { url: string; timeoutMs: number };
+import {
+  applyErrorBudget,
+  resetSentryBudgetState,
+} from "../../sentry.shared.config";
 
-function loadTicker(): {
-  targetRequest: TargetRequest;
-  dueTargets: (now: Date) => string[];
-  statusFor: (failed: { name: string; status: number }[]) => number;
-  reportableToSentry: (name: string) => boolean;
-  bucketFor: (
-    status: number,
-    maintenance?: boolean,
-  ) => "ok" | "held" | "failed";
-  buildFailedTargetsEvent: (failed: { name: string; status: number }[]) => {
-    message: string;
-    level: string;
-    fingerprint: string[];
-    tags: Record<string, string>;
-    contexts: {
-      tick: {
-        failedCount: number;
-        targets: { name: string; status: number; outcome: string }[];
-      };
-    };
-  };
-} {
+type Ticker = Pick<
+  typeof import("../../netlify/functions/cron-tick.mjs"),
+  | "targetRequest"
+  | "dueTargets"
+  | "statusFor"
+  | "reportableToSentry"
+  | "isFirstDueTickOfHour"
+  | "bucketFor"
+  | "buildFailedTargetEvent"
+>;
+type Target = ReturnType<Ticker["dueTargets"]>[number];
+
+function loadTicker(): Ticker {
   const file = path.join(
     __dirname,
     "..",
@@ -58,7 +49,7 @@ function loadTicker(): {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = { exports: {} as ReturnType<typeof loadTicker> };
+  const mod = { exports: {} as Ticker };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -254,7 +245,7 @@ describe("cron-tick dueTargets cadence", () => {
   // call-report volume. The #1792 Upstash budget is the line item.
   // Their phases keep them off the canary's :00/:30 ticks and off each other.
   it("fires the earnings release and the no-show refund on staggered 30-minute slots", () => {
-    const firing = (name: string) =>
+    const firing = (name: Target) =>
       [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((minute) =>
         dueTargets(at(minute)).includes(name),
       );
@@ -343,44 +334,66 @@ describe("cron-tick bucketFor", () => {
 });
 
 describe("cron-tick failed-target reporting", () => {
-  const { buildFailedTargetsEvent } = loadTicker();
+  const { buildFailedTargetEvent } = loadTicker();
 
-  // Sentry groups by message text. Naming the failed targets in the message
-  // would mint a separate issue for every distinct combination of failures, so
-  // a sweep that degrades over time fragments into a dozen near-identical
-  // issues and the one that matters gets lost among them.
-  it("uses one fixed message and fingerprint regardless of which targets failed", () => {
-    const a = buildFailedTargetsEvent([
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-    const b = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "release-earnings", status: 503 },
-    ]);
-
-    expect(a.message).toBe(b.message);
-    expect(a.fingerprint).toEqual(b.fingerprint);
-    expect(a.fingerprint).toEqual(["cron-tick-failed-targets"]);
+  beforeEach(() => {
+    resetSentryBudgetState();
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-04T00:00:00Z"));
   });
+  afterEach(() => jest.useRealTimers());
 
-  it("carries the detail as context, not in the message", () => {
-    const ev = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-
-    expect(ev.message).not.toContain("reconcile-refunds");
-    expect(ev.contexts.tick.failedCount).toBe(2);
-    expect(ev.contexts.tick.targets).toEqual([
-      { name: "reconcile-refunds", status: 500, outcome: "http" },
-      // 0 is this module's "never got an answer" value, not an HTTP status.
-      { name: "sweep-stuck-webhook-events", status: 0, outcome: "network" },
-    ]);
-  });
-
-  it("reports at error level, so it is not grouped with the expected refusals", () => {
-    expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
-      "error",
+  it("names the target in the message and fingerprint", () => {
+    const ev = buildFailedTargetEvent({
+      name: "sweep-stuck-webhook-events",
+      status: 0,
+    });
+    expect(ev.message).toBe(
+      "cron-tick: target sweep-stuck-webhook-events failed",
     );
+    expect(ev.fingerprint).toEqual(["cron-tick", "sweep-stuck-webhook-events"]);
+    expect(ev.level).toBe("error");
+    expect(ev.contexts.tick).toEqual({
+      target: "sweep-stuck-webhook-events",
+      status: 0,
+      outcome: "network",
+    });
+  });
+
+  it("the shared repeat filter throttles per target, not across targets", () => {
+    const a = buildFailedTargetEvent({
+      name: "reconcile-refunds",
+      status: 500,
+    });
+    const b = buildFailedTargetEvent({ name: "release-earnings", status: 503 });
+    expect(applyErrorBudget({ ...a })).not.toBeNull();
+    expect(applyErrorBudget({ ...b })).not.toBeNull();
+    expect(applyErrorBudget({ ...a })).toBeNull();
+  });
+});
+
+describe("cron-tick drain targets and failure reporting", () => {
+  const { dueTargets, isFirstDueTickOfHour } = loadTicker();
+  const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
+
+  it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {
+    const exportsMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("process-data-exports"));
+    expect(exportsMinutes).toEqual([0, 10, 20, 30, 40, 50]);
+    const moderationMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("retry-moderation-enforcement"));
+    expect(moderationMinutes).toEqual([25, 55]);
+  });
+
+  it("lets each target report once an hour, on its own first due tick", () => {
+    const reportMinutes = (name: string) =>
+      [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((m) =>
+        isFirstDueTickOfHour(name, at(m)),
+      );
+    expect(reportMinutes("sweep-stuck-webhook-events")).toEqual([0]);
+    expect(reportMinutes("release-earnings")).toEqual([5]);
+    expect(reportMinutes("retry-moderation-enforcement")).toEqual([25]);
+    expect(reportMinutes("sentry-ingest-canary")).toEqual([0]);
   });
 });

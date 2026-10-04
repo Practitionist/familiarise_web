@@ -22,7 +22,12 @@
  */
 
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
-import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
+import {
+  EarningStatus,
+  OccurrenceCompletionStatus,
+  Prisma,
+  RefundStatus,
+} from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -55,6 +60,16 @@ export interface ReleaseEarningsOptions {
   limit?: number;
 }
 
+export const UNDELIVERED_OCCURRENCE = {
+  deletedAt: null,
+  completionStatus: {
+    in: [
+      OccurrenceCompletionStatus.SCHEDULED,
+      OccurrenceCompletionStatus.RESCHEDULED,
+    ],
+  },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /**
  * Release earnings that have passed their hold period
  *
@@ -77,8 +92,13 @@ export interface ReleaseEarningsOptions {
  * a make-up or a refund for a host-cancelled or voided session, or holding a
  * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
  */
-const RELEASABLE_PAYMENT = {
+export const RELEASABLE_PAYMENT = {
   refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  NOT: {
+    appointment: {
+      occurrences: { some: UNDELIVERED_OCCURRENCE },
+    },
+  },
   OR: [
     { appointmentId: null },
     {

@@ -30,9 +30,6 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 jest.mock("../../lib/stream/webhook-dispatch", () => ({
   processStreamEvent: jest.fn(),
 }));
-jest.mock("../../app/api/webhooks/stripe-dispatch", () => ({
-  processStripeWebhookEvent: jest.fn(),
-}));
 
 // #476 — the sweep cores are now wrapped in withCronLock; pass through so
 // these unit tests exercise the sweep logic, not the lock (covered in
@@ -53,7 +50,6 @@ jest.mock("../../lib/observability/report", () => ({
 import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
-import { processStripeWebhookEvent } from "../../app/api/webhooks/stripe-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
 const mockWe = (
@@ -68,7 +64,6 @@ const mockWe = (
   }
 ).webhookEvent;
 const mockProcess = processRazorpayWebhookEvent as jest.Mock;
-const mockProcessStripe = processStripeWebhookEvent as jest.Mock;
 
 const stuckRow = (over: Record<string, unknown> = {}) => ({
   eventId: "payment.captured:pay_1",
@@ -126,10 +121,10 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
     expect(reportSentryMessage).not.toHaveBeenCalled();
 
-    // Razorpay, Stream, and Stripe (#1387), and BOTH stuck shapes.
+    // Razorpay and Stream, and BOTH stuck shapes.
     const where = mockWe.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
-      provider: { in: ["razorpay", "stream", "stripe"] },
+      provider: { in: ["razorpay", "stream"] },
     });
     expect(where.OR).toEqual([
       { processed: false, error: null },
@@ -150,31 +145,6 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(typeof env.created_at).toBe("number");
     expect(evType).toBe("payment.captured");
     expect(evId).toBe("payment.captured:pay_1");
-  });
-
-  it("re-drives a stuck Stripe event via processStripeWebhookEvent (#1387)", async () => {
-    const stripeRow = stuckRow({
-      eventId: "evt_stripe_1",
-      eventType: "payment_intent.succeeded",
-      provider: "stripe",
-      payload: {
-        id: "evt_stripe_1",
-        type: "payment_intent.succeeded",
-        data: { object: { id: "pi_1", amount: 5000, currency: "inr" } },
-      },
-    });
-    mockWe.findMany.mockResolvedValue([stripeRow]);
-    mockProcessStripe.mockResolvedValue(undefined);
-    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
-
-    const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
-
-    expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
-    expect(mockProcessStripe).toHaveBeenCalledWith(
-      stripeRow.payload,
-      "payment_intent.succeeded",
-      "evt_stripe_1",
-    );
   });
 
   it("a re-drive that still errors counts as stillFailing, not recovered", async () => {

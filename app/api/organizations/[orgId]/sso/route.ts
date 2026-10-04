@@ -276,6 +276,7 @@ export async function PATCH(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

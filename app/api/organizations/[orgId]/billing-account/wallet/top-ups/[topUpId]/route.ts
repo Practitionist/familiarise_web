@@ -15,6 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { toTopUpStatus } from "@/schemas/wallet";
 
 export async function GET(
   _req: NextRequest,
@@ -44,19 +45,11 @@ export async function GET(
     return NextResponse.json({ error: "Top-up not found" }, { status: 404 });
   }
 
-  // WalletTopUp.status carries the lifecycle directly: PENDING until the
-  // webhook confirms, then CONFIRMED; FAILED if the gateway rejected.
-  const status =
-    topUp.status === "CONFIRMED"
-      ? "confirmed"
-      : topUp.status === "FAILED"
-        ? "failed"
-        : "pending";
   return NextResponse.json({
     topUp: {
       topUpId: topUp.providerOrderId,
       providerPaymentId: topUp.providerPaymentId,
-      status,
+      status: toTopUpStatus(topUp.status),
       amountPaise: topUp.amountPaise,
       createdAt: topUp.createdAt,
     },

@@ -63,7 +63,7 @@ export default async function DashboardLayout({
 
   // Every StreamProvider under /dashboard connects with these, so the first
   // connect needs no token round trip to a possibly stalled instance (#1124).
-  const streamTokens = mintInitialStreamTokens(session.user.id, {
+  const streamTokens = await mintInitialStreamTokens(session.user.id, {
     chat: true,
     video: true,
   });

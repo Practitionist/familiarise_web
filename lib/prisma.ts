@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { z } from "zod";
 
 import { moneyResultExtensions } from "./prisma-extensions";
 import { ssoSecretDecryptExtension } from "./prisma-sso-secret-extension";
@@ -46,6 +47,19 @@ const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
 // a client-side query_timeout.
 const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 
+// The 1-connection pool is a deploy invariant on Netlify; a missing value would
+// silently fall back to pg's default of 10 per instance. The build phase is exempt.
+const PG_POOL_MAX = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .safeParse(process.env.PG_POOL_MAX);
+if (process.env.NETLIFY && !IS_NEXT_BUILD && !PG_POOL_MAX.success) {
+  throw new Error(
+    `PG_POOL_MAX must be a positive integer on Netlify (got "${process.env.PG_POOL_MAX ?? ""}"). Set PG_POOL_MAX=1 in the site's environment variables.`,
+  );
+}
+
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
@@ -63,9 +77,7 @@ const adapter = new PrismaPg({
   // concurrent invocations that can dwarf Supavisor's client cap. Set
   // PG_POOL_MAX=1 (or 2) in serverless deploy env; unset = pg default for
   // long-lived local dev/jobs.
-  ...(Number(process.env.PG_POOL_MAX) > 0
-    ? { max: Number(process.env.PG_POOL_MAX) }
-    : {}),
+  ...(PG_POOL_MAX.success ? { max: PG_POOL_MAX.data } : {}),
 });
 
 // Slow-query threshold (ms). A query exceeding this is logged via the

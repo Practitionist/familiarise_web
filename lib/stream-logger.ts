@@ -78,7 +78,7 @@ export const streamLogger = {
     };
     console.error(formatMessage("Stream:ERROR", message, errorContext));
 
-    if (!isDevelopment && error instanceof Error) {
+    if (!isDevelopment && !isTest && error instanceof Error) {
       Sentry.captureException(error, {
         tags: { subsystem: "stream" },
         contexts: {

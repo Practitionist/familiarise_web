@@ -349,7 +349,6 @@ The arrival time follows the rail the payment used: a gateway payment reads "car
 | Refund API              | `app/api/payments/refunds/route.ts` | POST handler             |
 | Two-phase pattern       | `app/api/payments/refunds/route.ts` | Lines 70-175             |
 | Gateway abstraction     | `lib/payments/index.ts`             | `createRefund()`         |
-| Stripe implementation   | `lib/payments/core/stripe.ts`       | `createStripeRefund()`   |
 | Razorpay implementation | `lib/payments/core/razorpay.ts`     | `createRazorpayRefund()` |
 
 ---

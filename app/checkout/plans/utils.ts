@@ -371,7 +371,7 @@ export async function handleUnifiedCheckout(
   const data = validationResult.data;
 
   // handleUnifiedCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-  // Real payments go through StripeCheckout/RazorpayCheckout components.
+  // Real payments go through the RazorpayCheckout component.
   if (data.success && (data.skipPayment || isMockPayment)) {
     handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
   } else if (!data.success) {
@@ -381,7 +381,7 @@ export async function handleUnifiedCheckout(
 
 // #1437 — WALLET/INVOICE/LICENSE org funding, zero-amount (credits) and mock
 // payments all confirm synchronously server-side with a synthetic id and no
-// gateway order/client secret. Opening Razorpay/Stripe on that id 400s and
+// gateway order/client secret. Opening Razorpay on that id 400s and
 // shows a false "Payment Failed" alert over a booking that already
 // succeeded, so every gateway component must check this before opening.
 export function checkoutNeedsGateway(data: {
@@ -392,23 +392,8 @@ export function checkoutNeedsGateway(data: {
   return !(data.skipPayment || data.isZeroAmountPayment);
 }
 
-// Gateway configuration for UI rendering. The four checkout pages each carried
-// their own copy of this array with `isActive: true` hardcoded on both entries,
-// so the fence had to be applied in four places to hold. One list now.
-//
-// #1351 — Stripe is a contingency rail kept in the tree in case RBI rules
-// change, not a live payment method: without NEXT_PUBLIC_STRIPE_ENABLED=true
-// the card renders the disabled "Coming Soon" button and no StripeCheckout
-// mounts. The server-side fence (STRIPE_ENABLED, assertGatewayUsable) is the
-// one that actually protects money; this only keeps the UI honest, because a
-// NEXT_PUBLIC_ value is inlined into the client bundle and a buyer can edit it.
+// Gateway configuration for UI rendering, shared by the four checkout pages.
 export const paymentGateways = [
-  {
-    name: "Stripe",
-    description: "Card payments (international)",
-    gateway: "STRIPE" as const,
-    isActive: process.env.NEXT_PUBLIC_STRIPE_ENABLED === "true",
-  },
   {
     name: "Razorpay",
     description: "UPI, cards & bank transfer",
@@ -416,68 +401,6 @@ export const paymentGateways = [
     isActive: true,
   },
 ];
-
-// Default success and error handlers for StripeCheckout component
-export function createStripeCheckoutHandlers(
-  toast: ReturnType<typeof useToast>["toast"],
-  navigate?: (url: string) => void,
-) {
-  return {
-    onPaymentSuccess: (_response: { message: string }) => {
-      toast({
-        title: "Payment Successful",
-        description:
-          "Your payment has been confirmed! Redirecting to your confirmation page...",
-      });
-      if (navigate) navigate("/checkout/checkout-success");
-      else window.location.href = "/checkout/checkout-success";
-    },
-    onPaymentError: (error: {
-      message?: string;
-      code?: string;
-      errorType?: string;
-      error?: string;
-    }) => {
-      // Booking-conflict errors from /api/checkout (slot taken/relinquished,
-      // event expired) carry our own errorType — route them through the precise
-      // toast map instead of the gateway card-decline heuristics.
-      // #1583 E-P1-03 — `code` first: a route that typed its refusal means the
-      // code is the specific half and `errorType` beside it is the coarse
-      // bucket, and the bucket alone titles a lead-time refusal "No Longer
-      // Available".
-      const conflictCode = error.code ?? error.errorType;
-      if (
-        conflictCode &&
-        (Object.values(ErrorTypes) as string[]).includes(conflictCode)
-      ) {
-        const { title, description } = getErrorToast(
-          conflictCode,
-          error.message ?? error.error,
-        );
-        toast({ title, description, variant: "destructive" });
-        return;
-      }
-      const errorMessage =
-        error.message || error.code || "An unexpected error occurred";
-      const userFriendlyMessage =
-        errorMessage.includes("card") || errorMessage.includes("payment_method")
-          ? "Your card was declined. Please check your card details or try a different payment method."
-          : errorMessage.includes("insufficient")
-            ? "Your card has insufficient funds. Please use a different card or payment method."
-            : errorMessage.includes("expired")
-              ? "Your card has expired. Please use a different card."
-              : errorMessage.includes("network")
-                ? "Connection error. Please check your internet connection and try again."
-                : `Payment failed: ${errorMessage}. Please try again or contact your bank if the problem persists.`;
-
-      toast({
-        title: "Payment Failed",
-        description: userFriendlyMessage,
-        variant: "destructive",
-      });
-    },
-  };
-}
 
 // Default success and error handlers for RazorpayCheckout component
 export function createRazorpayCheckoutHandlers(
@@ -490,12 +413,8 @@ export function createRazorpayCheckoutHandlers(
       razorpay_payment_id?: string;
       message?: string;
     }) => {
-      // Booking confirmation is webhook-driven, so at this instant the money is
-      // captured and the appointment may not exist yet. Razorpay used to land
-      // on /dashboard, where that gap reads as "I paid and got nothing" —
-      // Stripe has always gone to /checkout/checkout-success, which polls
-      // /api/checkout/verify, drives the pipeline synchronously and says
-      // "payment received, confirming". Same surface for both gateways now.
+      // Confirmation is webhook-driven, so the appointment may not exist yet;
+      // checkout-success polls /api/checkout/verify, which drives the pipeline.
       //
       // `Payment.paymentIntent` IS the Razorpay order id (the verify route
       // keys on `order_` for its sync branch), so that is the id to hand over.

@@ -241,7 +241,9 @@ export function RescheduleProposalCard({
             viewer's own, and this is the line they act on: miss it and the
             proposal closes. Rendered in the SAME provider zone as the times
             above it, so the card never shows two zones. */}
-        {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a zzz")}
+        {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a zzz")}.
+        If nobody answers by then, the request expires and the original times
+        are restored wherever they are still free.
       </p>
 
       {readOnly && (

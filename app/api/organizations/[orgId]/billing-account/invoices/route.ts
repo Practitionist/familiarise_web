@@ -111,6 +111,7 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "billing.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

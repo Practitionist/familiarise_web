@@ -14,6 +14,7 @@ import {
 import { cn } from "@/utils/tailwind";
 import { eventUnionStatusBadge } from "@/lib/appointments/status-guards";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
 
 export interface EventResource {
   id: string;
@@ -22,6 +23,7 @@ export interface EventResource {
   consultantImage: string | null;
   status: string;
   date: string;
+  eventType?: string;
   materials: {
     id: string;
     fileName: string;
@@ -41,7 +43,14 @@ export interface EventResource {
     playbackUrl: string | null;
     thumbnailUrl: string | null;
     status: string;
+    previewTranscript?: string | null;
   }[];
+}
+
+export function getRecordingStatusLabel(status: string): string {
+  if (status === "EXPIRED") return "Expired";
+  if (status === "FAILED") return "Unavailable";
+  return "Processing";
 }
 
 function formatFileSize(bytes: number): string {
@@ -101,6 +110,9 @@ export function EventResourceCard({
     (showMaterials ? event.materials.length : 0) +
     (showRecordings ? event.recordings.length : 0);
   const [expanded, setExpanded] = useState(totalItems > 0);
+  const [activeRecording, setActiveRecording] = useState<
+    EventResource["recordings"][number] | null
+  >(null);
 
   return (
     <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
@@ -216,58 +228,88 @@ export function EventResourceCard({
                 Recordings ({event.recordings.length})
               </h4>
               <div className="space-y-2">
-                {event.recordings.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
-                  >
+                {event.recordings.map((rec) => {
+                  const canWatch =
+                    Boolean(rec.playbackUrl) ||
+                    rec.status === "AVAILABLE" ||
+                    rec.status === "READY";
+                  return (
                     <div
-                      className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-lg shrink-0",
-                        rec.playbackUrl
-                          ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300"
-                          : "bg-card text-muted-foreground/70 border border-border",
-                      )}
+                      key={rec.id}
+                      className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
                     >
-                      <Video className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {rec.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDuration(rec.durationInMinutes)} &middot;{" "}
-                        {formatDate(rec.recordedAt)}
-                      </p>
-                    </div>
-                    {rec.playbackUrl ? (
-                      <a
-                        href={rec.playbackUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                      <div
+                        className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-lg shrink-0",
+                          canWatch
+                            ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300"
+                            : "bg-card text-muted-foreground/70 border border-border",
+                        )}
                       >
+                        <Video className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {rec.title}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDuration(rec.durationInMinutes)} &middot;{" "}
+                          {formatDate(rec.recordedAt)}
+                        </p>
+                      </div>
+                      {canWatch ? (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 dark:text-emerald-300"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveRecording(rec);
+                          }}
+                          className="text-emerald-600 dark:text-emerald-300"
                         >
                           <Play className="w-4 h-4 mr-1" />
                           Watch
                         </Button>
-                      </a>
-                    ) : (
-                      <span className="text-xs text-muted-foreground/70 px-2">
-                        Processing
-                      </span>
-                    )}
-                  </div>
-                ))}
+                      ) : (
+                        <span
+                          className={cn(
+                            "text-xs px-2",
+                            rec.status === "FAILED"
+                              ? "text-destructive"
+                              : "text-muted-foreground/70",
+                          )}
+                        >
+                          {getRecordingStatusLabel(rec.status)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
       )}
+
+      <RecordingPlayerModal
+        open={Boolean(activeRecording)}
+        onOpenChange={(open) => {
+          if (!open) setActiveRecording(null);
+        }}
+        recording={
+          activeRecording
+            ? {
+                id: activeRecording.id,
+                title: activeRecording.title,
+                recordedAt: activeRecording.recordedAt,
+                durationInMinutes: activeRecording.durationInMinutes,
+                playbackUrl: activeRecording.playbackUrl,
+                previewTranscript: activeRecording.previewTranscript ?? null,
+                planTitle: event.planTitle,
+              }
+            : null
+        }
+      />
     </div>
   );
 }

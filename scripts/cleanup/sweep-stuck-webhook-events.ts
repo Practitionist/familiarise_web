@@ -4,7 +4,7 @@
  * The webhook routes return HTTP 200 synchronously BEFORE the `after()` callback
  * runs the money side-effects. If the process crashes mid-callback, the
  * WebhookEvent row is left `processed=false, error=null` and is NEVER re-driven —
- * Razorpay/Stripe stop retrying once they see the 200, and the 5-min staleness
+ * Razorpay stops retrying once it sees the 200, and the 5-min staleness
  * window only fires on a redelivery that will never come. The result is the
  * highest-blast-radius zombie: PAID money with an ISSUED invoice, frozen ACCRUED
  * overages, uncredited wallet top-ups, frozen tentative appointments,
@@ -20,6 +20,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
+import { reclaimStaleProcessingWebhookEvent } from "@/lib/stream/webhook-receipt";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
@@ -115,7 +116,7 @@ async function sweepStuckWebhookEventsUnlocked(
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
       where: {
-        provider: { in: ["razorpay", "stream", "stripe"] },
+        provider: { in: ["razorpay", "stream"] },
         receivedAt: { lt: staleBefore },
         AND: [
           {
@@ -190,14 +191,11 @@ async function sweepStuckWebhookEventsUnlocked(
     let passProgress = 0;
 
     for (const ev of stuck) {
-      const claimed = await prisma.webhookEvent.updateMany({
-        where: {
-          eventId: ev.eventId,
-          OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
-        },
-        data: { claimedAt: new Date() },
-      });
-      if (claimed.count === 0) {
+      const { reclaimed, claim } = await reclaimStaleProcessingWebhookEvent(
+        ev.eventId,
+        ev.claimedAt,
+      );
+      if (!reclaimed) {
         console.log(
           `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
         );
@@ -205,10 +203,6 @@ async function sweepStuckWebhookEventsUnlocked(
       }
       passProgress++;
 
-      // WebhookEvent.payload stores only `event.payload`; the per-event schemas
-      // also require the envelope's entity/account_id/contains/created_at, so
-      // supply them — the handlers route on eventType + payload.* and never read
-      // these. `contains` mirrors Razorpay (the payload's top-level entity keys).
       const payloadKeys = Object.keys(
         (ev.payload ?? {}) as Record<string, unknown>,
       );
@@ -223,26 +217,14 @@ async function sweepStuckWebhookEventsUnlocked(
 
       try {
         if (ev.provider === "stream") {
-          // Stream stores the whole event as the payload, so there is no envelope
-          // to rebuild. processStreamEvent owns its own logWebhookEvent /
-          // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
-          // dispatch below.
           const streamEvent = ev.payload as { call_cid?: string } | null;
           await processStreamEvent(
             ev.payload,
             ev.eventType,
             ev.eventId,
-            undefined,
+            ev.signature ?? undefined,
             { call_cid: streamEvent?.call_cid },
-          );
-        } else if (ev.provider === "stripe") {
-          const { processStripeWebhookEvent } = await import(
-            "@/app/api/webhooks/stripe-dispatch"
-          );
-          await processStripeWebhookEvent(
-            ev.payload,
-            ev.eventType,
-            ev.eventId,
+            { claimAlreadyHeld: true, claim },
           );
         } else {
           // processRazorpayWebhookEvent catches handler errors and marks the row
@@ -250,58 +232,58 @@ async function sweepStuckWebhookEventsUnlocked(
           // re-runs the side-effects AND clears the stuck flag.
           await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
         }
-      const after = await prisma.webhookEvent.findUnique({
-        where: { eventId: ev.eventId },
-        select: { error: true, processed: true },
-      });
-      if (after?.error) {
-        stillFailing++;
-        errors.push(`${ev.eventId}: ${after.error}`);
-      } else if (after && !after.processed) {
-        // #813 — still the defer signature (processed=false/error=null): a
-        // defer-sentinel handler left it for the next sweep. Terminally cap once
-        // it ages past giveUpAfterHours so an unknown payment can't churn forever.
-        if (ev.receivedAt < giveUpOlderThan) {
-          await prisma.webhookEvent
-            .update({
-              where: { eventId: ev.eventId },
-              data: {
-                processed: true,
-                // Provider-specific: this sweep now covers Stream as well as
-                // Razorpay, and stamping a Stream session event "payment never
-                // arrived" sends whoever reads the row looking for a payment
-                // that was never involved.
-                error: giveUpReason(ev.provider),
-              },
-            })
-            .catch(() => {});
-          gaveUp++;
-          errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
-          console.warn(
-            `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
-          );
-        } else {
-          deferred++;
-          console.log(
-            `⏳ Stuck webhook ${ev.eventId} still deferred — will retry`,
-          );
-        }
-      } else {
-        recovered++;
-        console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
-      }
-    } catch (e) {
-      stillFailing++;
-      const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`${ev.eventId}: ${msg}`);
-      // The dispatch normally marks the row, but guard so a throw here can't
-      // leave it stuck to be re-swept forever.
-      await prisma.webhookEvent
-        .update({
+        const after = await prisma.webhookEvent.findUnique({
           where: { eventId: ev.eventId },
-          data: { processed: true, error: `sweep-failed: ${msg}` },
-        })
-        .catch(() => {});
+          select: { error: true, processed: true },
+        });
+        if (after?.error) {
+          stillFailing++;
+          errors.push(`${ev.eventId}: ${after.error}`);
+        } else if (after && !after.processed) {
+          // #813 — still the defer signature (processed=false/error=null): a
+          // defer-sentinel handler left it for the next sweep. Terminally cap once
+          // it ages past giveUpAfterHours so an unknown payment can't churn forever.
+          if (ev.receivedAt < giveUpOlderThan) {
+            await prisma.webhookEvent
+              .update({
+                where: { eventId: ev.eventId },
+                data: {
+                  processed: true,
+                  // Provider-specific: this sweep now covers Stream as well as
+                  // Razorpay, and stamping a Stream session event "payment never
+                  // arrived" sends whoever reads the row looking for a payment
+                  // that was never involved.
+                  error: giveUpReason(ev.provider),
+                },
+              })
+              .catch(() => {});
+            gaveUp++;
+            errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
+            console.warn(
+              `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
+            );
+          } else {
+            deferred++;
+            console.log(
+              `⏳ Stuck webhook ${ev.eventId} still deferred — will retry`,
+            );
+          }
+        } else {
+          recovered++;
+          console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
+        }
+      } catch (e) {
+        stillFailing++;
+        const msg = e instanceof Error ? e.message : String(e);
+        errors.push(`${ev.eventId}: ${msg}`);
+        // The dispatch normally marks the row, but guard so a throw here can't
+        // leave it stuck to be re-swept forever.
+        await prisma.webhookEvent
+          .update({
+            where: { eventId: ev.eventId },
+            data: { processed: true, error: `sweep-failed: ${msg}` },
+          })
+          .catch(() => {});
       }
     }
 

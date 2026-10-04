@@ -10,7 +10,7 @@ last-reviewed: 2026-06-12
 
 The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → `10-money-and-ledger/` → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. Two bands sit outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is, and `90-audits/` is the annex of audit artifacts.
 
-> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For money specifically, read [money-machinery](explainers/money-machinery.md) first — the cross-rail map of B2C and B2B on one spine, with the data model, sequence, state and posting diagrams — then start at [money-model-overview](10-money-and-ledger/01-money-model-overview.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
+> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](10-money-and-ledger/01-money-model-overview.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
 
 ---
 
@@ -74,7 +74,7 @@ This path adds the _why_ behind the design and the integrity machinery you must 
 This path covers the whole surface and the regulatory rails the money flows must satisfy.
 
 1. Everything in the SDE3 path.
-2. [money-machinery](explainers/money-machinery.md) — the cross-rail money narrative.
+2. [01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) — the canonical cross-rail booking, org-scoping, and money narrative.
 3. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) together with the authoritative rule set in [`docs/compliance/`](../compliance/00-overview.md).
 4. [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) — the one flag flip with real-money consequences.
 5. [scenarios-and-examples](60-scenarios-and-verdicts/01-scenarios-and-examples.md) — worked end-to-end enterprise scenarios.
@@ -163,14 +163,14 @@ This band holds the commercial logic (programs, contracts, cycles) and the app s
 
 These docs map the regulatory rails (DPDP, GST, TDS, MSME) onto the models and crons that implement them, plus the org-facing data plumbing.
 
-| #   | Doc                                                                                         | Focus                                      |
-| --- | ------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md)   | enterprise touchpoints → `../compliance/*` |
-| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                             | erasure, retention, immutable ledger       |
-| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                     | `OrgDataExportJob`                         |
-| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                         | `WebhookEndpoint`, delivery, signing       |
-| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)                 | `OrgWorkspaceProfile` prefs                |
-| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)       | per-subsystem wired/skipped map            |
+| #   | Doc                                                                                           | Focus                                      |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md)     | enterprise touchpoints → `../compliance/*` |
+| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                               | erasure, retention, immutable ledger       |
+| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                       | `OrgDataExportJob`                         |
+| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                           | `WebhookEndpoint`, delivery, signing       |
+| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)                   | `OrgWorkspaceProfile` prefs                |
+| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)         | per-subsystem wired/skipped map            |
 | 07  | [rbi-payment-aggregator-posture](40-compliance-and-data/07-rbi-payment-aggregator-posture.md) | RBI PA-CB regulatory posture               |
 
 ### Operations — `50-operations/`
@@ -202,11 +202,11 @@ This doc validates the system against worked end-to-end enterprise scenarios.
 
 This band collects the architecture decision records (`01` through `35`): each one states a decision the system embodies, the alternatives that were rejected, and the consequences we live with. Start at the [band index](70-design-decisions/00-README.md), which lists every ADR and the format they follow.
 
-### Explainers
+### Cross-Rail Explainers — `docs/start-here/`
 
-| File                                                        | Purpose                                                                                                                                                                                                  |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [explainers/money-machinery](explainers/money-machinery.md) | how money moves on both rails — one checkout, one writer, one ledger; B2C confirmation and refunds, B2B funding seam, overage, invoicing and org payouts; the concurrency posture and architecture map |
+| File                                                                                         | Purpose                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [start-here/01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) | Canonical end-to-end visual guide combining booking lifecycle, organizational scoping (`?orgScope=`), role & permission matrices, funding/program/overage permutations, all 20 double-entry ledger permutations, and worked numeric examples with seeded cast |
 
 ---
 

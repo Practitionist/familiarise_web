@@ -15,6 +15,20 @@ export function payPagePath(paymentId: string): string {
   return `${PAY_PAGE_PREFIX}${encodeURIComponent(paymentId)}`;
 }
 
+/** The Payment id inside a {@link payPagePath} href; null for any other href. */
+export function paymentIdFromPayPath(
+  href: string | null | undefined,
+): string | null {
+  if (!href?.startsWith(PAY_PAGE_PREFIX)) return null;
+  const encoded = href.slice(PAY_PAGE_PREFIX.length);
+  if (!encoded || /[/?#]/.test(encoded)) return null;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
+}
+
 export function payLinkHref(args: {
   paymentId: string | null | undefined;
   checkoutUrl: string | null | undefined;

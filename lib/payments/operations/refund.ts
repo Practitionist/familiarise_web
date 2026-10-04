@@ -14,7 +14,7 @@
  *      flips it to SUCCEEDED. Use this when the refund originates inside
  *      the app and you want it gateway-bound + ledgered in one call.
  *
- *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (Stripe /
+ *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (the
  *      Razorpay webhook → `Refund` row already exists). The cascade
  *      cron in `scripts/refunds/cascade-refund-earnings.ts` calls this
  *      to fan out the side-effects without re-creating the Refund row.
@@ -64,6 +64,7 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -84,6 +85,7 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 
 import {
   applyCappedEarningReversal,
@@ -271,6 +273,16 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     const err = new RefundValidationError(
       `Payment ${input.paymentId} not found`,
       "PAYMENT_NOT_FOUND",
+    );
+    reportModelledRefundOutcome(err);
+    throw err;
+  }
+  // Org-funded and credit-funded intents have no gateway money; only
+  // refundBookingPayment's in-ledger rails may return them.
+  if (fundingRailForIntent(payment.paymentIntent) !== "GATEWAY") {
+    const err = new RefundValidationError(
+      `Payment ${input.paymentId} is not gateway-funded; refund it through refundBookingPayment`,
+      "NOT_A_GATEWAY_PAYMENT",
     );
     reportModelledRefundOutcome(err);
     throw err;
@@ -986,6 +998,20 @@ export async function applyRefundCascade(
     });
   }
 
+  // Replay sales are the only appointment-less payments that grant playback;
+  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  if (payment.appointmentId === null) {
+    const otherSucceededPaise = payment.refunds
+      .filter(
+        (r) =>
+          r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+      )
+      .reduce((sum, r) => sum + r.amountPaise, 0);
+    if (otherSucceededPaise + input.amountPaise >= payment.amount) {
+      await revokeReplayEntitlement(tx, payment.paymentIntent);
+    }
+  }
+
   if (payment.amount <= 0 || input.amountPaise <= 0) {
     // Zero-amount payments (LICENSE-only) have no money to refund, and a
     // cascade clamped to zero (#1582 C-P0-03: every rupee already returned or
@@ -1472,27 +1498,6 @@ export async function applyRefundCascade(
       { reversedAt: new Date() },
       { fromIn: ["CHARGED"] },
     );
-  }
-
-  // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
-  // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.
-  // Inert while gstTcsCollectedPaise stays null. Idempotency rides on the
-  // cascade's own exactly-once discipline (cascadedAt), not a unique here —
-  // partial refunds legitimately produce one adjustment per refund.
-  if ((payment.gstTcsCollectedPaise ?? 0) > 0) {
-    const tcsReverse = Math.floor(
-      (payment.gstTcsCollectedPaise! * input.amountPaise) / payment.amount,
-    );
-    if (tcsReverse > 0) {
-      await tx.gstTcsAdjustment.create({
-        data: {
-          paymentId: payment.id,
-          refundId: input.refundId,
-          amountPaise: -tcsReverse,
-          reason: `refund (${input.reason})`,
-        },
-      });
-    }
   }
 
   // -----------------------------------------------------------------------

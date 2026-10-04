@@ -35,6 +35,10 @@ import {
 } from "./adapters";
 import { OFFERING_MANIFESTS, TRIAL_FIELD_NAMES } from "./manifests";
 import { OfferingMaterials } from "./OfferingMaterials";
+import {
+  commitPlanImage,
+  type StagedPlanImage,
+} from "@/components/plans/PlanImageUploader";
 import type { OfferingManifest, OfferingType } from "./manifest";
 import {
   applySponsorPricingHintToManifest,
@@ -137,6 +141,9 @@ export function OfferingEditorContainer({
   const [savingAction, setSavingAction] = React.useState<
     "draft" | "publish" | null
   >(null);
+  const [stagedImage, setStagedImage] = React.useState<StagedPlanImage | null>(
+    null,
+  );
 
   const existingPlan = initialEvent ? adapter.planOf(initialEvent) : undefined;
   const copySource = duplicateOf ? adapter.planOf(duplicateOf) : undefined;
@@ -233,6 +240,24 @@ export function OfferingEditorContainer({
     }
   }
 
+  /** Cover-image changes are staged in the editor so Cancel never persists one. */
+  const commitStagedImage = async (): Promise<boolean> => {
+    if (!stagedImage || !planId) return true;
+    try {
+      await commitPlanImage(adapter.imageType, planId, stagedImage);
+      setStagedImage(null);
+      return true;
+    } catch (imageError) {
+      // The offering saved; keep the staged image and stay so a re-save retries it.
+      toast({
+        title: "Saved, but the cover image wasn't updated",
+        description: `${imageError instanceof Error ? imageError.message : "Please try again."} Save again to retry.`,
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
   const persist = async (
     values: Record<string, unknown>,
     { publish }: { publish: boolean },
@@ -251,6 +276,9 @@ export function OfferingEditorContainer({
       } else {
         await adapter.save(payload, consultantId, saveCtx);
       }
+      // Re-read before the image commit so a failed image still shows the saved status.
+      void invalidateOfferingQueries(queryClient, consultantId);
+      if (!(await commitStagedImage())) return;
 
       toast(
         savedToast({
@@ -260,9 +288,6 @@ export function OfferingEditorContainer({
         }),
       );
 
-      // #1527 QA — the list and its status chips re-read on return instead
-      // of showing the pre-publish copy until a reload.
-      void invalidateOfferingQueries(queryClient, consultantId);
       router.push(
         returnHref ?? `/dashboard/consultant/${consultantId}/offerings`,
       );
@@ -289,7 +314,17 @@ export function OfferingEditorContainer({
         manifest={effectiveManifest}
         form={form}
         planId={planId}
-        planImageType={adapter.imageType}
+        coverImage={
+          planId
+            ? {
+                staged: stagedImage,
+                // Ignored mid-save so a staged image can't pair with a stale save.
+                onStage: (image) => {
+                  if (savingAction === null) setStagedImage(image);
+                },
+              }
+            : undefined
+        }
         status={status}
         draftLabel={
           hasRealDraft && status === "PUBLISHED"

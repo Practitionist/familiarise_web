@@ -38,6 +38,7 @@ import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { z } from "zod";
+import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
 
 const verifySignatureSchema = z.object({
   razorpay_order_id: z.string().startsWith("order_"),
@@ -145,17 +146,12 @@ export async function POST(req: NextRequest) {
     let capturedAmountPaise: number | undefined;
     try {
       if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
-      const gatewayPayment =
-        await razorpayClient.payments.fetch(razorpay_payment_id);
-      // Razorpay types `notes` as a string|number map; the handlers all read
-      // string values, so normalize rather than cast.
-      notes = Object.fromEntries(
-        Object.entries(gatewayPayment.notes ?? {}).map(([k, v]) => [
-          k,
-          String(v),
-        ]),
+      // A malformed gateway answer throws into the catch below and defers.
+      const gatewayPayment = razorpayFetchedPaymentSchema.parse(
+        await razorpayClient.payments.fetch(razorpay_payment_id),
       );
-      capturedAmountPaise = Number(gatewayPayment.amount);
+      notes = gatewayPayment.notes;
+      capturedAmountPaise = gatewayPayment.amount;
 
       // The signature proves the id pair came from Razorpay. It says nothing
       // about capture state, and this route is the ONLY confirmation path that

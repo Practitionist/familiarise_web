@@ -26,6 +26,9 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => mockStreamClient),
+  withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
+  StreamUnavailableError: class StreamUnavailableError extends Error {},
+  isExpectedStreamError: () => false,
 }));
 
 jest.mock("../../lib/stream-logger", () => ({
@@ -867,5 +870,152 @@ describe("addMemberToChannel error handling", () => {
         userId: "user-123",
       }),
     );
+  });
+});
+
+describe("droppedIds filtering and collaborator channel sync", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockStreamClient.channel.mockReturnValue(mockChannel);
+    mockStreamClient.queryChannels.mockResolvedValue([]);
+    mockGetSession.mockResolvedValue({
+      user: { id: "staff-user", role: "ADMIN" },
+    });
+  });
+
+  it("excludes soft-deleted users (droppedIds) from createChannel roster", async () => {
+    const { upsertUsersToStream } =
+      await import("../../actions/stream/chat/user.action");
+    (upsertUsersToStream as jest.Mock).mockResolvedValueOnce({
+      users: { host: {}, active1: {} },
+      droppedIds: ["ghost-user"],
+    });
+
+    const { createChannel } =
+      await import("../../actions/stream/chat/channel.action");
+
+    mockChannel.query.mockResolvedValueOnce({ members: {} });
+
+    const result = await createChannel({
+      channelType: "team",
+      channelId: "webinar-clean-roster",
+      members: ["active1", "ghost-user"],
+      createdById: "host",
+    });
+
+    expect(result.members).toEqual(["host", "active1"]);
+    expect(mockStreamClient.channel).toHaveBeenCalledWith(
+      "team",
+      "webinar-clean-roster",
+      expect.objectContaining({
+        members: ["host", "active1"],
+      }),
+    );
+  });
+
+  it("excludes droppedIds when addUserToEventChannel initializes a new event channel", async () => {
+    const { upsertUsersToStream } =
+      await import("../../actions/stream/chat/user.action");
+    (upsertUsersToStream as jest.Mock).mockResolvedValueOnce({
+      users: { "host-1": {}, "user-new": {} },
+      droppedIds: ["deleted-attendee"],
+    });
+
+    mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+      id: "web-init",
+      status: "SCHEDULED",
+      webinarPlan: {
+        title: "Clean Webinar",
+        consultantProfile: { user: { id: "host-1" } },
+        collaborators: [],
+      },
+      appointment: {
+        participants: [{ userId: "deleted-attendee" }, { userId: "user-new" }],
+      },
+      waitlist: [],
+    });
+
+    mockChannel.addMembers.mockRejectedValueOnce(
+      new Error("Channel does not exist"),
+    );
+
+    const { addUserToEventChannel } =
+      await import("../../lib/stream/event-channel-service");
+
+    const res = await addUserToEventChannel("webinar", "web-init", "user-new");
+    expect(res.success).toBe(true);
+    expect(mockStreamClient.channel).toHaveBeenCalledWith(
+      "team",
+      "webinar-web-init",
+      expect.objectContaining({
+        members: ["host-1", "user-new"],
+      }),
+    );
+  });
+
+  it("enables cooldown: 3 on team channels with >= 100 synced members and omits it below 100", async () => {
+    const { createChannel } =
+      await import("../../actions/stream/chat/channel.action");
+
+    mockChannel.query.mockResolvedValue({ members: {} });
+
+    await createChannel({
+      channelType: "team",
+      channelId: "webinar-99",
+      members: Array.from({ length: 98 }, (_, i) => `user-${i}`),
+      createdById: "host",
+    });
+
+    const smallPayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(smallPayload.cooldown).toBeUndefined();
+
+    await createChannel({
+      channelType: "team",
+      channelId: "webinar-100",
+      members: Array.from({ length: 99 }, (_, i) => `user-${i}`),
+      createdById: "host",
+    });
+
+    const largePayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(largePayload.cooldown).toBe(3);
+  });
+
+  it("enables cooldown: 3 when addUserToEventChannel creates a 100+ seat team channel", async () => {
+    mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+      id: "web-100-seat",
+      status: "SCHEDULED",
+      webinarPlan: {
+        title: "Large Webinar",
+        consultantProfile: { user: { id: "host-1" } },
+        collaborators: [],
+      },
+      appointment: {
+        participants: Array.from({ length: 99 }, (_, i) => ({
+          userId: `attendee-${i}`,
+        })),
+      },
+    });
+
+    mockChannel.addMembers
+      .mockRejectedValueOnce(new Error("Channel does not exist"))
+      .mockResolvedValue({});
+
+    const { addUserToEventChannel } =
+      await import("../../lib/stream/event-channel-service");
+
+    const res = await addUserToEventChannel(
+      "webinar",
+      "web-100-seat",
+      "attendee-0",
+    );
+    expect(res.success).toBe(true);
+    const createPayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(createPayload.cooldown).toBe(3);
   });
 });

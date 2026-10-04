@@ -23,12 +23,12 @@ Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-ac
 
 ### What Maker Includes
 
-| Feature        | Hard Limit                        | Normal Paid Value   |
-| -------------- | --------------------------------- | ------------------- |
-| Chat           | **2,000 MAU** (hard cap, pauses)  | $399/mo (10K MAU)   |
-| Video          | 333,000 participant-minutes/month | $0.15–$9.60/1K PM   |
-| Activity Feeds | 125,000 API calls/month           | $499/mo (Start)     |
-| AI Moderation  | $100 in credits                   | $2/1K msgs (PAYG)   |
+| Feature        | Hard Limit                        | Normal Paid Value |
+| -------------- | --------------------------------- | ----------------- |
+| Chat           | **2,000 MAU** (hard cap, pauses)  | $399/mo (10K MAU) |
+| Video          | 333,000 participant-minutes/month | $0.15–$9.60/1K PM |
+| Activity Feeds | 125,000 API calls/month           | $499/mo (Start)   |
+| AI Moderation  | $100 in credits                   | $2/1K msgs (PAYG) |
 
 > The Chat 2K MAU cap is a **hard pause** — the service stops, it does not bill overages.
 
@@ -38,14 +38,14 @@ Familiarise qualifies for Stream's [Maker Account](https://getstream.io/maker-ac
 
 Rates per 1,000 participant-minutes (PM). 60fps = 2× the 30fps rate.
 
-| Quality        | 30fps rate  | 60fps rate  | Common use      |
-| -------------- | ----------- | ----------- | --------------- |
-| Audio Only     | $0.30/1K PM | $0.60/1K PM | Voice calls     |
-| SD (360p)      | $1.50/1K PM | $3.00/1K PM | Low-bandwidth   |
-| HD (720p)      | $3.00/1K PM | $6.00/1K PM | Consultations   |
-| Full HD (1080) | $4.50/1K PM | $9.00/1K PM | Webinars        |
-| 2K (1440p)     | $6.00/1K PM | $12.00/1K PM| Premium         |
-| 4K (2160p)     | $9.60/1K PM | $19.20/1K PM| Ultra           |
+| Quality        | 30fps rate  | 60fps rate   | Common use    |
+| -------------- | ----------- | ------------ | ------------- |
+| Audio Only     | $0.30/1K PM | $0.60/1K PM  | Voice calls   |
+| SD (360p)      | $1.50/1K PM | $3.00/1K PM  | Low-bandwidth |
+| HD (720p)      | $3.00/1K PM | $6.00/1K PM  | Consultations |
+| Full HD (1080) | $4.50/1K PM | $9.00/1K PM  | Webinars      |
+| 2K (1440p)     | $6.00/1K PM | $12.00/1K PM | Premium       |
+| 4K (2160p)     | $9.60/1K PM | $19.20/1K PM | Ultra         |
 
 **Live Streaming mode** rates are 67% of the Video Calls rates above for SD through 4K, and 40% for Audio Only.
 
@@ -62,12 +62,12 @@ Rates per 1,000 participant-minutes (PM). 60fps = 2× the 30fps rate.
 
 ### Other Add-ons
 
-| Add-on              | Rate              |
-| ------------------- | ----------------- |
-| Noise Cancellation  | $0.30/1K PM       |
-| Transcriptions      | $8.00/1K call-min |
-| RTMP In/Out         | $15.00/1K call-min|
-| HLS (Live mode only)| $0.96/1K PM       |
+| Add-on               | Rate               |
+| -------------------- | ------------------ |
+| Noise Cancellation   | $0.30/1K PM        |
+| Transcriptions       | $8.00/1K call-min  |
+| RTMP In/Out          | $15.00/1K call-min |
+| HLS (Live mode only) | $0.96/1K PM        |
 
 ---
 
@@ -75,15 +75,15 @@ Rates per 1,000 participant-minutes (PM). 60fps = 2× the 30fps rate.
 
 Pricing as of April 2026. Annual = 2 months free.
 
-| Plan       | MAU    | Annual/mo | Monthly/mo | Annual (INR @₹90.7) | Monthly (INR) |
-| ---------- | ------ | --------- | ---------- | ------------------- | ------------- |
-| Start      | 10K    | $399      | $499       | ₹36,189             | ₹45,259       |
-| Start      | 25K    | $549      | $699       | ₹49,794             | ₹63,399       |
-| Start      | 50K    | $749      | $949       | ₹67,934             | ₹86,074       |
-| Elevate    | 10K    | $499      | $599       | ₹45,259             | ₹54,329       |
-| Elevate    | 25K    | $649      | $799       | ₹58,864             | ₹72,469       |
-| Elevate    | 50K    | $899      | $1,099     | ₹81,539             | ₹99,679       |
-| Enterprise | 1M+ MAU| Custom    | —          | —                   | —             |
+| Plan       | MAU     | Annual/mo | Monthly/mo | Annual (INR @₹90.7) | Monthly (INR) |
+| ---------- | ------- | --------- | ---------- | ------------------- | ------------- |
+| Start      | 10K     | $399      | $499       | ₹36,189             | ₹45,259       |
+| Start      | 25K     | $549      | $699       | ₹49,794             | ₹63,399       |
+| Start      | 50K     | $749      | $949       | ₹67,934             | ₹86,074       |
+| Elevate    | 10K     | $499      | $599       | ₹45,259             | ₹54,329       |
+| Elevate    | 25K     | $649      | $799       | ₹58,864             | ₹72,469       |
+| Elevate    | 50K     | $899      | $1,099     | ₹81,539             | ₹99,679       |
+| Enterprise | 1M+ MAU | Custom    | —          | —                   | —             |
 
 **Start vs Elevate:** Elevate adds push notifications, message search, content translation, message pinning, advanced moderation (shadow ban, bounce).
 
@@ -91,18 +91,18 @@ Pricing as of April 2026. Annual = 2 months free.
 
 ## Activity Feeds Pricing (Post-Maker)
 
-| Plan     | Price (Annual) | Price (Monthly) |
-| -------- | -------------- | --------------- |
-| Start    | $499/mo        | $599/mo         |
-| Elevate  | $899/mo        | $999/mo         |
+| Plan    | Price (Annual) | Price (Monthly) |
+| ------- | -------------- | --------------- |
+| Start   | $499/mo        | $599/mo         |
+| Elevate | $899/mo        | $999/mo         |
 
 ---
 
 ## The Cost Cliff
 
-| Trigger                     | Stream cost before | Stream cost after       | Net jump            |
-| --------------------------- | ------------------ | ----------------------- | ------------------- |
-| Any one Maker condition lost | ₹0/month           | ₹36,189/mo (Chat Start) | **+₹36,189/mo**     |
+| Trigger                      | Stream cost before | Stream cost after       | Net jump        |
+| ---------------------------- | ------------------ | ----------------------- | --------------- |
+| Any one Maker condition lost | ₹0/month           | ₹36,189/mo (Chat Start) | **+₹36,189/mo** |
 
 This is the single largest SaaS cost increase in the Familiarise stack. Budget for it before crossing ₹8.5L/month GMV or taking any outside funding.
 
@@ -114,13 +114,13 @@ Set a **1,500 MAU alert** (75% of the 2K hard cap) in the Stream dashboard to ge
 
 ## SaaS Cost by Growth Stage (Stream portion only)
 
-| Stage              | MAU     | Stream cost/mo (pre-GST) | Notes                        |
-| ------------------ | ------- | ------------------------ | ---------------------------- |
-| Launch–early (M1–6)| < 2K    | ₹0 (Maker)               | Video 333K PM included       |
-| Post-Maker         | 2K–10K  | ₹36,189 (Chat Start 10K) | Annual pricing, +GST 18% RCM |
-| Growth             | 10K–25K | ₹49,794 (Chat Start 25K) | Annual pricing               |
-| Scale              | 25K+    | ₹67,934+ (Chat Start 50K)| Consider Elevate for features|
-| Enterprise         | 1M+     | Custom                   | Dedicated infrastructure     |
+| Stage               | MAU     | Stream cost/mo (pre-GST)  | Notes                         |
+| ------------------- | ------- | ------------------------- | ----------------------------- |
+| Launch–early (M1–6) | < 2K    | ₹0 (Maker)                | Video 333K PM included        |
+| Post-Maker          | 2K–10K  | ₹36,189 (Chat Start 10K)  | Annual pricing, +GST 18% RCM  |
+| Growth              | 10K–25K | ₹49,794 (Chat Start 25K)  | Annual pricing                |
+| Scale               | 25K+    | ₹67,934+ (Chat Start 50K) | Consider Elevate for features |
+| Enterprise          | 1M+     | Custom                    | Dedicated infrastructure      |
 
 > **GST note:** If GST-registered, add 18% IGST under RCM on all Stream.io payments. This is claimable as ITC.
 

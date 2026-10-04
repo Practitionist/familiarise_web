@@ -260,14 +260,12 @@ export const getCuratedPrograms = unstable_cache(
       }
 
       programs.push(
-        ...classPlans.map(
-          (plan): ClassPlanProgram => ({
-            ...plan,
-            classes: plan.classes || [],
-            type: "class",
-            imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
-          }),
-        ),
+        ...classPlans.map((plan): ClassPlanProgram => ({
+          ...plan,
+          classes: plan.classes || [],
+          type: "class",
+          imageUrl: generateProgramImageUrl(plan.imageUrl),
+        })),
       );
     }
 
@@ -314,14 +312,12 @@ export const getCuratedPrograms = unstable_cache(
       }
 
       programs.push(
-        ...webinarPlans.map(
-          (plan): WebinarPlanProgram => ({
-            ...plan,
-            webinars: [],
-            type: "webinar",
-            imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
-          }),
-        ),
+        ...webinarPlans.map((plan): WebinarPlanProgram => ({
+          ...plan,
+          webinars: [],
+          type: "webinar",
+          imageUrl: generateProgramImageUrl(plan.imageUrl),
+        })),
       );
     }
 

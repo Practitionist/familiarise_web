@@ -227,7 +227,7 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 - **Positive amounts + a `direction` enum, never a signed amount.** A signed `amountPaise` would let a single column carry both "add" and "subtract", but it also lets a typo (a stray `-`) silently invert a posting that still _looks_ balanced. Splitting sign into `direction` makes the balance check a pure `Σdebit == Σcredit` over magnitudes and makes a malformed amount (`<= 0`) a hard throw. The cost is callers must pick `DEBIT`/`CREDIT` explicitly; the benefit is no posting can be sign-wrong yet pass.
 - **Immutable journal + counter-transactions, never edits.** `LedgerEntry.transactionId` is `onDelete: Restrict`; a wrong posting is corrected by posting its reverse (`REFUND`/`TOPUP_REFUND`), not by `UPDATE`. This keeps the journal append-only and auditable (every correction is itself a dated, balanced event) at the cost of more rows. An editable ledger would be smaller and unauditable — the wrong trade for money.
 - **Typed `kind` enum over a free string (#778 §B).** `kind` was a free string; a typo like `"BOOKNG"` silently broke reconcile's `groupBy` (the mistyped transaction just vanished from the aggregation). Making `LedgerTransactionKind` an enum turns that into a compile error. Cost: adding a flow is now a schema change; benefit: no silent reconciliation hole.
-- **Maintained O(1) balance snapshot over scan-on-read (#776).** `ledgerBalancePaise()` reads a 1:1 `LedgerAccountBalance` snapshot folded inside the same transaction as the journal write, instead of summing every entry on each read. The append-only journal stays the source of truth; the snapshot is a cache the reconciler validates (`LEDGER_BALANCE_SNAPSHOT_DRIFT`). Cost: one more write per posting + one more invariant; benefit: balance reads don't degrade as the journal grows.
+- **Balances aggregated on read, never stored.** `ledgerBalancePaise()` sums the account's journal entries. A stored per-account balance would be one row every posting to `CASH`, `PLATFORM_FEE` or `GST_PAYABLE` must update, and under Serializable isolation that row forces every concurrent confirmation platform-wide to queue behind the last one. No request path reads a ledger balance in O(1); the wallet's hot read is its own guarded `walletBalance` cache.
 
 ## 5b. What this design survived
 
@@ -244,19 +244,23 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 
 ---
 
-## Balance reads — maintained snapshot (#776)
+## Balance reads — aggregated from the journal
 
-`ledgerBalancePaise()` reads an O(1) maintained running balance
-(`LedgerAccountBalance`, keyed 1:1 by the deterministic account id) rather than
-scanning every entry. `postLedgerTxn` folds each posting's signed delta
-(`+DEBIT` / `−CREDIT`) into the snapshot **inside the same transaction** as the
-journal write; the idempotency fast-path returns before any mutation, so a
-retried key never double-applies. The append-only `LedgerEntry` journal stays
-the source of truth — the snapshot is a derived cache the reconcile cron
-validates (`LEDGER_BALANCE_SNAPSHOT_DRIFT`, [ledger-integrity](13-ledger-integrity.md)).
-`ledgerBalanceFromJournalPaise()` is the authoritative fallback (and the
-reconcile check's ground truth). No backfill — a fresh seed posts through
-`postLedgerTxn`, so snapshots populate as money moves.
+`ledgerBalancePaise()` returns Σ(DEBIT) − Σ(CREDIT) over the account's
+`LedgerEntry` rows, grouped by direction. `postLedgerTxn` writes only the
+transaction and its entries, so two postings that share an account never touch
+a common row and never abort each other under Serializable isolation. The
+journal is the only balance; there is no snapshot to drift.
+
+## Deprecated & Superseded Approaches
+
+- **The maintained `LedgerAccountBalance` snapshot (#776).** `postLedgerTxn`
+  used to fold every posting into a per-account balance row inside the posting
+  transaction, and the reconciler validated it as
+  `LEDGER_BALANCE_SNAPSHOT_DRIFT`. Nothing on a request path read it, while the
+  fold made `CASH`, `PLATFORM_FEE` and `GST_PAYABLE` hot rows that serialized
+  every confirmation. The fold and the finding are gone; the table is unwritten
+  and is dropped at the pre-launch reset.
 
 ### Related docs
 

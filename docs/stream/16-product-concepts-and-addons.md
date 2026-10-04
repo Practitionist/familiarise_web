@@ -72,16 +72,17 @@ Use case: simultaneously broadcast a webinar to the Stream platform and YouTube 
 
 | Product        | Direction             | Priced on              | Familiarise use          |
 | -------------- | --------------------- | ---------------------- | ------------------------ |
-| Video Calls    | Many ↔ Many           | Participant-minutes     | Consultations, Classes   |
-| Live Streaming | One → Many            | Participant-minutes     | Large webinars           |
-| Activity Feeds | Database events       | API calls + activities  | Not yet used             |
-| HLS add-on     | WebRTC → web embed    | Participant-minutes     | Public webinar embeds    |
-| Noise Cancel   | Per-stream processing | Participant-minutes     | All calls                |
-| Transcriptions | Once per call         | Call-minutes            | Accessibility            |
-| RTMP In        | External → Stream     | Call-minutes            | Pro AV equipment         |
-| RTMP Out       | Stream → External     | Call-minutes            | YouTube/Twitch simulcast |
+| Video Calls    | Many ↔ Many           | Participant-minutes    | Consultations, Classes   |
+| Live Streaming | One → Many            | Participant-minutes    | Large webinars           |
+| Activity Feeds | Database events       | API calls + activities | Not yet used             |
+| HLS add-on     | WebRTC → web embed    | Participant-minutes    | Public webinar embeds    |
+| Noise Cancel   | Per-stream processing | Participant-minutes    | All calls                |
+| Transcriptions | Once per call         | Call-minutes           | Accessibility            |
+| RTMP In        | External → Stream     | Call-minutes           | Pro AV equipment         |
+| RTMP Out       | Stream → External     | Call-minutes           | YouTube/Twitch simulcast |
 
 **Key pricing unit distinction:**
+
 - **Participant-minutes** = scales with audience size (more viewers = more cost)
 - **Call-minutes** = fixed per session regardless of how many people are on it
 

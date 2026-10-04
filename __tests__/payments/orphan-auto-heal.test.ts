@@ -58,8 +58,6 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
     mockConfirmExistingAppointment(...a),
 }));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
-  isInternalFundedIntent: (intent: string) => intent.startsWith("org_"),
-  isFreeCreditIntent: (intent: string) => intent.startsWith("free_"),
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
 }));
 jest.mock("../../lib/enterprise/system-events", () => ({

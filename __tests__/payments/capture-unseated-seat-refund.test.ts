@@ -54,6 +54,7 @@ const historyCreate = jest.fn().mockResolvedValue({});
 const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
 
 const txStub = {
+  $executeRaw: jest.fn(async () => 0),
   payment: {
     findUnique: paymentFindUnique,
     update: paymentUpdate,
@@ -136,6 +137,7 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
   resolvePaymentForEarnings: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("../../lib/email", () => ({

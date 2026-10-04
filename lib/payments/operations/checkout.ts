@@ -98,7 +98,6 @@ import {
   isWalletFrozen,
   WalletFrozenError,
 } from "@/lib/payments/wallet-freeze";
-import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
@@ -115,6 +114,7 @@ import {
   type PendingOverageNotification,
 } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -136,12 +136,18 @@ import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
-import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
+import {
+  type BusinessErrorCode,
+  isBusinessErrorCode,
+} from "@/lib/errors/classification/payment-error-classification";
 import {
   classEnrolmentFrom,
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "@/lib/booking/booking-rule-error";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
@@ -225,6 +231,9 @@ const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
   [AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED],
 );
 
+const REFERRAL_CREDITS_DROPPED_NOTICE =
+  "Referral credits can't be used on organisation-funded bookings, so none were spent.";
+
 /** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
 const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
@@ -238,18 +247,20 @@ const SUPERSEDED_HOLD_NOTE =
  * stay out on purpose: they mean a programme is configured in a shape we
  * cannot collect on and must keep paging.
  */
-const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  "ORG_NOT_OPERATIONAL",
-  "ORG_CANNOT_SPONSOR",
-  "ORG_MEMBERSHIP_REQUIRED",
-  "ORG_CREDIT_LIMIT_REACHED",
-  "CONSULTANT_NOT_ON_PANEL",
-  "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
-  "CREDIT_SHORTFALL",
-  "SUBSCRIPTION_ALREADY_ACTIVE",
-  "ALREADY_RENEWED",
-  "INVALID_RENEWAL_SOURCE",
-]);
+const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
+  new Set<BusinessErrorCode>([
+    "ORG_NOT_OPERATIONAL",
+    "ORG_CANNOT_SPONSOR",
+    "ORG_MEMBERSHIP_REQUIRED",
+    "ORG_CREDIT_LIMIT_REACHED",
+    "CONSULTANT_NOT_ON_PANEL",
+    "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+    "CREDIT_SHORTFALL",
+    "DISCOUNT_EXHAUSTED",
+    "SUBSCRIPTION_ALREADY_ACTIVE",
+    "ALREADY_RENEWED",
+    "INVALID_RENEWAL_SOURCE",
+  ]);
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -533,7 +544,10 @@ export async function findReusablePendingOrderPayment(
     // and must be actively superseded so its tentative slot / participant seat
     // is released before the new booking writes (even if the cleanup cron has
     // not swept it yet).
-    if (!candidate.expiresAt || candidate.expiresAt.getTime() <= now.getTime()) {
+    if (
+      !candidate.expiresAt ||
+      candidate.expiresAt.getTime() <= now.getTime()
+    ) {
       supersede.push({ id: candidate.id, reason: "hold-expired" });
       continue;
     }
@@ -1141,7 +1155,10 @@ export async function calculateAmountAndValidate(
           discount.maxUses !== null &&
           discount.currentUses >= discount.maxUses
         ) {
-          throw new Error("Discount code has reached maximum uses");
+          throw new DiscountExhaustedError(
+            discount.currentUses,
+            discount.maxUses,
+          );
         }
 
         discountCodeId = discount.id;
@@ -1659,7 +1676,7 @@ export async function validateSlotAvailability(
   });
 
   if (existingBooking) {
-    throw new Error("Time slot is already booked");
+    throw new SlotTakenError();
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
@@ -3552,6 +3569,11 @@ export async function handleCheckout(
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
 ) {
+  const requestedType = validatedData.appointmentType;
+  // Trials are booked through the trial flow; checkout never prices one.
+  if (requestedType === "TRIAL") {
+    throw new Error(`Unsupported appointment type: ${requestedType}`);
+  }
   let lock: ApprovalLock | ApprovalLock[] | null = null;
   let lockType = "";
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
@@ -3573,11 +3595,8 @@ export async function handleCheckout(
   // of truth for "is this booking sponsored?". A missing assignment on a
   // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
   // silently bill the learner's card.
-  const appointmentType = validatedData.appointmentType as
-    | "CONSULTATION"
-    | "SUBSCRIPTION"
-    | "WEBINAR"
-    | "CLASS";
+  const appointmentType: Exclude<CheckoutInput["appointmentType"], "TRIAL"> =
+    requestedType;
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
@@ -3591,6 +3610,8 @@ export async function handleCheckout(
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
   // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
   let creditEffectiveLimit: number | null = null;
+  // Set when org funding strips the buyer's referral credits; the UI says so.
+  let referralCreditsDropped = false;
 
   if (validatedData.organizationId) {
     const org = await prisma.organization.findUnique({
@@ -3706,6 +3727,7 @@ export async function handleCheckout(
     // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
       validatedData = { ...validatedData, useReferralCredits: false };
+      referralCreditsDropped = true;
     }
 
     // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
@@ -4338,7 +4360,8 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
-                for (const occ of webinarResult.appointment?.occurrences ?? []) {
+                for (const occ of webinarResult.appointment?.occurrences ??
+                  []) {
                   if (
                     occ.startsAt &&
                     occ.endsAt &&
@@ -4766,8 +4789,9 @@ export async function handleCheckout(
                 discountForIncrement.maxUses !== null &&
                 discountForIncrement.currentUses >= discountForIncrement.maxUses
               ) {
-                throw new Error(
-                  "Discount code has reached maximum uses — please remove the code and try again.",
+                throw new DiscountExhaustedError(
+                  discountForIncrement.currentUses,
+                  discountForIncrement.maxUses,
                 );
               }
               await tx.discountCode.update({
@@ -4852,6 +4876,23 @@ export async function handleCheckout(
                     ...legMismatch,
                   }),
                 );
+              }
+            }
+
+            // The synchronous rails confirm here, so their earnings and the
+            // booking:<paymentId> journal commit with the payment or not at all.
+            if (skipPayment) {
+              const resolvedEarnings = await resolvePaymentForEarnings(
+                { id: payment.id },
+                validatedData.appointmentType,
+                tx,
+              );
+              if (resolvedEarnings) {
+                await createEarningsFromPayment({
+                  payment: resolvedEarnings.paymentForEarnings,
+                  appointmentType: resolvedEarnings.earningsAppointmentType,
+                  tx,
+                });
               }
             }
 
@@ -4962,58 +5003,6 @@ export async function handleCheckout(
           });
         }
 
-        // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
-        try {
-          const resolved = await resolvePaymentForEarnings(
-            { paymentIntent: paymentResponse!.id },
-            validatedData.appointmentType,
-          );
-
-          if (resolved) {
-            await createEarningsFromPayment({
-              payment: resolved.paymentForEarnings,
-              appointmentType: resolved.earningsAppointmentType,
-            });
-
-            console.log(
-              `💰 Mock payment earnings created for consultant ${resolved.consultantProfileId}`,
-            );
-          }
-        } catch (earningsError) {
-          // C-01 #837 — payment + booking are committed but earnings + the
-          // BOOKING journal are not. Real money moved, so we don't roll back
-          // and we don't pretend success with a silent warning: page (ERROR)
-          // and durably record the ledger gap. The healer is the data-state
-          // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
-          // keyed on row state — not on this marker — so it's guaranteed and
-          // idempotent even if this alert is lost.
-          reportSentryError(earningsError, {
-            subsystem: "payments",
-            extra: {
-              paymentIntent: paymentResponse!.id,
-              userId,
-              appointmentType: validatedData.appointmentType,
-              path: "checkout",
-            },
-          });
-          await recordSystemError({
-            category: "PAYOUT",
-            summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,
-            err: earningsError,
-            correlationId: paymentResponse!.id,
-            context: {
-              paymentIntent: paymentResponse!.id,
-              userId,
-              appointmentType: validatedData.appointmentType,
-              path: "checkout",
-            },
-          });
-          console.error(
-            `⚠️ Failed to create earnings for mock payment:`,
-            earningsError,
-          );
-        }
-
         // #1365 — these payments never see a capture webhook, so the tax
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
@@ -5039,16 +5028,26 @@ export async function handleCheckout(
         }
       }
 
+      let message =
+        "Payment intent created. Complete payment to book appointment.";
+      if (isZeroAmountPayment) {
+        message =
+          "Payment completed via referral credits. Appointment booked successfully.";
+      } else if (isMockPayment) {
+        message = "Mock payment completed and appointment created successfully";
+      } else if (isOrgSponsoredPayment) {
+        message =
+          "Payment completed via organization funding. Appointment booked successfully.";
+        if (referralCreditsDropped) {
+          message += ` ${REFERRAL_CREDITS_DROPPED_NOTICE}`;
+        }
+      }
+
       return {
         success: true,
         paymentIntent: paymentResponse,
-        message: isZeroAmountPayment
-          ? "Payment completed via referral credits. Appointment booked successfully."
-          : isMockPayment
-            ? "Mock payment completed and appointment created successfully"
-            : isOrgSponsoredPayment
-              ? "Payment completed via organization funding. Appointment booked successfully."
-              : "Payment intent created. Complete payment to book appointment.",
+        message,
+        referralCreditsDropped,
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,
@@ -5118,7 +5117,7 @@ export async function handleCheckout(
         dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
         // #1582 B-P1-01b — the in-tx org/panel/credit refusals and the
         // CREDIT_SHORTFALL race are answers, not faults.
-        (typeof dbErrorCode === "string" &&
+        (isBusinessErrorCode(dbErrorCode) &&
           IN_TX_MODELLED_REFUSAL_CODES.has(dbErrorCode)) ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
@@ -5136,10 +5135,7 @@ export async function handleCheckout(
       if (paymentResponse && !isZeroAmountPayment) {
         try {
           const { cancelPaymentIntent } = await import("../index");
-          await cancelPaymentIntent(
-            paymentResponse.id,
-            "Database operation failed - preventing orphaned payment intent",
-          );
+          await cancelPaymentIntent(paymentResponse.id);
         } catch (cancelErr) {
           console.error(
             `Failed to cancel payment intent ${paymentResponse.id}:`,

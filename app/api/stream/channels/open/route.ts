@@ -35,6 +35,7 @@
  *
  * Both arms are idempotent — an existing channel is returned untouched.
  */
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
@@ -48,14 +49,14 @@ import {
   DmNotPermittedError,
   pairBookingContexts,
 } from "@/lib/stream/dm-eligibility";
-import {
-  DM_ELIGIBLE_STATUSES,
-  OPENABLE_EVENT_STATUSES,
-} from "@/lib/stream/dm-eligibility-statuses";
-import { DEFAULT_RETENTION_DAYS, isPastRetention } from "@/lib/stream/channel-lifecycle";
+import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
+import {
+  addUserToEventChannel,
+  isEventParticipant,
+} from "@/lib/stream/event-channel-service";
+import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
 const bodySchema = z.discriminatedUnion("kind", [
@@ -64,6 +65,8 @@ const bodySchema = z.discriminatedUnion("kind", [
     counterpartyUserId: z.string().min(1),
     /** Funding context. Absent or null = personal. */
     organizationId: z.string().min(1).nullable().optional(),
+    /** Optional appointment context to post a booking receipt card in the shared 1:1 DM. */
+    contextAppointmentId: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal("event"),
@@ -72,106 +75,296 @@ const bodySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-/**
- * Is the caller a participant in this event — an attendee on one of its slots,
- * or the host consultant?
- *
- * Deliberately NOT `authorizeEventAccess` from lib/auth-helpers: for webinars
- * and classes that helper authorizes the plan owner and ACCEPTED collaborators
- * only, and returns 403 for attendees. Attendees are exactly who needs the
- * event chat. This mirrors the predicate the search route already applies, so
- * the two cannot disagree about which rows are clickable.
- *
- * The retention guard (second query) is F-HIGH-2's other half: dev's fix keeps
- * past-retention events out of the sync expected-set, but create-on-miss here
- * would resurrect the hard-deleted channel anyway — writable until the expire
- * cron's next pass re-freezes it. An event whose last slot ended more than
- * `retentionDays` ago is not openable, full stop.
- */
-async function isEventParticipant(
-  eventType: "webinar" | "class",
-  eventId: string,
+const ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const EVENT_ELIGIBLE_STATUS_SET = new Set<string>([
+  ...DM_ELIGIBLE_STATUSES,
+  "IN_PROGRESS",
+]);
+
+function isMatchingUserPair(
   userId: string,
-): Promise<boolean> {
-  if (eventType === "webinar") {
-    const hit = await prisma.webinar.findFirst({
-      where: {
-        id: eventId,
-        status: { in: [...OPENABLE_EVENT_STATUSES] },
-        OR: [
-          {
-            appointment: {
-              deletedAt: null,
-              occurrences: { some: { deletedAt: null } },
-              participants: { some: liveParticipant(userId) },
-            },
-          },
-          { webinarPlan: { consultantProfile: { userId } } },
-        ],
-      },
+  counterpartyUserId: string,
+  a?: string | null,
+  b?: string | null,
+): boolean {
+  if (!a || !b) return false;
+  return (
+    (a === userId && b === counterpartyUserId) ||
+    (a === counterpartyUserId && b === userId)
+  );
+}
+
+function isMatchingHostAndAttendee(
+  userId: string,
+  counterpartyUserId: string,
+  hostId: string | null | undefined,
+  participantIds: Set<string>,
+): boolean {
+  if (!hostId || (hostId !== userId && hostId !== counterpartyUserId)) {
+    return false;
+  }
+  const attendeeId = hostId === userId ? counterpartyUserId : userId;
+  return participantIds.has(attendeeId);
+}
+
+type ContextAppointmentRow = {
+  id: string;
+  appointmentType: string;
+  occurrences?: { startsAt: Date; endsAt: Date }[];
+  participants?: { userId: string }[];
+  consultation?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    consultationPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  subscription?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    subscriptionPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  webinar?: {
+    status: string;
+    webinarPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  class?: {
+    status: string;
+    classPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+};
+
+function resolveDirectAppointmentTitle(
+  status: string,
+  hostId: string | undefined,
+  clientId: string | undefined,
+  title: string | undefined,
+  fallbackTitle: string,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (!ELIGIBLE_STATUS_SET.has(status)) return null;
+  if (!isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)) {
+    return null;
+  }
+  return title ?? fallbackTitle;
+}
+
+function resolveEventAppointmentTitle(
+  status: string,
+  hostId: string | undefined,
+  title: string | undefined,
+  fallbackTitle: string,
+  userId: string,
+  counterpartyUserId: string,
+  participantIds: Set<string>,
+): string | null {
+  if (!EVENT_ELIGIBLE_STATUS_SET.has(status)) return null;
+  if (
+    !isMatchingHostAndAttendee(
+      userId,
+      counterpartyUserId,
+      hostId,
+      participantIds,
+    )
+  ) {
+    return null;
+  }
+  return title ?? fallbackTitle;
+}
+
+function resolveVerifiedBookingContextTitle(
+  appt: ContextAppointmentRow,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (appt.consultation) {
+    return resolveDirectAppointmentTitle(
+      appt.consultation.status,
+      appt.consultation.consultationPlan?.consultantProfile?.userId,
+      appt.consultation.requestedBy?.userId,
+      appt.consultation.consultationPlan?.title,
+      "Consultation",
+      userId,
+      counterpartyUserId,
+    );
+  }
+  if (appt.subscription) {
+    return resolveDirectAppointmentTitle(
+      appt.subscription.status,
+      appt.subscription.subscriptionPlan?.consultantProfile?.userId,
+      appt.subscription.requestedBy?.userId,
+      appt.subscription.subscriptionPlan?.title,
+      "Subscription",
+      userId,
+      counterpartyUserId,
+    );
+  }
+  const participantIds = new Set(
+    (appt.participants ?? []).map((p) => p.userId),
+  );
+  if (appt.webinar) {
+    return resolveEventAppointmentTitle(
+      appt.webinar.status,
+      appt.webinar.webinarPlan?.consultantProfile?.userId,
+      appt.webinar.webinarPlan?.title,
+      "Webinar",
+      userId,
+      counterpartyUserId,
+      participantIds,
+    );
+  }
+  if (appt.class) {
+    return resolveEventAppointmentTitle(
+      appt.class.status,
+      appt.class.classPlan?.consultantProfile?.userId,
+      appt.class.classPlan?.title,
+      "Class",
+      userId,
+      counterpartyUserId,
+      participantIds,
+    );
+  }
+  return null;
+}
+
+function buildBookingContextMessageId(
+  channelId: string,
+  appointmentId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${channelId}:${appointmentId}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `booking-ctx-${digest}`;
+}
+
+async function postBookingContextCardIfAbsent(
+  channelId: string,
+  userId: string,
+  counterpartyUserId: string,
+  contextAppointmentId: string,
+): Promise<void> {
+  if (!prisma.appointment?.findFirst) return;
+
+  try {
+    const appt = await prisma.appointment.findFirst({
+      where: { id: contextAppointmentId, deletedAt: null },
       select: {
         id: true,
-        appointment: {
+        appointmentType: true,
+        occurrences: {
+          where: { deletedAt: null },
+          orderBy: { startsAt: "asc" },
+          take: 1,
+          select: { startsAt: true, endsAt: true },
+        },
+        participants: {
+          where: liveParticipant(),
+          select: { userId: true },
+        },
+        consultation: {
           select: {
-            organization: { select: { streamRecordingRetentionDays: true } },
-            occurrences: {
-              orderBy: { endsAt: "desc" },
-              take: 1,
-              select: { endsAt: true },
+            id: true,
+            status: true,
+            requestedBy: { select: { userId: true } },
+            consultationPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        subscription: {
+          select: {
+            id: true,
+            status: true,
+            requestedBy: { select: { userId: true } },
+            subscriptionPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        webinar: {
+          select: {
+            id: true,
+            status: true,
+            webinarPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        class: {
+          select: {
+            id: true,
+            status: true,
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
             },
           },
         },
       },
     });
-    if (!hit) return false;
-    return !isPastRetention(
-      hit.appointment?.occurrences[0]?.endsAt ?? null,
-      hit.appointment?.organization?.streamRecordingRetentionDays ??
-        DEFAULT_RETENTION_DAYS,
-    );
-  }
+    if (!appt) return;
 
-  const hit = await prisma.class.findFirst({
-    where: {
-      id: eventId,
-      status: { in: [...OPENABLE_EVENT_STATUSES] },
-      OR: [
-        {
-          appointment: {
-              deletedAt: null,
-              occurrences: { some: { deletedAt: null } },
-              participants: { some: liveParticipant(userId) },
-            },
-        },
-        { classPlan: { consultantProfile: { userId } } },
-      ],
-    },
-    select: {
-      id: true,
-      appointment: {
-        // A class spans one appointment per cohort but ONE channel; age is the
-        // latest end across cohorts, carrying that cohort's org dial — same
-        // collapse rule as the expire cron. Each appointment contributes only
-        // its own latest slot (orderBy+take below), so this stays one row per
-        // cohort.
-        select: {
-          organization: { select: { streamRecordingRetentionDays: true } },
-          occurrences: {
-            orderBy: { endsAt: "desc" },
-            take: 1,
-            select: { endsAt: true },
-          },
-        },
-      },
-    },
-  });
-  if (!hit) return false;
-  // #1554 — a class is one wrapper, so its window reads like the webinar's.
-  return !isPastRetention(
-    hit.appointment?.occurrences[0]?.endsAt ?? null,
-    hit.appointment?.organization?.streamRecordingRetentionDays ??
-      DEFAULT_RETENTION_DAYS,
-  );
+    const title = resolveVerifiedBookingContextTitle(
+      appt,
+      userId,
+      counterpartyUserId,
+    );
+    if (!title) return;
+
+    const client = getStreamChatClient();
+    const channel = client.channel("messaging", channelId);
+    const messageId = buildBookingContextMessageId(channelId, appt.id);
+    const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
+    const messagePayload: Record<string, unknown> = {
+      id: messageId,
+      user_id: userId,
+      text: `Booking context: ${title}`,
+      booking_appointment_id: appt.id,
+      booking_type: appt.appointmentType,
+      booking_title: title,
+      ...(slotStart ? { booking_starts_at: slotStart.toISOString() } : {}),
+    };
+
+    await channel.sendMessage(messagePayload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isDuplicate = /already exists|duplicate/i.test(message);
+    if (isDuplicate) {
+      streamLogger.debug("Booking context card already present on DM open", {
+        channelId,
+        contextAppointmentId,
+      });
+    } else {
+      streamLogger.warn("Failed to post booking context card on DM open", {
+        channelId,
+        contextAppointmentId,
+        error: message,
+      });
+    }
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -198,7 +391,7 @@ export async function POST(request: NextRequest) {
 
   try {
     if (body.kind === "dm") {
-      const { counterpartyUserId } = body;
+      const { counterpartyUserId, contextAppointmentId } = body;
       const requestedOrgId = body.organizationId ?? null;
 
       // Covers the self case too — `canDirectMessage` returns false for
@@ -232,8 +425,7 @@ export async function POST(request: NextRequest) {
         if (!contexts.organizations.includes(requestedOrgId)) {
           return NextResponse.json(
             {
-              error:
-                "No booking ties this conversation to that organization.",
+              error: "No booking ties this conversation to that organization.",
             },
             { status: 403 },
           );
@@ -270,6 +462,15 @@ export async function POST(request: NextRequest) {
         counterpartyUserId,
         organizationId,
       );
+
+      if (contextAppointmentId) {
+        await postBookingContextCardIfAbsent(
+          channelId,
+          userId,
+          counterpartyUserId,
+          contextAppointmentId,
+        );
+      }
 
       return NextResponse.json({ channelType: "messaging", channelId });
     }

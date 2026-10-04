@@ -12,6 +12,12 @@
 
 import type { Prisma } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  createR2PresignedGetUrl,
+  deleteR2Object,
+  getR2RecordingsBucket,
+  isR2Configured,
+} from "@/lib/storage/r2-client";
 // The leaf module, NOT `@/lib/supabase` — that one opens with
 // `import "server-only"`, which throws outside Next's `react-server` condition
 // and killed every cron that reached it (#1270).
@@ -106,12 +112,32 @@ export function durablyOursWhere(): Prisma.RecordingWhereInput {
 
 /**
  * Presigned playback URL. The bucket is private, so this is the only way a
- * client reaches the bytes.
+ * client reaches the bytes. Uses Cloudflare R2 when configured and falls back
+ * to Supabase Storage otherwise.
  */
 export async function generateSignedUrl(
   storagePath: string,
   expiresIn: number = 3600,
+  opts?: { storageUrl?: string | null },
 ): Promise<string | null> {
+  const storedInSupabase = Boolean(
+    opts?.storageUrl && /^https?:\/\//i.test(opts.storageUrl),
+  );
+  if (isR2Configured() && !storedInSupabase) {
+    try {
+      return createR2PresignedGetUrl({
+        bucket: getR2RecordingsBucket(),
+        key: storagePath,
+        expiresInSeconds: expiresIn,
+      });
+    } catch (error) {
+      streamLogger.error("Failed to generate R2 presigned URL", error, {
+        storagePath,
+      });
+      return null;
+    }
+  }
+
   const { data, error } = await storageClient.storage
     .from(RECORDINGS_BUCKET)
     .createSignedUrl(storagePath, expiresIn);
@@ -135,9 +161,14 @@ export async function getBestRecordingUrl(recording: {
   status: string;
   storagePath: string | null;
   recordingUrl: string | null;
+  storageUrl?: string | null;
 }): Promise<string | null> {
   if (recording.status === "AVAILABLE" && recording.storagePath) {
-    return generateSignedUrl(recording.storagePath);
+    return recording.storageUrl
+      ? generateSignedUrl(recording.storagePath, 3600, {
+          storageUrl: recording.storageUrl,
+        })
+      : generateSignedUrl(recording.storagePath);
   }
 
   if (recording.status === "READY" && recording.recordingUrl) {
@@ -146,6 +177,8 @@ export async function getBestRecordingUrl(recording: {
 
   return null;
 }
+
+export const resolveRecordingPlaybackUrl = getBestRecordingUrl;
 
 /**
  * Delete ONLY the storage object — no DB side effects.
@@ -158,9 +191,41 @@ export async function getBestRecordingUrl(recording: {
  */
 export async function deleteRecordingObject(
   storagePath: string,
+  bucket: string = RECORDINGS_BUCKET,
 ): Promise<{ success: boolean; error?: string }> {
+  if (isR2Configured()) {
+    try {
+      const r2Result = await deleteR2Object({
+        bucket: bucket === RECORDINGS_BUCKET ? getR2RecordingsBucket() : bucket,
+        key: storagePath,
+      });
+      if (!r2Result.success) {
+        streamLogger.error(
+          "Failed to delete recording object from R2",
+          new Error(r2Result.error ?? "R2 delete failed"),
+          { path: storagePath },
+        );
+        return { success: false, error: r2Result.error };
+      }
+      if (r2Result.notFound) {
+        await storageClient?.storage
+          ?.from(bucket)
+          ?.remove([storagePath])
+          .catch(() => undefined);
+      }
+      return { success: true };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete from R2";
+      streamLogger.error("Failed to delete recording object from R2", error, {
+        path: storagePath,
+      });
+      return { success: false, error: message };
+    }
+  }
+
   const { error } = await storageClient.storage
-    .from(RECORDINGS_BUCKET)
+    .from(bucket)
     .remove([storagePath]);
   if (error) {
     streamLogger.error("Failed to delete recording object", error, {

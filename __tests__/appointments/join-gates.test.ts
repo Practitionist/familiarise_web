@@ -114,14 +114,18 @@ describe("#1270 — a consultant needs a CONFIRMED booking, not just an open win
     expect(consultantMayJoin("SCHEDULED", at("11:30"))).toBe(false);
   });
 
-  it("opens the host window 15 minutes out and the learner's at 10", () => {
-    // 09:47 is inside the consultant's window and outside the consultee's —
-    // the one place the two constants are allowed to disagree.
+  it("opens both host and learner windows 15 minutes out", () => {
     expect(consultantMayJoin("SCHEDULED", at("09:47"))).toBe(true);
     expect(
       getJoinableOccurrence(oneHour(), {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("09:47"),
+      })?.id,
+    ).toBe("A");
+    expect(
+      getJoinableOccurrence(oneHour(), {
+        joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+        now: at("09:44"),
       }),
     ).toBeNull();
   });
@@ -295,9 +299,9 @@ describe("#1270 — there is one join window per role, imported everywhere", () 
     }
   });
 
-  it("gives hosts 15 minutes and learners 10", () => {
+  it("gives hosts and learners a unified 15-minute join window", () => {
     expect(CONSULTANT_JOIN_WINDOW_MS).toBe(15 * 60 * 1000);
-    expect(CONSULTEE_JOIN_WINDOW_MS).toBe(10 * 60 * 1000);
+    expect(CONSULTEE_JOIN_WINDOW_MS).toBe(15 * 60 * 1000);
     // The planner is a host surface and used to hold its own 10-minute copy.
     expect(
       read("components/planner/components/EventManagementDashboard.tsx"),

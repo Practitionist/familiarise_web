@@ -14,7 +14,7 @@ import {
 import { quoteSeatLeave } from "@/lib/booking/seat-leave";
 import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
 import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
-import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   REFUNDABLE_BALANCE_SELECT,

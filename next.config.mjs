@@ -76,14 +76,14 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  *
  * Allow-list rationale
  * --------------------
- *   - `script-src` includes Razorpay's checkout CDN + Stripe.js +
+ *   - `script-src` includes Razorpay's checkout CDN +
  *     Stream.io + Sentry + Supabase + 'unsafe-inline'/'unsafe-eval'
  *     (Next.js still emits inline runtime chunks; Next 15 hashing
  *     lands in 16).
- *   - `connect-src` opens WSS for Stream + HTTPS for the four payment
- *     gateways + Sentry + Resend + Upstash. Anything new must be
+ *   - `connect-src` opens WSS for Stream + HTTPS for the payment
+ *     gateway + Sentry + Resend + Upstash. Anything new must be
  *     added here AND in the matching client.
- *   - `frame-src` allows Razorpay's + Stripe's checkout iframes; Razorpay
+ *   - `frame-src` allows Razorpay's checkout iframes; Razorpay
  *     serves the live checkout iframe from `api.razorpay.com`, not just
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
  *   - `media-src` is the load-bearing entry for Stream call audio /
@@ -132,12 +132,12 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
+  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -392,7 +392,6 @@ const nextConfig = {
     "pg-pool",
     "pg-connection-string",
     "razorpay",
-    "stripe",
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
@@ -420,18 +419,23 @@ const nextConfig = {
       {
         hostname: "cdn.jsdelivr.net",
       },
-      {
-        hostname: "picsum.photos",
-      },
-      {
-        hostname: "fastly.picsum.photos",
-      },
-      {
-        hostname: "images.unsplash.com",
-      },
-      {
-        hostname: "plus.unsplash.com",
-      },
+      // Dev/placeholder image hosts are never reachable from a production build.
+      ...(process.env.NODE_ENV === "production"
+        ? []
+        : [
+            {
+              hostname: "picsum.photos",
+            },
+            {
+              hostname: "fastly.picsum.photos",
+            },
+            {
+              hostname: "images.unsplash.com",
+            },
+            {
+              hostname: "plus.unsplash.com",
+            },
+          ]),
     ],
   },
 

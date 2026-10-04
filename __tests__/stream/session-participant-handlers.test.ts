@@ -14,7 +14,10 @@
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     meeting: { findUnique: jest.fn() },
-    meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
+    meetingAttendance: {
+      upsert: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     meetingPresence: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -44,6 +47,9 @@ const mockFindUnique = (
 const mockUpsert = (
   prisma as unknown as { meetingAttendance: { upsert: jest.Mock } }
 ).meetingAttendance.upsert;
+const mockAttendanceUpdateMany = (
+  prisma as unknown as { meetingAttendance: { updateMany: jest.Mock } }
+).meetingAttendance.updateMany;
 const mockPresenceCreate = (
   prisma as unknown as { meetingPresence: { createMany: jest.Mock } }
 ).meetingPresence.createMany;
@@ -88,8 +94,11 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
       userId: "user_1",
       firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
     });
-    // A new device session bumps the counter, never resets firstJoinedAt.
-    expect(arg.update).toEqual({ joinCount: { increment: 1 } });
+    // A new device session bumps the counter and clears lastLeftAt, never resets firstJoinedAt.
+    expect(arg.update).toEqual({
+      joinCount: { increment: 1 },
+      lastLeftAt: null,
+    });
   });
 
   it("does not bump joinCount when the device session was already seen (#1746)", async () => {
@@ -158,8 +167,18 @@ describe("handleSessionParticipantLeft (STR-4)", () => {
       meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
     });
     expect(arg.update).toEqual({
-      lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
       joinCount: { increment: 1 },
+    });
+    expect(mockAttendanceUpdateMany).toHaveBeenCalledWith({
+      where: {
+        meetingId: "ms_1",
+        userId: "user_1",
+        OR: [
+          { lastLeftAt: null },
+          { lastLeftAt: { lt: new Date("2026-06-16T10:30:00.000Z") } },
+        ],
+      },
+      data: { lastLeftAt: new Date("2026-06-16T10:30:00.000Z") },
     });
     // #1569 — join lost, leave arrives: one closed interval rebuilt from duration_seconds.
     expect(mockPresenceCreate.mock.calls[0][0].data).toEqual([

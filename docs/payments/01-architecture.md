@@ -19,15 +19,12 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway. Stripe is implemented but fenced off, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses both a placeholder and a fenced-off gateway at runtime.
+The payment system uses **Razorpay** as the sole payment gateway. Stripe was removed from the code on 2026-10-04 and survives only as an enum label until the pre-MVP reset, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` lists the enum labels with no implementation, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses every gateway on that list (including `STRIPE`) at runtime.
 
 | Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
 | ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Razorpay**      | Live, primary           | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT.                                                                                                                                                                                                                   |
-| **Stripe**        | Implemented, fenced off | `STRIPE_ENABLED=true` on the server and `NEXT_PUBLIC_STRIPE_ENABLED=true` in the checkout UI. Auto-routing never selects it; only an explicit request reaches it, and `assertGatewayUsable` throws a `DisabledGatewayError` when the flag is unset. Refunds of existing Stripe payments are deliberately outside the fence. |
-| **Dodo Payments** | Schema placeholder      | Listed in `POST_MVP_GATEWAY_STUBS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
-
-Stripe is retained as a contingency rail in case RBI rules make Razorpay unusable for a class of collections, and for Connect transfers if international payouts are ever turned on. It is not a live payment method, so no customer should ever see the Stripe button.
+| **Dodo Payments** | Schema placeholder      | Listed in `UNIMPLEMENTED_GATEWAYS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
 
 The system handles four appointment types:
 
@@ -189,7 +186,6 @@ AppointmentStatus:
 | ---------------------------------------------- | ----------------------------- | ----- |
 | `lib/payments/operations/checkout.ts`          | Core checkout logic           | ~1445 |
 | `app/api/checkout/route.ts`                    | Checkout API endpoint         | ~150  |
-| `app/checkout/components/StripeCheckout.tsx`   | Stripe payment component      | ~120  |
 | `app/checkout/components/RazorpayCheckout.tsx` | Razorpay payment component    | ~140  |
 | `app/checkout/plans/utils.ts`                  | Checkout utilities & handlers | ~200  |
 | `schemas/checkout.ts`                          | Zod validation schemas        | ~180  |
@@ -210,13 +206,11 @@ AppointmentStatus:
 
 | File                                                     | Purpose                                                             | Lines |
 | -------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
-| `app/api/webhooks/stripe/route.ts`                       | Stripe webhook endpoint                                             | ~125  |
 | `app/api/webhooks/razorpay/route.ts`                     | Razorpay webhook endpoint                                           | ~147  |
 | `app/api/webhooks/utils.ts`                              | Shared webhook utilities & dispute/org handlers                     | ~2530 |
 | `lib/payments/webhooks/handlers.ts`                      | Payment success/failure state-machine handlers                      | ~1900 |
 | `lib/payments/webhooks/legacy-appointment-creation.ts`   | Legacy webhook fallback appointment creation & slot allocation      | ~810  |
 | `lib/payments/webhooks/staged-emails.ts`                 | Phase 1 transactional email outbox staging & notification context   | ~350  |
-| `schemas/webhooks/stripe.ts`                             | Stripe event schemas                                                | ~105  |
 | `schemas/webhooks/razorpay.ts`                           | Razorpay event schemas                                              | ~105  |
 | `schemas/webhooks/metadata.ts`                           | Appointment metadata validation                                     | ~115  |
 
@@ -253,7 +247,6 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `lib/payments/index.ts`                        | Payment library exports                                                  |
 | `lib/payments/core/types.ts`                   | Payment type definitions                                                 |
-| `lib/payments/core/stripe.ts`                  | Stripe gateway implementation                                            |
 | `lib/payments/core/razorpay.ts`                | Razorpay gateway implementation                                          |
 | `lib/payments/payouts/earnings-service.ts`     | Consultant & org earnings creation, splits, and hold/refund operations   |
 | `lib/payments/payouts/earning-reversal-cas.ts` | CAS-loop helpers for bounded consultant & org earning reversals          |
@@ -278,7 +271,7 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 | `netlify/functions/cron-tick.mts`         | `*/5 * * * *`               | 5-min & 15-min staggered operational sweeps via `/api/cleanup/[job]` |
 | `.github/workflows/cron-intra-day.yml`    | Sub-daily (`30m`/`1h`/`2h`/`4h`/`6h`) | Gateway & external vendor reconciliation sweeps            |
 | `.github/workflows/cron-daily.yml`        | Daily (`00:00`–`09:30` UTC) | Daily ledger integrity, pruning, dunning, and notifications|
-| `.github/workflows/cron-weekly.yml`       | Weekly / Monthly            | Weekly payout pipeline, GSTR-8 export, backup verification |
+| `.github/workflows/cron-weekly.yml`       | Weekly / Monthly            | Weekly payout pipeline, backup verification               |
 | `.github/workflows/race-condition-tests.yml` | On push to `dev` / PR    | Concurrent booking & payment race-condition verification   |
 | `.github/workflows/ci.yaml`               | On PR / push                | Typecheck, lint, tests, and hermetic Postgres schema/sidecar verification |
 
@@ -335,9 +328,9 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
                          |                 +--------------------+
                          v
 +-----------------------------------------------------------------------------------+
-|  USER CLICKS "Pay with Stripe" or "Pay with Razorpay"                             |
+|  USER CLICKS "Pay with Razorpay"                                                  |
 |  ------------------------------------------------------------------------------   |
-|  Components: StripeCheckout.tsx / RazorpayCheckout.tsx                            |
+|  Components: RazorpayCheckout.tsx                                                 |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v
@@ -618,12 +611,6 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 
 | Gateway      | Event                           | Handler                  |
 | ------------ | ------------------------------- | ------------------------ |
-| **Stripe**   | `payment_intent.succeeded`      | `handlePaymentSuccess()` |
-| **Stripe**   | `payment_intent.payment_failed` | `handlePaymentFailure()` |
-| **Stripe**   | `charge.refunded`               | `handleRefundCreated()`  |
-| **Stripe**   | `charge.dispute.created`        | `handleDisputeCreated()` |
-| **Stripe**   | `charge.dispute.updated`        | `handleDisputeUpdated()` |
-| **Stripe**   | `charge.dispute.closed`         | `handleDisputeUpdated()` |
 | **Razorpay** | `payment.captured`              | `razorpay-dispatch.ts` → routes by `notes.type`: `credit_purchase`/`invoice_payment` → `handleOrgPaymentSuccess()`; `overage_member` → `handleOverageMemberSuccess()`; B2C → `handlePaymentSuccess()` |
 | **Razorpay** | `order.paid`                    | `razorpay-dispatch.ts` → same routing by `notes.type` as `payment.captured` |
 | **Razorpay** | `payment.failed`                | `razorpay-dispatch.ts` → routes by `notes.type`: org paths → `handleOrgPaymentFailure()`; B2C → `handlePaymentFailure()` |
@@ -994,7 +981,7 @@ The matrix below covers the dispute surface, where the two gateways differ most,
 | Retrieve Dispute     | Yes                             | No                              |
 | Settlement currency  | INR only, enforced at order creation | INR only, enforced at order creation |
 
-Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md): every stored amount is an integer count of INR paise and the double-entry ledger is INR-denominated. That is enforced rather than assumed. `assertInrSettlement`, in `lib/payments/validation/currency-guards.ts`, is the first statement of both `createRazorpayOrder` and `createStripeCheckoutSession`, and it throws a `PaymentError` with code `NON_INR_SETTLEMENT` for anything else. The assertion sits at the gateway boundary rather than at each caller because callers read a currency out of the database — an organisation's billing account, an invoice's display currency, an overage event — and any one of them forwarding a stale non-INR value would otherwise mint an order denominated in that currency's own subunit while the platform recorded rupees. An international buyer is still served an INR order; their card issuer performs the conversion. See [multi-currency/01-architecture.md](./multi-currency/01-architecture.md) for the display-side story.
+Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md): every stored amount is an integer count of INR paise and the double-entry ledger is INR-denominated. That is enforced rather than assumed. `assertInrSettlement`, in `lib/payments/validation/currency-guards.ts`, is the first statement of `createRazorpayOrder`, and it throws a `PaymentError` with code `NON_INR_SETTLEMENT` for anything else. The assertion sits at the gateway boundary rather than at each caller because callers read a currency out of the database — an organisation's billing account, an invoice's display currency, an overage event — and any one of them forwarding a stale non-INR value would otherwise mint an order denominated in that currency's own subunit while the platform recorded rupees. An international buyer is still served an INR order; their card issuer performs the conversion. See [multi-currency/01-architecture.md](./multi-currency/01-architecture.md) for the display-side story.
 
 ---
 
@@ -1451,11 +1438,6 @@ Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions
 DATABASE_URL=
 DIRECT_URL=
 
-# Stripe
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-
 # Razorpay (Payments)
 RAZORPAY_KEY_ID=
 RAZORPAY_SECRET=
@@ -1480,7 +1462,6 @@ VERCEL_CRON_SECRET=
 | -------------------------- | -------- | ---------------------------------------------------------------- |
 | `/api/checkout`            | POST     | Create payment intent & tentative appointment                    |
 | `/api/checkout/verify`     | GET      | Verify payment status                                            |
-| `/api/webhooks/stripe`     | POST     | Stripe webhook handler                                           |
 | `/api/webhooks/razorpay`   | POST     | Razorpay webhook handler                                         |
 | `/api/payments/refunds`    | GET/POST | List/create refunds                                              |
 | `/api/payments/disputes`   | GET/POST | List disputes/submit evidence                                    |

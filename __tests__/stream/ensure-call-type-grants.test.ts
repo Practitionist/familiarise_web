@@ -595,4 +595,59 @@ describe("ensure-call-type-grants", () => {
 
     expect(code).toBe(1);
   });
+
+  it("revokes join-ended-call, update-call-permissions, create-call, and enable-noise-cancellation-any-team appropriately", async () => {
+    stored = {
+      ...LIVE_GRANTS(),
+      user: [
+        ...LIVE_GRANTS().user,
+        "create-call",
+        "enable-noise-cancellation-any-team",
+        "join-ended-call",
+        "update-call-permissions",
+        "end-call-owner",
+        "start-recording-any-team",
+      ],
+      guest: [
+        ...LIVE_GRANTS().guest,
+        "create-call",
+        "enable-noise-cancellation-any-team",
+        "join-ended-call",
+        "update-call-permissions-owner",
+      ],
+      call_member: [
+        ...LIVE_GRANTS().call_member,
+        "create-call",
+        "enable-noise-cancellation-any-team",
+        "join-ended-call",
+        "update-call-permissions",
+        "end-call-owner",
+        "start-recording-any-team",
+      ],
+    };
+
+    const code = await ensureCallTypeGrants({
+      apply: true,
+      restore: false,
+      deployConfirmed: true,
+    });
+
+    expect(code).toBe(0);
+    for (const role of ["user", "guest"]) {
+      expect(applied()[role]).not.toContain("join-ended-call");
+      expect(applied()[role]).not.toContain("update-call-permissions");
+      expect(applied()[role]).not.toContain("update-call-permissions-owner");
+    }
+    for (const role of ["user", "guest", "call_member"]) {
+      expect(applied()[role]).not.toContain("create-call");
+      expect(applied()[role]).not.toContain(
+        "enable-noise-cancellation-any-team",
+      );
+      expect(applied()[role]).not.toContain("end-call-owner");
+      expect(applied()[role]).not.toContain("start-recording-any-team");
+    }
+    expect(applied().call_member).toContain("join-call");
+    expect(applied().call_member).toContain("join-ended-call");
+    expect(applied().call_member).toContain("update-call-permissions");
+  });
 });

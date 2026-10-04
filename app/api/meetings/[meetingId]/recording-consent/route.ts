@@ -4,10 +4,13 @@ import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { resolveMeetingAccess } from "@/lib/meetings/access";
+import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 import {
   getRecordingNotice,
   recordRecordingConsent,
 } from "@/lib/stream/recording-consent";
+import { RecordingService } from "@/lib/stream/recording-service";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -44,7 +47,6 @@ export async function GET(
       );
     }
 
-
     const notice = await getRecordingNotice(
       access.meetingId,
       session.user.id,
@@ -62,6 +64,94 @@ export async function GET(
       { status: 500 },
     );
   }
+}
+
+async function stopRecordingOnConsentDecline(
+  access: {
+    meetingId: string;
+    streamCallId?: string | null;
+    isRecording?: boolean;
+  },
+  userId: string,
+): Promise<NextResponse | null> {
+  let isRecording = access.isRecording;
+  let targetCallId = access.streamCallId ?? null;
+
+  if (isRecording === undefined || !targetCallId) {
+    const meetingRow = await prisma.meeting?.findUnique?.({
+      where: { id: access.meetingId },
+      select: { isRecording: true, streamCallId: true },
+    });
+    if (meetingRow) {
+      isRecording ??= meetingRow.isRecording;
+      targetCallId ||= meetingRow.streamCallId;
+    }
+  }
+
+  if (!isRecording) return null;
+
+  if (!targetCallId) {
+    const missingCallError = new Error(
+      `Missing streamCallId while stopping active recording for meeting ${access.meetingId}`,
+    );
+    streamLogger.warn(
+      "Cannot stop active recording after consent withdrawal — streamCallId missing",
+      { meetingId: access.meetingId, userId },
+    );
+    reportSentryError(missingCallError, {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: { meetingId: access.meetingId, userId },
+    });
+    return NextResponse.json(
+      {
+        error:
+          "Recording could not be stopped — please leave the call while we investigate.",
+      },
+      { status: 502 },
+    );
+  }
+
+  const stopResult = await RecordingService.stopRecording(targetCallId, userId);
+  if (stopResult.success) {
+    await prisma.meeting.update({
+      where: { id: access.meetingId },
+      data: { isRecording: false },
+    });
+    return null;
+  }
+
+  streamLogger.warn(
+    "Failed to stop active recording after consent withdrawal",
+    {
+      meetingId: access.meetingId,
+      streamCallId: targetCallId,
+      userId,
+      error: stopResult.error,
+    },
+  );
+  reportSentryError(
+    new Error(
+      stopResult.error ??
+        "Failed to stop active recording after consent withdrawal",
+    ),
+    {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: {
+        meetingId: access.meetingId,
+        streamCallId: targetCallId,
+        userId,
+      },
+    },
+  );
+  return NextResponse.json(
+    {
+      error:
+        "Recording could not be stopped — please leave the call while we investigate.",
+    },
+    { status: 502 },
+  );
 }
 
 export async function POST(
@@ -89,7 +179,6 @@ export async function POST(
         { status: 400 },
       );
     }
-
 
     const appointment = access.appointment;
     const notice = await getRecordingNotice(
@@ -124,17 +213,22 @@ export async function POST(
       );
     }
 
-    // Records the decision; does NOT act on a recording already in progress.
-    // `getRecordingBlock` gates the START of a recording, so a decline lands
-    // before one begins in the ordinary lobby flow — but this is an upsert, and
-    // a participant can switch to DECLINED after the host has started. See the
-    // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
-    // a product decision and is deliberately not done here.
     await recordRecordingConsent(
       access.meetingId,
       session.user.id,
       parsed.data.decision,
     );
+
+    // When a participant in a 1:1 session withdraws consent mid-call while a
+    // recording is active, immediately stop the recording so withdrawal takes
+    // effect in real time.
+    if (parsed.data.decision === RecordingConsentDecision.DECLINED) {
+      const stopErrorResponse = await stopRecordingOnConsentDecline(
+        access,
+        session.user.id,
+      );
+      if (stopErrorResponse) return stopErrorResponse;
+    }
 
     return NextResponse.json({
       decision: parsed.data.decision,
