@@ -252,7 +252,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         // E2E-audit P1 fix — cron-issued invoices never emitted
         // `invoice.issued`, so integrators (HRIS/ERP) only ever saw
         // manually-created invoices. Same payload shape as the manual route.
-        void dispatchWebhookEvent({
+        await dispatchWebhookEvent({
           prisma,
           organizationId: orgId,
           eventType: "invoice.issued",

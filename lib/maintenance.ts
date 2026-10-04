@@ -35,6 +35,9 @@ const OFF_STATE: MaintenanceState = {
   betterstackIncidentId: null,
 };
 
+/** Redis keys are refreshed on every active read, so a window may outlive this TTL. */
+const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
+
 /**
  * Read current maintenance state directly from Redis (uncached on entry so
  * cross-instance admin/money-gate reads never observe a stale 60s cached OFF).
@@ -47,6 +50,11 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
         bypassCache: true,
       });
       if (!phase || phase === "OFF") return OFF_STATE;
+
+      await Promise.all([
+        redis.pexpire(REDIS_KEYS.PHASE, MAINTENANCE_KEY_TTL_SECONDS * 1000),
+        redis.pexpire(REDIS_KEYS.CONFIG, MAINTENANCE_KEY_TTL_SECONDS * 1000),
+      ]);
 
       const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
       let config: Partial<MaintenanceState> = {};
@@ -85,7 +93,6 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
-  const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
   await Promise.all([
     redis.set(REDIS_KEYS.PHASE, phase, { ex: MAINTENANCE_KEY_TTL_SECONDS }),
     redis.set(

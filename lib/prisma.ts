@@ -46,6 +46,18 @@ const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
 // a client-side query_timeout.
 const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 
+// The 1-connection pool is a deploy invariant on Netlify; a missing value would
+// silently fall back to pg's default of 10 per instance. The build phase is exempt.
+if (
+  process.env.NETLIFY &&
+  !IS_NEXT_BUILD &&
+  !(Number(process.env.PG_POOL_MAX) > 0)
+) {
+  throw new Error(
+    "PG_POOL_MAX is not set on Netlify. Set PG_POOL_MAX=1 in the site's environment variables.",
+  );
+}
+
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
