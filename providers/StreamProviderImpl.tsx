@@ -192,7 +192,7 @@ import {
 // Stream CSS co-located with the heavy impl so the ~2 stylesheets ship only
 // inside this lazy chunk (was previously imported at provider module top-level
 // and by both dashboard layouts).
-import "stream-chat-react/dist/css/v2/index.css";
+import "stream-chat-react/dist/css/index.css";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 
 // Client-side only: tracks which users have completed initial sync within this

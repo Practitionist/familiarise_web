@@ -226,7 +226,7 @@ All four Stream packages use exact version pins in `package.json` and are groupe
 | -------------------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`@stream-io/node-sdk`**        | `0.8.10`       | `0.8.x`                | Verify `npx tsc --noEmit` passes without casts on `call.updateCallMembers` in `app/api/meetings/[meetingId]/join/route.ts` and `scripts/stream/backfill-call-member-role.ts`, and run `npx jest __tests__/stream/`.                                                 |
 | **`@stream-io/video-react-sdk`** | `1.43.3`       | `1.43.x`               | Verify WebRTC call join, `<StageControls />`, and incoming video resolution caps (`setPreferredIncomingVideoResolution`) in `app/meetings/[id]/components/MeetingRoom.tsx`.                                                                                         |
-| **`stream-chat-react`**          | `14.12.1`      | `14.x`                 | Uses CSS v2 theming tokens (`stream-chat-react/dist/css/v2/index.css`). Before upgrading minor/major versions, audit custom components under `components/chat/` (`CustomMessage.tsx`, `ChatContainer.tsx`, `ChatSidebar.tsx`) across light and dark modes.          |
+| **`stream-chat-react`**          | `14.12.1`      | `14.x`                 | Uses CSS v2 theming tokens (`stream-chat-react/dist/css/index.css`). Before upgrading minor/major versions, audit custom components under `components/chat/` (`CustomMessage.tsx`, `ChatContainer.tsx`, `ChatSidebar.tsx`) across light and dark modes.             |
 | **`stream-chat`**                | `9.53.0`       | `10.x-rc`              | **Pre-Release Hold**: `stream-chat` `v10` remains in release-candidate status with breaking API removals (`Channel.getConfig()` removed, `client.configs` renamed to `client.channelServerConfigs`). Hold on `9.x` stable until `v10` reaches general availability. |
 
 ### Import Stream CSS
@@ -235,7 +235,7 @@ Stream CSS is imported inside `providers/StreamProviderImpl.tsx`, co-located wit
 
 ```typescript
 // providers/StreamProviderImpl.tsx
-import "stream-chat-react/dist/css/v2/index.css";
+import "stream-chat-react/dist/css/index.css";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 ```
 
