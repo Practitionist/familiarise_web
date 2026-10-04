@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
@@ -8,6 +7,7 @@ import { Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
+  derivePseudonym,
   eraseStreamPrincipalFootprint,
   hasMoneyInFlight,
   moneyInFlightForUser,
@@ -383,7 +383,7 @@ async function executeUserHardDeleteOrFallbackScrub(
     });
   }
 
-  const subjectPseudonymousId = createHash("sha256").update(id).digest("hex");
+  const subjectPseudonymousId = derivePseudonym(id);
   await prisma.$transaction([
     ...(prisma.consentArtifact?.updateMany
       ? [

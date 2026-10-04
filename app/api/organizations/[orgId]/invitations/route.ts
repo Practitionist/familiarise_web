@@ -97,7 +97,6 @@ export async function POST(
   // stay blocked by the explicit check here.
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
-    requireActive: true,
   });
   if (access.error) return access.error;
   // SUSPENDED-only: requireOrgAccess already answers 403 for DEACTIVATED

@@ -85,7 +85,7 @@ export interface ScrubResult {
  * emergency — old erasures are NOT re-keyed (their pseudonymousId is
  * locked in at scrub time and stored on the User row).
  */
-function derivePseudonym(userId: string): string {
+export function derivePseudonym(userId: string): string {
   const salt = process.env.ERASURE_SALT;
   // #1584 P1-ER01 — in production a pseudonym keyed on the public fallback is
   // reversible by anyone with the source; refuse rather than scrub with it.
@@ -448,25 +448,33 @@ async function settleVendorErasureOutbox(
   now: Date,
 ): Promise<void> {
   if (!erasureRequestId || !prisma.vendorErasureRetry?.update) return;
+  const whereKey = {
+    erasureRequestId_vendor_vendorRef: {
+      erasureRequestId,
+      vendor,
+      vendorRef,
+    },
+  };
+  let nextAttempt = 1;
+  if (error && prisma.vendorErasureRetry.findUnique) {
+    const existing = await prisma.vendorErasureRetry
+      .findUnique({ where: whereKey, select: { attempts: true } })
+      .catch(() => null);
+    nextAttempt = (existing?.attempts ?? 0) + 1;
+  }
   await prisma.vendorErasureRetry
     .update({
-      where: {
-        erasureRequestId_vendor_vendorRef: {
-          erasureRequestId,
-          vendor,
-          vendorRef,
-        },
-      },
+      where: whereKey,
       data: error
         ? {
             status: "FAILED",
-            attempts: 1,
+            attempts: { increment: 1 },
             lastError: error,
-            nextRetryAt: nextRetryAt(1, now),
+            nextRetryAt: nextRetryAt(nextAttempt, now),
           }
         : {
             status: "SUCCEEDED",
-            attempts: 1,
+            attempts: { increment: 1 },
             completedAt: new Date(),
           },
     })
@@ -868,9 +876,7 @@ export async function scrubUser(
     // Withdraw all active DPDP ConsentArtifact rows while preserving their
     // monotonic 7-year audit retention window (DPDP §6(4)-(6) + §12) and
     // stamping subjectPseudonymousId on the user's consent artifacts.
-    const subjectPseudonymousId = createHash("sha256")
-      .update(userId)
-      .digest("hex");
+    const subjectPseudonymousId = pseudonymousId;
     const consentRetainedUntil = new Date(now);
     consentRetainedUntil.setUTCFullYear(
       consentRetainedUntil.getUTCFullYear() + 7,

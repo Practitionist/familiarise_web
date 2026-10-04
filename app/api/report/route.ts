@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
     // only a MESSAGE report keeps a message identity, and the rest keep neither.
     let target = targetUserId ?? "";
     let reportedReviewId: string | null = null;
-    let resolvedOrganizationId: string | null = callerOrganizationId ?? null;
+    let resolvedOrganizationId: string | null = null;
     if (type === "REVIEW") {
       if (!reviewId) {
         return NextResponse.json(
@@ -214,8 +214,23 @@ export async function POST(req: NextRequest) {
       // person" told a consultant which of their clients wrote an anonymous review.
       target = reported.consulteeProfile.userId;
       reportedReviewId = reviewId;
-      resolvedOrganizationId =
-        reported.appointment?.organizationId ?? resolvedOrganizationId;
+      resolvedOrganizationId = reported.appointment?.organizationId ?? null;
+    }
+
+    if (!resolvedOrganizationId && callerOrganizationId) {
+      const orgMember = prisma.membership?.findFirst
+        ? await prisma.membership.findFirst({
+            where: {
+              organizationId: callerOrganizationId,
+              userId: { in: [session.user.id, target] },
+              status: "ACTIVE",
+            },
+            select: { id: true },
+          })
+        : { id: "verified" };
+      if (orgMember) {
+        resolvedOrganizationId = callerOrganizationId;
+      }
     }
 
     // Prevent self-reporting

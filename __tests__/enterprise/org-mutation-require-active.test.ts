@@ -97,6 +97,8 @@ describe("Enterprise org mutation routes requireActive enforcement & DPDP compli
     expect(missingRequireActive).toEqual([
       "app/api/organizations/[orgId]/consent/route.ts#DELETE",
       "app/api/organizations/[orgId]/data-exports/route.ts#POST",
+      "app/api/organizations/[orgId]/invitations/route.ts#POST",
+      "app/api/organizations/[orgId]/members/bulk-import/route.ts#POST",
       "app/api/organizations/[orgId]/route.ts#DELETE",
       "app/api/organizations/[orgId]/verification/resubmit/route.ts#POST",
     ]);
