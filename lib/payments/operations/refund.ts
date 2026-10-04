@@ -84,6 +84,7 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { revokeReplayEntitlement } from "@/lib/payments/webhooks/recording-purchase";
 
 import {
   applyCappedEarningReversal,
@@ -985,6 +986,8 @@ export async function applyRefundCascade(
       },
     });
   }
+
+  await revokeReplayEntitlement(tx, payment.paymentIntent);
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {
     // Zero-amount payments (LICENSE-only) have no money to refund, and a

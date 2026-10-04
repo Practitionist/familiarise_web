@@ -14,6 +14,8 @@ import {
 } from "@/lib/stream/late-join-recordings";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { deriveReplayAmount } from "@/lib/payments/pricing/replay-price";
+import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { Badge } from "@/components/ui/badge";
 import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
 import { RecordingBuyButton } from "./RecordingBuyButton";
@@ -194,6 +196,18 @@ export default async function RecordingDetailPage({
       ? await getBestRecordingUrl(rawRecording)
       : null;
 
+  // Same inputs as the order mint, so the total shown is the total charged.
+  const viewer = session?.user?.id
+    ? await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { country: true },
+      })
+    : null;
+  const charge = await deriveReplayAmount({
+    listPricePaise: listing.listPricePaise,
+    buyerCountry: detectBuyerCountry({ userCountry: viewer?.country }),
+  });
+
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
       <div className="space-y-6">
@@ -248,8 +262,14 @@ export default async function RecordingDetailPage({
 
       <aside className="space-y-4 h-fit rounded-xl border bg-card p-6 lg:sticky lg:top-24">
         <p className="text-3xl font-bold">
-          {formatCurrencyAmount(listing.listPricePaise, "INR")}
+          {formatCurrencyAmount(charge.amount, "INR")}
         </p>
+        {charge.taxAmount > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {formatCurrencyAmount(charge.originalAmount, "INR")} +{" "}
+            {formatCurrencyAmount(charge.taxAmount, "INR")} GST
+          </p>
+        )}
         {alreadyAccess ? (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -259,7 +279,7 @@ export default async function RecordingDetailPage({
           <RecordingBuyButton
             recordingId={listing.id}
             listPricePaise={listing.listPricePaise}
-            formattedPrice={formatCurrencyAmount(listing.listPricePaise, "INR")}
+            formattedPrice={formatCurrencyAmount(charge.amount, "INR")}
           />
         )}
         <ul className="space-y-2 pt-2 text-xs text-muted-foreground">

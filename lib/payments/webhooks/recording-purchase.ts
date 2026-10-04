@@ -11,10 +11,55 @@
  * or 0-row CAS guard. `payment.failed` marks the row FAILED only from PENDING
  * so a capture that raced ahead of the failure event wins.
  */
-import prisma from "@/lib/prisma";
+import { z } from "zod";
+import prisma, { type Tx } from "@/lib/prisma";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
+import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import * as Sentry from "@sentry/nextjs";
+
+const paiseNote = z.coerce.number().int().nonnegative();
+const replayChargeNotesSchema = z.object({
+  originalAmountPaise: paiseNote,
+  taxAmountPaise: paiseNote,
+  buyerCountry: z.string().length(2),
+});
+
+interface ReplayCharge {
+  originalAmount: number;
+  taxAmount: number;
+  buyerCountry: string | null;
+}
+
+/**
+ * The tax split the mint stamped on the order notes. An order minted before
+ * replays were taxed carries none and settles untaxed, as it was charged.
+ */
+function resolveReplayCharge(
+  orderId: string,
+  chargedPaise: number,
+  notes: Record<string, string> | undefined,
+): ReplayCharge {
+  const parsed = replayChargeNotesSchema.safeParse(notes ?? {});
+  if (
+    parsed.success &&
+    parsed.data.originalAmountPaise + parsed.data.taxAmountPaise ===
+      chargedPaise
+  ) {
+    return {
+      originalAmount: parsed.data.originalAmountPaise,
+      taxAmount: parsed.data.taxAmountPaise,
+      buyerCountry: parsed.data.buyerCountry.toUpperCase(),
+    };
+  }
+  if (notes?.taxAmountPaise !== undefined) {
+    Sentry.captureMessage(
+      `[recording-purchase] order notes do not sum to the charge: ${orderId}`,
+      { level: "error", tags: { subsystem: "payments" } },
+    );
+  }
+  return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
+}
 
 interface ResolvedPurchasePlanInfo {
   consultantProfileId: string;
@@ -121,8 +166,9 @@ function resolvePurchasePlanInfo(purchase: {
 export async function handleRecordingPurchaseSuccess(
   orderId: string,
   gatewayPaymentId?: string,
+  notes?: Record<string, string>,
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  const settledPaymentId = await prisma.$transaction(async (tx) => {
     const purchase = await tx.recordingPurchase.findUnique({
       where: { gatewayOrderId: orderId },
       select: {
@@ -205,10 +251,10 @@ export async function handleRecordingPurchaseSuccess(
         `[recording-purchase] captured order without row: ${orderId}`,
         { level: "error", tags: { subsystem: "payments" } },
       );
-      return;
+      return null;
     }
 
-    if (purchase.status === "SUCCEEDED") return; // idempotent replay
+    if (purchase.status === "SUCCEEDED") return null; // idempotent replay
 
     const grossAmountPaise = Number(purchase.amountPaise);
     if (!Number.isSafeInteger(grossAmountPaise) || grossAmountPaise <= 0) {
@@ -226,8 +272,9 @@ export async function handleRecordingPurchaseSuccess(
         ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
       },
     });
-    if (claimed.count === 0) return;
+    if (claimed.count === 0) return null;
 
+    const charge = resolveReplayCharge(orderId, grossAmountPaise, notes);
     const existingPayment = await tx.payment.findUnique({
       where: { paymentIntent: orderId },
     });
@@ -239,8 +286,14 @@ export async function handleRecordingPurchaseSuccess(
           userId: purchase.buyerId,
           appointmentId: null,
           amount: grossAmountPaise,
-          originalAmount: grossAmountPaise,
-          taxAmount: 0,
+          originalAmount: charge.originalAmount,
+          taxAmount: charge.taxAmount,
+          ...(charge.buyerCountry
+            ? {
+                buyerCountry: charge.buyerCountry,
+                isInternational: charge.buyerCountry !== "IN",
+              }
+            : {}),
           currency: "INR",
           paymentMethod: "CARD",
           paymentIntent: orderId,
@@ -260,7 +313,7 @@ export async function handleRecordingPurchaseSuccess(
         `[recording-purchase] settled without earnings owner: ${orderId}`,
         { level: "error", tags: { subsystem: "payments" } },
       );
-      return;
+      return payment.id;
     }
 
     await createEarningsFromPayment({
@@ -279,6 +332,26 @@ export async function handleRecordingPurchaseSuccess(
       appointmentType: planInfo.appointmentType,
       tx,
     });
+    return payment.id;
+  });
+
+  // Post-commit and best effort, exactly as the booking confirmation mints it.
+  if (settledPaymentId) {
+    await mintConsumerInvoiceBestEffort({ paymentId: settledPaymentId });
+  }
+}
+
+/**
+ * A refunded or charged-back replay sale stops entitling playback: every
+ * entitlement read requires SUCCEEDED, so the purchase moves to REFUNDED.
+ */
+export async function revokeReplayEntitlement(
+  tx: Tx,
+  paymentIntent: string,
+): Promise<void> {
+  await tx.recordingPurchase.updateMany({
+    where: { gatewayOrderId: paymentIntent, status: "SUCCEEDED" },
+    data: { status: "REFUNDED" },
   });
 }
 

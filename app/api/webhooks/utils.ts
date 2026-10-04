@@ -41,6 +41,7 @@ import {
   mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { revokeReplayEntitlement } from "@/lib/payments/webhooks/recording-purchase";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -1774,6 +1775,7 @@ export async function settleLostDispute(
       organizationId: true,
       billingAccountId: true,
       amount: true,
+      paymentIntent: true,
     },
   });
   if (disputedPayment?.organizationId) {
@@ -1808,6 +1810,10 @@ export async function settleLostDispute(
     amountPaise: dispute.amountPaise,
     reason: `chargeback lost (dispute ${disputeId})`,
   });
+
+  if (disputedPayment) {
+    await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
+  }
 
   // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
   // by its own s.34 credit note on the platform series; idempotent on
