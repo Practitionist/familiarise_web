@@ -61,6 +61,7 @@ import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
@@ -373,6 +374,7 @@ async function refundFreeCreditPayment(input: {
           paymentId: payment.id,
           refundId: refundRow.id,
           initiatedByUserId: input.initiatedByUserId ?? null,
+          reason: input.reason,
         });
 
         await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
@@ -547,6 +549,7 @@ export async function restoreClassSeatCredits(input: {
             paymentId: payment.id,
             refundId: refundRow.id,
             initiatedByUserId: input.initiatedByUserId,
+            reason: input.reason,
             share: { num: restoredPaise, den: creditValue },
           });
           notice = await stageRefundNotice(tx, payment, restoredPaise);
@@ -674,8 +677,8 @@ function assertReturnable(
  * The payables' source rows net first (earnings → REFUNDED, org clawback when
  * already paid out) so payout math and ledger stay coherent — EARNINGS_LEDGER_
  * DRIFT reconciles exactly this pairing. A free_ booking carries no overage
- * side-charges and no invoice, so there is no Step-7.6 credit-back or GST
- * credit note to mirror.
+ * side-charges, so there is no Step-7.6 credit-back; its consumer invoice is
+ * reversed by a credit note for the same share of the credit-funded value.
  *
  * No-op when no earnings rows exist: without them neither did the consultant
  * pipeline nor the booking journal run, so there is nothing to invert —
@@ -688,6 +691,7 @@ async function reverseFreeCreditSettlement(
     paymentId: string;
     refundId: string;
     initiatedByUserId: string | null;
+    reason: string;
     /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
     share?: { num: number; den: number };
   },
@@ -725,6 +729,28 @@ async function reverseFreeCreditSettlement(
         },
       },
     },
+  });
+
+  // The tax-inclusive value the credits funded, which is what the invoice billed.
+  const promoTotal = part(
+    payment.legs.reduce(
+      (s, l) =>
+        l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
+          ? s + l.amountPaise
+          : s,
+      0,
+    ),
+  );
+  const discountBack =
+    promoTotal > 0
+      ? 0
+      : part(payment.originalAmount + (payment.taxAmount ?? 0));
+
+  await mintConsumerCreditNote(tx, {
+    paymentId: input.paymentId,
+    refundId: input.refundId,
+    amountPaise: promoTotal + discountBack,
+    reason: input.reason,
   });
 
   if (
@@ -837,15 +863,6 @@ async function reverseFreeCreditSettlement(
   // The counter-posting. Funding returns to PLATFORM_PROMO (the account the
   // REFERRAL_CREDIT legs were debited to); legacy pre-legs payments booked
   // their gross as DISCOUNT instead (#1003 shape).
-  const promoTotal = part(
-    payment.legs.reduce(
-      (s, l) =>
-        l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
-          ? s + l.amountPaise
-          : s,
-      0,
-    ),
-  );
   const credits: Posting[] = [];
   if (promoTotal > 0) {
     credits.push({
@@ -853,17 +870,12 @@ async function reverseFreeCreditSettlement(
       direction: "CREDIT",
       amountPaise: promoTotal,
     });
-  } else {
-    const discountBack = part(
-      payment.originalAmount + (payment.taxAmount ?? 0),
-    );
-    if (discountBack > 0) {
-      credits.push({
-        account: { kind: "DISCOUNT" },
-        direction: "CREDIT",
-        amountPaise: discountBack,
-      });
-    }
+  } else if (discountBack > 0) {
+    credits.push({
+      account: { kind: "DISCOUNT" },
+      direction: "CREDIT",
+      amountPaise: discountBack,
+    });
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);

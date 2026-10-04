@@ -83,6 +83,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
   processQualifyingAction,
   processConsultantBookingReferral,
+  reverseCreditsForPayment,
 } from "@/lib/referrals/service";
 import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -702,11 +703,9 @@ export async function handlePaymentSuccess(
               }
             } catch (phase1EarningsErr) {
               if (hasSavepoint) {
-                await rawTx
-                  .$executeRawUnsafe!(
-                    "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
-                  )
-                  .catch(() => undefined);
+                await rawTx.$executeRawUnsafe!(
+                  "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
+                ).catch(() => undefined);
               }
               const isRetryableSerialization =
                 phase1EarningsErr instanceof
@@ -1299,6 +1298,9 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // Credits consumed at order creation go back under the same CAS, as on expiry.
+    await reverseCreditsForPayment(payment.id, tx);
+
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
@@ -1705,9 +1707,8 @@ export async function confirmExistingAppointment(
       appointment.subscription?.subscriptionPlan?.consultantProfileId ??
       appointment.webinar?.webinarPlan?.consultantProfileId ??
       appointment.class?.classPlan?.consultantProfileId;
-    const { buildCohostCommitmentFilter } = await import(
-      "@/utils/scheduling-engine/occupancyPolicy"
-    );
+    const { buildCohostCommitmentFilter } =
+      await import("@/utils/scheduling-engine/occupancyPolicy");
     const cohostCommitments = consultantProfileId
       ? buildCohostCommitmentFilter(consultantProfileId)
       : [];
