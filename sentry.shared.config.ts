@@ -241,7 +241,7 @@ function exceedsErrorBudget(
 }
 
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
-export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
+export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   // An expected outcome at info level is an ANSWER, not a fault.
   if (event.tags?.expected === "true" && event.level === "info") return null;
   const family = fingerprintFamily(event);

@@ -23,9 +23,14 @@ const SQL_DIR = path.join(ROOT, "prisma", "sql");
 
 const KnownStatementSchema = z.object({
   statement: z.string(),
-  expires: z.string(),
+  /** Last day (UTC, inclusive) the entry is honoured. */
+  expires: z.string().date(),
 });
 type KnownStatement = z.infer<typeof KnownStatementSchema>;
+
+const KnownDriftSchema = z.object({
+  destructiveStatementsAllowed: z.array(KnownStatementSchema).default([]),
+});
 
 /** Every index a sidecar creates; the schema omits them, so each push plans to drop them. */
 function sidecarOwnedIndexes(): Set<string> {
@@ -43,20 +48,20 @@ function sidecarOwnedIndexes(): Set<string> {
 }
 
 function knownStatements(): KnownStatement[] {
-  const parsed: unknown = JSON.parse(
-    fs.readFileSync(path.join(SQL_DIR, "known-drift.json"), "utf8"),
+  const parsed = KnownDriftSchema.safeParse(
+    JSON.parse(fs.readFileSync(path.join(SQL_DIR, "known-drift.json"), "utf8")),
   );
-  const raw = z
-    .object({ destructiveStatementsAllowed: z.unknown() })
-    .parse(parsed).destructiveStatementsAllowed;
-  if (!Array.isArray(raw)) return [];
-  const entries = z.array(KnownStatementSchema).safeParse(raw);
-  if (!entries.success) {
+  if (!parsed.success) {
     throw new Error(
-      `prisma/sql/known-drift.json: invalid destructiveStatementsAllowed entry: ${entries.error.message}`,
+      `prisma/sql/known-drift.json: invalid destructiveStatementsAllowed: ${parsed.error.message}`,
     );
   }
-  return entries.data;
+  return parsed.data.destructiveStatementsAllowed;
+}
+
+/** Midnight UTC of a `YYYY-MM-DD` date, as epoch milliseconds. */
+function utcDay(date: string): number {
+  return Date.parse(`${date}T00:00:00Z`);
 }
 
 function main(): void {
@@ -81,13 +86,14 @@ function main(): void {
 
   const owned = sidecarOwnedIndexes();
   const known = knownStatements();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = utcDay(new Date().toISOString().slice(0, 10));
   const unexpected = planStatements(plan).filter((statement) => {
     const dropped = droppedIndexName(statement);
     if (dropped && owned.has(dropped)) return false;
     return !known.some(
       (k) =>
-        normalise(k.statement) === normalise(statement) && k.expires >= today,
+        normalise(k.statement) === normalise(statement) &&
+        utcDay(k.expires) >= today,
     );
   });
 

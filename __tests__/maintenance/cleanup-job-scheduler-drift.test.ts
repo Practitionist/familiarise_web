@@ -5,11 +5,13 @@
 /**
  * Every `/api/cleanup/[job]` slug must have a scheduler: a Netlify ticker
  * target, a step in a `cron-*.yml` workflow, or an explicit `MANUAL_ONLY` entry.
- * Sources are read as text so the check needs neither Prisma nor Redis.
+ * The registry and ticker are read as text so the check needs neither Prisma nor Redis.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+
+import { MANUAL_ONLY } from "@/lib/cron/manual-only";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -24,21 +26,15 @@ function registryJobs(): { slug: string; names: string[] }[] {
     .split(/\/\/ @cleanup-twin /)
     .slice(1)
     .map((block) => {
-      const slug = block.match(/^([a-z0-9-]+)/)![1];
+      const slug = block.match(/^([a-z0-9-]+)/)?.[1];
+      if (!slug) {
+        throw new Error(
+          `cleanup-registry.ts: "@cleanup-twin" marker without a slug near: ${block.slice(0, 60)}`,
+        );
+      }
       const job = block.match(/job: "([a-z0-9-]+)"/)?.[1];
       return { slug, names: job ? [slug, job] : [slug] };
     });
-}
-
-function manualOnly(): string[] {
-  const src = fs.readFileSync(
-    path.join(ROOT, "lib", "cron", "cleanup-registry.ts"),
-    "utf8",
-  );
-  const body = src.match(/export const MANUAL_ONLY[^=]*=\s*\{([\s\S]*?)\n\};/);
-  return [...(body?.[1] ?? "").matchAll(/^\s*"([a-z0-9-]+)":/gm)].map(
-    (m) => m[1],
-  );
 }
 
 function tickerTargets(): Set<string> {
@@ -70,7 +66,7 @@ describe("cleanup job schedulers", () => {
   const keys = jobs.map((j) => j.slug);
   const targets = tickerTargets();
   const workflows = workflowText();
-  const manual = manualOnly();
+  const manual = Object.keys(MANUAL_ONLY);
 
   it("reads a non-trivial registry", () => {
     expect(keys.length).toBeGreaterThan(40);

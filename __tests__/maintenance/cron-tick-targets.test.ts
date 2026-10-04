@@ -17,34 +17,19 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
-type TargetRequest = (
-  baseUrl: string,
-  name: string,
-) => { url: string; timeoutMs: number };
+type Ticker = Pick<
+  typeof import("../../netlify/functions/cron-tick.mjs"),
+  | "targetRequest"
+  | "dueTargets"
+  | "statusFor"
+  | "reportableToSentry"
+  | "isFirstDueTickOfHour"
+  | "bucketFor"
+  | "buildFailedTargetsEvent"
+>;
+type Target = ReturnType<Ticker["dueTargets"]>[number];
 
-function loadTicker(): {
-  targetRequest: TargetRequest;
-  dueTargets: (now: Date) => string[];
-  statusFor: (failed: { name: string; status: number }[]) => number;
-  reportableToSentry: (name: string) => boolean;
-  isFirstDueTickOfHour: (name: string, now: Date) => boolean;
-  bucketFor: (
-    status: number,
-    maintenance?: boolean,
-  ) => "ok" | "held" | "failed";
-  buildFailedTargetsEvent: (failed: { name: string; status: number }[]) => {
-    message: string;
-    level: string;
-    fingerprint: string[];
-    tags: Record<string, string>;
-    contexts: {
-      tick: {
-        failedCount: number;
-        targets: { name: string; status: number; outcome: string }[];
-      };
-    };
-  };
-} {
+function loadTicker(): Ticker {
   const file = path.join(
     __dirname,
     "..",
@@ -59,7 +44,7 @@ function loadTicker(): {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = { exports: {} as ReturnType<typeof loadTicker> };
+  const mod = { exports: {} as Ticker };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -255,7 +240,7 @@ describe("cron-tick dueTargets cadence", () => {
   // call-report volume. The #1792 Upstash budget is the line item.
   // Their phases keep them off the canary's :00/:30 ticks and off each other.
   it("fires the earnings release and the no-show refund on staggered 30-minute slots", () => {
-    const firing = (name: string) =>
+    const firing = (name: Target) =>
       [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((minute) =>
         dueTargets(at(minute)).includes(name),
       );
