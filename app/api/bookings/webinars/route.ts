@@ -173,7 +173,12 @@ export async function GET(request: NextRequest) {
           appointment: {
             include: {
               occurrences: true,
-              payment: true,
+              // A group appointment carries every attendee's Payment; return only this consultee's.
+              payment: {
+                where: {
+                  user: { consulteeProfile: { id: consulteeProfileId } },
+                },
+              },
             },
           },
         },

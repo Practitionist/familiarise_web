@@ -37,26 +37,30 @@ export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 // The tones moved to lib/ui/tone.ts (#1527); re-exported so importers keep working.
 export { TONE_CLASS, type Tone } from "@/lib/ui/tone";
 
-export type BookingStateKind =
-  | "REQUESTED"
-  | "AWAITING_PAYMENT"
-  | "PAYMENT_LAPSED"
-  | "CONFIRMED"
-  | "AWAITING_ALLOCATION"
-  | "COMPLETED"
-  | "CANCELLED"
-  | "DECLINED";
+export const BOOKING_STATE_KINDS = [
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+  "PAYMENT_LAPSED",
+  "CONFIRMED",
+  "AWAITING_ALLOCATION",
+  "COMPLETED",
+  "CANCELLED",
+  "DECLINED",
+] as const;
+export type BookingStateKind = (typeof BOOKING_STATE_KINDS)[number];
 
-export type MoneyStateKind =
-  | "NOT_DUE"
-  | "DUE"
-  | "PAID"
-  | "REFUND_PENDING"
-  | "REFUNDED"
-  | "PARTIALLY_REFUNDED"
-  | "SPONSORED"
-  | "DISPUTED"
-  | "FREE";
+export const MONEY_STATE_KINDS = [
+  "NOT_DUE",
+  "DUE",
+  "PAID",
+  "REFUND_PENDING",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+  "SPONSORED",
+  "DISPUTED",
+  "FREE",
+] as const;
+export type MoneyStateKind = (typeof MONEY_STATE_KINDS)[number];
 
 export type NextActionKind =
   | "APPROVE_OR_DECLINE"
