@@ -10,7 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
-import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import {
+  buildCheckoutOptions,
+  type RazorpayCheckoutResponse,
+} from "@/lib/payments/client/checkout-options";
 import { DashboardGrid } from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
@@ -110,8 +113,14 @@ const apiErrorSchema = z.object({
   errorType: z.string().optional(),
 });
 
+const topUpVerifyResponseSchema = z.object({
+  status: z.enum(["pending", "confirmed", "failed"]),
+});
+
 const TOPUP_POLL_INTERVAL_MS = 1000;
 const TOPUP_POLL_MAX_ATTEMPTS = 20;
+/** How often a top-up still awaiting the gateway is re-checked in the background. */
+const TOPUP_PENDING_REFETCH_MS = 5000;
 
 type TopUpMutationResult =
   | {
@@ -189,6 +198,28 @@ async function fetchTopUpStatus(
   return topUpStatusResponseSchema.parse(await res.json()).topUp;
 }
 
+/** Drives the server-side confirmation from the Checkout response; the webhook stays the backstop. */
+async function verifyTopUp(
+  orgId: string,
+  topUpId: string,
+  response: RazorpayCheckoutResponse,
+): Promise<void> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}/verify`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        razorpay_order_id: response.razorpay_order_id,
+        razorpay_payment_id: response.razorpay_payment_id,
+        razorpay_signature: response.razorpay_signature,
+      }),
+    },
+  );
+  // Best effort: a refusal here still leaves the capture webhook to confirm.
+  if (res.ok) topUpVerifyResponseSchema.parse(await res.json());
+}
+
 async function pollTopUpUntilConfirmed(
   orgId: string,
   topUpId: string,
@@ -235,7 +266,36 @@ export function WalletTab({
   // it lands (see effect below) so the inputs reflect persisted state.
   const [minBalanceMajor, setMinBalanceMajor] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(false);
+  // A paid top-up the gateway has not confirmed yet; cleared once it settles.
+  const [pendingTopUpId, setPendingTopUpId] = useState<string | null>(null);
   const { toast } = useToast();
+
+  const pendingTopUp = useQuery({
+    queryKey: ["org-wallet-top-up", orgId, pendingTopUpId],
+    queryFn: () => fetchTopUpStatus(orgId, pendingTopUpId ?? ""),
+    enabled: pendingTopUpId !== null,
+    refetchInterval: TOPUP_PENDING_REFETCH_MS,
+  });
+  const pendingTopUpStatus = pendingTopUp.data?.status;
+  const pendingTopUpAmount = pendingTopUp.data?.amountPaise;
+  useEffect(() => {
+    if (pendingTopUpStatus !== "confirmed" && pendingTopUpStatus !== "failed")
+      return;
+    setPendingTopUpId(null);
+    queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+    toast(
+      pendingTopUpStatus === "confirmed"
+        ? {
+            title: "Top-up confirmed",
+            description: `₹${((pendingTopUpAmount ?? 0) / 100).toLocaleString("en-IN")} credited to your wallet.`,
+          }
+        : {
+            title: "Top-up failed",
+            description: "The payment was not captured. Nothing was credited.",
+            variant: "destructive",
+          },
+    );
+  }, [pendingTopUpStatus, pendingTopUpAmount, orgId, queryClient, toast]);
 
   const topUpMutation = useMutation({
     mutationFn: async (): Promise<TopUpMutationResult> => {
@@ -258,42 +318,45 @@ export function WalletTab({
           "Razorpay checkout failed to load. Please disable ad-blockers and retry.",
         );
       }
-      const paid = await new Promise<boolean>((resolve) => {
-        const rzp = new window.Razorpay(
-          buildCheckoutOptions({
-            keyId: result.keyId,
-            amount: result.amountPaise,
-            currency: result.currency,
-            name: "Familiarise",
-            description: "Wallet top-up",
-            orderId: result.razorpayOrderId,
-            prefill: {
-              ...(session?.user?.name ? { name: session.user.name } : {}),
-              ...(session?.user?.email ? { email: session.user.email } : {}),
-              contact,
-            },
-            handler: () => {
-              resolve(true);
-            },
-            theme: { color: "#2563EB" },
-          }),
-        );
-        rzp.on("payment.failed", () => {
-          toast({
-            title: "Payment failed",
-            description:
-              "Your card was declined or the payment timed out. Please try again.",
-            variant: "destructive",
+      const paid = await new Promise<RazorpayCheckoutResponse | null>(
+        (resolve) => {
+          const rzp = new window.Razorpay(
+            buildCheckoutOptions({
+              keyId: result.keyId,
+              amount: result.amountPaise,
+              currency: result.currency,
+              name: "Familiarise",
+              description: "Wallet top-up",
+              orderId: result.razorpayOrderId,
+              prefill: {
+                ...(session?.user?.name ? { name: session.user.name } : {}),
+                ...(session?.user?.email ? { email: session.user.email } : {}),
+                contact,
+              },
+              handler: (response) => {
+                resolve(response);
+              },
+              theme: { color: "#2563EB" },
+            }),
+          );
+          rzp.on("payment.failed", () => {
+            toast({
+              title: "Payment failed",
+              description:
+                "Your card was declined or the payment timed out. Please try again.",
+              variant: "destructive",
+            });
+            resolve(null);
           });
-          resolve(false);
-        });
-        rzp.open();
-      });
+          rzp.open();
+        },
+      );
 
       if (!paid) {
         return { result, outcome: "not_paid", confirmed: null };
       }
 
+      await verifyTopUp(orgId, result.topUpId, paid).catch(() => undefined);
       const confirmed = await pollTopUpUntilConfirmed(orgId, result.topUpId);
       if (confirmed) {
         return { result, outcome: "confirmed", confirmed };
@@ -309,11 +372,7 @@ export function WalletTab({
           description: `₹${(data.confirmed.amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
         });
       } else if (data.outcome === "pending") {
-        toast({
-          title: "Payment received",
-          description:
-            "Awaiting confirmation from Razorpay. Your balance will update automatically once the webhook lands.",
-        });
+        setPendingTopUpId(data.result.topUpId);
       }
     },
   });
@@ -477,6 +536,16 @@ export function WalletTab({
               </div>
             )}
           </div>
+
+          {pendingTopUpId && (
+            <div
+              role="status"
+              className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+            >
+              Top-up pending — payment received, waiting for Razorpay to confirm
+              it. Your balance updates here once it does.
+            </div>
+          )}
 
           <DashboardGrid columns={2}>
             <StatCard
