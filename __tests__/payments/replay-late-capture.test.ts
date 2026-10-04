@@ -99,10 +99,15 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
     where: { id: "rp-1", status: "FAILED" },
     data: { status: "SUCCEEDED", gatewayPaymentId: "pay_B" },
   });
+  // The CARD leg satisfies the commit-time leg trigger and makes a refund credit CASH.
   expect(mockTx.payment.create.mock.calls[0][0].data).toMatchObject({
     amount: 99900,
     paymentIntent: "order_1",
     paymentStatus: "SUCCEEDED",
+    description: expect.stringMatching(/^Replay sale:/),
+    legs: {
+      create: { source: "CARD", amountPaise: 99900, sourceRef: "order_1" },
+    },
   });
   expect(mockCreateEarnings).toHaveBeenCalledTimes(1);
   expect(mockMintInvoice).toHaveBeenCalledWith({ paymentId: "pay-order_1" });
@@ -117,7 +122,11 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
   expect(mockTx.recordingPurchase.updateMany).not.toHaveBeenCalled();
   expect(mockCreateEarnings).not.toHaveBeenCalled();
   const staged = mockTx.payment.create.mock.calls[0][0].data;
-  expect(staged).toMatchObject({ paymentIntent: "order_2", amount: 99900 });
+  expect(staged).toMatchObject({
+    paymentIntent: "order_2",
+    amount: 99900,
+    legs: { create: { source: "CARD", amountPaise: 99900 } },
+  });
   expect(staged.description).toMatch(/^Auto-refund pending:/);
   expect(mockRefund).toHaveBeenCalledWith(
     expect.objectContaining({

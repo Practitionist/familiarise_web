@@ -38,6 +38,7 @@ import {
   isInternalFundedIntent,
 } from "@/lib/payments/funding-rail";
 import { RefundValidationError } from "@/lib/payments/operations/refund";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
@@ -361,6 +362,7 @@ function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
     deletedAt: null,
     parentPaymentId: null,
     NOT: { paymentIntent: { startsWith: "overage:" } },
+    AND: [notSettledElsewhereWhere],
     createdAt: { gte: windowCutoff, lt: graceCutoff },
     refunds: { none: { status: RefundStatus.PENDING } },
     disputes: {
@@ -426,6 +428,7 @@ async function reconcileOrphanedPaymentsUnlocked(
       deletedAt: null,
       parentPaymentId: null,
       NOT: { paymentIntent: { startsWith: "overage:" } },
+      AND: [notSettledElsewhereWhere],
       createdAt: { lt: windowCutoff },
       refunds: { none: { status: RefundStatus.PENDING } },
       disputes: {

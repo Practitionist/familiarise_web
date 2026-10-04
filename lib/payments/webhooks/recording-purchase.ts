@@ -11,7 +11,10 @@
  */
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
-import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
+import {
+  createEarningsFromPayment,
+  type CreateEarningsParams,
+} from "@/lib/payments/payouts/earnings-service";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -19,6 +22,7 @@ import {
   AUTO_REFUND_PENDING_PREFIX,
   AUTO_REFUND_STUCK_PREFIX,
   AUTO_REFUNDED_PREFIX,
+  REPLAY_SALE_PREFIX,
   settledAutoRefundDescription,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { isDurablyOurs } from "@/lib/stream/recording-storage";
@@ -195,6 +199,13 @@ type CaptureOutcome =
   | { kind: "settled"; paymentId: string }
   | { kind: "refund"; paymentId: string; reason: string; marker: string };
 
+/** The leg trigger rejects a positive Payment without legs at commit. */
+function cardLeg(amountPaise: number, paymentIntent: string) {
+  return {
+    create: { source: "CARD" as const, amountPaise, sourceRef: paymentIntent },
+  };
+}
+
 /**
  * Record a capture that fulfils nothing as a SUCCEEDED Payment carrying the
  * auto-refund marker. A row already staged for the intent is re-driven only
@@ -243,6 +254,7 @@ async function stageCaptureRefund(
       capturedAt: new Date(),
       description: marker,
       organizationId: input.organizationId,
+      legs: cardLeg(input.chargedPaise, input.paymentIntent),
       ...(input.gatewayPaymentId
         ? { gatewayPaymentId: input.gatewayPaymentId }
         : {}),
@@ -295,6 +307,122 @@ async function refundOrphanCapture(
     gatewayPaymentId: input.gatewayPaymentId,
     reason: `capture on replay order ${orderId}; its purchase no longer exists`,
   });
+}
+
+/**
+ * Whether a capture on a settled order is a second payment. An order settled
+ * without a payment id takes the first id seen as its settling capture.
+ */
+async function isDuplicateCapture(
+  tx: Tx,
+  input: {
+    purchaseId: string;
+    settledBy: string | null;
+    orderId: string;
+    gatewayPaymentId: string;
+  },
+): Promise<boolean> {
+  const { purchaseId, orderId, gatewayPaymentId } = input;
+  let settledBy = input.settledBy;
+  if (!settledBy) {
+    const stamped = await tx.recordingPurchase.updateMany({
+      where: { id: purchaseId, gatewayPaymentId: null },
+      data: { gatewayPaymentId },
+    });
+    if (stamped.count === 1) {
+      await tx.payment.updateMany({
+        where: { paymentIntent: orderId, gatewayPaymentId: null },
+        data: { gatewayPaymentId },
+      });
+      return false;
+    }
+    const current = await tx.recordingPurchase.findUnique({
+      where: { id: purchaseId },
+      select: { gatewayPaymentId: true },
+    });
+    settledBy = current?.gatewayPaymentId ?? null;
+  }
+  // Same payment redelivered; a different one is a duplicate charge.
+  return settledBy !== gatewayPaymentId;
+}
+
+/** Settle a claimed purchase: its Payment, CARD leg, earnings and journal. */
+async function settleReplaySale(
+  tx: Tx,
+  input: {
+    orderPayment: Omit<CreateEarningsParams["payment"], "appointment"> | null;
+    buyerId: string;
+    recordingId: string;
+    orderId: string;
+    gatewayPaymentId: string | undefined;
+    chargedPaise: number;
+    charge: ReplayCharge;
+    organizationId: string | null;
+    planInfo: ResolvedPurchasePlanInfo | null;
+  },
+): Promise<CaptureOutcome> {
+  const {
+    orderPayment,
+    orderId,
+    gatewayPaymentId,
+    chargedPaise,
+    charge,
+    organizationId,
+    planInfo,
+  } = input;
+  const payment =
+    orderPayment ??
+    (await tx.payment.create({
+      data: {
+        userId: input.buyerId,
+        appointmentId: null,
+        amount: chargedPaise,
+        originalAmount: charge.originalAmount,
+        taxAmount: charge.taxAmount,
+        ...(charge.buyerCountry
+          ? {
+              buyerCountry: charge.buyerCountry,
+              isInternational: charge.buyerCountry !== "IN",
+            }
+          : {}),
+        currency: "INR",
+        paymentMethod: "CARD",
+        paymentIntent: orderId,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        capturedAt: new Date(),
+        description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+        organizationId,
+        legs: cardLeg(chargedPaise, orderId),
+        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+      },
+    }));
+
+  if (!planInfo) {
+    Sentry.captureMessage(
+      `[recording-purchase] settled without earnings owner: ${orderId}`,
+      { level: "error", tags: { subsystem: "payments" } },
+    );
+    return { kind: "settled", paymentId: payment.id };
+  }
+
+  await createEarningsFromPayment({
+    payment: {
+      ...payment,
+      appointment: {
+        consultantProfile: { id: planInfo.consultantProfileId },
+        webinar: planInfo.webinarPlanId
+          ? { webinarPlanId: planInfo.webinarPlanId }
+          : null,
+        class: planInfo.classPlanId
+          ? { classPlanId: planInfo.classPlanId }
+          : null,
+      },
+    },
+    appointmentType: planInfo.appointmentType,
+    tx,
+  });
+  return { kind: "settled", paymentId: payment.id };
 }
 
 export async function handleRecordingPurchaseSuccess(
@@ -423,32 +551,18 @@ export async function handleRecordingPurchaseSuccess(
 
       if (purchase.status === "SUCCEEDED" || purchase.status === "REFUNDED") {
         if (!gatewayPaymentId) return null;
-        let settledBy = purchase.gatewayPaymentId;
-        if (!settledBy) {
-          // Settled without a payment id: the first id seen is the settling capture.
-          const stamped = await tx.recordingPurchase.updateMany({
-            where: { id: purchase.id, gatewayPaymentId: null },
-            data: { gatewayPaymentId },
-          });
-          if (stamped.count === 1) {
-            await tx.payment.updateMany({
-              where: { paymentIntent: orderId, gatewayPaymentId: null },
-              data: { gatewayPaymentId },
-            });
-            return null;
-          }
-          const current = await tx.recordingPurchase.findUnique({
-            where: { id: purchase.id },
-            select: { gatewayPaymentId: true },
-          });
-          settledBy = current?.gatewayPaymentId ?? null;
-        }
-        // Same payment redelivered; a different one is a duplicate charge.
-        if (settledBy === gatewayPaymentId) return null;
-        return refundCapture(
+        const duplicate = await isDuplicateCapture(tx, {
+          purchaseId: purchase.id,
+          settledBy: purchase.gatewayPaymentId,
+          orderId,
           gatewayPaymentId,
-          `duplicate capture on settled replay order ${orderId}`,
-        );
+        });
+        return duplicate
+          ? refundCapture(
+              gatewayPaymentId,
+              `duplicate capture on settled replay order ${orderId}`,
+            )
+          : null;
       }
 
       const orderPayment = await tx.payment.findUnique({
@@ -503,57 +617,17 @@ export async function handleRecordingPurchaseSuccess(
       });
       if (claimed.count === 0) return null;
 
-      const payment =
-        orderPayment ??
-        (await tx.payment.create({
-          data: {
-            userId: purchase.buyerId,
-            appointmentId: null,
-            amount: chargedPaise,
-            originalAmount: charge.originalAmount,
-            taxAmount: charge.taxAmount,
-            ...(charge.buyerCountry
-              ? {
-                  buyerCountry: charge.buyerCountry,
-                  isInternational: charge.buyerCountry !== "IN",
-                }
-              : {}),
-            currency: "INR",
-            paymentMethod: "CARD",
-            paymentIntent: orderId,
-            paymentGateway: "RAZORPAY",
-            paymentStatus: "SUCCEEDED",
-            capturedAt: new Date(),
-            organizationId,
-            ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-          },
-        }));
-
-      if (!planInfo) {
-        Sentry.captureMessage(
-          `[recording-purchase] settled without earnings owner: ${orderId}`,
-          { level: "error", tags: { subsystem: "payments" } },
-        );
-        return { kind: "settled", paymentId: payment.id };
-      }
-
-      await createEarningsFromPayment({
-        payment: {
-          ...payment,
-          appointment: {
-            consultantProfile: { id: planInfo.consultantProfileId },
-            webinar: planInfo.webinarPlanId
-              ? { webinarPlanId: planInfo.webinarPlanId }
-              : null,
-            class: planInfo.classPlanId
-              ? { classPlanId: planInfo.classPlanId }
-              : null,
-          },
-        },
-        appointmentType: planInfo.appointmentType,
-        tx,
+      return settleReplaySale(tx, {
+        orderPayment,
+        buyerId: purchase.buyerId,
+        recordingId: purchase.recordingId,
+        orderId,
+        gatewayPaymentId,
+        chargedPaise,
+        charge,
+        organizationId,
+        planInfo,
       });
-      return { kind: "settled", paymentId: payment.id };
     },
   );
 
