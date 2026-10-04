@@ -69,6 +69,8 @@ export interface ModerationRetryOptions {
   limit?: number;
 }
 
+const MAX_ATTEMPTS = 6;
+
 const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "USER_BANNED",
   "USER_SUSPENDED",
