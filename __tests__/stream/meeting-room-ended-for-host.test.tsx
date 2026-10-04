@@ -32,6 +32,8 @@ const custom: Record<string, unknown> = {
 const call = {
   id: "slot-A",
   setDisconnectionTimeout: jest.fn(),
+  setIncomingVideoEnabled: jest.fn(),
+  setPreferredIncomingVideoResolution: jest.fn(),
   on: jest.fn(() => () => {}),
   state: { recording: false },
 };
@@ -97,6 +99,9 @@ let root: Root;
 
 beforeEach(() => {
   push.mockReset();
+  call.setIncomingVideoEnabled.mockReset();
+  call.setPreferredIncomingVideoResolution.mockReset();
+  custom.appointmentType = "WEBINAR";
   global.fetch = jest.fn(() =>
     Promise.resolve({ ok: false, status: 404 }),
   ) as unknown as typeof fetch;
@@ -153,5 +158,25 @@ describe("the room after the call is ended by someone else", () => {
 
     expect(host.querySelector('[data-testid="speaker-layout"]')).not.toBeNull();
     expect(host.textContent).toContain("2 participants");
+    expect(call.setIncomingVideoEnabled).toHaveBeenCalledWith(true);
+    expect(call.setPreferredIncomingVideoResolution).toHaveBeenCalledWith({
+      width: 1280,
+      height: 720,
+    });
+  });
+
+  it("applies the 480p incoming video cap on mount for 1:1 consultations", async () => {
+    sessionUser = { id: "owner", role: "CONSULTANT" };
+    callingState = "joined";
+    endedAt = undefined;
+    custom.appointmentType = "CONSULTATION";
+
+    await render();
+
+    expect(call.setIncomingVideoEnabled).toHaveBeenCalledWith(true);
+    expect(call.setPreferredIncomingVideoResolution).toHaveBeenCalledWith({
+      width: 640,
+      height: 480,
+    });
   });
 });

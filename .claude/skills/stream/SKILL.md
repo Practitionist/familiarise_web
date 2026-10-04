@@ -134,16 +134,17 @@ mcp__stream-io__app_get_rate_limits   {}
 - **Ceilings**: `DeleteUser: 60/min` · `DeleteChannels: 60/min` · `ExportUsers: 60/min` · `UpdateUsers: 300/min` · `UpdateUsersPartial: 300/min` · `SendMessage: 1000/min` · `QueryChannels: 10000/min`.
 - **Batch Pacing Rule**: Always chunk `upsertUsers` and `channel.create` members at `100` (`createMemberChunk` / `addRemainingMembers`), page `queryChannels` at `30` (`queryChannelsPaged` sorted by `created_at: 1`), and enforce a **`10_000ms` delay between 100-item chunks** (`RATE_LIMIT_DELAY_MS = 10_000`) in `expire-event-channels.ts` and `stream-sync.ts`.
 
-### Pinned SDK Version Holds (`.github/dependabot.yml` & `package.json`)
+### Pinned SDK Versions (`.github/dependabot.yml` & `package.json`)
 
-- **`@stream-io/node-sdk` held on `0.7.x`**: `0.8.0` broke `UpdateCallMembersRequest` TypeScript types and caused runtime call-member regressions. Verify `npx tsc --noEmit` on `updateCallMembers` call sites and `npx jest __tests__/stream/` before upgrading.
-- **`stream-chat-react` held on `13.x`**: `v14` introduced breaking `AttachmentActionsProps` changes and redesigned `MessageComposer`/`MessageActions` CSS tokens. Requires a dedicated UI migration PR with visual review across `components/chat/*`.
-- **`stream-chat` held on `9.x`**: `v10` is still RC with breaking `Channel.getConfig()` / `client.configs` removals.
+- **`@stream-io/node-sdk` (`0.8.10`)**: Server-side Video & App SDK. Verify `npx tsc --noEmit` on `updateCallMembers` call sites and `npx jest __tests__/stream/` before bumping.
+- **`@stream-io/video-react-sdk` (`1.43.3`)**: Video client & WebRTC UI.
+- **`stream-chat-react` (`14.12.1`)**: Chat React UI components (CSS v2 theming tokens imported in `providers/StreamProviderImpl.tsx`).
+- **`stream-chat` held on `9.x` (`9.53.0`)**: `v10` is still RC with breaking `Channel.getConfig()` / `client.configs` removals.
 
 ### Operator Cutover & Verification Commands (`scripts/stream/ensure.ts`)
 
 ```bash
-# 1. Dry-run control-plane check (app settings, 18 billable permissions + -owner/-any-team suffixes across default/livestream/audio_room/development, 300s inactivity timeout)
+# 1. Dry-run control-plane check (app settings, billable permissions + -owner/-any-team suffixes across default/livestream/audio_room/development, 300s inactivity timeout)
 npx tsx scripts/stream/ensure.ts
 
 # 2. Apply control-plane hardening once /api/meetings/[meetingId]/{join,end} are deployed
@@ -151,7 +152,4 @@ npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 
 # 3. Verify / apply webhook event subscriptions
 npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
-
-# 4. Register Cloudflare R2 external storage for recordings
-npx tsx scripts/stream/ensure-recording-external-storage.ts --provider r2 --apply
 ```

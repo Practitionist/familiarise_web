@@ -52,10 +52,17 @@ import {
   describeCallingState,
 } from "@/lib/stream/connection-state";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
+import {
+  applyIncomingVideoSetting,
+  type IncomingVideoSetting,
+} from "@/lib/stream/incoming-video";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
-import { isInCallChatAllowed } from "@/lib/meetings/room-ready";
+import {
+  isInCallChatAllowed,
+  isOneToManyAppointmentType,
+} from "@/lib/meetings/room-ready";
 
 export { isInCallChatAllowed };
 
@@ -159,6 +166,21 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const info = useSessionInfo();
   const isHost = info.isHost;
   const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
+  const isOneToMany = isOneToManyAppointmentType(info.appointmentType);
+  const defaultIncomingVideoCap: IncomingVideoSetting = isOneToMany
+    ? "720p"
+    : "480p";
+
+  // Enforce default incoming video cap on join (480p for 1:1 sessions, 720p for webinars/classes).
+  useEffect(() => {
+    if (
+      call &&
+      typeof call.setIncomingVideoEnabled === "function" &&
+      typeof call.setPreferredIncomingVideoResolution === "function"
+    ) {
+      applyIncomingVideoSetting(call, defaultIncomingVideoCap);
+    }
+  }, [call, defaultIncomingVideoCap]);
 
   const getDashboardUrl = () => {
     if (!session?.user) return "/";

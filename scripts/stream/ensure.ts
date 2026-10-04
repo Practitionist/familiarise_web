@@ -28,7 +28,10 @@ export interface EnsureOptions {
 function parseArgs(argv: string[]): EnsureOptions {
   return {
     apply: argv.includes("--apply"),
-    deployConfirmed: argv.includes("--confirm-join-route-deployed"),
+    deployConfirmed:
+      argv.includes("--routes-are-deployed") ||
+      argv.includes("--join-route-is-deployed") ||
+      argv.includes("--confirm-join-route-deployed"),
   };
 }
 

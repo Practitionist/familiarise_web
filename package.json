@@ -110,7 +110,7 @@
     "server-only": "^0.0.1",
     "sharp": "^0.35.5",
     "stream-chat": "9.53.0",
-    "stream-chat-react": "13.14.6",
+    "stream-chat-react": "14.12.1",
     "stripe": "^22.6.2",
     "tailwind-merge": "^3.7.0",
     "use-debounce": "^10.1.1",

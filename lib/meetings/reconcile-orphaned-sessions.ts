@@ -158,6 +158,9 @@ async function reconcileSingleOrphanedSession(
   }
 }
 
+export const BATCH_SIZE = 100;
+export const MAX_BATCH_PAGES = 10;
+
 async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
   const result: ReconciliationResult = {
     processed: 0,
@@ -169,39 +172,48 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
   };
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  let lastCursorId: string | null = null;
 
-  const orphanedSessions = await prisma.meeting.findMany({
-    where: {
-      endedAt: null,
-      occurrence: {
-        endsAt: { lt: oneHourAgo },
-      },
-    },
-    include: {
-      occurrence: true,
-    },
-    orderBy: {
-      occurrence: {
-        endsAt: "asc",
-      },
-    },
-    take: 100,
-  });
+  for (let page = 0; page < MAX_BATCH_PAGES; page++) {
+    const orphanedSessions: OrphanedSessionRow[] =
+      await prisma.meeting.findMany({
+        where: {
+          endedAt: null,
+          occurrence: {
+            endsAt: { lt: oneHourAgo },
+          },
+        },
+        include: {
+          occurrence: true,
+        },
+        orderBy: [{ occurrence: { endsAt: "asc" } }, { id: "asc" }],
+        take: BATCH_SIZE,
+        ...(lastCursorId ? { cursor: { id: lastCursorId }, skip: 1 } : {}),
+      });
 
-  if (orphanedSessions.length === 0) {
-    result.details.push("No orphaned sessions found");
-    return result;
+    if (orphanedSessions.length === 0) {
+      if (page === 0) {
+        result.details.push("No orphaned sessions found");
+      }
+      break;
+    }
+
+    console.log(
+      `[reconcile-orphaned-sessions] Page ${page + 1}: found ${orphanedSessions.length} orphaned sessions`,
+    );
+
+    await orphanedSessions.reduce<Promise<void>>(
+      (chain, session) =>
+        chain.then(() => reconcileSingleOrphanedSession(session, result)),
+      Promise.resolve(),
+    );
+
+    if (orphanedSessions.length < BATCH_SIZE) {
+      break;
+    }
+
+    lastCursorId = orphanedSessions[orphanedSessions.length - 1].id;
   }
-
-  console.log(
-    `[reconcile-orphaned-sessions] Found ${orphanedSessions.length} orphaned sessions`,
-  );
-
-  await orphanedSessions.reduce<Promise<void>>(
-    (chain, session) =>
-      chain.then(() => reconcileSingleOrphanedSession(session, result)),
-    Promise.resolve(),
-  );
 
   return result;
 }
