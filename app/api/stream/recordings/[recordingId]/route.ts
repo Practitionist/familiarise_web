@@ -335,6 +335,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           playbackUrl: null,
           thumbnailUrl: null,
           previewClipUrl: null,
+          previewTranscript: null,
         },
         access: {
           level: "METADATA_ONLY" as const,
@@ -369,6 +370,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         playbackUrl,
         thumbnailUrl: recording.thumbnailUrl,
         previewClipUrl: recording.previewClipUrl,
+        previewTranscript: recording.previewTranscript ?? null,
       },
       access: { level: "FULL" as const },
     });
