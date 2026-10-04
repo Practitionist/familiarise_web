@@ -159,19 +159,14 @@ npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
 What the orchestrator enforces:
 
 - **App-Level Settings (`ensure-app-settings.ts`)**: Configures `webhook_url` (`https://<origin>/api/stream/webhooks`), `AsyncModerationConfiguration`, `guest_user_creation_disabled: true`, and `enable_hook_payload_compression: false` after running a no-op fingerprint probe (`lib/stream/config-fingerprint.ts`) to guarantee `updateApp` merges rather than replaces unrelated app fields.
-- **18 Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all 18 billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
-- **Least-Privilege Call Admission on `default`**: Revokes `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, revokes `end-call` from `user`, `guest`, and `call_member`, and ensures only `call_member` (granted server-side after `resolveMeetingAccess`) and `host`/`admin` can join an active room.
+- **Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`, `enable-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
+- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`, and ensures only `call_member` (granted server-side after `resolveMeetingAccess`) and `host`/`admin` can join an active room.
 - **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
 - **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
 
-### 2. Cloudflare R2 External Storage Registration
+### 2. Cloudflare R2 Recording Storage
 
-Permanent recordings (`PERMANENT` policy on Webinars, Classes, and opt-in 1:1 sessions) are stored in Cloudflare R2 (`$0` egress, S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-storage.ts`, with automatic fallback to Supabase Storage for legacy objects):
-
-```bash
-# Register or verify Cloudflare R2 external storage configuration
-npx tsx scripts/stream/ensure-recording-external-storage.ts --provider r2 --apply
-```
+Permanent recordings (`PERMANENT` policy on Webinars, Classes, and opt-in 1:1 sessions) are streamed server-side from Stream's signed recording URL directly to Cloudflare R2 (`$0` egress, S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, with automatic fallback to Supabase Storage for legacy objects).
 
 Ensure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_RECORDINGS_BUCKET` are set in the deployment environment before enabling permanent recording transfers (`jobs/stream/transfer-expiring-recordings.ts`).
 
@@ -204,10 +199,10 @@ Stream SDK consists of **4 separate packages**, pinned to exact versions in `pac
 ```json
 {
   "dependencies": {
-    "@stream-io/node-sdk": "0.7.x",
+    "@stream-io/node-sdk": "0.8.10",
     "@stream-io/video-react-sdk": "1.43.3",
     "stream-chat": "9.53.0",
-    "stream-chat-react": "13.14.6"
+    "stream-chat-react": "14.12.1"
   }
 }
 ```
@@ -223,15 +218,16 @@ Stream SDK consists of **4 separate packages**, pinned to exact versions in `pac
 
 ---
 
-## Pinned SDK Version Holds
+## Pinned SDK Version Governance
 
-All four Stream packages use exact version pins in `package.json` and are grouped under `stream-communication` in `.github/dependabot.yml` (with `version-update:semver-major` ignored globally). Two packages have deliberate version-hold constraints and upgrade verification gates:
+All four Stream packages use exact version pins in `package.json` and are grouped under `stream-communication` in `.github/dependabot.yml` (with `version-update:semver-major` ignored globally):
 
-| Package                   | Held Series | Upstream Latest Series | Reason for Hold & Upgrade Verification Criteria                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------- | ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`@stream-io/node-sdk`** | `0.7.x`     | `0.8.x`                | **Type & Runtime Regression Hold**: `@stream-io/node-sdk` `0.8.0` broke `UpdateCallMembersRequest` TypeScript signatures, dropped Node `< 22.12`, and introduced call-member update regressions. Before adopting any `0.8.x` release, verify `npx tsc --noEmit` passes without casts on `call.updateCallMembers` in `app/api/meetings/[meetingId]/join/route.ts` and `scripts/stream/backfill-call-member-role.ts`, and run `npx jest __tests__/stream/`.                                        |
-| **`stream-chat-react`**   | `13.x`      | `14.x`                 | **Breaking Component & Theme Overhaul Hold**: `stream-chat-react` `v14` introduced breaking `AttachmentActionsProps` changes, redesigned `MessageComposer` and `MessageActions`, and replaced CSS v2 theming tokens. Never merge `v14` inside an automated Dependabot batch PR; upgrading requires a dedicated PR auditing every custom component under `components/chat/` (`CustomMessage.tsx`, `ChatContainer.tsx`, `ChatSidebar.tsx`) and visual regression sign-off across light/dark modes. |
-| **`stream-chat`**         | `9.x`       | `10.x-rc`              | **Pre-Release Hold**: `stream-chat` `v10` remains in release-candidate status with breaking API removals (`Channel.getConfig()` removed, `client.configs` renamed to `client.channelServerConfigs`, `linkPreviews.enabled` default inverted). Hold on `9.x` stable until `v10` reaches general availability and `stream-chat-react` `v14` migration is scheduled.                                                                                                                                |
+| Package                          | Pinned Version | Upstream Latest Series | Governance & Upgrade Verification Criteria                                                                                                                                                                                                                          |
+| -------------------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`@stream-io/node-sdk`**        | `0.8.10`       | `0.8.x`                | Verify `npx tsc --noEmit` passes without casts on `call.updateCallMembers` in `app/api/meetings/[meetingId]/join/route.ts` and `scripts/stream/backfill-call-member-role.ts`, and run `npx jest __tests__/stream/`.                                                 |
+| **`@stream-io/video-react-sdk`** | `1.43.3`       | `1.43.x`               | Verify WebRTC call join, `<StageControls />`, and incoming video resolution caps (`setPreferredIncomingVideoResolution`) in `app/meetings/[id]/components/MeetingRoom.tsx`.                                                                                         |
+| **`stream-chat-react`**          | `14.12.1`      | `14.x`                 | Uses CSS v2 theming tokens (`stream-chat-react/dist/css/v2/index.css`). Before upgrading minor/major versions, audit custom components under `components/chat/` (`CustomMessage.tsx`, `ChatContainer.tsx`, `ChatSidebar.tsx`) across light and dark modes.          |
+| **`stream-chat`**                | `9.53.0`       | `10.x-rc`              | **Pre-Release Hold**: `stream-chat` `v10` remains in release-candidate status with breaking API removals (`Channel.getConfig()` removed, `client.configs` renamed to `client.channelServerConfigs`). Hold on `9.x` stable until `v10` reaches general availability. |
 
 ### Import Stream CSS
 

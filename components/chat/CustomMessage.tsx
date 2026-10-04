@@ -7,7 +7,7 @@ import {
   Attachment,
   useChatContext,
   useMessageContext,
-  useMessageComposer,
+  useMessageComposerController,
 } from "stream-chat-react";
 import {
   SmileIcon,
@@ -50,7 +50,7 @@ import {
 export const CustomMessage = () => {
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
-  const messageComposer = useMessageComposer();
+  const messageComposer = useMessageComposerController();
   const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -236,7 +236,7 @@ export const CustomMessage = () => {
 
   // WhatsApp/Telegram style reply - sets the message as quoted for the input
   const handleReplyClick = () => {
-    // Use Stream Chat v13's MessageComposer API to set quoted message
+    // Use Stream Chat's MessageComposer controller API to set quoted message
     messageComposer.setQuotedMessage(message);
   };
 

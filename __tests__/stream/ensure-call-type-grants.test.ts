@@ -596,11 +596,13 @@ describe("ensure-call-type-grants", () => {
     expect(code).toBe(1);
   });
 
-  it("revokes join-ended-call and update-call-permissions from user and guest while preserving them on call_member", async () => {
+  it("revokes join-ended-call, update-call-permissions, create-call, and enable-noise-cancellation-any-team appropriately", async () => {
     stored = {
       ...LIVE_GRANTS(),
       user: [
         ...LIVE_GRANTS().user,
+        "create-call",
+        "enable-noise-cancellation-any-team",
         "join-ended-call",
         "update-call-permissions",
         "end-call-owner",
@@ -608,11 +610,15 @@ describe("ensure-call-type-grants", () => {
       ],
       guest: [
         ...LIVE_GRANTS().guest,
+        "create-call",
+        "enable-noise-cancellation-any-team",
         "join-ended-call",
         "update-call-permissions-owner",
       ],
       call_member: [
         ...LIVE_GRANTS().call_member,
+        "create-call",
+        "enable-noise-cancellation-any-team",
         "join-ended-call",
         "update-call-permissions",
         "end-call-owner",
@@ -633,6 +639,10 @@ describe("ensure-call-type-grants", () => {
       expect(applied()[role]).not.toContain("update-call-permissions-owner");
     }
     for (const role of ["user", "guest", "call_member"]) {
+      expect(applied()[role]).not.toContain("create-call");
+      expect(applied()[role]).not.toContain(
+        "enable-noise-cancellation-any-team",
+      );
       expect(applied()[role]).not.toContain("end-call-owner");
       expect(applied()[role]).not.toContain("start-recording-any-team");
     }
