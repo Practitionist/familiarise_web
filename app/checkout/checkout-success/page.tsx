@@ -9,7 +9,11 @@ import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
 import type { BookingState, MoneyState } from "@/app/api/checkout/verify/route";
+import { useSession } from "@/lib/auth-client";
+import { supportRequestsHref } from "@/lib/dashboard/account-href";
 interface PaymentDetails {
+  /** The internal Payment id; absent until the verify poll lands a SUCCEEDED row. */
+  paymentId?: string;
   paymentIntent: string;
   appointmentType: string;
   status: string;
@@ -45,6 +49,7 @@ function CheckoutSuccessContent() {
   const [pollRun, setPollRun] = useState(0);
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { data: session } = useSession();
 
   // Support both Stripe Checkout (sends session_id) and direct PI flow (sends payment_intent)
   const paymentIntent =
@@ -354,6 +359,14 @@ function CheckoutSuccessContent() {
         : "UNKNOWN",
     );
 
+  const consulteeProfileId = session?.user?.consulteeProfileId;
+  const paymentDetailHref =
+    consulteeProfileId && paymentDetails.paymentId
+      ? `/dashboard/consultee/${consulteeProfileId}/payments/${paymentDetails.paymentId}`
+      : null;
+  const supportHref =
+    (session?.user && supportRequestsHref(session.user)) ?? "/support";
+
   return (
     <div className="min-h-screen bg-muted py-12">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -404,6 +417,14 @@ function CheckoutSuccessContent() {
                 <div className="text-sm text-muted-foreground/70 font-mono break-all">
                   Payment ID: {paymentIntent}
                 </div>
+                {paymentDetailHref && (
+                  <Link
+                    href={paymentDetailHref}
+                    className="mt-2 inline-block text-sm font-medium text-foreground hover:underline"
+                  >
+                    View payment details
+                  </Link>
+                )}
               </div>
             )}
           </CardContent>
@@ -427,7 +448,7 @@ function CheckoutSuccessContent() {
           <p>
             Need help? Contact our{" "}
             <Link
-              href="/dashboard"
+              href={supportHref}
               className="text-foreground font-medium hover:underline"
             >
               support team
