@@ -276,6 +276,19 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     reportModelledRefundOutcome(err);
     throw err;
   }
+  // Org-funded and credit-funded intents have no gateway money; only
+  // refundBookingPayment's in-ledger rails may return them.
+  if (
+    payment.paymentIntent.startsWith("org_") ||
+    payment.paymentIntent.startsWith("free_")
+  ) {
+    const err = new RefundValidationError(
+      `Payment ${input.paymentId} is not gateway-funded; refund it through refundBookingPayment`,
+      "NOT_A_GATEWAY_PAYMENT",
+    );
+    reportModelledRefundOutcome(err);
+    throw err;
+  }
   if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
     const err = new RefundValidationError(
       `Payment ${input.paymentId} is not SUCCEEDED (status=${payment.paymentStatus}); cannot refund`,
