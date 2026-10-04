@@ -240,6 +240,24 @@ export function OfferingEditorContainer({
     }
   }
 
+  /** Cover-image changes are staged in the editor so Cancel never persists one. */
+  const commitStagedImage = async (): Promise<boolean> => {
+    if (!stagedImage || !planId) return true;
+    try {
+      await commitPlanImage(adapter.imageType, planId, stagedImage);
+      setStagedImage(null);
+      return true;
+    } catch (imageError) {
+      // The offering saved; keep the staged image and stay so a re-save retries it.
+      toast({
+        title: "Saved, but the cover image wasn't updated",
+        description: `${imageError instanceof Error ? imageError.message : "Please try again."} Save again to retry.`,
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
   const persist = async (
     values: Record<string, unknown>,
     { publish }: { publish: boolean },
@@ -258,21 +276,7 @@ export function OfferingEditorContainer({
       } else {
         await adapter.save(payload, consultantId, saveCtx);
       }
-      // Cover-image changes are staged in the editor so Cancel never persists one.
-      if (stagedImage && planId) {
-        try {
-          await commitPlanImage(adapter.imageType, planId, stagedImage);
-          setStagedImage(null);
-        } catch (imageError) {
-          // The offering saved; keep the staged image and stay so a re-save retries it.
-          toast({
-            title: "Saved, but the cover image wasn't updated",
-            description: `${imageError instanceof Error ? imageError.message : "Please try again."} Save again to retry.`,
-            variant: "destructive",
-          });
-          return;
-        }
-      }
+      if (!(await commitStagedImage())) return;
 
       toast(
         savedToast({

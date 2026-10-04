@@ -419,19 +419,22 @@ export async function GET(
       );
     }
 
-    // A group appointment carries every attendee's Payment; only ops and the plan's host see them all.
+    // A group appointment carries every attendee's Payment and seat; only ops and the plan's host see them all.
     const hostProfileId =
       appointment.webinar?.webinarPlan.consultantProfileId ??
       appointment.class?.classPlan.consultantProfileId;
-    const seesEveryPayment =
+    const seesEveryAttendee =
       isPrivileged(session.user.role) ||
       (!appointment.webinarId && !appointment.classId) ||
       (!!hostProfileId && hostProfileId === session.user.consultantProfileId);
-    const data = seesEveryPayment
+    const data = seesEveryAttendee
       ? appointment
       : {
           ...appointment,
           payment: appointment.payment.filter(
+            (p) => p.userId === session.user.id,
+          ),
+          participants: appointment.participants.filter(
             (p) => p.userId === session.user.id,
           ),
         };
