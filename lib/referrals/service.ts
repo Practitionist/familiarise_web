@@ -812,11 +812,7 @@ export async function getUserReferrals(
     now.getTime() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
   return rows.map((r) => {
-    const expiresAt = (r as { expiresAt?: Date | null }).expiresAt;
-    const isStale =
-      (r.status === "SIGNED_UP" || (r.status as string) === "PENDING") &&
-      ((expiresAt !== null && expiresAt !== undefined && expiresAt < now) ||
-        (r.signedUpAt !== null && r.signedUpAt < windowCutoff));
+    const isStale = r.status === "SIGNED_UP" && r.signedUpAt < windowCutoff;
     return isStale ? { ...r, status: "EXPIRED" as const } : r;
   });
 }

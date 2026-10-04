@@ -136,7 +136,10 @@ import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
-import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
+import {
+  type BusinessErrorCode,
+  isBusinessErrorCode,
+} from "@/lib/errors/classification/payment-error-classification";
 import {
   classEnrolmentFrom,
   type OpenClassEnrolment,
@@ -241,19 +244,20 @@ const SUPERSEDED_HOLD_NOTE =
  * stay out on purpose: they mean a programme is configured in a shape we
  * cannot collect on and must keep paging.
  */
-const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  "ORG_NOT_OPERATIONAL",
-  "ORG_CANNOT_SPONSOR",
-  "ORG_MEMBERSHIP_REQUIRED",
-  "ORG_CREDIT_LIMIT_REACHED",
-  "CONSULTANT_NOT_ON_PANEL",
-  "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
-  "CREDIT_SHORTFALL",
-  "DISCOUNT_EXHAUSTED",
-  "SUBSCRIPTION_ALREADY_ACTIVE",
-  "ALREADY_RENEWED",
-  "INVALID_RENEWAL_SOURCE",
-]);
+const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
+  new Set<BusinessErrorCode>([
+    "ORG_NOT_OPERATIONAL",
+    "ORG_CANNOT_SPONSOR",
+    "ORG_MEMBERSHIP_REQUIRED",
+    "ORG_CREDIT_LIMIT_REACHED",
+    "CONSULTANT_NOT_ON_PANEL",
+    "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+    "CREDIT_SHORTFALL",
+    "DISCOUNT_EXHAUSTED",
+    "SUBSCRIPTION_ALREADY_ACTIVE",
+    "ALREADY_RENEWED",
+    "INVALID_RENEWAL_SOURCE",
+  ]);
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -3562,6 +3566,11 @@ export async function handleCheckout(
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
 ) {
+  const requestedType = validatedData.appointmentType;
+  // Trials are booked through the trial flow; checkout never prices one.
+  if (requestedType === "TRIAL") {
+    throw new Error(`Unsupported appointment type: ${requestedType}`);
+  }
   let lock: ApprovalLock | ApprovalLock[] | null = null;
   let lockType = "";
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
@@ -3583,8 +3592,8 @@ export async function handleCheckout(
   // of truth for "is this booking sponsored?". A missing assignment on a
   // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
   // silently bill the learner's card.
-  const appointmentType = validatedData.appointmentType as
-    "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  const appointmentType: Exclude<CheckoutInput["appointmentType"], "TRIAL"> =
+    requestedType;
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
@@ -5105,7 +5114,7 @@ export async function handleCheckout(
         dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
         // #1582 B-P1-01b — the in-tx org/panel/credit refusals and the
         // CREDIT_SHORTFALL race are answers, not faults.
-        (typeof dbErrorCode === "string" &&
+        (isBusinessErrorCode(dbErrorCode) &&
           IN_TX_MODELLED_REFUSAL_CODES.has(dbErrorCode)) ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>

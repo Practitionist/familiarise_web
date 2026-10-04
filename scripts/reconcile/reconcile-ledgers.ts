@@ -1125,17 +1125,8 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
     });
     for (const t of overageTxns) {
       if (t.idempotencyKey.startsWith("overage-recarve-invoice:")) {
-        const debitLines =
-          t.entries ??
-          (
-            t as unknown as {
-              postings?: Array<{ amountPaise: number | bigint }>;
-            }
-          ).postings ??
-          [];
-        const debitSum = debitLines.reduce(
-          (s: number, p: { amountPaise: number | bigint }) =>
-            s + Number(p.amountPaise),
+        const debitSum = t.entries.reduce(
+          (s, p) => s + Number(p.amountPaise),
           0,
         );
         recarveReversalAmounts.set(t.idempotencyKey, debitSum);

@@ -741,9 +741,8 @@ async function capturedPaymentIdOfOrder(
     );
   }
 
-  // PM-12 — an order can carry failed attempts before the captured one;
-  // items[0] is creation-ordered. #1584 P1-GW01b — never fall back to it:
-  // an order with no captured payment has nothing to refund.
+  // An order can carry failed attempts before the captured one, and one with
+  // no captured payment has nothing to refund, so never fall back to items[0].
   const payment = payments.items.find((p) => p.status === "captured");
   if (!payment) {
     throw new RefundError(
@@ -914,7 +913,7 @@ async function firstPaymentIdOfOrder(
     razorpayClient.orders.fetchPayments(orderId),
   );
   if (payments.count === 0) return null;
-  // PM-12 — prefer the captured payment over a failed earlier attempt.
+  // Prefer the captured payment over a failed earlier attempt.
   return (
     payments.items.find((p) => p.status === "captured") ?? payments.items[0]
   ).id;

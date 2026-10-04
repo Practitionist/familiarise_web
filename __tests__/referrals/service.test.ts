@@ -333,7 +333,7 @@ describe("#880 — role weighting, caps and program budget", () => {
 });
 
 describe("getUserReferrals — derives EXPIRED status at read time", () => {
-  it("projects EXPIRED for stale SIGNED_UP/PENDING referrals while keeping fresh or REWARDED rows intact", async () => {
+  it("projects EXPIRED for stale SIGNED_UP referrals while keeping fresh or REWARDED rows intact", async () => {
     mockTx.referralCode.findUnique.mockResolvedValue({ id: "code-1" });
     const now = Date.now();
     mockTx.referral.findMany.mockResolvedValue([
@@ -342,13 +342,6 @@ describe("getUserReferrals — derives EXPIRED status at read time", () => {
         status: "SIGNED_UP",
         signedUpAt: new Date(now - (QUALIFICATION_WINDOW_DAYS + 2) * DAY_MS),
         referredUser: { name: "Stale SignedUp", image: null },
-      },
-      {
-        id: "ref-stale-expires",
-        status: "PENDING",
-        expiresAt: new Date(now - DAY_MS),
-        signedUpAt: new Date(now - 5 * DAY_MS),
-        referredUser: { name: "Stale Pending", image: null },
       },
       {
         id: "ref-fresh",
@@ -368,7 +361,6 @@ describe("getUserReferrals — derives EXPIRED status at read time", () => {
 
     expect(result.map((r) => ({ id: r.id, status: r.status }))).toEqual([
       { id: "ref-stale-window", status: "EXPIRED" },
-      { id: "ref-stale-expires", status: "EXPIRED" },
       { id: "ref-fresh", status: "SIGNED_UP" },
       { id: "ref-rewarded", status: "REWARDED" },
     ]);
