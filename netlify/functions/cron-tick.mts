@@ -471,9 +471,10 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
  */
 async function alertFailedTargets(
   failed: { name: string; status: number }[],
+  tickStart: Date,
 ): Promise<void> {
-  const now = new Date();
-  const due = failed.filter((f) => isFirstDueTickOfHour(f.name, now));
+  // Judge against the tick's start: targets can run 20 s past a minute boundary.
+  const due = failed.filter((f) => isFirstDueTickOfHour(f.name, tickStart));
   if (due.length === 0) return;
   try {
     const Sentry = await import("@sentry/node");
@@ -644,7 +645,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // It stays in `failed` for the HTTP status and the body, so a 503 from the
   // canary is still visible in the tick's own output and in the job-execution
   // history — only the Sentry report is suppressed.
-  await alertFailedTargets(failed.filter((f) => reportableToSentry(f.name)));
+  await alertFailedTargets(
+    failed.filter((f) => reportableToSentry(f.name)),
+    new Date(started),
+  );
 
   // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it
   // never delays them. Health follows `failed`, not the (always-200) HTTP

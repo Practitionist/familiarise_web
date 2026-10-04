@@ -697,6 +697,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
           unresolvableCount: r.unresolvableCount,
           retiredCount: r.retiredCount,
+          errors: r.errors.slice(0, 5),
         }),
         status: (r) =>
           statusFor(
@@ -744,6 +745,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           skippedCount: r.skippedCount,
           skippedFenced: r.skippedFenced,
           failedUnknownId: r.failedUnknownId,
+          errors: r.errors.slice(0, 5),
         }),
         status: (r) => statusFor(r, r.skippedFenced > 0),
         failureMessage: "Failed to reconcile refunds",

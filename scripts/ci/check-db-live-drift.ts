@@ -9,28 +9,17 @@ import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { z } from "zod";
 
 import {
   droppedIndexName,
   normalise,
+  parseKnownDrift,
   planStatements,
   sidecarOwnedUniqueIndexes,
 } from "../db/preflight-push";
 
 const ROOT = path.join(__dirname, "..", "..");
 const SQL_DIR = path.join(ROOT, "prisma", "sql");
-
-const KnownStatementSchema = z.object({
-  statement: z.string(),
-  /** Last day (UTC, inclusive) the entry is honoured. */
-  expires: z.string().date(),
-});
-type KnownStatement = z.infer<typeof KnownStatementSchema>;
-
-const KnownDriftSchema = z.object({
-  destructiveStatementsAllowed: z.array(KnownStatementSchema).default([]),
-});
 
 /** Every index a sidecar creates; the schema omits them, so each push plans to drop them. */
 function sidecarOwnedIndexes(): Set<string> {
@@ -45,18 +34,6 @@ function sidecarOwnedIndexes(): Set<string> {
     }
   }
   return names;
-}
-
-function knownStatements(): KnownStatement[] {
-  const parsed = KnownDriftSchema.safeParse(
-    JSON.parse(fs.readFileSync(path.join(SQL_DIR, "known-drift.json"), "utf8")),
-  );
-  if (!parsed.success) {
-    throw new Error(
-      `prisma/sql/known-drift.json: invalid destructiveStatementsAllowed: ${parsed.error.message}`,
-    );
-  }
-  return parsed.data.destructiveStatementsAllowed;
 }
 
 /** Midnight UTC of a `YYYY-MM-DD` date, as epoch milliseconds. */
@@ -85,7 +62,7 @@ function main(): void {
   );
 
   const owned = sidecarOwnedIndexes();
-  const known = knownStatements();
+  const known = parseKnownDrift(path.join(SQL_DIR, "known-drift.json"));
   const today = utcDay(new Date().toISOString().slice(0, 10));
   const unexpected = planStatements(plan).filter((statement) => {
     const dropped = droppedIndexName(statement);
