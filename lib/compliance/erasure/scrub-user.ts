@@ -803,64 +803,42 @@ export async function scrubUser(
     }
 
     if (erasureRequestId && tx.vendorErasureRetry?.upsert) {
-      await tx.vendorErasureRetry.upsert({
-        where: {
-          erasureRequestId_vendor_vendorRef: {
-            erasureRequestId,
-            vendor: "NOVU",
-            vendorRef: userId,
-          },
-        },
-        create: {
-          erasureRequestId,
-          vendor: "NOVU",
-          vendorRef: userId,
-          status: "PENDING",
-        },
-        update: { status: "PENDING" },
-      });
-      await tx.vendorErasureRetry.upsert({
-        where: {
-          erasureRequestId_vendor_vendorRef: {
-            erasureRequestId,
-            vendor: "STREAM",
-            vendorRef: userId,
-          },
-        },
-        create: {
-          erasureRequestId,
-          vendor: "STREAM",
-          vendorRef: userId,
-          status: "PENDING",
-        },
-        update: { status: "PENDING" },
-      });
+      const vendorStages: Array<{
+        vendor: "NOVU" | "STREAM" | "RAZORPAY";
+        payload?: Record<string, unknown>;
+      }> = [{ vendor: "NOVU" }, { vendor: "STREAM" }];
       if (hasRazorpayWork) {
-        const razorpayPayload = {
-          customerId: existing.razorpayCustomerId ?? null,
-          payoutAccounts: payoutAccounts.map((a) => ({
-            id: a.id,
-            razorpayContactId: a.razorpayContactId,
-            razorpayFundAccId: a.razorpayFundAccId,
-          })),
-        };
+        vendorStages.push({
+          vendor: "RAZORPAY",
+          payload: {
+            customerId: existing.razorpayCustomerId ?? null,
+            payoutAccounts: payoutAccounts.map((a) => ({
+              id: a.id,
+              razorpayContactId: a.razorpayContactId,
+              razorpayFundAccId: a.razorpayFundAccId,
+            })),
+          },
+        });
+      }
+      for (const stage of vendorStages) {
+        const payloadField = stage.payload ? { payload: stage.payload } : {};
         await tx.vendorErasureRetry.upsert({
           where: {
             erasureRequestId_vendor_vendorRef: {
               erasureRequestId,
-              vendor: "RAZORPAY",
+              vendor: stage.vendor,
               vendorRef: userId,
             },
           },
           create: {
             erasureRequestId,
-            vendor: "RAZORPAY",
+            vendor: stage.vendor,
             vendorRef: userId,
-            payload: razorpayPayload,
+            ...payloadField,
             status: "PENDING",
           },
           update: {
-            payload: razorpayPayload,
+            ...payloadField,
             status: "PENDING",
           },
         });

@@ -274,6 +274,45 @@ async function executeErasureRevocationRow(
   }
 }
 
+async function recordErasureOutboxOutcome(params: {
+  delegate: {
+    update: (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => Promise<unknown>;
+  };
+  row: { id: string; attempts: number; erasureRequestId: string | null };
+  error: string | null;
+  errorLabel: string;
+  now: Date;
+  result: ModerationRetryResult;
+  settledRequestIds: Set<string>;
+}): Promise<void> {
+  const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
+    params;
+  const attempts = row.attempts + 1;
+  await delegate.update({
+    where: { id: row.id },
+    data: error
+      ? {
+          status: "FAILED",
+          attempts,
+          lastError: error,
+          nextRetryAt: nextRetryAt(attempts, now),
+        }
+      : { status: "SUCCEEDED", attempts, completedAt: now },
+  });
+  if (error) {
+    result.stillFailing++;
+    result.errors.push(`${errorLabel} ${row.id}: ${error}`);
+  } else {
+    result.erasureRevocationsRecovered++;
+    if (row.erasureRequestId) {
+      settledRequestIds.add(row.erasureRequestId);
+    }
+  }
+}
+
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
@@ -311,27 +350,15 @@ async function drainErasureRevocations(
       eraseStreamPrincipalFootprint,
       revokeCollaboratorAccess,
     });
-    const attempts = row.attempts + 1;
-    await prisma.streamRevocationRetry.update({
-      where: { id: row.id },
-      data: error
-        ? {
-            status: "FAILED",
-            attempts,
-            lastError: error,
-            nextRetryAt: nextRetryAt(attempts, now),
-          }
-        : { status: "SUCCEEDED", attempts, completedAt: now },
+    await recordErasureOutboxOutcome({
+      delegate: prisma.streamRevocationRetry,
+      row,
+      error,
+      errorLabel: "erasure-revoke",
+      now,
+      result,
+      settledRequestIds,
     });
-    if (error) {
-      result.stillFailing++;
-      result.errors.push(`erasure-revoke ${row.id}: ${error}`);
-    } else {
-      result.erasureRevocationsRecovered++;
-      if (row.erasureRequestId) {
-        settledRequestIds.add(row.erasureRequestId);
-      }
-    }
   }
 }
 
@@ -397,30 +424,15 @@ async function drainVendorErasureRetries(
       error = errMsg(error_);
     }
 
-    const attempts = row.attempts + 1;
-    await prisma.vendorErasureRetry.update({
-      where: { id: row.id },
-      data: error
-        ? {
-            status: "FAILED",
-            attempts,
-            lastError: error,
-            nextRetryAt: nextRetryAt(attempts, now),
-          }
-        : { status: "SUCCEEDED", attempts, completedAt: now },
+    await recordErasureOutboxOutcome({
+      delegate: prisma.vendorErasureRetry,
+      row,
+      error,
+      errorLabel: `vendor-erasure ${row.vendor.toLowerCase()}`,
+      now,
+      result,
+      settledRequestIds,
     });
-
-    if (error) {
-      result.stillFailing++;
-      result.errors.push(
-        `vendor-erasure ${row.vendor.toLowerCase()} ${row.id}: ${error}`,
-      );
-    } else {
-      result.erasureRevocationsRecovered++;
-      if (row.erasureRequestId) {
-        settledRequestIds.add(row.erasureRequestId);
-      }
-    }
   }
 }
 
@@ -430,20 +442,16 @@ async function finalizeCompletedErasureRequests(
   if (settledRequestIds.size === 0 || !prisma.erasureRequest) return;
   const now = new Date();
   for (const erasureRequestId of settledRequestIds) {
+    const pendingFilter = {
+      where: {
+        erasureRequestId,
+        status: { in: ["PENDING" as const, "FAILED" as const] },
+      },
+    };
     const pendingStream =
-      (await prisma.streamRevocationRetry?.count?.({
-        where: {
-          erasureRequestId,
-          status: { in: ["PENDING", "FAILED"] },
-        },
-      })) ?? 0;
+      (await prisma.streamRevocationRetry?.count?.(pendingFilter)) ?? 0;
     const pendingVendor =
-      (await prisma.vendorErasureRetry?.count?.({
-        where: {
-          erasureRequestId,
-          status: { in: ["PENDING", "FAILED"] },
-        },
-      })) ?? 0;
+      (await prisma.vendorErasureRetry?.count?.(pendingFilter)) ?? 0;
     if (pendingStream > 0 || pendingVendor > 0) continue;
 
     if (prisma.erasureRequest.updateMany) {
