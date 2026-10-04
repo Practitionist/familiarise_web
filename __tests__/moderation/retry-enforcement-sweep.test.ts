@@ -35,6 +35,15 @@ jest.mock("../../lib/prisma", () => ({
     streamRevocationRetry: {
       findMany: jest.fn(async () => []),
       update: jest.fn(async () => ({})),
+      count: jest.fn(async () => 0),
+    },
+    vendorErasureRetry: {
+      findMany: jest.fn(async () => []),
+      update: jest.fn(async () => ({})),
+      count: jest.fn(async () => 0),
+    },
+    erasureRequest: {
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     $disconnect: jest.fn(async () => undefined),
   },
@@ -69,6 +78,9 @@ const findMany = prisma.moderationAction.findMany as jest.Mock;
 const update = prisma.moderationAction.update as jest.Mock;
 const outboxFindMany = prisma.streamRevocationRetry.findMany as jest.Mock;
 const outboxUpdate = prisma.streamRevocationRetry.update as jest.Mock;
+const vendorOutboxFindMany = prisma.vendorErasureRetry.findMany as jest.Mock;
+const vendorOutboxUpdate = prisma.vendorErasureRetry.update as jest.Mock;
+const erasureRequestUpdateMany = prisma.erasureRequest.updateMany as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
 
@@ -95,6 +107,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   findUser.mockResolvedValue({ banned: true, banExpires: null });
   enforce.mockResolvedValue(undefined);
+  outboxFindMany.mockResolvedValue([]);
+  vendorOutboxFindMany.mockResolvedValue([]);
 });
 
 describe("retryModerationEnforcement", () => {
@@ -259,6 +273,7 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-1",
+        erasureRequestId: "er-1",
         planType: "CLASS",
         planId: "cp-9",
         attempts: 1,
@@ -277,6 +292,38 @@ describe("retryModerationEnforcement", () => {
     expect(outboxUpdate).toHaveBeenCalledWith({
       where: { id: "retry-1" },
       data: { status: "SUCCEEDED", attempts: 2, completedAt: expect.any(Date) },
+    });
+    expect(erasureRequestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "er-1", status: "IN_PROGRESS" },
+      data: { status: "COMPLETED", completedAt: expect.any(Date) },
+    });
+    expect(result.erasureRevocationsRecovered).toBe(1);
+    expect(result.success).toBe(true);
+  });
+
+  it("drains VendorErasureRetry rows and finalizes IN_PROGRESS ErasureRequest when all outbox legs succeed", async () => {
+    findMany.mockResolvedValue([]);
+    vendorOutboxFindMany.mockResolvedValueOnce([
+      {
+        id: "vr-1",
+        erasureRequestId: "er-vendor-1",
+        vendor: "RAZORPAY",
+        vendorRef: "u-erased",
+        payload: { customerId: null, payoutAccounts: [] },
+        attempts: 1,
+        erasureRequest: { userId: "u-erased" },
+      },
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(vendorOutboxUpdate).toHaveBeenCalledWith({
+      where: { id: "vr-1" },
+      data: { status: "SUCCEEDED", attempts: 2, completedAt: expect.any(Date) },
+    });
+    expect(erasureRequestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "er-vendor-1", status: "IN_PROGRESS" },
+      data: { status: "COMPLETED", completedAt: expect.any(Date) },
     });
     expect(result.erasureRevocationsRecovered).toBe(1);
     expect(result.success).toBe(true);

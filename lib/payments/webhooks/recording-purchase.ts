@@ -210,19 +210,14 @@ export async function handleRecordingPurchaseSuccess(
 
     if (purchase.status === "SUCCEEDED") return; // idempotent replay
 
-    const planInfo = resolvePurchasePlanInfo(purchase);
-    if (!planInfo) {
-      Sentry.captureMessage(
-        `[recording-purchase] unable to resolve owning consultant plan for order: ${orderId}`,
-        { level: "error", tags: { subsystem: "payments" } },
+    const grossAmountPaise = Number(purchase.amountPaise);
+    if (!Number.isSafeInteger(grossAmountPaise) || grossAmountPaise <= 0) {
+      throw new Error(
+        `[recording-purchase] invalid amountPaise for order ${orderId}`,
       );
-      return;
     }
 
-    const grossAmountPaise = Number(purchase.amountPaise);
-    if (!Number.isFinite(grossAmountPaise) || grossAmountPaise <= 0) {
-      return;
-    }
+    const planInfo = resolvePurchasePlanInfo(purchase);
 
     const claimed = await tx.recordingPurchase.updateMany({
       where: { id: purchase.id, status: "PENDING" },
@@ -252,10 +247,21 @@ export async function handleRecordingPurchaseSuccess(
           paymentGateway: "RAZORPAY",
           paymentStatus: "SUCCEEDED",
           capturedAt: new Date(),
-          organizationId: planInfo.organizationId,
+          organizationId:
+            planInfo?.organizationId ??
+            purchase.recording?.organizationId ??
+            null,
           ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
         },
       }));
+
+    if (!planInfo) {
+      Sentry.captureMessage(
+        `[recording-purchase] settled without earnings owner: ${orderId}`,
+        { level: "error", tags: { subsystem: "payments" } },
+      );
+      return;
+    }
 
     await createEarningsFromPayment({
       payment: {

@@ -63,40 +63,83 @@ export async function GET(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "purchaseOrders.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "purchaseOrders.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const po = await prisma.purchaseOrder.findFirst({
     where: { id: poId, organizationId: orgId },
     include: {
       contracts: {
-        select: { id: true, status: true, effectiveFrom: true, effectiveTo: true },
+        select: {
+          id: true,
+          status: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+        },
       },
       invoices: {
-        select: { id: true, invoiceNumber: true, status: true, totalPaise: true },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          totalPaise: true,
+        },
       },
     },
   });
   if (!po) {
-    return NextResponse.json({ error: "PurchaseOrder not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "PurchaseOrder not found" },
+      { status: 404 },
+    );
   }
   return NextResponse.json({ purchaseOrder: po });
 }
 
-export async function PATCH(
-  req: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{ orgId: string; poId: string }>;
-  },
+async function authorizePurchaseOrderMutation(
+  params: Promise<{ orgId: string; poId: string }>,
+  options: { permission: "purchaseOrders.manage" },
 ) {
   const { orgId, poId } = await params;
   const access = await requireOrgAccess(orgId, {
-    permission: "purchaseOrders.manage",
+    permission: options.permission,
     canSponsor: true,
+    requireActive: true,
   });
-  if (access.error) return access.error;
+  if (access.error) return { error: access.error };
+  return { error: null, orgId, poId, actorMembershipId: access.member.id };
+}
+
+function handlePurchaseOrderError(poError: unknown): NextResponse {
+  const tagged = poError as { httpStatus?: unknown; code?: unknown };
+  if (poError instanceof Error && "httpStatus" in poError) {
+    const status =
+      typeof tagged.httpStatus === "number" ? tagged.httpStatus : 500;
+    const payload =
+      typeof tagged.code === "string"
+        ? { error: poError.message, code: tagged.code }
+        : { error: poError.message };
+    return NextResponse.json(payload, { status });
+  }
+  Sentry.captureException(
+    poError instanceof Error ? poError : new Error(String(poError)),
+    { tags: { subsystem: "enterprise" } },
+  );
+  throw poError;
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string; poId: string }> },
+) {
+  const auth = await authorizePurchaseOrderMutation(params, {
+    permission: "purchaseOrders.manage",
+  });
+  if (auth.error) return auth.error;
+  const { orgId, poId, actorMembershipId } = auth;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -145,7 +188,7 @@ export async function PATCH(
           data: { ...moneyOrTermData, ...docData },
           audit: {
             organizationId: orgId,
-            actorMembershipId: access.member.id,
+            actorMembershipId,
             category: "INVOICE", // PO lifecycle rides the INVOICE category (see OrgAuditCategory)
             action:
               body.status === "CLOSED"
@@ -184,7 +227,7 @@ export async function PATCH(
         await tx.orgAuditLog.create({
           data: {
             organizationId: orgId,
-            actorMembershipId: access.member.id,
+            actorMembershipId,
             category: "INVOICE",
             action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_UPDATED,
             description: `PurchaseOrder ${current.poNumber} updated: ${changed.join(", ")}`,
@@ -202,35 +245,19 @@ export async function PATCH(
     });
     return NextResponse.json({ purchaseOrder: updated });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      const code =
-        "code" in err && typeof err.code === "string" ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code && { code }) },
-        { status },
-      );
-    }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    throw err;
+    return handlePurchaseOrderError(err);
   }
 }
 
 export async function DELETE(
   _req: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{ orgId: string; poId: string }>;
-  },
+  { params }: { params: Promise<{ orgId: string; poId: string }> },
 ) {
-  const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, {
+  const auth = await authorizePurchaseOrderMutation(params, {
     permission: "purchaseOrders.manage",
-    canSponsor: true,
   });
-  if (access.error) return access.error;
+  if (auth.error) return auth.error;
+  const { orgId, poId, actorMembershipId } = auth;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -258,7 +285,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId,
           category: "INVOICE",
           action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_DELETED,
           description: `PurchaseOrder ${current.poNumber} deleted`,
@@ -274,12 +301,6 @@ export async function DELETE(
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    throw err;
+    return handlePurchaseOrderError(err);
   }
 }

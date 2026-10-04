@@ -7,6 +7,7 @@ import { Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
+  derivePseudonym,
   eraseStreamPrincipalFootprint,
   hasMoneyInFlight,
   moneyInFlightForUser,
@@ -246,9 +247,7 @@ async function checkConsulteeActiveBookingsBlock(
   );
 }
 
-async function evaluateUserDeletionEligibility(
-  id: string,
-): Promise<{
+async function evaluateUserDeletionEligibility(id: string): Promise<{
   blockerResponse: NextResponse | null;
   hasRetainedHistory: boolean;
 }> {
@@ -384,7 +383,20 @@ async function executeUserHardDeleteOrFallbackScrub(
     });
   }
 
+  const subjectPseudonymousId = derivePseudonym(id);
+  const now = new Date();
+  const auditRetainedUntil = new Date(now);
+  auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
   await prisma.$transaction([
+    prisma.consentArtifact.updateMany({
+      where: { userId: id },
+      data: {
+        userId: null,
+        subjectPseudonymousId,
+        withdrawnAt: now,
+        auditRetainedUntil,
+      },
+    }),
     prisma.session.deleteMany({ where: { userId: id } }),
     prisma.user.delete({ where: { id } }),
   ]);

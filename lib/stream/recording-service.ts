@@ -22,6 +22,7 @@ import {
   RecordingTransferService,
   resolveAppointmentStoragePolicy,
 } from "@/lib/stream/recording-transfer-service";
+import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import type {
   RecordingRow,
   ConsultantRecordingWithDetails,
@@ -1115,12 +1116,18 @@ export class RecordingService {
           storagePolicy === "PERMANENT" ||
           storagePolicy === "SUPABASE_PERMANENT"
         ) {
-          await RecordingTransferService.queueRecordingTransfer(
-            recording.id,
-          ).catch((err) =>
-            streamLogger.error("Synced recording transfer kick threw", err, {
-              recordingId: recording.id,
-            }),
+          const recordingId = recording.id;
+          await runAfterOrInline(() =>
+            RecordingTransferService.queueRecordingTransfer(recordingId).catch(
+              (err) =>
+                streamLogger.error(
+                  "Synced recording transfer kick threw",
+                  err,
+                  {
+                    recordingId,
+                  },
+                ),
+            ),
           );
         }
 

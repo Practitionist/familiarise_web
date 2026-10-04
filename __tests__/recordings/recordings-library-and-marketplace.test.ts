@@ -181,10 +181,8 @@ import {
   ClientPublishSchema,
   canDeleteRecording,
 } from "@/components/recordings/RecordingManageSheet";
-import {
-  buildCaptionTrackDataUri,
-  resolveActivePlaybackUrl,
-} from "@/components/recordings/RecordingPlayerModal";
+import { resolveActivePlaybackUrl } from "@/components/recordings/RecordingPlayerModal";
+import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { RecordingListing } from "@/lib/data/recordings-explore";
 import { handleRecordingPurchaseSuccess } from "@/lib/payments/webhooks/recording-purchase";

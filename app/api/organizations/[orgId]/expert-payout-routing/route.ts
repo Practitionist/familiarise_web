@@ -65,7 +65,7 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { requireActive: true });
   if (access.error) return access.error;
 
   // #1851 decision 5 — where an expert is paid is a finance decision, so the

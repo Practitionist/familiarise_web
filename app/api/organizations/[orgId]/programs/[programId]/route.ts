@@ -456,6 +456,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -531,6 +532,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

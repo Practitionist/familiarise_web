@@ -15,7 +15,7 @@ import {
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { Badge } from "@/components/ui/badge";
-import { buildCaptionTrackDataUri } from "@/components/recordings/RecordingPlayerModal";
+import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
 import { RecordingBuyButton } from "./RecordingBuyButton";
 
 type RecordingAccessRow = {
@@ -101,7 +101,11 @@ function renderMedia(
 ) {
   const playbackSrc = fullPlaybackUrl ?? listing.previewClipUrl;
   if (playbackSrc) {
-    const captionTrackSrc = buildCaptionTrackDataUri(listing.previewTranscript);
+    const trimmedPreviewTranscript = listing.previewTranscript?.trim() || null;
+    const captionTrackSrc =
+      !fullPlaybackUrl && trimmedPreviewTranscript
+        ? buildCaptionTrackDataUri(trimmedPreviewTranscript)
+        : null;
     return (
       <video
         src={playbackSrc}
@@ -111,16 +115,18 @@ function renderMedia(
         controlsList="nodownload"
         className="h-full w-full object-cover"
         aria-describedby={
-          listing.previewTranscript ? "preview-transcript" : undefined
+          trimmedPreviewTranscript ? "preview-transcript" : undefined
         }
       >
-        <track
-          kind="captions"
-          srcLang="en"
-          label="Transcript"
-          src={captionTrackSrc}
-          default
-        />
+        {captionTrackSrc && (
+          <track
+            kind="captions"
+            srcLang="en"
+            label="Transcript"
+            src={captionTrackSrc}
+            default
+          />
+        )}
       </video>
     );
   }

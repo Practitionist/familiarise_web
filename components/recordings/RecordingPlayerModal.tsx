@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
+import { buildCaptionTrackDataUri } from "./caption-track";
 
 export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
@@ -93,14 +94,6 @@ function computeStorageBadge(
     return { label: "Temporary Stream Storage", permanent: false };
   }
   return null;
-}
-
-export function buildCaptionTrackDataUri(
-  transcriptText?: string | null,
-): string {
-  const cueBody = transcriptText?.trim() || "Session recording";
-  const vtt = `WEBVTT\n\n00:00:00.000 --> 99:59:59.000\n${cueBody}\n`;
-  return `data:text/vtt;charset=utf-8,${encodeURIComponent(vtt)}`;
 }
 
 interface PlayerViewportProps {

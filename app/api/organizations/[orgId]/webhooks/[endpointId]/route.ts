@@ -135,6 +135,7 @@ export async function PATCH(
   const { orgId, endpointId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "integrations.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -252,6 +253,7 @@ export async function DELETE(
   // action requires deliberate elevation.
   const access = await requireOrgAccess(orgId, {
     permission: "webhooks.delete",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

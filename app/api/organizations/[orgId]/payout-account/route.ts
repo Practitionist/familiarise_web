@@ -180,6 +180,7 @@ export async function PUT(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.account.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

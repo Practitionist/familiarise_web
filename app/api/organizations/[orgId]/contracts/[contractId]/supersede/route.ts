@@ -156,6 +156,7 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "contracts.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -325,7 +326,10 @@ export async function POST(
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

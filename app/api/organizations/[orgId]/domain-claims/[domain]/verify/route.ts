@@ -40,6 +40,7 @@ export async function POST(
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -98,7 +99,10 @@ export async function POST(
         { status: 422 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     console.error(
       JSON.stringify({
         event: "domain_verify_dns_resolve_failed",
@@ -121,9 +125,7 @@ export async function POST(
   // span multiple chunks). We look for any record whose concatenated
   // chunks equal the expected token.
   const expected = claim.verificationToken;
-  const matched = records.some(
-    (chunks) => chunks.join("").trim() === expected,
-  );
+  const matched = records.some((chunks) => chunks.join("").trim() === expected);
   if (!matched) {
     return NextResponse.json(
       {

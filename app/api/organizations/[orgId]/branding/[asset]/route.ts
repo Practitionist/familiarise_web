@@ -54,18 +54,53 @@ function badAsset() {
   );
 }
 
+async function authorizeBrandingMutation(
+  params: Promise<{ orgId: string; asset: string }>,
+  options: { permission: "settings.manage" },
+) {
+  const { orgId, asset: rawAsset } = await params;
+  const asset = parseAsset(rawAsset);
+  if (!asset) return { error: badAsset() };
+
+  const access = await requireOrgAccess(orgId, {
+    permission: options.permission,
+    requireActive: true,
+  });
+  if (access.error) return { error: access.error };
+
+  return {
+    error: null,
+    orgId,
+    asset,
+    column: ASSET_COLUMN[asset],
+    memberId: access.member.id,
+  };
+}
+
+function handleBrandingError(
+  asset: Asset,
+  verb: "persist" | "clear",
+  err: unknown,
+) {
+  Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+    tags: { subsystem: "enterprise" },
+  });
+  console.error(`Failed to ${verb} organization ${asset}:`, err);
+  return NextResponse.json(
+    { error: "Failed to update organization branding" },
+    { status: 500 },
+  );
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
 ) {
-  const { orgId, asset: rawAsset } = await params;
-  const asset = parseAsset(rawAsset);
-  if (!asset) return badAsset();
-
-  const access = await requireOrgAccess(orgId, {
+  const auth = await authorizeBrandingMutation(params, {
     permission: "settings.manage",
   });
-  if (access.error) return access.error;
+  if (auth.error) return auth.error;
+  const { orgId, asset, column, memberId } = auth;
 
   let formData: FormData;
   try {
@@ -79,10 +114,7 @@ export async function POST(
 
   const file = formData.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json(
-      { error: "No file provided" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
   if (!ALLOWED_ORG_BRANDING_IMAGE_TYPES.includes(file.type)) {
@@ -116,7 +148,6 @@ export async function POST(
     );
   }
 
-  const column = ASSET_COLUMN[asset];
   const fileUrl = uploadResult.fileUrl;
   const storagePath = uploadResult.storagePath;
 
@@ -134,7 +165,7 @@ export async function POST(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: memberId,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
           description: `Organization ${asset} updated`,
@@ -142,17 +173,12 @@ export async function POST(
         },
       });
 
-      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
+      return { id: orgId, ...profile };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    console.error(`Failed to persist organization ${asset}:`, err);
-    return NextResponse.json(
-      { error: "Failed to update organization branding" },
-      { status: 500 },
-    );
+    return handleBrandingError(asset, "persist", err);
   }
 }
 
@@ -160,16 +186,11 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
 ) {
-  const { orgId, asset: rawAsset } = await params;
-  const asset = parseAsset(rawAsset);
-  if (!asset) return badAsset();
-
-  const access = await requireOrgAccess(orgId, {
+  const auth = await authorizeBrandingMutation(params, {
     permission: "settings.manage",
   });
-  if (access.error) return access.error;
-
-  const column = ASSET_COLUMN[asset];
+  if (auth.error) return auth.error;
+  const { orgId, asset, column, memberId } = auth;
 
   const current = await prisma.organization.findUnique({
     where: { id: orgId },
@@ -217,7 +238,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: memberId,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
           description: `Organization ${asset} removed`,
@@ -225,16 +246,11 @@ export async function DELETE(
         },
       });
 
-      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
+      return { id: orgId, ...profile };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
-    console.error(`Failed to clear organization ${asset}:`, err);
-    return NextResponse.json(
-      { error: "Failed to update organization branding" },
-      { status: 500 },
-    );
+    return handleBrandingError(asset, "clear", err);
   }
 }
