@@ -16,7 +16,7 @@ last-reviewed: 2026-06-05
 
 ## 1. The checks
 
-The auditor verifies **fourteen** core `Finding` kinds via single-pass, set-based PostgreSQL aggregations (`$queryRaw` / `groupBy`). Three run **full-scope only** (the global journal sweeps — `LEDGER_TXN_IMBALANCE`, `LEDGER_BALANCE_SNAPSHOT_DRIFT`, `REFUND_BOOKING_COHERENCE`); the rest accept an `organizationId` filter for incident triage.
+The auditor verifies **thirteen** core `Finding` kinds via single-pass, set-based PostgreSQL aggregations (`$queryRaw` / `groupBy`). Two run **full-scope only** (the global journal sweeps — `LEDGER_TXN_IMBALANCE` and `REFUND_BOOKING_COHERENCE`); the rest accept an `organizationId` filter for incident triage.
 
 ```mermaid
 flowchart TD
@@ -31,7 +31,7 @@ flowchart TD
   R --> H["PAYMENT_LEG_SUM_MISMATCH"]
   R --> IT["INVOICE_TOTAL_MISMATCH"]
   R --> G["ORG_PAYOUT_TOTAL_MISMATCH"]
-  R --> FULL["full-scope only:<br/>LEDGER_TXN_IMBALANCE<br/>LEDGER_BALANCE_SNAPSHOT_DRIFT<br/>REFUND_BOOKING_COHERENCE"]
+  R --> FULL["full-scope only:<br/>LEDGER_TXN_IMBALANCE<br/>REFUND_BOOKING_COHERENCE"]
   A & E2 & E & CP & OC & OI & NI & F & H & IT & G & FULL --> Z["findings[]"]
   Z --> RP["LedgerReconciliationReport<br/>{ ok, summary, findings }"]
   RP --> OK{"findings.length == 0?"}
@@ -53,7 +53,6 @@ flowchart TD
 | `INVOICE_TOTAL_MISMATCH`               | per `OrganizationInvoice`                                                       | `totalPaise == subtotalPaise + CGST + SGST + IGST`                                                                                                                   | a mis-totaled GST invoice (filing defect); the issue-time assert in `invoice-rollup.ts` blocks new ones, this sweeps legacy/manual rows                                                                            |
 | `ORG_PAYOUT_TOTAL_MISMATCH`            | per `OrganizationPayout` in `PENDING` / `APPROVED` / `PROCESSING` / `COMPLETED` | `sum(orgShare − refunded) of batched earnings == netPayoutPaise`                                                                                                     | the batch claim updated earnings but the payout total diverged. Terminal-with-release statuses (`FAILED`, `REVERSED`, `CANCELLED`) are skipped because they detach their earnings back to `READY` by design        |
 | `LEDGER_TXN_IMBALANCE`                 | per `LedgerTransaction` (**full scope only**)                                   | `Σdebit == Σcredit`                                                                                                                                                  | a manual SQL edit or a future writer bug broke a posting                                                                                                                                                           |
-| `LEDGER_BALANCE_SNAPSHOT_DRIFT`        | per `LedgerAccount` (**full scope only**)                                       | maintained `LedgerAccountBalance` snapshot == journal `Σ(DEBIT)−Σ(CREDIT)`                                                                                           | the O(1) running-balance cache drifted, or an account with entries has no snapshot row (a posting bypassed `postLedgerTxn`)                                                                                        |
 | `REFUND_BOOKING_COHERENCE`             | per `BookingUtilization` (**full scope only**)                                  | fully-refunded payment ⇒ utilization reversed; reversed utilization ⇒ a `SUCCEEDED` refund backs it                                                                  | a cap leak (money back but the seat still consumed) or a seat released for free                                                                                                                                    |
 | `LEDGER_DUAL_WRITE_GAP`                | per `OrganizationPayout` with `clawbackAmountPaise > 0`                         | a `clawback:*` `LedgerTransaction` exists against that payout                                                                                                        | the payout claims recovered cash the journal never saw                                                                                                                                                             |
 
@@ -69,7 +68,6 @@ flowchart TD
   RUN --> G4
   subgraph G1["① journal soundness (full-scope only)"]
     LTI["LEDGER_TXN_IMBALANCE"]
-    LBS["LEDGER_BALANCE_SNAPSHOT_DRIFT"]
     RBC["REFUND_BOOKING_COHERENCE"]
   end
   subgraph G2["② money caches vs journal"]
@@ -108,13 +106,13 @@ Each `Finding` is a compact row: `{ kind, organizationId?, billingAccountId?, bi
 
 `summary.earningsPaymentsWithoutBookingTxn` counts earnings-bearing payments that have **no** `BOOKING` journal transaction yet. It is reported for visibility but does **not** fail the run, because `EARNINGS_LEDGER_DRIFT` only checks payments that _do_ have a booking txn.
 
-A related but stricter check, the `EARNINGS_WITHOUT_BOOKING_TXN` finding, does fail the run: it flags an earnings-bearing payment still missing its `BOOKING` journal transaction once the payment is older than `RECONCILE_UNJOURNALED_GRACE_MS` (thirty minutes by default).
+A related but stricter check, the `EARNINGS_WITHOUT_BOOKING_TXN` finding, does fail the run: it flags an earnings-bearing payment missing its `BOOKING` journal transaction. An earnings row and its journal always commit in one transaction, and the check reads earnings before journal transactions, so it needs no grace window.
 
 ---
 
 ## 3. How it runs
 
-- **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the three global journal sweeps** (`LEDGER_TXN_IMBALANCE`, `LEDGER_BALANCE_SNAPSHOT_DRIFT`, `REFUND_BOOKING_COHERENCE`), which run full-scope only.
+- **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the two global journal sweeps** (`LEDGER_TXN_IMBALANCE` and `REFUND_BOOKING_COHERENCE`), which run full-scope only.
 - **Nightly cron:** `scripts/reconcile/reconcile-ledgers.ts` calls `runReconcileLedgers({ scope: "full" })`, persists a `LedgerReconciliationReport`, freezes any wallet with `WALLET_BALANCE_DRIFT`, and exits **0** (clean), **2** (discrepancies — page ops), or **1** (fatal error). Scheduled via `.github/workflows/cron-daily.yml`.
 - **On-demand HTTP & Admin routes:** `POST /api/admin/reconcile-ledgers` and `POST /api/cleanup/reconcile-ledgers` invoke `runReconcileLedgers` synchronously in-process. Because all checks are set-based SQL aggregations (`$queryRaw` / `groupBy`), a full-scope run completes in ~1–2 seconds without chunking or background workers.
 - **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time.
