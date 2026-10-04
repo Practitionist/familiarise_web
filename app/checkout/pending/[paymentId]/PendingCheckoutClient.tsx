@@ -58,10 +58,14 @@ export function PendingCheckoutClient({
 
   const money = (paise: number) =>
     formatCurrencyAmount(paise, pending.currency);
-  const lapsed =
-    pending.status === "EXPIRED" ||
-    pending.status === "FAILED" ||
-    (expiresAtMs !== null && now !== null && now >= expiresAtMs);
+  const lapsed = pending.status === "EXPIRED" || pending.status === "FAILED";
+  // The timer only says the window ended; the server decides what happened.
+  const checking =
+    !lapsed && expiresAtMs !== null && now !== null && now >= expiresAtMs;
+  useEffect(() => {
+    if (checking) router.refresh();
+  }, [checking, router]);
+
   const detailsHref = pending.consulteeProfileId
     ? `/dashboard/consultee/${pending.consulteeProfileId}/payments`
     : "/dashboard";
@@ -89,6 +93,27 @@ export function PendingCheckoutClient({
     } finally {
       setCancelling(false);
     }
+  }
+
+  if (checking) {
+    return (
+      <main className="mx-auto max-w-xl px-4 py-16">
+        <Card>
+          <CardHeader>
+            <CardTitle>Checking your payment</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <p className="text-sm text-muted-foreground">
+              The payment window for {pending.planTitle} has ended. We are
+              checking whether your payment landed.
+            </p>
+            <Button asChild variant="outline" className="w-full">
+              <Link href={detailsHref}>Go to your payments</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    );
   }
 
   if (lapsed) {
