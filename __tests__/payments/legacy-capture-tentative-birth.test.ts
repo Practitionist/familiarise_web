@@ -53,6 +53,7 @@ const subscriptionFindUnique = jest.fn();
 const subscriptionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 const historyCreate = jest.fn().mockResolvedValue({});
 const txStub = {
+  $executeRaw: jest.fn(async () => 0),
   payment: {
     findUnique: paymentFindUnique,
     // The appointmentId link is still a plain update — only STATUS rides a CAS.
@@ -109,6 +110,8 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
+  resolvePaymentForEarnings: jest.fn(async () => null),
 }));
 jest.mock("../../lib/email", () => ({
   __esModule: true,

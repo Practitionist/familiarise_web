@@ -220,15 +220,13 @@ export async function handlePaymentSuccess(
   // atomically with appointment confirmation without holding Serializable locks
   // across read-heavy rate-card resolution queries.
   let preplannedEarnings: PreplannedEarningsContext | null = null;
-  if (typeof planEarningsForPayment === "function") {
-    try {
-      preplannedEarnings = await planEarningsForPayment(
-        { paymentIntent: paymentIntentId },
-        metadata.appointmentType,
-      );
-    } catch {
-      preplannedEarnings = null;
-    }
+  try {
+    preplannedEarnings = await planEarningsForPayment(
+      { paymentIntent: paymentIntentId },
+      metadata.appointmentType,
+    );
+  } catch {
+    preplannedEarnings = null;
   }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
@@ -666,24 +664,16 @@ export async function handlePaymentSuccess(
                 ),
               },
             });
-          } else if (typeof createEarningsFromPayment === "function") {
-            const rawTx = tx as {
-              $executeRawUnsafe?: (query: string) => Promise<unknown>;
-            };
-            const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
-            if (hasSavepoint) {
-              await rawTx.$executeRawUnsafe!("SAVEPOINT sp_phase1_earnings");
-            }
+          } else {
+            await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =
                 preplannedEarnings?.resolvedPayment ??
-                (typeof resolvePaymentForEarnings === "function"
-                  ? await resolvePaymentForEarnings(
-                      { id: payment.id },
-                      metadata.appointmentType,
-                      tx,
-                    )
-                  : null);
+                (await resolvePaymentForEarnings(
+                  { id: payment.id },
+                  metadata.appointmentType,
+                  tx,
+                ));
               if (resolvedInTx) {
                 await createEarningsFromPayment({
                   payment: resolvedInTx.paymentForEarnings,
@@ -696,17 +686,11 @@ export async function handlePaymentSuccess(
                   `💰 Earnings record created atomically in Phase 1 for payment ${payment.id}, consultant ${resolvedInTx.consultantProfileId}`,
                 );
               }
-              if (hasSavepoint) {
-                await rawTx.$executeRawUnsafe!(
-                  "RELEASE SAVEPOINT sp_phase1_earnings",
-                );
-              }
+              await tx.$executeRaw`RELEASE SAVEPOINT sp_phase1_earnings`;
             } catch (phase1EarningsErr) {
-              if (hasSavepoint) {
-                await rawTx.$executeRawUnsafe!(
-                  "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
-                ).catch(() => undefined);
-              }
+              await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_phase1_earnings`.catch(
+                () => undefined,
+              );
               const isRetryableSerialization =
                 phase1EarningsErr instanceof
                   Prisma.PrismaClientKnownRequestError &&
@@ -714,21 +698,11 @@ export async function handlePaymentSuccess(
               if (isRetryableSerialization) {
                 throw phase1EarningsErr;
               }
-              if (hasSavepoint) {
-                console.warn(
-                  `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
-                  phase1EarningsErr,
-                );
-                earningsCreatedInPhase1 = false;
-              } else if (
-                "consultantEarnings" in tx &&
-                typeof (tx as { consultantEarnings?: unknown })
-                  .consultantEarnings === "object" &&
-                (tx as { consultantEarnings?: unknown }).consultantEarnings !==
-                  null
-              ) {
-                throw phase1EarningsErr;
-              }
+              console.warn(
+                `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
+                phase1EarningsErr,
+              );
+              earningsCreatedInPhase1 = false;
             }
           }
           const appointmentForEmails = blocked

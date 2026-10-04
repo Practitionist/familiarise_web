@@ -67,6 +67,7 @@ const mockCheckoutHarness = {
 };
 
 const mockSessionTx = {
+  $executeRaw: jest.fn(async () => 0),
   payment: {
     findUnique: mockCheckoutHarness.lookupPaymentByIntent,
     updateMany: mockCheckoutHarness.casPaymentStamp,
@@ -124,6 +125,7 @@ jest.mock("../../lib/payments/payouts", () => ({
     mockCheckoutHarness.preplanEarnings(...args),
   createEarningsFromPayment: (...args: unknown[]) =>
     mockCheckoutHarness.bookEarnings(...args),
+  resolvePaymentForEarnings: async () => null,
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...args: unknown[]) =>
