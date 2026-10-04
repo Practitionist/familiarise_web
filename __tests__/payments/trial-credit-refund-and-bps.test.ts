@@ -96,16 +96,6 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (input: Record<string, unknown>) =>
     mockRefundBookingPayment(input),
-  // The real prefix → rail mapping, so the quote's own predicate is exercised
-  // rather than a hardcoded "GATEWAY".
-  fundingRailForIntent: (intent: string | null | undefined) =>
-    !intent
-      ? "GATEWAY"
-      : intent.startsWith("free_")
-        ? "CREDITS"
-        : intent.startsWith("org_")
-          ? "INTERNAL"
-          : "GATEWAY",
 }));
 
 /** A ladder the quote's own `computeRefundPct` reads; a rung may be 2dp. */

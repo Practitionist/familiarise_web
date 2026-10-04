@@ -21,7 +21,7 @@ import {
   fundingRailForIntent,
   isFreeCreditIntent,
   isInternalFundedIntent,
-} from "../../lib/payments/operations/booking-refund";
+} from "../../lib/payments/funding-rail";
 
 describe("fundingRailForIntent", () => {
   it("reads an org-funded intent as the INTERNAL rail", () => {

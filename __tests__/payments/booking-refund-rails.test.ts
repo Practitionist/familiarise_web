@@ -97,10 +97,8 @@ jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),
 }));
 
-import {
-  isInternalFundedIntent,
-  refundBookingPayment,
-} from "../../lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import { isInternalFundedIntent } from "../../lib/payments/funding-rail";
 
 const PAYMENT_ID = "pay-1";
 

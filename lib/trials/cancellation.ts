@@ -29,11 +29,11 @@ import {
   POLICY_TERMS_INCLUDE,
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   fundingRailForIntent,
-  refundBookingPayment,
   type FundingRail,
-} from "@/lib/payments/operations/booking-refund";
+} from "@/lib/payments/funding-rail";
 
 export type TrialRefundOutcome = {
   refundPct: number;

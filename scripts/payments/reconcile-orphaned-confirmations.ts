@@ -32,11 +32,11 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import * as Sentry from "@sentry/nextjs";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
+} from "@/lib/payments/funding-rail";
 import { RefundValidationError } from "@/lib/payments/operations/refund";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";

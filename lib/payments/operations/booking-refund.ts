@@ -92,6 +92,11 @@ import {
   applyCappedEarningReversal,
   applyCappedOrgEarningReversal,
 } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  type FundingRail,
+  isFreeCreditIntent,
+  isInternalFundedIntent,
+} from "@/lib/payments/funding-rail";
 
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
@@ -149,44 +154,12 @@ async function attemptRefundNotice(
   );
 }
 
-/** Which rail a booking's money travels on, in or out. */
-export type FundingRail = "GATEWAY" | "INTERNAL" | "CREDITS";
-
 export type BookingRefundResult = {
   refundId: string;
   amountRefundedPaise: number;
   /** Which rail actually returned the money (CREDITS = referral restoration). */
   rail: FundingRail;
 };
-
-/** Org-funded bookings carry a synthetic paymentIntent no gateway can refund. */
-export function isInternalFundedIntent(paymentIntent: string): boolean {
-  return paymentIntent.startsWith("org_");
-}
-
-/** Fully credit-funded bookings — zero gateway money, credits to restore. */
-export function isFreeCreditIntent(paymentIntent: string): boolean {
-  return paymentIntent.startsWith("free_");
-}
-
-/**
- * The rail a payment WILL refund on, decided before anything moves.
- *
- * `refundBookingPayment` answers the same question after the fact, from the
- * same two prefixes. The cancellation quote has to answer it beforehand — the
- * dialog was promising every learner that "refunds reach your original payment
- * method in 5–7 working days", which is a sentence about a card nobody
- * charged on the org rails. Both readings come from here so the quote and the
- * charge cannot describe different rails.
- */
-export function fundingRailForIntent(
-  paymentIntent: string | null | undefined,
-): FundingRail {
-  if (!paymentIntent) return "GATEWAY";
-  if (isFreeCreditIntent(paymentIntent)) return "CREDITS";
-  if (isInternalFundedIntent(paymentIntent)) return "INTERNAL";
-  return "GATEWAY";
-}
 
 export async function refundBookingPayment(input: {
   paymentId: string;

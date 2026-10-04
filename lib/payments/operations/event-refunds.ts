@@ -21,12 +21,12 @@ import {
   refundPayment,
   RefundValidationError,
 } from "./refund";
+import { refundBookingPayment } from "./booking-refund";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
-  refundBookingPayment,
   type FundingRail,
-} from "./booking-refund";
+} from "@/lib/payments/funding-rail";
 import { computeRefundPct } from "./cancellation-policy";
 import {
   POLICY_TERMS_INCLUDE,

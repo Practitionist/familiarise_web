@@ -25,7 +25,6 @@ jest.mock("../../lib/prisma", () => ({
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
-  fundingRailForIntent: jest.fn(),
 }));
 jest.mock("../../lib/payments/operations/refund", () => {
   class RefundGatewayError extends Error {

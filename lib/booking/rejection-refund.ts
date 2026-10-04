@@ -41,10 +41,8 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
-import {
-  isFreeCreditIntent,
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { isFreeCreditIntent } from "@/lib/payments/funding-rail";
 import { resolveBookingRefundContext } from "./cancellation-scope";
 
 export type RejectionRefundOutcome = {
