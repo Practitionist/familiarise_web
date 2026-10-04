@@ -203,7 +203,9 @@ describe("vest", () => {
       config({ currentMonthSpentPaise: 80_000 }),
     );
     tx.referralProgramConfig.updateMany.mockResolvedValue({ count: 0 });
-    expect(await settleQualifyingReferral("ref-1", NOW)).toBe("DEFERRED");
+    expect(await settleQualifyingReferral("ref-1", NOW)).toBe(
+      "BUDGET_EXHAUSTED",
+    );
     expect(tx.referralProgramConfig.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({

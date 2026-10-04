@@ -145,16 +145,21 @@ export async function recordReferralCapture(
  */
 export async function recordReferralCaptureInSavepoint(
   tx: Tx,
-  input: { paymentId: string; consultantProfileId: string | null | undefined },
+  input: {
+    paymentId: string;
+    /** Resolved inside the savepoint so a lookup fault cannot fail the capture. */
+    consultantProfileId: () => Promise<string | null | undefined>;
+  },
 ): Promise<void> {
-  const { consultantProfileId } = input;
-  if (!consultantProfileId) return;
   await tx.$executeRaw`SAVEPOINT sp_referral_capture`;
   try {
-    await recordReferralCapture(tx, {
-      paymentId: input.paymentId,
-      consultantProfileId,
-    });
+    const consultantProfileId = await input.consultantProfileId();
+    if (consultantProfileId) {
+      await recordReferralCapture(tx, {
+        paymentId: input.paymentId,
+        consultantProfileId,
+      });
+    }
     await tx.$executeRaw`RELEASE SAVEPOINT sp_referral_capture`;
   } catch (err) {
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_referral_capture`.catch(

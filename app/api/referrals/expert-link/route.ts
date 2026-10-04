@@ -17,5 +17,8 @@ export async function GET() {
   if (!profile) {
     return NextResponse.json({ error: "Not an expert" }, { status: 404 });
   }
-  return NextResponse.json({ href: expertShareHref(profile.id) });
+  return NextResponse.json({
+    consultantProfileId: profile.id,
+    href: expertShareHref(profile.id),
+  });
 }

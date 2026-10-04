@@ -4920,7 +4920,8 @@ export async function handleCheckout(
               }
               await recordReferralCaptureInSavepoint(tx, {
                 paymentId: payment.id,
-                consultantProfileId: resolvedEarnings?.consultantProfileId,
+                consultantProfileId: async () =>
+                  resolvedEarnings?.consultantProfileId,
               });
             }
 

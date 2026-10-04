@@ -33,13 +33,22 @@ export type ReferralVoidReason =
   | "REFERRER_YEARLY_CAP"
   | "KYC_NOT_COMPLETED";
 
-export type VestOutcome = "VESTED" | "VOIDED" | "DEFERRED" | "SKIPPED";
+export type VestOutcome =
+  "VESTED" | "VOIDED" | "DEFERRED" | "BUDGET_EXHAUSTED" | "SKIPPED";
 
 /** A predicate re-checked in a CAS no longer held; the whole row rolls back and retries next run. */
 class VestRaced extends Error {
   constructor(step: string) {
     super(`referral vest raced at ${step}`);
     this.name = "VestRaced";
+  }
+}
+
+/** The month's budget cannot cover this reward; the row rolls back and waits for the next window. */
+class BudgetExhausted extends Error {
+  constructor() {
+    super("referral budget exhausted");
+    this.name = "BudgetExhausted";
   }
 }
 
@@ -309,7 +318,7 @@ async function vestConsumerReferral(
   if (codeSlot.count === 0) {
     return voidReferral(tx, r.id, "CODE_CAP_REACHED", now);
   }
-  if (!(await claimBudget(tx, cfg, reward, now))) throw new VestRaced("budget");
+  if (!(await claimBudget(tx, cfg, reward, now))) throw new BudgetExhausted();
 
   const vested = await tx.referral.updateMany({
     where: vestableWhere(r.id, ready.occurrenceId, ready.deliveredBefore),
@@ -445,6 +454,7 @@ export async function settleQualifyingReferral(
     );
   } catch (err) {
     if (err instanceof VestRaced) return "DEFERRED";
+    if (err instanceof BudgetExhausted) return "BUDGET_EXHAUSTED";
     throw err;
   }
 }
@@ -454,11 +464,12 @@ export interface VestRunResult {
   vested: number;
   voided: number;
   deferred: number;
+  budgetExhausted: number;
   failed: number;
   failures: { referralId: string; error: string }[];
 }
 
-/** The 15-minute sweep: oldest QUALIFYING first, one transaction per referral. */
+/** The ticker sweep: least recently examined QUALIFYING first, one transaction per referral. */
 export async function vestQualifyingReferrals(opts: {
   limit: number;
   now?: Date;
@@ -466,7 +477,7 @@ export async function vestQualifyingReferrals(opts: {
   const now = opts.now ?? new Date();
   const rows = await prisma.referral.findMany({
     where: { status: "QUALIFYING" },
-    orderBy: { qualifiedAt: "asc" },
+    orderBy: { updatedAt: "asc" },
     take: opts.limit,
     select: { id: true },
   });
@@ -475,6 +486,7 @@ export async function vestQualifyingReferrals(opts: {
     vested: 0,
     voided: 0,
     deferred: 0,
+    budgetExhausted: 0,
     failed: 0,
     failures: [],
   };
@@ -483,7 +495,15 @@ export async function vestQualifyingReferrals(opts: {
       const outcome = await settleQualifyingReferral(id, now);
       if (outcome === "VESTED") result.vested++;
       else if (outcome === "VOIDED") result.voided++;
-      else if (outcome === "DEFERRED") result.deferred++;
+      else if (outcome === "DEFERRED" || outcome === "BUDGET_EXHAUSTED") {
+        if (outcome === "DEFERRED") result.deferred++;
+        else result.budgetExhausted++;
+        // Rotate it behind rows not yet examined so waiting referrals never starve ready ones.
+        await prisma.referral.updateMany({
+          where: { id, status: "QUALIFYING" },
+          data: { updatedAt: now },
+        });
+      }
     } catch (err) {
       result.failed++;
       result.failures.push({

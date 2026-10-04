@@ -85,6 +85,7 @@ export function referralTerms(cfg: ReferralProgramConfigRow | null) {
     discountMaxPaise: cfg.discountMaxPaise,
     referrerRewardPaise: cfg.referrerRewardPaise,
     minOrderPaise: cfg.minOrderPaise,
+    redemptionCapPercent: cfg.redemptionCapBps / 100,
   };
 }
 

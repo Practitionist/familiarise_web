@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import {
   configSnapshot,
   readReferralProgramConfig,
@@ -37,9 +38,18 @@ export const PATCH = withOpsAction(
       }
       const before = await readReferralProgramConfig(tx);
       if (!before) {
-        const created = await tx.referralProgramConfig.create({
-          data: { id: REFERRAL_CONFIG_ID, ...patch },
-        });
+        const created = await tx.referralProgramConfig
+          .create({ data: { id: REFERRAL_CONFIG_ID, ...patch } })
+          .catch((err: unknown) => {
+            if (isUniqueViolationOn(err, "id")) {
+              throw new OpsRefusal(
+                "CONFIG_CHANGED",
+                "The programme was edited by someone else; refresh and retry.",
+                409,
+              );
+            }
+            throw err;
+          });
         return {
           target: { kind: "ReferralProgramConfig", id: REFERRAL_CONFIG_ID },
           response: { config: created },

@@ -701,7 +701,7 @@ export async function handlePaymentSuccess(
             }
             await recordReferralCaptureInSavepoint(tx, {
               paymentId: payment.id,
-              consultantProfileId:
+              consultantProfileId: async () =>
                 preplannedEarnings?.resolvedPayment.consultantProfileId ??
                 (
                   await resolvePaymentForEarnings(

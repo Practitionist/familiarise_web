@@ -1191,6 +1191,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           vested: r.vested,
           voided: r.voided,
           deferred: r.deferred,
+          budgetExhausted: r.budgetExhausted,
           failed: r.failed,
         }),
         failureMessage: "Failed to vest referral credits",

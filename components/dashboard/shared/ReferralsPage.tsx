@@ -50,6 +50,7 @@ interface ReferralTerms {
   discountMaxPaise: number;
   referrerRewardPaise: number;
   minOrderPaise: number;
+  redemptionCapPercent: number;
 }
 
 interface Referral {
@@ -359,7 +360,7 @@ export function ReferralsPage({
               value={formatAmount(credits?.totalAvailable ?? 0)}
               icon={IndianRupee}
               variant="info"
-              tooltip="Credit you can spend now. Credit from a referral becomes spendable after your friend's first session, and can cover up to 20% of a booking."
+              tooltip={`Credit you can spend now. Credit from a referral becomes spendable after your friend's first session${terms ? `, and can cover up to ${terms.redemptionCapPercent}% of a booking` : ""}.`}
             />
           </DashboardGrid>
         )}
