@@ -274,6 +274,7 @@ export function AppointmentDetailClient({
     status: string;
     durationInMinutes: number;
     recordedAt: Date;
+    previewTranscript?: string | null;
   } | null>(null);
   const {
     data: detail,
@@ -1178,6 +1179,7 @@ export function AppointmentDetailClient({
                 recordedAt: activeRecording.recordedAt,
                 durationInMinutes: activeRecording.durationInMinutes,
                 playbackUrl: activeRecording.url,
+                previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: vm.title,
               }
             : null

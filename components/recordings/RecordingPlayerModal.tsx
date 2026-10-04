@@ -47,6 +47,7 @@ export interface RecordingPlayerItem {
 export interface ResolvedPlaybackState {
   recordingId: string;
   url: string;
+  previewTranscript?: string | null;
 }
 
 export interface RecordingPlayerModalProps {
@@ -94,7 +95,9 @@ function computeStorageBadge(
   return null;
 }
 
-function buildCaptionTrackDataUri(transcriptText: string | null): string {
+export function buildCaptionTrackDataUri(
+  transcriptText?: string | null,
+): string {
   const cueBody = transcriptText?.trim() || "Session recording";
   const vtt = `WEBVTT\n\n00:00:00.000 --> 99:59:59.000\n${cueBody}\n`;
   return `data:text/vtt;charset=utf-8,${encodeURIComponent(vtt)}`;
@@ -211,6 +214,7 @@ export function RecordingPlayerModal({
       const payload = (await response.json().catch(() => ({}))) as {
         recording?: {
           playbackUrl?: string | null;
+          previewTranscript?: string | null;
         };
         access?: {
           level?: string;
@@ -234,7 +238,11 @@ export function RecordingPlayerModal({
             "Playback URL is not available for this recording yet.",
         );
       }
-      setResolvedPlayback({ recordingId: id, url: nextUrl });
+      setResolvedPlayback({
+        recordingId: id,
+        url: nextUrl,
+        previewTranscript: payload.recording?.previewTranscript ?? null,
+      });
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -290,7 +298,12 @@ export function RecordingPlayerModal({
     recording.storageType,
     recording.streamUrlExpiresAt,
   );
-  const transcriptText = recording.previewTranscript ?? null;
+  const fetchedTranscript =
+    resolvedPlayback?.recordingId === recording.id
+      ? (resolvedPlayback.previewTranscript ?? null)
+      : null;
+  const transcriptText =
+    recording.previewTranscript?.trim() || fetchedTranscript?.trim() || null;
   const captionTrackSrc = buildCaptionTrackDataUri(transcriptText);
 
   return (

@@ -68,7 +68,7 @@ describe("estimateStreamVideoUsage", () => {
 
     expect(mockFindMany).toHaveBeenCalledWith({
       where: {
-        joinedAt: { gte: from, lte: to },
+        joinedAt: { lte: to },
       },
       include: {
         meeting: { select: { endedAt: true } },

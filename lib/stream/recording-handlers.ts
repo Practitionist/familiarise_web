@@ -280,15 +280,9 @@ async function stageAndSendRecordingReadyNotifications(
           "recordings",
         ),
       },
-      { deferAttempt: true },
-    ).catch((err) => {
-      streamLogger.warn("Failed to stage recording notifications", {
-        recordingId,
-        streamCallId,
-        error: err,
-      });
-      return [];
-    })) ?? [];
+      `recording.ready:${recordingId}`,
+      { deferAttempt: true, entityRef: `recording:${recordingId}` },
+    )) ?? [];
 
   const stagedRows = staged
     .map((r) => r.staged)
@@ -434,14 +428,13 @@ export async function handleRecordingReady(
         orderBy: { createdAt: "desc" },
       }));
 
-    const alreadyTransferred =
-      existingRecording?.storageType === "PLATFORM" ||
-      existingRecording?.status === "AVAILABLE";
-
     let recording: NonNullable<typeof existingRecording>;
     if (existingRecording) {
+      const existingAlreadyTransferred =
+        existingRecording.storageType === "PLATFORM" ||
+        existingRecording.status === "AVAILABLE";
       if (
-        !alreadyTransferred &&
+        !existingAlreadyTransferred &&
         existingRecording.status !== "TRANSFERRING" &&
         (existingRecording.status === "PROCESSING" ||
           existingRecording.status === "RECORDING" ||
@@ -468,30 +461,49 @@ export async function handleRecordingReady(
           recordingId: existingRecording.id,
           streamRecordingId: filename,
         });
-        if (meeting.isRecording) {
-          await prisma.meeting.update({
-            where: { id: meeting.id },
-            data: { isRecording: false },
-          });
-        }
-        return;
+        recording = existingRecording;
       }
     } else {
-      recording = await prisma.recording.create({
-        data: {
-          title,
-          recordingUrl: url,
-          durationInMinutes,
-          recordedAt: startDate,
-          streamRecordingId: filename,
-          streamCallId,
-          storageType: "STREAM_S3",
-          status: "READY",
-          streamUrlExpiresAt,
-          meetingId: meeting.id,
-          organizationId: appointment?.organizationId ?? null,
-        },
-      });
+      try {
+        recording = await prisma.recording.create({
+          data: {
+            title,
+            recordingUrl: url,
+            durationInMinutes,
+            recordedAt: startDate,
+            streamRecordingId: filename,
+            streamCallId,
+            storageType: "STREAM_S3",
+            status: "READY",
+            streamUrlExpiresAt,
+            meetingId: meeting.id,
+            organizationId: appointment?.organizationId ?? null,
+          },
+        });
+      } catch (createError) {
+        if ((createError as { code?: string })?.code === "P2002") {
+          const racedRecording = await prisma.recording.findFirst({
+            where: {
+              meetingId: meeting.id,
+              streamRecordingId: filename,
+            },
+          });
+          if (racedRecording) {
+            streamLogger.info(
+              "Concurrent recording create detected, adopting existing row",
+              {
+                recordingId: racedRecording.id,
+                streamRecordingId: filename,
+              },
+            );
+            recording = racedRecording;
+          } else {
+            throw createError;
+          }
+        } else {
+          throw createError;
+        }
+      }
     }
 
     // Also update the meeting session to stop recording state if still active
@@ -510,6 +522,8 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
+    const alreadyTransferred =
+      recording.storageType === "PLATFORM" || recording.status === "AVAILABLE";
     const storagePolicy = resolveAppointmentStoragePolicy(appointment);
     if (
       !alreadyTransferred &&
@@ -528,7 +542,7 @@ export async function handleRecordingReady(
 
     await stageAndSendRecordingReadyNotifications(
       appointment,
-      url,
+      recording.recordingUrl || url,
       recordingId,
       streamCallId,
     );

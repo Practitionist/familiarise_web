@@ -37,9 +37,32 @@ jest.mock("../../lib/auth-helpers", () => ({
     new Response(JSON.stringify({ error: msg }), { status: 403 }),
 }));
 
+const mockRecordingPurchaseFindUnique = jest.fn();
+const mockRecordingPurchaseUpdateMany = jest.fn();
+const mockPaymentFindUnique = jest.fn();
+const mockPaymentCreate = jest.fn();
+const mockCreateEarningsFromPayment = jest.fn();
+
+const mockTx = {
+  recordingPurchase: {
+    findFirst: (...args: unknown[]) => mockRecordingPurchaseFindFirst(...args),
+    findMany: (...args: unknown[]) => mockRecordingPurchaseFindMany(...args),
+    findUnique: (...args: unknown[]) =>
+      mockRecordingPurchaseFindUnique(...args),
+    updateMany: (...args: unknown[]) =>
+      mockRecordingPurchaseUpdateMany(...args),
+  },
+  payment: {
+    findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
+    create: (...args: unknown[]) => mockPaymentCreate(...args),
+  },
+};
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: async (cb: (tx: typeof mockTx) => Promise<unknown>) =>
+      cb(mockTx),
     consultantProfile: {
       findUnique: (...args: unknown[]) =>
         mockConsultantProfileFindUnique(...args),
@@ -53,6 +76,14 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: (...args: unknown[]) =>
         mockRecordingPurchaseFindFirst(...args),
       findMany: (...args: unknown[]) => mockRecordingPurchaseFindMany(...args),
+      findUnique: (...args: unknown[]) =>
+        mockRecordingPurchaseFindUnique(...args),
+      updateMany: (...args: unknown[]) =>
+        mockRecordingPurchaseUpdateMany(...args),
+    },
+    payment: {
+      findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
+      create: (...args: unknown[]) => mockPaymentCreate(...args),
     },
     consulteeProfile: {
       findUnique: (...args: unknown[]) =>
@@ -74,6 +105,12 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...args: unknown[]) => mockTrialFindMany(...args),
     },
   },
+}));
+
+jest.mock("../../lib/payments/payouts/earnings-service", () => ({
+  __esModule: true,
+  createEarningsFromPayment: (...args: unknown[]) =>
+    mockCreateEarningsFromPayment(...args),
 }));
 
 jest.mock("../../lib/stream/recording-service", () => ({
@@ -135,14 +172,22 @@ import { GET as getConsultantRecordings } from "@/app/api/consultants/[consultan
 import { GET as getConsulteeResources } from "@/app/api/dashboard/consultee/[consulteeId]/resources/route";
 import RecordingDetailPage from "@/app/explore/recordings/[slug]/page";
 import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
-import { EVENT_TYPE_LABELS } from "@/components/dashboard/library/LibraryBrowser";
+import { getRecordingStatusLabel } from "@/components/dashboard/consultee/resources/EventResourceCard";
+import {
+  EVENT_TYPE_LABELS,
+  toLibraryPlayerItem,
+} from "@/components/dashboard/library/LibraryBrowser";
 import {
   ClientPublishSchema,
   canDeleteRecording,
 } from "@/components/recordings/RecordingManageSheet";
-import { resolveActivePlaybackUrl } from "@/components/recordings/RecordingPlayerModal";
+import {
+  buildCaptionTrackDataUri,
+  resolveActivePlaybackUrl,
+} from "@/components/recordings/RecordingPlayerModal";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { RecordingListing } from "@/lib/data/recordings-explore";
+import { handleRecordingPurchaseSuccess } from "@/lib/payments/webhooks/recording-purchase";
 
 describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat", () => {
   beforeEach(() => {
@@ -688,6 +733,212 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           push: jest.fn(),
         }),
       ).toEqual([]);
+    });
+
+    it("computes canTransfer and canPublish as true when a READY STREAM_S3 webinar recording has PERMANENT storage policy", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: "u-consultant", role: "CONSULTANT" },
+      });
+      mockConsultantProfileFindUnique.mockResolvedValue({ id: "cp-1" });
+      mockRecordingCount.mockResolvedValue(1);
+      mockRecordingFindMany.mockResolvedValue([
+        {
+          id: "rec-perm-1",
+          title: "Webinar Session",
+          durationInMinutes: 60,
+          recordedAt: new Date("2026-10-01T10:00:00Z"),
+          status: "READY",
+          storageType: "STREAM_S3",
+          storagePath: null,
+          recordingUrl: "https://stream.io/rec-perm-1.mp4",
+          thumbnailUrl: null,
+          resolution: "1080p",
+          fileSize: 52428800,
+          streamUrlExpiresAt: new Date("2026-10-15T10:00:00Z"),
+          transferredAt: null,
+          listingStatus: "UNPUBLISHED",
+          listPricePaise: null,
+          listingTitle: null,
+          listingDescription: null,
+          slug: null,
+          tags: [],
+          previewClipUrl: null,
+          previewTranscript: null,
+          consentAttestedAt: null,
+          createdAt: new Date("2026-10-01T10:00:00Z"),
+          purchases: [],
+          meeting: {
+            occurrence: {
+              startsAt: new Date("2026-10-01T10:00:00Z"),
+              appointment: {
+                participants: [],
+                webinar: {
+                  webinarPlan: {
+                    id: "wplan-perm-1",
+                    title: "Production Readiness Webinar",
+                    consultantProfileId: "cp-1",
+                    recordingStoragePolicy: "PERMANENT",
+                    catalogVisibility: "PUBLIC",
+                    organizationId: null,
+                    archivedAt: null,
+                  },
+                },
+                class: null,
+                consultation: null,
+                subscription: null,
+                trial: null,
+              },
+            },
+          },
+        },
+      ]);
+
+      const req = new NextRequest(
+        "http://localhost:3000/api/consultants/cp-1/recordings?type=webinar&page=1&limit=12",
+      );
+      const res = await getConsultantRecordings(req, {
+        params: Promise.resolve({ consultantId: "cp-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.recordings[0]).toMatchObject({
+        id: "rec-perm-1",
+        canManage: true,
+        canTransfer: true,
+        canPublish: true,
+      });
+    });
+
+    it("settles RecordingPurchase, Payment, and ConsultantEarnings atomically inside a transaction and is idempotent on replay", async () => {
+      mockRecordingPurchaseFindUnique.mockResolvedValueOnce({
+        id: "rp-1",
+        buyerId: "u-buyer-1",
+        amountPaise: 99900,
+        status: "PENDING",
+        recording: {
+          id: "rec-100",
+          organizationId: "org-host-1",
+          meeting: {
+            occurrence: {
+              appointment: {
+                organizationId: "org-host-1",
+                webinar: {
+                  webinarPlanId: "wplan-100",
+                  webinarPlan: {
+                    id: "wplan-100",
+                    consultantProfileId: "cp-host-1",
+                    organizationId: "org-host-1",
+                  },
+                },
+                class: null,
+                consultation: null,
+                subscription: null,
+              },
+            },
+          },
+        },
+      });
+      mockRecordingPurchaseUpdateMany.mockResolvedValueOnce({ count: 1 });
+      mockPaymentFindUnique.mockResolvedValueOnce(null);
+      mockPaymentCreate.mockResolvedValueOnce({
+        id: "pay-rec-1",
+        userId: "u-buyer-1",
+        appointmentId: null,
+        amount: 99900,
+        originalAmount: 99900,
+        taxAmount: 0,
+        currency: "INR",
+        paymentMethod: "CARD",
+        paymentIntent: "order_rec_1",
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        gatewayPaymentId: "pay_rzp_1",
+        organizationId: "org-host-1",
+        createdAt: new Date("2026-10-04T00:00:00Z"),
+      });
+      mockCreateEarningsFromPayment.mockResolvedValueOnce("earn-1");
+
+      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1");
+
+      expect(mockRecordingPurchaseUpdateMany).toHaveBeenCalledWith({
+        where: { id: "rp-1", status: "PENDING" },
+        data: { status: "SUCCEEDED", gatewayPaymentId: "pay_rzp_1" },
+      });
+      expect(mockPaymentCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "u-buyer-1",
+          appointmentId: null,
+          amount: 99900,
+          originalAmount: 99900,
+          paymentIntent: "order_rec_1",
+          paymentStatus: "SUCCEEDED",
+          gatewayPaymentId: "pay_rzp_1",
+          organizationId: "org-host-1",
+        }),
+      });
+      expect(mockCreateEarningsFromPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appointmentType: "WEBINAR",
+          tx: mockTx,
+          payment: expect.objectContaining({
+            id: "pay-rec-1",
+            appointment: {
+              consultantProfile: { id: "cp-host-1" },
+              webinar: { webinarPlanId: "wplan-100" },
+              class: null,
+            },
+          }),
+        }),
+      );
+
+      // Replay when already SUCCEEDED does not create duplicate Payment or earnings
+      jest.clearAllMocks();
+      mockRecordingPurchaseFindUnique.mockResolvedValueOnce({
+        id: "rp-1",
+        buyerId: "u-buyer-1",
+        amountPaise: 99900,
+        status: "SUCCEEDED",
+        recording: null,
+      });
+      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1");
+      expect(mockRecordingPurchaseUpdateMany).not.toHaveBeenCalled();
+      expect(mockPaymentCreate).not.toHaveBeenCalled();
+      expect(mockCreateEarningsFromPayment).not.toHaveBeenCalled();
+    });
+
+    it("builds WebVTT caption tracks, maps terminal recording statuses, and maps LibraryBrowser recordings to RecordingPlayerItem", () => {
+      const vttUri = buildCaptionTrackDataUri("Key takeaways from the webinar");
+      expect(vttUri.startsWith("data:text/vtt;charset=utf-8,")).toBe(true);
+      expect(
+        decodeURIComponent(vttUri.replace("data:text/vtt;charset=utf-8,", "")),
+      ).toContain("Key takeaways from the webinar");
+
+      expect(getRecordingStatusLabel("EXPIRED")).toBe("Expired");
+      expect(getRecordingStatusLabel("FAILED")).toBe("Unavailable");
+      expect(getRecordingStatusLabel("PROCESSING")).toBe("Processing");
+
+      expect(
+        toLibraryPlayerItem(
+          {
+            id: "lib-rec-1",
+            title: "Cohort Session 1",
+            recordedAt: "2026-10-01T10:00:00.000Z",
+            durationInMinutes: 45,
+            status: "AVAILABLE",
+            playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
+          },
+          { title: "System Design Cohort", kind: "CLASS" },
+        ),
+      ).toEqual({
+        id: "lib-rec-1",
+        title: "Cohort Session 1",
+        recordedAt: "2026-10-01T10:00:00.000Z",
+        durationInMinutes: 45,
+        playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
+        planTitle: "System Design Cohort",
+        planType: "Class",
+      });
     });
   });
 });
