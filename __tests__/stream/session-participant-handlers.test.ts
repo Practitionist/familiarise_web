@@ -94,8 +94,11 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
       userId: "user_1",
       firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
     });
-    // A new device session bumps the counter, never resets firstJoinedAt.
-    expect(arg.update).toEqual({ joinCount: { increment: 1 } });
+    // A new device session bumps the counter and clears lastLeftAt, never resets firstJoinedAt.
+    expect(arg.update).toEqual({
+      joinCount: { increment: 1 },
+      lastLeftAt: null,
+    });
   });
 
   it("does not bump joinCount when the device session was already seen (#1746)", async () => {

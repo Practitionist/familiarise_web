@@ -57,6 +57,7 @@ export const BILLABLE_PERMISSIONS = [
   "stop-rtmp-broadcast",
   "stop-all-rtmp-broadcasts",
   "use-noise-cancellation",
+  "enable-noise-cancellation",
 ];
 
 /** Matches a permission or its `-owner` / `-any-team` scoped variants against a base permission list. */

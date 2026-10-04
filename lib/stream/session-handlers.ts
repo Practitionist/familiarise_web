@@ -402,7 +402,9 @@ export async function handleSessionParticipantJoined(
           firstJoinedAt: joinedAt,
         },
         update:
-          newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
+          newSessions > 0
+            ? { joinCount: { increment: newSessions }, lastLeftAt: null }
+            : {},
       });
     });
 
