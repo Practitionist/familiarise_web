@@ -27,8 +27,21 @@ import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-repla
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { isDeadlock } from "@/lib/db/pg-errors";
+import { isDeadlock, isExclusionViolation } from "@/lib/db/pg-errors";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+
+/** Contention refusals per reason; their share of checkout attempts is the slot-reservation trigger. */
+function countCheckoutConflict(reason: string): void {
+  Sentry.metrics?.count?.("checkout.conflict", 1, { attributes: { reason } });
+}
+
+/** A 1:1 time another buyer holds: the pre-check refusal or the overlap constraint at insert. */
+function isSlotTaken(error: unknown): boolean {
+  return (
+    isExclusionViolation(error) ||
+    (error instanceof Error && error.message === "Time slot is already booked")
+  );
+}
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -204,6 +217,7 @@ export async function POST(req: NextRequest) {
     // B4 — SOLD OUT answered by the optimistic pre-check before the mutex.
     // Terminal until someone cancels: no retryAfter, plain copy.
     if (error instanceof EventFullError) {
+      countCheckoutConflict(error.code);
       return NextResponse.json(
         {
           error: error.message,
@@ -221,6 +235,7 @@ export async function POST(req: NextRequest) {
       error instanceof EventCheckoutBusyError ||
       error instanceof ConsulteeBookingBusyError
     ) {
+      countCheckoutConflict(error.code);
       return NextResponse.json(
         {
           error: error.message,
@@ -309,6 +324,7 @@ export async function POST(req: NextRequest) {
         error.code === "P2034") ||
       isDeadlock(error)
     ) {
+      countCheckoutConflict("SERIALIZATION_CONFLICT");
       reportSentryError(error, {
         subsystem: "checkout",
         op: "serializable-exhausted",
@@ -334,6 +350,7 @@ export async function POST(req: NextRequest) {
     // without an explicit branch above — the #1458 programme-cap codes, the
     // #1467 entitlement codes — paging as a checkout incident. Report it the
     // way the modelled refusals inside handleCheckout are reported instead.
+    if (isSlotTaken(error)) countCheckoutConflict("SLOT_TAKEN");
     let errorId: string | undefined;
     if (isBusinessErrorCode((error as { code?: unknown } | null)?.code)) {
       reportSentryError(error, { subsystem: "checkout", expected: true });
@@ -343,6 +360,9 @@ export async function POST(req: NextRequest) {
     }
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
+    if (classified.errorType === ErrorTypes.LOCK_CONTENTION) {
+      countCheckoutConflict(classified.errorType);
+    }
 
     // A coded refusal that names a retry window (CREDIT_SHORTFALL after a
     // concurrent spend, #1582 B-P1-01) lets the client auto-retry once.
