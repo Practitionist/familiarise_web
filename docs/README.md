@@ -57,6 +57,7 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
 - [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
 - [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
+- [booking-and-money-machinery.md](./enterprise/explainers/booking-and-money-machinery.md) - End-to-end visual guide combining booking lifecycle, org scoping, permission matrices, and worked ledger examples
 
 ---
 
@@ -79,6 +80,7 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 - [02-setup.md](./payments/02-setup.md) - Payment system setup
 - [03-status-enums-reference.md](./payments/03-status-enums-reference.md) - Status enums reference
 - [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
+- [booking-and-money-machinery.md](./enterprise/explainers/booking-and-money-machinery.md) - End-to-end visual guide with org scoping, permission matrices, and worked numeric ledger examples
 
 #### Checkout Flow
 

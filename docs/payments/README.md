@@ -8,15 +8,16 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 
 ## Overview
 
-| #   | Document                                                       | Description                                                                                       |
-| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| 01  | [Architecture](./01-architecture.md)                           | System design, database models, complete data flow                                                |
-| 02  | [Setup](./02-setup.md)                                         | Payment gateway configuration, environment variables                                              |
-| 03  | [Status Enums Reference](./03-status-enums-reference.md)       | All payment, refund, dispute, and booking status values                                           |
-| 04  | [B2C/B2B Funding Seam](./04-b2c-b2b-funding-seam.md)           | Where the consumer and organisation funding paths meet and diverge                                |
-| 05  | [High-Level Design](./05-high-level-design.md)                 | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers        |
-| 06  | [B2C Tax Invoices](./06-b2c-tax-invoice.md)                    | Consumer tax invoices, credit notes, and the outward-supplies register                            |
-| —   | [Money Machinery](../enterprise/explainers/money-machinery.md) | Cross-rail explainer: B2C and B2B on one spine — data model, sequence, state and posting diagrams |
+| #   | Document                                                                             | Description                                                                                       |
+| --- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| 01  | [Architecture](./01-architecture.md)                                                 | System design, database models, complete data flow                                                |
+| 02  | [Setup](./02-setup.md)                                                               | Payment gateway configuration, environment variables                                              |
+| 03  | [Status Enums Reference](./03-status-enums-reference.md)                             | All payment, refund, dispute, and booking status values                                           |
+| 04  | [B2C/B2B Funding Seam](./04-b2c-b2b-funding-seam.md)                                 | Where the consumer and organisation funding paths meet and diverge                                |
+| 05  | [High-Level Design](./05-high-level-design.md)                                       | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers        |
+| 06  | [B2C Tax Invoices](./06-b2c-tax-invoice.md)                                          | Consumer tax invoices, credit notes, and the outward-supplies register                            |
+| —   | [Money Machinery](../enterprise/explainers/money-machinery.md)                       | Cross-rail explainer: B2C and B2B on one spine — data model, sequence, state and posting diagrams |
+| —   | [Booking & Money Machinery](../enterprise/explainers/booking-and-money-machinery.md) | End-to-end visual guide with org scoping, permission matrices, and worked numeric ledger examples |
 
 ## Subsections
 

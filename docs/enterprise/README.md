@@ -163,14 +163,14 @@ This band holds the commercial logic (programs, contracts, cycles) and the app s
 
 These docs map the regulatory rails (DPDP, GST, TDS, MSME) onto the models and crons that implement them, plus the org-facing data plumbing.
 
-| #   | Doc                                                                                         | Focus                                      |
-| --- | ------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md)   | enterprise touchpoints → `../compliance/*` |
-| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                             | erasure, retention, immutable ledger       |
-| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                     | `OrgDataExportJob`                         |
-| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                         | `WebhookEndpoint`, delivery, signing       |
-| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)                 | `OrgWorkspaceProfile` prefs                |
-| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)       | per-subsystem wired/skipped map            |
+| #   | Doc                                                                                           | Focus                                      |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md)     | enterprise touchpoints → `../compliance/*` |
+| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                               | erasure, retention, immutable ledger       |
+| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                       | `OrgDataExportJob`                         |
+| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                           | `WebhookEndpoint`, delivery, signing       |
+| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)                   | `OrgWorkspaceProfile` prefs                |
+| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)         | per-subsystem wired/skipped map            |
 | 07  | [rbi-payment-aggregator-posture](40-compliance-and-data/07-rbi-payment-aggregator-posture.md) | RBI PA-CB regulatory posture               |
 
 ### Operations — `50-operations/`
@@ -204,9 +204,10 @@ This band collects the architecture decision records (`01` through `35`): each o
 
 ### Explainers
 
-| File                                                        | Purpose                                                                                                                                                                                                  |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [explainers/money-machinery](explainers/money-machinery.md) | how money moves on both rails — one checkout, one writer, one ledger; B2C confirmation and refunds, B2B funding seam, overage, invoicing and org payouts; the concurrency posture and architecture map |
+| File                                                                                | Purpose                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [explainers/money-machinery](explainers/money-machinery.md)                         | how money moves on both rails — one checkout, one writer, one ledger; B2C confirmation and refunds, B2B funding seam, overage, invoicing and org payouts; the concurrency posture and architecture map   |
+| [explainers/booking-and-money-machinery](explainers/booking-and-money-machinery.md) | end-to-end visual guide combining booking lifecycle, organizational scoping, role & permission matrices, funding/program/overage permutations, and worked numeric double-entry examples with seeded cast |
 
 ---
 
