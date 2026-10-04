@@ -720,6 +720,7 @@ export class RecordingService {
     userId: string,
     filters?: {
       type?: "webinar" | "class" | "consultation" | "subscription" | "trial";
+      organizationId?: string | null;
     },
   ): Promise<ConsulteeRecordingWithDetails[]> {
     try {
@@ -756,6 +757,9 @@ export class RecordingService {
           status: {
             notIn: ["FAILED", "EXPIRED"],
           },
+          ...(filters?.organizationId !== undefined
+            ? { organizationId: filters.organizationId }
+            : {}),
         },
         include: consulteeRecordingInclude,
         orderBy: {
