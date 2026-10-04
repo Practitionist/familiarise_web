@@ -7,6 +7,7 @@
 
 import type { ClassStatus, WebinarStatus } from "@prisma/client";
 
+import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
 import type { Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
@@ -171,7 +172,9 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
 
 /** The first live session, else the webinar's first slot row. */
 function webinarStart(event: PlannerWebinarEvent): Date | null {
-  const startsAt = event.appointment?.occurrences?.[0]?.startsAt;
+  const occurrences = event.appointment?.occurrences ?? [];
+  const live = liveOccurrencesOf(occurrences);
+  const startsAt = (live[0] ?? occurrences[0])?.startsAt;
   return startsAt ? new Date(startsAt) : null;
 }
 

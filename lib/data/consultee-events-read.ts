@@ -381,6 +381,7 @@ export async function readConsulteeEvents(
                   },
                 },
               },
+              payment: callerPayments,
             },
           },
         },

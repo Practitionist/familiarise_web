@@ -276,10 +276,17 @@ const consultantDeliveryArms = (
       status: "SCHEDULED" as const,
     },
   },
+  {
+    trial: {
+      consultantProfileId,
+      status: "SCHEDULED" as const,
+    },
+  },
 ];
 
 const appointmentInclude = {
   occurrences: {
+    where: { deletedAt: null },
     orderBy: { startsAt: "asc" as const },
     include: {
       meeting: {
@@ -395,6 +402,25 @@ const appointmentInclude = {
                 },
               },
             },
+          },
+        },
+      },
+    },
+  },
+  trial: {
+    include: {
+      subscriptionPlan: {
+        select: {
+          id: true,
+          title: true,
+          trialDurationMinutes: true,
+          trialPriceInPaise: true,
+        },
+      },
+      consulteeProfile: {
+        include: {
+          user: {
+            select: userSelectFields,
           },
         },
       },
@@ -688,6 +714,7 @@ export async function getConsultantDashboard(
           select: { id: true, requestedBy: { select: { id: true } } },
         },
         class: { select: { id: true } },
+        trial: { select: { consulteeProfile: { select: { id: true } } } },
       },
     }),
     // Pending previews. #1703 — the list reads the SAME predicate and window
@@ -820,6 +847,7 @@ export async function getConsultantDashboard(
             { subscription: { subscriptionPlan: { consultantProfileId } } },
             { webinar: { webinarPlan: { consultantProfileId } } },
             { class: { classPlan: { consultantProfileId } } },
+            { trial: { consultantProfileId } },
           ],
         },
         startsAt: { gte: thirtyDaysAgo, lt: now },
@@ -966,6 +994,20 @@ export async function getConsultantDashboard(
             status: appointment.class.status,
           }
         : undefined,
+      trial: appointment.trial
+        ? {
+            id: appointment.trial.id,
+            status: appointment.trial.status,
+            subscriptionPlan: appointment.trial.subscriptionPlan,
+            consulteeProfile: {
+              id: appointment.trial.consulteeProfile?.id ?? "",
+              user: {
+                name: appointment.trial.consulteeProfile?.user?.name ?? null,
+                image: appointment.trial.consulteeProfile?.user?.image ?? null,
+              },
+            },
+          }
+        : undefined,
     }),
   );
 
@@ -1081,7 +1123,9 @@ export async function getConsultantDashboard(
   const activeClassIds = new Set<string>();
   for (const apt of activeBookRows) {
     const consulteeId =
-      apt.consultation?.requestedBy?.id ?? apt.subscription?.requestedBy?.id;
+      apt.consultation?.requestedBy?.id ??
+      apt.subscription?.requestedBy?.id ??
+      apt.trial?.consulteeProfile?.id;
     if (consulteeId) activeClientIds.add(consulteeId);
     if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
     if (apt.class?.id) activeClassIds.add(apt.class.id);

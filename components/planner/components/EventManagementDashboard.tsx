@@ -22,6 +22,7 @@ import {
   getJoinableOccurrence,
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
+import { isConfirmedStatus } from "@/lib/appointments/status";
 import type {
   ConsultationPlanEvent,
   PlannerClassEvent,
@@ -133,6 +134,7 @@ export function EventManagementDashboard({
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
+      if (!isConfirmedStatus(webinar.status)) continue;
       const run = getJoinableOccurrence(
         webinar.appointment?.occurrences ?? [],
         {
@@ -144,6 +146,7 @@ export function EventManagementDashboard({
     }
 
     for (const cls of classes) {
+      if (!isConfirmedStatus(cls.status)) continue;
       const run = getJoinableOccurrence(cls.appointment?.occurrences ?? [], {
         joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,

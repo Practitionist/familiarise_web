@@ -55,14 +55,17 @@ import {
   eventStatusBadge,
 } from "@/lib/labels/session-labels";
 import {
+  eventUnionStatusBadge,
   isCancelledLikeStatus,
   isInactiveStatus,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
   openProposalTarget,
   type OpenRescheduleProposal,
@@ -79,12 +82,13 @@ import {
 } from "./event-processor";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
-// subscriptions carry AppointmentStatus. One resolver so both card
-// variants render the same shared pills.
+// subscriptions carry AppointmentStatus; trials carry TrialStatus.
 const processedEventBadge = (event: ProcessedEvent) =>
   event.type === "webinar" || event.type === "class"
     ? eventStatusBadge(event.status?.toUpperCase())
-    : appointmentStatusBadge(event.status?.toUpperCase());
+    : event.type === "trial"
+      ? eventUnionStatusBadge(event.status?.toUpperCase())
+      : appointmentStatusBadge(event.status?.toUpperCase());
 
 const NEXT_UP_LIMIT = 3;
 const RATE_PROMPT_LIMIT = 2;
@@ -94,6 +98,7 @@ const TYPE_LABEL: Record<ProcessedEvent["type"], string> = {
   subscription: "Subscription",
   class: "Class",
   webinar: "Webinar",
+  trial: "Trial",
 };
 
 interface HomeTabProps {
@@ -133,14 +138,22 @@ function awaitingLabel(reason: NeedsActionReason | null): string {
 function getTimeAway(
   date: Date | null,
   reason: NeedsActionReason | null,
+  endsAt?: Date | null,
+  now: Date = new Date(),
 ): { text: string; urgent: boolean } {
   if (!date)
     return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
-  const now = new Date();
+  const startMs = date.getTime();
+  const endMs = (endsAt ?? date).getTime() + REJOIN_GRACE_MS;
+  const nowMs = now.getTime();
+  if (nowMs >= startMs && nowMs <= endMs) {
+    return { text: "In progress", urgent: true };
+  }
+  if (nowMs > endMs) return { text: "Past", urgent: false };
+
   const hoursAway = differenceInHours(date, now);
   const daysAway = differenceInDays(date, now);
 
-  if (hoursAway < 0) return { text: "Past", urgent: false };
   if (hoursAway < 1) return { text: "Starting soon", urgent: true };
   if (hoursAway < 24) {
     const mins = Math.floor((hoursAway % 1) * 60);
@@ -178,16 +191,23 @@ function NextUpCard({
   event,
   href,
   viewerZone,
+  now,
   onJoin,
   isJoining,
 }: Readonly<{
   event: ProcessedEvent;
   href: string | null;
   viewerZone: ViewerZone;
+  now: Date;
   onJoin?: () => void;
   isJoining?: boolean;
 }>) {
-  const timeAway = getTimeAway(event.startsAt, event.needsActionReason);
+  const timeAway = getTimeAway(
+    event.startsAt,
+    event.needsActionReason,
+    event.endsAt,
+    now,
+  );
 
   // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
   // Appointments tab cards.
@@ -206,6 +226,7 @@ function NextUpCard({
     !!event.joinableOccurrence &&
     getOccurrenceJoinState(event.joinableOccurrence, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now,
     }) === "joinable";
 
   return (
@@ -486,13 +507,14 @@ export default function HomeTab({
     }
   };
 
+  const now = useNowTick();
   const processedEvents = useMemo(
-    () => processAllEvents(eventsData),
-    [eventsData],
+    () => processAllEvents(eventsData, now),
+    [eventsData, now],
   );
   const upcomingEvents = useMemo(
-    () => getUpcomingEvents(processedEvents),
-    [processedEvents],
+    () => getUpcomingEvents(processedEvents, now),
+    [processedEvents, now],
   );
   // #1527 — Next up is live scheduled sessions only: an unpaid request is in
   // Needs you and a request waiting on the expert is Appointments' concern.
@@ -582,6 +604,7 @@ export default function HomeTab({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),
         })),
+        now,
       }),
     [
       pendingPayments,
@@ -592,12 +615,13 @@ export default function HomeTab({
       userDetails?.id,
       reviewable,
       revisions,
+      now,
     ],
   );
 
   const monthSessions = useMemo(
-    () => sessionsThisMonth(processedEvents, viewerZone.zone, new Date()),
-    [processedEvents, viewerZone.zone],
+    () => sessionsThisMonth(processedEvents, viewerZone.zone, now),
+    [processedEvents, viewerZone.zone, now],
   );
 
   return (
@@ -662,6 +686,7 @@ export default function HomeTab({
                     : null
                 }
                 viewerZone={viewerZone}
+                now={now}
                 onJoin={() => handleJoinMeeting(event)}
                 isJoining={joiningEventId === event.id}
               />

@@ -108,10 +108,10 @@ export default function AppointmentsPageClient({
     placeholderData: keepPreviousData,
     // Side lists change slowly; a short stale window dedupes remount refetches.
     staleTime: 2 * 60_000,
-    queryKey: ["trials", consultantId, "SCHEDULED"] as const,
+    queryKey: ["trials", consultantId, "ALL"] as const,
     queryFn: async () => {
       const res = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=SCHEDULED`,
+        `/api/trials?consultantProfileId=${consultantId}&limit=100`,
       );
       if (!res.ok) throw new Error("Failed to fetch trials");
       const { data } = await res.json();

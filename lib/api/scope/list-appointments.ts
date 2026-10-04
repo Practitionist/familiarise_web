@@ -113,7 +113,31 @@ export function buildWhere(
         },
         { trial: { consultantProfile: { userId: uid } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        {
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfile: { userId: uid },
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
+        {
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfile: { userId: uid },
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
       ],
     };
   }
@@ -143,7 +167,7 @@ export function buildWhere(
         // invisible on BOTH dashboards (personal excludes org rows by design).
         // Mirrors lib/data/consultee-events-read.ts slot membership.
         { participants: { some: liveParticipant(uid) } },
-        // Delivered as an expert (owns the plan).
+        // Delivered as an expert (owns the plan or is an accepted collaborator).
         {
           consultation: {
             consultationPlan: { consultantProfile: { userId: uid } },
@@ -155,7 +179,31 @@ export function buildWhere(
           },
         },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+        {
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfile: { userId: uid },
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
+        {
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfile: { userId: uid },
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
       ],
     };
   }
@@ -277,6 +325,7 @@ export async function listAppointmentsScoped(
         },
         consultation: {
           select: {
+            status: true,
             consultationPlan: {
               select: {
                 title: true,
@@ -296,6 +345,7 @@ export async function listAppointmentsScoped(
         },
         subscription: {
           select: {
+            status: true,
             subscriptionPlan: {
               select: {
                 title: true,
@@ -315,6 +365,7 @@ export async function listAppointmentsScoped(
         },
         webinar: {
           select: {
+            status: true,
             webinarPlan: {
               select: {
                 title: true,
@@ -329,6 +380,7 @@ export async function listAppointmentsScoped(
         },
         class: {
           select: {
+            status: true,
             classPlan: {
               select: {
                 title: true,
@@ -343,6 +395,7 @@ export async function listAppointmentsScoped(
         },
         trial: {
           select: {
+            status: true,
             consulteeProfile: {
               select: {
                 user: { select: { id: true, name: true, email: true } },
