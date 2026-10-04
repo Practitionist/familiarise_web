@@ -103,18 +103,40 @@ describe("lib/meetings/duration-cap", () => {
 });
 
 describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
-  it("configures limits.max_duration_seconds across session types and returns undefined when null", () => {
-    for (const appointmentType of [
-      "WEBINAR",
-      "CLASS",
-      "CONSULTATION",
-      "SUBSCRIPTION",
-      "TRIAL",
-    ]) {
+  it("configures limits.max_duration_seconds for 1:1 session types and returns undefined when null", () => {
+    for (const appointmentType of ["CONSULTATION", "SUBSCRIPTION", "TRIAL"]) {
       expect(buildCallSettingsOverride(appointmentType, 4500)).toEqual({
         limits: { max_duration_seconds: 4500 },
       });
       expect(buildCallSettingsOverride(appointmentType, null)).toBeUndefined();
+    }
+  });
+
+  it("enables backstage and muted access-request stage settings for WEBINAR and CLASS", () => {
+    const expectedOneToManySettings = {
+      backstage: {
+        enabled: true,
+        join_ahead_time_seconds: 900,
+      },
+      audio: {
+        mic_default_on: false,
+        default_device: "speaker",
+        access_request_enabled: true,
+      },
+      video: {
+        camera_default_on: false,
+        access_request_enabled: true,
+      },
+    };
+
+    for (const appointmentType of ["WEBINAR", "CLASS"]) {
+      expect(buildCallSettingsOverride(appointmentType, 4500)).toEqual({
+        ...expectedOneToManySettings,
+        limits: { max_duration_seconds: 4500 },
+      });
+      expect(buildCallSettingsOverride(appointmentType, null)).toEqual(
+        expectedOneToManySettings,
+      );
     }
   });
 
