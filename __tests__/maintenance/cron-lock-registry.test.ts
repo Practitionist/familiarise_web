@@ -61,6 +61,7 @@ const LOCK_EXEMPT: Record<string, string> = {
   // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
   // read-only lockfile audit with no database or external state mutation.
   "security-audit.yml": "deliberately unlocked — read-only npm audit check",
+  "db-live-drift.yml": "deliberately unlocked — read-only migrate diff",
 };
 
 interface Row {
