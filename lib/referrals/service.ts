@@ -503,6 +503,7 @@ export async function applyCreditsToPayment(
 
   let creditsUsed = 0;
   let remainingToPay = paymentAmount;
+  let firstUsageId: string | null = null;
 
   for (const credit of credits) {
     if (remainingToPay <= 0) break;
@@ -530,25 +531,24 @@ export async function applyCreditsToPayment(
           originalAmount: useAmount,
         },
       });
-
-      // Enterprise (Arch 4-Modified): every credit consumption writes a
-      // matching PaymentLeg so the per-payment leg invariant
-      // (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`) holds for any flow that
-      // mixes referral credits with card / wallet / invoice. `sourceRef`
-      // points at the ReferralCreditUsage row so refund + reversal can
-      // join the credit ledger without scanning by paymentId+credit.
-      await tx.paymentLeg.create({
-        data: {
-          paymentId,
-          source: "REFERRAL_CREDIT",
-          amountPaise: useAmount,
-          sourceRef: usage.id,
-        },
-      });
+      firstUsageId ??= usage.id;
     }
 
     creditsUsed += useAmount;
     remainingToPay -= useAmount;
+  }
+
+  // One REFERRAL_CREDIT leg per payment (@@unique([paymentId, source])); the
+  // usage rows above keep the per-credit trail.
+  if (paymentId && firstUsageId && creditsUsed > 0) {
+    await tx.paymentLeg.create({
+      data: {
+        paymentId,
+        source: "REFERRAL_CREDIT",
+        amountPaise: creditsUsed,
+        sourceRef: firstUsageId,
+      },
+    });
   }
 
   return { creditsUsed, remainingToPay };
