@@ -52,9 +52,9 @@ plumbing through the existing refund family is future work.
 
 ## Storage layout
 
-| Asset | Bucket | Visibility |
-|---|---|---|
-| Full recording | `recordings` | private, signed 1h |
+| Asset                    | Bucket                | Visibility                  |
+| ------------------------ | --------------------- | --------------------------- |
+| Full recording           | `recordings`          | private, signed 1h          |
 | Preview clip + thumbnail | `recordings-previews` | **public**, immutable cache |
 
 Preview assets are marketing material for ISR-cached anonymous explore cards;
@@ -101,7 +101,7 @@ The order for any PR that adds columns AND prerenders a page that reads them:
    its schema is a strict superset — a push from a branch reconciles the DB to
    THAT branch's schema, and anything missing from it is dropped.
 2. Verify the delta is additive: `npx prisma migrate diff
-   --from-config-datasource --to-schema prisma/schema.prisma --script` and
+--from-config-datasource --to-schema prisma/schema.prisma --script` and
    confirm there is no `DROP TABLE`, `DROP COLUMN` or `SET NOT NULL`.
 3. `npx prisma db push` from the branch, then `npm run db:sidecars`.
 4. Re-run CI and the deploy preview, then merge.
@@ -112,7 +112,6 @@ that warning is a false positive — every existing row gets NULL, and Postgres
 unique indexes permit unlimited NULLs. Confirm the column does not yet exist,
 then `--accept-data-loss` is safe. Confirm first; do not reach for the flag by
 reflex.
-
 
 ⚠️ **Schema drift hazard (hit twice on #1244):** until this branch squashes
 into `dev`, a `prisma db push` run from any checkout whose schema.prisma

@@ -7,106 +7,51 @@
 - [Channel Creation Strategies](#channel-creation-strategies)
 - [User Channel Synchronization](#user-channel-synchronization)
 - [Channel Membership Rules](#channel-membership-rules)
+  - [4-Part DM & Trial Policy](#4-part-dm--trial-policy)
+  - [Contextual Booking Receipt Cards](#contextual-booking-receipt-cards)
+  - [Server-Side Authorization for Membership Changes](#server-side-authorization-for-membership-changes)
 - [Race Condition Prevention](#race-condition-prevention)
 - [User Channel Sync Flow](#user-channel-sync-flow)
 - [Event Channel Management](#event-channel-management)
 - [Code Examples](#code-examples)
 - [Best Practices](#best-practices)
+- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
 
 ## Channel Creation Strategies
 
-### Eager Creation
+### Server-Provisioned Hybrid Strategy
 
-**Definition**: Create channels immediately when the entity (webinar, class, consultation, subscription) is created or approved.
+Stream Chat channels are created and reconciled exclusively on the server across two complementary paths:
 
-**When to Use**:
-
-- High-priority events (paid consultations, approved subscriptions)
-- Events with guaranteed participants
-- When chat availability is critical
-
-**Advantages**:
-
-- Channels ready immediately
-- No delay for first users
-- Predictable behavior
-
-**Disadvantages**:
-
-- May create unused channels
-- Higher initial API usage
-- Requires cleanup for canceled events
-
-**Implementation**:
+1. **Eager Provisioning on Confirmed Payment / Approval (`lib/payments/webhooks/handlers.ts`)**:
+   - When a paid **Consultation** or **Subscription** transitions into `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`), the server provisions or reuses the pair's canonical 1:1 DM channel (`createDirectMessageChannel(consultantUserId, consulteeUserId, organizationId)`).
+   - When a **Webinar** or **Class** enrollment is confirmed, the server adds the enrollee to the group `team` channel (`webinar-<id>` / `class-<id>`) **and** provisions the 1:1 DM channel between the consultant and the enrollee.
+   - **Free Trials (`TRIAL`)** never create or open a Stream channel (`skipped: "trial_chat_blocked"`).
+2. **On-Demand Resolution (`POST /api/stream/channels/open`)**:
+   - When a user clicks **"Message"** on an appointment card or selects a search result in the chat sidebar, the browser sends the target user or event identifier (`{ kind: "dm", counterpartyUserId, organizationId, contextAppointmentId }` or `{ kind: "event", eventType, eventId }`) to `POST /api/stream/channels/open`.
+   - The server verifies `canDirectMessage` or `isEventParticipant`, derives the canonical channel ID server-side, creates/adopts the channel with chunked membership (`createMemberChunk` + `addRemainingMembers`), and optionally posts an idempotent booking context card.
 
 ```typescript
-// After consultation approval
-const consultation = await prisma.consultation.update({
-  where: { id: consultationId },
-  data: { status: "APPROVED" },
+// Eager provisioning after payment confirmation (server-side)
+await createDirectMessageChannel(
+  consultantUserId,
+  consulteeUserId,
+  organizationId,
+);
+
+// On-demand open from client UI (never client-side channel.watch() on uncreated IDs)
+const res = await fetch("/api/stream/channels/open", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    kind: "dm",
+    counterpartyUserId,
+    organizationId,
+    contextAppointmentId: appointment.id,
+  }),
 });
-
-// Immediately create channel
-await createConsultationChannel(consultation.id);
-```
-
-### Lazy Creation
-
-**Definition**: Create channels on-demand when the first user attempts to access them.
-
-**When to Use**:
-
-- Events with uncertain participation
-- Low-priority or free events
-- When minimizing API usage is important
-
-**Advantages**:
-
-- Only creates channels that will be used
-- Lower API usage
-- Self-cleaning (no unused channels)
-
-**Disadvantages**:
-
-- Slight delay for first user
-- Race conditions possible
-- More complex error handling
-
-**Implementation**:
-
-```typescript
-// In event channel component
-const ensureChannel = async () => {
-  try {
-    // Try to access channel
-    const channel = client.channel("team", `webinar-${webinarId}`);
-    await channel.watch();
-  } catch (error) {
-    if (error.code === 16) {
-      // Channel not found
-      // Create channel server-side
-      await createWebinarChannel(webinarId);
-    }
-  }
-};
-```
-
-### Hybrid Strategy (Recommended)
-
-Combine both strategies based on entity type:
-
-```typescript
-// Eager for paid/approved entities
-if (consultation.status === "APPROVED") {
-  await createConsultationChannel(consultation.id);
-}
-
-// Lazy for events (created when the first attendee registers)
-if (registeredCount === 1) {
-  await createWebinarChannel(webinar.id);
-}
 ```
 
 ---
@@ -115,19 +60,15 @@ if (registeredCount === 1) {
 
 ### syncUserEventChannels Function
 
-**Purpose**: Ensure a user is a member of all channels for events they're participating in.
+**Purpose**: Reconcile a user's Stream channel memberships against Postgres entitlements and revoke stale memberships.
 
 **When to Call**:
 
-- User login (ensure membership of all channels)
-- After joining an event (add to specific channel)
-- Privileged maintenance run (fix any inconsistencies — the session gate rejects unauthenticated callers entirely)
-- After profile changes
+- Deferred initial provider connect (`providers/StreamProviderImpl.tsx`)
+- Manual user refresh (`components/chat/InitializeUserChannelsButton.tsx`)
+- Privileged maintenance run (the session gate rejects unauthenticated callers)
 
-**File**: `actions/stream/chat/event-channel.action.ts`
-
-The real signature and contract matter more than the body, because callers get
-both wrong in ways that are invisible until production:
+**File**: `actions/stream/chat/event-channel.action.ts` (thin `"use server"` wrapper delegating primitives to `lib/stream/event-channel-service.ts`)
 
 ```typescript
 export async function syncUserEventChannels(
@@ -144,113 +85,80 @@ export async function syncUserEventChannels(
 }>;
 ```
 
-Five properties of this contract are load-bearing.
+Five properties of this contract are load-bearing:
 
-**It reports failure by resolving, not by rejecting.** A missing user returns
-`{ success: false, error: "User not found" }` rather than throwing. A caller
-written as `sync(id).then(markDone).catch(logIt)` therefore marks a failed sync
-as done, because the `catch` only ever sees the thrown case. That is exactly the
-bug fixed in `providers/StreamProviderImpl.tsx`, where the success marker was
-persisted to `sessionStorage` for a sync that had failed, suppressing every
-retry for the rest of the tab's life. Branch on `result.success`.
-
-**It can no-op.** A recent successful sync for the same user returns
-`{ success: true, skipped: true }` without doing any work, unless `force` is
-passed. Treat `skipped` as success, because it means the state is already
-correct.
-
-**It revokes rather than adds, and it fans out in bounded chunks.** The add pass
-is retired: channels are provisioned on demand by
-`POST /api/stream/channels/open` and eagerly at booking approval and payment
-success, so what remains is the reconciliation half — query Stream for every
-channel the user is actually in, and remove the memberships that the
-expected-set no longer justifies. Removals go out through chunked
-`Promise.allSettled` rather than a sequential loop, so one channel that fails
-does not abandon the rest — hence `failed` alongside `channelsSynced`, which
-now reports the size of the expected-set rather than a count of work performed.
-A partial result is the normal shape, not an error.
-
-That reconciliation query pages through `queryChannelsPaged`
-(`lib/stream/batch.ts`), because Stream returns at most 30 channels per
-`queryChannels` call no matter what `limit` is requested. Reading a single page
-as the whole list is what left stale direct messages beyond the thirtieth
-channel unrevoked (#1270); see
-[17. Channel Lifecycle](./17-channel-lifecycle.md#streams-per-request-ceilings)
-for the full account and for the matching 100-member ceiling on channel
-creation.
-
-**It is session-gated.** The module is `"use server"`, so the action is
-remotely invocable and gates itself before any work: it reads the session
-fresh from the database (`getSession(true)`), rejects suspended accounts, and
-allows only self or privileged (`isPrivileged`) callers — mirroring
-`assertCanMintToken` in `actions/stream/chat/stream.action.ts`. The gate fires
-before the `force` path clears the sync dedup guard, so an unauthenticated call
-cannot reset someone else's guard. Legitimate callers always act as self:
-`providers/StreamProviderImpl.tsx` fires the sync fire-and-forget, and
-`components/chat/InitializeUserChannelsButton.tsx` passes the signed-in user's
-own id.
-
-**Its expected-set excludes events past retention.** `getWebinarIdsForUser` and
-`getClassIdsForUser` select each event's latest slot `endsAt` plus the owning
-organization's `streamRecordingRetentionDays`, then drop events whose window
-has lapsed via `isPastRetention` in `lib/stream/channel-lifecycle.ts`. Without
-this filter the sync could lazily resurrect a channel the retention cron
-hard-deleted — and the resurrected channel would classify as already-frozen
-against its `chatFrozenAt` ledger stamp and stay writable forever (F-HIGH-2,
-2026-08-23 architecture review). [17. Channel Lifecycle](./17-channel-lifecycle.md)
-documents the full failure mode and the invariant that protects it.
-
-For the current body, read the function itself. It is long, it changes with the
-event model, and a transcribed copy here has drifted every time.
+1. **It reports failure by resolving, not by rejecting.** A missing user or unauthenticated session returns `{ success: false, error: "..." }` rather than throwing. Callers must branch on `result.success` before marking session sync complete.
+2. **It can no-op.** A recent successful sync for the same user returns `{ success: true, skipped: true }` without doing work unless `force` is passed.
+3. **It revokes rather than adds, paging at Stream's 30-channel ceiling.** Channels are provisioned eagerly at booking confirmation and on-demand via `POST /api/stream/channels/open`. `syncUserEventChannels` walks every channel the user belongs to via `queryChannelsPaged` (`lib/stream/batch.ts`, 30 channels per page sorted by `created_at` ascending) and removes memberships with a managed prefix (`MANAGED_CHANNEL_PREFIXES`) that are absent from the Postgres expected-set.
+4. **It is session-gated.** `actions/stream/chat/event-channel.action.ts` reads the session fresh from the database (`getSession(true)`), rejects banned accounts, and allows only self or privileged (`ADMIN`/`STAFF`) callers before touching the sync cache.
+5. **Its expected-set includes `ACCEPTED` collaborators and excludes events past retention.** `getWebinarIdsForUser` and `getClassIdsForUser` include webinars and classes where the user is the host, a live `AppointmentParticipant`, or an `ACCEPTED` `PlanCollaborator` (`consultantProfile.deletedAt: null`), so co-hosts are never evicted during reconciliation. Events whose latest slot `endsAt` has passed the owning organization's retention window (`isPastRetention` in `lib/stream/channel-lifecycle.ts`) are excluded so the sync never resurrects channels hard-deleted by the retention cron.
 
 ---
 
 ## Channel Membership Rules
 
-### Who May Talk to Whom (Policy)
+### 4-Part DM & Trial Policy
 
-The platform deliberately supports only three conversation shapes. First, a consultant and a consultee who transact together share exactly one direct-message channel: consultations, subscriptions, trials, and ad-hoc DMs between the same pair all reuse the deterministic `dm-<idA>-<idB>` channel id (the two user ids are put into code-unit order before joining, so the pair can never produce a duplicate channel regardless of who initiates). An organization-scoped conversation uses the `dmo-` form instead; see [Direct Messages](./04-chat-implementation.md#direct-messages) for why the ordering must not use `localeCompare`. Trials were absent from this list until recently, and the omission was accidentally accurate: the trial branch in the payment webhook existed but could never execute, because the consultant could not be resolved for a trial appointment. A trial now opens the same conversation as any other one-to-one booking. Second, group events — webinars and classes — put every booked attendee and the host into one shared event channel, and this is the sanctioned space where consultees can talk alongside other consultees. Third, consultants collaborating on a joint webinar or class get a plan-scoped `collab-{webinar|class}-{planId}` channel that is reconciled against the accepted collaborator list.
+Familiarise enforces a deterministic 4-part communication policy across all booking modalities (`lib/stream/dm-eligibility.ts`, `lib/stream/dm-eligibility-statuses.ts`, `lib/stream/event-channel-service.ts`):
 
-Consultee↔consultee direct messages are intentionally not supported. This is a decision, not a gap: peer-to-peer DMs on a marketplace are only safe with mature moderation infrastructure, and the block stays until the moderation enforcement shipped for #693 and the #899 hardening have settled in production. The full rationale is recorded in `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`. There is no consultee↔consultee code path to disable — reviewers should keep it that way.
+1. **One Human Pair = One Canonical DM Channel (`dm-` / `dmo-`)**:
+   - A consultant and a consultee who transact together share **one** 1:1 `messaging` channel per tenancy scope across all repeat consultations, subscriptions, webinars, and classes:
+     - **B2C Personal Scope**: `dm-${userIdA}-${userIdB}` (with `userIdA` and `userIdB` ordered by UTF-16 code units `a < b ? [a, b] : [b, a]`, never `localeCompare`; hashed to `dmh-${sha256}` if the joined string exceeds Stream's 64-character ceiling).
+     - **B2B Enterprise Organization Scope**: `dmo-${sha256(orgId).slice(0, 12)}-${sha256(`${orgId}:${a}:${b}`).slice(0, 36)}` with `custom.organization_id = orgId`.
+   - Consultee-to-consultee peer DMs are prohibited (`canDirectMessage` requires at least one eligible consultant ↔ consultee link).
+2. **Paid / Confirmed Eligibility Gate (`DM_ELIGIBLE_STATUSES`)**:
+   - `DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]` (`lib/stream/dm-eligibility-statuses.ts`).
+   - Unpaid or unconfirmed bookings (`PENDING`, `APPROVED_PENDING_PAYMENT`, `CANCELLED`, `REJECTED`, `EXPIRED`) are **excluded** — direct messaging opens only after payment settles or an appointment is confirmed without pending payment, and remains open through `COMPLETED` for post-session follow-up until the retention window expires.
+3. **Webinars & Classes Provision Both Group Event Channels and 1:1 Host DMs**:
+   - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions **both**:
+     1. The shared `team` channel (`webinar-${webinarId}` or `class-${classId}`), whose roster includes the plan owner, all `ACCEPTED` `PlanCollaborator` co-hosts, and all live `AppointmentParticipant` enrollees.
+     2. The 1:1 personal DM (`dm-` or `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink` and `hasClassLink` in `lib/stream/dm-eligibility.ts`).
+4. **Free Trials (`TRIAL`) Block All Chat Surfaces**:
+   - `TrialSession` appointments (`AppointmentsType.TRIAL`) have all Stream Chat channels, 1:1 DMs, and in-call meeting chat blocked (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/handlers.ts` and in-call chat hidden in `app/meetings/[id]/components/MeetingRoom.tsx`). A free trial is a strictly time-boxed live video evaluation; asynchronous DM access unlocks only when the learner converts to a paid plan.
+
+### Contextual Booking Receipt Cards
+
+Because repeat bookings between the same consultant and consultee share a single `dm-` or `dmo-` thread, `POST /api/stream/channels/open` supports an optional `contextAppointmentId` parameter to disambiguate which booking a conversation turn refers to:
+
+- When `contextAppointmentId` is passed (for example, from **"Message Consultant"** / **"Message Consultee"** CTAs on an appointment card via `chatAffordancesForVm`), the server verifies that the appointment is non-deleted, in an eligible status, and links `(userId, counterpartyUserId)`.
+- The server then posts an idempotent message into the shared DM with deterministic message ID (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId(channelId, appointmentId)` hashed to $\le 64$ chars) and `booking_context` metadata (`booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`).
+- If the receipt card for that appointment was already posted, Stream rejects the duplicate message ID and `postBookingContextCardIfAbsent` treats the duplicate as a clean no-op.
 
 ### Server-Side Authorization for Membership Changes
 
-Stream's server-side API bypasses its own permission system whenever a valid API secret is presented, so every membership mutation must be authorized in our application layer before the Stream call. The `addMemberToChannel` server action requires a signed-in session and allows only admins, staff, or the channel's creator to add members; non-privileged callers can no longer lazily create channels they do not own. The channel-creation route applies the same rule: event channels require the caller to be the event's creator (or privileged), and custom channels are admin/staff-only.
+Stream's server-side API bypasses its own permission system whenever a valid API secret is presented, so every membership mutation is authorized in the application layer before calling Stream:
+
+- `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts` do **not** have `"use server"` directives and cannot be invoked as browser RPCs.
+- `actions/stream/chat/event-channel.action.ts` (`"use server"`) gates `addUserToEventChannel`, `removeUserFromEventChannel`, and `syncUserEventChannels` via `getSession(true)` + participant/host/admin checks.
+- `POST /api/stream/channels/open` enforces `requireApiAuth()`, `streamApiLimiter`, `canDirectMessage` / `isEventParticipant`, and `pairBookingContexts` (preventing cross-organization `organizationId` forgery).
 
 ### Participant Sources
 
-Event channel membership follows the event's session slots: a user is a member
-if they are connected to one, which is exactly what registering does. The host
-is added separately.
+Event channel membership follows the event's confirmed `AppointmentParticipant` records plus the plan owner and `ACCEPTED` `PlanCollaborator` co-hosts:
 
 ```mermaid
 graph TB
-    User[User]
+    User[Enrolled Learner]
+    Collab[Accepted Collaborator]
+    Host[Plan Owner / Consultant]
 
-    subgraph "Webinar Membership"
-        W2[Appointment Slot]
-        W3[Host/Consultant]
+    subgraph "Webinar / Class Group Channel (team)"
+        EventChannel["webinar-{id} / class-{id}"]
     end
 
-    subgraph "Class Membership"
-        C2[Appointment Slot]
-        C3[Instructor/Consultant]
+    subgraph "1:1 Direct Message (messaging)"
+        DMChannel["dm-{a}-{b} / dmo-{org}-{pair}"]
     end
 
-    User -->|Registers| W2
-    User -->|Creates Plan| W3
+    User -->|Confirmed Enrollment| EventChannel
+    Collab -->|status = ACCEPTED| EventChannel
+    Host -->|channel_moderator| EventChannel
 
-    User -->|Enrolls| C2
-    User -->|Creates Plan| C3
+    User <-->|1:1 Host DM + Booking Receipt Card| DMChannel
+    Host <-->|1:1 Host DM + Booking Receipt Card| DMChannel
 
-    W2 --> WChannel[Webinar Channel]
-    W3 --> WChannel
-
-    C2 --> CChannel[Class Channel]
-    C3 --> CChannel
-
-    style WChannel fill:#4fc3f7
-    style CChannel fill:#81c784
+    style EventChannel fill:#4fc3f7
+    style DMChannel fill:#81c784
 ```
 
 ### Deduplication Strategy
@@ -788,6 +696,16 @@ if (existingChannel.name !== expectedName) {
   await channel.update({ name: expectedName });
 }
 ```
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Per-Booking `consultation-{id}` and `subscription-{id}` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` tuple (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`). Per-booking channels fragmented conversation history across repeat sessions, caused sidebar clutter, and complicated post-session follow-up. Disambiguation across multiple bookings now uses idempotent `booking-ctx-` receipt cards posted into the shared DM via `POST /api/stream/channels/open`.
+- **Direct Messages and In-Call Chat on Free Trials (`TRIAL`)**: Superseded by a strict trial chat block (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/handlers.ts` and `enableChat={false}` in `MeetingRoom.tsx`). Free trials are bounded live video evaluations; asynchronous messaging opens only on paid/confirmed bookings (`DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`).
+- **Opening DMs on `APPROVED_PENDING_PAYMENT` Bookings**: Retired so unpaid booking requests cannot initiate chat before payment settles.
+- **Unpaginated `queryChannels({ limit: 100 })` Reconciliation Loops**: Superseded by `queryChannelsPaged` (`lib/stream/batch.ts`), which pages at Stream's hard 30-channel per-request ceiling sorted by `created_at` ascending so memberships beyond the 30th channel are never silently skipped during revocation sweeps.
+- **Client-Side `channel.watch()` on Uncreated Channel IDs**: Superseded by server-side resolution in `POST /api/stream/channels/open` (`createDirectMessageChannel` / `addUserToEventChannel`), preventing the browser from creating memberless phantom channels.
 
 ---
 

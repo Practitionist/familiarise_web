@@ -207,9 +207,7 @@ Atomic creation with members:
 // Create channel AND add members in one call (reduces race window)
 await channel.create({
   members: allParticipants,
-  data: {
-    /* metadata */
-  },
+  data: {/* metadata */},
 });
 ```
 
@@ -318,9 +316,7 @@ import { logger } from "@/lib/logger";
 logger.error("stream.chat.connection_failed", {
   userId,
   error,
-  context: {
-    /* additional context */
-  },
+  context: {/* additional context */},
 });
 ```
 
@@ -328,12 +324,12 @@ logger.error("stream.chat.connection_failed", {
 
 ### Workarounds Summary
 
-| Issue           | Workaround                   | Effectiveness | Notes                            |
-| --------------- | ---------------------------- | ------------- | -------------------------------- |
+| Issue           | Workaround                   | Effectiveness | Notes                                     |
+| --------------- | ---------------------------- | ------------- | ----------------------------------------- |
 | Admin role bug  | Resolved in #899             | Fixed         | Least-privilege role mapping now in place |
-| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
-| Race conditions | Atomic creation              | Moderate      | Race window still exists         |
-| User cleanup    | Exclusion list               | Good          | Manual maintenance required      |
+| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops                    |
+| Race conditions | Atomic creation              | Moderate      | Race window still exists                  |
+| User cleanup    | Exclusion list               | Good          | Manual maintenance required               |
 
 ---
 
@@ -403,7 +399,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
 
 #### Cause
 
-The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed *type* between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
+The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed _type_ between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
 
 #### Fix
 

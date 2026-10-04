@@ -114,7 +114,7 @@ so `dm-<a>-<a>` would otherwise become a one-member channel: no counterparty for
 
 **Never open a DM by asking Stream for a computed id.** `channel.watch()` posts
 to the same query endpoint `channel.create()` does, so watching an id that does
-not exist *creates* it — as `created_by`, with no members, invisible to the
+not exist _creates_ it — as `created_by`, with no members, invisible to the
 sidebar's `{ members: { $in: [me] } }` filter on the next reload. Go through
 `POST /api/stream/channels/open`, which checks eligibility and creates the
 channel with both members.
@@ -128,7 +128,7 @@ This section used to document two separate formats with their own member lists.
 They never worked. `createConsultationChannel` minted a DM and always had; the
 `consultation-` id existed only in this document and in a reconciler blocklist.
 Worse, `syncUserEventChannels` built its expected set from webinars, classes and
-DMs while treating both prefixes as MANAGED — so any channel that *did* carry
+DMs while treating both prefixes as MANAGED — so any channel that _did_ carry
 one was classified stale and the buyer was removed from it on their very next
 dashboard load. #1134 P0-7 deleted the concept rather than repairing it: the
 pair already has a thread, and removing the second one removed a contradiction
@@ -219,7 +219,6 @@ list on every accept.
 after its last session ends (readable, not writable) and hard-deletes it at the
 org's `streamRecordingRetentionDays`, default 90. DM channels are deliberately
 excluded: the pair's thread outlives any single booking.
-
 
 ## Creating Channels
 

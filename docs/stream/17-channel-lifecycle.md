@@ -7,14 +7,16 @@
 ## Table of Contents
 
 - [Two stores, two responsibilities](#two-stores-two-responsibilities)
-- [Channel ID taxonomy](#channel-id-taxonomy)
+- [Channel ID taxonomy & 4-Part DM / Trial policy](#channel-id-taxonomy--4-part-dm--trial-policy)
+- [Contextual booking receipt cards](#contextual-booking-receipt-cards)
 - [How a channel comes into existence](#how-a-channel-comes-into-existence)
 - [The duplicate-create race](#the-duplicate-create-race)
 - [Aging: freeze, then delete](#aging-freeze-then-delete)
 - [The sync expected-set contract](#the-sync-expected-set-contract)
-- [Stream's per-request ceilings](#streams-per-request-ceilings)
+- [Stream's per-request & rate-limit ceilings](#streams-per-request--rate-limit-ceilings)
 - [Security surface rules](#security-surface-rules)
 - [Testing map](#testing-map)
+- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
 
@@ -25,90 +27,99 @@ messages, read state, and membership live only on Stream, and a deleted channel
 is unrecoverable. Postgres is the system of record for entitlements and
 scheduling truth: who booked what, when the last slot ends, and which
 organization's retention dial applies. Neither store can answer the other's
-questions — a Postgres appointment proves the *right* to be in a channel, not
+questions — a Postgres appointment proves the _right_ to be in a channel, not
 that the channel exists, and a Stream channel proves nothing about why it was
 created. Every mechanism in this document exists to manage the boundary between
 the two: creation copies entitlements forward into Stream, expiry retires
 channels once their entitlements are historic, and the sync repairs drift in
 one direction only — Postgres decides, Stream obeys.
 
-## Channel ID taxonomy
+## Channel ID taxonomy & 4-Part DM / Trial policy
 
-Every channel id is derived deterministically from domain entities. The
-prefixes (`webinar-`, `class-`, `dm-`/`dmo-`, `collab-`, and the legacy
-`consultation-`/`subscription-`) and the helpers around them live in
-`lib/stream-channel-ids.ts`; read that file rather than any table here.
-`MANAGED_CHANNEL_PREFIXES` in the same file defines the set the dashboard sync
-is allowed to reconcile — anything outside it (collaborator threads, support
-channels) is never swept.
+Every channel ID is derived deterministically from domain entities (`lib/stream-channel-ids.ts`, `lib/stream-utils.ts`) using UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`, never `localeCompare`) and capped at Stream's 64-character ceiling. `MANAGED_CHANNEL_PREFIXES` defines the prefixes reconciled by `syncUserEventChannels` (`webinar-`, `class-`, `dm-`, `dmo-`, `dmh-`, and legacy `consultation-`/`subscription-`); `collab-` and support channels are never swept by user sync.
+
+Channel provisioning and eligibility follow a strict **4-Part DM & Trial Policy** (`lib/stream/dm-eligibility.ts`, `lib/stream/dm-eligibility-statuses.ts`):
+
+1. **One human pair = one DM channel (`dm-` / `dmo-`)**:
+   - Personal B2C conversations between a consultant and consultee use `dm-${userIdA}-${userIdB}` (or `dmh-${sha256}` when $> 64$ chars) with no `organization_id` field.
+   - Enterprise B2B conversations scoped to an organization use `dmo-${sha256(orgId).slice(0, 12)}-${sha256(`${orgId}:${a}:${b}`).slice(0, 36)}` and stamp `organization_id: orgId` on the channel's custom data.
+   - Consultee-to-consultee peer DMs are never permitted (`canDirectMessage` requires a consultant ↔ consultee link).
+2. **Paid/confirmed gate (`DM_ELIGIBLE_STATUSES`)**:
+   - `DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`.
+   - `APPROVED_PENDING_PAYMENT` and `PENDING` are excluded — no DM channel can be created, searched, or opened until payment succeeds or an appointment is approved without pending payment.
+3. **Webinars & Classes provision both the group event channel and a 1:1 personal DM**:
+   - Confirmed enrollment (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions both the shared `team` channel (`webinar-${id}` / `class-${id}`) **and** a 1:1 DM (`dm-` / `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink`, `hasClassLink`).
+   - `ACCEPTED` `PlanCollaborator` co-hosts (`consultantProfile.deletedAt: null`) are included in the group channel roster (`lib/stream/event-channel-service.ts`) and in `syncUserEventChannels`'s expected-set so co-hosts are never evicted during reconciliation.
+4. **Free Trials (`TRIAL`) block all chat surfaces**:
+   - `TrialSession` bookings have all Stream Chat channels, 1:1 DMs, and in-call meeting chat blocked (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/handlers.ts` and `enableChat={false}` in `MeetingRoom.tsx`).
+
+## Contextual booking receipt cards
+
+Because all consultations, subscriptions, webinars, and classes between a given `(consultant, consultee, orgScope)` pair share one canonical 1:1 DM thread, `POST /api/stream/channels/open` accepts an optional `contextAppointmentId` to anchor conversation context when a user clicks **"Message"** from an appointment card (`chatAffordancesForVm`):
+
+- The route verifies that `contextAppointmentId` is non-deleted, in an eligible status, and links `(userId, counterpartyUserId)` (either directly on a consultation/subscription or as host + live participant on a webinar/class).
+- It then sends an idempotent message into the shared DM with deterministic ID (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId(channelId, appointmentId)`) and custom `booking_context` fields (`booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`).
+- Re-opening the same appointment's chat hits Stream's duplicate-message-ID check and is ignored cleanly without posting duplicate receipt cards.
 
 ## How a channel comes into existence
 
-There are exactly three ways, and all of them run on the server:
+There are three server-side creation paths:
 
 1. **Explicit creators** — `actions/stream/chat/channel.action.ts`
-   (`createChannel` plus the entity wrappers `createWebinarChannel`,
-   `createClassChannel`, `createConsultationChannel`,
-   `createSubscriptionChannel`, `createDirectMessageChannel`). Called from
-   authenticated API routes under `app/api/` and from
-   `lib/payments/webhooks/handlers.ts` at booking/approval time.
-2. **Lazy create-on-miss** — `actions/stream/chat/event-channel.action.ts`
-   (`addUserToEventChannel`, `addUserToDmChannel`). Try `addMembers` first;
-   when that fails because the channel does not exist, build the full roster
-   from Postgres and create atomically with every member included.
+   (`createChannel` plus `createWebinarChannel`, `createClassChannel`,
+   `createDirectMessageChannel`). Called from `POST /api/stream/channels/open`,
+   authenticated API routes under `app/api/`, and `lib/payments/webhooks/handlers.ts`
+   at booking confirmation and payment settlement.
+2. **Lazy create-on-miss** — `lib/stream/event-channel-service.ts`
+   (`addUserToEventChannel`, wrapped for browser callers by
+   `actions/stream/chat/event-channel.action.ts`). Attempts `addMembers` first;
+   when the channel does not exist, builds the full roster from Postgres
+   (host + `ACCEPTED` collaborators + live `AppointmentParticipant` rows),
+   filters out unconsented users (`droppedIds` from `upsertUsersToStream`), and
+   creates atomically with `createMemberChunk` + `addRemainingMembers`.
 3. **Collaborator reconcile** — `createCollaboratorChannel` in
-   `channel.action.ts`. Idempotent create plus a full member diff against the
-   accepted-collaborator list, run when a collaborator invitation is accepted.
+   `channel.action.ts`. Idempotent create (`collab-{webinar|class}-{planId}`)
+   with 100-member chunking (`createMemberChunk` + `addRemainingMembers`) plus
+   a full member diff against the `ACCEPTED` collaborator list.
 
 Creation is server-side by necessity, not preference: the Node SDK holds the
 API secret, and every create call must carry `created_by_id` set to a real
 member (the consultant host, or the DM initiator) — Stream rejects server-side
 creates without it, and a synthetic "system" creator would break the
-moderation-grant logic described next.
+channel-scoped `channel_moderator` grant via `assignRoles`.
 
 ## The duplicate-create race
 
-Lazy creation invites a race (architecture review 2026-08-23, F-HIGH-3): two
-users join an event at the same instant, both `addMembers` calls fail because
-the channel does not exist yet, and both proceed to `create()`. One wins; the
-loser's `create()` rejects with Stream's duplicate-create error. Before the
-adopt-on-race contract, that rejection propagated — from the awaited
-payment-webhook path it failed a real attendee's join outright.
+Lazy creation can encounter a concurrent-create race: two users join an event
+at the same instant, both `addMembers` calls miss because the channel does not
+exist yet, and both proceed to `create()`. One wins; the loser's `create()`
+rejects with Stream's duplicate-create error.
 
-The contract is now: **lose the race, adopt the winner's channel.** The
+The contract is: **lose the race, adopt the winner's channel.** The
 predicate is `isChannelAlreadyExistsError` in `lib/stream-utils.ts`, which
 matches three shapes — `error.code === 17`, HTTP status 409, and a
-message-text `/already exists/i` fallback — because the rejection shape drifted
-across stream-chat SDK versions, and v9 routes `create()` through the
-get-or-create query endpoint.
+message-text `/already exists/i` fallback.
 
-What adoption does guarantee:
+What adoption guarantees:
 
-- The channel exists and was built from the same deterministic id and roster
-  inputs, so the loser continues down the normal post-create path: the
-  channel-scoped `channel_moderator` grant via `assignRoles`, and the
-  `markChannelExists` cache stamp.
-- The caller resolves successfully with the channel id it asked for. On the
+- The channel exists and was built from the same deterministic ID and roster
+  inputs, so the loser continues down the normal post-create path:
+  `addRemainingMembers`, the channel-scoped `channel_moderator` grant via
+  `assignRoles`, and the `markChannelExists` cache stamp.
+- The caller resolves successfully with the channel ID it asked for. On the
   explicit path (`createChannel`) the raw create response is dropped
-  (`channelData: null`) — callers consume the id and members, never the payload.
+  (`channelData: null`) — callers consume the ID and members, never the payload.
 
-What adoption does **not** guarantee is your membership. The winner's roster
-snapshot may predate you, so the lazy paths (`addUserToEventChannel`,
-`addUserToDmChannel`) retry `addMembers([userId])` once after adopting. That
-retry is best-effort: a failure is logged and swallowed, never thrown, and the
-membership cache stays unwritten so nothing suppresses a future attempt — the
-next dashboard sync will reconcile a genuinely missed membership anyway.
-The explicit creators (`createChannel` and its entity wrappers) intentionally
-skip an equivalent post-adoption diff: their roster inputs are deterministic
-from the same entity rows the winner read, so divergence is rare and transient,
-and a `queryChannels` diff on the awaited payment-webhook hot path would cost
-more than it protects. Any other create failure — quota, outage, validation —
-still propagates.
+What adoption does **not** guarantee is the joining user's membership if the
+winner's roster snapshot predated them. Therefore, the lazy paths
+(`addUserToEventChannel`, `addUserToDmChannel`) retry `addMembers([userId])`
+once after adopting. That retry is best-effort: if it fails, `adoptRetryFailed`
+keeps the membership cache unwritten so the next sync or open call retries.
 
 ## Aging: freeze, then delete
 
-Nothing used to end a webinar or class chat; membership grew without bound on a
-product billed per MAU (#1134 P1-17). Channels now age through three states:
+Group event channels age through three states so dormant cohorts do not
+accumulate writable channels indefinitely:
 
 ```mermaid
 stateDiagram-v2
@@ -119,167 +130,107 @@ stateDiagram-v2
     Deleted --> [*]: hard delete, messages gone
 ```
 
-The thresholds are defined once in `lib/stream/channel-lifecycle.ts` —
+The thresholds are defined in `lib/stream/channel-lifecycle.ts` —
 `FREEZE_AFTER_DAYS = 7`, `DEFAULT_RETENTION_DAYS = 90`, `DAY_MS`, and
-`isPastRetention()` — and both consumers import them, so the expiry job and the
-dashboard sync cannot drift apart (review F-HIGH-2).
+`isPastRetention()` — and shared between the expiry job and the dashboard sync
+so the two never drift apart.
 
 The daily job `jobs/stream/expire-event-channels.ts` (scheduled in
 `.github/workflows/expire-event-channels.yml`) applies two stages:
 
 - **Freeze (+7d after the last slot ends).** `updatePartial({ set: { frozen:
-  true } })`: history stays readable, nobody can post. Because Stream has no
-  batch freeze, this stage is paced and capped per run to stay under the
-  app-wide UpdateChannelPartial rate limit — see the job's header comment for
-  the pacing math and the 2026-08-23 burst that motivated it. After a
-  successful Stream call, the job stamps the ledger:
-  `Webinar.chatFrozenAt` / `Class.chatFrozenAt`. The ordering is deliberate: a
-  missed stamp costs one redundant freeze on the next run (safe), while a
-  premature stamp could leave a channel unfrozen forever (not safe).
+true } })`: history stays readable, nobody can post. After a successful
+  Stream call, the job stamps `Webinar.chatFrozenAt` / `Class.chatFrozenAt`.
+  Stamping after the Stream write ensures a missed stamp costs at most one
+  redundant freeze on the next run rather than leaving a channel unfrozen.
 - **Delete (at the org's retention window).**
-  `deleteChannels(cids, { hard_delete: true })`, capped at 100 cids per
-  request, asynchronous on Stream's side (it returns a task id). Re-deleting a
-  deleted channel is a no-op. The window comes from the owning organization's
-  `streamRecordingRetentionDays`, falling back to the schema default of 90 —
-  one number reused rather than inventing a second dial to explain.
+  `deleteChannels(cids, { hard_delete: true })`, capped at 100 CIDs per
+  request and paced with a `10_000ms` delay between 100-CID chunks to stay well
+  under Stream's `60/min` `DeleteChannels` rate limit. The retention window uses
+  `resolveEventRetentionDays` (`organization.chatRetentionDays ?? organization.streamRecordingRetentionDays ?? 90`).
 
-One subtlety shared by both the job and the sync: a webinar spans many
-appointments (one per attendee cohort) but owns **one** channel, so its age is
-the **latest** end across all cohorts, carrying *that* cohort's org dial.
-Freezing on the earliest cohort's end would cut off a channel whose later
-sessions are still running.
+A webinar or class may span multiple appointments across cohorts but owns
+**one** event channel, so its age is computed from the **latest** slot `endsAt`
+across all non-deleted occurrences.
 
 ## The sync expected-set contract
 
 `syncUserEventChannels` in `actions/stream/chat/event-channel.action.ts` is the
-reconciliation loop: Postgres says which channels the user *should* belong to,
-and the sync makes Stream agree. It builds the expected-set from the user's
-webinars, classes, and DM pairs, then queries Stream for every channel the
-user is actually in and removes memberships whose ids carry a managed prefix
-but are not in the expected-set. There is no add pass any more — channels are
-provisioned on demand by `POST /api/stream/channels/open` and eagerly at
-booking approval and payment success — so revocation is the whole job, and
-nothing else in the system notices that a membership *ought* to be withdrawn.
-Only this user's membership is removed; stale channels survive for the people
-still entitled to them.
+reconciliation loop: Postgres defines which channels the user _should_ belong to,
+and the sync revokes any managed Stream channel membership absent from that set.
+It builds the expected-set from:
 
-The expected-set is Postgres-authoritative, which cuts both ways: rows that no
-longer confer a right to a channel must be excluded, or the sync will *create*
-damage instead of repairing it. Hence the retention filter (review F-HIGH-2):
-`getWebinarIdsForUser` and `getClassIdsForUser` now select each event's latest
-slot `endsAt` plus `organization.streamRecordingRetentionDays` off the
-appointment(s), and drop events where `isPastRetention` is true — the same
-window math the expiry cron applies, fed by the same shared constants.
+1. **Webinars (`getWebinarIdsForUser`)**: Active webinars (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`webinarPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
+2. **Classes (`getClassIdsForUser`)**: Active classes (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`classPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
+3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `IN_PROGRESS`, `COMPLETED`).
 
-Before that filter, the failure mode was resurrection. Postgres rows outlive
-their Stream channels forever, so a finished event stayed in the expected-set
-after the cron had hard-deleted its channel, and the next dashboard sync
-lazily re-created it with the full historic roster. Worse, the pre-delete
-freeze ledger made things *worse* on revival: the resurrected channel carried a
-stamped `chatFrozenAt` upstream, so it classified as already-frozen, was never
-frozen again, and sat writable forever while membership regrew unbounded. If
-you touch either side of this filter, preserve the invariant: **an event past
-retention must appear in neither the cron's work queue nor the sync's
-expected-set.**
+Excluding events where `isPastRetention` is true prevents resurrection: Postgres
+rows outlive their Stream channels, so if a finished event remained in the
+expected-set after `expire-event-channels.ts` hard-deleted its channel, a lazy
+open or sync would re-create the deleted channel with `chatFrozenAt` already
+stamped in Postgres, leaving it permanently unfrozen. **An event past retention
+must appear in neither the cron's freeze queue nor the sync's expected-set.**
 
-## Stream's per-request ceilings
+## Stream's per-request & rate-limit ceilings
 
-Stream imposes two hard limits on the calls this subsystem makes, and both were
-being ignored in ways that produced silent, partial correctness rather than
-visible errors. `lib/stream/batch.ts` is the one place either number is
-written down.
+`lib/stream/batch.ts` and our background jobs enforce three hard Stream ceilings:
 
-**`queryChannels` returns at most 30 channels per call, whatever `limit` you
-pass.** Asking for 100 returns exactly 30. Both reconciliation call sites in
-`event-channel.action.ts` used to ask for pages of 100 and loop while
-`page.length === 100`, so the very first page looked short, the loop ended
-after one request, and reconciliation only ever examined a user's *first thirty*
-memberships. A DM whose booking had been cancelled but that happened to sit at
-position 41 of the user's channel list was never read, never classified stale,
-and never revoked — this is the DM revocation leak (#1270). The same loop also
-advanced `offset` by the requested 100 rather than by the 30 actually returned,
-so had it ever run a second time it would have skipped seventy channels.
-`scripts/stream/purge-memberless-dms.ts` had already learned this the hard way;
-the fix now lives in `queryChannelsPaged`, which pages at the real cap, advances
-by the rows returned, and is shared by both call sites.
-
-Two consequences of that helper are worth stating explicitly. It sorts the
-reconciliation walk by `created_at` ascending rather than leaving the sort
-unspecified, because offset paging is only coherent over a stable order and
-Stream's default sort is `last_message_at` — which moves underneath a
-multi-page walk, letting an active channel jump onto an earlier page and push
-an unexamined one off the end. And it stops at Stream's maximum `offset` of
-1000 and returns `truncated: true` rather than quietly handing back a prefix.
-A user with more memberships than that gets a partial reconcile, which errs in
-the safe direction — a channel nobody looked at keeps its member, it does not
-lose one — but the run logs a warning instead of reporting a sweep it did not
-perform.
-
-**`channel.create()` carries its roster in the request body and accepts at most
-100 members**, the same ceiling `upsertUsersToStream` already respected.
-`Webinar.maxParticipants` is unbounded, so a 150-seat webinar assembled a valid
-roster and then handed all of it to Stream in one oversized call that was
-rejected outright: the first attendee to open chat got a caught exception, a
-Sentry event, and no chat. Both create paths now send `createMemberChunk(...)`
-— the first hundred — and follow with `addRemainingMembers(...)`, which adds
-the rest in hundreds through the existing sequential `forEachChunk`. The
-remainder pass also runs after an adopted race, since the winner created the
-same channel from the same roster and `addMembers` is idempotent for anyone
-already in.
-
-Ordering inside that roster is load-bearing rather than incidental. Whoever
-must certainly end up in the channel belongs at the front of the array, because
-only the front hundred travel inside the atomic create; everyone after them
-arrives in a follow-up request that can fail on its own. `createChannel` puts
-the creator first by construction, and the lazy path in
-`addUserToEventChannel` puts the consultant host and the joining user first,
-so the person whose click triggered the create is never the one stranded.
+1. **`queryChannels` returns at most 30 channels per call (`QUERY_CHANNELS_PAGE_LIMIT = 30`).**
+   Asking for `limit: 100` still returns 30 rows. `queryChannelsPaged` pages at
+   the real 30-row cap, advances `offset` by the number of rows returned, sorts
+   by `created_at` ascending (a stable sort order, unlike `last_message_at`
+   which shifts during multi-page walks), and stops at Stream's maximum `offset`
+   of 1000 (`truncated: true`).
+2. **`channel.create()` and `upsertUsers()` accept at most 100 members per request.**
+   Both `createChannel` and `addUserToEventChannel` pass the first 100 members
+   via `createMemberChunk(syncedMembers)` (keeping the host and joining user at
+   the front of the array) and backfill the remainder in 100-member batches via
+   `addRemainingMembers`.
+3. **Batch deletion rate limits (`DeleteChannels: 60/min`, `DeleteUser: 60/min`).**
+   `jobs/stream/expire-event-channels.ts` and `scripts/stream/stream-sync.ts`
+   enforce a `10_000ms` pause between 100-item chunks so batch sweeps never trip
+   Stream's 60 requests/minute ceiling.
 
 ## Security surface rules
 
-`actions/stream/chat/channel.action.ts` is deliberately **not** a `"use
-server"` module (review F-HIGH-1), and its header comment says it must never be
-re-marked. Marking it so turned every export into a remotely invocable RPC with
-no session check — and Stream's server-side API bypasses all of Stream's
-permission checks — so any browser could mint arbitrary channels and
-memberships, or trigger a full-database upsert storm billed to our MAU. (The
-dead `initializeAllChannels` export, deleted in the same fix, was exactly such
-a trigger.) Its callers today are all server-side: API routes under `app/api/`,
-`lib/payments/webhooks/handlers.ts`, and `lib/collaborators/service.ts`.
-
-If a client ever needs one of these operations directly, put a gate in front of
-it — an authenticated API route, or a thin wrapper in its own `"use server"`
-file that validates the session before delegating. Never widen the module
-itself.
-
-`event-channel.action.ts` *is* `"use server"`, so its exports are RPCs, and
-they gate themselves. The pattern to copy is `assertCanMintToken` in
-`actions/stream/chat/stream.action.ts`: read the session fresh from the database
-(`getSession(true)`), so a just-demoted staff member or a just-banned user
-cannot ride a stale session; reject banned accounts outright; allow
-only self or privileged (`isPrivileged`) callers; throw otherwise.
-`syncUserEventChannels` mirrors it exactly, and the gate fires **before** the
-`force` path clears the sync dedup guard — an unauthenticated call must not be
-able to reset someone else's guard. Legitimate callers always act as self:
-`providers/StreamProviderImpl.tsx` fires the sync fire-and-forget, and
-`components/chat/InitializeUserChannelsButton.tsx` passes the signed-in user's
-own id. `addMemberToChannel` carries its own variant of the same gate:
-privileged callers may add anywhere; anyone else only to a channel they
-created.
+- **`actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts` must NEVER carry `"use server"`.**
+  Stream's server-side SDK bypasses all permission checks when given the API
+  secret. Keeping internal channel-creation and service primitives out of
+  `"use server"` modules prevents browsers from invoking them as unauthenticated
+  RPC endpoints.
+- **`actions/stream/chat/event-channel.action.ts` is a thin `"use server"` boundary.**
+  Its exports (`syncUserEventChannels`, `addUserToEventChannel`,
+  `removeUserFromEventChannel`, `checkEventChannelExists`) verify a fresh
+  database session (`getSession(true)`), reject banned users, and enforce
+  self/host/privileged authorization before delegating to
+  `lib/stream/event-channel-service.ts`.
+- **`actions/stream/chat/user.action.ts` enforces actor checks and PII stripping.**
+  Browser-initiated calls require an authenticated session (`requireAuthenticatedStreamActor`),
+  filter out users without `STREAM_DATA_PROCESSING` consent (`droppedIds`), and
+  strip `email` fields (`stripStreamUserEmails`) from returned Stream user objects.
 
 ## Testing map
 
-| Suite | Pins |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `__tests__/stream/channel-actions.test.ts` | Explicit-path adoption: losing `create()` still returns the id, `channelData` is null, `assignRoles` and `markChannelExists` still run; non-duplicate failures rethrow; `addMemberToChannel` authz gates. Also the 100-member create ceiling: a 250-seat roster creates with 100 and backfills 100 + 50, an ordinary two-person channel costs no extra request, and an adopted race still backfills. |
-| `__tests__/stream/event-channel-actions.test.ts` | Lazy-path adoption plus the one-shot post-adoption `addMembers` retry; the sync gate (another user as non-privileged → Forbidden, banned user even for self → account suspended). Also the 30-row page cap: a full page forces a second request, offsets advance 0/30/60, a stale DM at position 41 is revoked, the walk sorts by `created_at`, and an offset-capped walk warns instead of claiming a clean sweep. |
-| `__tests__/stream/batch.test.ts` | `queryChannelsPaged` in isolation — the 30 constant, second-page-on-full-page, offset advancing by rows returned, empty page as an empty answer rather than a truncated one, and the `truncated` flag at the 1000 ceiling; plus `createMemberChunk` / `addRemainingMembers` losing and duplicating nobody. |
-| `__tests__/fixtures/stream-mocks.ts` | Shared mocks; `assignRoles` added so both suites can observe the moderator grant. |
+| Suite                                            | Pins                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `__tests__/stream/channel-actions.test.ts`       | Explicit-path adoption: losing `create()` still returns the id, `channelData` is null, `assignRoles` and `markChannelExists` still run; non-duplicate failures rethrow; 100-member `createMemberChunk` + `addRemainingMembers` on event and collaborator channels; `droppedIds` consent filtering. |
+| `__tests__/stream/event-channel-actions.test.ts` | Lazy-path adoption plus one-shot post-adoption `addMembers` retry; session gate (another user as non-privileged → Forbidden, banned user → account suspended); `ACCEPTED` collaborator retention in `syncUserEventChannels`; 30-row `queryChannelsPaged` paging and `created_at` sort.             |
+| `__tests__/stream/batch.test.ts`                 | `queryChannelsPaged` 30-row cap, offset advancement, and `truncated` flag at offset 1000; `createMemberChunk` / `addRemainingMembers` chunking.                                                                                                                                                    |
+| `__tests__/fixtures/stream-mocks.ts`             | Shared mocks including `assignRoles` for channel-scoped moderator grants.                                                                                                                                                                                                                          |
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Per-Booking `consultation-*` and `subscription-*` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` pair (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`), with per-booking context injected via idempotent `booking-ctx-` receipt cards on `POST /api/stream/channels/open`. Legacy `consultation-` and `subscription-` prefixes remain in `MANAGED_CHANNEL_PREFIXES` solely so `syncUserEventChannels` can clean up historic memberships.
+- **Trial Session (`TRIAL`) Chat Channels & DMs**: Retired (`skipped: "trial_chat_blocked"`). Free trials no longer provision or unlock 1:1 DMs or in-call chat.
+- **Unpaid (`APPROVED_PENDING_PAYMENT`) DM Provisioning**: Removed from `DM_ELIGIBLE_STATUSES` so chat opens strictly after payment confirmation (`APPROVED`, `SCHEDULED`, `COMPLETED`).
+- **Unpaginated `queryChannels({ limit: 100 })` Sweeps**: Replaced by `queryChannelsPaged` (`lib/stream/batch.ts`) paging at Stream's 30-channel hard limit sorted by `created_at` ascending.
+- **Monolithic `"use server"` Channel Modules**: `lib/stream/event-channel-service.ts` was extracted from `actions/stream/chat/event-channel.action.ts` so server-side callers (`POST /api/stream/channels/open`, webhooks, cron jobs) can invoke event-channel primitives without going through browser-facing `"use server"` wrappers.
 
 ---
 
 **See also:** [06. Channel Management](./06-channel-management.md) for the
 membership policy and sync signature; [09. Background Sync](./09-background-sync.md)
-for the other scheduled sweeps; [troubleshooting.md](./troubleshooting.md) for
-symptoms. The findings cited above (F-HIGH-1/2/3) come from the 2026-08-23
-architecture review tracked in PR #1226.
+for scheduled sweeps; [troubleshooting.md](./troubleshooting.md) for
+operational diagnostics.
