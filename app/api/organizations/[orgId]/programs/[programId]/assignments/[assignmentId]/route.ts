@@ -254,6 +254,25 @@ async function editAssignmentPeriod(
   return next;
 }
 
+async function authorizeAssignmentMutation(
+  params: Promise<{ orgId: string; programId: string; assignmentId: string }>,
+) {
+  const { orgId, programId, assignmentId } = await params;
+  const access = await requireOrgAccess(orgId, {
+    permission: "programs.assign",
+    canSponsor: true,
+    requireActive: true,
+  });
+  if (access.error) return { error: access.error };
+  return {
+    error: null,
+    orgId,
+    programId,
+    assignmentId,
+    member: access.member,
+  };
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -262,15 +281,9 @@ export async function PATCH(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const { orgId, programId, assignmentId } = await params;
-  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
-  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
-  const access = await requireOrgAccess(orgId, {
-    permission: "programs.assign",
-    canSponsor: true,
-    requireActive: true,
-  });
-  if (access.error) return access.error;
+  const auth = await authorizeAssignmentMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, programId, assignmentId, member } = auth;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -287,7 +300,7 @@ export async function PATCH(
   // (programs.assign), which includes ending a seat early with `cancel`.
   if (
     (body.periodStart !== undefined || body.periodEnd !== undefined) &&
-    !hasOrgPermission(access.member.role, "programs.seat.period")
+    !hasOrgPermission(member.role, "programs.seat.period")
   ) {
     return NextResponse.json(
       {
@@ -304,7 +317,7 @@ export async function PATCH(
         orgId,
         programId,
         assignmentId,
-        actorMembershipId: access.member.id,
+        actorMembershipId: member.id,
         body,
       }),
     );
@@ -337,15 +350,9 @@ export async function DELETE(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const { orgId, programId, assignmentId } = await params;
-  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
-  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
-  const access = await requireOrgAccess(orgId, {
-    permission: "programs.assign",
-    canSponsor: true,
-    requireActive: true,
-  });
-  if (access.error) return access.error;
+  const auth = await authorizeAssignmentMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, programId, assignmentId, member } = auth;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -379,7 +386,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: member.id,
           targetMembershipId: current.membershipId,
           category: "PROGRAM",
           action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,

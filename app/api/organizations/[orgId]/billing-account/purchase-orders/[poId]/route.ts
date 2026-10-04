@@ -99,13 +99,8 @@ export async function GET(
   return NextResponse.json({ purchaseOrder: po });
 }
 
-export async function PATCH(
-  req: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{ orgId: string; poId: string }>;
-  },
+async function authorizePurchaseOrderMutation(
+  params: Promise<{ orgId: string; poId: string }>,
 ) {
   const { orgId, poId } = await params;
   const access = await requireOrgAccess(orgId, {
@@ -113,7 +108,17 @@ export async function PATCH(
     canSponsor: true,
     requireActive: true,
   });
-  if (access.error) return access.error;
+  if (access.error) return { error: access.error };
+  return { error: null, orgId, poId, actorMembershipId: access.member.id };
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string; poId: string }> },
+) {
+  const auth = await authorizePurchaseOrderMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, poId, actorMembershipId } = auth;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -162,7 +167,7 @@ export async function PATCH(
           data: { ...moneyOrTermData, ...docData },
           audit: {
             organizationId: orgId,
-            actorMembershipId: access.member.id,
+            actorMembershipId,
             category: "INVOICE", // PO lifecycle rides the INVOICE category (see OrgAuditCategory)
             action:
               body.status === "CLOSED"
@@ -201,7 +206,7 @@ export async function PATCH(
         await tx.orgAuditLog.create({
           data: {
             organizationId: orgId,
-            actorMembershipId: access.member.id,
+            actorMembershipId,
             category: "INVOICE",
             action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_UPDATED,
             description: `PurchaseOrder ${current.poNumber} updated: ${changed.join(", ")}`,
@@ -238,19 +243,11 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  {
-    params,
-  }: {
-    params: Promise<{ orgId: string; poId: string }>;
-  },
+  { params }: { params: Promise<{ orgId: string; poId: string }> },
 ) {
-  const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    permission: "purchaseOrders.manage",
-    canSponsor: true,
-    requireActive: true,
-  });
-  if (access.error) return access.error;
+  const auth = await authorizePurchaseOrderMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, poId, actorMembershipId } = auth;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -278,7 +275,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId,
           category: "INVOICE",
           action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_DELETED,
           description: `PurchaseOrder ${current.poNumber} deleted`,

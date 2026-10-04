@@ -54,19 +54,35 @@ function badAsset() {
   );
 }
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ orgId: string; asset: string }> },
+async function authorizeBrandingMutation(
+  params: Promise<{ orgId: string; asset: string }>,
 ) {
   const { orgId, asset: rawAsset } = await params;
   const asset = parseAsset(rawAsset);
-  if (!asset) return badAsset();
+  if (!asset) return { error: badAsset() };
 
   const access = await requireOrgAccess(orgId, {
     permission: "settings.manage",
     requireActive: true,
   });
-  if (access.error) return access.error;
+  if (access.error) return { error: access.error };
+
+  return {
+    error: null,
+    orgId,
+    asset,
+    column: ASSET_COLUMN[asset],
+    memberId: access.member.id,
+  };
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ orgId: string; asset: string }> },
+) {
+  const auth = await authorizeBrandingMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, asset, column, memberId } = auth;
 
   let formData: FormData;
   try {
@@ -114,7 +130,6 @@ export async function POST(
     );
   }
 
-  const column = ASSET_COLUMN[asset];
   const fileUrl = uploadResult.fileUrl;
   const storagePath = uploadResult.storagePath;
 
@@ -132,7 +147,7 @@ export async function POST(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: memberId,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
           description: `Organization ${asset} updated`,
@@ -165,17 +180,9 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
 ) {
-  const { orgId, asset: rawAsset } = await params;
-  const asset = parseAsset(rawAsset);
-  if (!asset) return badAsset();
-
-  const access = await requireOrgAccess(orgId, {
-    permission: "settings.manage",
-    requireActive: true,
-  });
-  if (access.error) return access.error;
-
-  const column = ASSET_COLUMN[asset];
+  const auth = await authorizeBrandingMutation(params);
+  if (auth.error) return auth.error;
+  const { orgId, asset, column, memberId } = auth;
 
   const current = await prisma.organization.findUnique({
     where: { id: orgId },
@@ -223,7 +230,7 @@ export async function DELETE(
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
-          actorMembershipId: access.member.id,
+          actorMembershipId: memberId,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
           description: `Organization ${asset} removed`,

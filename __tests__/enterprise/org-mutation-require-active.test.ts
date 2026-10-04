@@ -75,7 +75,7 @@ describe("Enterprise org mutation routes requireActive enforcement & DPDP compli
 
       lines.forEach((line, idx) => {
         const m = line.match(
-          /^export async function (GET|POST|PUT|PATCH|DELETE)\b/,
+          /^(?:export )?async function (GET|POST|PUT|PATCH|DELETE|authorize\w+Mutation)\b/,
         );
         if (m) handlers.push({ method: m[1], start: idx });
       });
