@@ -29,7 +29,7 @@ import {
 } from "./session-outcome";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
-import { liveParticipant } from "./participants";
+import { liveParticipant, transitionParticipant } from "./participants";
 import { NEEDS_HUMAN } from "./misses";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { onClassSessionVoided } from "./class-sessions";
@@ -222,6 +222,20 @@ function writeSlotOutcomeTransaction(
       organizationId: slot.appointment.organizationId,
       allowZero: true,
     });
+    // A learner seen in a completed session has attended: their seat moves CONFIRMED -> ATTENDED.
+    const presentUserIds = [...new Set(presences.map((p) => p.userId))];
+    if (count > 0 && to === "COMPLETED" && presentUserIds.length > 0) {
+      await transitionParticipant(
+        tx,
+        {
+          appointmentId: slot.appointmentId,
+          role: "CONSULTEE",
+          userId: { in: presentUserIds },
+        },
+        "ATTENDED",
+        { fromIn: ["CONFIRMED"] },
+      );
+    }
     if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
       await stageNoShowBells(tx, slot, "one-to-one");
     }

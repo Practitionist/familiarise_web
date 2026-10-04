@@ -21,9 +21,8 @@ import Link from "next/link";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExternalLink, Loader2 } from "lucide-react";
-import type { TPlanImageType } from "@/lib/supabase";
 import { FormSection } from "@/components/planner/components/form-fields/FormSection";
-import { OfferingField } from "./OfferingFields";
+import { OfferingField, type CoverImageControl } from "./OfferingFields";
 import type { OfferingManifest } from "./manifest";
 
 export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
@@ -35,9 +34,10 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
    * rather than being forced into a field kind.
    */
   slots?: Record<string, React.ReactNode>;
-  /** Absent while creating: there is no offering to attach an image to yet. */
+  /** Absent while creating. */
   planId?: string;
-  planImageType?: TPlanImageType;
+  /** Absent while creating: there is no offering to attach an image to yet. */
+  coverImage?: CoverImageControl;
   /** Null while creating. DRAFT offerings are not buyable and not discoverable. */
   status?: "DRAFT" | "PUBLISHED" | null;
   /**
@@ -74,7 +74,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   form,
   slots,
   planId,
-  planImageType,
+  coverImage,
   status = null,
   savingAction = null,
   publishBlockedReason = null,
@@ -235,8 +235,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
                           key={spec.name}
                           control={form.control}
                           spec={spec}
-                          planId={planId}
-                          planImageType={planImageType}
+                          coverImage={coverImage}
                         />
                       ))}
                     </div>

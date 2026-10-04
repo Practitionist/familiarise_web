@@ -51,14 +51,29 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
       "upload.wikimedia.org",
       "img.logo.dev",
       "cdn.jsdelivr.net",
-      "picsum.photos",
-      "fastly.picsum.photos",
-      "images.unsplash.com",
-      "plus.unsplash.com",
     ];
     for (const host of requiredHostnames) {
       expect(cfg).toContain(`hostname: "${host}"`);
     }
+  });
+
+  it("registers dev/placeholder image hosts only outside production builds and serves a local program cover", () => {
+    const cfg = readRepoFile("next.config.mjs");
+    const gated = cfg.slice(
+      cfg.indexOf('process.env.NODE_ENV === "production"\n        ? []'),
+    );
+    for (const host of [
+      "picsum.photos",
+      "fastly.picsum.photos",
+      "images.unsplash.com",
+      "plus.unsplash.com",
+    ]) {
+      expect(gated).toContain(`hostname: "${host}"`);
+    }
+    expect(cfg.indexOf('hostname: "picsum.photos"')).toBeGreaterThan(
+      cfg.indexOf('process.env.NODE_ENV === "production"\n        ? []'),
+    );
+    expect(readRepoFile("lib/explore/programs.ts")).not.toContain("picsum");
   });
 
   it("caps TestimonialsSection marquee duplication to 2x per row instead of 9x", () => {

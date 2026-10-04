@@ -104,12 +104,6 @@ const webinarInclude = {
       topics: true,
     },
   },
-  appointment: {
-    include: {
-      occurrences: true,
-      payment: true,
-    },
-  },
 } satisfies Prisma.WebinarInclude;
 
 const classInclude = {
@@ -135,13 +129,17 @@ const classInclude = {
       },
     },
   },
-  appointment: {
+} satisfies Prisma.ClassInclude;
+
+/** A group appointment carries every attendee's Payment; return only this consultee's. */
+function groupAppointmentInclude(consulteeId: string) {
+  return {
     include: {
       occurrences: true,
-      payment: true,
+      payment: { where: { user: { consulteeProfile: { id: consulteeId } } } },
     },
-  },
-} satisfies Prisma.ClassInclude;
+  } satisfies Prisma.WebinarInclude["appointment"];
+}
 
 // =============================================================================
 // Route Handler
@@ -258,6 +256,7 @@ export async function GET(
           },
           include: {
             ...webinarInclude,
+            appointment: groupAppointmentInclude(consulteeId),
           },
           // Deterministic truncation: take without orderBy is unspecified
           // order, so >250 matches could page differently between requests.
@@ -284,6 +283,7 @@ export async function GET(
           },
           include: {
             ...classInclude,
+            appointment: groupAppointmentInclude(consulteeId),
           },
           orderBy: [
             {

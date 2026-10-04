@@ -257,3 +257,58 @@ jobs:
           test "${{ needs.typecheck.result }}" = success
           test "${{ needs.unit-tests.result }}" = success
           test "${{ needs.build.result }}" = success
+
+  # Hermetic: applies this branch's schema + SQL sidecars to a throwaway Postgres
+  # and asserts them, so red means the branch is broken, never the shared DB.
+  db-guards:
+    name: Database sidecar guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # No .env exists here, so these are the only URLs prisma.config.ts and lib/prisma.ts see.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Push schema + sidecars
+        # Only ever the service container above; `db push` alone drops the ledger trigger and every CHECK.
+        run: |
+          node_modules/.bin/prisma db push
+          npm run db:sidecars
+
+      - name: Database sidecar guard
+        run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts

@@ -141,7 +141,10 @@ import {
   classEnrolmentFrom,
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "@/lib/booking/booking-rule-error";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
@@ -1659,7 +1662,7 @@ export async function validateSlotAvailability(
   });
 
   if (existingBooking) {
-    throw new Error("Time slot is already booked");
+    throw new SlotTakenError();
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
