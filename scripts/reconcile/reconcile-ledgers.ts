@@ -19,7 +19,6 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { UNAPPLIED_RECEIPT_KEY_PREFIX } from "@/lib/payments/ledger/unapplied-receipts";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -1156,11 +1155,9 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
 // --- a refunded parked capture nets UNAPPLIED_RECEIPTS to zero per payment ---
 async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
   const parked = await prisma.ledgerTransaction.findMany({
-    where: {
-      idempotencyKey: { startsWith: UNAPPLIED_RECEIPT_KEY_PREFIX },
-      paymentId: { not: null },
-    },
+    where: { kind: "UNAPPLIED_RECEIPT", paymentId: { not: null } },
     select: { paymentId: true },
+    distinct: ["paymentId"],
   });
   const paymentIds = parked
     .map((t) => t.paymentId)
@@ -1168,51 +1165,11 @@ async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
 
   for (let i = 0; i < paymentIds.length; i += CHUNK) {
     const slice = paymentIds.slice(i, i + CHUNK);
-    const entries = await prisma.ledgerEntry.findMany({
-      where: {
-        account: { kind: "UNAPPLIED_RECEIPTS" },
-        transaction: { paymentId: { in: slice } },
-      },
-      select: {
-        direction: true,
-        amountPaise: true,
-        transaction: { select: { paymentId: true } },
-      },
-    });
-    const refunds = await prisma.refund.findMany({
-      where: { paymentId: { in: slice } },
-      select: { paymentId: true, status: true, cascadedAt: true },
-    });
-
-    const owedByPayment = new Map<string, number>();
-    for (const e of entries) {
-      const paymentId = e.transaction.paymentId;
-      if (!paymentId) continue;
-      const paise = sumPaise(e.amountPaise);
-      owedByPayment.set(
-        paymentId,
-        (owedByPayment.get(paymentId) ?? 0) +
-          (e.direction === "CREDIT" ? paise : -paise),
-      );
-    }
-    const settled = new Set<string>();
-    const open = new Set<string>();
-    for (const r of refunds) {
-      if (
-        r.status === "PENDING" ||
-        (r.status === "SUCCEEDED" && r.cascadedAt === null)
-      ) {
-        open.add(r.paymentId);
-      } else if (r.status === "SUCCEEDED") {
-        settled.add(r.paymentId);
-      }
-    }
-
+    const owedByPayment = await unappliedOwedByPayment(slice);
+    const settled = await settledRefundPayments(slice);
     for (const paymentId of slice) {
       const owed = owedByPayment.get(paymentId) ?? 0;
-      if (!settled.has(paymentId) || open.has(paymentId) || owed === 0) {
-        continue;
-      }
+      if (!settled.has(paymentId) || owed === 0) continue;
       ctx.findings.push({
         kind: "UNAPPLIED_RECEIPTS_RESIDUE",
         paymentId,
@@ -1226,6 +1183,51 @@ async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
       });
     }
   }
+}
+
+/** Net UNAPPLIED_RECEIPTS credit per payment (positive: still owed to the payer). */
+async function unappliedOwedByPayment(
+  paymentIds: string[],
+): Promise<Map<string, number>> {
+  const entries = await prisma.ledgerEntry.findMany({
+    where: {
+      account: { kind: "UNAPPLIED_RECEIPTS" },
+      transaction: { paymentId: { in: paymentIds } },
+    },
+    select: {
+      direction: true,
+      amountPaise: true,
+      transaction: { select: { paymentId: true } },
+    },
+  });
+  const owed = new Map<string, number>();
+  for (const e of entries) {
+    const paymentId = e.transaction.paymentId;
+    if (!paymentId) continue;
+    const paise = sumPaise(e.amountPaise);
+    const signed = e.direction === "CREDIT" ? paise : -paise;
+    owed.set(paymentId, (owed.get(paymentId) ?? 0) + signed);
+  }
+  return owed;
+}
+
+/** Payments with a cascaded SUCCEEDED refund and no refund still in flight. */
+async function settledRefundPayments(
+  paymentIds: string[],
+): Promise<Set<string>> {
+  const refunds = await prisma.refund.findMany({
+    where: { paymentId: { in: paymentIds } },
+    select: { paymentId: true, status: true, cascadedAt: true },
+  });
+  const inFlight = (r: (typeof refunds)[number]) =>
+    r.status === "PENDING" ||
+    (r.status === "SUCCEEDED" && r.cascadedAt === null);
+  const open = new Set(refunds.filter(inFlight).map((r) => r.paymentId));
+  return new Set(
+    refunds
+      .filter((r) => r.status === "SUCCEEDED" && !open.has(r.paymentId))
+      .map((r) => r.paymentId),
+  );
 }
 
 // --- PENDING_TRUST park watchdog ---

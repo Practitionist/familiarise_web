@@ -840,46 +840,54 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   );
 
-  // #715/#716 — the parent booking was fully refunded and carried a CHARGED
-  // CHARGE_MEMBER overage on a SEPARATE side-payment. Refund it now that the
-  // parent settled: outside the tx (its own gateway call + Serializable
-  // cascade), and best-effort so a hiccup never rolls back the parent refund.
-  if (settled.memberOverageRefundDue) {
-    const sidePaymentId = settled.memberOverageRefundDue.overagePaymentId;
-    try {
-      await refundPayment({
-        paymentId: sidePaymentId,
-        reason: `overage credit-back — parent booking ${input.paymentId} refunded`,
-        initiatedByUserId: input.initiatedByUserId ?? null,
-      });
-    } catch (err) {
-      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
-      // re-drives — the nested refundPayment call already reported them
-      // (expected:true) at their origin above; anything else here is a real
-      // gap between the parent refund and the member's credit-back — page
-      // ops rather than fail the settled parent.
-      if (
-        !(err instanceof RefundValidationError) ||
-        (err.code !== "ALREADY_FULLY_REFUNDED" &&
-          err.code !== "PAYMENT_NOT_SUCCEEDED")
-      ) {
-        reportSentryError(err, {
-          subsystem: "payments",
-          tags: { feature: "overage-credit-back" },
-          extra: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
-          err,
-          context: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-      }
-    }
-  }
+  await refundMemberOverageSidePayment({
+    parentPaymentId: input.paymentId,
+    due: settled.memberOverageRefundDue,
+    initiatedByUserId: input.initiatedByUserId ?? null,
+  });
 
   return settled;
+}
+
+/**
+ * Refunds a fully-refunded booking's CHARGE_MEMBER overage side-payment once the
+ * parent's cascade has committed; best effort, so it never undoes the parent.
+ */
+export async function refundMemberOverageSidePayment(input: {
+  parentPaymentId: string;
+  due: ApplyRefundCascadeResult["memberOverageRefundDue"];
+  initiatedByUserId: string | null;
+}): Promise<void> {
+  if (!input.due) return;
+  const sidePaymentId = input.due.overagePaymentId;
+  try {
+    await refundPayment({
+      paymentId: sidePaymentId,
+      reason: `overage credit-back — parent booking ${input.parentPaymentId} refunded`,
+      initiatedByUserId: input.initiatedByUserId,
+    });
+  } catch (err) {
+    // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign re-drives the
+    // nested call already reported; anything else is a real credit-back gap.
+    if (
+      !(err instanceof RefundValidationError) ||
+      (err.code !== "ALREADY_FULLY_REFUNDED" &&
+        err.code !== "PAYMENT_NOT_SUCCEEDED")
+    ) {
+      reportSentryError(err, {
+        subsystem: "payments",
+        tags: { feature: "overage-credit-back" },
+        extra: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+      await recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
+        err,
+        context: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+    }
+  }
 }
 
 // ============================================================================

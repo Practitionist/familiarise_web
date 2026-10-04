@@ -3,7 +3,8 @@
  */
 
 // A refund of a parked capture returns only the cash from UNAPPLIED_RECEIPTS;
-// a booked payment keeps the full fee/GST/earnings reversal.
+// a booked payment keeps the full fee/GST/earnings reversal, and a parked
+// capture never accrues earnings.
 
 const mockPostLedgerTxn = jest.fn();
 
@@ -37,6 +38,11 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import type { Posting } from "../../lib/payments/ledger/post";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import {
+  createEarningsFromPayment,
+  ParkedCaptureEarningsError,
+  type CreateEarningsParams,
+} from "../../lib/payments/payouts/earnings-service";
 
 const AMOUNT = 118_000;
 const TAX = 18_000;
@@ -57,10 +63,21 @@ function txStub(payment: Record<string, unknown>, parked: boolean) {
     consumerInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
     overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
     ledgerTransaction: {
-      findUnique: jest.fn().mockResolvedValue(parked ? { id: "txn-u" } : null),
+      findUnique: jest.fn(
+        async (args: { where: { idempotencyKey: string } }) =>
+          parked && args.where.idempotencyKey === "unapplied:pay-1"
+            ? { id: "txn-u" }
+            : null,
+      ),
     },
   };
 }
+
+type TxStub = ReturnType<typeof txStub>;
+
+/** A hand-rolled stub cannot satisfy the full `Tx` type; cast once at the boundary. */
+const asTx = (tx: TxStub) =>
+  tx as unknown as Parameters<typeof applyRefundCascade>[0];
 
 function cardPayment(earnings: unknown[]) {
   return {
@@ -91,7 +108,7 @@ beforeEach(() => {
 
 it("a partial refund of a parked capture debits UNAPPLIED_RECEIPTS and credits CASH only", async () => {
   const tx = txStub(cardPayment([]), true);
-  await applyRefundCascade(tx as never, {
+  await applyRefundCascade(asTx(tx), {
     paymentId: "pay-1",
     refundId: "ref-1",
     amountPaise: 50_000,
@@ -128,7 +145,7 @@ it("a booked payment keeps the fee, GST and payable reversal and never reads the
     ]),
     false,
   );
-  await applyRefundCascade(tx as never, {
+  await applyRefundCascade(asTx(tx), {
     paymentId: "pay-1",
     refundId: "ref-2",
     amountPaise: AMOUNT,
@@ -145,7 +162,25 @@ it("a booked payment keeps the fee, GST and payable reversal and never reads the
     ]),
   );
   expect(kinds.some((k) => k.endsWith("UNAPPLIED_RECEIPTS"))).toBe(false);
-  expect(tx.ledgerTransaction.findUnique).not.toHaveBeenCalledWith(
-    expect.objectContaining({ where: { idempotencyKey: "unapplied:pay-1" } }),
-  );
+  expect(tx.ledgerTransaction.findUnique).not.toHaveBeenCalled();
+});
+
+it("createEarningsFromPayment refuses a parked capture before writing anything", async () => {
+  const tx = txStub(cardPayment([]), true);
+  const payment = {
+    ...cardPayment([]),
+    appointmentId: null,
+    userId: "user-1",
+    createdAt: new Date(),
+    appointment: { consultantProfile: { id: "cp-1" } },
+  } as unknown as CreateEarningsParams["payment"];
+
+  await expect(
+    createEarningsFromPayment({
+      payment,
+      appointmentType: "CONSULTATION",
+      tx: asTx(tx),
+    }),
+  ).rejects.toBeInstanceOf(ParkedCaptureEarningsError);
+  expect(mockPostLedgerTxn).not.toHaveBeenCalled();
 });

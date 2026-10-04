@@ -86,6 +86,7 @@ const txStub = {
 
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
   postUnappliedReceipt: jest.fn(),
+  releaseUnappliedReceipt: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

@@ -2783,6 +2783,7 @@ enum LedgerTransactionKind {
   OVERAGE_MEMBER
   /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
+  UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
 }
 
 model LedgerTransaction {

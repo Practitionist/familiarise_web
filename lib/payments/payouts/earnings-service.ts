@@ -41,6 +41,7 @@ import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { hasUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -1423,6 +1424,15 @@ async function postBookingLedgerJournal(
   }
 }
 
+/** A parked capture funds no booking, so it must never accrue earnings or a booking journal. */
+export class ParkedCaptureEarningsError extends Error {
+  readonly code = "PARKED_CAPTURE";
+  constructor(readonly paymentId: string) {
+    super(`Payment ${paymentId} is a parked capture; earnings refused`);
+    this.name = "ParkedCaptureEarningsError";
+  }
+}
+
 /**
  * Create earnings record from a successful payment
  * Called from payment success webhook
@@ -1489,6 +1499,9 @@ export async function createEarningsFromPayment(
   );
 
   const runInTx = async (tx: Tx): Promise<string | null> => {
+    if (await hasUnappliedReceipt(tx, payment.id)) {
+      throw new ParkedCaptureEarningsError(payment.id);
+    }
     const existingEarnings = await tx.consultantEarnings.findFirst({
       where: { paymentId: payment.id, consultantProfileId },
     });
@@ -1630,6 +1643,14 @@ export async function createEarningsFromPayment(
       await rawOuterTx!
         .$executeRawUnsafe!("ROLLBACK TO SAVEPOINT sp_create_earnings")
         .catch(() => undefined);
+    }
+    if (error instanceof ParkedCaptureEarningsError) {
+      console.warn(
+        JSON.stringify({
+          event: "EARNINGS_REFUSED_PARKED_CAPTURE",
+          paymentId: payment.id,
+        }),
+      );
     }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

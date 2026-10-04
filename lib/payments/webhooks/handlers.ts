@@ -53,7 +53,10 @@ import {
   settledAutoRefundDescription,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
-import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
+import {
+  postUnappliedReceipt,
+  releaseUnappliedReceipt,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
@@ -463,6 +466,8 @@ export async function handlePaymentSuccess(
                 observedStatus: payment.paymentStatus,
                 reason: `metadata validation failed: ${errorMessage}`,
               });
+            } else {
+              await parkCapture();
             }
 
             console.error(
@@ -677,6 +682,9 @@ export async function handlePaymentSuccess(
             });
             await parkCapture();
           } else {
+            if (recoverable) {
+              await releaseUnappliedReceipt(tx, payment.id);
+            }
             await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =

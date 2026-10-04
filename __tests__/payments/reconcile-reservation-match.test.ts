@@ -32,6 +32,8 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       refund,
+      // The stranded-refund backstop selects its cohort ids with raw SQL.
+      $queryRaw: jest.fn(),
       // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
       // payer's notice; the tx sees the same refund table.
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
@@ -66,8 +68,11 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 const mockApplyRefundCascade = jest.fn().mockResolvedValue({});
+const mockRefundSidePayment = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: (...a: unknown[]) => mockApplyRefundCascade(...a),
+  refundMemberOverageSidePayment: (...a: unknown[]) =>
+    mockRefundSidePayment(...a),
 }));
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn().mockResolvedValue(0),
@@ -98,10 +103,12 @@ interface ReconcileRefundMock {
 }
 interface ReconcilePrismaMock {
   refund: ReconcileRefundMock;
+  $queryRaw: jest.Mock;
 }
 
 // Single seam over the generated client (repo-wide mock idiom).
 const refundTable = (prisma as unknown as ReconcilePrismaMock).refund;
+const mockStrandedIds = (prisma as unknown as ReconcilePrismaMock).$queryRaw;
 const mockList = listRefunds as jest.Mock;
 const mockGet = getRefund as jest.Mock;
 const mockPage = reportSentryMessage as jest.Mock;
@@ -145,8 +152,9 @@ function placeholderRow(
 beforeEach(() => {
   jest.clearAllMocks();
   refundTable.findUnique.mockResolvedValue(null);
-  // The stranded-refund backstop pass finds nothing unless a test says so.
   refundTable.findMany.mockResolvedValue([]);
+  // The stranded-refund backstop pass finds nothing unless a test says so.
+  mockStrandedIds.mockResolvedValue([]);
 });
 
 describe("reconcilePendingRefunds placeholder matching", () => {
@@ -560,7 +568,6 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
     refundTable.findMany
       .mockResolvedValueOnce([]) // placeholder pass
       .mockResolvedValueOnce([]) // real-id pass
-      .mockResolvedValueOnce([]) // stranded-refund backstop
       .mockResolvedValueOnce([
         {
           id: "row_failed",
@@ -576,8 +583,8 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
 
     await reconcilePendingRefunds();
 
-    expect(refundTable.findMany).toHaveBeenCalledTimes(4);
-    expect(refundTable.findMany.mock.calls[3][0]).toMatchObject({
+    expect(refundTable.findMany).toHaveBeenCalledTimes(3);
+    expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
       where: { status: "FAILED", failedNotifiedAt: null },
     });
     expect(refundTable.updateMany).toHaveBeenCalledWith(
@@ -593,7 +600,11 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
 });
 
 describe("reconcilePendingRefunds — stranded-refund backstop", () => {
-  test("re-drives an uncascaded SUCCEEDED refund with its credits, and a failure fails the run", async () => {
+  test("re-drives with credits and the overage side-payment; a poison row rotates without failing the run", async () => {
+    mockStrandedIds.mockResolvedValueOnce([
+      { id: "ref_stranded" },
+      { id: "ref_broken" },
+    ]);
     refundTable.findMany
       .mockResolvedValueOnce([]) // placeholder pass
       .mockResolvedValueOnce([]) // real-id pass
@@ -603,6 +614,7 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
           paymentId: "pay_1",
           amountPaise: 4_000,
           reason: null,
+          metadata: null,
           payment: { amount: 10_000 },
         },
         {
@@ -610,30 +622,46 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
           paymentId: "pay_2",
           amountPaise: 1_000,
           reason: null,
+          metadata: { cascadeRedriveAttempts: 2 },
           payment: { amount: 1_000 },
         },
       ]);
     mockApplyRefundCascade
-      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        memberOverageRefundDue: { overagePaymentId: "pay_side" },
+      })
       .mockRejectedValueOnce(new Error("ledger down"));
 
     const result = await reconcilePendingRefunds();
 
-    expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
-      where: { status: "SUCCEEDED", cascadedAt: null },
-    });
-    expect(mockApplyRefundCascade).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ refundId: "ref_stranded", amountPaise: 4_000 }),
-    );
     expect(reverseCreditsForPayment).toHaveBeenCalledWith(
       "pay_1",
       expect.anything(),
       4_000,
       10_000,
     );
-    expect(reverseCreditsForPayment).toHaveBeenCalledTimes(1);
-    expect(result.redrivenCount).toBe(1);
-    expect(result.success).toBe(false);
+    expect(mockRefundSidePayment).toHaveBeenCalledWith({
+      parentPaymentId: "pay_1",
+      due: { overagePaymentId: "pay_side" },
+      initiatedByUserId: null,
+    });
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ref_broken", status: "SUCCEEDED", cascadedAt: null },
+        data: expect.objectContaining({
+          metadata: { cascadeRedriveAttempts: 3 },
+        }),
+      }),
+    );
+    expect(mockPage).toHaveBeenCalledWith(
+      expect.stringContaining("1 SUCCEEDED refund(s) dead-lettered"),
+      expect.objectContaining({ extra: { refundIds: ["ref_broken"] } }),
+    );
+    expect(result).toMatchObject({
+      redrivenCount: 1,
+      redriveFailedCount: 1,
+      redriveDeadLettered: 1,
+      success: true,
+    });
   });
 });

@@ -744,6 +744,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           skippedCount: r.skippedCount,
           failedUnknownId: r.failedUnknownId,
           redrivenCount: r.redrivenCount,
+          redriveFailedCount: r.redriveFailedCount,
+          redriveDeadLettered: r.redriveDeadLettered,
           errors: r.errors.slice(0, 5),
         }),
         failureMessage: "Failed to reconcile refunds",
