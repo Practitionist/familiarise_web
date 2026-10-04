@@ -867,3 +867,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
   ON "SystemJobExecution" ("jobName")
   WHERE "status" = 'RUNNING';
 
+-- SPLIT
+-- A fee waiver is consumed by CAS on sessionsRemaining > 0; it never goes negative.
+ALTER TABLE "ConsultantFeeWaiver" DROP CONSTRAINT IF EXISTS "consultant_fee_waiver_sessions_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsultantFeeWaiver" ADD CONSTRAINT "consultant_fee_waiver_sessions_nonnegative"
+  CHECK ("sessionsRemaining" >= 0);
+
+-- SPLIT
+-- Take rates are basis points of the gross; own-link never exceeds marketplace, and the
+-- approver of a fee schedule is never the person who proposed it.
+ALTER TABLE "PlatformFeeSchedule" DROP CONSTRAINT IF EXISTS "platform_fee_schedule_valid";
+-- SPLIT
+ALTER TABLE "PlatformFeeSchedule" ADD CONSTRAINT "platform_fee_schedule_valid"
+  CHECK (
+    "marketplaceBps" BETWEEN 0 AND 10000
+    AND "ownLinkBps" BETWEEN 0 AND "marketplaceBps"
+    AND ("checkerUserId" IS NULL OR "checkerUserId" <> "makerUserId")
+    AND (("checkerUserId" IS NULL) = ("approvedAt" IS NULL))
+  );
+
+-- SPLIT
+ALTER TABLE "ReferralProgramConfig" DROP CONSTRAINT IF EXISTS "referral_program_config_ranges";
+-- SPLIT
+ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_ranges"
+  CHECK (
+    "discountBps" BETWEEN 0 AND 10000
+    AND "redemptionCapBps" BETWEEN 0 AND 10000
+    AND "monthlyBudgetPaise" >= 0
+    AND "currentMonthSpentPaise" >= 0
+    AND "referrerRewardPaise" >= 0
+    AND "discountMaxPaise" >= 0
+    AND "minOrderPaise" >= 0
+    AND "perReferrerYearlyCapPaise" >= 0
+    AND "creditExpiryDays" > 0
+    AND "qualifyWindowDays" > 0
+    AND "perCodeLifetimeCap" >= 0
+    AND "weeklyVestCap" >= 0
+  );
+
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_platform_fee_bps_range";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_platform_fee_bps_range"
+  CHECK ("platformFeeBps" IS NULL OR "platformFeeBps" BETWEEN 0 AND 10000);

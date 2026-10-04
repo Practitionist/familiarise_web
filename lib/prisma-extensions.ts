@@ -167,9 +167,12 @@ export const moneyResultExtensions = {
   tdsAdjustment: { amountPaise: f("amountPaise") },
   discountCode: { maxDiscount: fn("maxDiscount") },
   referralProgramConfig: {
-    monthlyBudgetPaise: fn("monthlyBudgetPaise"),
+    monthlyBudgetPaise: f("monthlyBudgetPaise"),
     currentMonthSpentPaise: f("currentMonthSpentPaise"),
     referrerRewardPaise: f("referrerRewardPaise"),
+    discountMaxPaise: f("discountMaxPaise"),
+    minOrderPaise: f("minOrderPaise"),
+    perReferrerYearlyCapPaise: f("perReferrerYearlyCapPaise"),
   },
   platformPricingConfig: {
     minTrialPriceInPaise: f("minTrialPriceInPaise"),

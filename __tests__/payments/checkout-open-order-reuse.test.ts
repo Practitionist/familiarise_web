@@ -137,8 +137,20 @@ jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
   applyCreditsToPayment: jest.fn(),
   getUserCredits: jest.fn(async () => ({ totalAvailable: 0 })),
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
+}));
+jest.mock("../../lib/referrals/capture", () => ({
+  __esModule: true,
+  recordReferralCaptureInSavepoint: jest.fn(),
+}));
+jest.mock("../../lib/referrals/attribution", () => ({
+  __esModule: true,
+  resolveCheckoutAttribution: jest.fn(async () => ({
+    source: "MARKETPLACE",
+    referralId: null,
+    platformFeeBps: 2000,
+    welcomeDiscount: null,
+    creditCapBps: 2000,
+  })),
 }));
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,

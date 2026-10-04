@@ -80,13 +80,8 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import {
-  processQualifyingAction,
-  processConsultantBookingReferral,
-  reverseCreditsForPayment,
-} from "@/lib/referrals/service";
-import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
-import { scheduleAfter } from "@/lib/api/after-safe";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -704,6 +699,18 @@ export async function handlePaymentSuccess(
               );
               earningsCreatedInPhase1 = false;
             }
+            await recordReferralCaptureInSavepoint(tx, {
+              paymentId: payment.id,
+              consultantProfileId:
+                preplannedEarnings?.resolvedPayment.consultantProfileId ??
+                (
+                  await resolvePaymentForEarnings(
+                    { id: payment.id },
+                    metadata.appointmentType,
+                    tx,
+                  )
+                )?.consultantProfileId,
+            });
           }
           const appointmentForEmails = blocked
             ? null
@@ -983,39 +990,6 @@ export async function handlePaymentSuccess(
         earningsError,
       );
     }
-  }
-
-  try {
-    await processQualifyingAction(userId, "first_paid_booking");
-    scheduleAfter(
-      () =>
-        notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-          console.error("[referral-qualification-bell] failed:", bellErr),
-        ),
-      "payments.handlePaymentSuccess.referral-bell",
-    );
-  } catch (referralError) {
-    reportSentryError(referralError, {
-      subsystem: "payments",
-      level: "warning",
-    });
-    console.error(
-      `⚠️ Failed to process referral qualifying action for user ${userId}:`,
-      referralError,
-    );
-  }
-
-  try {
-    await processConsultantBookingReferral({ id: paymentId }, userId);
-  } catch (consultantReferralError) {
-    reportSentryError(consultantReferralError, {
-      subsystem: "payments",
-      level: "warning",
-    });
-    console.error(
-      `⚠️ Failed to process consultant referral qualifying action:`,
-      consultantReferralError,
-    );
   }
 
   await mintConsumerInvoiceBestEffort({ paymentId });

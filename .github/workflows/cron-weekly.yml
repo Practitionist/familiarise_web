@@ -15,6 +15,8 @@ on:
     - cron: "0 4 1 * *"
     # Monthly 3rd 01:40 UTC: GST outward-supplies register export
     - cron: "40 1 3 * *"
+    # Monthly 1st 03:10 UTC: referral credit breakage
+    - cron: "10 3 1 * *"
     # Quarterly 5th of Jan/Apr/Jul/Oct 01:20 UTC: TDS Form 26Q return draft export
     - cron: "20 1 5 1,4,7,10 *"
   workflow_dispatch:
@@ -99,7 +101,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
+            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|expire-referral-credits|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
               ;;
             *)
               echo "::error::Unknown weekly/statutory job slug '${INPUT_JOB}'"
@@ -152,6 +154,15 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/settle-invoice-accruals.ts
 
+      - name: Expire referral credits (breakage)
+        id: expire-referral-credits
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '10 3 1 * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-referral-credits'))
+        timeout-minutes: 10
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/referrals/referral-credits.ts
+
       - name: Export GST outward-supplies register
         id: gst-outward-register-export
         if: >-
@@ -200,6 +211,7 @@ jobs:
             "create-payout-batch:${{ steps.create-payout-batch.outcome }}" \
             "process-payouts:${{ steps.process-payouts.outcome }}" \
             "settle-invoice-accruals:${{ steps.settle-invoice-accruals.outcome }}" \
+            "expire-referral-credits:${{ steps.expire-referral-credits.outcome }}" \
             "gst-outward-register-export:${{ steps.gst-outward-register-export.outcome }}" \
             "tds-26q-draft-export:${{ steps.tds-26q-draft-export.outcome }}"
           do

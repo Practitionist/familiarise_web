@@ -17,6 +17,7 @@
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
 export const POST = withOpsAction(
   "referrals.manage",
@@ -77,6 +78,8 @@ export const POST = withOpsAction(
           reversedAt: now,
           reversedBy: ctx.actor.userId,
           reversedReason: ctx.body.reason,
+          state: "VOID",
+          voidedAt: now,
         },
       });
       if (cas.count !== 1) {
@@ -85,6 +88,26 @@ export const POST = withOpsAction(
           "Credit was modified or reversed concurrently; refresh and retry.",
           409,
         );
+      }
+      // A vested v2 credit sits in the liability; reversing it releases that balance.
+      if (existing.vestedAt && existing.state === "VESTED") {
+        await postLedgerTxn(tx, {
+          idempotencyKey: `referral-reverse:${creditId}`,
+          kind: "REFERRAL_CREDIT",
+          description: `Referral credit ${creditId} reversed by ops`,
+          postings: [
+            {
+              account: { kind: "REFERRAL_CREDIT_LIABILITY" },
+              direction: "DEBIT",
+              amountPaise: remainingPaise,
+            },
+            {
+              account: { kind: "PLATFORM_PROMO" },
+              direction: "CREDIT",
+              amountPaise: remainingPaise,
+            },
+          ],
+        });
       }
 
       const updated = await tx.referralCredit.findUniqueOrThrow({

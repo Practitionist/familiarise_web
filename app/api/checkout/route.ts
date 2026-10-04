@@ -28,6 +28,7 @@ import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { isDeadlock, isExclusionViolation } from "@/lib/db/pg-errors";
+import { EXPERT_VIA_COOKIE } from "@/lib/referrals/attribution-token-shape";
 import {
   BookingRuleError,
   SlotTakenError,
@@ -127,6 +128,7 @@ export async function POST(req: NextRequest) {
           session.user.id,
           isMockPayment,
           buyerCountry,
+          { viaToken: req.cookies.get(EXPERT_VIA_COOKIE)?.value ?? null },
         ).then((value) => {
           // Which gateway ran, not what was asked for: auto-routing may have
           // overridden the request above, and it is the one input that changes

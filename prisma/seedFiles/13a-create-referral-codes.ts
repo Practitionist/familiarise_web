@@ -7,6 +7,26 @@ import prisma from "../../lib/prisma";
 export async function createReferralCodes() {
   console.log("Creating referral codes...");
 
+  // The programme row with a dev budget, and the approved launch take rates (20 % / 10 %).
+  await prisma.referralProgramConfig.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton", monthlyBudgetPaise: 3_000_000 },
+    update: {},
+  });
+  if ((await prisma.platformFeeSchedule.count()) === 0) {
+    await prisma.platformFeeSchedule.create({
+      data: {
+        marketplaceBps: 2000,
+        ownLinkBps: 1000,
+        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+        makerUserId: "seed-maker",
+        checkerUserId: "seed-checker",
+        approvedAt: new Date("2026-01-01T00:00:00Z"),
+        reason: "Launch take rates",
+      },
+    });
+  }
+
   // Get all users
   const users = await prisma.user.findMany({
     select: { id: true, name: true },

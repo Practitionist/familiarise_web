@@ -124,8 +124,6 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentBooked: jest.fn(),
 }));
 jest.mock("../../lib/referrals/service", () => ({
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   addUserToEventChannel: jest.fn(),

@@ -105,9 +105,11 @@ model User {
   moderationActions ModerationAction[]
 
   // Referral system
-  referralCode    ReferralCode?
-  referral        Referral?        @relation("ReferredUser")
-  referralCredits ReferralCredit[]
+  referralCode        ReferralCode?
+  referral            Referral?                    @relation("ReferredUser")
+  referralCredits     ReferralCredit[]
+  // Experts this user has bought from, with the source that owns the relationship.
+  expertRelationships ExpertCustomerRelationship[]
 
   // In-progress onboarding wizard state (resumable drafts). At most one row
   // per user; deleted when onboarding completes. See OnboardingDraft below.
@@ -2708,6 +2710,7 @@ enum LedgerAccountKind {
   WALLET // an org's prepaid balance (a liability we owe the org)
   PLATFORM_FEE // platform revenue
   PLATFORM_PROMO // contra-revenue: platform-funded grants/comps + referral credits
+  REFERRAL_CREDIT_LIABILITY // vested, unredeemed referral credit owed as future discount
   DISCOUNT // contra-revenue: discount given to the buyer (#771 AF-3 booking posting)
   CONSULTANT_PAYABLE // owed to a consultant
   ORG_PAYABLE // owed to a host org
@@ -2782,6 +2785,7 @@ enum LedgerTransactionKind {
   OVERAGE_MEMBER
   /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
+  REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
 }
 
 model LedgerTransaction {
@@ -3033,6 +3037,10 @@ model ConsultantProfile {
 
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
+
+  // Referral v2: who owns each buyer relationship, and platform-fee waivers.
+  customerRelationships ExpertCustomerRelationship[]
+  feeWaivers            ConsultantFeeWaiver[]
 
   // Enterprise: optional org memberships. A consultant can belong to zero or
   // more HOST/HYBRID orgs via typed Membership rows.
@@ -5080,6 +5088,9 @@ model AppointmentOccurrence {
   // gate reads it without going through Meeting.
   attendances MeetingAttendance[]
 
+  // Referrals that vest when this session is delivered.
+  qualifyingReferrals Referral[] @relation("ReferralQualifyingOccurrence")
+
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
   deletedAt       DateTime? @db.Timestamptz
   movedAt         DateTime? @db.Timestamptz // #1780 decision 9 — stamped when the host moves this session; waives the leave window
@@ -5505,6 +5516,16 @@ model Payment {
   // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
   consumerStateCode String? @db.VarChar(2)
 
+  // Who brought this sale, stamped in the order-mint transaction; decides the take rate.
+  attributionSource           PaymentAttributionSource?
+  attributionReferralId       String?
+  attributionReferral         Referral?                    @relation("PaymentAttributionReferral", fields: [attributionReferralId], references: [id], onDelete: SetNull)
+  // Platform fee actually charged on this sale, in basis points (0 under a fee waiver).
+  platformFeeBps              Int?
+  // Referrals this payment qualified (at most one in practice).
+  qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
+  firstPaymentOfRelationships ExpertCustomerRelationship[]
+
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -5581,6 +5602,13 @@ model Payment {
   @@index([parentPaymentId])
   @@index([discountCodeId])
   @@index([billingAccountId])
+  @@index([attributionReferralId])
+}
+
+enum PaymentAttributionSource {
+  MARKETPLACE // found through the platform
+  OWN_LINK // the expert's own signed share link
+  CONSUMER_REFERRAL // a consumer referral code on the buyer's first purchase
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
@@ -6376,17 +6404,28 @@ model ReferralCode {
 }
 
 model Referral {
-  id                   String         @id @default(cuid())
-  referralCodeId       String
-  referredUserId       String         @unique
-  status               ReferralStatus @default(SIGNED_UP)
-  referrerRewardAmount BigInt?
-  refereeRewardAmount  BigInt?
-  referrerRewardPaidAt DateTime?
-  refereeRewardPaidAt  DateTime?
-  signedUpAt           DateTime       @default(now())
-  qualifiedAt          DateTime?
-  qualifyingAction     String?
+  id                     String                 @id @default(cuid())
+  referralCodeId         String
+  referredUserId         String                 @unique
+  status                 ReferralStatus         @default(SIGNED_UP)
+  referrerRewardAmount   BigInt?
+  refereeRewardAmount    BigInt?
+  referrerRewardPaidAt   DateTime?
+  refereeRewardPaidAt    DateTime?
+  signedUpAt             DateTime               @default(now())
+  qualifiedAt            DateTime?
+  qualifyingAction       String?
+  // Referral v2: the capture that moved it to QUALIFYING and the session that must be delivered to vest.
+  qualifyingPaymentId    String?
+  qualifyingPayment      Payment?               @relation("ReferralQualifyingPayment", fields: [qualifyingPaymentId], references: [id], onDelete: SetNull)
+  qualifyingOccurrenceId String?
+  qualifyingOccurrence   AppointmentOccurrence? @relation("ReferralQualifyingOccurrence", fields: [qualifyingOccurrenceId], references: [id], onDelete: SetNull)
+  voidReason             String?
+  vestedAt               DateTime?              @db.Timestamptz
+  // ReferralProgramConfig.version the referral was applied under.
+  configVersion          Int?
+  attributedPayments     Payment[]              @relation("PaymentAttributionReferral")
+  feeWaivers             ConsultantFeeWaiver[]
 
   // #727 — attribution-only org tag, mirroring Trial.organizationId.
   // Set when the referrer is a member of an active org; no money coupling
@@ -6403,26 +6442,33 @@ model Referral {
   @@index([referralCodeId])
   @@index([status])
   @@index([organizationId])
+  @@index([qualifyingPaymentId])
+  @@index([qualifyingOccurrenceId])
 }
 
 model ReferralCredit {
-  id              String       @id @default(cuid())
+  id              String              @id @default(cuid())
   userId          String
   amount          BigInt // Credit amount in smallest currency unit (paise)
-  currency        Currency     @default(INR)
+  currency        Currency            @default(INR)
   source          CreditSource
   referralId      String?
-  usedAmount      BigInt       @default(0)
+  usedAmount      BigInt              @default(0)
   remainingAmount BigInt // amount - usedAmount
   expiresAt       DateTime?
   usedAt          DateTime?
   // #1839 — backoffice manual/compensation issuance & reversal audit fields.
-  idempotencyKey  String?      @unique
+  idempotencyKey  String?             @unique
   reason          String?
   issuedBy        String?
-  reversedAt      DateTime?    @db.Timestamptz
+  reversedAt      DateTime?           @db.Timestamptz
   reversedBy      String?
   reversedReason  String?
+  // Only VESTED is spendable; vestedAt is set only when the vest journal posted the liability.
+  state           ReferralCreditState @default(VESTED)
+  vestedAt        DateTime?           @db.Timestamptz
+  voidedAt        DateTime?           @db.Timestamptz
+  configVersion   Int?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
@@ -6437,6 +6483,14 @@ model ReferralCredit {
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
+  @@index([state, expiresAt])
+}
+
+enum ReferralCreditState {
+  PENDING // issued at qualification, not spendable
+  VESTED // spendable
+  EXPIRED // lapsed unredeemed balance, breakage posted
+  VOID // qualification failed or reversed by ops
 }
 
 model ReferralCreditUsage {
@@ -6455,20 +6509,82 @@ model ReferralCreditUsage {
   @@index([paymentId])
 }
 
-// #880 — single-row referral-program config (fixed id). Centralizes the
-// conservative-launch controls: the program on/off switch, a monthly budget cap
-// with auto-pause, and the ramped referrer reward. Paise columns are BigInt
-// like every other money column (#780); the Prisma result extension converts
-// them to number at the JS boundary so the gate arithmetic stays in number.
+// Single-row referral-program config (fixed id): every referral economic is data, edited by
+// ADMIN with a reason; `version` bumps on each edit and is snapshotted on referrals and credits.
 model ReferralProgramConfig {
-  id                     String   @id @default("singleton")
-  isActive               Boolean  @default(true)
-  monthlyBudgetPaise     BigInt? // null = unlimited
-  currentPeriod          String   @default("") // "YYYY-MM" of the active budget window
-  currentMonthSpentPaise BigInt   @default(0)
-  referrerRewardPaise    BigInt   @default(30000) // ₹300 launch; ramp to 50000 (₹500)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  id                        String   @id @default("singleton")
+  isActive                  Boolean  @default(true)
+  paused                    Boolean  @default(false)
+  // 0 = programme effectively off until ops sets a budget.
+  monthlyBudgetPaise        BigInt   @default(0)
+  currentPeriod             String   @default("") // "YYYY-MM" of the active budget window
+  currentMonthSpentPaise    BigInt   @default(0)
+  referrerRewardPaise       BigInt   @default(30000)
+  discountBps               Int      @default(2000)
+  discountMaxPaise          BigInt   @default(30000)
+  redemptionCapBps          Int      @default(2000)
+  minOrderPaise             BigInt   @default(50000)
+  creditExpiryDays          Int      @default(90)
+  qualifyWindowDays         Int      @default(30)
+  perCodeLifetimeCap        Int      @default(25)
+  perReferrerYearlyCapPaise BigInt   @default(1000000)
+  weeklyVestCap             Int      @default(5)
+  version                   Int      @default(1)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+// Buyer ownership per expert: the first paid purchase fixes the source for every later one.
+model ExpertCustomerRelationship {
+  id                  String                   @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile        @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  buyerUserId         String
+  buyer               User                     @relation(fields: [buyerUserId], references: [id], onDelete: Cascade)
+  source              PaymentAttributionSource
+  firstPaymentId      String
+  firstPayment        Payment                  @relation(fields: [firstPaymentId], references: [id], onDelete: Cascade)
+  createdAt           DateTime                 @default(now()) @db.Timestamptz
+
+  @@unique([consultantProfileId, buyerUserId])
+  @@index([buyerUserId])
+  @@index([firstPaymentId])
+}
+
+// Versioned take rates (maker-checker). The active row is the latest approved one with effectiveFrom <= now.
+model PlatformFeeSchedule {
+  id             String    @id @default(cuid())
+  marketplaceBps Int
+  ownLinkBps     Int
+  effectiveFrom  DateTime  @db.Timestamptz
+  makerUserId    String
+  checkerUserId  String?
+  approvedAt     DateTime? @db.Timestamptz
+  reason         String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+
+  @@index([approvedAt, effectiveFrom])
+}
+
+// A 0 % platform fee on the next N sessions, consumed by CAS in the capture transaction.
+model ConsultantFeeWaiver {
+  id                  String                    @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile         @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  reason              ConsultantFeeWaiverReason
+  sessionsRemaining   Int
+  expiresAt           DateTime                  @db.Timestamptz
+  referralId          String
+  referral            Referral                  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  createdAt           DateTime                  @default(now()) @db.Timestamptz
+
+  @@unique([referralId, consultantProfileId])
+  @@index([consultantProfileId, expiresAt])
+}
+
+enum ConsultantFeeWaiverReason {
+  REFERRED_EXPERT
+  REFERRING_EXPERT
 }
 
 // Single-row platform pricing config (fixed id), mirroring
@@ -6488,6 +6604,9 @@ enum ReferralStatus {
   REWARDED
   EXPIRED
   FRAUDULENT
+  QUALIFYING // first paid marketplace capture seen; waiting on delivery + refund window
+  VESTED // reward released
+  VOID // disqualified; see voidReason
 }
 
 enum CreditSource {

@@ -87,6 +87,8 @@ const TARGETS = [
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
   "retry-moderation-enforcement",
+  // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
+  "vest-referral-credits",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -181,6 +183,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 30,
   "process-data-exports": 10,
   "retry-moderation-enforcement": 30,
+  // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
+  "vest-referral-credits": 30,
 };
 
 /**
@@ -221,6 +225,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 10,
   "process-data-exports": 0,
   "retry-moderation-enforcement": 25,
+  "vest-referral-credits": 5,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */

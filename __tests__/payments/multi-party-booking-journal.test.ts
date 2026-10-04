@@ -96,6 +96,13 @@ jest.mock("../../lib/prisma", () => {
         })),
     },
     ledgerAccountBalance: { upsert: jest.fn().mockResolvedValue({}) },
+    // B2C take rate: no fee schedule row (marketplace fallback), no waiver, no stored owner.
+    platformFeeSchedule: { findFirst: jest.fn().mockResolvedValue(null) },
+    consultantFeeWaiver: { findFirst: jest.fn().mockResolvedValue(null) },
+    expertCustomerRelationship: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
     // #1458 — only read when an OVERAGE_INVOICE_ACCRUAL leg funded the payment.
     overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },

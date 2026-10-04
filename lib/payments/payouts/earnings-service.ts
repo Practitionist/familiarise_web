@@ -31,13 +31,17 @@ import {
   Prisma,
   type CoveredPlanType,
 } from "@prisma/client";
-import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
+import { AppointmentType } from "./constants";
 import {
   computeHoldUntil,
   holdHoursFor,
   resolveEarningsAnchor,
 } from "./earnings-hold";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import {
+  planB2cPlatformFeePaise,
+  settleB2cPlatformFeePaise,
+} from "@/lib/payments/pricing/platform-fee";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -827,7 +831,12 @@ export async function planEarningsForPayment(
 
   const platformFeePaise = orgSplit
     ? orgSplit.platformFeePaise
-    : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+    : await planB2cPlatformFeePaise(
+        db,
+        payment,
+        consultantProfileId,
+        grossAmount,
+      );
   const totalConsultantPool = orgSplit
     ? orgSplit.consultantSharePaise
     : grossAmount - platformFeePaise;
@@ -1517,7 +1526,13 @@ export async function createEarningsFromPayment(
 
     const platformFeePaise = orgSplit
       ? orgSplit.platformFeePaise
-      : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+      : await settleB2cPlatformFeePaise(
+          tx,
+          payment,
+          consultantProfileId,
+          grossAmount,
+          { allowWaiver: !hasPreplanned || preplanned.splits.length === 0 },
+        );
     const totalConsultantPool = orgSplit
       ? orgSplit.consultantSharePaise
       : grossAmount - platformFeePaise;

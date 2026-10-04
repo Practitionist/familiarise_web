@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { ledgerAccountId } from "@/lib/payments/ledger/post";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -48,7 +49,9 @@ export type Finding = {
     | "OVERAGE_SETTLEMENT_MISMATCH"
     // An anti-invoice-fraud park older than 24h. Detect-only: age never
     // releases a park.
-    | "PENDING_TRUST_PARK_STALE";
+    | "PENDING_TRUST_PARK_STALE"
+    // The referral-credit liability disagrees with the vested, unredeemed credit balance.
+    | "REFERRAL_CREDIT_LIABILITY_DRIFT";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -1292,6 +1295,35 @@ export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
   return s.status === "RUNNING";
 }
 
+// --- referral-credit liability == Σ remaining of VESTED credits that posted a vest journal ---
+async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
+  const sums = await prisma.ledgerEntry.groupBy({
+    by: ["direction"],
+    where: {
+      accountId: ledgerAccountId({ kind: "REFERRAL_CREDIT_LIABILITY" }),
+    },
+    _sum: { amountPaise: true },
+  });
+  let ledgerOwed = 0;
+  for (const row of sums) {
+    const amt = sumPaise(row._sum.amountPaise);
+    ledgerOwed += row.direction === "CREDIT" ? amt : -amt;
+  }
+  const vested = await prisma.referralCredit.aggregate({
+    where: { state: "VESTED", vestedAt: { not: null } },
+    _sum: { remainingAmount: true },
+  });
+  const expected = sumPaise(vested._sum.remainingAmount);
+  if (expected !== ledgerOwed) {
+    ctx.findings.push({
+      kind: "REFERRAL_CREDIT_LIABILITY_DRIFT",
+      expectedPaise: expected,
+      actualPaise: ledgerOwed,
+      deltaPaise: ledgerOwed - expected,
+    });
+  }
+}
+
 async function executeSteps(opts: ReconcileScope): Promise<{
   ctx: StepCtx;
   durationMs: number;
@@ -1323,6 +1355,9 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   await stepSplitSums(ctx);
   await stepOverageSettlement(ctx);
   await stepPendingTrustParks(ctx);
+  if (!opts.organizationId) {
+    await stepReferralCreditLiability(ctx);
+  }
 
   return { ctx, durationMs: Date.now() - startedAt };
 }

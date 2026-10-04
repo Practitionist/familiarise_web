@@ -75,16 +75,10 @@ import {
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import {
-  applyCreditsToPayment,
-  getUserCredits,
-  processQualifyingAction,
-  processConsultantBookingReferral,
-} from "@/lib/referrals/service";
-import {
-  notifyCreditsAppliedBestEffort,
-  notifyReferralQualificationBestEffort,
-} from "@/lib/referrals/referral-notify";
+import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
+import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
+import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
+import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   deriveCheckoutAmount,
   type CheckoutDiscountInput,
@@ -828,6 +822,11 @@ export async function calculateAmountAndValidate(
    * actually resume. Null default keeps every non-org caller personal.
    */
   organizationId: string | null = null,
+  /** The signed own-link cookie and whether an org funds this booking. */
+  referral: { viaToken: string | null; orgFunded: boolean } = {
+    viaToken: null,
+    orgFunded: false,
+  },
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
@@ -1211,11 +1210,21 @@ export async function calculateAmountAndValidate(
     // The credit balance is still read lazily, only once the order clears the
     // redemption floor, so orders that cannot spend a credit keep it out of the
     // transaction's read set.
+    const attribution = await resolveCheckoutAttribution(tx, {
+      buyerUserId: userId,
+      consultantProfileId: plan.consultantProfile?.id ?? null,
+      consultantUserId: plan.consultantProfile?.userId ?? null,
+      viaToken: referral.viaToken,
+      orgFunded: referral.orgFunded,
+      hasDiscountCode: appliedDiscount !== null,
+    });
     const derived = await deriveCheckoutAmount({
       basePaise: amount,
       buyerCountry,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
       discount: appliedDiscount,
+      welcomeDiscount: attribution.welcomeDiscount,
+      creditCapBps: attribution.creditCapBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
         (await getUserCredits(userId, tx)).totalAvailable,
@@ -1252,6 +1261,9 @@ export async function calculateAmountAndValidate(
       isInternational,
       classSessionsQuoted,
       subscriptionSchedulingPeriod,
+      attributionSource: attribution.source,
+      attributionReferralId: attribution.referralId,
+      platformFeeBps: attribution.platformFeeBps,
     };
   });
 }
@@ -3568,6 +3580,8 @@ export async function handleCheckout(
   userId: string,
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
+  /** The `fam_via` own-link cookie, read by the route. */
+  attribution: { viaToken?: string | null } = {},
 ) {
   const requestedType = validatedData.appointmentType;
   // Trials are booked through the trial flow; checkout never prices one.
@@ -3835,6 +3849,9 @@ export async function handleCheckout(
       isInternational,
       classSessionsQuoted,
       subscriptionSchedulingPeriod,
+      attributionSource,
+      attributionReferralId,
+      platformFeeBps,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -3842,6 +3859,10 @@ export async function handleCheckout(
       // #1465-triage — resolved and membership-verified above; the slot gate
       // needs it to scope the self-hold exclusion to a resumable hold.
       organizationId,
+      {
+        viaToken: attribution.viaToken ?? null,
+        orgFunded: fundingSource !== null && fundingSource !== "PERSONAL",
+      },
     );
 
     // INVOICE fundingSource: fast-fail on the credit limit before any lock is
@@ -4491,6 +4512,9 @@ export async function handleCheckout(
                 // one and the org is invoiced for a seat it did not buy.
                 organizationId,
                 billingAccountId,
+                attributionSource,
+                attributionReferralId,
+                platformFeeBps,
               },
             });
 
@@ -4894,6 +4918,10 @@ export async function handleCheckout(
                   tx,
                 });
               }
+              await recordReferralCaptureInSavepoint(tx, {
+                paymentId: payment.id,
+                consultantProfileId: resolvedEarnings?.consultantProfileId,
+              });
             }
 
             return {
@@ -4957,50 +4985,23 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount/org-sponsored payment post-processing: referral
-      // qualifying action. Real payments handle this via
-      // handlePaymentSuccess() in the webhook, but these flows bypass
-      // webhooks entirely.
+      // Mock/zero-amount/org-sponsored payments never see a capture webhook,
+      // so their post-commit follow-ups run here.
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
-        // Trigger referral reward if this is the user's first paid booking
-        try {
-          await processQualifyingAction(userId, "first_paid_booking");
-          // P3 referral bells, scheduled after the response (scheduleAfter
-          // degrades to a floating promise outside a request scope — jest
-          // and scripts reach this path). Bells, never money truth.
+        // applyCreditsToPayment committed above, so this post-commit bell reads settled state.
+        if (result.creditsApplied > 0) {
           scheduleAfter(
             () =>
-              notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-                console.error("[referral-qualification-bell] failed:", bellErr),
+              notifyCreditsAppliedBestEffort({
+                userId,
+                creditsUsedPaise: result.creditsApplied,
+                remainingPaise: result.creditsRemainingAfter,
+                appointmentType: validatedData.appointmentType,
+              }).catch((bellErr) =>
+                console.error("[credits-applied-bell] failed:", bellErr),
               ),
-            "checkout.referral-qualification-bell",
+            "checkout.credits-applied-bell",
           );
-          // P3 credits-applied bell: applyCreditsToPayment ran inside the
-          // committed tx above, so this post-commit read is the correct
-          // boundary (belling inside service.ts would fire in-tx).
-          if (result.creditsApplied > 0) {
-            scheduleAfter(
-              () =>
-                notifyCreditsAppliedBestEffort({
-                  userId,
-                  creditsUsedPaise: result.creditsApplied,
-                  remainingPaise: result.creditsRemainingAfter,
-                  appointmentType: validatedData.appointmentType,
-                }).catch((bellErr) =>
-                  console.error("[credits-applied-bell] failed:", bellErr),
-                ),
-              "checkout.credits-applied-bell",
-            );
-          }
-        } catch (referralError) {
-          console.error(
-            `⚠️ Failed to process referral qualifying action for user ${userId}:`,
-            referralError,
-          );
-          reportSentryError(referralError, {
-            subsystem: "payments",
-            level: "warning",
-          });
         }
 
         // #1365 — these payments never see a capture webhook, so the tax
@@ -5009,23 +5010,6 @@ export async function handleCheckout(
         await mintConsumerInvoiceBestEffort({
           paymentIntent: paymentResponse!.id,
         });
-
-        // FIX #437: Consultant qualifying action (receiving first paid booking)
-        try {
-          await processConsultantBookingReferral(
-            { paymentIntent: paymentResponse!.id },
-            userId,
-          );
-        } catch (consultantRefError) {
-          console.error(
-            `⚠️ Failed to process consultant referral qualifying action:`,
-            consultantRefError,
-          );
-          reportSentryError(consultantRefError, {
-            subsystem: "payments",
-            level: "warning",
-          });
-        }
       }
 
       let message =
