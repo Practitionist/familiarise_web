@@ -284,7 +284,7 @@ stateDiagram-v2
   state "AppointmentOccurrence (Session Outcome)" as Occ {
     [*] --> SCHEDULED : Slot placed
     SCHEDULED --> COMPLETED : Outcome HELD (both attended) or LEARNER_ABSENT (forfeited, no refund)
-    SCHEDULED --> VOIDED : Outcome CUT_SHORT, PLATFORM_OUTAGE, or HOST_ABSENT (earnings held; 14d make-up or refund)
+    SCHEDULED --> VOIDED : Outcome CUT_SHORT, PLATFORM_OUTAGE, or HOST_ABSENT (earnings held, 14d make-up or refund)
     SCHEDULED --> UNVERIFIED : Outcome NOBODY_JOINED, INCONCLUSIVE, or OFFLINE (parked for Ops review)
     SCHEDULED --> CANCELLED : Host cancels class session (14d make-up or 1-unit refund) or whole booking cancelled
     UNVERIFIED --> COMPLETED : Ops overrides via session.set-outcome
@@ -332,8 +332,8 @@ flowchart LR
 
   subgraph RoleLayer["Layer 3: Per-Org Membership (MemberRole)"]
     OPS["Operator Roles: OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT (no profile link)"]
-    EXP["EXPERT (links ConsultantProfile; payoutRecipient = SELF | ORGANIZATION)"]
-    LRN["LEARNER (links ConsulteeProfile; receives ProgramAssignment)"]
+    EXP["EXPERT (links ConsultantProfile, payoutRecipient = SELF | ORGANIZATION)"]
+    LRN["LEARNER (links ConsulteeProfile, receives ProgramAssignment)"]
   end
 
   UR --> CP & CEP & OWP
