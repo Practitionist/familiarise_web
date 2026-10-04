@@ -113,9 +113,7 @@ async function isAppointmentParticipant(
 
   // Check class ownership/collaboration
   if (appointment.class) {
-    if (
-      consultantProfileId === appointment.class.classPlan.consultantProfileId
-    )
+    if (consultantProfileId === appointment.class.classPlan.consultantProfileId)
       return true;
     if (
       consultantProfileId &&
@@ -128,9 +126,6 @@ async function isAppointmentParticipant(
 
   return false;
 }
-
-
-
 
 type _AppointmentInclude = Prisma.AppointmentGetPayload<{
   include: {
@@ -424,14 +419,33 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: appointment }, { status: 200 });
+    // A group appointment carries every attendee's Payment; only ops and the plan's host see them all.
+    const hostProfileId =
+      appointment.webinar?.webinarPlan.consultantProfileId ??
+      appointment.class?.classPlan.consultantProfileId;
+    const seesEveryPayment =
+      isPrivileged(session.user.role) ||
+      (!appointment.webinarId && !appointment.classId) ||
+      (!!hostProfileId && hostProfileId === session.user.consultantProfileId);
+    const data = seesEveryPayment
+      ? appointment
+      : {
+          ...appointment,
+          payment: appointment.payment.filter(
+            (p) => p.userId === session.user.id,
+          ),
+        };
+
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     console.error("Error fetching appointment:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching the appointment" },
       { status: 500 },
     );
   }
 }
-

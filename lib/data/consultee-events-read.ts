@@ -55,6 +55,14 @@ const liveProposalInclude = {
   },
 } satisfies Prisma.Appointment$rescheduleRequestsArgs;
 
+/** Only the caller's own Payment rows: a group appointment carries every attendee's. */
+function callerPaymentsInclude(userId: string) {
+  return {
+    where: { userId },
+    select: { id: true, paymentStatus: true, createdAt: true },
+  } satisfies Prisma.Appointment$paymentArgs;
+}
+
 /** Thrown when the consulteeId has no profile — route maps to 404. */
 export class ConsulteeProfileNotFoundError extends Error {
   constructor(consulteeId: string) {
@@ -87,6 +95,7 @@ export async function readConsulteeEvents(
   }
 
   const userId = consulteeProfile.userId;
+  const callerPayments = callerPaymentsInclude(userId);
 
   // Build per-resource org filters. The 5 booking models attach to
   // org context differently:
@@ -159,7 +168,7 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
@@ -203,7 +212,7 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
@@ -265,7 +274,7 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
@@ -327,7 +336,7 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
