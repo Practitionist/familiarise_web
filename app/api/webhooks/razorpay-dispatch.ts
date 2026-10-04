@@ -138,7 +138,12 @@ export async function routeCapturedPayment(params: {
   if (notes.type === "recording_purchase") {
     // #366 — standalone replay sale; not a Payment row, settled on its own
     // RecordingPurchase record (idempotent per gatewayOrderId).
-    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId, notes);
+    await handleRecordingPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      notes,
+      amountPaise,
+    );
     return;
   }
   // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is

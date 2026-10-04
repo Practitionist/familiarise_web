@@ -131,13 +131,26 @@ const TOPUP_POLL_MAX_ATTEMPTS = 20;
 const TOPUP_PENDING_REFETCH_MS = 5000;
 
 type TopUpMutationResult =
-  | {
-      result: TopUpInitiateResponse;
-      outcome: "confirmed";
-      confirmed: TopUpStatus;
-    }
-  | { result: TopUpInitiateResponse; outcome: "pending"; confirmed: null }
-  | { result: TopUpInitiateResponse; outcome: "not_paid"; confirmed: null };
+  | { result: TopUpInitiateResponse; outcome: "settled"; settled: TopUpStatus }
+  | { result: TopUpInitiateResponse; outcome: "pending"; settled: null }
+  | { result: TopUpInitiateResponse; outcome: "not_paid"; settled: null };
+
+/** The toast for a top-up the gateway has settled, confirmed or failed. */
+function settledTopUpToast(
+  status: "confirmed" | "failed",
+  amountPaise: number,
+) {
+  return status === "confirmed"
+    ? {
+        title: "Top-up confirmed",
+        description: `₹${(amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
+      }
+    : {
+        title: "Top-up failed",
+        description: "The payment was not captured. Nothing was credited.",
+        variant: "destructive" as const,
+      };
+}
 
 async function fetchWallet(orgId: string): Promise<WalletFetchResult> {
   const res = await fetch(`/api/organizations/${orgId}/billing-account/wallet`);
@@ -228,16 +241,14 @@ async function verifyTopUp(
   if (res.ok) topUpVerifyResponseSchema.parse(await res.json());
 }
 
-async function pollTopUpUntilConfirmed(
+/** The top-up once confirmed or failed, or null while still pending. */
+async function pollTopUpUntilSettled(
   orgId: string,
   topUpId: string,
 ): Promise<TopUpStatus | null> {
   for (let attempt = 0; attempt < TOPUP_POLL_MAX_ATTEMPTS; attempt++) {
     const status = await fetchTopUpStatus(orgId, topUpId);
-    if (status?.status === "confirmed") return status;
-    // A failed top-up is terminal; polling it to the attempt cap only delays
-    // telling the member their money did not land.
-    if (status?.status === "failed") return status;
+    if (status && status.status !== "pending") return status;
     await new Promise((r) => setTimeout(r, TOPUP_POLL_INTERVAL_MS));
   }
   return null;
@@ -300,18 +311,7 @@ export function WalletTab({
     queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
     if (announcedTopUpIds.current.has(settledTopUpId)) return;
     announcedTopUpIds.current.add(settledTopUpId);
-    toast(
-      pendingTopUpStatus === "confirmed"
-        ? {
-            title: "Top-up confirmed",
-            description: `₹${((pendingTopUpAmount ?? 0) / 100).toLocaleString("en-IN")} credited to your wallet.`,
-          }
-        : {
-            title: "Top-up failed",
-            description: "The payment was not captured. Nothing was credited.",
-            variant: "destructive",
-          },
-    );
+    toast(settledTopUpToast(pendingTopUpStatus, pendingTopUpAmount ?? 0));
   }, [
     settledTopUpId,
     pendingTopUpStatus,
@@ -377,24 +377,29 @@ export function WalletTab({
       );
 
       if (!paid) {
-        return { result, outcome: "not_paid", confirmed: null };
+        return { result, outcome: "not_paid", settled: null };
       }
 
       await verifyTopUp(orgId, result.topUpId, paid).catch(() => undefined);
-      const confirmed = await pollTopUpUntilConfirmed(orgId, result.topUpId);
-      if (confirmed) {
-        return { result, outcome: "confirmed", confirmed };
+      const settled = await pollTopUpUntilSettled(orgId, result.topUpId);
+      if (settled) {
+        return { result, outcome: "settled", settled };
       }
-      return { result, outcome: "pending", confirmed: null };
+      return { result, outcome: "pending", settled: null };
     },
     onSuccess: (data) => {
       setShowBuy(false);
       queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
-      if (data.outcome === "confirmed") {
+      if (data.outcome === "settled") {
         announcedTopUpIds.current.add(data.result.topUpId);
+        const { status, amountPaise } = data.settled;
+        if (status !== "pending") toast(settledTopUpToast(status, amountPaise));
+      } else if (data.outcome === "pending") {
+        // The pending banner keeps polling and announces the final status.
         toast({
-          title: "Top-up confirmed",
-          description: `₹${(data.confirmed.amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
+          title: "Top-up pending",
+          description:
+            "The payment is still being confirmed. Your balance updates once it lands.",
         });
       }
     },

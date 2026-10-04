@@ -1,21 +1,27 @@
 /**
  * Replay purchase webhook settlement.
  *
- * Recording purchase orders settle the RecordingPurchase row from PENDING to
- * SUCCEEDED and atomically record the corresponding Payment, ConsultantEarnings
- * (plus OrganizationEarnings and collaborator splits when applicable), and
- * double-entry BOOKING ledger journal inside a single database transaction.
- *
- * Idempotency: keyed on gatewayOrderId (unique) with a PENDING -> SUCCEEDED
- * compare-and-swap. A replayed capture hits the already-SUCCEEDED early return
- * or 0-row CAS guard. `payment.failed` marks the row FAILED only from PENDING
- * so a capture that raced ahead of the failure event wins.
+ * A capture settles its RecordingPurchase (PENDING, or FAILED when the buyer
+ * retried the same order) to SUCCEEDED with the Payment, earnings and BOOKING
+ * journal in one transaction. A capture that cannot fulfil a purchase (the
+ * replay is no longer purchasable, the buyer already holds it, or a second
+ * payment on a settled order) is recorded as a SUCCEEDED Payment carrying the
+ * auto-refund marker and refunded after commit; retry-auto-refunds re-drives it.
  */
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  AUTO_REFUND_PENDING_PREFIX,
+  AUTO_REFUND_STUCK_PREFIX,
+  AUTO_REFUNDED_PREFIX,
+  settledAutoRefundDescription,
+} from "@/lib/payments/webhooks/auto-refund-marker";
+import { isDurablyOurs } from "@/lib/stream/recording-storage";
+import { reportSentryError } from "@/lib/observability/report";
 import * as Sentry from "@sentry/nextjs";
 
 const paiseNote = z.coerce.number().int().nonnegative();
@@ -163,70 +169,151 @@ function resolvePurchasePlanInfo(purchase: {
   return null;
 }
 
+const AUTO_REFUND_MARKERS = [
+  AUTO_REFUND_PENDING_PREFIX,
+  AUTO_REFUNDED_PREFIX,
+  AUTO_REFUND_STUCK_PREFIX,
+];
+
+type CaptureOutcome =
+  | { kind: "settled"; paymentId: string }
+  | { kind: "refund"; paymentId: string; reason: string; marker: string };
+
+/**
+ * Record a capture that fulfils nothing as a SUCCEEDED Payment carrying the
+ * auto-refund marker. A row already staged for the intent is re-driven only
+ * while its marker is still pending.
+ */
+async function stageCaptureRefund(
+  tx: Tx,
+  input: {
+    paymentIntent: string;
+    buyerId: string;
+    chargedPaise: number;
+    charge: ReplayCharge;
+    organizationId: string | null;
+    gatewayPaymentId: string | undefined;
+    reason: string;
+  },
+): Promise<CaptureOutcome | null> {
+  const marker = `${AUTO_REFUND_PENDING_PREFIX} ${input.reason}. Replay NOT granted.`;
+  const existing = await tx.payment.findUnique({
+    where: { paymentIntent: input.paymentIntent },
+    select: { id: true, description: true },
+  });
+  if (existing) {
+    if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
+      return null;
+    }
+    return {
+      kind: "refund",
+      paymentId: existing.id,
+      reason: input.reason,
+      marker: existing.description,
+    };
+  }
+  const created = await tx.payment.create({
+    data: {
+      userId: input.buyerId,
+      appointmentId: null,
+      amount: input.chargedPaise,
+      originalAmount: input.charge.originalAmount,
+      taxAmount: input.charge.taxAmount,
+      currency: "INR",
+      paymentMethod: "CARD",
+      paymentIntent: input.paymentIntent,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "SUCCEEDED",
+      capturedAt: new Date(),
+      description: marker,
+      organizationId: input.organizationId,
+      ...(input.gatewayPaymentId
+        ? { gatewayPaymentId: input.gatewayPaymentId }
+        : {}),
+    },
+    select: { id: true },
+  });
+  return {
+    kind: "refund",
+    paymentId: created.id,
+    reason: input.reason,
+    marker,
+  };
+}
+
 export async function handleRecordingPurchaseSuccess(
   orderId: string,
   gatewayPaymentId?: string,
   notes?: Record<string, string>,
+  /** Captured paise from the payment entity; the purchase amount when absent. */
+  capturedPaise?: number,
 ): Promise<void> {
-  const settledPaymentId = await prisma.$transaction(async (tx) => {
-    const purchase = await tx.recordingPurchase.findUnique({
-      where: { gatewayOrderId: orderId },
-      select: {
-        id: true,
-        buyerId: true,
-        amountPaise: true,
-        status: true,
-        recording: {
-          select: {
-            id: true,
-            organizationId: true,
-            meeting: {
-              select: {
-                occurrence: {
-                  select: {
-                    appointment: {
-                      select: {
-                        organizationId: true,
-                        webinar: {
-                          select: {
-                            webinarPlanId: true,
-                            webinarPlan: {
-                              select: {
-                                id: true,
-                                consultantProfileId: true,
-                                organizationId: true,
+  const outcome = await prisma.$transaction(
+    async (tx): Promise<CaptureOutcome | null> => {
+      const purchase = await tx.recordingPurchase.findUnique({
+        where: { gatewayOrderId: orderId },
+        select: {
+          id: true,
+          recordingId: true,
+          buyerId: true,
+          amountPaise: true,
+          status: true,
+          gatewayPaymentId: true,
+          recording: {
+            select: {
+              id: true,
+              organizationId: true,
+              listingStatus: true,
+              status: true,
+              storageType: true,
+              meeting: {
+                select: {
+                  occurrence: {
+                    select: {
+                      appointment: {
+                        select: {
+                          organizationId: true,
+                          webinar: {
+                            select: {
+                              webinarPlanId: true,
+                              webinarPlan: {
+                                select: {
+                                  id: true,
+                                  consultantProfileId: true,
+                                  organizationId: true,
+                                },
                               },
                             },
                           },
-                        },
-                        class: {
-                          select: {
-                            classPlanId: true,
-                            classPlan: {
-                              select: {
-                                id: true,
-                                consultantProfileId: true,
-                                organizationId: true,
+                          class: {
+                            select: {
+                              classPlanId: true,
+                              classPlan: {
+                                select: {
+                                  id: true,
+                                  consultantProfileId: true,
+                                  organizationId: true,
+                                },
                               },
                             },
                           },
-                        },
-                        consultation: {
-                          select: {
-                            consultationPlan: {
-                              select: {
-                                id: true,
-                                consultantProfileId: true,
+                          consultation: {
+                            select: {
+                              consultationPlan: {
+                                select: {
+                                  id: true,
+                                  consultantProfileId: true,
+                                },
                               },
                             },
                           },
-                        },
-                        subscription: {
-                          select: {
-                            subscriptionPlan: {
-                              select: {
-                                id: true,
-                                consultantProfileId: true,
+                          subscription: {
+                            select: {
+                              subscriptionPlan: {
+                                select: {
+                                  id: true,
+                                  consultantProfileId: true,
+                                },
                               },
                             },
                           },
@@ -239,105 +326,185 @@ export async function handleRecordingPurchaseSuccess(
             },
           },
         },
-      },
-    });
+      });
 
-    if (!purchase) {
-      // Unknown order — log loudly; the sweeper can't re-drive what has no row.
-      console.error(
-        `[recording-purchase] captured order ${orderId} has no RecordingPurchase row`,
-      );
-      Sentry.captureMessage(
-        `[recording-purchase] captured order without row: ${orderId}`,
-        { level: "error", tags: { subsystem: "payments" } },
-      );
-      return null;
-    }
+      if (!purchase) {
+        // Unknown order — log loudly; the sweeper can't re-drive what has no row.
+        console.error(
+          `[recording-purchase] captured order ${orderId} has no RecordingPurchase row`,
+        );
+        Sentry.captureMessage(
+          `[recording-purchase] captured order without row: ${orderId}`,
+          { level: "error", tags: { subsystem: "payments" } },
+        );
+        return null;
+      }
 
-    if (purchase.status === "SUCCEEDED") return null; // idempotent replay
+      const chargedPaise = capturedPaise ?? Number(purchase.amountPaise);
+      if (!Number.isSafeInteger(chargedPaise) || chargedPaise <= 0) {
+        throw new Error(
+          `[recording-purchase] invalid charged amount for order ${orderId}`,
+        );
+      }
+      const charge = resolveReplayCharge(orderId, chargedPaise, notes);
+      const planInfo = resolvePurchasePlanInfo(purchase);
+      const organizationId =
+        planInfo?.organizationId ?? purchase.recording?.organizationId ?? null;
+      const refundCapture = (paymentIntent: string, reason: string) =>
+        stageCaptureRefund(tx, {
+          paymentIntent,
+          buyerId: purchase.buyerId,
+          chargedPaise,
+          charge,
+          organizationId,
+          gatewayPaymentId,
+          reason,
+        });
 
-    const grossAmountPaise = Number(purchase.amountPaise);
-    if (!Number.isSafeInteger(grossAmountPaise) || grossAmountPaise <= 0) {
-      throw new Error(
-        `[recording-purchase] invalid amountPaise for order ${orderId}`,
-      );
-    }
+      if (purchase.status === "SUCCEEDED" || purchase.status === "REFUNDED") {
+        // Same payment redelivered; a different one is a duplicate charge.
+        if (
+          !gatewayPaymentId ||
+          !purchase.gatewayPaymentId ||
+          gatewayPaymentId === purchase.gatewayPaymentId
+        ) {
+          return null;
+        }
+        return refundCapture(
+          gatewayPaymentId,
+          `duplicate capture on settled replay order ${orderId}`,
+        );
+      }
 
-    const planInfo = resolvePurchasePlanInfo(purchase);
+      const orderPayment = await tx.payment.findUnique({
+        where: { paymentIntent: orderId },
+      });
+      // A refund already staged for this order is final; never grant over it.
+      if (
+        AUTO_REFUND_MARKERS.some((prefix) =>
+          orderPayment?.description?.startsWith(prefix),
+        )
+      ) {
+        return refundCapture(
+          orderId,
+          `late capture on replay order ${orderId}`,
+        );
+      }
 
-    const claimed = await tx.recordingPurchase.updateMany({
-      where: { id: purchase.id, status: "PENDING" },
-      data: {
-        status: "SUCCEEDED",
-        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-      },
-    });
-    if (claimed.count === 0) return null;
+      const recording = purchase.recording;
+      if (
+        purchase.status === "FAILED" &&
+        (recording?.listingStatus !== "PUBLISHED" || !isDurablyOurs(recording))
+      ) {
+        return refundCapture(
+          orderId,
+          `late capture on replay order ${orderId}; the replay is no longer purchasable`,
+        );
+      }
 
-    const charge = resolveReplayCharge(orderId, grossAmountPaise, notes);
-    const existingPayment = await tx.payment.findUnique({
-      where: { paymentIntent: orderId },
-    });
+      const entitled = await tx.recordingPurchase.findFirst({
+        where: {
+          recordingId: purchase.recordingId,
+          buyerId: purchase.buyerId,
+          status: "SUCCEEDED",
+          id: { not: purchase.id },
+        },
+        select: { id: true },
+      });
+      if (entitled) {
+        return refundCapture(
+          orderId,
+          `capture on replay order ${orderId}; the buyer already holds this replay`,
+        );
+      }
 
-    const payment =
-      existingPayment ??
-      (await tx.payment.create({
+      // Expected prior status in WHERE: PENDING, or FAILED for a late retry.
+      const claimed = await tx.recordingPurchase.updateMany({
+        where: { id: purchase.id, status: purchase.status },
         data: {
-          userId: purchase.buyerId,
-          appointmentId: null,
-          amount: grossAmountPaise,
-          originalAmount: charge.originalAmount,
-          taxAmount: charge.taxAmount,
-          ...(charge.buyerCountry
-            ? {
-                buyerCountry: charge.buyerCountry,
-                isInternational: charge.buyerCountry !== "IN",
-              }
-            : {}),
-          currency: "INR",
-          paymentMethod: "CARD",
-          paymentIntent: orderId,
-          paymentGateway: "RAZORPAY",
-          paymentStatus: "SUCCEEDED",
-          capturedAt: new Date(),
-          organizationId:
-            planInfo?.organizationId ??
-            purchase.recording?.organizationId ??
-            null,
+          status: "SUCCEEDED",
           ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
         },
-      }));
+      });
+      if (claimed.count === 0) return null;
 
-    if (!planInfo) {
-      Sentry.captureMessage(
-        `[recording-purchase] settled without earnings owner: ${orderId}`,
-        { level: "error", tags: { subsystem: "payments" } },
-      );
-      return payment.id;
-    }
+      const payment =
+        orderPayment ??
+        (await tx.payment.create({
+          data: {
+            userId: purchase.buyerId,
+            appointmentId: null,
+            amount: chargedPaise,
+            originalAmount: charge.originalAmount,
+            taxAmount: charge.taxAmount,
+            ...(charge.buyerCountry
+              ? {
+                  buyerCountry: charge.buyerCountry,
+                  isInternational: charge.buyerCountry !== "IN",
+                }
+              : {}),
+            currency: "INR",
+            paymentMethod: "CARD",
+            paymentIntent: orderId,
+            paymentGateway: "RAZORPAY",
+            paymentStatus: "SUCCEEDED",
+            capturedAt: new Date(),
+            organizationId,
+            ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+          },
+        }));
 
-    await createEarningsFromPayment({
-      payment: {
-        ...payment,
-        appointment: {
-          consultantProfile: { id: planInfo.consultantProfileId },
-          webinar: planInfo.webinarPlanId
-            ? { webinarPlanId: planInfo.webinarPlanId }
-            : null,
-          class: planInfo.classPlanId
-            ? { classPlanId: planInfo.classPlanId }
-            : null,
+      if (!planInfo) {
+        Sentry.captureMessage(
+          `[recording-purchase] settled without earnings owner: ${orderId}`,
+          { level: "error", tags: { subsystem: "payments" } },
+        );
+        return { kind: "settled", paymentId: payment.id };
+      }
+
+      await createEarningsFromPayment({
+        payment: {
+          ...payment,
+          appointment: {
+            consultantProfile: { id: planInfo.consultantProfileId },
+            webinar: planInfo.webinarPlanId
+              ? { webinarPlanId: planInfo.webinarPlanId }
+              : null,
+            class: planInfo.classPlanId
+              ? { classPlanId: planInfo.classPlanId }
+              : null,
+          },
         },
-      },
-      appointmentType: planInfo.appointmentType,
-      tx,
-    });
-    return payment.id;
-  });
+        appointmentType: planInfo.appointmentType,
+        tx,
+      });
+      return { kind: "settled", paymentId: payment.id };
+    },
+  );
 
+  if (!outcome) return;
   // Post-commit and best effort, exactly as the booking confirmation mints it.
-  if (settledPaymentId) {
-    await mintConsumerInvoiceBestEffort({ paymentId: settledPaymentId });
+  if (outcome.kind === "settled") {
+    await mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId });
+    return;
+  }
+  try {
+    await refundBookingPayment({
+      paymentId: outcome.paymentId,
+      reason: outcome.reason,
+      initiatedByUserId: null,
+      dedupeKey: `replay-capture:${outcome.paymentId}`,
+    });
+    await prisma.payment.updateMany({
+      where: { id: outcome.paymentId, description: outcome.marker },
+      data: { description: settledAutoRefundDescription(outcome.marker) },
+    });
+  } catch (refundError) {
+    // The marker stays pending, so retry-auto-refunds re-drives the refund.
+    reportSentryError(refundError, {
+      subsystem: "payments",
+      extra: { orderId, paymentId: outcome.paymentId },
+    });
   }
 }
 

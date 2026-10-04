@@ -514,9 +514,7 @@ export async function eraseRazorpayCustomerPii(
  * `no_live_payment`.
  */
 export type RazorpayOrderCancelResult =
-  | "no_live_payment"
-  | "has_live_payment"
-  | "unknown";
+  "no_live_payment" | "has_live_payment" | "unknown";
 
 /** Payment states that mean the buyer's money is with the gateway. */
 const LIVE_ORDER_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
@@ -724,6 +722,39 @@ async function postRefund({
   }
 }
 
+type RazorpaySdkClient = NonNullable<ReturnType<typeof getRazorpayClient>>;
+
+/** The order's captured payment; refusing an order with nothing captured. */
+async function capturedPaymentIdOfOrder(
+  razorpayClient: RazorpaySdkClient,
+  orderId: string,
+): Promise<string> {
+  const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+    razorpayClient.orders.fetchPayments(orderId),
+  );
+
+  if (payments.count === 0) {
+    throw new RefundError(
+      "No payment found for this order",
+      "NO_PAYMENT_FOUND",
+      "RAZORPAY",
+    );
+  }
+
+  // PM-12 — an order can carry failed attempts before the captured one;
+  // items[0] is creation-ordered. #1584 P1-GW01b — never fall back to it:
+  // an order with no captured payment has nothing to refund.
+  const payment = payments.items.find((p) => p.status === "captured");
+  if (!payment) {
+    throw new RefundError(
+      `Order ${orderId} has no captured payment — nothing to refund`,
+      "NOT_CAPTURED",
+      "RAZORPAY",
+    );
+  }
+  return payment.id;
+}
+
 /**
  * Create a refund for a Razorpay payment
  * Note: Razorpay refunds are created on payment IDs, not order IDs
@@ -757,34 +788,14 @@ export async function createRazorpayRefund({
   }
 
   try {
-    // First, get the payment ID from the order
-    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(paymentIntentId),
-    );
-
-    if (payments.count === 0) {
-      throw new RefundError(
-        "No payment found for this order",
-        "NO_PAYMENT_FOUND",
-        "RAZORPAY",
-      );
-    }
-
-    // PM-12 — an order can carry failed attempts before the captured one;
-    // items[0] is creation-ordered. #1584 P1-GW01b — never fall back to it:
-    // an order with no captured payment has nothing to refund.
-    const payment = payments.items.find((p) => p.status === "captured");
-    if (!payment) {
-      throw new RefundError(
-        `Order ${paymentIntentId} has no captured payment — nothing to refund`,
-        "NOT_CAPTURED",
-        "RAZORPAY",
-      );
-    }
+    // A `pay_…` intent names one capture on a shared order; refund exactly it.
+    const paymentId = paymentIntentId.startsWith("pay_")
+      ? paymentIntentId
+      : await capturedPaymentIdOfOrder(razorpayClient, paymentIntentId);
 
     // Create refund on the payment. Raw HTTP, not the SDK — see postRefund.
     const refund = await postRefund({
-      paymentId: payment.id,
+      paymentId,
       amount, // already in smallest currency unit (paise)
       notes: {
         reason: reason || "requested_by_customer",
@@ -894,9 +905,24 @@ export function isRazorpayUnknownOrderError(
   );
 }
 
+/** The order's captured payment, else its first attempt; null when it has none. */
+async function firstPaymentIdOfOrder(
+  razorpayClient: RazorpaySdkClient,
+  orderId: string,
+): Promise<string | null> {
+  const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+    razorpayClient.orders.fetchPayments(orderId),
+  );
+  if (payments.count === 0) return null;
+  // PM-12 — prefer the captured payment over a failed earlier attempt.
+  return (
+    payments.items.find((p) => p.status === "captured") ?? payments.items[0]
+  ).id;
+}
+
 /**
- * List all refunds for a payment
- * Note: This function receives an orderId, not a paymentId
+ * List all refunds for a payment: an order id, or the `pay_…` id of one
+ * capture when a Payment row records a single duplicate capture.
  */
 export async function listRazorpayRefunds(
   orderId: string,
@@ -912,17 +938,12 @@ export async function listRazorpayRefunds(
   }
 
   try {
-    // First, get the payment ID from the order ID
-    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(orderId),
-    );
-    if (payments.count === 0) {
+    const paymentId = orderId.startsWith("pay_")
+      ? orderId
+      : await firstPaymentIdOfOrder(razorpayClient, orderId);
+    if (!paymentId) {
       return []; // No payments for this order, so no refunds
     }
-    // PM-12 — prefer the captured payment over a failed earlier attempt.
-    const paymentId = (
-      payments.items.find((p) => p.status === "captured") ?? payments.items[0]
-    ).id;
 
     // Fetch refunds for the specific payment using the SDK method
     const refundsResponse = await withRazorpaySdkTimeout(
