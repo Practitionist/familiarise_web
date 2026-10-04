@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isUnimplementedGateway } from "@/lib/payments/constants";
 
 // #828 — replay the original checkout response for a duplicate attempt. The
 // stored Payment carries enough for the client to reopen the gateway with the
@@ -30,7 +31,11 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
       message: "This checkout was already completed.",
     });
   }
-  if (existing.paymentStatus === "PENDING") {
+  // Only an implemented gateway minted a resumable order; any other PENDING row gets the 409.
+  if (
+    existing.paymentStatus === "PENDING" &&
+    !isUnimplementedGateway(existing.paymentGateway)
+  ) {
     return NextResponse.json({
       success: true,
       reused: true,
