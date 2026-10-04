@@ -16,6 +16,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   PayoutStatus,
   PayoutMethod,
+  PayoutAccountType,
   PaymentGateway,
   EarningStatus,
   RefundStatus,
@@ -32,16 +33,12 @@ import {
   payoutEligibilityReason,
   type PayoutEligibilityReason,
 } from "./payout-requirements";
-import { isPostMvpGatewayStub } from "@/lib/payments/constants";
+import { isUnimplementedGateway } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
   isDefinitiveGatewayRejection,
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
-import {
-  getStripeConnectService,
-  isStripeConnectConfigured,
-} from "./stripe-connect";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { randomUUID } from "crypto";
 import {
@@ -306,15 +303,19 @@ interface ConsultantPayoutDraft {
  * claims the earnings READY → BATCHED inside a single transaction.
  */
 function resolvePayoutMethodFromAccountType(
-  accountType: string,
+  accountType: PayoutAccountType,
 ): PayoutMethod {
   switch (accountType) {
-    case "UPI":
-      return PayoutMethod.UPI;
-    case "STRIPE_CONNECT":
-      return PayoutMethod.STRIPE_TRANSFER;
-    default:
+    case PayoutAccountType.BANK_ACCOUNT:
       return PayoutMethod.BANK_TRANSFER;
+    case PayoutAccountType.UPI:
+      return PayoutMethod.UPI;
+    case PayoutAccountType.STRIPE_CONNECT:
+      return PayoutMethod.STRIPE_TRANSFER;
+    default: {
+      const unhandled: never = accountType;
+      throw new Error(`Unhandled payout account type: ${String(unhandled)}`);
+    }
   }
 }
 
@@ -351,11 +352,11 @@ async function mintConsultantPayout(
     return null;
   }
 
-  // Skip unsupported post-MVP gateway stubs before claiming earnings into BATCHED.
-  if (isPostMvpGatewayStub(account.provider)) {
+  // Skip unimplemented gateways before claiming earnings into BATCHED.
+  if (isUnimplementedGateway(account.provider)) {
     console.warn(
       `Skipping consultant ${consultantProfileId}: payout account is on ` +
-        `"${account.provider}", which has no implementation (post-MVP stub).`,
+        `"${account.provider}", which has no implementation.`,
     );
     return null;
   }
@@ -1352,7 +1353,6 @@ async function processSinglePayout(
     consultantProfile: {
       payoutAccounts: Array<{
         razorpayFundAccId: string | null;
-        stripeAccountId: string | null;
         accountType: string;
         [key: string]: unknown;
       }>;
@@ -1499,12 +1499,6 @@ async function processSinglePayout(
         account,
         markSubmitted,
       );
-    } else if (payout.provider === PaymentGateway.STRIPE) {
-      providerPayoutId = await processStripePayout(
-        payoutForGateway,
-        account,
-        markSubmitted,
-      );
     } else {
       throw new Error(`Unsupported provider: ${payout.provider}`);
     }
@@ -1583,44 +1577,6 @@ async function processRazorpayPayout(
   });
 
   return result.id;
-}
-
-async function processStripePayout(
-  payout: {
-    id: string;
-    amount: number;
-    currency: string;
-    idempotencyKey: string | null;
-  },
-  account: {
-    stripeAccountId: string | null;
-  },
-  onSubmit: () => void,
-): Promise<string> {
-  if (!isStripeConnectConfigured()) {
-    throw new Error("Stripe Connect not configured");
-  }
-
-  if (!account.stripeAccountId) {
-    throw new Error("Stripe connected account not found");
-  }
-
-  const stripeConnect = getStripeConnectService();
-
-  onSubmit();
-  const transfer = await stripeConnect.createTransfer({
-    amount: payout.amount,
-    currency: payout.currency.toLowerCase(),
-    destinationAccountId: account.stripeAccountId,
-    description: `Payout ${payout.id}`,
-    idempotencyKey: payout.idempotencyKey || `payout_${payout.id}`,
-    metadata: {
-      payoutId: payout.id,
-      source: "familiarise_platform",
-    },
-  });
-
-  return transfer.id;
 }
 
 export async function reportUnknownPayoutStatus(input: {

@@ -14,9 +14,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 1,
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
-const getDispute = jest.fn();
-jest.mock("../../lib/payments", () => ({
-  getDispute: (...a: unknown[]) => getDispute(...a),
+const mockGetRazorpayDispute = jest.fn();
+jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
+  ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
+  getRazorpayDispute: (...a: unknown[]) => mockGetRazorpayDispute(...a),
 }));
 
 const updateMany = jest.fn(async ({ where }: { where: { status: string } }) =>
@@ -32,10 +33,10 @@ jest.mock("../../lib/prisma", () => ({
         {
           disputeId: "dp_1",
           status: "UNDER_REVIEW",
-          paymentGateway: "STRIPE",
+          paymentGateway: "RAZORPAY",
           dueBy: null,
           evidence: null,
-          payment: {},
+          payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
         },
       ]),
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
@@ -48,12 +49,12 @@ import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.STRIPE_ENABLED = "true";
 });
 
 describe("dispute reconciliation is a CAS on the status it read", () => {
   it("does not overwrite a dispute whose status changed mid-run", async () => {
-    getDispute.mockResolvedValue({
+    mockGetRazorpayDispute.mockResolvedValue({
+      paymentId: "pay_1",
       status: "needs_response",
       evidence: {},
       isChargeRefundable: true,

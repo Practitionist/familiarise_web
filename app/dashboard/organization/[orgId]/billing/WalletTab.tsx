@@ -49,8 +49,6 @@ const walletResponseSchema = z.object({
     walletBalance: z.number(),
     // #777 §C — balance-alert config.
     minBalancePaise: z.number().nullable(),
-    autoTopUpEnabled: z.boolean(),
-    autoTopUpAmountPaise: z.number().nullable(),
   }),
   ledger: z.array(
     z.object({
@@ -180,8 +178,7 @@ async function initiateTopUp(
 
 // #777 §C — persist the balance-alert config via the billing-account PATCH.
 // NOTIFY-ONLY floor: the toggle drives whether a minimum is set (cron alerts
-// off minBalancePaise alone); autoTopUpEnabled stays false until mandates land
-// — the API rejects enabling it without an autoTopUpAmountPaise anyway.
+// off minBalancePaise alone).
 async function patchBalanceAlerts(
   orgId: string,
   body: {
@@ -647,11 +644,7 @@ export function WalletTab({
                     {alertsMutation.isPending ? "Saving…" : "Save alerts"}
                   </Button>
                 )}
-                {/* #863 residual — the auto-top-up executor (RBI e-mandate:
-                    ₹15k AFA-free cap + 24h pre-debit notice) is NOT built. The
-                    autoTopUp* columns + settings CRUD exist as config-of-intent;
-                    nothing fires a debit. TODO(#863): build the mandate +
-                    executor when a design partner needs it. Notify-only for now. */}
+                {/* No auto-debit exists: an RBI e-mandate executor is not built. */}
                 <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
                     Automatic top-up — coming soon.

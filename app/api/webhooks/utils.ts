@@ -7,8 +7,6 @@ import {
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
-import crypto from "crypto";
-import { getStripeClient } from "@/lib/payments/core/stripe";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
@@ -564,67 +562,6 @@ export {
   logWebhookEvent,
   markWebhookEventProcessed,
 } from "@/lib/webhooks/event-log";
-import { readBodyWithinCap } from "@/lib/webhooks/read-body";
-
-// Generic webhook verification
-export async function verifyWebhookSignature(
-  req: Request,
-  secret: string,
-  gateway: "stripe" | "razorpay",
-): Promise<{ isValid: boolean; body: string; oversized?: true }> {
-  const signature =
-    req.headers.get("stripe-signature") ||
-    req.headers.get("x-razorpay-signature");
-
-  if (!signature) {
-    return { isValid: false, body: "" };
-  }
-
-  // #1582 F-P1-01a — bounded like the Razorpay route: an oversized body is
-  // refused before any signature work, never buffered to verify it.
-  const body = await readBodyWithinCap(req);
-  if (body === null) {
-    return { isValid: false, body: "", oversized: true };
-  }
-
-  try {
-    if (gateway === "stripe") {
-      // Only Stripe verification touches the SDK client; Razorpay verifies
-      // via local HMAC below.
-      const stripeClient = getStripeClient();
-      if (!stripeClient) {
-        console.error(
-          "Stripe client not initialized - cannot verify webhook signature",
-        );
-        return { isValid: false, body: "" };
-      }
-      stripeClient.webhooks.constructEvent(body, signature, secret);
-      return { isValid: true, body };
-    } else {
-      const expectedSignature = crypto
-        .createHmac("sha256", secret)
-        .update(body)
-        .digest("hex");
-      // H1 FIX: Use timing-safe comparison to prevent timing attacks on HMAC
-      // Validate hex length before Buffer.from (odd-length strings get truncated)
-      if (signature.length !== 64) {
-        return { isValid: false, body };
-      }
-      const sigBuf = Buffer.from(signature, "hex");
-      const expectedBuf = Buffer.from(expectedSignature, "hex");
-      if (sigBuf.length !== expectedBuf.length) {
-        return { isValid: false, body };
-      }
-      return { isValid: crypto.timingSafeEqual(sigBuf, expectedBuf), body };
-    }
-  } catch (error) {
-    console.error(
-      `Webhook signature verification failed for ${gateway}:`,
-      error,
-    );
-    return { isValid: false, body };
-  }
-}
 
 // ============================================================================
 // Refund Webhook Handlers
@@ -646,8 +583,7 @@ export async function verifyWebhookSignature(
  *
  * If the webhook resolves to none of the above, we log and return.
  * `providerPaymentId` (Razorpay `pay_<…>`) is optional and only used by
- * the org-level branches; for Stripe we keep the legacy `paymentIntentId`
- * contract.
+ * the org-level branches.
  */
 export async function handleRefundCreated(
   refundId: string,
@@ -655,7 +591,6 @@ export async function handleRefundCreated(
   amount: number,
   currency: string,
   status: string,
-  gateway: "STRIPE" | "RAZORPAY",
   providerPaymentId?: string,
 ) {
   // Serializable + retry — the contract `applyRefundCascade` documents for
@@ -1026,22 +961,11 @@ export async function handleRefundCreated(
           // event (processed=true/error=null) so it never re-runs; a throw stamps
           // error=true which the sweeper skips (it only re-drives error=null) — both
           // are permanent death on Razorpay (no redelivery after a 200). Instead
-          // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
+          // DEFER: the dispatcher skips the mark and the sweeper re-drives
           // until the payment lands (or the terminal age cap gives up).
-          //
-          // Stripe keeps throwing, and the asymmetry is deliberate rather than
-          // leftover: sweep-stuck-webhook-events.ts selects
-          // `provider: { in: ["razorpay", "stream"] }`, so a deferred Stripe event
-          // has NO actor — it would sit processed=false/error=null forever after a
-          // 200 told Stripe to stop retrying. The throw returns 5xx, and Stripe's
-          // native retry schedule (~3 days) is the re-drive. Extracting a Stripe
-          // dispatch and adding it to the sweep is the precondition for unifying
-          // these two branches.
-          const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
-          if (gateway === "RAZORPAY") {
-            return new DeferSignal(deferReason);
-          }
-          throw new Error(`${deferReason} — re-driving`);
+          return new DeferSignal(
+            `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`,
+          );
         }
 
         // Check if refund already exists
@@ -1177,7 +1101,7 @@ export async function handleRefundCreated(
             currency: toCurrencyEnum(currency),
             status: mapGatewayRefundStatus(status),
             refundId,
-            paymentGateway: gateway,
+            paymentGateway: PaymentGateway.RAZORPAY,
             paymentId: payment.id,
           },
           select: { id: true },
@@ -1254,13 +1178,11 @@ export async function handleDisputeCreated(
   status: string,
   dueBy: number | null,
   isChargeRefundable: boolean,
-  gateway: "STRIPE" | "RAZORPAY",
 ) {
-  // Only resolve the client the dispute's gateway will use.
-  const stripeClient = gateway === "STRIPE" ? getStripeClient() : null;
-  const razorpayClient = gateway === "RAZORPAY" ? getRazorpayClient() : null;
+  const gateway = PaymentGateway.RAZORPAY;
+  const razorpayClient = getRazorpayClient();
   // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
-  // This lookup is an external HTTP call to Stripe or Razorpay; leaving it
+  // This lookup is an external HTTP call to Razorpay; leaving it
   // inside the tx held a database transaction open across a network round trip,
   // and made the tx unsafe to retry (an SSI retry would re-hit the gateway).
   // Both matter now that this handler runs Serializable to match
@@ -1270,19 +1192,7 @@ export async function handleDisputeCreated(
   // !payment branch below must not both fire for the same webhook.
   let unlinkAlertRecorded = false;
 
-  if (gateway === "STRIPE" && stripeClient) {
-    try {
-      const charge = await stripeClient.charges.retrieve(chargeId);
-      if (charge.payment_intent) {
-        resolvedPaymentIntent =
-          typeof charge.payment_intent === "string"
-            ? charge.payment_intent
-            : charge.payment_intent.id;
-      }
-    } catch (error) {
-      console.error("Failed to retrieve charge:", error);
-    }
-  } else if (razorpayClient) {
+  if (razorpayClient) {
     // For Razorpay, chargeId is the payment_id. We need to fetch the payment
     // from Razorpay to get the order_id, which is stored as our paymentIntent.
     try {
@@ -1504,7 +1414,6 @@ export interface LostDisputeSettlementInput {
   paymentId: string;
   payment: {
     amount: number;
-    gstTcsCollectedPaise: number | null;
     organizationId?: string | null;
   };
 }
@@ -1827,25 +1736,6 @@ export async function settleLostDispute(
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
-  // #738-B — TCS u/s 52 parity: if collection ever stamped this payment
-  // (flag-gated, schema-live), the chargeback must net it out of the
-  // next GSTR-8. Inert while gstTcsCollectedPaise stays null.
-  if ((dispute.payment.gstTcsCollectedPaise ?? 0) > 0) {
-    const tcsReverse = Math.floor(
-      (dispute.payment.gstTcsCollectedPaise! * dispute.amountPaise) /
-        dispute.payment.amount,
-    );
-    if (tcsReverse > 0) {
-      await tx.gstTcsAdjustment.create({
-        data: {
-          paymentId: dispute.paymentId,
-          amountPaise: -tcsReverse,
-          reason: `chargeback lost (dispute ${disputeId})`,
-        },
-      });
-    }
-  }
-
   return { consultantClawbackPage };
 }
 
@@ -1880,13 +1770,11 @@ export async function handleDisputeUpdated(
         stagedNotification = null;
         const dispute = await tx.dispute.findUnique({
           where: { disputeId },
-          // #738-B — payment amount/TCS needed for the lost-dispute tax parity.
           include: {
             payment: {
               select: {
                 id: true,
                 amount: true,
-                gstTcsCollectedPaise: true,
                 organizationId: true,
               },
             },
@@ -2432,7 +2320,7 @@ export async function handleRazorpayPayoutWebhook(
     // entry fell through to the `|| "PENDING"` default: a `payout.failed`
     // delivery left the consultant payout in flight and its earnings BATCHED
     // forever, because the un-batch back to READY only runs on the FAILED
-    // branch of handlePayoutWebhook. The Stripe twin below already maps it.
+    // branch of handlePayoutWebhook.
     failed: "FAILED",
     cancelled: "CANCELLED",
   };
@@ -2484,51 +2372,4 @@ export async function handleRazorpayPayoutWebhook(
   console.log(
     `✅ RazorpayX consultant payout ${payoutData.id} webhook processed: ${status}`,
   );
-}
-
-/**
- * Handle Stripe Connect payout/transfer webhook events
- */
-export async function handleStripePayoutWebhook(
-  eventType: string,
-  payoutData: {
-    id: string;
-    status: string;
-    failure_code?: string;
-    failure_message?: string;
-  },
-): Promise<void> {
-  // Map Stripe status to our internal status
-  const statusMap: Record<
-    string,
-    "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
-  > = {
-    pending: "PENDING",
-    in_transit: "PROCESSING",
-    paid: "COMPLETED",
-    failed: "FAILED",
-    canceled: "CANCELLED",
-  };
-
-  const status = statusMap[payoutData.status];
-  // R-5 — the Stripe twin of the same rule.
-  if (!status) {
-    await reportUnknownPayoutStatus({
-      provider: PaymentGateway.STRIPE,
-      providerPayoutId: payoutData.id,
-      status: payoutData.status,
-      eventType,
-    });
-    return;
-  }
-  const failureReason = payoutData.failure_message || payoutData.failure_code;
-
-  await handlePayoutWebhook(
-    PaymentGateway.STRIPE,
-    payoutData.id,
-    status,
-    failureReason,
-  );
-
-  console.log(`✅ Stripe payout ${payoutData.id} webhook processed: ${status}`);
 }

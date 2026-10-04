@@ -112,7 +112,6 @@ const APPROVED = {
     payoutAccounts: [
       {
         razorpayFundAccId: "fa_x",
-        stripeAccountId: null,
         accountType: "BANK_ACCOUNT",
       },
     ],

@@ -225,7 +225,7 @@ describe("#1463 the buyer's own live hold does not block their resume", () => {
     await expect(
       validateSlotAvailability(
         tx,
-        checkoutInput(WINDOW_START, WINDOW_END, "STRIPE"),
+        checkoutInput(WINDOW_START, WINDOW_END, "CARD"),
         BUYER,
         CONSULTANT,
       ),

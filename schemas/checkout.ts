@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AppointmentsType } from "@prisma/client";
+import { AppointmentsType, PaymentGateway } from "@prisma/client";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import {
   SUPPORTED_CURRENCY_CODES,
@@ -27,12 +27,12 @@ export const appointmentTypeSchema = z.enum([
   "TRIAL",
 ]);
 
-export const paymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
+// The checkout-selectable subset of PaymentGateway; unimplemented labels never validate here.
+export const paymentGatewaySchema = z.enum([
+  PaymentGateway.RAZORPAY,
+  PaymentGateway.CARD,
+]);
 
-// The implemented checkout gateways — a strict subset of the PaymentGateway
-// Prisma enum. Post-MVP stubs (e.g. DODO_PAYMENTS, #984) are NOT valid at
-// checkout, so everything flowing into CheckoutInput.paymentGateway uses this
-// narrow type, never the full enum.
 export type SupportedCheckoutGateway = z.infer<typeof paymentGatewaySchema>;
 
 // Search params validation (URL query parameters)
@@ -100,7 +100,7 @@ export const checkoutSchema = z
     // #828 — one key per logical checkout attempt; the server replays the
     // original response for a duplicate instead of minting a second order.
     clientIdempotencyKey: z.string().min(8).max(128).optional(),
-    paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
+    paymentGateway: paymentGatewaySchema.default(PaymentGateway.RAZORPAY), // Server auto-routes; client hint only
     // #1396 — this lands in `Payment.displayCurrencyAtCheckout` and it comes
     // from localStorage. `z.string().length(3)` let any three letters through
     // and `Intl.NumberFormat` renders an invented code without complaint

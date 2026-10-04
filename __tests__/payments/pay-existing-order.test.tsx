@@ -28,7 +28,11 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import RazorpayCheckout from "../../app/checkout/components/RazorpayCheckout";
-import { payLinkHref } from "../../lib/payments/pay-link-href";
+import {
+  payLinkHref,
+  payPagePath,
+  paymentIdFromPayPath,
+} from "../../lib/payments/pay-link-href";
 
 describe("payLinkHref", () => {
   it("resolves a Razorpay order id to the pay page and keeps hosted links", () => {
@@ -41,6 +45,12 @@ describe("payLinkHref", () => {
     expect(
       payLinkHref({ paymentId: null, checkoutUrl: "order_Nx1" }),
     ).toBeNull();
+  });
+
+  it("reads the payment id back out of a pay-page path only", () => {
+    expect(paymentIdFromPayPath(payPagePath("pay/1 x"))).toBe("pay/1 x");
+    expect(paymentIdFromPayPath("https://rzp.io/l/x")).toBeNull();
+    expect(paymentIdFromPayPath("/checkout/pay/pay_1/extra")).toBeNull();
   });
 });
 

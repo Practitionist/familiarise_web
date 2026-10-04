@@ -70,7 +70,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
   getRazorpayClient: () => ({ payments: { fetch: async () => ({}) } }),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
 jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),
   notifyDisputeCreated: jest.fn(),
@@ -136,7 +135,6 @@ interface PaymentRow {
   amount: number;
   organizationId: string | null;
   billingAccountId: string | null;
-  gstTcsCollectedPaise: number | null;
 }
 
 interface DisputeRow {
@@ -290,7 +288,6 @@ function makeTxStub() {
       create: async () => ({}),
     },
     orgAuditLog: { create: async () => ({}) },
-    gstTcsAdjustment: { create: async () => ({}) },
   };
 }
 
@@ -304,7 +301,6 @@ function seedPayment(amountPaise: number): void {
     amount: amountPaise,
     organizationId: null,
     billingAccountId: null,
-    gstTcsCollectedPaise: null,
   });
 }
 

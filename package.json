@@ -46,8 +46,7 @@
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "db:push:no-sidecars-DANGEROUS": "prisma db push"
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@better-auth/core": "1.7.7",
@@ -80,7 +79,6 @@
     "@sentry/nextjs": "^10.76.0",
     "@stream-io/node-sdk": "0.8.10",
     "@stream-io/video-react-sdk": "1.43.3",
-    "@stripe/stripe-js": "^10.0.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tanstack/react-query": "^5.104.1",
     "@upstash/ratelimit": "^2.2.0",
@@ -111,7 +109,6 @@
     "sharp": "^0.35.5",
     "stream-chat": "9.53.0",
     "stream-chat-react": "14.12.1",
-    "stripe": "^22.6.2",
     "tailwind-merge": "^3.7.0",
     "use-debounce": "^10.1.1",
     "zod": "^3.25.76"

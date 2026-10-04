@@ -72,7 +72,8 @@ export async function recordParticipants(
   }
 }
 
-/** Statuses under which a participant row still holds its seat. */
+/** Statuses under which a participant row still holds its seat. The seat is per
+ * appointment, so ATTENDED means "attended at least one session" and stays live. */
 export const LIVE_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "HELD",
   "CONFIRMED",

@@ -43,7 +43,6 @@ jest.mock("../../lib/enterprise/system-events", () => {
 // Stubs for the rest of utils.ts's import graph so the module loads (mirrors
 // dispute-refund-correctness.test.ts — these paths have side-effectful graphs).
 jest.mock("../../lib/payments/core/razorpay", () => ({ razorpayClient: {} }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
 jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),
   notifyDisputeCreated: jest.fn(),

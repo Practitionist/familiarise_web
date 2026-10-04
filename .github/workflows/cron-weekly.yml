@@ -40,10 +40,6 @@ on:
         description: "TDS return fiscal quarter 1-4"
         required: false
         type: string
-      month_start:
-        description: "GSTR-8 period start, UTC"
-        required: false
-        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.schedule || inputs.job || 'manual' }}
@@ -57,6 +53,10 @@ jobs:
     env:
       NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
       NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+      ENABLE_LIVE_PAYOUTS: ${{ vars.ENABLE_LIVE_PAYOUTS }}
+      ENABLE_DUNNING_SUSPEND: ${{ vars.ENABLE_DUNNING_SUSPEND }}
+      RATE_CARD_SCOPED_RESOLUTION: ${{ vars.RATE_CARD_SCOPED_RESOLUTION }}
+      TDS_ENGINE: ${{ vars.TDS_ENGINE }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
@@ -68,14 +68,12 @@ jobs:
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
       RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER }}
-      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       ENABLE_CONSOLIDATED_INVOICE: ${{ secrets.ENABLE_CONSOLIDATED_INVOICE }}
       PLATFORM_GSTIN: ${{ secrets.PLATFORM_GSTIN }}
       SUPPLIER_STATE_CODE: ${{ secrets.SUPPLIER_STATE_CODE }}
       PLATFORM_INVOICE_PREFIX: ${{ secrets.PLATFORM_INVOICE_PREFIX }}
       GST_REGISTER_CSV_OUT: gst-outward-register.csv
       PAN_ENCRYPTION_KEY: ${{ secrets.PAN_ENCRYPTION_KEY }}
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -101,7 +99,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|gst-outward-register-export|tds-26q-draft-export|tds-return-draft|gstr8-draft-export)
+            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
               ;;
             *)
               echo "::error::Unknown weekly/statutory job slug '${INPUT_JOB}'"
@@ -187,16 +185,6 @@ jobs:
           TDS_RETURN_QUARTER: ${{ inputs.quarter }}
         run: node_modules/.bin/tsx jobs/compliance/tds-26q-draft-export.ts
 
-      - name: Export GSTR-8 draft (manual dispatch)
-        id: gstr8-draft-export
-        if: >-
-          github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'gstr8-draft-export')
-        timeout-minutes: 10
-        continue-on-error: true
-        env:
-          GSTR8_MONTH_START: ${{ inputs.month_start }}
-        run: node_modules/.bin/tsx jobs/compliance/gstr8-draft-export.ts
-
       - name: Check job outcomes and notify on failure
         if: always()
         env:
@@ -213,8 +201,7 @@ jobs:
             "process-payouts:${{ steps.process-payouts.outcome }}" \
             "settle-invoice-accruals:${{ steps.settle-invoice-accruals.outcome }}" \
             "gst-outward-register-export:${{ steps.gst-outward-register-export.outcome }}" \
-            "tds-26q-draft-export:${{ steps.tds-26q-draft-export.outcome }}" \
-            "gstr8-draft-export:${{ steps.gstr8-draft-export.outcome }}"
+            "tds-26q-draft-export:${{ steps.tds-26q-draft-export.outcome }}"
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"

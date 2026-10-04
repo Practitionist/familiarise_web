@@ -1,6 +1,6 @@
 /**
  * Payments Module - Main Exports
- * Unified payment gateway abstraction for Stripe and Razorpay
+ * Gateway abstraction over Razorpay (plus dev mock payments)
  */
 
 import { PaymentGateway } from "@prisma/client";
@@ -9,23 +9,10 @@ import {
   PaymentIntent,
   RefundParams,
   RefundResult,
-  DisputeParams,
-  DisputeResult,
   PaymentError,
 } from "./core/types";
 
 // Core modules
-import {
-  createStripeCheckoutSession,
-  cancelStripePayment,
-  createStripeRefund,
-  getStripeRefund,
-  listStripeRefunds,
-  getStripeDispute,
-  submitStripeDisputeEvidence,
-  listStripeDisputes,
-} from "./core/stripe";
-
 import {
   createRazorpayOrder,
   cancelRazorpayOrder,
@@ -33,8 +20,6 @@ import {
   getRazorpayRefund,
   listRazorpayRefunds,
 } from "./core/razorpay";
-
-import { getRazorpayDispute } from "./core/razorpay-disputes";
 
 import { assertGatewayUsable } from "./validation/gateway-guards";
 
@@ -77,20 +62,13 @@ export async function createPaymentIntent(
   // dev Mock Pay button still names a gateway.
   assertGatewayUsable(paymentGateway, "create a payment intent");
 
-  // Route to correct gateway
-  switch (paymentGateway) {
-    case "STRIPE":
-      return createStripeCheckoutSession(params);
-
-    case "RAZORPAY":
-      return createRazorpayOrder(params);
-
-    default:
-      throw new PaymentError(
-        `Unsupported payment gateway: ${paymentGateway}`,
-        "UNSUPPORTED_GATEWAY",
-      );
+  if (paymentGateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Unsupported payment gateway: ${paymentGateway}`,
+      "UNSUPPORTED_GATEWAY",
+    );
   }
+  return createRazorpayOrder(params);
 }
 
 /**
@@ -98,16 +76,10 @@ export async function createPaymentIntent(
  */
 export async function cancelPaymentIntent(
   paymentIntentId: string,
-  reason: string = "requested_by_customer",
 ): Promise<void> {
   // Handle mock payments
   if (isMockPaymentId(paymentIntentId)) {
     return cancelMockPayment(paymentIntentId);
-  }
-
-  // Route based on payment ID format
-  if (paymentIntentId.startsWith("cs_") || paymentIntentId.startsWith("pi_")) {
-    return cancelStripePayment(paymentIntentId, reason);
   }
 
   if (paymentIntentId.startsWith("order_")) {
@@ -148,11 +120,6 @@ export async function createRefund(
     };
   }
 
-  // Route based on payment ID format
-  if (paymentIntentId.startsWith("pi_") || paymentIntentId.startsWith("cs_")) {
-    return createStripeRefund(params);
-  }
-
   if (
     paymentIntentId.startsWith("order_") ||
     paymentIntentId.startsWith("pay_")
@@ -173,20 +140,14 @@ export async function getRefund(
   refundId: string,
   gateway: PaymentGateway,
 ): Promise<RefundResult> {
-  switch (gateway) {
-    case "STRIPE":
-      return getStripeRefund(refundId);
-
-    case "RAZORPAY":
-      return getRazorpayRefund(refundId);
-
-    default:
-      throw new PaymentError(
-        `Refund retrieval not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
+  if (gateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Refund retrieval not supported for: ${gateway}`,
+      "NOT_SUPPORTED",
+      gateway,
+    );
   }
+  return getRazorpayRefund(refundId);
 }
 
 /**
@@ -197,133 +158,12 @@ export async function listRefunds(
   gateway: PaymentGateway,
   limit: number = 10,
 ): Promise<RefundResult[]> {
-  switch (gateway) {
-    case "STRIPE":
-      return listStripeRefunds(paymentIntentId, limit);
-
-    case "RAZORPAY":
-      return listRazorpayRefunds(paymentIntentId, limit);
-
-    default:
-      throw new PaymentError(
-        `Refund listing not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
+  if (gateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Refund listing not supported for: ${gateway}`,
+      "NOT_SUPPORTED",
+      gateway,
+    );
   }
-}
-
-// ============================================================================
-// Unified Dispute Operations
-// ============================================================================
-
-/**
- * Get dispute details
- * Razorpay is polled via GET /v1/disputes/:id; the raw gateway status flows
- * through for the caller to map, and the gateway payment id rides along for
- * the join. Evidence submit + listing stay dashboard-only.
- */
-export async function getDispute(
-  disputeId: string,
-  gateway: PaymentGateway,
-): Promise<DisputeResult> {
-  switch (gateway) {
-    case "STRIPE":
-      return getStripeDispute(disputeId);
-
-    case "RAZORPAY":
-      return getRazorpayDispute(disputeId);
-
-    default:
-      throw new PaymentError(
-        `Dispute retrieval not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
-  }
-}
-
-/**
- * Submit evidence for a dispute
- */
-export async function submitDisputeEvidence(
-  params: DisputeParams,
-  gateway: PaymentGateway,
-): Promise<DisputeResult> {
-  switch (gateway) {
-    case "STRIPE":
-      return submitStripeDisputeEvidence(params);
-
-    case "RAZORPAY":
-      throw new PaymentError(
-        "Razorpay dispute evidence must be submitted through their dashboard",
-        "NOT_SUPPORTED",
-        "RAZORPAY",
-      );
-
-    default:
-      throw new PaymentError(
-        `Dispute evidence submission not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
-  }
-}
-
-/**
- * List all disputes (admin only)
- */
-export async function listDisputes(
-  gateway: PaymentGateway,
-  limit: number = 10,
-): Promise<DisputeResult[]> {
-  switch (gateway) {
-    case "STRIPE":
-      return listStripeDisputes(limit);
-
-    case "RAZORPAY":
-      throw new PaymentError(
-        "Razorpay disputes can only be accessed via webhooks",
-        "NOT_SUPPORTED",
-        "RAZORPAY",
-      );
-
-    default:
-      throw new PaymentError(
-        `Dispute listing not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
-  }
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Determine payment gateway from payment intent ID
- */
-export function getPaymentGateway(paymentIntentId: string): PaymentGateway {
-  if (isMockPaymentId(paymentIntentId)) {
-    // Extract gateway from mock ID
-    if (paymentIntentId.includes("cs_mock")) return "STRIPE";
-    if (paymentIntentId.includes("order_mock")) return "RAZORPAY";
-  }
-
-  if (paymentIntentId.startsWith("cs_") || paymentIntentId.startsWith("pi_")) {
-    return "STRIPE";
-  }
-
-  if (
-    paymentIntentId.startsWith("order_") ||
-    paymentIntentId.startsWith("pay_")
-  ) {
-    return "RAZORPAY";
-  }
-
-  throw new PaymentError(
-    `Cannot determine gateway for payment: ${paymentIntentId}`,
-    "UNKNOWN_GATEWAY",
-  );
+  return listRazorpayRefunds(paymentIntentId, limit);
 }

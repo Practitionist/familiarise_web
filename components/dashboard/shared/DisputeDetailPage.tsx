@@ -3,11 +3,9 @@
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
@@ -25,7 +23,6 @@ import {
   FileText,
   Lock,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { DisputeDetails } from "@/types/disputes";
@@ -101,24 +98,6 @@ async function fetchDisputeDetails(
   return response.json() as Promise<DisputeDetails>;
 }
 
-async function submitEvidence(data: {
-  disputeId: string;
-  evidence: Record<string, string | undefined>;
-}): Promise<DisputeDetails> {
-  const response = await fetch("/api/payments/disputes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to submit evidence");
-  }
-
-  return response.json() as Promise<DisputeDetails>;
-}
-
 export interface DisputeDetailPageProps {
   /** Dispute ID from URL params */
   disputeId: string;
@@ -136,18 +115,7 @@ export function DisputeDetailPage({
   // #1527 — links stay in the viewer's tree; evidence is `disputes.manage`.
   const { basePath, can } = useBackofficeCapability();
   const allowEvidenceSubmission = can("disputes.manage");
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
 
-  const [customerName, setCustomerName] = useState("");
-  const [customerEmail, setCustomerEmail] = useState("");
-  const [productDescription, setProductDescription] = useState("");
-  const [customerSignature, setCustomerSignature] = useState("");
-  const [refundPolicy, setRefundPolicy] = useState("");
-  const [refundPolicyDisclosure, setRefundPolicyDisclosure] = useState("");
-  const [cancellationPolicy, setCancellationPolicy] = useState("");
-  const [cancellationRebuttal, setCancellationRebuttal] = useState("");
-  const [additionalEvidence, setAdditionalEvidence] = useState("");
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
 
   const {
@@ -159,48 +127,6 @@ export function DisputeDetailPage({
     queryFn: () => fetchDisputeDetails(apiEndpoint, disputeId),
     staleTime: 30 * 1000,
   });
-
-  const evidenceMutation = useMutation({
-    mutationFn: submitEvidence,
-    onSuccess: () => {
-      toast({
-        title: "Evidence Submitted",
-        description: "Dispute evidence has been submitted successfully.",
-      });
-      queryClient.invalidateQueries({
-        queryKey: [queryKeyPrefix, disputeId],
-      });
-      setShowEvidenceForm(false);
-    },
-    onError: (err: Error) => {
-      toast({
-        title: "Submission Failed",
-        description: err.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleSubmitEvidence = () => {
-    if (!dispute) return;
-
-    const evidence = {
-      customerName: customerName || undefined,
-      customerEmailAddress: customerEmail || undefined,
-      productDescription: productDescription || undefined,
-      customerSignature: customerSignature || undefined,
-      refundPolicy: refundPolicy || undefined,
-      refundPolicyDisclosure: refundPolicyDisclosure || undefined,
-      cancellationPolicy: cancellationPolicy || undefined,
-      cancellationRebuttal: cancellationRebuttal || undefined,
-      uncategorizedText: additionalEvidence || undefined,
-    };
-
-    evidenceMutation.mutate({
-      disputeId: dispute.disputeId,
-      evidence,
-    });
-  };
 
   if (error) {
     return (
@@ -235,8 +161,10 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
+  // Only Razorpay disputes have an evidence form.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
+    dispute.paymentGateway === "RAZORPAY" &&
     ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
       dispute.status,
     );
@@ -509,146 +437,13 @@ export function DisputeDetailPage({
       </Card>
 
       {/* #1771 K-7 — Razorpay evidence goes through its own form. */}
-      {showEvidenceForm &&
-        canSubmitEvidence &&
-        dispute.paymentGateway === "RAZORPAY" && (
-          <RazorpayEvidenceForm
-            disputeId={dispute.id}
-            dueBy={dispute.dueBy}
-            queryKey={[queryKeyPrefix, disputeId]}
-          />
-        )}
-
-      {/* Evidence Submission Form (admin only) */}
-      {showEvidenceForm &&
-        canSubmitEvidence &&
-        dispute.paymentGateway !== "RAZORPAY" && (
-          <Card className="border-blue-200">
-            <CardHeader>
-              <CardTitle className="text-blue-600">Submit Evidence</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="customerName">Customer Name</Label>
-                  <Textarea
-                    id="customerName"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    rows={2}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="customerEmail">Customer Email</Label>
-                  <Textarea
-                    id="customerEmail"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    rows={2}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="productDescription">
-                  Product/Service Description
-                </Label>
-                <Textarea
-                  id="productDescription"
-                  value={productDescription}
-                  onChange={(e) => setProductDescription(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="customerSignature">
-                  Customer Signature/Acknowledgment
-                </Label>
-                <Textarea
-                  id="customerSignature"
-                  value={customerSignature}
-                  onChange={(e) => setCustomerSignature(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="refundPolicy">Refund Policy</Label>
-                <Textarea
-                  id="refundPolicy"
-                  value={refundPolicy}
-                  onChange={(e) => setRefundPolicy(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="refundPolicyDisclosure">
-                  Refund Policy Disclosure
-                </Label>
-                <Textarea
-                  id="refundPolicyDisclosure"
-                  value={refundPolicyDisclosure}
-                  onChange={(e) => setRefundPolicyDisclosure(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="cancellationPolicy">Cancellation Policy</Label>
-                <Textarea
-                  id="cancellationPolicy"
-                  value={cancellationPolicy}
-                  onChange={(e) => setCancellationPolicy(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="cancellationRebuttal">
-                  Cancellation Rebuttal
-                </Label>
-                <Textarea
-                  id="cancellationRebuttal"
-                  value={cancellationRebuttal}
-                  onChange={(e) => setCancellationRebuttal(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="additionalEvidence">
-                  Additional Evidence/Notes
-                </Label>
-                <Textarea
-                  id="additionalEvidence"
-                  value={additionalEvidence}
-                  onChange={(e) => setAdditionalEvidence(e.target.value)}
-                  rows={4}
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleSubmitEvidence}
-                  disabled={evidenceMutation.isPending}
-                >
-                  {evidenceMutation.isPending
-                    ? "Submitting..."
-                    : "Submit Evidence"}
-                </Button>
-                <Button
-                  onClick={() => setShowEvidenceForm(false)}
-                  variant="outline"
-                  disabled={evidenceMutation.isPending}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {showEvidenceForm && canSubmitEvidence && (
+        <RazorpayEvidenceForm
+          disputeId={dispute.id}
+          dueBy={dispute.dueBy}
+          queryKey={[queryKeyPrefix, disputeId]}
+        />
+      )}
 
       {/* Gateway-specific Notes (admin only) */}
       {allowEvidenceSubmission && (
@@ -657,10 +452,6 @@ export function DisputeDetailPage({
             <CardTitle>Important Notes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-gray-600">
-            <p>
-              • Stripe disputes: You can submit evidence directly through this
-              form.
-            </p>
             <p>
               • Razorpay disputes: upload the documents and save a draft or
               submit it here; Razorpay only takes evidence while a dispute is

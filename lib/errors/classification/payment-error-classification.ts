@@ -249,9 +249,8 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
  * Errors that carry a machine-readable `code` are classified on that code
  * rather than on their prose, so rewording a message can never re-route it.
  *
- * #1351 — a rail this deployment fences off, and a gateway that exists in the
- * enum with nothing behind it, are both the caller asking for a payment method
- * we do not offer. That is a rejection the buyer can act on by choosing another
+ * A gateway that exists in the enum with nothing behind it is the caller
+ * asking for a payment method we do not offer. That is a rejection the buyer can act on by choosing another
  * method, not the 500 the message-only classifier fell through to.
  */
 interface BusinessErrorEntry {
@@ -263,11 +262,6 @@ interface BusinessErrorEntry {
 }
 
 const BUSINESS_ERROR_ENTRIES = [
-  {
-    code: "GATEWAY_DISABLED",
-    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
-    httpStatus: 422,
-  },
   {
     code: "UNSUPPORTED_GATEWAY",
     errorType: ErrorTypes.GATEWAY_UNAVAILABLE,

@@ -37,8 +37,10 @@ import { PriceField } from "@/components/planner/components/form-fields/PriceFie
 import { LanguageLevelFields } from "@/components/planner/components/form-fields/LanguageLevelFields";
 import { LearningOutcomesField } from "@/components/planner/components/form-fields/LearningOutcomesField";
 import { StringListField } from "@/components/planner/components/form-fields/StringListField";
-import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
-import type { TPlanImageType } from "@/lib/supabase";
+import {
+  PlanImageUploader,
+  type StagedPlanImage,
+} from "@/components/plans/PlanImageUploader";
 import type { FieldSpec } from "./manifest";
 
 /** Sections are a 6-column grid so halves and thirds both land cleanly. */
@@ -69,8 +71,7 @@ function toLocalDateTimeValue(value: unknown): string {
 function renderControl<T extends FieldValues = FieldValues>(
   spec: FieldSpec,
   field: ControllerRenderProps<T, never>,
-  planId: string | undefined,
-  planImageType: TPlanImageType | undefined,
+  coverImage: CoverImageControl | undefined,
 ) {
   switch (spec.kind) {
     case "textarea":
@@ -140,12 +141,11 @@ function renderControl<T extends FieldValues = FieldValues>(
         <Switch checked={!!field.value} onCheckedChange={field.onChange} />
       );
     case "image":
-      return planId && planImageType ? (
+      return coverImage ? (
         <PlanImageUploader
-          planType={planImageType}
-          planId={planId}
           currentImageUrl={field.value ?? null}
-          onImageChange={field.onChange}
+          staged={coverImage.staged}
+          onStage={coverImage.onStage}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -164,24 +164,22 @@ function renderControl<T extends FieldValues = FieldValues>(
   }
 }
 
+/** The cover-image change staged until save; absent while creating (no plan id to attach to). */
+export interface CoverImageControl {
+  staged: StagedPlanImage | null;
+  onStage: (change: StagedPlanImage | null) => void;
+}
+
 interface OfferingFieldProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
   spec: FieldSpec;
-  /**
-   * The saved offering, when there is one. The image uploader posts against an
-   * existing plan id, so on a brand-new offering there is nothing to attach a
-   * file to yet — the field says so rather than rendering a control that
-   * cannot work.
-   */
-  planId?: string;
-  planImageType?: TPlanImageType;
+  coverImage?: CoverImageControl;
 }
 
 export function OfferingField<T extends FieldValues = FieldValues>({
   control,
   spec,
-  planId,
-  planImageType,
+  coverImage,
 }: Readonly<OfferingFieldProps<T>>) {
   const span = SPAN_CLASS[spec.span ?? 6];
 
@@ -257,13 +255,11 @@ export function OfferingField<T extends FieldValues = FieldValues>({
             // stacks it under the label at the same height as its neighbours.
             <div className="flex h-9 items-center">
               <FormControl>
-                {renderControl(spec, field, planId, planImageType)}
+                {renderControl(spec, field, coverImage)}
               </FormControl>
             </div>
           ) : (
-            <FormControl>
-              {renderControl(spec, field, planId, planImageType)}
-            </FormControl>
+            <FormControl>{renderControl(spec, field, coverImage)}</FormControl>
           )}
           {spec.description && (
             <FormDescription>{spec.description}</FormDescription>

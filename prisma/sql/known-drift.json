@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Known, tracked divergences between prisma/schema.prisma and the live database.",
-    "scripts/ci/check-db-drift.ts fails on any drift NOT listed here, so this file is",
+    "scripts/ci/check-db-live-drift.ts fails on any drift NOT listed here, so this file is",
     "the reviewed record of what we are knowingly carrying and until when.",
     "",
     "Every entry needs an owner, a reason, and an `expires` date. Past the expiry the",
@@ -15,5 +15,83 @@
     "whitespace-insensitive. The reset is the only occasion that should add any."
   ],
   "enumLabelsInDbNotInSchema": [],
-  "destructiveStatementsAllowed": []
+  "destructiveStatementsAllowed": [
+    {
+      "statement": "ALTER TABLE \"GstTcsAdjustment\" DROP CONSTRAINT \"GstTcsAdjustment_batchId_fkey\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP INDEX \"OrganizationPayoutAccount_stripeConnectId_key\"",
+      "reason": "Stripe gateway and Stripe Connect payouts were deleted from the code; the live DB keeps the column until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP INDEX \"PayoutAccount_stripeAccountId_key\"",
+      "reason": "Stripe gateway and Stripe Connect payouts were deleted from the code; the live DB keeps the column until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"BillingAccount\" DROP COLUMN \"autoTopUpAmountPaise\", DROP COLUMN \"autoTopUpEnabled\", DROP COLUMN \"autoTopUpMandateId\"",
+      "reason": "The auto-top-up mandate charge was never built; its config columns were deleted and the live DB keeps them until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"ConsultantEarnings\" DROP COLUMN \"gstTcsAccruedPaise\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"OrganizationPayoutAccount\" DROP COLUMN \"stripeConnectId\"",
+      "reason": "Stripe gateway and Stripe Connect payouts were deleted from the code; the live DB keeps the column until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Payment\" DROP COLUMN \"gstTcsCollectedPaise\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"PayoutAccount\" DROP COLUMN \"stripeAccountId\", DROP COLUMN \"stripeAccountStatus\"",
+      "reason": "Stripe gateway and Stripe Connect payouts were deleted from the code; the live DB keeps the column until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TABLE \"GstTcsAdjustment\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TABLE \"GstTcsBatch\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"GstTcsBatchStatus\"",
+      "reason": "GST-TCS u/s 52 never applies under the principal-supplier model; the machinery was deleted and the live DB keeps it until the pre-MVP reset.",
+      "owner": "teetangh",
+      "trackedBy": "#688",
+      "expires": "2026-12-31"
+    }
+  ]
 }

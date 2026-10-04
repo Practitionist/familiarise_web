@@ -64,13 +64,9 @@ export function seedEarningStatusForPayout(
 }
 
 /**
- * Determine payout method based on provider
+ * Pick a RazorpayX payout method
  */
-function getPayoutMethod(provider: PaymentGateway): PayoutMethod {
-  if (provider === PaymentGateway.STRIPE) {
-    return PayoutMethod.STRIPE_TRANSFER;
-  }
-  // For Razorpay, randomly choose between bank transfer and UPI
+function getPayoutMethod(): PayoutMethod {
   return faker.datatype.boolean({ probability: 0.7 })
     ? PayoutMethod.BANK_TRANSFER
     : PayoutMethod.UPI;
@@ -80,10 +76,7 @@ function getPayoutMethod(provider: PaymentGateway): PayoutMethod {
  * Get currency based on provider
  */
 function getCurrency(_provider: PaymentGateway): Currency {
-  // Always INR. Payouts settle in INR whichever provider carries them —
-  // processRazorpayPayout throws on anything else — so seeding USD payouts
-  // for Stripe produced rows the real pipeline would reject, and inflated the
-  // dashboards that sum payout amounts without grouping by currency.
+  // Always INR: processRazorpayPayout throws on anything else.
   return Currency.INR;
 }
 
@@ -161,7 +154,7 @@ export async function createPayouts(): Promise<void> {
 
       // Determine provider and related fields
       const provider = weightedRandom(PAYOUT_PROVIDER_WEIGHTS);
-      const method = getPayoutMethod(provider);
+      const method = getPayoutMethod();
       const currency = getCurrency(provider);
       const status = weightedRandom(SEED_PAYOUT_STATUS_WEIGHTS);
 

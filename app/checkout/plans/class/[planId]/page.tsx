@@ -24,12 +24,10 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   handleUnifiedCheckout,
   paymentGateways,
   reportPaymentsError,
@@ -304,7 +302,6 @@ export default function ClassCheckoutPage({
     () => createHandleCheckoutSuccess(toast, "CLASS"),
     [toast],
   );
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
@@ -410,7 +407,6 @@ export default function ClassCheckoutPage({
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
-      resolvedSearchParams,
       planData?.data?.id,
       handleApiError,
       handleCheckoutSuccess,
@@ -935,25 +931,6 @@ export default function ClassCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : availableClassId && gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CLASS",
-                            planId: planDetails.id,
-                            eventId: availableClassId,
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}

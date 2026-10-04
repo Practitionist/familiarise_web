@@ -4,7 +4,7 @@
  * The webhook routes return HTTP 200 synchronously BEFORE the `after()` callback
  * runs the money side-effects. If the process crashes mid-callback, the
  * WebhookEvent row is left `processed=false, error=null` and is NEVER re-driven —
- * Razorpay/Stripe stop retrying once they see the 200, and the 5-min staleness
+ * Razorpay stops retrying once it sees the 200, and the 5-min staleness
  * window only fires on a redelivery that will never come. The result is the
  * highest-blast-radius zombie: PAID money with an ISSUED invoice, frozen ACCRUED
  * overages, uncredited wallet top-ups, frozen tentative appointments,
@@ -116,7 +116,7 @@ async function sweepStuckWebhookEventsUnlocked(
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
       where: {
-        provider: { in: ["razorpay", "stream", "stripe"] },
+        provider: { in: ["razorpay", "stream"] },
         receivedAt: { lt: staleBefore },
         AND: [
           {
@@ -226,10 +226,6 @@ async function sweepStuckWebhookEventsUnlocked(
             { call_cid: streamEvent?.call_cid },
             { claimAlreadyHeld: true, claim },
           );
-        } else if (ev.provider === "stripe") {
-          const { processStripeWebhookEvent } =
-            await import("@/app/api/webhooks/stripe-dispatch");
-          await processStripeWebhookEvent(ev.payload, ev.eventType, ev.eventId);
         } else {
           // processRazorpayWebhookEvent catches handler errors and marks the row
           // processed (stamping error on failure) in its finally — so this both

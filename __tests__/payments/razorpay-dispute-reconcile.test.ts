@@ -7,7 +7,7 @@
  * by the poll flips status through the CAS and settles through the shared
  * lost-dispute path, an id-less row resolves via the order join, and gateway
  * failures count toward manual review without crashing the loop. Mocks at the
- * getDispute boundary like reconcile-disputes-cas.test.ts.
+ * getRazorpayDispute boundary like reconcile-disputes-cas.test.ts.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -17,8 +17,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 const mockGetDispute = jest.fn();
-jest.mock("../../lib/payments", () => ({
-  getDispute: (...a: unknown[]) => (mockGetDispute as jest.Mock)(...a),
+jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
+  ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
+  getRazorpayDispute: (...a: unknown[]) => (mockGetDispute as jest.Mock)(...a),
 }));
 
 const mockRazorpayPaymentsFetch = jest.fn();
@@ -49,7 +50,6 @@ interface PaymentRow {
   amount: number;
   gatewayPaymentId: string | null;
   paymentIntent: string;
-  gstTcsCollectedPaise: number | null;
 }
 
 interface DisputeRow {
@@ -109,7 +109,6 @@ function seedLinkedDispute(overrides?: Partial<DisputeRow>): DisputeRow {
     amount: 10_000,
     gatewayPaymentId: "pay_rzp_1",
     paymentIntent: "order_1",
-    gstTcsCollectedPaise: null,
   };
   const dispute: DisputeRow = {
     id: "row_1",
@@ -135,7 +134,6 @@ function seedLinkedDispute(overrides?: Partial<DisputeRow>): DisputeRow {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.STRIPE_ENABLED = "true";
   store.disputes = [];
   store.payments = [];
   store.earnings = [];
@@ -241,7 +239,6 @@ describe("razorpay dispute reconcile", () => {
       amount: 5_000,
       gatewayPaymentId: null,
       paymentIntent: "order_9",
-      gstTcsCollectedPaise: null,
     };
     store.payments = [payment];
     store.disputes = [
@@ -286,7 +283,6 @@ describe("razorpay dispute reconcile", () => {
       amount: 7_000,
       gatewayPaymentId: "pay_rzp_b",
       paymentIntent: "order_b",
-      gstTcsCollectedPaise: null,
     };
     store.payments = [paymentB];
     store.disputes = [
