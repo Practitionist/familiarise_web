@@ -1,29 +1,23 @@
 /**
  * Netlify scheduled ticker — ADR 27 (docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
  *
- * ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule
- * roughly once every hundred minutes (#866), so the fleet's money sweeps were
- * running six times slower than their declared cadence. This function POSTs
- * the latency-sensitive `/api/cleanup/*` routes every five minutes (the money
- * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
- * outbox relay every tick and the email outbox relay on every third tick,
- * since #1583/#1589 five booking sweeps, and since #1775 the two
- * session-outcome jobs that gate an earnings release and a full refund)
- * instead of waiting on Actions. It never writes money state itself: every
- * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
- * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
- * the loser — expected, not an error — and Actions stays as the unbounded
- * daily/weekly scheduler and backstop (#1356).
+ * Every five minutes this POSTs the `/api/cleanup/*` routes listed in
+ * {@link TARGETS}: the money sweeps, the ledger reconcile, the Novu and email
+ * outbox relays, the booking sweeps, the session-outcome jobs, the data-export
+ * drain (every 10 min) and the moderation/erasure retry drain (every 30 min).
+ * GitHub Actions runs the daily/weekly batch jobs and is NOT a backstop for a
+ * ticker target: a target missing here runs nowhere unless a workflow names it.
+ * It never writes money state itself: every target is `CRON_SECRET`-gated and
+ * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
+ * loser — expected, not an error.
  *
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides. The one exception is a lazy
- * `@sentry/node` import, reached from exactly two paths so the happy path
- * still bundles nothing: the missing-secret fatal (#1582 F-P2-02), and
- * {@link alertFailedTargets} for a target that could not be delivered.
+ * Functions runtime already provides. `@sentry/node` and the shared error
+ * budget are imported lazily, only for the missing-secret fatal and for
+ * {@link alertFailedTargets}.
  *
- * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
- * from a scheduled function costs three invocations and reports nothing.
+ * The tick always answers 200; see {@link statusFor} for why.
  */
 
 export const config = { schedule: "*/5 * * * *" };
@@ -89,6 +83,10 @@ const TARGETS = [
   // 06-ingest-canary.md. It costs one HTTPS round trip to a vendor and no
   // Redis, so unlike the other targets it has no per-tick lock cost to amortise.
   "sentry-ingest-canary",
+  // Drains OrgDataExportJob (DPDP data export); every 10 minutes.
+  "process-data-exports",
+  // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
+  "retry-moderation-enforcement",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -181,6 +179,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "detect-consultant-no-shows": 30,
   "alert-orphaned-payments": 15,
   "reconcile-orphaned-payments": 30,
+  "process-data-exports": 10,
+  "retry-moderation-enforcement": 30,
 };
 
 /**
@@ -219,6 +219,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
+  "process-data-exports": 0,
+  "retry-moderation-enforcement": 25,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -255,6 +257,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "detect-consultant-no-shows": 20_000,
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
+  "process-data-exports": 20_000,
+  "retry-moderation-enforcement": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

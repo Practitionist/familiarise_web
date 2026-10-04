@@ -76,7 +76,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|cleanup-old-stream-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|mark-expired-recordings|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|reconcile-orphaned-recordings|timeout-member-overages|dunning|wallet-low-balance)
+            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|cleanup-old-stream-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|mark-expired-recordings|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -282,6 +282,15 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/reconcile-orphaned-recordings.ts
 
+      - name: Wind down deactivated orgs
+        id: wind-down-deactivated-orgs
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'wind-down-deactivated-orgs'))
+        timeout-minutes: 5
+        continue-on-error: true
+        run: node_modules/.bin/tsx jobs/stream/wind-down-deactivated-orgs.ts
+
       - name: Timeout member overages
         id: timeout-member-overages
         if: >-
@@ -341,6 +350,7 @@ jobs:
             "msme-payment-alerts:${{ steps.msme-payment-alerts.outcome }}" \
             "expire-event-channels:${{ steps.expire-event-channels.outcome }}" \
             "reconcile-orphaned-recordings:${{ steps.reconcile-orphaned-recordings.outcome }}" \
+            "wind-down-deactivated-orgs:${{ steps.wind-down-deactivated-orgs.outcome }}" \
             "timeout-member-overages:${{ steps.timeout-member-overages.outcome }}" \
             "dunning:${{ steps.dunning.outcome }}" \
             "wallet-low-balance:${{ steps.wallet-low-balance.outcome }}"

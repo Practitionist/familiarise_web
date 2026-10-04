@@ -68,6 +68,9 @@ const MAX_RESCHEDULE_PROPOSALS = 25;
 /** Tentative slots per run; a cheap soft cancel behind an expensive read. */
 const MAX_TENTATIVE_SLOTS = 200;
 
+/** Registry slugs with no scheduler on purpose; the value is the reason. */
+export const MANUAL_ONLY: Record<string, string> = {};
+
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
  *
