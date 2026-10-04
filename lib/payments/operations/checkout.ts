@@ -98,7 +98,6 @@ import {
   isWalletFrozen,
   WalletFrozenError,
 } from "@/lib/payments/wallet-freeze";
-import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
@@ -538,7 +537,10 @@ export async function findReusablePendingOrderPayment(
     // and must be actively superseded so its tentative slot / participant seat
     // is released before the new booking writes (even if the cleanup cron has
     // not swept it yet).
-    if (!candidate.expiresAt || candidate.expiresAt.getTime() <= now.getTime()) {
+    if (
+      !candidate.expiresAt ||
+      candidate.expiresAt.getTime() <= now.getTime()
+    ) {
       supersede.push({ id: candidate.id, reason: "hold-expired" });
       continue;
     }
@@ -3582,10 +3584,7 @@ export async function handleCheckout(
   // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
   // silently bill the learner's card.
   const appointmentType = validatedData.appointmentType as
-    | "CONSULTATION"
-    | "SUBSCRIPTION"
-    | "WEBINAR"
-    | "CLASS";
+    "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
@@ -4349,7 +4348,8 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
-                for (const occ of webinarResult.appointment?.occurrences ?? []) {
+                for (const occ of webinarResult.appointment?.occurrences ??
+                  []) {
                   if (
                     occ.startsAt &&
                     occ.endsAt &&
@@ -4867,6 +4867,23 @@ export async function handleCheckout(
               }
             }
 
+            // The synchronous rails confirm here, so their earnings and the
+            // booking:<paymentId> journal commit with the payment or not at all.
+            if (skipPayment) {
+              const resolvedEarnings = await resolvePaymentForEarnings(
+                { id: payment.id },
+                validatedData.appointmentType,
+                tx,
+              );
+              if (resolvedEarnings) {
+                await createEarningsFromPayment({
+                  payment: resolvedEarnings.paymentForEarnings,
+                  appointmentType: resolvedEarnings.earningsAppointmentType,
+                  tx,
+                });
+              }
+            }
+
             return {
               appointmentId: createdAppointment?.id,
               holdExpiresAt: payment.expiresAt,
@@ -4972,58 +4989,6 @@ export async function handleCheckout(
             subsystem: "payments",
             level: "warning",
           });
-        }
-
-        // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
-        try {
-          const resolved = await resolvePaymentForEarnings(
-            { paymentIntent: paymentResponse!.id },
-            validatedData.appointmentType,
-          );
-
-          if (resolved) {
-            await createEarningsFromPayment({
-              payment: resolved.paymentForEarnings,
-              appointmentType: resolved.earningsAppointmentType,
-            });
-
-            console.log(
-              `💰 Mock payment earnings created for consultant ${resolved.consultantProfileId}`,
-            );
-          }
-        } catch (earningsError) {
-          // C-01 #837 — payment + booking are committed but earnings + the
-          // BOOKING journal are not. Real money moved, so we don't roll back
-          // and we don't pretend success with a silent warning: page (ERROR)
-          // and durably record the ledger gap. The healer is the data-state
-          // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
-          // keyed on row state — not on this marker — so it's guaranteed and
-          // idempotent even if this alert is lost.
-          reportSentryError(earningsError, {
-            subsystem: "payments",
-            extra: {
-              paymentIntent: paymentResponse!.id,
-              userId,
-              appointmentType: validatedData.appointmentType,
-              path: "checkout",
-            },
-          });
-          await recordSystemError({
-            category: "PAYOUT",
-            summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,
-            err: earningsError,
-            correlationId: paymentResponse!.id,
-            context: {
-              paymentIntent: paymentResponse!.id,
-              userId,
-              appointmentType: validatedData.appointmentType,
-              path: "checkout",
-            },
-          });
-          console.error(
-            `⚠️ Failed to create earnings for mock payment:`,
-            earningsError,
-          );
         }
 
         // #1365 — these payments never see a capture webhook, so the tax
