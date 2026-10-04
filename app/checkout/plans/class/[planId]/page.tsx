@@ -48,6 +48,7 @@ import {
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
@@ -191,6 +192,9 @@ export default function ClassCheckoutPage({
   });
 
   const planData = checkoutPlanQuery.data ?? null;
+  const referralPricing = useReferralPricing(
+    planData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     staleError ??
@@ -442,10 +446,15 @@ export default function ClassCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount: appliedDiscount
+        ? null
+        : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
     batchPricePaise,
     appliedDiscount,
     useReferralCredits,

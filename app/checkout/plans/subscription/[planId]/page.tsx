@@ -44,6 +44,7 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import {
   mintClientIdempotencyKey,
   busyRetryToast,
@@ -180,6 +181,9 @@ export default function SubscriptionCheckoutPage({
   });
 
   const planData = checkoutPlanQuery.data ?? null;
+  const referralPricing = useReferralPricing(
+    planData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     staleError ??
@@ -464,10 +468,15 @@ export default function SubscriptionCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount: appliedDiscount
+        ? null
+        : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,

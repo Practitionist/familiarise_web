@@ -14,6 +14,7 @@
 
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
@@ -429,8 +430,8 @@ export async function readConsulteePayments(args: {
     query,
     args.now ?? new Date(),
   );
-  const [payments, total, credits, creditAgg, creditUsages] = await Promise.all(
-    [
+  const [payments, total, credits, creditAgg, spendableAgg, creditUsages] =
+    await Promise.all([
       findPayments(
         where,
         userId,
@@ -447,7 +448,11 @@ export async function readConsulteePayments(args: {
       // sum over it would underreport past 250 credits (PR #1247 review).
       prisma.referralCredit.aggregate({
         where: { userId },
-        _sum: { amount: true, usedAmount: true, remainingAmount: true },
+        _sum: { amount: true, usedAmount: true },
+      }),
+      prisma.referralCredit.aggregate({
+        where: spendableCreditsWhere(userId),
+        _sum: { remainingAmount: true },
       }),
       prisma.referralCreditUsage.findMany({
         where: { credit: { userId } },
@@ -460,8 +465,7 @@ export async function readConsulteePayments(args: {
         orderBy: { createdAt: "desc" },
         take: HISTORY_CAP,
       }),
-    ],
-  );
+    ]);
 
   // Aggregations bypass the money result extensions and return raw BigInt
   // at runtime whatever the type says, so every sum goes through Number().
@@ -476,7 +480,7 @@ export async function readConsulteePayments(args: {
     creditSummary: {
       total: sum(creditAgg._sum.amount),
       used: sum(creditAgg._sum.usedAmount),
-      remaining: sum(creditAgg._sum.remainingAmount),
+      remaining: sum(spendableAgg._sum.remainingAmount),
     },
   };
 }
@@ -529,7 +533,7 @@ export async function readConsulteeMoneySummary(args: {
       },
     }),
     prisma.referralCredit.aggregate({
-      where: { userId },
+      where: spendableCreditsWhere(userId),
       _sum: { remainingAmount: true },
     }),
   ]);

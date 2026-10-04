@@ -19,6 +19,10 @@ export interface PricingConfig {
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
   creditsApplied?: number; // Referral credits applied (same unit as baseAmount, typically paise)
+  /** Referee's pre-tax welcome discount; only used when no other discount applies. */
+  welcomeDiscount?: { bps: number; maxPaise: number } | null;
+  /** Credits cover at most this many basis points of the list price. */
+  creditCapBps?: number | null;
 }
 
 export interface PricingBreakdown {
@@ -104,20 +108,34 @@ export function calculatePricing(
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);
-  const discountAmount = calculateDiscount(
+  const codeDiscount = calculateDiscount(
     subtotal,
     discountPercent,
     config.discountAmount,
   );
+  // Mirrors computeWelcomeDiscountPaise in derive-checkout-amount.ts.
+  const welcome = config.welcomeDiscount;
+  const discountAmount =
+    codeDiscount > 0 || !welcome
+      ? codeDiscount
+      : Math.min(
+          Math.round((subtotal * welcome.bps) / 10_000),
+          welcome.maxPaise,
+          subtotal,
+        );
   const netAmount = calculateNetAmount(subtotal, discountAmount);
   const taxAmount = calculateTax(netAmount, taxRate);
   const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
   // #1592 S-P1-04 — the same ₹500 redemption floor the server applies in
   // lib/payments/pricing/derive-checkout-amount.ts, so the preview never
   // shows a credit the charge will not honour.
+  const creditCap =
+    config.creditCapBps === null || config.creditCapBps === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.floor((subtotal * config.creditCapBps) / 10_000);
   const creditsApplied =
     totalBeforeCredits >= MIN_CREDIT_REDEMPTION_PAISE
-      ? Math.min(config.creditsApplied ?? 0, totalBeforeCredits)
+      ? Math.min(config.creditsApplied ?? 0, totalBeforeCredits, creditCap)
       : 0;
   const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
 

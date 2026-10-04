@@ -39,9 +39,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       data: referral,
-      // FIX #437: Credits are now deferred to first booking, not given on signup
       message:
-        "Referral code applied successfully! You'll receive your bonus credits after your first booking.",
+        "Referral code applied. Your welcome discount is taken off your first booking at checkout.",
     });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });

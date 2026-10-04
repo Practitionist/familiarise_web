@@ -559,7 +559,7 @@ function SignUpContent() {
                 <p className="text-sm text-green-400">
                   Referral code{" "}
                   <span className="font-semibold">{referralCode}</span> applied!
-                  You&apos;ll receive a welcome bonus after signing up.
+                  You&apos;ll get a discount on your first booking.
                 </p>
               </div>
             )}

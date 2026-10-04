@@ -45,6 +45,13 @@ interface ReferralCode {
   maxReferrals: number;
 }
 
+interface ReferralTerms {
+  discountPercent: number;
+  discountMaxPaise: number;
+  referrerRewardPaise: number;
+  minOrderPaise: number;
+}
+
 interface Referral {
   id: string;
   status: string;
@@ -113,7 +120,7 @@ export function ReferralsPage({
     isLoading: codeLoading,
     error: codeError,
     refetch: refetchCode,
-  } = useQuery<{ data: ReferralCode }>({
+  } = useQuery<{ data: ReferralCode; terms: ReferralTerms | null }>({
     queryKey: ["referral-code"],
     queryFn: async () => {
       const res = await fetch("/api/referrals/code", { method: "POST" });
@@ -154,13 +161,17 @@ export function ReferralsPage({
   });
 
   const code = codeData?.data;
+  const terms = codeData?.terms ?? null;
+  const friendOffer = terms
+    ? `${terms.discountPercent}% off your first booking, up to ${formatAmount(terms.discountMaxPaise)}`
+    : null;
   const referrals = referralsData?.data ?? [];
   const credits = creditsData?.data;
   const totalReferred = referrals.length;
   // A referral counts as qualified once it completes the paid booking
   // (QUALIFIED) — REWARDED is the same milestone after the credit lands.
-  const qualified = referrals.filter(
-    (r) => r.status === "QUALIFIED" || r.status === "REWARDED",
+  const qualified = referrals.filter((r) =>
+    ["QUALIFIED", "REWARDED", "QUALIFYING", "VESTED"].includes(r.status),
   ).length;
   // `window` is only safe here because `code` happens to be undefined on the
   // server pass today. Add an SSR prefetch for ["referral-code"] — the exact
@@ -174,13 +185,15 @@ export function ReferralsPage({
     code && origin ? `${origin}/r/${code.customCode || code.code}` : "";
 
   const shareMessage = referralLink
-    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatAmount(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
+    ? friendOffer
+      ? `I've been using Familiarise. Use my referral link to get ${friendOffer}: ${referralLink}`
+      : `I've been using Familiarise. Join with my referral link: ${referralLink}`
     : "";
   const whatsappUrl = referralLink
     ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
     : "";
   const emailUrl = referralLink
-    ? `mailto:?subject=${encodeURIComponent(`Get ${formatAmount(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
+    ? `mailto:?subject=${encodeURIComponent(friendOffer ? `Get ${friendOffer} on Familiarise` : "Join me on Familiarise")}&body=${encodeURIComponent(shareMessage)}`
     : "";
 
   const handleCopy = () => {
@@ -309,8 +322,8 @@ export function ReferralsPage({
         title="Invite & earn"
         subtitle={
           isConsultant
-            ? "Invite others and earn credits when they make their first booking"
-            : "Invite friends and earn credits towards your next booking"
+            ? "Invite learners for booking credit, or other experts for fee-free sessions"
+            : "Invite friends and earn credit towards your next booking"
         }
       />
       <DashboardContent>
@@ -332,7 +345,7 @@ export function ReferralsPage({
               value={statsError ? "—" : qualified}
               icon={Gift}
               variant="success"
-              tooltip={`Friends who signed up and completed their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days`}
+              tooltip={`Friends who made their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days of signing up`}
             />
             {isConsultant && (
               <StatCard
@@ -346,7 +359,7 @@ export function ReferralsPage({
               value={formatAmount(credits?.totalAvailable ?? 0)}
               icon={IndianRupee}
               variant="info"
-              tooltip="Credits earned from referrals. Applied at checkout."
+              tooltip="Credit you can spend now. Credit from a referral becomes spendable after your friend's first session, and can cover up to 20% of a booking."
             />
           </DashboardGrid>
         )}
@@ -372,9 +385,23 @@ export function ReferralsPage({
               {code && (
                 <>
                   <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-                    Earn {formatAmount(code.referrerReward)} for each friend who
-                    books. Your friend gets {formatAmount(code.refereeReward)}{" "}
-                    off their first booking!
+                    {terms ? (
+                      <>
+                        Your friend gets {friendOffer}. You get{" "}
+                        {formatAmount(terms.referrerRewardPaise)} credit after
+                        your friend&apos;s first session, once its refund window
+                        has passed.
+                      </>
+                    ) : (
+                      "The referral programme is paused right now. Your link still works and new rewards resume when it reopens."
+                    )}
+                    {isConsultant && (
+                      <span className="mt-1 block">
+                        Refer another expert and you both pay no platform fee on
+                        3 sessions once they have verified their payout details
+                        and delivered their first paid session.
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mb-3">
                     <span className="text-sm text-zinc-500">Your code:</span>

@@ -45,6 +45,7 @@ import { createHandleApiError, paymentGateways } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import {
   createRazorpayCheckoutHandlers,
   mintClientIdempotencyKey,
@@ -259,6 +260,9 @@ export default function ConsultationCheckoutPage({
   });
 
   const eventData = checkoutPlanQuery.data?.plan ?? null;
+  const referralPricing = useReferralPricing(
+    eventData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     slotPassedError ??
@@ -527,10 +531,15 @@ export default function ConsultationCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount: appliedDiscount
+        ? null
+        : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
     eventData?.data?.price,
     appliedDiscount,
     useReferralCredits,
