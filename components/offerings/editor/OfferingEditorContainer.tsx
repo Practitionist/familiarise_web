@@ -316,7 +316,15 @@ export function OfferingEditorContainer({
         form={form}
         planId={planId}
         coverImage={
-          planId ? { staged: stagedImage, onStage: setStagedImage } : undefined
+          planId
+            ? {
+                staged: stagedImage,
+                // Ignored mid-save so a staged image can't pair with a stale save.
+                onStage: (image) => {
+                  if (savingAction === null) setStagedImage(image);
+                },
+              }
+            : undefined
         }
         status={status}
         draftLabel={
