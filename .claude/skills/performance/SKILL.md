@@ -46,7 +46,7 @@ You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lightho
   - Do **NOT** re-introduce `@radix-ui/react-avatar` in `components/ui/avatar.tsx`. Radix's `useImageLoadingStatus` hook executes `const image = new window.Image(); image.src = src;` inside `useLayoutEffect`, which completely bypasses `<img loading="lazy">` and eagerly downloads all below-the-fold avatars during hydration.
   - `AvatarImage` in `components/ui/avatar.tsx` must render a native `<img loading="lazy" decoding="async">` directly in SSR HTML when `src` is non-empty and switch to `<AvatarFallback>` via `AvatarContext` only when `src` is empty or `onError` fires.
 - **`next.config.mjs` `images.remotePatterns` Allowlist**:
-  - Every remote hostname used with `next/image` (`<Image>`) must remain registered in `next.config.mjs` `images.remotePatterns` (`lh3.googleusercontent.com`, `*.supabase.co`, `avatars.githubusercontent.com`, `upload.wikimedia.org`, `img.logo.dev`, `cdn.jsdelivr.net`, `picsum.photos`, `fastly.picsum.photos`, `images.unsplash.com`, `plus.unsplash.com`), or `/_next/image` will return `400 Bad Request` in production/preview.
+  - Every remote hostname used with `next/image` (`<Image>`) must remain registered in `next.config.mjs` `images.remotePatterns` (`lh3.googleusercontent.com`, `*.supabase.co`, `avatars.githubusercontent.com`, `upload.wikimedia.org`, `img.logo.dev`, `cdn.jsdelivr.net`; the dev placeholder hosts `picsum.photos`, `fastly.picsum.photos`, `images.unsplash.com` and `plus.unsplash.com` are registered only in non-production builds), or `/_next/image` will return `400 Bad Request` in production/preview.
 
 ### 4. Accessibility (100/100) & SEO (100/100) Checklist
 

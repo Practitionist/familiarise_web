@@ -125,7 +125,7 @@ describe("maintenance keys carry a TTL (#697 INF-1)", () => {
   it("sets an expiry on both state keys", () => {
     expect(maintSource).toContain("MAINTENANCE_KEY_TTL_SECONDS");
     expect(maintSource).toMatch(
-      /redis\.set\(REDIS_KEYS\.PHASE, phase, \{ ex: MAINTENANCE_KEY_TTL_SECONDS \}\)/,
+      /redis\.set\(REDIS_KEYS\.PHASE, phase, \{ ex: ttlSeconds \}\)/,
     );
   });
 });
