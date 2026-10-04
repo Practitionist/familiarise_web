@@ -63,12 +63,17 @@ export async function GET(
       ...(!canReadAll && { membershipId: access.member.id }),
     },
     include: {
-      membership: { include: { user: { select: { id: true, name: true, email: true } } } },
+      membership: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
       utilizations: { orderBy: { createdAt: "desc" }, take: 50 },
     },
   });
   if (!assignment) {
-    return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Assignment not found" },
+      { status: 404 },
+    );
   }
   if (canReadAll) return NextResponse.json({ assignment });
   const { consumedPaise: _spend, utilizations, ...own } = assignment;
@@ -106,7 +111,9 @@ async function cancelAssignment(
   current: { membershipId: string; periodStart: Date },
 ) {
   const { orgId, programId, assignmentId, actorMembershipId } = ctx;
-  const cancelEnd = new Date(Math.max(Date.now(), current.periodStart.getTime()));
+  const cancelEnd = new Date(
+    Math.max(Date.now(), current.periodStart.getTime()),
+  );
   const claimed = await tx.programAssignment.updateMany({
     where: { id: assignmentId, status: "ACTIVE" },
     data: { status: "CANCELLED", periodEnd: cancelEnd },
@@ -261,6 +268,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.assign",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -304,8 +312,7 @@ export async function PATCH(
     return NextResponse.json({ assignment: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       // Code passthrough so clients can branch on ASSIGNMENT_NOT_LIVE etc.
       // without string-matching messages (parity with supersede/invoices).
       const code = "code" in err ? err.code : undefined;
@@ -314,7 +321,10 @@ export async function PATCH(
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }
@@ -333,6 +343,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.assign",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -380,11 +391,13 @@ export async function DELETE(
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

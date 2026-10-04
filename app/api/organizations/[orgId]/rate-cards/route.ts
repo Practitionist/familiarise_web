@@ -133,6 +133,7 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.manage",
     canHost: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

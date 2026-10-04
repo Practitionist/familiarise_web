@@ -195,7 +195,9 @@ export async function moneyInFlightForUser(
  * `deleteSubscriber`'s contract rather than in each caller, and changing that
  * return type is a wider change than a hotfix should carry.
  */
-async function offboardNotificationVendor(userId: string): Promise<string[]> {
+export async function offboardNotificationVendor(
+  userId: string,
+): Promise<string[]> {
   const { isNovuConfigured } = await import("@/lib/novu/client");
   if (!isNovuConfigured()) {
     return [
@@ -437,10 +439,51 @@ async function cleanupUserRecordingsOnErasure(
   return failures;
 }
 
+async function settleVendorErasureOutbox(
+  prisma: Db,
+  erasureRequestId: string | null,
+  vendor: "STREAM" | "NOVU" | "RAZORPAY",
+  vendorRef: string,
+  error: string | null,
+  now: Date,
+): Promise<void> {
+  if (!erasureRequestId || !prisma.vendorErasureRetry?.update) return;
+  await prisma.vendorErasureRetry
+    .update({
+      where: {
+        erasureRequestId_vendor_vendorRef: {
+          erasureRequestId,
+          vendor,
+          vendorRef,
+        },
+      },
+      data: error
+        ? {
+            status: "FAILED",
+            attempts: 1,
+            lastError: error,
+            nextRetryAt: nextRetryAt(1, now),
+          }
+        : {
+            status: "SUCCEEDED",
+            attempts: 1,
+            completedAt: new Date(),
+          },
+    })
+    .catch((error_) =>
+      reportSentryError(error_, {
+        subsystem: "compliance",
+        op: "scrubUser.settleVendorErasureOutbox",
+        extra: { erasureRequestId, vendor, vendorRef },
+      }),
+    );
+}
+
 async function retryErasedUserVendorCleanup(
   prisma: Db,
   userId: string,
 ): Promise<string[]> {
+  const now = new Date();
   const vendorFailures = await offboardNotificationVendor(userId);
   const activeRequest = prisma.erasureRequest?.findFirst
     ? await prisma.erasureRequest.findFirst({
@@ -450,18 +493,36 @@ async function retryErasedUserVendorCleanup(
       })
     : null;
   if (activeRequest?.id) {
+    await settleVendorErasureOutbox(
+      prisma,
+      activeRequest.id,
+      "NOVU",
+      userId,
+      vendorFailures.length > 0 ? vendorFailures.join("; ") : null,
+      now,
+    );
+    let streamError: string | null = null;
     try {
       await eraseStreamPrincipalFootprint(userId);
-    } catch {
+    } catch (error_) {
+      streamError = error_ instanceof Error ? error_.message : String(error_);
       vendorFailures.push(
         "stream: principal deletion not confirmed — re-run required",
       );
     }
+    await settleVendorErasureOutbox(
+      prisma,
+      activeRequest.id,
+      "STREAM",
+      userId,
+      streamError,
+      now,
+    );
   }
   const recordingFailures = await cleanupUserRecordingsOnErasure(
     prisma,
     userId,
-    new Date(),
+    now,
   );
   vendorFailures.push(...recordingFailures);
   return vendorFailures;
@@ -471,7 +532,7 @@ async function settlePrincipalStreamErasure(
   prisma: Db,
   userId: string,
   erasureRequestId: string | null,
-  principalOutboxQueued: boolean,
+  _principalOutboxQueued: boolean,
   now: Date,
 ): Promise<string[]> {
   if (!erasureRequestId) return [];
@@ -517,7 +578,15 @@ async function settlePrincipalStreamErasure(
         }),
       );
   }
-  if (principalError && !principalOutboxQueued) {
+  await settleVendorErasureOutbox(
+    prisma,
+    erasureRequestId,
+    "STREAM",
+    userId,
+    principalError,
+    now,
+  );
+  if (principalError) {
     return ["stream: principal deletion not confirmed — re-run required"];
   }
   return [];
@@ -559,13 +628,6 @@ export async function scrubUser(
     // transient failure was permanent: re-running the erasure reported a
     // clean success and the processor kept the data forever. This is the
     // retry path for exactly that.
-    //
-    // Payment vendors are NOT re-attempted: they are guarded by the cleared
-    // `razorpayCustomerId`, so a second pass has nothing to act on. A durable
-    // outbox is the correct answer for guaranteed vendor delivery across a
-    // process death between commit and the vendor calls — see the note on
-    // `StreamRevocationRetry`, which is the pattern to extend rather than
-    // reinvent.
     const vendorFailures = await retryErasedUserVendorCleanup(prisma, userId);
     return {
       scrubbed: false,
@@ -599,6 +661,11 @@ export async function scrubUser(
     where: { consultantProfile: { userId } },
     select: { id: true, razorpayContactId: true, razorpayFundAccId: true },
   });
+  const hasRazorpayWork =
+    Boolean(existing.razorpayCustomerId) ||
+    payoutAccounts.some((a) =>
+      Boolean(a.razorpayContactId || a.razorpayFundAccId),
+    );
 
   let collaborationsRemoved: CollaborationRef[] = [];
   let erasureRequestId: string | null = null;
@@ -727,6 +794,71 @@ export async function scrubUser(
       principalOutboxQueued = true;
     }
 
+    if (erasureRequestId && tx.vendorErasureRetry?.upsert) {
+      await tx.vendorErasureRetry.upsert({
+        where: {
+          erasureRequestId_vendor_vendorRef: {
+            erasureRequestId,
+            vendor: "NOVU",
+            vendorRef: userId,
+          },
+        },
+        create: {
+          erasureRequestId,
+          vendor: "NOVU",
+          vendorRef: userId,
+          status: "PENDING",
+        },
+        update: { status: "PENDING" },
+      });
+      await tx.vendorErasureRetry.upsert({
+        where: {
+          erasureRequestId_vendor_vendorRef: {
+            erasureRequestId,
+            vendor: "STREAM",
+            vendorRef: userId,
+          },
+        },
+        create: {
+          erasureRequestId,
+          vendor: "STREAM",
+          vendorRef: userId,
+          status: "PENDING",
+        },
+        update: { status: "PENDING" },
+      });
+      if (hasRazorpayWork) {
+        const razorpayPayload = {
+          customerId: existing.razorpayCustomerId ?? null,
+          payoutAccounts: payoutAccounts.map((a) => ({
+            id: a.id,
+            razorpayContactId: a.razorpayContactId,
+            razorpayFundAccId: a.razorpayFundAccId,
+          })),
+        };
+        await tx.vendorErasureRetry.upsert({
+          where: {
+            erasureRequestId_vendor_vendorRef: {
+              erasureRequestId,
+              vendor: "RAZORPAY",
+              vendorRef: userId,
+            },
+          },
+          create: {
+            erasureRequestId,
+            vendor: "RAZORPAY",
+            vendorRef: userId,
+            payload: razorpayPayload,
+            status: "PENDING",
+          },
+          update: {
+            payload: razorpayPayload,
+            status: "PENDING",
+          },
+        });
+      }
+    }
+
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately. BetterAuth caches sessions in Redis;
     // those entries expire on TTL and are non-load-bearing.
@@ -734,14 +866,37 @@ export async function scrubUser(
     await tx.account.deleteMany({ where: { userId } });
 
     // Withdraw all active DPDP ConsentArtifact rows while preserving their
-    // 7-year audit retention window (DPDP §6(4)-(6) + §12).
+    // monotonic 7-year audit retention window (DPDP §6(4)-(6) + §12) and
+    // stamping subjectPseudonymousId on the user's consent artifacts.
+    const subjectPseudonymousId = createHash("sha256")
+      .update(userId)
+      .digest("hex");
     const consentRetainedUntil = new Date(now);
     consentRetainedUntil.setUTCFullYear(
       consentRetainedUntil.getUTCFullYear() + 7,
     );
     await tx.consentArtifact?.updateMany({
+      where: {
+        userId,
+        withdrawnAt: null,
+        auditRetainedUntil: { lt: consentRetainedUntil },
+      },
+      data: {
+        withdrawnAt: now,
+        auditRetainedUntil: consentRetainedUntil,
+        subjectPseudonymousId,
+      },
+    });
+    await tx.consentArtifact?.updateMany({
       where: { userId, withdrawnAt: null },
-      data: { withdrawnAt: now, auditRetainedUntil: consentRetainedUntil },
+      data: {
+        withdrawnAt: now,
+        subjectPseudonymousId,
+      },
+    });
+    await tx.consentArtifact?.updateMany({
+      where: { userId, subjectPseudonymousId: null },
+      data: { subjectPseudonymousId },
     });
 
     // Audit row (under SYSTEM — the actor is the platform, the target
@@ -846,15 +1001,37 @@ export async function scrubUser(
     now,
   );
 
-  const vendorFailures = await offboardPaymentVendors(prisma, {
+  const paymentFailures = await offboardPaymentVendors(prisma, {
     userId,
     razorpayCustomerId: existing.razorpayCustomerId,
     payoutAccounts,
   });
+  if (hasRazorpayWork) {
+    await settleVendorErasureOutbox(
+      prisma,
+      erasureRequestId,
+      "RAZORPAY",
+      userId,
+      paymentFailures.length > 0 ? paymentFailures.join("; ") : null,
+      now,
+    );
+  }
 
-  vendorFailures.push(...principalFailures, ...recordingFailures);
+  const vendorFailures = [
+    ...paymentFailures,
+    ...principalFailures,
+    ...recordingFailures,
+  ];
 
   const notificationFailures = await offboardNotificationVendor(userId);
+  await settleVendorErasureOutbox(
+    prisma,
+    erasureRequestId,
+    "NOVU",
+    userId,
+    notificationFailures.length > 0 ? notificationFailures.join("; ") : null,
+    now,
+  );
   vendorFailures.push(...notificationFailures);
 
   return {
@@ -872,7 +1049,7 @@ export async function scrubUser(
  * `vendorFailures` entry. The Customer column is cleared only once its tokens
  * are gone and its PII is overwritten, so the reference survives for a retry.
  */
-async function offboardPaymentVendors(
+export async function offboardPaymentVendors(
   prisma: Db,
   input: {
     userId: string;

@@ -30,6 +30,7 @@ const CreateReportSchema = z.object({
   contentText: z.string().max(MAX_TEXT_LENGTH).optional(),
   contentUrl: z.string().max(MAX_TITLE_LENGTH).optional(),
   reviewId: z.string().max(MAX_TITLE_LENGTH).optional(),
+  organizationId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
   // #1270 — the message identity a MESSAGE report is about. Without it
   // CONTENT_REMOVED has nothing to delete and dedup cannot tell two messages
   // from the same author apart.
@@ -150,6 +151,7 @@ export async function POST(req: NextRequest) {
       contentText,
       contentUrl,
       reviewId,
+      organizationId: callerOrganizationId,
       streamMessageId,
       // NB: `streamChannelCid` is accepted by the schema and deliberately NOT
       // read. The cid stored comes from Stream's own answer — see
@@ -186,6 +188,7 @@ export async function POST(req: NextRequest) {
     // only a MESSAGE report keeps a message identity, and the rest keep neither.
     let target = targetUserId ?? "";
     let reportedReviewId: string | null = null;
+    let resolvedOrganizationId: string | null = callerOrganizationId ?? null;
     if (type === "REVIEW") {
       if (!reviewId) {
         return NextResponse.json(
@@ -195,7 +198,10 @@ export async function POST(req: NextRequest) {
       }
       const reported = await prisma.consultantReview.findFirst({
         where: { id: reviewId, deletedAt: null },
-        select: { consulteeProfile: { select: { userId: true } } },
+        select: {
+          consulteeProfile: { select: { userId: true } },
+          appointment: { select: { organizationId: true } },
+        },
       });
       if (!reported) {
         return NextResponse.json(
@@ -208,6 +214,8 @@ export async function POST(req: NextRequest) {
       // person" told a consultant which of their clients wrote an anonymous review.
       target = reported.consulteeProfile.userId;
       reportedReviewId = reviewId;
+      resolvedOrganizationId =
+        reported.appointment?.organizationId ?? resolvedOrganizationId;
     }
 
     // Prevent self-reporting
@@ -307,6 +315,7 @@ export async function POST(req: NextRequest) {
         contentText,
         contentUrl,
         reviewId: reportedReviewId,
+        organizationId: resolvedOrganizationId,
         ...verifiedMessage,
       },
     });

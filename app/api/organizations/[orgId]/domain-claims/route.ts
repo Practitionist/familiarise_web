@@ -76,6 +76,7 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -139,15 +140,15 @@ export async function POST(
           recordName: `_familiarise-verify.${created.domain}`,
           recordValue: created.verificationToken,
           recordType: "TXT",
-          instructionsUrl: "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
+          instructionsUrl:
+            "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
         },
       },
       { status: 201 },
     );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     // P2002 race: two concurrent OWNERs claim the same domain at the
@@ -168,7 +169,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

@@ -64,6 +64,7 @@ export async function POST(
 
   const access = await requireOrgAccess(orgId, {
     permission: "settings.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -79,10 +80,7 @@ export async function POST(
 
   const file = formData.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json(
-      { error: "No file provided" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
   if (!ALLOWED_ORG_BRANDING_IMAGE_TYPES.includes(file.type)) {
@@ -142,12 +140,19 @@ export async function POST(
         },
       });
 
-      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
+      return {
+        id: orgId,
+        logo: profile.logo,
+        bannerImage: profile.bannerImage,
+      };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error(`Failed to persist organization ${asset}:`, err);
     return NextResponse.json(
       { error: "Failed to update organization branding" },
@@ -166,6 +171,7 @@ export async function DELETE(
 
   const access = await requireOrgAccess(orgId, {
     permission: "settings.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -225,12 +231,19 @@ export async function DELETE(
         },
       });
 
-      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
+      return {
+        id: orgId,
+        logo: profile.logo,
+        bannerImage: profile.bannerImage,
+      };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error(`Failed to clear organization ${asset}:`, err);
     return NextResponse.json(
       { error: "Failed to update organization branding" },

@@ -220,9 +220,13 @@ async function retryModerationEnforcementUnlocked(
     }
   }
 
-  // #1593 — the erasure scrub records the Stream revocations it could not
-  // land; there is no erasure sweep of its own, so this one drains them.
-  await drainErasureRevocations(result, limit);
+  // The erasure scrub records the Stream revocations and vendor
+  // erasures it could not land; there is no erasure sweep of its own, so this
+  // one drains them.
+  const settledRequestIds = new Set<string>();
+  await drainErasureRevocations(result, limit, settledRequestIds);
+  await drainVendorErasureRetries(result, limit, settledRequestIds);
+  await finalizeCompletedErasureRequests(settledRequestIds);
 
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
@@ -273,7 +277,9 @@ async function executeErasureRevocationRow(
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
+  settledRequestIds: Set<string>,
 ): Promise<void> {
+  if (!prisma.streamRevocationRetry?.findMany) return;
   const now = new Date();
   // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
   // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
@@ -284,6 +290,7 @@ async function drainErasureRevocations(
     },
     select: {
       id: true,
+      erasureRequestId: true,
       planType: true,
       planId: true,
       attempts: true,
@@ -321,6 +328,134 @@ async function drainErasureRevocations(
       result.errors.push(`erasure-revoke ${row.id}: ${error}`);
     } else {
       result.erasureRevocationsRecovered++;
+      if (row.erasureRequestId) {
+        settledRequestIds.add(row.erasureRequestId);
+      }
+    }
+  }
+}
+
+type RazorpayRetryPayload = {
+  customerId?: string | null;
+  payoutAccounts?: {
+    razorpayContactId: string | null;
+    razorpayFundAccId: string | null;
+  }[];
+};
+
+async function drainVendorErasureRetries(
+  result: ModerationRetryResult,
+  limit: number,
+  settledRequestIds: Set<string>,
+): Promise<void> {
+  if (!prisma.vendorErasureRetry?.findMany) return;
+  const now = new Date();
+  const rows = await prisma.vendorErasureRetry.findMany({
+    where: {
+      status: { in: ["PENDING", "FAILED"] },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      erasureRequestId: true,
+      vendor: true,
+      vendorRef: true,
+      payload: true,
+      attempts: true,
+      erasureRequest: { select: { userId: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+  if (rows.length === 0) return;
+
+  const {
+    eraseStreamPrincipalFootprint,
+    offboardNotificationVendor,
+    offboardPaymentVendors,
+  } = await import("@/lib/compliance/erasure/scrub-user");
+
+  for (const row of rows) {
+    const targetUserId = row.vendorRef || row.erasureRequest.userId;
+    let error: string | null = null;
+    try {
+      if (row.vendor === "NOVU") {
+        const failures = await offboardNotificationVendor(targetUserId);
+        if (failures.length > 0) error = failures.join("; ");
+      } else if (row.vendor === "STREAM") {
+        await eraseStreamPrincipalFootprint(targetUserId);
+      } else if (row.vendor === "RAZORPAY") {
+        const payload = (row.payload ?? {}) as RazorpayRetryPayload;
+        const failures = await offboardPaymentVendors(prisma, {
+          userId: targetUserId,
+          razorpayCustomerId: payload.customerId ?? null,
+          payoutAccounts: payload.payoutAccounts ?? [],
+        });
+        if (failures.length > 0) error = failures.join("; ");
+      }
+    } catch (error_) {
+      error = errMsg(error_);
+    }
+
+    const attempts = row.attempts + 1;
+    await prisma.vendorErasureRetry.update({
+      where: { id: row.id },
+      data: error
+        ? {
+            status: "FAILED",
+            attempts,
+            lastError: error,
+            nextRetryAt: nextRetryAt(attempts, now),
+          }
+        : { status: "SUCCEEDED", attempts, completedAt: now },
+    });
+
+    if (error) {
+      result.stillFailing++;
+      result.errors.push(
+        `vendor-erasure ${row.vendor.toLowerCase()} ${row.id}: ${error}`,
+      );
+    } else {
+      result.erasureRevocationsRecovered++;
+      if (row.erasureRequestId) {
+        settledRequestIds.add(row.erasureRequestId);
+      }
+    }
+  }
+}
+
+async function finalizeCompletedErasureRequests(
+  settledRequestIds: Set<string>,
+): Promise<void> {
+  if (settledRequestIds.size === 0 || !prisma.erasureRequest) return;
+  const now = new Date();
+  for (const erasureRequestId of settledRequestIds) {
+    const pendingStream =
+      (await prisma.streamRevocationRetry?.count?.({
+        where: {
+          erasureRequestId,
+          status: { in: ["PENDING", "FAILED"] },
+        },
+      })) ?? 0;
+    const pendingVendor =
+      (await prisma.vendorErasureRetry?.count?.({
+        where: {
+          erasureRequestId,
+          status: { in: ["PENDING", "FAILED"] },
+        },
+      })) ?? 0;
+    if (pendingStream > 0 || pendingVendor > 0) continue;
+
+    if (prisma.erasureRequest.updateMany) {
+      await prisma.erasureRequest.updateMany({
+        where: { id: erasureRequestId, status: "IN_PROGRESS" },
+        data: { status: "COMPLETED", completedAt: now },
+      });
+    } else if (prisma.erasureRequest.update) {
+      await prisma.erasureRequest.update({
+        where: { id: erasureRequestId },
+        data: { status: "COMPLETED", completedAt: now },
+      });
     }
   }
 }

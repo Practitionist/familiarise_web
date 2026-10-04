@@ -302,7 +302,9 @@ export async function checkConsentBatch(params: {
       },
       select: { userId: true },
     });
-    for (const a of artifacts) consented.add(a.userId);
+    for (const a of artifacts) {
+      if (a.userId) consented.add(a.userId);
+    }
   }
   return consented;
 }
@@ -317,12 +319,16 @@ export async function checkConsentBatch(params: {
  * lets a user revoke MARKETING_COMMS without losing their core
  * PRIMARY_PROCESSING consent (canonical codes: lib/compliance/purpose-codes.ts).
  */
-export async function withdrawConsent(params: {
-  userId: string;
-  purposeCode?: PurposeCode;
-}): Promise<{ withdrawnCount: number }> {
+export async function withdrawConsent(
+  params: {
+    userId: string;
+    purposeCode?: PurposeCode;
+    now?: Date;
+  },
+  db: Tx | typeof prisma = prisma,
+): Promise<{ withdrawnCount: number }> {
   const { userId, purposeCode } = params;
-  const now = new Date();
+  const now = params.now ?? new Date();
 
   const where = purposeCode
     ? {
@@ -335,13 +341,30 @@ export async function withdrawConsent(params: {
       }
     : { userId, withdrawnAt: null };
 
-  const { count } = await prisma.consentArtifact.updateMany({
+  const floor = addYears(now, CONSENT_AUDIT_RETENTION_YEARS);
+  const existingRows = await db.consentArtifact.findMany?.({
+    where,
+    select: { auditRetainedUntil: true },
+  });
+  const monotonicRetainedUntil = Array.isArray(existingRows)
+    ? existingRows.reduce(
+        (max, row) =>
+          row.auditRetainedUntil instanceof Date &&
+          row.auditRetainedUntil.getTime() > max.getTime()
+            ? row.auditRetainedUntil
+            : max,
+        floor,
+      )
+    : floor;
+
+  const { count } = await db.consentArtifact.updateMany({
     where,
     data: {
       withdrawnAt: now,
-      // The audit clock restarts at the withdrawal. Without this the row's
-      // `auditRetainedUntil` keeps running from `grantedAt`, so an artifact
-      // granted six years ago and withdrawn today becomes deletable
+      // The audit clock restarts at the withdrawal and is monotonic (never
+      // shortened if an existing row already has a later deadline). Without
+      // this the row's `auditRetainedUntil` keeps running from `grantedAt`, so
+      // an artifact granted six years ago and withdrawn today becomes deletable
       // immediately — and the consent-retention sweeper would delete the only
       // record that the user ever withdrew. That destroys the evidence of the
       // withdrawal itself, which is the thing an audit asks for.
@@ -349,7 +372,7 @@ export async function withdrawConsent(params: {
       // The org consent dashboard already told users retention runs "7 years
       // from grant or withdrawal" (app/dashboard/organization/[orgId]/consent/
       // page.tsx). This is the code that makes that sentence true.
-      auditRetainedUntil: addYears(now, CONSENT_AUDIT_RETENTION_YEARS),
+      auditRetainedUntil: monotonicRetainedUntil,
     },
   });
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
@@ -246,9 +247,7 @@ async function checkConsulteeActiveBookingsBlock(
   );
 }
 
-async function evaluateUserDeletionEligibility(
-  id: string,
-): Promise<{
+async function evaluateUserDeletionEligibility(id: string): Promise<{
   blockerResponse: NextResponse | null;
   hasRetainedHistory: boolean;
 }> {
@@ -384,7 +383,16 @@ async function executeUserHardDeleteOrFallbackScrub(
     });
   }
 
+  const subjectPseudonymousId = createHash("sha256").update(id).digest("hex");
   await prisma.$transaction([
+    ...(prisma.consentArtifact?.updateMany
+      ? [
+          prisma.consentArtifact.updateMany({
+            where: { userId: id },
+            data: { userId: null, subjectPseudonymousId },
+          }),
+        ]
+      : []),
     prisma.session.deleteMany({ where: { userId: id } }),
     prisma.user.delete({ where: { id } }),
   ]);
