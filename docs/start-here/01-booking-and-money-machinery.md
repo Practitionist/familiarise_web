@@ -9,13 +9,13 @@ last-reviewed: 2026-10-04
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
 
 > **The Core Architectural Spine in One Sentence**
-> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/operations/checkout.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../../payments/04-b2c-b2b-funding-seam.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../10-money-and-ledger/05-booking-to-earnings.md)**.
+> There is **one checkout pipeline** (`handleCheckout()` in `lib/payments/operations/checkout.ts`), **one payment confirmation writer** (`handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`), and **one append-only double-entry journal** (`postLedgerTxn()` in `lib/payments/ledger/post.ts`); consumer (B2C) and enterprise (B2B) flows differ **only in which [`PaymentLeg`](../payments/04-b2c-b2b-funding-seam.md) rows fund the `Payment`** and **whether an organization claims a host share via [`RateCard`](../enterprise/10-money-and-ledger/05-booking-to-earnings.md)**.
 
 ---
 
 ## 1. Cast of Real Seeded People & Organizations
 
-All examples below use the canonical seed cohort from `prisma/seedFiles/1a-create-users.ts`, `prisma/seedFiles/14a-create-organizations.ts`, and [`docs/team/mock-credentials.md`](../../team/mock-credentials.md) (universal dev password: `SeedPass123!`). All money in the database is stored as **integer paise** (`BigInt` in Postgres, converted to JS `number` via `lib/prisma.ts`, where `₹1 = 100 paise`), and all percentage splits are stored in **basis points** (`10,000 bps = 100%`).
+All examples below use the canonical seed cohort from `prisma/seedFiles/1a-create-users.ts`, `prisma/seedFiles/14a-create-organizations.ts`, and [`docs/team/mock-credentials.md`](../team/mock-credentials.md) (universal dev password: `SeedPass123!`). All money in the database is stored as **integer paise** (`BigInt` in Postgres, converted to JS `number` via `lib/prisma.ts`, where `₹1 = 100 paise`), and all percentage splits are stored in **basis points** (`10,000 bps = 100%`).
 
 ### 1.1 Organizations Cohort
 
@@ -174,7 +174,7 @@ erDiagram
 | :---------------------- | :------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
 | **1. Consultation**     | 1:1, single call (`0.5h–4h`)                                              | `1 Consultation` → `1 Appointment` → `1 AppointmentOccurrence` + `2 AppointmentParticipant`s (Consultant + Consultee)                                                                                         | **Direct Checkout**: Consultee picks consecutive 30-min blocks at checkout (`isTentative=true` until capture).<br>**Request Mode**: Consultee requests slots (or window); Consultant approves via `SchedulingService` (`useRequestedSlots`, `manualAllocate`, or `autoAllocate`).                                          | **Direct**: At checkout.<br>**Request**: After approval via `/checkout/pay/[paymentId]` within **24h** (or **7d** fallback) before `lapseApprovedRequest` expires it.                                                                                                                            | Consumes **1 engagement** (or full price in paise for `CREDIT_POOL`) at checkout.                                                              |
 | **2. Subscription**     | 1:1, recurring (`M` calls across fill-order cycles)                       | `1 Subscription` → `1 Appointment` wrapper → initially **0 occurrences** (placeholder at checkout); `SchedulingService` adds `1 AppointmentOccurrence` per call as cycles are scheduled.                      | **Always allocated after payment** by the consultant in **fill-order tranches** (`capacity = sessionsPerWeek`, `nextBatch = min(capacity - filledInCycle, remaining)` in `lib/booking/entitlement.ts`). First cycle **must be allocated within 48h of capture** or `expireUnallocatedPaidSubscriptions` auto-refunds 100%. | **Always paid upfront at purchase**. Request-then-pay is forbidden (`409 SUBSCRIPTION_UNPAID`).                                                                                                                                                                                                  | **0 at checkout** (`engagementsForCap = null`). Debited **lazily** in `SchedulingService.createAppointments` as each cycle batch is allocated. |
-| **3. Webinar**          | 1:many, single call                                                       | `1 Webinar` → `1 shared Appointment` → `1 master AppointmentOccurrence`. Each enrollee adds `1 AppointmentParticipant` row (`status = HELD -> CONFIRMED`).                                                    | Pre-scheduled by the consultant before publishing (`DRAFT -> SCHEDULED`). Enrollees never create occurrences; they only claim a seat on the roster up to `maxParticipants`.                                                                                                                                                | Paid at enrollment (`1 Payment` per `(userId, appointmentId)`). Host sees aggregated seat summary; each attendee sees only their own `Payment` ([ADR 2026-09-13](../../decisions/2026-09-13-appointment-money-is-per-seat.md)).                                                                  | Consumes **1 engagement** at checkout.                                                                                                         |
+| **3. Webinar**          | 1:many, single call                                                       | `1 Webinar` → `1 shared Appointment` → `1 master AppointmentOccurrence`. Each enrollee adds `1 AppointmentParticipant` row (`status = HELD -> CONFIRMED`).                                                    | Pre-scheduled by the consultant before publishing (`DRAFT -> SCHEDULED`). Enrollees never create occurrences; they only claim a seat on the roster up to `maxParticipants`.                                                                                                                                                | Paid at enrollment (`1 Payment` per `(userId, appointmentId)`). Host sees aggregated seat summary; each attendee sees only their own `Payment` ([ADR 2026-09-13](../decisions/2026-09-13-appointment-money-is-per-seat.md)).                                                                     | Consumes **1 engagement** at checkout.                                                                                                         |
 | **4. Class**            | 1:many, recurring series (`M` calls)                                      | `1 Class` → `1 shared Appointment` wrapper → `M AppointmentOccurrence` rows (one per session ordinal `1..M`). Each enrollee gets **1 `AppointmentParticipant` row** on the wrapper covering all `M` sessions. | Pre-scheduled by the consultant (`M` occurrences). Enrolment is open while `remaining > 0` and next session ordinal ≤ `lateJoinUntilSession` (default `1`). Late joiners pay **pro-rata** for `sessionsPurchased` remaining sessions.                                                                                      | Paid upfront in full (or via Razorpay card EMI when ≥ ₹3,000 and `ENABLE_CHECKOUT_EMI` is on).                                                                                                                                                                                                   | Consumes **`N` engagements** at checkout (`classResult.engagementsConsumed`).                                                                  |
 | **5. Trial**            | 1:1, single call (default `30m`), max **1 per `(consultee, consultant)`** | `1 Trial` → `1 Appointment` (`TRIAL`) → `1 AppointmentOccurrence`. Linked to a `SubscriptionPlan` with `trialEnabled = true`.                                                                                 | Consultee requests trial (`POST /api/trials`). Consultant accepts & picks slot (`PATCH /api/trials/[id]` with `status: SCHEDULED`), taking `lockConsulteeBooking` + `lockSlotBooking`.                                                                                                                                     | **Free (`trialPriceInPaise = 0`)**: No payment.<br>**Priced (`> 0`)**: Paid at request on `/checkout/plans/trial/[trialId]` while `Trial.status = PENDING`. Consultant cannot accept until paid (`409 TRIAL_UNPAID`). Unanswered after **48h** → auto-cancelled & refunded (`TRIAL_UNANSWERED`). | Not org-sponsored. Purchasing a `Subscription` after a `COMPLETED` trial flips `Trial.status` to `CONVERTED`.                                  |
 | **6. Recording Replay** | Standalone digital purchase                                               | `1 Recording` (`status=AVAILABLE`, `storageType=SUPABASE`, `listingStatus=PUBLISHED`) → `1 RecordingPurchase` per buyer.                                                                                      | No calendar slot. Webinar/Class recordings only (1:1 recordings are private and never sellable).                                                                                                                                                                                                                           | `POST /api/recordings/[id]/purchase` → Razorpay order (`notes.type = recording_purchase`) → webhook flips `RecordingPurchase` `PENDING -> SUCCEEDED`.                                                                                                                                            | Outside `Payment` / `Appointment` table invariants; grants 1h signed Supabase playback URLs.                                                   |
@@ -295,7 +295,7 @@ stateDiagram-v2
 
 ### 4.4 Session Outcome Classification & Class Series Protection Rules
 
-One hour after any `SCHEDULED` occurrence's `endsAt`, the hourly `auto-complete-appointments` sweep runs `classifySessionOutcome()` (`lib/booking/session-outcome.ts`) over device-level `MeetingPresence` intervals, Stream call reports, and maintenance windows ([ADR 2026-09-25](../../decisions/2026-09-25-session-outcomes.md)):
+One hour after any `SCHEDULED` occurrence's `endsAt`, the hourly `auto-complete-appointments` sweep runs `classifySessionOutcome()` (`lib/booking/session-outcome.ts`) over device-level `MeetingPresence` intervals, Stream call reports, and maintenance windows ([ADR 2026-09-25](../decisions/2026-09-25-session-outcomes.md)):
 
 | Verdict (`SessionOutcome`)                       | Occurrence Status                    | Who Was Present & Rule                                                                                                                                                                         | Financial & Booking Effect                                                                                                                                                                                                                                                                                                                                      |
 | :----------------------------------------------- | :----------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -312,7 +312,7 @@ One hour after any `SCHEDULED` occurrence's `endsAt`, the hourly `auto-complete-
 
 ### 5.1 Axis 1 × Axis 2 × Axis 3: Platform `UserRole` × Org Capability × `MemberRole`
 
-Every user has one global `User.role` (`UserRole`), independent global profile links (`consultantProfileId`, `consulteeProfileId`, `orgWorkspaceProfileId`), and one `Membership` (`MemberRole`) per organization ([`docs/onboarding/02-identity-and-org-permutations.md`](../../onboarding/02-identity-and-org-permutations.md)).
+Every user has one global `User.role` (`UserRole`), independent global profile links (`consultantProfileId`, `consulteeProfileId`, `orgWorkspaceProfileId`), and one `Membership` (`MemberRole`) per organization ([`docs/onboarding/02-identity-and-org-permutations.md`](../onboarding/02-identity-and-org-permutations.md)).
 
 ```mermaid
 flowchart LR
@@ -367,7 +367,7 @@ flowchart LR
 
 ### 5.2 Complete Organization Role Permission Matrix (`lib/auth/org-permissions.ts`)
 
-Authorization inside an organization is governed by a **46-key permission matrix** across **7 `MemberRole`s** ([`04-roles-and-permissions.md`](../00-foundations/04-roles-and-permissions.md)), not a linear rank ladder, because finance (`BILLING_ADMIN`) and operations (`MANAGER`, `SUPPORT`) are orthogonal tracks:
+Authorization inside an organization is governed by a **46-key permission matrix** across **7 `MemberRole`s** ([`04-roles-and-permissions.md`](../enterprise/00-foundations/04-roles-and-permissions.md)), not a linear rank ladder, because finance (`BILLING_ADMIN`) and operations (`MANAGER`, `SUPPORT`) are orthogonal tracks:
 
 | Surface / Domain    | Permission Key                                                                | `OWNER` | `MAINTAINER` | `BILLING_ADMIN` | `MANAGER` | `SUPPORT` | `EXPERT` | `LEARNER` | What It Controls                                                                                                                      |
 | :------------------ | :---------------------------------------------------------------------------- | :-----: | :----------: | :-------------: | :-------: | :-------: | :------: | :-------: | :------------------------------------------------------------------------------------------------------------------------------------ |
@@ -496,6 +496,80 @@ flowchart LR
 
 ---
 
+### 5.5 `?orgScope=` Resolution & Automatic Downgrade Decision Tree (`lib/enterprise/scope.ts`)
+
+Every multi-tenant read endpoint (`/api/appointments`, `/api/dashboard`, `/api/earnings`, `/api/programs`) calls `resolveOrgScope()` to translate the caller's session + `?orgScope=` query parameter into one of four discriminated union variants (`personal`, `all`, `org`, `orgMember`), enforcing **owned-rows-only (`#1166`)** and **automatic downgrade** for `LEARNER` and `EXPERT` members so they never see coworkers' bookings:
+
+```text
+Incoming Request: resolveOrgScope(sessionUser, queryOrgScope)
+  |
+  +-- 1. queryOrgScope === "personal" OR no organizationId in query/session?
+  |        |
+  |        +--> Returns { kind: "personal", userId }
+  |             Prisma filter (owned-rows-only, #1166):
+  |               WHERE (consulteeUserId = userId OR consultantUserId = userId)
+  |               AND organizationId IS NULL
+  |
+  +-- 2. queryOrgScope === "all"?
+  |        |
+  |        +-- Is sessionUser.role IN ('ADMIN', 'STAFF')?
+  |              |-- YES --> Returns { kind: "all" } (unfiltered backoffice view)
+  |              +-- NO  --> 403 Forbidden (never silently downgraded)
+  |
+  +-- 3. queryOrgScope === "<orgId>":
+           |
+           +-- Verify Membership(userId, orgId, status='ACTIVE') & Org not OFFBOARDED
+                 |-- Missing or inactive -> 403 Forbidden
+                 |
+                 |-- MemberRole IN ('OWNER', 'MAINTAINER', 'BILLING_ADMIN', 'MANAGER', 'SUPPORT')?
+                 |     +--> Returns { kind: "org", orgId, role, canSponsor, canHost }
+                 |          Sees organization-wide aggregates, programs, invoices, & roster
+                 |          (ADR-20 still blocks per-session private chat/recording playback)
+                 |
+                 +-- MemberRole IN ('LEARNER', 'EXPERT')?
+                       +--> AUTOMATIC DOWNGRADE to:
+                            { kind: "orgMember", orgId, userId, role }
+                            Prisma filter:
+                              WHERE organizationId = orgId
+                              AND (consulteeUserId = userId OR consultantUserId = userId)
+                            (Olivia Anderson at Wipro sees ONLY her own Wipro-sponsored
+                             bookings; Aarav Anderson at LearnPro sees ONLY his own sessions!)
+                            Exhaustiveness guard: `assertNeverScope(scope)` in default branch.
+```
+
+---
+
+### 5.6 Commercial Lifecycle: `Contract` → `Program` → `ProgramAssignment` Rollover (`30-programs-and-lifecycle/`)
+
+```text
++------------------------------------------------------------------------+
+| 1. CONTRACT (`ContractStatus`: DRAFT -> ACTIVE -> SUPERSEDED/EXPIRED)  |
+|    - Signed by Sponsor `OWNER` (`contracts.manage`).                   |
+|    - Supersession (`AMENDMENT` / `RENEWAL`) links `parentContractId`   |
+|      and atomically flips old contract `ACTIVE -> SUPERSEDED`.         |
++-----------------------------------+------------------------------------+
+                                    |
+                                    v
++------------------------------------------------------------------------+
+| 2. PROGRAM (`ProgramType`: LICENSED_SEAT | CREDIT_POOL)                |
+|    - Defines cycle cadence (`MONTHLY` / `QUARTERLY` / `ANNUAL`),       |
+|      `coveredEngagementsPerCycle` or `creditBudgetPerCycle`,           |
+|      `priceCapPerEngagementPaise`, and `overageBehavior`.              |
++-----------------------------------+------------------------------------+
+                                    |
+                                    v
++------------------------------------------------------------------------+
+| 3. PROGRAM ASSIGNMENT (`ProgramAssignment` — Per Learner, Per Cycle)   |
+|    - Nightly `advance-program-cycles` sweep checks `cycleEndsAt <= now`|
+|    - Marks completed cycle `EXPIRED`, snapshots unused allowance       |
+|      (no rollover of unspent credits unless contract specifies),       |
+|      and mints successor cycle row `[newCycleStart, newCycleEnd]`      |
+|      with `engagementsUsed = 0`, `consumedPaise = 0`.                  |
++------------------------------------------------------------------------+
+```
+
+---
+
 ## 6. The Complete Money Machinery & Double-Entry Ledger
 
 ### 6.1 Step 1 of Checkout: Price Derivation Order of Operations (`deriveCheckoutAmount()`)
@@ -522,7 +596,7 @@ flowchart LR
 
 ### 6.2 Chart of Accounts (`10 LedgerAccountKind` Buckets)
 
-Every `LedgerAccount` has a deterministic primary key `kind|organizationId-or-_|consultantProfileId-or-_|INR` ([ADR 03](../70-design-decisions/03-deterministic-ledger-account-ids.md)). Every `LedgerEntry.amountPaise` is strictly positive; sign is determined by `DEBIT` vs `CREDIT` and the account's normal side:
+Every `LedgerAccount` has a deterministic primary key `kind|organizationId-or-_|consultantProfileId-or-_|INR` ([ADR 03](../enterprise/70-design-decisions/03-deterministic-ledger-account-ids.md)). Every `LedgerEntry.amountPaise` is strictly positive; sign is determined by `DEBIT` vs `CREDIT` and the account's normal side:
 
 | Account Kind (`LedgerAccountKind`) | Scope                        | Normal Side | What Increases It                                                         | What Decreases It                                                    | Meaning                                                                                             |
 | :--------------------------------- | :--------------------------- | :---------: | :------------------------------------------------------------------------ | :------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
@@ -536,6 +610,331 @@ Every `LedgerAccount` has a deterministic primary key `kind|organizationId-or-_|
 | **`GST_PAYABLE`**                  | Platform (`_\|_`)            | **CREDIT**  | `Cr GST_PAYABLE` (18% GST at `BOOKING`)                                   | `Dr GST_PAYABLE` (Credit Note issued on `REFUND` / `LOST` dispute)   | Output GST liability owed to the government.                                                        |
 | **`TDS_PAYABLE`**                  | Platform (`_\|_`)            | **CREDIT**  | `Cr TDS_PAYABLE` (Section 194-O withheld at `PAYOUT` / `ORG_PAYOUT`)      | `Dr TDS_PAYABLE` (Payout reversal)                                   | Income tax withheld at source on payouts, remitted via quarterly 26Q.                               |
 | **`PLATFORM_FEE`**                 | Platform (`_\|_`)            | **CREDIT**  | `Cr PLATFORM_FEE` (20% B2C or RateCard `platformBps` + overage surcharge) | `Dr PLATFORM_FEE` (`REFUND` reversal; absorbs ±1 paisa rounding)     | Recognized platform commission revenue.                                                             |
+
+---
+
+### 6.3 The 4 Confirmation Doors, Wave-2 Atomic Phase-1 Journaling (`#1758`), & Money State Machines
+
+Whether a payment is captured via Razorpay/Stripe or confirmed synchronously on an enterprise rail, **four confirmation doors** converge on a single idempotent writer (`routeCapturedPayment()` → `handlePaymentSuccess()`). Under **Wave 2 (`#1758`)**, `planEarningsForPayment()` pre-computes the revenue split _before_ opening the `Serializable` transaction, and `createEarningsFromPayment({ tx })` writes the `ConsultantEarnings`, `OrganizationEarnings`, and `booking:<paymentId>` `LedgerTransaction` **atomically inside Phase 1** under savepoint `sp_phase1_earnings`:
+
+```text
+  Door 1: Webhook (`payment.captured` / `checkout.session.completed`)
+  Door 2: Client Signature Verify (`POST /api/checkout/verify-signature`)
+  Door 3: Client Polling Fallback (`GET /api/checkout/verify?sync=true`)
+  Door 4: Reconciler Sweep (`reconcile-payment-status` cron for PENDING > 15m)
+     |
+     +---> routeCapturedPayment() -> handlePaymentSuccess(paymentIntentId)
+             |
+             |-- Pre-Tx: planEarningsForPayment() resolves RateCard / ShareBand / Collaborator bps
+             |
+             +-- BEGIN ISOLATION LEVEL SERIALIZABLE (withSerializableRetry)
+                   |-- 1. CAS Payment: WHERE status = 'PENDING' -> 'SUCCEEDED' (0 rows = already settled)
+                   |-- 2. Confirm slots: AppointmentOccurrence.isTentative = false
+                   |-- 3. Confirm seat:  AppointmentParticipant.status = 'CONFIRMED'
+                   |-- 4. Advance request: Consultation/Subscription -> 'APPROVED'
+                   |-- 5. SAVEPOINT sp_phase1_earnings (#1758)
+                   |        |-- createEarningsFromPayment({ tx }):
+                   |        |     Writes ConsultantEarnings + OrganizationEarnings (PENDING / PENDING_TRUST)
+                   |        +-- postLedgerTxn({ tx, idempotencyKey: "booking:<paymentId>" }):
+                   |              Writes balanced DEBIT/CREDIT LedgerEntry rows (verified by ledger_txn_balanced)
+                   +-- COMMIT (Phase 2 & 6h `sync-payment-earnings` cron act as defensive fallback if savepoint rolls back)
+```
+
+#### Money State Machines (`Payment`, `ConsultantEarnings` / `OrganizationEarnings`, `Payout`, `Refund`)
+
+```text
+  PaymentStatus:
+    PENDING ──(capture)──▶ SUCCEEDED ──(partial refund)──▶ PARTIALLY_REFUNDED ──▶ REFUNDED
+       ├──(gateway fail)─▶ FAILED
+       └──(30m timeout)──▶ EXPIRED  (late capture on EXPIRED triggers 100% auto-refund)
+
+  EarningsStatus (ConsultantEarnings & OrganizationEarnings):
+    PENDING / PENDING_TRUST (<5 lifetime sessions: 7d hold)
+       ├──(holdUntil elapsed: 24h Cons / 48h Web / 168h Sub & Class)──▶ READY
+       ├──(dispute.created or session VOIDED/UNVERIFIED)──────────────▶ HELD ──(won/resolved)──▶ READY
+       └──(full refund before payout)─────────────────────────────────▶ REFUNDED
+    READY ──(claimed by weekly batch)──▶ BATCHED ──(payout.processed)──▶ PAID ──(payout.reversed)──▶ READY
+
+  PayoutStatus (ConsultantPayout & OrganizationPayout):
+    PENDING ──(<₹5k auto OR Admin / 2-Person Org approval)──▶ APPROVED ──▶ PROCESSING ──▶ COMPLETED / FAILED / REVERSED
+
+  RefundStatus:
+    PENDING (Phase-1 Serializable reservation) ──(Gateway 2xx + applyRefundCascade)──▶ SUCCEEDED (or FAILED)
+```
+
+---
+
+### 6.4 Exhaustive 20-Permutation Double-Entry General Ledger Reference (`V2`)
+
+Every financial state change in `familiarise_web` maps to one of the **20 canonical double-entry ledger permutations** below. In every permutation, `∑ Debit === ∑ Credit` is enforced at `COMMIT` by the deferred constraint trigger `ledger_txn_balanced`:
+
+#### Permutation 1: Standard B2C Direct Card Booking
+
+- **Context**: List price ₹1,000 + 18% GST (₹180) = ₹1,180 charged to card. 20% platform commission (₹200).
+- **Idempotency Key**: `booking:pay_b2c_std`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                            |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------- |
+| `CASH`                    | `DEBIT`   |        118,000 |      ₹1,180.00 | Gateway gross card collection    |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | 20% platform revenue cut         |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | 80% consultant share             |
+| `GST_PAYABLE`             | `CREDIT`  |         18,000 |        ₹180.00 | 18% Output GST (Principal model) |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+#### Permutation 2: B2C Card Booking with Partial Referral Credit
+
+- **Context**: List ₹1,000 + GST ₹180 = ₹1,180. User applies ₹500 referral credit. Net gateway charge = ₹680.
+- **Idempotency Key**: `booking:pay_b2c_split_credit`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                             |
+| :------------------------ | :-------- | -------------: | -------------: | :-------------------------------- |
+| `CASH`                    | `DEBIT`   |         68,000 |        ₹680.00 | Net cash charged to gateway       |
+| `PLATFORM_PROMO`          | `DEBIT`   |         50,000 |        ₹500.00 | Platform-absorbed referral credit |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Commission on full nominal base   |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant receives full earnings |
+| `GST_PAYABLE`             | `CREDIT`  |         18,000 |        ₹180.00 | 18% GST on full nominal base      |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+#### Permutation 3: B2C Booking with Platform Discount / Coupon
+
+- **Context**: List ₹1,000 with ₹200 coupon. Discounted base = ₹800 + 18% GST (₹144) = ₹944 charged to card.
+- **Idempotency Key**: `booking:pay_b2c_coupon`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`                    | `DEBIT`   |         94,400 |        ₹944.00 | Discounted price + GST charged to card |
+| `DISCOUNT`                | `DEBIT`   |         20,000 |        ₹200.00 | Platform-absorbed discount plug        |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Platform commission base               |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant share of nominal list       |
+| `GST_PAYABLE`             | `CREDIT`  |         14,400 |        ₹144.00 | 18% GST on discounted base             |
+
+- **Balance Check**: `∑ Debit = 114,400 == ∑ Credit = 114,400 ✓`
+
+#### Permutation 4: 100% Free Referral-Funded Booking
+
+- **Context**: ₹500 consultation fully paid using ₹590 referral credits (covering base + 18% GST). Card charge = ₹0.
+- **Idempotency Key**: `booking:pay_b2c_100free`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                |
+| :------------------------ | :-------- | -------------: | -------------: | :----------------------------------- |
+| `PLATFORM_PROMO`          | `DEBIT`   |         59,000 |        ₹590.00 | Platform absorbs 100% of price & tax |
+| `PLATFORM_FEE`            | `CREDIT`  |         10,000 |        ₹100.00 | Platform fee accounting allocation   |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         40,000 |        ₹400.00 | Consultant owed their delivery fee   |
+| `GST_PAYABLE`             | `CREDIT`  |          9,000 |         ₹90.00 | 18% GST remitted to government       |
+
+- **Balance Check**: `∑ Debit = 59,000 == ∑ Credit = 59,000 ✓`
+
+#### Permutation 5: Backoffice Administrative Referral Credit Revocation (`#1844`)
+
+- **Context**: Admin revokes ₹1,000 unspent referral credit due to abuse or expiration.
+- **Idempotency Key**: `credit-revoke:crd_bad_991`
+
+| Account          | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :--------------- | :-------- | -------------: | -------------: | :---------------------------------- |
+| `PLATFORM_FEE`   | `DEBIT`   |        100,000 |      ₹1,000.00 | De-allocates platform promo reserve |
+| `PLATFORM_PROMO` | `CREDIT`  |        100,000 |      ₹1,000.00 | Reverses contra-revenue liability   |
+
+- **Balance Check**: `∑ Debit = 100,000 == ∑ Credit = 100,000 ✓`
+
+#### Permutation 6: Organization Wallet Top-Up
+
+- **Context**: Client org `org_wipro` tops up prepaid balance by ₹5,00,000.
+- **Idempotency Key**: `topup:order_topup_882`
+
+| Account             | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`              | `DEBIT`   |     50,000,000 |   ₹5,00,000.00 | Bank deposit / payment gateway receipt |
+| `WALLET(org_wipro)` | `CREDIT`  |     50,000,000 |   ₹5,00,000.00 | Prepaid balance liability credited     |
+
+- **Balance Check**: `∑ Debit = 50,000,000 == ∑ Credit = 50,000,000 ✓`
+
+#### Permutation 7: B2B Prepaid Wallet Booking (Direct Consultant)
+
+- **Context**: Employee books session using company wallet. Price ₹2,000 + 18% GST (₹360) = ₹2,360.
+- **Idempotency Key**: `booking:pay_org_wlt_dir`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------- |
+| `WALLET(org_wipro)`       | `DEBIT`   |        236,000 |      ₹2,360.00 | Atomic decrement of wallet balance |
+| `PLATFORM_FEE`            | `CREDIT`  |         40,000 |        ₹400.00 | 20% platform commission            |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |        160,000 |      ₹1,600.00 | 80% consultant share               |
+| `GST_PAYABLE`             | `CREDIT`  |         36,000 |        ₹360.00 | 18% Output GST                     |
+
+- **Balance Check**: `∑ Debit = 236,000 == ∑ Credit = 236,000 ✓`
+
+#### Permutation 8: B2B Wallet Booking with 3-Way Split (Host Academy)
+
+- **Context**: Session with consultant affiliated with `org_learnpro` (Host Org). Rate card: Platform 10%, Host Org 20%, Consultant 70%. Base ₹10,000 + GST ₹1,800 = ₹11,800.
+- **Idempotency Key**: `booking:pay_3way_split`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                            |
+| :-------------------------- | :-------- | -------------: | -------------: | :------------------------------- |
+| `WALLET(org_wipro)`         | `DEBIT`   |      1,180,000 |     ₹11,800.00 | Corporate wallet debited in full |
+| `PLATFORM_FEE`              | `CREDIT`  |        100,000 |      ₹1,000.00 | 10% platform share               |
+| `ORG_PAYABLE(org_learnpro)` | `CREDIT`  |        200,000 |      ₹2,000.00 | 20% host organization share      |
+| `CONSULTANT_PAYABLE(c_1)`   | `CREDIT`  |        700,000 |      ₹7,000.00 | 70% expert delivery share        |
+| `GST_PAYABLE`               | `CREDIT`  |        180,000 |      ₹1,800.00 | 18% Output GST                   |
+
+- **Balance Check**: `∑ Debit = 1,180,000 == ∑ Credit = 1,180,000 ✓`
+
+#### Permutation 9: B2B Postpaid Invoice Accrual (Monthly Invoiced Booking)
+
+- **Context**: Booking on `INVOICE` rail. Base ₹5,000 + GST ₹900 = ₹5,900. No immediate funds move.
+- **Idempotency Key**: `booking:pay_inv_accrual`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------- |
+| `ORG_RECEIVABLE(org_tcs)` | `DEBIT`   |        590,000 |      ₹5,900.00 | Unbilled accrual owed by enterprise |
+| `PLATFORM_FEE`            | `CREDIT`  |        100,000 |      ₹1,000.00 | Accrued commission revenue          |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |        400,000 |      ₹4,000.00 | Earnings held for delivery          |
+| `GST_PAYABLE`             | `CREDIT`  |         90,000 |        ₹900.00 | GST liability recognized            |
+
+- **Balance Check**: `∑ Debit = 590,000 == ∑ Credit = 590,000 ✓`
+
+#### Permutation 10: Settlement of Monthly Enterprise Invoice (`INVOICE_PAID`)
+
+- **Context**: `org_tcs` wires ₹1,18,000 settling their consolidated monthly invoice.
+- **Idempotency Key**: `invoicepaid:inv_oct_2026_01`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------- |
+| `CASH`                    | `DEBIT`   |     11,800,000 |   ₹1,18,000.00 | Bank deposit receipt               |
+| `ORG_RECEIVABLE(org_tcs)` | `CREDIT`  |     11,800,000 |   ₹1,18,000.00 | Clears monthly accounts receivable |
+
+- **Balance Check**: `∑ Debit = 11,800,000 == ∑ Credit = 11,800,000 ✓`
+
+#### Permutation 11: Consultant Payout with Exact bps TDS (Section 194-O)
+
+- **Context**: Consultant payout batch of ₹80,000 gross. Section 194-O rate = 10 bps (0.10%). Math: `(8,000,000 * 10) / 10,000 = 8,000 paise` (₹80.00). Net transfer = ₹79,920.
+- **Idempotency Key**: `payout:pout_cons_991`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                |
+| :------------------------ | :-------- | -------------: | -------------: | :----------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |      8,000,000 |     ₹80,000.00 | Settles consultant liability in full |
+| `CASH`                    | `CREDIT`  |      7,992,000 |     ₹79,920.00 | Net wire via RazorpayX               |
+| `TDS_PAYABLE`             | `CREDIT`  |          8,000 |         ₹80.00 | Exact 10 bps statutory withholding   |
+
+- **Balance Check**: `∑ Debit = 8,000,000 == ∑ Credit = 8,000,000 ✓`
+
+#### Permutation 12: Host Organization Payout Disbursement (`ORG_PAYOUT`)
+
+- **Context**: Payout to `org_learnpro` of ₹2,00,000 gross. Section 194-O TDS @ 10 bps = ₹200. Net wire = ₹1,99,800.
+- **Idempotency Key**: `orgpayout:pout_org_552`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :-------------------------- | :-------- | -------------: | -------------: | :--------------------------------- |
+| `ORG_PAYABLE(org_learnpro)` | `DEBIT`   |     20,000,000 |   ₹2,00,000.00 | Gross host org share cleared       |
+| `CASH`                      | `CREDIT`  |     19,980,000 |   ₹1,99,800.00 | Net wire to corporate bank account |
+| `TDS_PAYABLE`               | `CREDIT`  |         20,000 |        ₹200.00 | Withholding under Section 194-O    |
+
+- **Balance Check**: `∑ Debit = 20,000,000 == ∑ Credit = 20,000,000 ✓`
+
+#### Permutation 13: Host Org Payout Post-Completion Bank Bounce / Reversal
+
+- **Context**: Permutation 12 is returned by the bank due to invalid account details (`markOrgPayoutReversed`).
+- **Idempotency Key**: `orgpayout-reversal:pout_org_552`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :-------------------------- | :-------- | -------------: | -------------: | :--------------------------------- |
+| `CASH`                      | `DEBIT`   |     19,980,000 |   ₹1,99,800.00 | Funds returned to platform bank    |
+| `TDS_PAYABLE`               | `DEBIT`   |         20,000 |        ₹200.00 | Tax withholding liability reversed |
+| `ORG_PAYABLE(org_learnpro)` | `CREDIT`  |     20,000,000 |   ₹2,00,000.00 | Re-opens payable owed to host org  |
+
+- **Balance Check**: `∑ Debit = 20,000,000 == ∑ Credit = 20,000,000 ✓`
+
+#### Permutation 14: Payout Clawback (Refund on Already-Disbursed Earnings)
+
+- **Context**: A booking is cancelled/refunded, but the consultant has already received the payout. Platform claws back the debt from the consultant's balance.
+- **Idempotency Key**: `clawback:rfnd_123:pout_cons_991`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------- |
+| `CASH`                    | `DEBIT`   |         80,000 |        ₹800.00 | Cash recovery from payout debt      |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Offsets negative consultant balance |
+
+- **Balance Check**: `∑ Debit = 80,000 == ∑ Credit = 80,000 ✓`
+
+#### Permutation 15: Full Refund of B2C Card Booking (`REFUND`)
+
+- **Context**: Reversing Permutation 1 (₹1,180 card booking).
+- **Idempotency Key**: `refund:rfnd_b2c_full`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                    |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         80,000 |        ₹800.00 | Consultant earnings debited              |
+| `GST_PAYABLE`             | `DEBIT`   |         18,000 |        ₹180.00 | Reverses Output GST (Credit Note issued) |
+| `PLATFORM_FEE`            | `DEBIT`   |         20,000 |        ₹200.00 | Platform fee plug debited                |
+| `CASH`                    | `CREDIT`  |        118,000 |      ₹1,180.00 | Gateway refund returns cash to card      |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+#### Permutation 16: Partial Refund (50% Cancellation Tier)
+
+- **Context**: Permutation 1 cancelled within 2–24h notice window (50% tier). Consultee receives ₹590.
+- **Idempotency Key**: `refund:rfnd_b2c_half`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                     |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         40,000 |        ₹400.00 | 50% prorated consultant earnings clawback |
+| `GST_PAYABLE`             | `DEBIT`   |          9,000 |         ₹90.00 | 50% tax reversal via Credit Note          |
+| `PLATFORM_FEE`            | `DEBIT`   |         10,000 |        ₹100.00 | 50% platform fee reversed                 |
+| `CASH`                    | `CREDIT`  |         59,000 |        ₹590.00 | Gateway partial refund to buyer           |
+
+- **Balance Check**: `∑ Debit = 59,000 == ∑ Credit = 59,000 ✓`
+
+#### Permutation 17: Full Refund of B2B Wallet Booking
+
+- **Context**: Reversing Permutation 7 (₹2,360 wallet booking). Re-credits corporate wallet balance.
+- **Idempotency Key**: `refund:rfnd_wlt_rev`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                 |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------ |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |        160,000 |      ₹1,600.00 | Consultant earnings reversed          |
+| `GST_PAYABLE`             | `DEBIT`   |         36,000 |        ₹360.00 | Tax reversed                          |
+| `PLATFORM_FEE`            | `DEBIT`   |         40,000 |        ₹400.00 | Platform fee reversed                 |
+| `WALLET(org_wipro)`       | `CREDIT`  |        236,000 |      ₹2,360.00 | Wallet balance re-credited atomically |
+
+- **Balance Check**: `∑ Debit = 236,000 == ∑ Credit = 236,000 ✓`
+
+#### Permutation 18: Full Refund of B2B Invoice-Accrued Booking
+
+- **Context**: Reversing Permutation 9 (₹5,900 invoiced booking).
+- **Idempotency Key**: `refund:rfnd_inv_rev`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |        400,000 |      ₹4,000.00 | Consultant earnings reversed           |
+| `GST_PAYABLE`             | `DEBIT`   |         90,000 |        ₹900.00 | Output GST reversed                    |
+| `PLATFORM_FEE`            | `DEBIT`   |        100,000 |      ₹1,000.00 | Platform fee reversed                  |
+| `ORG_RECEIVABLE(org_tcs)` | `CREDIT`  |        590,000 |      ₹5,900.00 | Clears unbilled accrual before invoice |
+
+- **Balance Check**: `∑ Debit = 590,000 == ∑ Credit = 590,000 ✓`
+
+#### Permutation 19: Member Overage Side-Charge Settlement (`OVERAGE_MEMBER`)
+
+- **Context**: Employee books past corporate cap and pays ₹1,000 marginal directly via personal card. This provides an org-relief credit.
+- **Idempotency Key**: `overage:pay_side_charge_44`
+
+| Account                  | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :----------------------- | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`                   | `DEBIT`   |        100,000 |      ₹1,000.00 | Collected from member's personal card  |
+| `ORG_PAYABLE(org_wipro)` | `CREDIT`  |        100,000 |      ₹1,000.00 | Relief credit realized by organization |
+
+- **Balance Check**: `∑ Debit = 100,000 == ∑ Credit = 100,000 ✓`
+
+#### Permutation 20: Member Overage Late-Capture Invoice Recarve (`#1900`)
+
+- **Context**: Employee side-charge was initially marked `FAILED` (so `basePaise` ₹800 was restored to the parent invoice accrual). The member later pays via late capture (`FAILED → CHARGED`). The engine reverses the invoice accrual on the parent invoice to prevent double collection.
+- **Idempotency Key**: `overage-recarve-invoice:pay_side_charge_44`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                           |
+| :-------------------------- | :-------- | -------------: | -------------: | :------------------------------ |
+| `PLATFORM_FEE`              | `DEBIT`   |         80,000 |        ₹800.00 | Clears restored accrual plug    |
+| `ORG_RECEIVABLE(org_wipro)` | `CREDIT`  |         80,000 |        ₹800.00 | Reverses parent invoice accrual |
+
+- **Balance Check**: `∑ Debit = 80,000 == ∑ Credit = 80,000 ✓`
 
 ---
 
@@ -629,7 +1028,7 @@ Because Andrew is salaried by **IIT Madras**, his 80% consultant share (`800,000
   2. **Co-Host (`COLLABORATOR`)**: **Aarav Anderson** (`revenueShareBps = 2500` = **25% of pool**; member of **LearnPro Academy** on `10 / 10 / 80` RateCard, `SELF`).
   3. **Moderator (`COLLABORATOR`)**: **Benjamin Anderson** (`revenueShareBps = 1500` = **15% of pool**; member of **IIT Madras** on `10 / 10 / 80` RateCard, `SELF`).
 
-#### Step-by-Step Collaborator & Per-Collaborator Host-Org Split ([`docs/collaborators/03-revenue-sharing.md`](../../collaborators/03-revenue-sharing.md))
+#### Step-by-Step Collaborator & Per-Collaborator Host-Org Split ([`docs/collaborators/03-revenue-sharing.md`](../collaborators/03-revenue-sharing.md))
 
 1. **Primary Marketplace Fee & Consultant Pool** (since plan is owned by independent **Grace Anderson**):
    - Primary `platformFeePaise = floor(100,000 × 20 / 100) = 20,000` paise (**₹200.00**).
@@ -812,7 +1211,7 @@ Suppose **Arjun Anderson** has crossed the ₹50,000 financial-year threshold an
   - **Org-sponsored (`WALLET`, `INVOICE`, `LICENSE`) 1:1 & Subscription bookings**: The sponsoring org's published `CancellationPolicy` version snapshotted onto `Appointment.cancellationPolicyId` at checkout (falls back to platform ladder if org has none).
   - **Consultant-initiated cancellation**: Always **100% refund** regardless of notice window (note: an Org Admin cancelling via `appointments.actForOrg.cancel` acts on the _payer_ side and is subject to the notice tier).
   - **Subscriptions**: Prorated by undelivered sessions (`remaining / totalSessions × tierPct`).
-  - **Class Series**: Per-seat `unit = floor(seat.amount / sessionsPurchased)`. Leaving before `refundWindowHours` (or after a host reschedules `movedAt > seat.createdAt`, or after ≥ 3 host/outage misses) refunds undelivered units ([ADR 2026-09-25](../../decisions/2026-09-25-class-series-money-rules.md)).
+  - **Class Series**: Per-seat `unit = floor(seat.amount / sessionsPurchased)`. Leaving before `refundWindowHours` (or after a host reschedules `movedAt > seat.createdAt`, or after ≥ 3 host/outage misses) refunds undelivered units ([ADR 2026-09-25](../decisions/2026-09-25-class-series-money-rules.md)).
 
 #### B. Worked 50% Partial Refund Cascade (`applyRefundCascade` in `lib/payments/operations/refund.ts`)
 
@@ -869,6 +1268,116 @@ flowchart LR
   RL --> SSI --> CAS --> L0 --> Reconciler
 ```
 
+### 8.1 Serializable Retry Engine: `withSerializableRetry` (`lib/db/serializable-retry.ts`)
+
+Under PostgreSQL `SERIALIZABLE` transaction isolation, concurrent transactions with overlapping read/write sets are aborted by PostgreSQL's Serializable Snapshot Isolation (SSI) engine (`SQLSTATE 40001`, mapped by Prisma to **`P2034`**) to prevent phantom reads and write skew:
+
+```text
+Writer A (Learner 1 Checkout)             Writer B (Learner 2 Checkout)
++---------------------------------+       +---------------------------------+
+| BEGIN (SERIALIZABLE)            |       | BEGIN (SERIALIZABLE)            |
+| Read Slot Availability (Free)   |       | Read Slot Availability (Free)   |
+| Write Occurrence Hold           |       | Write Occurrence Hold           |
+| COMMIT -> OK                    |       | COMMIT                          |
++---------------------------------+       +----------------+----------------+
+                                                           |
+                                                           v
+                                                ERROR: P2034 (40001)
+                                                could not serialize access
+                                                           |
+                                                           v
+                                            withSerializableRetry() catches P2034
+                                            Waits 50 * 2^attempt + jitter(0..25ms)
+                                            Retries transaction from the top
+                                            (Now sees Slot Taken -> Rejects 409)
+```
+
+- **Retries ONLY `P2034`**: Never retries validation errors, foreign key violations (`P2003`), or `IllegalTransitionError` — business refusals fail fast.
+- **Jittered Exponential Backoff**: `50 * Math.pow(2, attempt) + Math.random() * 25` ms (`50–75ms`, `100–125ms`, `200–225ms`) up to `SERIALIZABLE_MAX_RETRIES = 3`.
+- **Pure Idempotent Closure**: Functions inside `withSerializableRetry` perform pure DB mutations with zero uncommitted external side effects.
+
+---
+
+### 8.2 Reconciliation Architecture V2 (`scripts/reconcile/reconcile-ledgers.ts`)
+
+The reconciliation engine inspects live database state, re-derives every cached balance from `LedgerEntry` rows, and writes a `LedgerReconciliationReport`:
+
+```text
+Reconciliation Engine V2 (26 Set-Based Invariant Checks across 4 Groups)
+  |
+  +-- Group 1: Journal Soundness (Full-Scope Only)
+  |     |-- LEDGER_TXN_IMBALANCE: Sum(DEBIT) - Sum(CREDIT) == 0
+  |     |-- LEDGER_BALANCE_SNAPSHOT_DRIFT: O(1) cache == Sum(Journal)
+  |     +-- REFUND_BOOKING_COHERENCE: Refunded bookings have released capacity
+  |
+  +-- Group 2: Money Caches vs. Journal
+  |     |-- WALLET_BALANCE_DRIFT: Calls freezeWalletSpend(isWalletFrozen=true) & Pages P0
+  |     |-- EARNINGS_LEDGER_DRIFT: ConsultantEarnings == Journal payables
+  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: Unjournaled payments > 60s grace
+  |     |-- PAYMENT_LEG_SUM_MISMATCH: Sum(Legs) == Payment.amount
+  |     |-- ORG_PAYOUT_TOTAL_MISMATCH: Batched earnings sum == netPayoutPaise
+  |     +-- LEDGER_DUAL_WRITE_GAP: Payout clawbacks match posted CASH debits
+  |
+  +-- Group 3: Usage & Program Counters
+  |     |-- PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT: Sum(UsageLedger) == engagementsUsed
+  |     |-- CREDIT_POOL_CONSUMED_DRIFT: Sum(UsageLedger.paise) == consumedPaise
+  |     |-- OVERAGE_COUNT_DRIFT: Active events count == overageCount
+  |     |-- OVERAGE_CHARGESTATUS_INTEGRITY: CHARGED events have side-payments
+  |     +-- ACTIVE_SEAT_COUNT_DRIFT: Active assignments == activeSeatCount
+  |
+  +-- Group 4: Tax & Filing Compliance
+        |-- INVOICE_TOTAL_MISMATCH: Total == Subtotal + CGST + SGST + IGST
+        |-- OVERAGE_RECARVE_COHERENCE: Every overage-recarve-invoice matches CreditNote
+        +-- LEDGER_ACCOUNT_NON_INR: All accounts strictly INR-denominated
+```
+
+- **60-Second Grace Window (`RECONCILE_UNJOURNALED_GRACE_MS = 60_000`)**: Reduced from 30 minutes to 60 seconds because Wave 2 (`#1758`) journals earnings and `booking:<paymentId>` atomically inside Phase 1.
+- **Chunked Resumable Engine (`#1454`)**: Full sweeps execute in bounded cursor chunks under `RECONCILE_CHUNK_BUDGET_MS` (`12s` soft deadline) so serverless functions never hit 504 gateway timeouts.
+
+---
+
+### 8.3 Wave-2 3-Tier Cron Architecture & `SystemJobExecution` Lease (`#1945`)
+
+All 38 background sweeps are registered once in `lib/cron/cleanup-registry.ts` and dispatched across 3 operational tiers:
+
+```text
+========================================================================
+                      3-TIER CRON ARCHITECTURE (#1945)
+========================================================================
+
+  [ Tier 1: Sub-Hourly Latency Sweeps ] ──▶ Netlify Scheduled Ticker
+    - Cadence: Every 5 minutes (*/5 * * * *) via netlify/functions/cron-tick.mts
+    - Dispatches HTTP twins with CRON_SECRET:
+      • abandoned-payments, sync-payment-earnings, reconcile-refunds
+      • retry-auto-refunds, drain-notification-outbox, retry-failed-emails
+      • tentative-occurrences, expire-stale-requests
+
+  [ Tier 2: Daily Maintenance Sweeps ]  ──▶ GitHub Actions (daily-sweeps.yml)
+    - Cadence: Daily at 02:00 UTC
+    - Dispatches heavy jobs:
+      • Full-scope ledger reconciliation (reconcile-ledgers)
+      • Monthly invoice rollup (settle-invoice-accruals)
+      • TDS 26Q draft report generation (tds-26q-draft-export)
+      • Stale invitation pruning & MSME 43B(h) due date evaluations
+
+  [ Tier 3: Weekly / System Jobs ]      ──▶ GitHub Actions (weekly-sweeps.yml)
+    - Cadence: Weekly Sunday at 00:00 UTC
+    - Pruning & Retention:
+      • Stream.io recording retention cleanup
+      • Sentry ingest canary audit & quota verification
+```
+
+Every job is guarded by `withCronLock` (`lib/cron/with-cron-lock.ts`) and the PostgreSQL partial unique index on `SystemJobExecution`:
+
+```sql
+CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
+  ON "SystemJobExecution" ("jobName")
+  WHERE "status" = 'RUNNING';
+```
+
+- **`failMode: "closed"` (Money Sweeps)**: Aborts immediately if the DB lock cannot be verified; a skipped sweep is always safer than a duplicate dunning, invoice, or payout run.
+- **`failMode: "open"` (Idempotent Cleanup Sweeps)**: Logs a warning and proceeds if lock telemetry is unavailable during maintenance.
+
 ---
 
 ## 9. Deprecated & Superseded Approaches
@@ -887,3 +1396,14 @@ To prevent re-introducing retired models or legacy financial patterns, the follo
 4. **Request-for-Approval on Subscriptions (`SUBSCRIPTION_UNPAID`)**:
    - **What it was**: Allowing consultees to submit unpaid subscription requests for consultant slot allocation prior to payment capture.
    - **Why it was superseded**: Allocating multi-week recurring slot batches before payment tied up consultant inventory without financial commitment. Subscriptions now require upfront payment at checkout (`POST /api/checkout`), and `SchedulingService` refuses unpaid subscription allocation with `409 SUBSCRIPTION_UNPAID`.
+
+---
+
+## 10. Architecture Verdict & Scale Posture
+
+| Question                                           | Verdict                                                                                                                                                                  | Rationale                                                                                                                                                                                                                                                         |
+| :------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Separate microservices for Booking vs. Money?**  | **No — keep in one modular monolith on one Postgres database.**                                                                                                          | Checkout (`withSerializableRetry`), Phase-1 confirmation (`sp_phase1_earnings`), and `applyRefundCascade` rely on atomic ACID transactions across `AppointmentOccurrence`, `Payment`, `PaymentLeg`, `BillingAccount`, and `LedgerEntry` (`ledger_txn_balanced`).  |
+| **Async event bus (Kafka / RabbitMQ) for Ledger?** | **No — keep synchronous in-tx `postLedgerTxn()` (`#1758`) + Postgres outbox for external webhooks.**                                                                     | Moving ledger postings onto an async bus introduces an eventual-consistency window where `Payment` is `SUCCEEDED` while the journal lags. Writing `LedgerEntry` rows inside the same `COMMIT` guarantees zero unjournaled payments.                               |
+| **Where is the first database scale wall?**        | **Hot-row contention on `BillingAccount.walletBalance` (`walletDebit` CAS) and `PLATFORM_FEE` / `CASH` `LedgerAccount` rows when one enterprise books `>50` seats/sec.** | Mitigated today by `withSerializableRetry` (`P2034`) and append-only `LedgerEntry` inserts (no mutable balance column on `LedgerAccount`). Above `~50` concurrent bookings/sec for a single Sponsor Org, shard `walletBalance` across `K` sub-buckets (`0..K-1`). |
+| **How should analytics & BI queries scale?**       | **Read replica + CDC / set-based chunked cursor (`#1454`).**                                                                                                             | Keep OLTP checkout and webhook writers on the primary connection pool; route finance exports, dashboard rollups, and `reconcile-ledgers` chunked scans to a read replica.                                                                                         |
