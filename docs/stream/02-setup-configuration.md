@@ -5,7 +5,9 @@
 ## Table of Contents
 
 - [Environment Variables](#environment-variables)
+- [Production Operator Cutover & Verification Runbook](#production-operator-cutover--verification-runbook)
 - [Package Installation](#package-installation)
+- [Pinned SDK Version Holds](#pinned-sdk-version-holds)
 - [Stream Dashboard Setup](#stream-dashboard-setup)
 - [Code Integration](#code-integration)
 - [Minimal Working Example](#minimal-working-example)
@@ -19,28 +21,41 @@
 
 ### Required Variables
 
-Stream SDK requires **3 critical environment variables** for operation:
+Stream SDK requires **3 critical environment variables** for operation, plus dual-secret webhook rotation and Cloudflare R2 storage credentials in production:
 
 ```env
 # Stream API Credentials (Required)
 NEXT_PUBLIC_STREAM_API_KEY=your_stream_api_key_here
 STREAM_API_SECRET=your_stream_api_secret_here
 
+# Webhook Verification & Zero-Downtime Secret Rotation
+STREAM_WEBHOOK_SECRET=your_stream_webhook_secret_here
+STREAM_WEBHOOK_SECRET_PREVIOUS=your_previous_webhook_secret_here
+
 # Database Connection (Required for user sync)
 DATABASE_URL=postgresql://user:password@host:5432/database
 
 # Optional: Background Sync Job Protection
 STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
+
+# Cloudflare R2 Permanent Recording Storage
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+R2_RECORDINGS_BUCKET=familiarise-recordings
 ```
 
 ### Variable Breakdown
 
-| Variable                     | Scope            | Purpose                         | Security   |
-| ---------------------------- | ---------------- | ------------------------------- | ---------- |
-| `NEXT_PUBLIC_STREAM_API_KEY` | Public (Client)  | Identifies your Stream app      | Public     |
-| `STREAM_API_SECRET`          | Private (Server) | Authenticates server operations | **SECRET** |
-| `DATABASE_URL`               | Private (Server) | User data for token generation  | **SECRET** |
-| `STREAM_SYNC_SECRET`         | Private (Server) | Protects sync API endpoint      | **SECRET** |
+| Variable                         | Scope            | Purpose                                            | Security   |
+| -------------------------------- | ---------------- | -------------------------------------------------- | ---------- |
+| `NEXT_PUBLIC_STREAM_API_KEY`     | Public (Client)  | Identifies your Stream app                         | Public     |
+| `STREAM_API_SECRET`              | Private (Server) | Authenticates server operations                    | **SECRET** |
+| `STREAM_WEBHOOK_SECRET`          | Private (Server) | Primary HMAC secret for `/api/stream/webhooks`     | **SECRET** |
+| `STREAM_WEBHOOK_SECRET_PREVIOUS` | Private (Server) | Fallback HMAC secret during zero-downtime rotation | **SECRET** |
+| `DATABASE_URL`                   | Private (Server) | User data for token generation                     | **SECRET** |
+| `STREAM_SYNC_SECRET`             | Private (Server) | Protects sync API endpoint                         | **SECRET** |
+| `R2_*`                           | Private (Server) | Cloudflare R2 S3-compatible multipart storage      | **SECRET** |
 
 ⚠️ **Security Warning:**
 
@@ -61,7 +76,7 @@ STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 1. Navigate to **Dashboard** → **Create New App**
 2. Choose app name (e.g., "Familiarise Dev")
 3. Select region closest to your users
-   - 🇺🇸 US East (Virginia)
+   - 🇺🇸 US East (Virginia / `gcp-us-east5`)
    - 🇪🇺 EU West (Ireland)
    - 🇸🇬 Singapore
    - 🇦🇺 Australia
@@ -86,9 +101,10 @@ DATABASE_URL=postgresql://...
 **For Production:**
 
 ```bash
-# Set in Vercel/Railway/hosting platform
+# Set in Vercel/Netlify/hosting platform
 NEXT_PUBLIC_STREAM_API_KEY=prod_key
 STREAM_API_SECRET=prod_secret
+STREAM_WEBHOOK_SECRET=prod_webhook_secret
 DATABASE_URL=postgresql://...
 STREAM_SYNC_SECRET=random_secure_string
 ```
@@ -102,6 +118,8 @@ Create `.env.example` in your project root:
 NEXT_PUBLIC_STREAM_API_KEY=""
 STREAM_API_KEY=""
 STREAM_API_SECRET=""
+STREAM_WEBHOOK_SECRET=""
+STREAM_WEBHOOK_SECRET_PREVIOUS=""
 STREAM_SYNC_SECRET=""
 
 # Database
@@ -115,118 +133,117 @@ BETTER_AUTH_URL=""
 # Other services...
 ```
 
-### Unified Stream App & Call-Type Provisioning (`scripts/stream/ensure.ts`)
+---
 
-Run the idempotent orchestrator to verify or apply app settings (`guest_user_creation_disabled: true`, `enable_hook_payload_compression: false`), `default` call-type role grants (`call_member` admission only), unused call-type hardening (`livestream`, `audio_room`, `development`), and `default` call-type `session.inactivity_timeout_seconds = 300`:
+## Production Operator Cutover & Verification Runbook
+
+Stream application settings, call-type permission grants, webhook subscriptions, and external storage are managed via idempotent scripts under `scripts/stream/` rather than manual dashboard edits. Pre-image backups are written automatically to `.stream-backups/` (and `os.tmpdir()` for call-type settings drift) before any write.
+
+### 1. App Settings, Call-Type Hardening & Webhook Subscription (`scripts/stream/ensure.ts`)
+
+Run the unified provisioning orchestrator to inspect and apply all Stream control-plane invariants in one pass:
 
 ```bash
-# Dry run (inspects current state and prints pending diffs)
+# Step 1a: Dry run (inspects live Stream state and prints pending diffs without mutating)
 npx tsx scripts/stream/ensure.ts
 
-# Apply changes
-npx tsx scripts/stream/ensure.ts --apply --confirm-join-route-deployed
+# Step 1b: Apply changes once /api/meetings/[meetingId]/join and /end are deployed
+npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
+# (Also accepts --confirm-join-route-deployed on ensure.ts / ensure-call-type-grants.ts)
+
+# Step 1c: Verify and widen webhook event subscriptions for all handled chat & video events
+npx tsx scripts/stream/ensure-webhook-subscription.ts --check
+npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
 ```
+
+What the orchestrator enforces:
+
+- **App-Level Settings (`ensure-app-settings.ts`)**: Configures `webhook_url` (`https://<origin>/api/stream/webhooks`), `AsyncModerationConfiguration`, `guest_user_creation_disabled: true`, and `enable_hook_payload_compression: false` after running a no-op fingerprint probe (`lib/stream/config-fingerprint.ts`) to guarantee `updateApp` merges rather than replaces unrelated app fields.
+- **18 Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all 18 billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
+- **Least-Privilege Call Admission on `default`**: Revokes `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, revokes `end-call` from `user`, `guest`, and `call_member`, and ensures only `call_member` (granted server-side after `resolveMeetingAccess`) and `host`/`admin` can join an active room.
+- **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
+- **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
+
+### 2. Cloudflare R2 External Storage Registration
+
+Permanent recordings (`PERMANENT` policy on Webinars, Classes, and opt-in 1:1 sessions) are stored in Cloudflare R2 (`$0` egress, S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-storage.ts`, with automatic fallback to Supabase Storage for legacy objects):
+
+```bash
+# Register or verify Cloudflare R2 external storage configuration
+npx tsx scripts/stream/ensure-recording-external-storage.ts --provider r2 --apply
+```
+
+Ensure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_RECORDINGS_BUCKET` are set in the deployment environment before enabling permanent recording transfers (`jobs/stream/transfer-expiring-recordings.ts`).
+
+### 3. Live Stream Rate-Limit Ceilings & Batch Pacing Invariant
+
+Stream enforces strict per-minute rate limits per endpoint at the application level:
+
+| Stream API Endpoint  | Live App Ceiling | Primary Call Sites                                                            |
+| -------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `DeleteUser`         | **60 / min**     | `scripts/stream/stream-sync.ts` (`hardDeleteEligibleUsers`), `scrubUser`      |
+| `DeleteChannels`     | **60 / min**     | `jobs/stream/expire-event-channels.ts` (retention purge)                      |
+| `ExportUsers`        | **60 / min**     | Compliance / DSAR export workflows                                            |
+| `UpdateUsers`        | **300 / min**    | `actions/stream/chat/user.action.ts` (`upsertUsersToStream`, 100-user chunks) |
+| `UpdateUsersPartial` | **300 / min**    | User profile and role synchronization                                         |
+| `SendMessage`        | **1,000 / min**  | `app/api/stream/channels/open/route.ts` (`booking-ctx-` receipt cards)        |
+| `QueryChannels`      | **10,000 / min** | `lib/stream/batch.ts` (`queryChannelsPaged`, 30-channel page ceiling)         |
+
+> [!IMPORTANT]
+> **Why Batch Jobs Enforce `10_000ms` Pacing Between 100-Item Chunks:**
+> Stream's batch deletion endpoints (`deleteUsers` and `deleteChannels`) accept up to 100 IDs per request, but their rate limit is **60 requests per minute** (1 request/second sustained, with tight burst buckets on shared cluster placements). Both `jobs/stream/expire-event-channels.ts` and `scripts/stream/stream-sync.ts` enforce a **`10_000ms` (10-second) delay between 100-item chunks** (`RATE_LIMIT_DELAY_MS = 10_000`, capped at 6 chunks/minute = 600 items/minute) so background cleanup jobs never trip `429 Too Many Requests` or starve interactive user traffic.
 
 ---
 
 ## Package Installation
 
-Stream SDK consists of **4 separate packages**, each serving a specific purpose.
+Stream SDK consists of **4 separate packages**, pinned to exact versions in `package.json` (no caret ranges).
 
 ### Required Packages
 
 ```json
 {
   "dependencies": {
-    "@stream-io/node-sdk": "^0.4.17",
-    "@stream-io/video-react-sdk": "^1.12.6",
-    "stream-chat": "^8.57.6",
-    "stream-chat-react": "^12.13.1"
+    "@stream-io/node-sdk": "0.7.x",
+    "@stream-io/video-react-sdk": "1.43.3",
+    "stream-chat": "9.53.0",
+    "stream-chat-react": "13.14.6"
   }
 }
-```
-
-### Installation Steps
-
-#### Option 1: Install All at Once
-
-```bash
-npm install \
-  @stream-io/node-sdk@^0.4.17 \
-  @stream-io/video-react-sdk@^1.12.6 \
-  stream-chat@^8.57.6 \
-  stream-chat-react@^12.13.1
-```
-
-#### Option 2: Install Individually
-
-```bash
-# Server SDK (for token generation, server actions)
-npm install @stream-io/node-sdk
-
-# Video SDK (for video calls and meetings)
-npm install @stream-io/video-react-sdk
-
-# Chat SDK Core (for messaging functionality)
-npm install stream-chat
-
-# Chat React Components (UI components)
-npm install stream-chat-react
 ```
 
 ### Package Purposes
 
-| Package                      | Purpose                      | Used In                                |
-| ---------------------------- | ---------------------------- | -------------------------------------- |
-| `@stream-io/node-sdk`        | Server-side token generation | `actions/stream/chat/stream.action.ts` |
-| `@stream-io/video-react-sdk` | Video client & UI            | `providers/StreamProvider.tsx`         |
-| `stream-chat`                | Chat client core             | `providers/StreamProvider.tsx`         |
-| `stream-chat-react`          | Chat UI components           | Chat components                        |
+| Package                      | Purpose                      | Used In                                                       |
+| ---------------------------- | ---------------------------- | ------------------------------------------------------------- |
+| `@stream-io/node-sdk`        | Server-side Video & App SDK  | `lib/stream-client.ts`, `actions/stream/**`, `scripts/stream` |
+| `@stream-io/video-react-sdk` | Video client & WebRTC UI     | `providers/StreamProviderImpl.tsx`, `app/meetings/[id]/**`    |
+| `stream-chat`                | Chat client core (Node & UI) | `lib/stream-client.ts`, `providers/StreamProviderImpl.tsx`    |
+| `stream-chat-react`          | Chat React UI components     | `components/chat/**`                                          |
 
-### Peer Dependencies
+---
 
-Ensure you have React installed (already in Next.js):
+## Pinned SDK Version Holds
 
-```json
-{
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  }
-}
-```
+All four Stream packages use exact version pins in `package.json` and are grouped under `stream-communication` in `.github/dependabot.yml` (with `version-update:semver-major` ignored globally). Two packages have deliberate version-hold constraints and upgrade verification gates:
 
-### Verify Installation
-
-```bash
-# Check installed versions
-npm list @stream-io/node-sdk
-npm list @stream-io/video-react-sdk
-npm list stream-chat
-npm list stream-chat-react
-```
-
-**Expected Output:**
-
-```
-familiarise_web@0.2.0 /path/to/project
-├── @stream-io/node-sdk@0.4.17
-├── @stream-io/video-react-sdk@1.12.6
-├── stream-chat@8.57.6
-└── stream-chat-react@12.13.1
-```
+| Package                   | Held Series | Upstream Latest Series | Reason for Hold & Upgrade Verification Criteria                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------- | ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`@stream-io/node-sdk`** | `0.7.x`     | `0.8.x`                | **Type & Runtime Regression Hold**: `@stream-io/node-sdk` `0.8.0` broke `UpdateCallMembersRequest` TypeScript signatures, dropped Node `< 22.12`, and introduced call-member update regressions. Before adopting any `0.8.x` release, verify `npx tsc --noEmit` passes without casts on `call.updateCallMembers` in `app/api/meetings/[meetingId]/join/route.ts` and `scripts/stream/backfill-call-member-role.ts`, and run `npx jest __tests__/stream/`.                                        |
+| **`stream-chat-react`**   | `13.x`      | `14.x`                 | **Breaking Component & Theme Overhaul Hold**: `stream-chat-react` `v14` introduced breaking `AttachmentActionsProps` changes, redesigned `MessageComposer` and `MessageActions`, and replaced CSS v2 theming tokens. Never merge `v14` inside an automated Dependabot batch PR; upgrading requires a dedicated PR auditing every custom component under `components/chat/` (`CustomMessage.tsx`, `ChatContainer.tsx`, `ChatSidebar.tsx`) and visual regression sign-off across light/dark modes. |
+| **`stream-chat`**         | `9.x`       | `10.x-rc`              | **Pre-Release Hold**: `stream-chat` `v10` remains in release-candidate status with breaking API removals (`Channel.getConfig()` removed, `client.configs` renamed to `client.channelServerConfigs`, `linkPreviews.enabled` default inverted). Hold on `9.x` stable until `v10` reaches general availability and `stream-chat-react` `v14` migration is scheduled.                                                                                                                                |
 
 ### Import Stream CSS
 
-Stream CSS is imported inside `providers/StreamProvider.tsx`, co-located with the provider that renders Stream UI components:
+Stream CSS is imported inside `providers/StreamProviderImpl.tsx`, co-located with the lazy-loaded provider implementation that renders Stream UI components:
 
 ```typescript
-// providers/StreamProvider.tsx
+// providers/StreamProviderImpl.tsx
 import "stream-chat-react/dist/css/v2/index.css";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 ```
 
-⚠️ **Important:** Import CSS **before** your custom styles to allow overrides. Do not import in `app/layout.tsx` — the CSS is scoped to the provider that owns the Stream UI.
+⚠️ **Important:** Import CSS **before** your custom styles to allow overrides. Do not import in `app/layout.tsx` or `providers/StreamProvider.tsx` — the CSS is scoped to the lazy `StreamProviderImpl` chunk so non-Stream routes never pay the CSS bundle cost.
 
 ---
 
@@ -276,64 +293,17 @@ Stream provides default channel types. For Familiarise, configure:
 
 **Navigation:** Dashboard → Chat → Roles & Permissions
 
-⚠️ **CRITICAL BUG:** Currently all users get "admin" role regardless of actual role.
-See: [Troubleshooting - Universal Admin Role](./troubleshooting.md#universal-admin-role-critical)
+Only platform `ADMIN` and `STAFF` accounts receive the global `admin` role in Stream (`mapRoleToStream` in `lib/user.ts`). All other accounts (`CONSULTANT`, `CONSULTEE`, `USER`) receive the standard `user` role, while event hosts receive channel-scoped `channel_moderator` grants on their own `team` channels (`assignRoles` in `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts`).
 
-#### Built-in Roles
+#### Role Mapping (`lib/user.ts`)
 
-Stream provides these default roles:
-
-```typescript
-// admin (currently used for everyone)
-{
-  name: "admin",
-  permissions: ["*"] // Full access to all operations
-}
-
-// user (standard permissions)
-{
-  name: "user",
-  permissions: [
-    "read-channel",
-    "send-message",
-    "delete-own-message",
-    "update-own-message",
-    "upload-file"
-  ]
-}
-
-// channel_moderator (channel-level moderation)
-{
-  name: "channel_moderator",
-  permissions: [
-    "*user-permissions*",
-    "delete-any-message",
-    "ban-channel-members",
-    "update-channel"
-  ]
-}
-
-// anonymous (read-only)
-{
-  name: "anonymous",
-  permissions: [
-    "read-channel"
-  ]
-}
-```
-
-#### Intended Role Mapping
-
-**Once bug is fixed**, roles should map as follows:
-
-| App Role     | Stream Role         | Permissions               |
-| ------------ | ------------------- | ------------------------- |
-| `ADMIN`      | `admin`             | Full system access        |
-| `CONSULTANT` | `channel_moderator` | Create channels, moderate |
-| `CONSULTEE`  | `user`              | Read, send messages       |
-| `USER`       | `user`              | Standard permissions      |
-
-**Implementation Location:** `lib/user.ts:98-115` (`mapRoleToStream` function)
+| App Role     | Global Stream Role | Channel-Scoped Role (Owned Group Events) | Effective Permissions                    |
+| ------------ | ------------------ | ---------------------------------------- | ---------------------------------------- |
+| `ADMIN`      | `admin`            | —                                        | Full system access                       |
+| `STAFF`      | `admin`            | —                                        | Full system access                       |
+| `CONSULTANT` | `user`             | `channel_moderator`                      | Moderate own group channels; standard DM |
+| `CONSULTEE`  | `user`             | —                                        | Read and send messages in joined threads |
+| `USER`       | `user`             | —                                        | Standard permissions                     |
 
 ### 3. Enable Chat Features
 

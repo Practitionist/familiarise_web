@@ -347,9 +347,7 @@ const connectServices = useCallback(
       setIsConnecting(false);
     }
   },
-  [
-    /* dependencies */
-  ],
+  [/* dependencies */],
 );
 ```
 
