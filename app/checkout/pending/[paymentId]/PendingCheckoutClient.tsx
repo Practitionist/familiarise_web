@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { apiErrorSchema, errorMessageFromBody } from "@/lib/fetch-helpers";
 import { payPagePath } from "@/lib/payments/pay-link-href";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -15,6 +15,8 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 // The expiry sweep may lag the hold's clock; re-ask the server a bounded number of times.
 const STATUS_CHECK_INTERVAL_MS = 15_000;
 const MAX_STATUS_CHECKS = 8;
+const ALREADY_PAID_NOTICE =
+  "Your payment for this booking has already gone through, so it was not cancelled.";
 
 function remainingLabel(msLeft: number): string {
   const totalSeconds = Math.max(0, Math.floor(msLeft / 1000));
@@ -81,6 +83,16 @@ export function PendingCheckoutClient({
     return () => clearTimeout(timer);
   }, [checking, checks, checksExhausted, router]);
 
+  // A payment finished in another tab or app shows up when the buyer returns.
+  useEffect(() => {
+    if (lapsed) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [lapsed, router]);
+
   const detailsHref = pending.consulteeProfileId
     ? `/dashboard/consultee/${pending.consulteeProfileId}/payments`
     : "/dashboard";
@@ -94,12 +106,22 @@ export function PendingCheckoutClient({
         `/api/bookings/${pending.appointmentId}/abandon`,
         { method: "POST" },
       );
+      const body: unknown = response.ok
+        ? null
+        : await response.json().catch(() => null);
+      const parsed = apiErrorSchema.safeParse(body);
+      const code = parsed.success ? parsed.data.code : undefined;
+      // ALREADY_PAID is also a 409: the booking is live, so it must not read as cancelled.
+      if (code === "ALREADY_PAID") {
+        setError(ALREADY_PAID_NOTICE);
+        router.refresh();
+        return;
+      }
       if (response.ok || response.status === 409) {
         router.push(detailsHref);
         router.refresh();
         return;
       }
-      const body: unknown = await response.json().catch(() => null);
       setError(
         errorMessageFromBody(body, "Could not cancel the booking. Try again."),
       );
@@ -121,8 +143,8 @@ export function PendingCheckoutClient({
             <p className="text-sm text-muted-foreground">
               The payment window for {pending.planTitle} has ended.{" "}
               {checksExhausted
-                ? "We could not confirm the result yet. Your payments page will show it once it settles."
-                : "We are checking whether your payment landed."}
+                ? "If you paid, your payments page will show it once it settles. If you did not, the hold is released shortly and nothing is charged."
+                : "We are checking whether a payment came through."}
             </p>
             <Button asChild variant="outline" className="w-full">
               <Link href={detailsHref}>Go to your payments</Link>
