@@ -27,7 +27,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
-import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { ENABLE_DUNNING_SUSPEND, logMoneyFlags } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   notifyOrgInvoiceOverdue,
@@ -387,5 +387,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("dunning", () => main().finally(() => prisma.$disconnect()));
+  runJob("dunning", () => {
+    logMoneyFlags("dunning");
+    return main().finally(() => prisma.$disconnect());
+  });
 }

@@ -265,6 +265,7 @@ export async function GET(req: NextRequest) {
 
     // Return success response with appointment details
     return NextResponse.json({
+      paymentId: payment.id,
       paymentIntent: payment.paymentIntent,
       appointmentType,
       status: "SUCCEEDED",

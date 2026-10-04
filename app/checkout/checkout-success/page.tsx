@@ -9,16 +9,12 @@ import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
 import type { BookingState, MoneyState } from "@/app/api/checkout/verify/route";
-interface PaymentDetails {
-  paymentIntent: string;
-  appointmentType: string;
-  status: string;
-  message: string;
-  /** #1586 — absent while the pipeline has not landed; the page keeps polling. */
-  bookingState?: BookingState;
-  /** #1675 — a full refund on its way or done outranks the booking state. */
-  moneyState?: MoneyState;
-}
+import { useSession } from "@/lib/auth-client";
+import { supportRequestsHref } from "@/lib/dashboard/account-href";
+import { verifyResponseSchema } from "@/schemas/checkout-verify";
+import type { z, ZodError } from "zod";
+
+type PaymentDetails = z.infer<typeof verifyResponseSchema>;
 
 /**
  * What the verify poll settled on. `confirming` is the normal terminal state
@@ -45,6 +41,7 @@ function CheckoutSuccessContent() {
   const [pollRun, setPollRun] = useState(0);
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { data: session } = useSession();
 
   const paymentIntent = searchParams.get("payment_intent");
 
@@ -71,6 +68,7 @@ function CheckoutSuccessContent() {
       // anything, and then it is "still confirming", never "failed".
       const delays = pollRun === 0 ? RETRY_DELAYS_MS : RETRY_NOW_DELAYS_MS;
       const maxAttempts = delays.length + 1;
+      let shapeError: ZodError | null = null;
       setPhase("loading");
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -99,15 +97,21 @@ function CheckoutSuccessContent() {
 
           if (response.ok) {
             if (cancelled) return;
-            setPaymentDetails(data);
-            // #1586 P1-J07 — SUCCEEDED alone is not "confirmed" (the #827
-            // loser and the amount-mismatch case are SUCCEEDED with no
-            // booking). Stop polling only once the route names the state.
-            if (data.bookingState) {
-              setPhase("confirmed");
-              return;
+            const parsed = verifyResponseSchema.safeParse(data);
+            if (parsed.success) {
+              setPaymentDetails(parsed.data);
+              // #1586 P1-J07 — SUCCEEDED alone is not "confirmed" (the #827
+              // loser and the amount-mismatch case are SUCCEEDED with no
+              // booking). Stop polling only once the route names the state.
+              if (parsed.data.bookingState) {
+                setPhase("confirmed");
+                return;
+              }
+              setPhase("confirming");
+            } else {
+              // An unreadable 200 is not a failed payment; keep polling and report once below.
+              shapeError = parsed.error;
             }
-            setPhase("confirming");
           } else if (
             response.status === 500 &&
             data?.errorType === "VERIFICATION_FAILED"
@@ -144,6 +148,7 @@ function CheckoutSuccessContent() {
       // reconcile-orphaned-confirmations both re-drive it, so the page keeps
       // showing "confirming" — never "failed".
       if (cancelled) return;
+      if (shapeError) reportPaymentsError(shapeError);
       setPhase("confirming");
     }
 
@@ -352,6 +357,14 @@ function CheckoutSuccessContent() {
         : "UNKNOWN",
     );
 
+  const consulteeProfileId = session?.user?.consulteeProfileId;
+  const paymentDetailHref =
+    consulteeProfileId && paymentDetails.paymentId
+      ? `/dashboard/consultee/${consulteeProfileId}/payments/${encodeURIComponent(paymentDetails.paymentId)}`
+      : null;
+  const supportHref =
+    (session?.user && supportRequestsHref(session.user)) ?? "/support";
+
   return (
     <div className="min-h-screen bg-muted py-12">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -402,6 +415,14 @@ function CheckoutSuccessContent() {
                 <div className="text-sm text-muted-foreground/70 font-mono break-all">
                   Payment ID: {paymentIntent}
                 </div>
+                {paymentDetailHref && (
+                  <Link
+                    href={paymentDetailHref}
+                    className="mt-2 inline-block text-sm font-medium text-foreground hover:underline"
+                  >
+                    View payment details
+                  </Link>
+                )}
               </div>
             )}
           </CardContent>
@@ -425,7 +446,7 @@ function CheckoutSuccessContent() {
           <p>
             Need help? Contact our{" "}
             <Link
-              href="/dashboard"
+              href={supportHref}
               className="text-foreground font-medium hover:underline"
             >
               support team

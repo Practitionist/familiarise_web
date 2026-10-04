@@ -419,18 +419,23 @@ const nextConfig = {
       {
         hostname: "cdn.jsdelivr.net",
       },
-      {
-        hostname: "picsum.photos",
-      },
-      {
-        hostname: "fastly.picsum.photos",
-      },
-      {
-        hostname: "images.unsplash.com",
-      },
-      {
-        hostname: "plus.unsplash.com",
-      },
+      // Dev/placeholder image hosts are never reachable from a production build.
+      ...(process.env.NODE_ENV === "production"
+        ? []
+        : [
+            {
+              hostname: "picsum.photos",
+            },
+            {
+              hostname: "fastly.picsum.photos",
+            },
+            {
+              hostname: "images.unsplash.com",
+            },
+            {
+              hostname: "plus.unsplash.com",
+            },
+          ]),
     ],
   },
 

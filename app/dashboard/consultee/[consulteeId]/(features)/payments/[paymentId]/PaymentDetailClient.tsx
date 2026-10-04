@@ -23,26 +23,11 @@ const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
 });
 const formatWhen = (value: Date | string) => DATE_TIME.format(new Date(value));
 
-/**
- * #1527 Q5 — "What happened to this charge?": the money line and its facts,
- * the refund timeline with arrival times, every document for it, and the
- * same "Problem with this charge" door the appointment page has.
- */
-export function PaymentDetailClient({
-  consulteeId,
-  detail,
-}: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
-  const { row, moneyState } = detail;
-  useSetBreadcrumbLabel(row.planTitle);
-  const basePath = `/dashboard/consultee/${consulteeId}`;
-  const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
-  // #1527 — the booking's request page, opened on the payment intent; a
-  // charge with no booking goes to the Platform tab's request form.
-  const helpHref = row.appointmentId
-    ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
-    : `${basePath}/support?view=platform`;
+type Money = (paise: number) => string;
 
-  const facts = [
+function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
+  const { row, moneyState } = detail;
+  return [
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
       ? [
           {
@@ -78,9 +63,11 @@ export function PaymentDetailClient({
     { label: "Date", value: formatWhen(row.createdAt) },
     { label: "For", value: `${row.planTitle} with ${row.consultantName}` },
   ];
+}
 
-  const documents = [
-    ...(detail.invoicePdfHref
+function chargeDocuments(detail: ConsulteePaymentDetail) {
+  return [
+    ...(detail.invoicePdfHref && detail.taxDocumentsAvailable
       ? [
           {
             key: "invoice",
@@ -92,12 +79,40 @@ export function PaymentDetailClient({
     ...(detail.receiptHref
       ? [{ key: "receipt", label: "Receipt", href: detail.receiptHref }]
       : []),
-    ...detail.creditNotes.map((note) => ({
+    ...(detail.taxDocumentsAvailable ? detail.creditNotes : []).map((note) => ({
       key: note.id,
       label: `Credit note ${note.number} (PDF)`,
       href: note.href,
     })),
   ];
+}
+
+/**
+ * "What happened to this charge?": the money line and its facts,
+ * the refund timeline with arrival times, every document for it, and the
+ * same "Problem with this charge" door the appointment page has.
+ */
+export function PaymentDetailClient({
+  consulteeId,
+  detail,
+}: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
+  const { row, moneyState } = detail;
+  useSetBreadcrumbLabel(row.planTitle);
+  const basePath = `/dashboard/consultee/${consulteeId}`;
+  const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
+  // The booking's request page, opened on the payment intent; a
+  // charge with no booking goes to the Platform tab's request form.
+  const helpHref = row.appointmentId
+    ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
+    : `${basePath}/support?view=platform`;
+
+  const facts = chargeFacts(detail, money);
+  const taxDocsPending =
+    !detail.taxDocumentsAvailable &&
+    (detail.invoicePdfHref !== null ||
+      detail.creditNotes.length > 0 ||
+      row.status === "SUCCEEDED");
+  const documents = chargeDocuments(detail);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -130,6 +145,38 @@ export function PaymentDetailClient({
         )}
       </Section>
 
+      {detail.refunds.length > 0 && (
+        <Section title="Refund details" variant="card">
+          <ul className="divide-y divide-border">
+            {detail.refunds.map((refund) => (
+              <li key={refund.id} className="space-y-1 py-3 text-sm first:pt-0">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-foreground">
+                    {formatCurrencyAmount(refund.amountPaise, refund.currency)}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {humanizeEnum(refund.status)}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Requested {formatWhen(refund.createdAt)} · Updated{" "}
+                  {formatWhen(refund.updatedAt)}
+                </p>
+                {refund.failureNotice && (
+                  <p className="text-xs text-foreground">
+                    {refund.failureNotice}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Refund reference for support:{" "}
+                  <span className="font-mono">{refund.gatewayRefundId}</span>
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {detail.refundTimeline.length > 0 && (
         <Section title="Refunds" variant="card">
           <ol className="space-y-3">
@@ -154,11 +201,19 @@ export function PaymentDetailClient({
       )}
 
       <Section title="Documents" variant="card">
-        {documents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No documents for this charge yet. A tax invoice is issued once a
-            payment goes through.
+        {taxDocsPending && (
+          <p className="mb-2 text-sm text-muted-foreground">
+            Your tax invoice is not available yet. It will appear here once it
+            is ready.
           </p>
+        )}
+        {documents.length === 0 ? (
+          !taxDocsPending && (
+            <p className="text-sm text-muted-foreground">
+              No documents for this charge yet. A tax invoice is issued once a
+              payment goes through.
+            </p>
+          )
         ) : (
           <ul className="space-y-2 text-sm">
             {documents.map((doc) => (

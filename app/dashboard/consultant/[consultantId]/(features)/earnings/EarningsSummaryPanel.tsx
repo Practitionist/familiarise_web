@@ -91,7 +91,13 @@ export function EarningsSummaryPanel({
   }
 
   if (view === "activity") {
-    return <EarningsActivity data={data} isStale={isPlaceholderData} />;
+    return (
+      <EarningsActivity
+        consultantId={consultantId}
+        data={data}
+        isStale={isPlaceholderData}
+      />
+    );
   }
   let offeringStats: typeof stats.data | null | undefined;
   if (stats.data) offeringStats = stats.data;
