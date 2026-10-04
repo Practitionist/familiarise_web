@@ -72,7 +72,7 @@ is real money on the first run — so the prerequisites below are hard gates.
       retry can never double-pay.
 - [ ] **Sandbox proof done** (next section) — green.
 - [ ] **Reconcile clean**: `reconcile-ledgers` reports `ok:true`, 0 findings
-      (incl. `ORG_PAYOUT_TOTAL_MISMATCH`, `LEDGER_BALANCE_SNAPSHOT_DRIFT`).
+      (incl. `ORG_PAYOUT_TOTAL_MISMATCH`).
 - [ ] **Monitoring live**: `ENABLE_BETTERSTACK_TELEMETRY=true` so a stuck/failed
       payout pages someone (#776 §K — `handle-stuck-payouts` emits to the sink).
 - [ ] **Rollback understood** (final section).

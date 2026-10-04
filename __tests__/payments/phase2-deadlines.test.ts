@@ -36,6 +36,7 @@ const END = new Date("2026-10-01T10:00:00.000Z");
 const consultationCreate = jest.fn();
 const webhookAppointmentCreate = jest.fn();
 const webhookTx = {
+  $executeRaw: jest.fn(async () => 0),
   payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   consultation: {
     create: consultationCreate,
@@ -98,6 +99,8 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
+  resolvePaymentForEarnings: jest.fn(async () => null),
   reverseEarningsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/email", () => ({

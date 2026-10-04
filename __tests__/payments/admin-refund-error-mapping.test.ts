@@ -71,8 +71,6 @@ jest.mock("../../lib/payments/operations/refund", () => {
 // org-funded intents reverse in-ledger; the same spy answers it.
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...args: unknown[]) => refundPayment(...args),
-  fundingRailForIntent: (intent: string) =>
-    intent.startsWith("org_") ? "INTERNAL" : "GATEWAY",
 }));
 
 // #1586 — the whole-event receipt for INTERNAL seats (parity with #1740 M9).

@@ -39,6 +39,7 @@ import {
   mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -1637,9 +1638,8 @@ export async function settleLostDispute(
 
     // #CASC — the shared CAS writer pins the prior amount and writes an
     // absolute value, so two LOST disputes compose to min(share, a + b).
-    const orgApplied = (
-      await applyCappedOrgEarningReversal(tx, oe, requested)
-    ).reversedPaise;
+    const orgApplied = (await applyCappedOrgEarningReversal(tx, oe, requested))
+      .reversedPaise;
 
     // Terminalised here, not by the helper: a LOST dispute makes the row
     // terminal even when proration recovers less than the share. The
@@ -1683,6 +1683,8 @@ export async function settleLostDispute(
       organizationId: true,
       billingAccountId: true,
       amount: true,
+      paymentIntent: true,
+      appointmentId: true,
     },
   });
   if (disputedPayment?.organizationId) {
@@ -1717,6 +1719,11 @@ export async function settleLostDispute(
     amountPaise: dispute.amountPaise,
     reason: `chargeback lost (dispute ${disputeId})`,
   });
+
+  // Replay sales are the only appointment-less payments that grant playback.
+  if (disputedPayment?.appointmentId === null) {
+    await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
+  }
 
   // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
   // by its own s.34 credit note on the platform series; idempotent on
@@ -2160,24 +2167,22 @@ export async function applyB2cChargebackReversal(
   // Proportional inverse: flip each leg's direction and floor-scale by the
   // settled fraction (== the whole booking for a full chargeback, no prior refund).
   const postings: Posting[] = booking.entries
-    .map(
-      (e): Posting => ({
-        account: {
-          kind: e.account.kind,
-          organizationId: e.account.organizationId,
-          consultantProfileId: e.account.consultantProfileId,
-        },
-        direction:
-          e.direction === "DEBIT" ? ("CREDIT" as const) : ("DEBIT" as const),
-        // BigInt arithmetic (not Number*) so the proportional scale can't lose
-        // precision on large paise values; BigInt division truncates toward zero
-        // == Math.floor for these non-negative operands.
-        amountPaise: Number(
-          (BigInt(e.amountPaise) * BigInt(settlePaise)) /
-            BigInt(paymentAmountPaise),
-        ),
-      }),
-    )
+    .map((e): Posting => ({
+      account: {
+        kind: e.account.kind,
+        organizationId: e.account.organizationId,
+        consultantProfileId: e.account.consultantProfileId,
+      },
+      direction:
+        e.direction === "DEBIT" ? ("CREDIT" as const) : ("DEBIT" as const),
+      // BigInt arithmetic (not Number*) so the proportional scale can't lose
+      // precision on large paise values; BigInt division truncates toward zero
+      // == Math.floor for these non-negative operands.
+      amountPaise: Number(
+        (BigInt(e.amountPaise) * BigInt(settlePaise)) /
+          BigInt(paymentAmountPaise),
+      ),
+    }))
     .filter((p) => p.amountPaise > 0);
 
   // Balance the floor residual onto PLATFORM_FEE (the platform absorbs rounding,

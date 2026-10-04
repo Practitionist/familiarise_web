@@ -194,6 +194,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Discount Code Not Applicable",
     description: null,
   },
+  [ErrorTypes.DISCOUNT_EXHAUSTED]: {
+    title: "Discount Code Fully Redeemed",
+    description: null,
+  },
   // The verify route's non-2xx: the capture may still confirm by webhook, so
   // the copy must not claim the payment failed (PR-G makes verify emit it).
   [ErrorTypes.VERIFICATION_FAILED]: {

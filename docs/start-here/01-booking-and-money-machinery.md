@@ -1307,13 +1307,12 @@ Reconciliation Engine V2 (26 Set-Based Invariant Checks across 4 Groups)
   |
   +-- Group 1: Journal Soundness (Full-Scope Only)
   |     |-- LEDGER_TXN_IMBALANCE: Sum(DEBIT) - Sum(CREDIT) == 0
-  |     |-- LEDGER_BALANCE_SNAPSHOT_DRIFT: O(1) cache == Sum(Journal)
   |     +-- REFUND_BOOKING_COHERENCE: Refunded bookings have released capacity
   |
   +-- Group 2: Money Caches vs. Journal
   |     |-- WALLET_BALANCE_DRIFT: Calls freezeWalletSpend(isWalletFrozen=true) & Pages P0
   |     |-- EARNINGS_LEDGER_DRIFT: ConsultantEarnings == Journal payables
-  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: Unjournaled payments > 60s grace
+  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: Earnings rows with no booking journal
   |     |-- PAYMENT_LEG_SUM_MISMATCH: Sum(Legs) == Payment.amount
   |     |-- ORG_PAYOUT_TOTAL_MISMATCH: Batched earnings sum == netPayoutPaise
   |     +-- LEDGER_DUAL_WRITE_GAP: Payout clawbacks match posted CASH debits
@@ -1331,8 +1330,7 @@ Reconciliation Engine V2 (26 Set-Based Invariant Checks across 4 Groups)
         +-- LEDGER_ACCOUNT_NON_INR: All accounts strictly INR-denominated
 ```
 
-- **60-Second Grace Window (`RECONCILE_UNJOURNALED_GRACE_MS = 60_000`)**: Reduced from 30 minutes to 60 seconds because Wave 2 (`#1758`) journals earnings and `booking:<paymentId>` atomically inside Phase 1.
-- **Chunked Resumable Engine (`#1454`)**: Full sweeps execute in bounded cursor chunks under `RECONCILE_CHUNK_BUDGET_MS` (`12s` soft deadline) so serverless functions never hit 504 gateway timeouts.
+- **No grace window**: an earnings row and its `booking:<paymentId>` journal always commit in one transaction, and the check reads earnings before journal transactions, so a fresh payment can never look unjournaled.
 
 ---
 

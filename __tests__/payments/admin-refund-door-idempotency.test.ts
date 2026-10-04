@@ -47,7 +47,6 @@ const restoreClassSeatCredits = jest.fn(async (..._args: unknown[]) => ({
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
   restoreClassSeatCredits: (...a: unknown[]) => restoreClassSeatCredits(...a),
-  fundingRailForIntent: jest.fn(),
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   RefundGatewayError: class extends Error {},

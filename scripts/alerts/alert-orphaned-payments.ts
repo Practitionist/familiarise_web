@@ -33,6 +33,7 @@ import { PaymentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 
 /** The `SystemEvent.category` every orphaned-payment row is filed under. */
 const EVENT_CATEGORY = "PAYMENT";
@@ -147,13 +148,15 @@ async function alertOrphanedPaymentsUnlocked(
 
   // Find succeeded payments without appointments, oldest first so a backlog
   // drains in arrival order. Side-charges carry appointmentId null by design,
-  // so they are excluded from the critical cohort and counted separately.
+  // so they are excluded from the critical cohort and counted separately;
+  // replay sales and auto-refund markers are settled by their own rails.
   const orphanedPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
       appointmentId: null,
       parentPaymentId: null,
       NOT: { paymentIntent: { startsWith: "overage:" } },
+      AND: [notSettledElsewhereWhere],
       createdAt: { gte: sevenDaysAgo },
     },
     include: {

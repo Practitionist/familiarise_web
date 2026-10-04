@@ -157,6 +157,10 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
 // Captured, not executed: the balance assertion below re-derives what the
 // ledger would enforce, so a drift ships as a red test instead of a red
 // production reconcile report.
+const mockMintConsumerCreditNote = jest.fn();
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerCreditNote: (...a: unknown[]) => mockMintConsumerCreditNote(...a),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
@@ -238,6 +242,13 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
     });
     // No amounts passed → full restoration of every usage row.
     expect(mockReverseCredits).toHaveBeenCalledWith(PAYMENT_ID, tx);
+    // The consumer invoice is reversed for the whole credit-funded value.
+    expect(mockMintConsumerCreditNote).toHaveBeenCalledWith(tx, {
+      paymentId: PAYMENT_ID,
+      refundId: "refund-row-1",
+      amountPaise: 118_000,
+      reason: "cancellation",
+    });
     expect(mockReverseUtilization).toHaveBeenCalledWith(tx, {
       paymentId: PAYMENT_ID,
       reason: "cancellation",

@@ -11,10 +11,8 @@ import {
   RefundValidationError,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
-import {
-  fundingRailForIntent,
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,

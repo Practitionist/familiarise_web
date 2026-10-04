@@ -18,10 +18,8 @@ import {
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import {
-  fundingRailForIntent,
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import {
   findDedupedRefund,
   RefundValidationError,

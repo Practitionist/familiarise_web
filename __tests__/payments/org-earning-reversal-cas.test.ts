@@ -42,6 +42,11 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
 }));
 
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerCreditNote: jest.fn().mockResolvedValue({
+    consumerCreditNoteId: null,
+  }),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
@@ -94,7 +99,7 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   ).postPayoutClawback,
 }));
 
-const tx: Record<string, any> = {
+const tx: Record<string, Record<string, jest.Mock>> = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findFirst: jest.fn(),
@@ -187,32 +192,44 @@ type ConsRow = {
  * amount) and whose `findUnique` really re-reads. `refuseAlways` models a row a
  * concurrent writer keeps outrunning, i.e. the worst-case two-refusal path.
  */
-function makeDelegate<T extends Record<string, any>>(
+function makeDelegate<T extends { id: string; status: EarningStatus }>(
   rows: T[],
-  amountColumn: string,
+  amountColumn: keyof T & string,
   refuseAlways = false,
 ) {
-  const updateMany = jest.fn(async ({ where, data }: any) => {
-    if (refuseAlways) return { count: 0 };
-    let count = 0;
-    for (const r of rows) {
-      if (where.id !== undefined && where.id !== r.id) continue;
-      if (where.status !== undefined) {
-        const allowed = where.status.in ?? [where.status];
-        if (!allowed.includes(r.status)) continue;
+  const updateMany = jest.fn(
+    async ({
+      where,
+      data,
+    }: {
+      where: Record<string, unknown> & {
+        id?: string;
+        status?: EarningStatus | { in: EarningStatus[] };
+      };
+      data: Partial<T>;
+    }) => {
+      if (refuseAlways) return { count: 0 };
+      let count = 0;
+      for (const r of rows) {
+        if (where.id !== undefined && where.id !== r.id) continue;
+        if (where.status !== undefined) {
+          const allowed =
+            typeof where.status === "object" ? where.status.in : [where.status];
+          if (!allowed.includes(r.status)) continue;
+        }
+        if (
+          where[amountColumn] !== undefined &&
+          where[amountColumn] !== r[amountColumn]
+        ) {
+          continue;
+        }
+        count++;
+        Object.assign(r, data);
       }
-      if (
-        where[amountColumn] !== undefined &&
-        where[amountColumn] !== r[amountColumn]
-      ) {
-        continue;
-      }
-      count++;
-      Object.assign(r, data);
-    }
-    return { count };
-  });
-  const findUnique = jest.fn(async ({ where }: any) => {
+      return { count };
+    },
+  );
+  const findUnique = jest.fn(async ({ where }: { where: { id: string } }) => {
     const r = rows.find((x) => x.id === where.id);
     if (!r) return null;
     return { status: r.status, [amountColumn]: r[amountColumn] };
@@ -637,7 +654,13 @@ function sum(
     .reduce((s, p) => s + p.amountPaise, 0);
 }
 
-function lastPosting(): any[] {
+type PostingArg = {
+  account: { kind: string };
+  direction: string;
+  amountPaise: number;
+};
+
+function lastPosting(): PostingArg[] {
   const calls = mockPostLedgerTxn.mock.calls;
   return calls[calls.length - 1]?.[1]?.postings ?? [];
 }
@@ -706,7 +729,8 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     });
     // The payout counter took the APPLIED figure.
     const clawback = tx.organizationPayout.update.mock.calls.find(
-      ([arg]: any) => !!arg?.data?.clawbackAmountPaise,
+      ([arg]: [{ data?: { clawbackAmountPaise?: number } }]) =>
+        !!arg?.data?.clawbackAmountPaise,
     );
     expect(clawback?.[0].data.clawbackAmountPaise).toEqual({
       increment: 20_000,
@@ -725,7 +749,7 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     );
     // The ORG_PAYABLE debit matches the applied figure, and the txn still balances.
     const payable = lastPosting().find(
-      (p: any) => p.account.kind === "ORG_PAYABLE" && p.direction === "DEBIT",
+      (p) => p.account.kind === "ORG_PAYABLE" && p.direction === "DEBIT",
     );
     expect(payable).toMatchObject({ amountPaise: 20_000 });
     expect(sum(lastPosting(), "DEBIT")).toBe(sum(lastPosting(), "CREDIT"));
@@ -761,14 +785,14 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     expect(clawbackPosts()).toHaveLength(0);
     expect(
       lastPosting().find(
-        (p: any) => p.account.kind === "ORG_PAYABLE" && p.direction === "DEBIT",
+        (p) => p.account.kind === "ORG_PAYABLE" && p.direction === "DEBIT",
       ),
     ).toBeUndefined();
     // The funding return is still journalled — the credits really came back —
     // so the txn balances with the whole amount as the fee residual.
     expect(sum(lastPosting(), "DEBIT")).toBe(sum(lastPosting(), "CREDIT"));
     expect(
-      lastPosting().find((p: any) => p.account.kind === "PLATFORM_FEE"),
+      lastPosting().find((p) => p.account.kind === "PLATFORM_FEE"),
     ).toMatchObject({ direction: "DEBIT", amountPaise: 100_000 });
     noZeroAmountPosting();
     warn.mockRestore();

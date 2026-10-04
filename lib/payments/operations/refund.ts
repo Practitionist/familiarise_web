@@ -64,6 +64,7 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -84,6 +85,7 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 
 import {
   applyCappedEarningReversal,
@@ -271,6 +273,16 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     const err = new RefundValidationError(
       `Payment ${input.paymentId} not found`,
       "PAYMENT_NOT_FOUND",
+    );
+    reportModelledRefundOutcome(err);
+    throw err;
+  }
+  // Org-funded and credit-funded intents have no gateway money; only
+  // refundBookingPayment's in-ledger rails may return them.
+  if (fundingRailForIntent(payment.paymentIntent) !== "GATEWAY") {
+    const err = new RefundValidationError(
+      `Payment ${input.paymentId} is not gateway-funded; refund it through refundBookingPayment`,
+      "NOT_A_GATEWAY_PAYMENT",
     );
     reportModelledRefundOutcome(err);
     throw err;
@@ -984,6 +996,20 @@ export async function applyRefundCascade(
         reversedPaise: remaining,
       },
     });
+  }
+
+  // Replay sales are the only appointment-less payments that grant playback;
+  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  if (payment.appointmentId === null) {
+    const otherSucceededPaise = payment.refunds
+      .filter(
+        (r) =>
+          r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+      )
+      .reduce((sum, r) => sum + r.amountPaise, 0);
+    if (otherSucceededPaise + input.amountPaise >= payment.amount) {
+      await revokeReplayEntitlement(tx, payment.paymentIntent);
+    }
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {

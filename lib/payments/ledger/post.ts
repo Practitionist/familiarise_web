@@ -8,7 +8,8 @@ import type { PrismaLike } from "@/lib/prisma";
  *
  * Every cash event posts ONE balanced LedgerTransaction: Σ(DEBIT) == Σ(CREDIT),
  * all amounts positive paise. Balances are DERIVED via `ledgerBalancePaise()` —
- * never stored. `BillingAccount.walletBalance` survives only as a cache for the
+ * never stored, so postings to shared accounts (CASH, GST_PAYABLE) write no
+ * common row and never serialize each other. `BillingAccount.walletBalance` survives only as a cache for the
  * atomic-debit guard, asserted against balance(WALLET) by the reconcile cron.
  *
  * Accounts resolve on demand to a DETERMINISTIC id
@@ -253,76 +254,21 @@ export async function postLedgerTxn(
     throw err;
   }
 
-  // #776 — fold this txn's postings into the maintained per-account balance
-  // snapshot. Runs inside the caller's tx, so it's atomic with the journal
-  // write; the idempotency fast-path above returns before any mutation, so a
-  // retried key never double-applies. Multiple postings can hit the same
-  // account, so aggregate the signed delta + entry count per account first.
-  const deltas = new Map<string, { delta: bigint; count: bigint }>();
-  input.postings.forEach((p, i) => {
-    const id = accountIds[i];
-    const signed = p.direction === "DEBIT" ? p.amountPaise : -p.amountPaise;
-    const cur = deltas.get(id) ?? { delta: BigInt(0), count: BigInt(0) };
-    cur.delta += BigInt(signed);
-    cur.count += BigInt(1);
-    deltas.set(id, cur);
-  });
-  // Sort account ids so every txn acquires LedgerAccountBalance row locks in
-  // the same order — concurrent posts touching shared accounts (CASH,
-  // PLATFORM_FEE) in different posting orders would otherwise deadlock.
-  for (const accountId of Array.from(deltas.keys()).sort()) {
-    const { delta, count } = deltas.get(accountId)!;
-    await db.ledgerAccountBalance.upsert({
-      where: { accountId },
-      create: { accountId, balancePaise: delta, entrySeq: count },
-      update: {
-        balancePaise: { increment: delta },
-        entrySeq: { increment: count },
-      },
-    });
-  }
-
   return { transactionId: txn.id, created: true };
 }
 
 /**
- * Signed balance (Σ DEBIT − Σ CREDIT) of an account, in paise. For liability
- * accounts (WALLET, *_PAYABLE) the amount owed is the negative of this (credit
- * normal); callers interpret per kind.
- *
- * #776 — reads the O(1) maintained snapshot (`LedgerAccountBalance`). Falls
- * back to the O(n) journal scan only when the snapshot row is missing (an
- * account that exists but has never been posted to via postLedgerTxn, or
- * pre-snapshot data) — that path also returns 0 for a never-posted account.
+ * Signed balance (Σ DEBIT − Σ CREDIT) of an account, in paise, aggregated from
+ * the journal. For liability accounts (WALLET, *_PAYABLE) the amount owed is the
+ * negative of this (credit normal); callers interpret per kind.
  */
 export async function ledgerBalancePaise(
   db: PrismaLike,
   ref: AccountRef,
 ): Promise<number> {
-  const id = ledgerAccountId(ref);
-  const snapshot = await db.ledgerAccountBalance.findUnique({
-    where: { accountId: id },
-    select: { balancePaise: true },
-  });
-  if (snapshot) return Number(snapshot.balancePaise);
-
-  // Defensive fallback: derive from the journal. Reachable only if a posting
-  // bypassed postLedgerTxn (it shouldn't) or for an account with zero entries.
-  return ledgerBalanceFromJournalPaise(db, id);
-}
-
-/**
- * Authoritative balance straight from the append-only journal — the snapshot's
- * ground truth. Used by the reconcile cron's LEDGER_BALANCE_SNAPSHOT_DRIFT
- * check and as the fallback in `ledgerBalancePaise`.
- */
-export async function ledgerBalanceFromJournalPaise(
-  db: PrismaLike,
-  accountId: string,
-): Promise<number> {
   const rows = await db.ledgerEntry.groupBy({
     by: ["direction"],
-    where: { accountId },
+    where: { accountId: ledgerAccountId(ref) },
     _sum: { amountPaise: true },
   });
   // #780 — groupBy _sum bypasses the result extension; still bigint at runtime.

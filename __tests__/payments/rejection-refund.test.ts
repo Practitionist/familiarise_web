@@ -34,6 +34,8 @@ jest.mock("../../lib/booking/cancellation-scope", () => ({
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
+}));
+jest.mock("../../lib/payments/funding-rail", () => ({
   isFreeCreditIntent: (...a: unknown[]) => mockIsFreeCreditIntent(...a),
 }));
 

@@ -37,7 +37,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
@@ -83,6 +83,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
   processQualifyingAction,
   processConsultantBookingReferral,
+  reverseCreditsForPayment,
 } from "@/lib/referrals/service";
 import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -219,15 +220,13 @@ export async function handlePaymentSuccess(
   // atomically with appointment confirmation without holding Serializable locks
   // across read-heavy rate-card resolution queries.
   let preplannedEarnings: PreplannedEarningsContext | null = null;
-  if (typeof planEarningsForPayment === "function") {
-    try {
-      preplannedEarnings = await planEarningsForPayment(
-        { paymentIntent: paymentIntentId },
-        metadata.appointmentType,
-      );
-    } catch {
-      preplannedEarnings = null;
-    }
+  try {
+    preplannedEarnings = await planEarningsForPayment(
+      { paymentIntent: paymentIntentId },
+      metadata.appointmentType,
+    );
+  } catch {
+    preplannedEarnings = null;
   }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
@@ -665,24 +664,16 @@ export async function handlePaymentSuccess(
                 ),
               },
             });
-          } else if (typeof createEarningsFromPayment === "function") {
-            const rawTx = tx as {
-              $executeRawUnsafe?: (query: string) => Promise<unknown>;
-            };
-            const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
-            if (hasSavepoint) {
-              await rawTx.$executeRawUnsafe!("SAVEPOINT sp_phase1_earnings");
-            }
+          } else {
+            await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =
                 preplannedEarnings?.resolvedPayment ??
-                (typeof resolvePaymentForEarnings === "function"
-                  ? await resolvePaymentForEarnings(
-                      { id: payment.id },
-                      metadata.appointmentType,
-                      tx,
-                    )
-                  : null);
+                (await resolvePaymentForEarnings(
+                  { id: payment.id },
+                  metadata.appointmentType,
+                  tx,
+                ));
               if (resolvedInTx) {
                 await createEarningsFromPayment({
                   payment: resolvedInTx.paymentForEarnings,
@@ -695,19 +686,11 @@ export async function handlePaymentSuccess(
                   `💰 Earnings record created atomically in Phase 1 for payment ${payment.id}, consultant ${resolvedInTx.consultantProfileId}`,
                 );
               }
-              if (hasSavepoint) {
-                await rawTx.$executeRawUnsafe!(
-                  "RELEASE SAVEPOINT sp_phase1_earnings",
-                );
-              }
+              await tx.$executeRaw`RELEASE SAVEPOINT sp_phase1_earnings`;
             } catch (phase1EarningsErr) {
-              if (hasSavepoint) {
-                await rawTx
-                  .$executeRawUnsafe!(
-                    "ROLLBACK TO SAVEPOINT sp_phase1_earnings",
-                  )
-                  .catch(() => undefined);
-              }
+              await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_phase1_earnings`.catch(
+                () => undefined,
+              );
               const isRetryableSerialization =
                 phase1EarningsErr instanceof
                   Prisma.PrismaClientKnownRequestError &&
@@ -715,21 +698,11 @@ export async function handlePaymentSuccess(
               if (isRetryableSerialization) {
                 throw phase1EarningsErr;
               }
-              if (hasSavepoint) {
-                console.warn(
-                  `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
-                  phase1EarningsErr,
-                );
-                earningsCreatedInPhase1 = false;
-              } else if (
-                "consultantEarnings" in tx &&
-                typeof (tx as { consultantEarnings?: unknown })
-                  .consultantEarnings === "object" &&
-                (tx as { consultantEarnings?: unknown }).consultantEarnings !==
-                  null
-              ) {
-                throw phase1EarningsErr;
-              }
+              console.warn(
+                `⚠️ Phase 1 earnings creation failed for payment ${payment.id}; deferring to Phase 2:`,
+                phase1EarningsErr,
+              );
+              earningsCreatedInPhase1 = false;
             }
           }
           const appointmentForEmails = blocked
@@ -1299,6 +1272,9 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // Credits consumed at order creation go back under the same CAS, as on expiry.
+    await reverseCreditsForPayment(payment.id, tx);
+
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
@@ -1705,9 +1681,8 @@ export async function confirmExistingAppointment(
       appointment.subscription?.subscriptionPlan?.consultantProfileId ??
       appointment.webinar?.webinarPlan?.consultantProfileId ??
       appointment.class?.classPlan?.consultantProfileId;
-    const { buildCohostCommitmentFilter } = await import(
-      "@/utils/scheduling-engine/occupancyPolicy"
-    );
+    const { buildCohostCommitmentFilter } =
+      await import("@/utils/scheduling-engine/occupancyPolicy");
     const cohostCommitments = consultantProfileId
       ? buildCohostCommitmentFilter(consultantProfileId)
       : [];

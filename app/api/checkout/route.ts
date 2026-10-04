@@ -32,6 +32,7 @@ import {
   BookingRuleError,
   SlotTakenError,
 } from "@/lib/booking/booking-rule-error";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 
 /** Contention refusals per reason; their share of checkout attempts is the slot-reservation trigger. */
 function countCheckoutConflict(reason: string): void {
@@ -373,6 +374,13 @@ export async function POST(req: NextRequest) {
         errorType: classified.errorType,
         // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
         ...(error instanceof BookingRuleError ? { code: error.code } : {}),
+        ...(error instanceof DiscountExhaustedError
+          ? {
+              code: error.code,
+              currentUses: error.currentUses,
+              maxUses: error.maxUses,
+            }
+          : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         ...(errorId ? { errorId } : {}),
         timestamp: new Date().toISOString(),

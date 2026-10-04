@@ -44,7 +44,7 @@ type Earn = {
   payoutId: string | null;
 };
 
-const tx: any = {
+const tx: Record<string, Record<string, jest.Mock>> = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findFirst: jest.fn(),
@@ -142,6 +142,11 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
 // Captured, not executed: the balance assertion re-derives what the real
 // poster would enforce, so a drift ships as a red test rather than a red
 // production reconcile report.
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerCreditNote: jest.fn().mockResolvedValue({
+    consumerCreditNoteId: null,
+  }),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
@@ -179,22 +184,34 @@ function partlyReversedEarning(): Earn {
  * under test. `refuseAlways` models a row a concurrent writer keeps outrunning.
  */
 function earningsDelegate(rows: Earn[], refuseAlways = false) {
-  const updateMany = jest.fn(async ({ where, data }: any) => {
-    if (refuseAlways) return { count: 0 };
-    const r = rows.find((e) => e.id === where.id);
-    if (!r) return { count: 0 };
-    if (where.status?.in && !where.status.in.includes(r.status))
-      return { count: 0 };
-    if (
-      where.refundedShareAmount !== undefined &&
-      where.refundedShareAmount !== r.refundedShareAmount
-    ) {
-      return { count: 0 };
-    }
-    Object.assign(r, data);
-    return { count: 1 };
-  });
-  const findUnique = jest.fn(async ({ where }: any) => {
+  const updateMany = jest.fn(
+    async ({
+      where,
+      data,
+    }: {
+      where: {
+        id: string;
+        status?: { in: string[] };
+        refundedShareAmount?: number;
+      };
+      data: Partial<Earn>;
+    }) => {
+      if (refuseAlways) return { count: 0 };
+      const r = rows.find((e) => e.id === where.id);
+      if (!r) return { count: 0 };
+      if (where.status?.in && !where.status.in.includes(r.status))
+        return { count: 0 };
+      if (
+        where.refundedShareAmount !== undefined &&
+        where.refundedShareAmount !== r.refundedShareAmount
+      ) {
+        return { count: 0 };
+      }
+      Object.assign(r, data);
+      return { count: 1 };
+    },
+  );
+  const findUnique = jest.fn(async ({ where }: { where: { id: string } }) => {
     const r = rows.find((e) => e.id === where.id);
     return r
       ? { status: r.status, refundedShareAmount: r.refundedShareAmount }
@@ -212,14 +229,20 @@ function sum(
     .reduce((s, p) => s + p.amountPaise, 0);
 }
 
-function lastPosting(): any[] {
+type PostingArg = {
+  account: { kind: string };
+  direction: string;
+  amountPaise: number;
+};
+
+function lastPosting(): PostingArg[] {
   const calls = mockPostLedgerTxn.mock.calls;
   return calls[calls.length - 1]?.[1]?.postings ?? [];
 }
 
 function postingFor(kind: string) {
   return lastPosting().find(
-    (p: any) => p.account.kind === kind && p.direction === "DEBIT",
+    (p) => p.account.kind === kind && p.direction === "DEBIT",
   );
 }
 
