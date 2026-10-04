@@ -27,6 +27,7 @@ function loadTicker(): {
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
   reportableToSentry: (name: string) => boolean;
+  isFirstTickOfHour: (now: Date) => boolean;
   bucketFor: (
     status: number,
     maintenance?: boolean,
@@ -382,5 +383,28 @@ describe("cron-tick failed-target reporting", () => {
     expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
       "error",
     );
+  });
+});
+
+describe("cron-tick drain targets and failure reporting", () => {
+  const { dueTargets, isFirstTickOfHour } = loadTicker();
+  const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
+
+  it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {
+    const exportsMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("process-data-exports"));
+    expect(exportsMinutes).toEqual([0, 10, 20, 30, 40, 50]);
+    const moderationMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("retry-moderation-enforcement"));
+    expect(moderationMinutes).toEqual([25, 55]);
+  });
+
+  it("lets only the first tick of an hour report to Sentry", () => {
+    expect(isFirstTickOfHour(at(0))).toBe(true);
+    expect(isFirstTickOfHour(at(4))).toBe(true);
+    expect(isFirstTickOfHour(at(5))).toBe(false);
+    expect(isFirstTickOfHour(at(55))).toBe(false);
   });
 });

@@ -386,11 +386,13 @@ export function reportableToSentry(name: string): boolean {
 async function alertMissingSecret(error: string): Promise<void> {
   try {
     const Sentry = await import("@sentry/node");
+    const { applyErrorBudget } = await import("../../sentry.shared.config");
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
+      beforeSend: applyErrorBudget,
     });
     Sentry.captureMessage(error, "fatal");
     await Sentry.flush(2_000);
@@ -434,6 +436,11 @@ export function buildFailedTargetsEvent(
   };
 }
 
+/** At most one ticker-failure event per hour slot: only the tick in minutes 0-4 may report. */
+export function isFirstTickOfHour(now: Date): boolean {
+  return now.getUTCMinutes() < 5;
+}
+
 /**
  * Report one failing target to Sentry.
  *
@@ -456,14 +463,16 @@ export function buildFailedTargetsEvent(
 async function alertFailedTargets(
   failed: { name: string; status: number }[],
 ): Promise<void> {
-  if (failed.length === 0) return;
+  if (failed.length === 0 || !isFirstTickOfHour(new Date())) return;
   try {
     const Sentry = await import("@sentry/node");
+    const { applyErrorBudget } = await import("../../sentry.shared.config");
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
+      beforeSend: applyErrorBudget,
       // Same posture as the app: no IP, no cookies, no headers. The ticker's
       // only caller is the Netlify scheduler, so there is nothing to collect.
       dataCollection: {
