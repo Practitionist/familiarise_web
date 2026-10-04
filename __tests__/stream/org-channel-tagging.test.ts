@@ -93,3 +93,96 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     ).toBeNull();
   });
 });
+
+const mockPaymentFindMany = jest.fn();
+const mockRecordingFindMany = jest.fn();
+const mockRecordingPurchaseFindMany = jest.fn();
+
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    payment: {
+      findMany: (...args: unknown[]) => mockPaymentFindMany(...args),
+    },
+    recordingPurchase: {
+      findMany: (...args: unknown[]) => mockRecordingPurchaseFindMany(...args),
+    },
+    recording: {
+      findMany: (...args: unknown[]) => mockRecordingFindMany(...args),
+    },
+  },
+}));
+
+jest.mock("../../lib/stream-client", () => ({
+  getStreamVideoClient: jest.fn(),
+  withStreamCircuitBreaker: <T>(fn: () => T) => fn(),
+}));
+
+jest.mock("../../lib/stream-logger", () => ({
+  streamLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
+jest.mock("../../lib/stream/recording-transfer-service", () => ({
+  RecordingTransferService: {},
+  resolveAppointmentStoragePolicy: jest.fn(),
+}));
+
+describe("RecordingService.getConsulteeRecordings organizationId filter", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        amount: 50000,
+        appointmentId: "appt-1",
+        refunds: [],
+        appointment: {
+          id: "appt-1",
+          webinar: { webinarPlanId: "wp-1" },
+          class: null,
+          consultation: null,
+          subscription: null,
+          trial: null,
+        },
+      },
+    ]);
+    mockRecordingPurchaseFindMany.mockResolvedValue([]);
+    mockRecordingFindMany.mockResolvedValue([]);
+  });
+
+  it("applies organizationId filter when set to an org id or null, and omits it when undefined", async () => {
+    const { RecordingService } =
+      await import("../../lib/stream/recording-service");
+
+    await RecordingService.getConsulteeRecordings("user-1", {
+      organizationId: "org-123",
+    });
+    expect(mockRecordingFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: "org-123",
+        }),
+      }),
+    );
+
+    await RecordingService.getConsulteeRecordings("user-1", {
+      organizationId: null,
+    });
+    expect(mockRecordingFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: null,
+        }),
+      }),
+    );
+
+    await RecordingService.getConsulteeRecordings("user-1");
+    const lastWhere = mockRecordingFindMany.mock.calls.at(-1)?.[0]
+      ?.where as Record<string, unknown>;
+    expect(lastWhere).not.toHaveProperty("organizationId");
+  });
+});

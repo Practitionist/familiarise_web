@@ -209,6 +209,9 @@ export async function addUserToEventChannel(
       created_by_id: consultantId,
       members: createMemberChunk(syncedMembers),
       [`${eventType}_id`]: eventId,
+      ...(channelType === "team" && syncedMembers.length >= 100
+        ? { cooldown: 3 }
+        : {}),
       ...(organizationId ? { organization_id: organizationId } : {}),
     };
 

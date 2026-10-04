@@ -952,4 +952,70 @@ describe("droppedIds filtering and collaborator channel sync", () => {
       }),
     );
   });
+
+  it("enables cooldown: 3 on team channels with >= 100 synced members and omits it below 100", async () => {
+    const { createChannel } =
+      await import("../../actions/stream/chat/channel.action");
+
+    mockChannel.query.mockResolvedValue({ members: {} });
+
+    await createChannel({
+      channelType: "team",
+      channelId: "webinar-99",
+      members: Array.from({ length: 98 }, (_, i) => `user-${i}`),
+      createdById: "host",
+    });
+
+    const smallPayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(smallPayload.cooldown).toBeUndefined();
+
+    await createChannel({
+      channelType: "team",
+      channelId: "webinar-100",
+      members: Array.from({ length: 99 }, (_, i) => `user-${i}`),
+      createdById: "host",
+    });
+
+    const largePayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(largePayload.cooldown).toBe(3);
+  });
+
+  it("enables cooldown: 3 when addUserToEventChannel creates a 100+ seat team channel", async () => {
+    mockPrisma.webinar.findUnique.mockResolvedValueOnce({
+      id: "web-100-seat",
+      status: "SCHEDULED",
+      webinarPlan: {
+        title: "Large Webinar",
+        consultantProfile: { user: { id: "host-1" } },
+        collaborators: [],
+      },
+      appointment: {
+        participants: Array.from({ length: 99 }, (_, i) => ({
+          userId: `attendee-${i}`,
+        })),
+      },
+    });
+
+    mockChannel.addMembers
+      .mockRejectedValueOnce(new Error("Channel does not exist"))
+      .mockResolvedValue({});
+
+    const { addUserToEventChannel } =
+      await import("../../lib/stream/event-channel-service");
+
+    const res = await addUserToEventChannel(
+      "webinar",
+      "web-100-seat",
+      "attendee-0",
+    );
+    expect(res.success).toBe(true);
+    const createPayload = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+      cooldown?: number;
+    };
+    expect(createPayload.cooldown).toBe(3);
+  });
 });

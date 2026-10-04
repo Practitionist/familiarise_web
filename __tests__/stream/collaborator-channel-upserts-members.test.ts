@@ -28,15 +28,30 @@ const mockCache = {
 };
 const calls: string[] = [];
 
+const mockWebinarPlanFindUnique = jest.fn(async () => ({
+  title: "Intro Webinar",
+  organizationId: null as string | null,
+  consultantProfile: { user: { id: "host-user" } },
+  collaborators: [{ consultantProfile: { user: { id: "collab-user" } } }],
+}));
+
+const mockClassPlanFindUnique = jest.fn(async () => ({
+  title: "Advanced Class",
+  organizationId: "org-enterprise-1" as string | null,
+  consultantProfile: { user: { id: "host-user" } },
+  collaborators: [{ consultantProfile: { user: { id: "collab-user" } } }],
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     webinarPlan: {
-      findUnique: jest.fn(async () => ({
-        title: "Intro Webinar",
-        consultantProfile: { user: { id: "host-user" } },
-        collaborators: [{ consultantProfile: { user: { id: "collab-user" } } }],
-      })),
+      findUnique: (...args: unknown[]) =>
+        mockWebinarPlanFindUnique(...(args as [])),
+    },
+    classPlan: {
+      findUnique: (...args: unknown[]) =>
+        mockClassPlanFindUnique(...(args as [])),
     },
   },
 }));
@@ -58,6 +73,15 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
 }));
 
 describe("createCollaboratorChannel", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    calls.length = 0;
+    mockStreamClient.channel.mockReturnValue(mockChannel);
+    mockChannel.addMembers.mockResolvedValue({});
+    mockChannel.removeMembers.mockResolvedValue({});
+    mockChannel.assignRoles.mockResolvedValue({});
+  });
+
   it("upserts the host and every accepted collaborator before creating the channel", async () => {
     // Imported here, after the mocks above are initialised (hoisting).
     const { createCollaboratorChannel } =
@@ -69,7 +93,6 @@ describe("createCollaboratorChannel", () => {
     mockChannel.query.mockResolvedValue({
       members: [{ user_id: "host-user" }, { user_id: "collab-user" }],
     });
-    mockStreamClient.channel.mockReturnValue(mockChannel);
 
     await createCollaboratorChannel("webinar", "plan-1");
 
@@ -77,5 +100,75 @@ describe("createCollaboratorChannel", () => {
       "upsert:host-user,collab-user",
       "create",
     ]);
+    const createPayload = mockStreamClient.channel.mock.calls[0]?.[2] as Record<
+      string,
+      unknown
+    >;
+    expect(createPayload.organization_id).toBeUndefined();
+  });
+
+  it("stamps organization_id when plan.organizationId is set", async () => {
+    const { createCollaboratorChannel } =
+      await import("../../actions/stream/chat/channel.action");
+    mockChannel.create.mockResolvedValue({});
+    mockChannel.query.mockResolvedValue({
+      members: [{ user_id: "host-user" }, { user_id: "collab-user" }],
+    });
+
+    await createCollaboratorChannel("class", "class-plan-org");
+
+    expect(mockStreamClient.channel).toHaveBeenCalledWith(
+      "messaging",
+      "collab-class-class-plan-org",
+      expect.objectContaining({
+        class_plan_id: "class-plan-org",
+        is_collaborator_channel: true,
+        organization_id: "org-enterprise-1",
+      }),
+    );
+  });
+
+  it("chunks >100 collaborator members across create, addRemainingMembers, and reconciliation", async () => {
+    const { createCollaboratorChannel } =
+      await import("../../actions/stream/chat/channel.action");
+
+    const collaborators = Array.from({ length: 149 }, (_, i) => ({
+      consultantProfile: { user: { id: `collab-${i}` } },
+    }));
+    mockWebinarPlanFindUnique.mockResolvedValueOnce({
+      title: "Mega Summit",
+      organizationId: "org-summit",
+      consultantProfile: { user: { id: "host-user" } },
+      collaborators,
+    });
+    mockChannel.create.mockResolvedValue({});
+    const departedMembers = Array.from({ length: 120 }, (_, i) => ({
+      user_id: `departed-${i}`,
+    }));
+    mockChannel.query.mockResolvedValue({
+      members: [{ user_id: "host-user" }, ...departedMembers],
+    });
+
+    await createCollaboratorChannel("webinar", "plan-mega");
+
+    const createData = mockStreamClient.channel.mock.calls[0]?.[2] as {
+      members: string[];
+      organization_id?: string;
+    };
+    expect(createData.organization_id).toBe("org-summit");
+    expect(createData.members).toHaveLength(100);
+    expect(createData.members[0]).toBe("host-user");
+
+    // First addMembers call is addRemainingMembers (50 remaining after initial 100);
+    // subsequent calls are reconciliation of missing 149 collaborators (100 + 49).
+    const addBatches = mockChannel.addMembers.mock.calls.map(
+      ([batch]: [string[]]) => batch.length,
+    );
+    expect(addBatches).toEqual([50, 100, 49]);
+
+    const removeBatches = mockChannel.removeMembers.mock.calls.map(
+      ([batch]: [string[]]) => batch.length,
+    );
+    expect(removeBatches).toEqual([100, 20]);
   });
 });
