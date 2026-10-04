@@ -31,7 +31,11 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
-import { addRemainingMembers, createMemberChunk } from "@/lib/stream/batch";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  forEachChunk,
+} from "@/lib/stream/batch";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -155,6 +159,9 @@ export async function createChannel(input: {
     name: validated.channelName,
     created_by_id: validated.createdById,
     members: createMemberChunk(syncedMembers),
+    ...(validated.channelType === "team" && syncedMembers.length >= 100
+      ? { cooldown: 3 }
+      : {}),
     ...mergedAdditionalData,
   };
   const channel = client.channel(
@@ -278,10 +285,7 @@ const ACCEPTED_COLLABORATORS_INCLUDE = {
 };
 
 export type EventChannelType =
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
+  "webinar" | "class" | "consultation" | "subscription";
 
 async function loadEventChannelData(
   eventType: EventChannelType,
@@ -632,6 +636,7 @@ export async function createCollaboratorChannel(
   let title: string;
   let hostUserId: string | undefined;
   let collaboratorUserIds: string[];
+  let organizationId: string | null = null;
 
   if (planType === "webinar") {
     const plan = await prisma.webinarPlan.findUnique({
@@ -649,6 +654,7 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Webinar plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
     collaboratorUserIds = plan.collaborators
       .map((c) => c.consultantProfile.user.id)
@@ -669,6 +675,7 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Class plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
     collaboratorUserIds = plan.collaborators
       .map((c) => c.consultantProfile.user.id)
@@ -716,13 +723,15 @@ export async function createCollaboratorChannel(
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
     created_by_id: hostUserId,
-    members: roster,
+    members: createMemberChunk(roster),
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
+    ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
   // Idempotent create — no-op if channel already exists
   await channel.create();
+  await addRemainingMembers(channel, roster);
   markChannelExists("messaging", channelId);
 
   // Host moderates their own collab channel — this path bypasses
@@ -738,7 +747,9 @@ export async function createCollaboratorChannel(
   // Add members present in DB but missing from channel
   const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
   if (toAdd.length > 0) {
-    await channel.addMembers(toAdd);
+    await forEachChunk(toAdd, async (chunk) => {
+      await channel.addMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: added missing members", {
       channelId,
       added: toAdd,
@@ -748,7 +759,9 @@ export async function createCollaboratorChannel(
   // Remove channel members no longer in the DB set
   const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
   if (toRemove.length > 0) {
-    await channel.removeMembers(toRemove);
+    await forEachChunk(toRemove, async (chunk) => {
+      await channel.removeMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: removed departed members", {
       channelId,
       removed: toRemove,
