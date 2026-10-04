@@ -601,9 +601,9 @@ The table below points at the one document that reads the whole band as a single
 connected narrative; read the banded folders as the chapters and the guide as the
 thread that walks you between them.
 
-| File | Purpose |
-|------|---------|
-| [`explainers/complete-guide.md`](../explainers/complete-guide.md) | The single end-to-end narrative. Read the banded folders (`00-foundations/` through `60-scenarios-and-verdicts/`) as the story, and read the guide as the connective walkthrough. |
+| File                                                                                                 | Purpose                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`start-here/01-booking-and-money-machinery.md`](../../start-here/01-booking-and-money-machinery.md) | The single end-to-end narrative. Read the banded folders (`00-foundations/` through `60-scenarios-and-verdicts/`) as the story, and read the guide as the connective walkthrough. |
 
 The former `playbooks/` and `reference/` directories were folded into this band.
 The SSO testing recipes and the typed error codes moved into
@@ -707,12 +707,12 @@ deterministic cohort below. Slugs and emails are stable handles —
 prefer them over raw IDs in tests, prompts, and docs (IDs change
 across `prisma migrate reset`). Source: `prisma/seedFiles/14a-create-organizations.ts`.
 
-| Slug | Capability | Funding | Program | Notes |
-|---|---|---|---|---|
-| `wipro` | Sponsor (canSponsor=true, canHost=false) | INVOICE | LICENSED_SEAT | PO + draft monthly invoice; pure buyer-side. |
-| `learnpro-academy` | Host (canSponsor=false, canHost=true) | — | — | Payout account + 10/10/80 RateCard + EXPERT memberships. |
-| `iit-madras` | Hybrid (canSponsor=true, canHost=true) | WALLET | CREDIT_POOL | Both money flows live in parallel. |
-| Arjun's solo org (`arjun-anderson-coaching-…`) | Host (canSponsor=false, canHost=true) | — | — | Single-consultant convenience org; dynamic slug. |
+| Slug                                           | Capability                               | Funding | Program       | Notes                                                    |
+| ---------------------------------------------- | ---------------------------------------- | ------- | ------------- | -------------------------------------------------------- |
+| `wipro`                                        | Sponsor (canSponsor=true, canHost=false) | INVOICE | LICENSED_SEAT | PO + draft monthly invoice; pure buyer-side.             |
+| `learnpro-academy`                             | Host (canSponsor=false, canHost=true)    | —       | —             | Payout account + 10/10/80 RateCard + EXPERT memberships. |
+| `iit-madras`                                   | Hybrid (canSponsor=true, canHost=true)   | WALLET  | CREDIT_POOL   | Both money flows live in parallel.                       |
+| Arjun's solo org (`arjun-anderson-coaching-…`) | Host (canSponsor=false, canHost=true)    | —       | —             | Single-consultant convenience org; dynamic slug.         |
 
 **Tour owner:** `tour-owner@familiarise.dev`, password from
 `SEED_PASSWORD` (default `SeedPass123!`). Created with
