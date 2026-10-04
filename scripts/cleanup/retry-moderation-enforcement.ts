@@ -291,6 +291,7 @@ async function recordErasureOutboxOutcome(params: {
   const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
     params;
   const attempts = row.attempts + 1;
+  const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
   await delegate.update({
     where: { id: row.id },
     data: error
@@ -298,12 +299,24 @@ async function recordErasureOutboxOutcome(params: {
           status: "FAILED",
           attempts,
           lastError: error,
-          nextRetryAt: nextRetryAt(attempts, now),
+          nextRetryAt: gaveUp ? null : nextRetryAt(attempts, now),
         }
       : { status: "SUCCEEDED", attempts, completedAt: now },
   });
   if (error) {
-    result.stillFailing++;
+    if (gaveUp) {
+      result.gaveUp++;
+      Sentry.captureMessage(
+        `${errorLabel} retry gave up after ${attempts} attempts`,
+        {
+          level: "error",
+          tags: { subsystem: "moderation-retry" },
+          extra: { rowId: row.id, lastError: error },
+        },
+      );
+    } else {
+      result.stillFailing++;
+    }
     result.errors.push(`${errorLabel} ${row.id}: ${error}`);
   } else {
     result.erasureRevocationsRecovered++;
@@ -380,6 +393,7 @@ async function drainVendorErasureRetries(
   const rows = await prisma.vendorErasureRetry.findMany({
     where: {
       status: { in: ["PENDING", "FAILED"] },
+      attempts: { lt: MAX_ATTEMPTS },
       OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
     },
     select: {
@@ -454,17 +468,10 @@ async function finalizeCompletedErasureRequests(
       (await prisma.vendorErasureRetry?.count?.(pendingFilter)) ?? 0;
     if (pendingStream > 0 || pendingVendor > 0) continue;
 
-    if (prisma.erasureRequest.updateMany) {
-      await prisma.erasureRequest.updateMany({
-        where: { id: erasureRequestId, status: "IN_PROGRESS" },
-        data: { status: "COMPLETED", completedAt: now },
-      });
-    } else if (prisma.erasureRequest.update) {
-      await prisma.erasureRequest.update({
-        where: { id: erasureRequestId },
-        data: { status: "COMPLETED", completedAt: now },
-      });
-    }
+    await prisma.erasureRequest.updateMany?.({
+      where: { id: erasureRequestId, status: "IN_PROGRESS" },
+      data: { status: "COMPLETED", completedAt: now },
+    });
   }
 }
 

@@ -218,17 +218,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (!resolvedOrganizationId && callerOrganizationId) {
-      const orgMember = prisma.membership?.findFirst
-        ? await prisma.membership.findFirst({
-            where: {
-              organizationId: callerOrganizationId,
-              userId: { in: [session.user.id, target] },
-              status: "ACTIVE",
-            },
-            select: { id: true },
-          })
-        : { id: "verified" };
-      if (orgMember) {
+      const targetMembership = await prisma.membership?.findFirst?.({
+        where: {
+          organizationId: callerOrganizationId,
+          userId: target,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (targetMembership) {
         resolvedOrganizationId = callerOrganizationId;
       }
     }

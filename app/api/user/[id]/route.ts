@@ -384,15 +384,19 @@ async function executeUserHardDeleteOrFallbackScrub(
   }
 
   const subjectPseudonymousId = derivePseudonym(id);
+  const now = new Date();
+  const auditRetainedUntil = new Date(now);
+  auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
   await prisma.$transaction([
-    ...(prisma.consentArtifact?.updateMany
-      ? [
-          prisma.consentArtifact.updateMany({
-            where: { userId: id },
-            data: { userId: null, subjectPseudonymousId },
-          }),
-        ]
-      : []),
+    prisma.consentArtifact.updateMany({
+      where: { userId: id },
+      data: {
+        userId: null,
+        subjectPseudonymousId,
+        withdrawnAt: now,
+        auditRetainedUntil,
+      },
+    }),
     prisma.session.deleteMany({ where: { userId: id } }),
     prisma.user.delete({ where: { id } }),
   ]);
