@@ -245,6 +245,8 @@ async function syncPaymentEarningsUnlocked(
         paymentStatus: PaymentStatus.SUCCEEDED,
         // Synchronous rails carry the flag and settle earnings in their own tx.
         isMockPayment: false,
+        // An appointment-less row is never healed here, so it must not hold a cohort slot.
+        appointmentId: { not: null },
         earnings: { none: {} }, // No linked earnings
         refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
         disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
