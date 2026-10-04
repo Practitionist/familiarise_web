@@ -600,17 +600,8 @@ async function calculateAmount(
       throw new Error("Consultation plan not found");
     }
 
-    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
     const currency = plan.priceCurrency;
-    // The direct-checkout path has always called this; this path never did, and
-    // it is the one that charges in the plan's own currency. A
-    // GBP-priced plan booked via request→approve therefore took a real GBP
-    // charge, wrote Payment.currency="GBP" with an amount in pence, and every
-    // stage below then treated that number as INR paise: the earnings row is
-    // hardcoded "INR", the journal posts it into an INR account, and the payout
-    // is sized off it. Nothing downstream compares an amount against its own
-    // currency, so it balances cleanly and reconciles clean while being wrong
-    // by the GBP:INR rate — with the shortfall landing on the consultant.
+    // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.
     validatePlanCurrency(currency);
 
     return {

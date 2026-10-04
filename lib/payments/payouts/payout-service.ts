@@ -16,6 +16,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   PayoutStatus,
   PayoutMethod,
+  PayoutAccountType,
   PaymentGateway,
   EarningStatus,
   RefundStatus,
@@ -32,7 +33,7 @@ import {
   payoutEligibilityReason,
   type PayoutEligibilityReason,
 } from "./payout-requirements";
-import { isPostMvpGatewayStub } from "@/lib/payments/constants";
+import { isUnimplementedGateway } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
   isDefinitiveGatewayRejection,
@@ -301,8 +302,21 @@ interface ConsultantPayoutDraft {
  * Atomically sums a consultant's READY earnings, creates the payout row, and
  * claims the earnings READY → BATCHED inside a single transaction.
  */
-function resolvePayoutMethodFromAccountType(accountType: string): PayoutMethod {
-  return accountType === "UPI" ? PayoutMethod.UPI : PayoutMethod.BANK_TRANSFER;
+function resolvePayoutMethodFromAccountType(
+  accountType: PayoutAccountType,
+): PayoutMethod {
+  switch (accountType) {
+    case PayoutAccountType.BANK_ACCOUNT:
+      return PayoutMethod.BANK_TRANSFER;
+    case PayoutAccountType.UPI:
+      return PayoutMethod.UPI;
+    case PayoutAccountType.STRIPE_CONNECT:
+      return PayoutMethod.STRIPE_TRANSFER;
+    default: {
+      const unhandled: never = accountType;
+      throw new Error(`Unhandled payout account type: ${String(unhandled)}`);
+    }
+  }
 }
 
 function resolveMintedPayoutCreator(
@@ -338,11 +352,11 @@ async function mintConsultantPayout(
     return null;
   }
 
-  // Skip unsupported post-MVP gateway stubs before claiming earnings into BATCHED.
-  if (isPostMvpGatewayStub(account.provider)) {
+  // Skip unimplemented gateways before claiming earnings into BATCHED.
+  if (isUnimplementedGateway(account.provider)) {
     console.warn(
       `Skipping consultant ${consultantProfileId}: payout account is on ` +
-        `"${account.provider}", which has no implementation (post-MVP stub).`,
+        `"${account.provider}", which has no implementation.`,
     );
     return null;
   }

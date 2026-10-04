@@ -19,12 +19,12 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole payment gateway. Stripe was removed from the code on 2026-10-04 and survives only as an enum label until the pre-MVP reset, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses every gateway on that list (including `STRIPE`) at runtime.
+The payment system uses **Razorpay** as the sole payment gateway. Stripe was removed from the code on 2026-10-04 and survives only as an enum label until the pre-MVP reset, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` lists the enum labels with no implementation, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses every gateway on that list (including `STRIPE`) at runtime.
 
 | Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
 | ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Razorpay**      | Live, primary           | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT.                                                                                                                                                                                                                   |
-| **Dodo Payments** | Schema placeholder      | Listed in `POST_MVP_GATEWAY_STUBS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
+| **Dodo Payments** | Schema placeholder      | Listed in `UNIMPLEMENTED_GATEWAYS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
 
 The system handles four appointment types:
 

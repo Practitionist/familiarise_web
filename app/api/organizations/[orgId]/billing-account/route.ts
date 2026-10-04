@@ -34,15 +34,11 @@ const FundingSourceSchema = z.enum([
   "INVOICE",
 ]);
 
-// #1396 — the `Currency` enum stays on the column (ADR 15 keeps the type), but
-// this API refuses to write anything except INR. `BillingAccount.currency` is
-// forwarded verbatim into `createRazorpayOrder` by the wallet top-up route, and
-// every amount the platform stores is INR paise, so a USD account priced a
-// ₹1,000 top-up as a $1,000 order.
+// INR only: wallet top-ups forward `BillingAccount.currency` verbatim into
+// `createRazorpayOrder`, and every stored amount is INR paise.
 const CurrencySchema = z.literal("INR");
 
-// #777 §C — wallet minimum balance: a notify-only floor (the cron emails
-// finance below it).
+// Wallet minimum balance is a notify-only floor (the cron emails finance below it).
 const PatchBodySchema = z
   .object({
     billingEmail: z.string().email().optional(),
@@ -139,8 +135,8 @@ export async function PATCH(
         );
       }
 
-      // #777 §C — the balance alert applies only to WALLET funding: the
-      // incoming funding source if being changed, else the stored one.
+      // The balance alert applies only to WALLET funding: the incoming
+      // funding source if being changed, else the stored one.
       if (body.minBalancePaise !== undefined) {
         const effectiveFunding = body.fundingSource ?? ba.fundingSource;
         if (effectiveFunding !== "WALLET") {

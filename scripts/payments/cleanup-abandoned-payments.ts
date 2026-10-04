@@ -71,9 +71,8 @@ export interface CleanupAbandonedOptions {
 }
 
 /**
- * Cancel payment intent with the appropriate payment gateway.
- *
- * #1861 L2 — resolves to what the gateway still holds.
+ * Cancel payment intent with the appropriate payment gateway; resolves to what
+ * the gateway still holds.
  */
 export async function cancelPaymentIntent(
   paymentIntent: string,
@@ -81,7 +80,7 @@ export async function cancelPaymentIntent(
 ): Promise<RazorpayOrderCancelResult> {
   try {
     switch (gateway) {
-      // Stripe was removed and never charged in production; nothing to cancel.
+      // STRIPE has no client and no live orders; nothing to cancel.
       case PaymentGateway.STRIPE:
         return "no_live_payment";
 

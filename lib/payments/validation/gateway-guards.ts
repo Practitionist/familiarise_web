@@ -9,14 +9,15 @@
  * sensible fallback for "refund this through a gateway that does not exist".
  */
 import { PaymentError } from "@/lib/payments/core/types";
-import { isPostMvpGatewayStub } from "@/lib/payments/constants";
+import type { PaymentGateway } from "@prisma/client";
+import { isUnimplementedGateway } from "@/lib/payments/constants";
 
 export class UnsupportedGatewayError extends PaymentError {
   constructor(gateway: string, operation: string) {
     super(
       `Payment gateway "${gateway}" has no implementation — cannot ${operation}. ` +
         `It exists in the PaymentGateway enum as a label only ` +
-        `(see POST_MVP_GATEWAY_STUBS in lib/payments/constants.ts).`,
+        `(see UNIMPLEMENTED_GATEWAYS in lib/payments/constants.ts).`,
       "UNSUPPORTED_GATEWAY",
     );
     this.name = "UnsupportedGatewayError";
@@ -28,8 +29,11 @@ export class UnsupportedGatewayError extends PaymentError {
  *
  * `operation` completes the sentence "cannot ..." — e.g. "issue a refund".
  */
-export function assertGatewayUsable(gateway: string, operation: string): void {
-  if (isPostMvpGatewayStub(gateway)) {
+export function assertGatewayUsable(
+  gateway: PaymentGateway,
+  operation: string,
+): void {
+  if (isUnimplementedGateway(gateway)) {
     throw new UnsupportedGatewayError(gateway, operation);
   }
 }

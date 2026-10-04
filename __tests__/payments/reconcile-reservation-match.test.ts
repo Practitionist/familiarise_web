@@ -509,12 +509,10 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
 });
 
 /**
- * #1757 — a real-id PENDING refund on a gateway with no implementation was
- * skipped on every tick forever (the seed minted them on STRIPE). Past 24 h it is retired
- * FAILED/GATEWAY_DISABLED through the PENDING-guarded CAS, which re-opens the
- * refundable balance, and the run reports it once.
+ * A real-id PENDING refund on a gateway with no implementation is retired
+ * FAILED/GATEWAY_DISABLED past 24 h through the PENDING-guarded CAS, reported once.
  */
-describe("reconcilePendingRefunds — no live client past 24h (#1757)", () => {
+describe("reconcilePendingRefunds — no live client past 24h", () => {
   test("a 3-day-old PENDING STRIPE refund → FAILED once", async () => {
     refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
       {

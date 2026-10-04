@@ -15,10 +15,9 @@
 
 import prisma from "../../lib/prisma";
 import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
-import { getDispute } from "../../lib/payments";
 import {
+  getRazorpayDispute,
   isRazorpayUnknownDisputeIdError,
-  type RazorpayDisputeResult,
 } from "../../lib/payments/core/razorpay-disputes";
 import {
   getRazorpayClient,
@@ -242,10 +241,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         continue;
       }
 
-      const gatewayDispute = (await getDispute(
-        dispute.disputeId,
-        PaymentGateway.RAZORPAY,
-      )) as RazorpayDisputeResult;
+      const gatewayDispute = await getRazorpayDispute(dispute.disputeId);
       const settlementPayment = await resolveRazorpayDisputePayment(
         dispute,
         gatewayDispute.paymentId,

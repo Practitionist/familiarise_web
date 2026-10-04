@@ -2,6 +2,8 @@
  * Payment-related constants used across the application
  */
 
+import { PaymentGateway } from "@prisma/client";
+
 /** Time in hours before an approval payment link expires (#1703 D2: 48 → 24). */
 export const APPROVAL_PAYMENT_EXPIRATION_HOURS = 24;
 
@@ -18,30 +20,16 @@ export const MINIMUM_BOOKING_LEAD_TIME_MS = 15 * 60 * 1000;
 /** Minimum booking lead time in minutes */
 export const MINIMUM_BOOKING_LEAD_TIME_MINUTES = 15;
 
-/**
- * Gateways that exist in the `PaymentGateway` Prisma enum but have NO
- * implementation behind them.
- *
- * The enum is a superset of what the platform can actually transact with. It
- * has to be — Prisma enums are a database type, and a value cannot be removed
- * while any row or any historical record references it. Lemon Squeezy and XFlow
- * were retired in #984 and their code deleted, but the labels survive in the
- * live type to this day and are what broke reconcile-disputes and
- * cleanup-abandoned-payments with Prisma P2023.
- *
- * DODO_PAYMENTS is the sanctioned post-MVP second gateway and STRIPE a
- * removed one; neither has any implementation behind its label.
- *
- * `schemas/checkout.ts` already narrows checkout to the implemented subset, so
- * a stub cannot be selected at checkout. This list plus `assertGatewayUsable`
- * cover everything downstream — refunds, payouts, reconciliation — where a stub
- * value read back off an existing row would otherwise fall through a `default`
- * branch and be treated as a working gateway.
- */
-export const POST_MVP_GATEWAY_STUBS = ["STRIPE", "DODO_PAYMENTS"] as const;
+/** `PaymentGateway` enum labels with no implementation; every money path refuses them. */
+export const UNIMPLEMENTED_GATEWAYS = [
+  PaymentGateway.STRIPE,
+  PaymentGateway.DODO_PAYMENTS,
+] as const satisfies readonly PaymentGateway[];
 
-export type PostMvpGatewayStub = (typeof POST_MVP_GATEWAY_STUBS)[number];
+const UNIMPLEMENTED_GATEWAY_SET: ReadonlySet<PaymentGateway> = new Set(
+  UNIMPLEMENTED_GATEWAYS,
+);
 
-export function isPostMvpGatewayStub(gateway: string): boolean {
-  return (POST_MVP_GATEWAY_STUBS as readonly string[]).includes(gateway);
+export function isUnimplementedGateway(gateway: PaymentGateway): boolean {
+  return UNIMPLEMENTED_GATEWAY_SET.has(gateway);
 }

@@ -197,7 +197,6 @@ describe("handleRefundCreated status transition guard", () => {
       10_000,
       "INR",
       "pending", // raw gateway string from a late/out-of-order refund.created
-      "RAZORPAY",
     );
 
     // No update may run at all — the row must stay settled.
@@ -214,14 +213,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "processed",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
 
     expect(store.refunds[0].status).toBe("FAILED");
     expect(applyRefundCascade).not.toHaveBeenCalled();
@@ -235,14 +227,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "processed",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
 
     expect(store.refunds[0].status).toBe("SUCCEEDED");
     expect(applyRefundCascade).toHaveBeenCalledTimes(1);
@@ -274,7 +259,6 @@ describe("handleRefundCreated status transition guard", () => {
       10_000,
       "INR",
       "processed",
-      "RAZORPAY",
       "pay_gateway_1",
     );
 
@@ -291,14 +275,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "pending",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "pending");
 
     expect(applyRefundCascade).not.toHaveBeenCalled();
     expect(store.refunds).toHaveLength(1);
@@ -340,7 +317,6 @@ describe("an invoice refund whose wallet credit fails aborts the transaction", (
         10_000,
         "INR",
         "processed",
-        "RAZORPAY",
         "pay_inv_1",
       ),
     ).rejects.toThrow("wallet cache write failed");

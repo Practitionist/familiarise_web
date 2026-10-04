@@ -7,7 +7,7 @@
  * by the poll flips status through the CAS and settles through the shared
  * lost-dispute path, an id-less row resolves via the order join, and gateway
  * failures count toward manual review without crashing the loop. Mocks at the
- * getDispute boundary like reconcile-disputes-cas.test.ts.
+ * getRazorpayDispute boundary like reconcile-disputes-cas.test.ts.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -17,8 +17,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 const mockGetDispute = jest.fn();
-jest.mock("../../lib/payments", () => ({
-  getDispute: (...a: unknown[]) => (mockGetDispute as jest.Mock)(...a),
+jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
+  ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
+  getRazorpayDispute: (...a: unknown[]) => (mockGetDispute as jest.Mock)(...a),
 }));
 
 const mockRazorpayPaymentsFetch = jest.fn();

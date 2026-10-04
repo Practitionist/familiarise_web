@@ -350,7 +350,7 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
   });
 });
 
-describe("reconcile-payment-status — SUCCEEDED routes through routeCapturedPayment (#1905)", () => {
+describe("reconcile-payment-status — SUCCEEDED routes through routeCapturedPayment", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;

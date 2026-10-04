@@ -455,21 +455,8 @@ async function reconcilePaymentStatusUnlocked(
 
     // Update if status changed
     if (mappedStatus !== payment.paymentStatus) {
-      // ADR 21 — a payment that reconciles to SUCCEEDED must go through the
-      // confirmation pipeline, not a status write.
-      //
-      // This job exists precisely because a `payment.captured` was missed, so
-      // it is the LEAST safe place to write the status directly: setting
-      // SUCCEEDED here poisons handlePaymentSuccess's already-SUCCEEDED guard,
-      // and Razorpay's redelivery (it retries for 24h) then no-ops. The legacy
-      // appointment-creation path and all three auto-refund guards
-      // (amount-mismatch, captured-after-terminal, double-booking-loser) are
-      // skipped permanently — and none of those are covered by another cron.
-      // The old code even logged "may need manual appointment creation!"
-      // instead of just creating it.
-      // #1905 — a SUCCEEDED reconcile goes through
-      // routeCapturedPayment so appointment confirmation, earnings, and ledger
-      // journaling are never bypassed by a raw paymentStatus=SUCCEEDED write.
+      // SUCCEEDED goes through routeCapturedPayment, never a raw status write,
+      // so confirmation, auto-refund guards, earnings and journaling all run.
       if (mappedStatus === PaymentStatus.SUCCEEDED) {
         const notes: Record<string, string> = {
           ...gatewayStatus.notes,

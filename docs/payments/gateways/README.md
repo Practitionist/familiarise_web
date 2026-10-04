@@ -48,7 +48,7 @@ adding it under time pressure.
 
 Because a schema value with no implementation is exactly the kind of thing that
 gets picked up by a `default:` branch and silently used, it fails loudly
-instead. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` names it, and
+instead. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` names it, and
 `lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError`
 if it ever reaches gateway routing, a refund, or a payout submitter. The payout
 service also skips a stub-gateway account at *selection* time rather than at

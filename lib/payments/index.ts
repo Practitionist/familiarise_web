@@ -9,7 +9,6 @@ import {
   PaymentIntent,
   RefundParams,
   RefundResult,
-  DisputeResult,
   PaymentError,
 } from "./core/types";
 
@@ -21,8 +20,6 @@ import {
   getRazorpayRefund,
   listRazorpayRefunds,
 } from "./core/razorpay";
-
-import { getRazorpayDispute } from "./core/razorpay-disputes";
 
 import { assertGatewayUsable } from "./validation/gateway-guards";
 
@@ -169,28 +166,4 @@ export async function listRefunds(
     );
   }
   return listRazorpayRefunds(paymentIntentId, limit);
-}
-
-// ============================================================================
-// Unified Dispute Operations
-// ============================================================================
-
-/**
- * Get dispute details
- * Razorpay is polled via GET /v1/disputes/:id; the raw gateway status flows
- * through for the caller to map, and the gateway payment id rides along for
- * the join. Evidence submit + listing stay dashboard-only.
- */
-export async function getDispute(
-  disputeId: string,
-  gateway: PaymentGateway,
-): Promise<DisputeResult> {
-  if (gateway !== "RAZORPAY") {
-    throw new PaymentError(
-      `Dispute retrieval not supported for: ${gateway}`,
-      "NOT_SUPPORTED",
-      gateway,
-    );
-  }
-  return getRazorpayDispute(disputeId);
 }

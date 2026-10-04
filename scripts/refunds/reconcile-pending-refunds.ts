@@ -128,10 +128,8 @@ async function reconcilePendingRefundsUnlocked(
   const failedUnknownOrder: string[] = [];
 
   /**
-   * #1757 — a row no live client can ever settle (a gateway with no
-   * implementation) was skipped on every tick forever. Past 24 h it is FAILED with
-   * `GATEWAY_DISABLED` through the same CAS the unknown-id path uses, which
-   * re-opens the refundable balance; younger rows keep the skip.
+   * A row on a gateway with no live client is FAILED/`GATEWAY_DISABLED` past
+   * 24 h through the unknown-id CAS (re-opening the refundable balance); younger rows skip.
    */
   const retireIfNoLiveClient = async (refund: {
     id: string;

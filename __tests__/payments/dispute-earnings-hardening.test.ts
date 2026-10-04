@@ -566,7 +566,6 @@ async function openDispute(
     "open",
     null,
     true,
-    "RAZORPAY",
   );
 }
 

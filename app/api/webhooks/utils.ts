@@ -590,7 +590,6 @@ export async function handleRefundCreated(
   amount: number,
   currency: string,
   status: string,
-  gateway: "RAZORPAY",
   providerPaymentId?: string,
 ) {
   // Serializable + retry — the contract `applyRefundCascade` documents for
@@ -1101,7 +1100,7 @@ export async function handleRefundCreated(
             currency: toCurrencyEnum(currency),
             status: mapGatewayRefundStatus(status),
             refundId,
-            paymentGateway: gateway,
+            paymentGateway: PaymentGateway.RAZORPAY,
             paymentId: payment.id,
           },
           select: { id: true },
@@ -1178,8 +1177,8 @@ export async function handleDisputeCreated(
   status: string,
   dueBy: number | null,
   isChargeRefundable: boolean,
-  gateway: "RAZORPAY",
 ) {
+  const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
   // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
   // This lookup is an external HTTP call to Razorpay; leaving it

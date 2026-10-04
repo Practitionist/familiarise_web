@@ -292,7 +292,6 @@ export async function processRazorpayWebhookEvent(
           refundEvent.amount,
           refundEvent.currency || "INR",
           refundEvent.status,
-          "RAZORPAY",
           refundEvent.payment_id,
         );
         if (refundResult instanceof DeferSignal) {
@@ -352,7 +351,6 @@ export async function processRazorpayWebhookEvent(
           failedRefundEvent.amount,
           failedRefundEvent.currency || "INR",
           "failed",
-          "RAZORPAY",
           failedRefundEvent.payment_id,
         );
         if (failedRefundResult instanceof DeferSignal) {
@@ -388,7 +386,6 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
-          "RAZORPAY",
         );
         break;
       }

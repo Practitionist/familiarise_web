@@ -413,11 +413,8 @@ export function createRazorpayCheckoutHandlers(
       razorpay_payment_id?: string;
       message?: string;
     }) => {
-      // Booking confirmation is webhook-driven, so at this instant the money is
-      // captured and the appointment may not exist yet. Razorpay used to land
-      // on /dashboard, where that gap reads as "I paid and got nothing";
-      // /checkout/checkout-success polls /api/checkout/verify, drives the
-      // pipeline synchronously and says "payment received, confirming".
+      // Confirmation is webhook-driven, so the appointment may not exist yet;
+      // checkout-success polls /api/checkout/verify, which drives the pipeline.
       //
       // `Payment.paymentIntent` IS the Razorpay order id (the verify route
       // keys on `order_` for its sync branch), so that is the id to hand over.
