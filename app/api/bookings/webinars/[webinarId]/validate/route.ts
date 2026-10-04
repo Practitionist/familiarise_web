@@ -22,8 +22,8 @@ import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
+  categorizeValidationErrors,
   conflictDetailsBySlot,
-  describeConflict,
   findTentativeOccurrenceIdsForEvent,
 } from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -152,62 +152,23 @@ export async function POST(
         });
       }
 
-      // Categorize errors by prefix instead of brittle regex
-      const result: SlotConflictResult = {
-        conflicts: [],
-        outsideAvailability: [],
-        validSlots: [],
-      };
-
-      for (const error of validationResult.errors) {
-        if (error.startsWith("[CONFLICT]")) {
-          const message = error.replace("[CONFLICT] ", "");
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.conflicts.push(
-              describeConflict(
-                slotMatch[1],
-                conflictDetails.get(slotMatch[1]),
-                viewer,
-                message.includes("subscription")
-                  ? "Subscription"
-                  : message.includes("webinar")
-                    ? "Webinar"
-                    : "Consultation",
-              ),
-            );
-          }
-        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
-          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.outsideAvailability.push({ slot: slotMatch[1] });
-          } else {
-            for (const bodySlot of body.slots) {
-              const normalized = new Date(bodySlot).toISOString().slice(0, 19);
-              if (
-                !result.outsideAvailability.some((o) => o.slot === normalized)
-              ) {
-                result.outsideAvailability.push({ slot: normalized });
-              }
-            }
-          }
-        }
-        // [VALIDATION] errors don't need slot-level parsing
-      }
-
-      // Valid slots are those not in conflicts or outside availability
-      result.validSlots = body.slots.filter((bodySlot) => {
-        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
-        return (
-          !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
-          !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
-        );
+      const categorized = categorizeValidationErrors({
+        errors: validationResult.errors,
+        slots: body.slots,
+        conflictDetails,
+        viewer,
+        resolveFallbackType: (message) =>
+          message.includes("subscription")
+            ? "Subscription"
+            : message.includes("webinar")
+              ? "Webinar"
+              : "Consultation",
       });
+      const result: SlotConflictResult = {
+        conflicts: categorized.conflicts,
+        outsideAvailability: categorized.outsideAvailability,
+        validSlots: categorized.validSlots,
+      };
 
       return NextResponse.json({ data: result });
     } catch (validationError) {

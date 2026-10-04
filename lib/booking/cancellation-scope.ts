@@ -269,6 +269,15 @@ export async function resolveBookingRefundContext(
   };
 }
 
+function noticeHoursBetween(
+  startsAt: Date,
+  stampedAt: Date | null | undefined,
+): number | null {
+  if (!(stampedAt instanceof Date)) return null;
+  const hours = (startsAt.getTime() - stampedAt.getTime()) / 3_600_000;
+  return hours >= 0 ? hours : null;
+}
+
 async function computeRescheduleNoticeFloorHours(
   db: unknown,
   appointmentId: string | undefined,
@@ -284,7 +293,6 @@ async function computeRescheduleNoticeFloorHours(
         findMany?: (args: unknown) => Promise<
           Array<{
             startsAt: Date;
-            updatedAt?: Date | null;
             deletedAt?: Date | null;
             completionStatus: string;
           }>
@@ -302,31 +310,23 @@ async function computeRescheduleNoticeFloorHours(
         },
         select: {
           startsAt: true,
-          updatedAt: true,
           deletedAt: true,
           completionStatus: true,
         },
       })) ?? [])
     : [];
 
-  const priorRescheduleNoticeHours: number[] = [];
-  for (const s of slots) {
-    if (s.completionStatus === "RESCHEDULED" && s.updatedAt instanceof Date) {
-      const noticeHours =
-        (s.startsAt.getTime() - s.updatedAt.getTime()) / 3_600_000;
-      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
-    }
-  }
-  for (const t of tombstonedSlots) {
-    if (t.completionStatus === "RESCHEDULED" && t.deletedAt instanceof Date) {
-      const noticeHours =
-        (t.startsAt.getTime() - t.deletedAt.getTime()) / 3_600_000;
-      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
-    }
-  }
+  const liveRescheduledNotices = slots
+    .filter((s) => s.completionStatus === "RESCHEDULED")
+    .map((s) => noticeHoursBetween(s.startsAt, s.updatedAt));
+  const tombstonedNotices = tombstonedSlots
+    .filter((t) => t.completionStatus === "RESCHEDULED")
+    .map((t) => noticeHoursBetween(t.startsAt, t.deletedAt));
 
-  return priorRescheduleNoticeHours.length > 0
-    ? Math.min(...priorRescheduleNoticeHours)
-    : null;
+  const validNotices = [...liveRescheduledNotices, ...tombstonedNotices].filter(
+    (h): h is number => h !== null,
+  );
+  return validNotices.length > 0 ? Math.min(...validNotices) : null;
 }
+
 

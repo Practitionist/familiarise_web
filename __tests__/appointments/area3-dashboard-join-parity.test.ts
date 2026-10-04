@@ -64,40 +64,39 @@ describe("Area 3 — Dashboard Appointment Display & Join-Button Timing Parity",
     const baseNow = new Date("2026-08-01T10:15:00.000Z");
 
     it("includes Trial sessions in processAllEvents and keeps in-progress sessions in getUpcomingEvents", () => {
-      const events = processAllEvents(
-        {
-          consultations: [],
-          subscriptions: [],
-          webinars: [],
-          classes: [],
-          trials: [
-            {
-              id: "trial-1",
-              status: "SCHEDULED",
-              subscriptionPlan: {
-                title: "Growth Mentorship",
-                consultantProfile: {
-                  user: { name: "Dr. Ada", image: null },
+      const trialEventsInput = {
+        consultations: [],
+        subscriptions: [],
+        webinars: [],
+        classes: [],
+        trials: [
+          {
+            id: "trial-1",
+            status: "SCHEDULED",
+            subscriptionPlan: {
+              title: "Growth Mentorship",
+              consultantProfile: {
+                user: { name: "Dr. Ada", image: null },
+              },
+            },
+            appointment: {
+              id: "appt-trial-1",
+              occurrences: [
+                {
+                  id: "occ-trial-1",
+                  startsAt: "2026-08-01T10:00:00.000Z",
+                  endsAt: "2026-08-01T10:30:00.000Z",
+                  isTentative: false,
+                  completionStatus: "SCHEDULED",
+                  meeting: null,
                 },
-              },
-              appointment: {
-                id: "appt-trial-1",
-                occurrences: [
-                  {
-                    id: "occ-trial-1",
-                    startsAt: "2026-08-01T10:00:00.000Z",
-                    endsAt: "2026-08-01T10:30:00.000Z",
-                    isTentative: false,
-                    completionStatus: "SCHEDULED",
-                    meeting: null,
-                  },
-                ],
-              },
-            } as never,
-          ],
-        },
-        baseNow,
-      );
+              ],
+            },
+          } as never,
+        ],
+      };
+
+      const events = processAllEvents(trialEventsInput, baseNow);
 
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe("trial");
@@ -126,37 +125,7 @@ describe("Area 3 — Dashboard Appointment Display & Join-Button Timing Parity",
           60_000,
       );
       const refreshedAfterGrace = processAllEvents(
-        {
-          consultations: [],
-          subscriptions: [],
-          webinars: [],
-          classes: [],
-          trials: [
-            {
-              id: "trial-1",
-              status: "SCHEDULED",
-              subscriptionPlan: {
-                title: "Growth Mentorship",
-                consultantProfile: {
-                  user: { name: "Dr. Ada", image: null },
-                },
-              },
-              appointment: {
-                id: "appt-trial-1",
-                occurrences: [
-                  {
-                    id: "occ-trial-1",
-                    startsAt: "2026-08-01T10:00:00.000Z",
-                    endsAt: "2026-08-01T10:30:00.000Z",
-                    isTentative: false,
-                    completionStatus: "SCHEDULED",
-                    meeting: null,
-                  },
-                ],
-              },
-            } as never,
-          ],
-        },
+        trialEventsInput,
         afterGrace,
       );
       expect(getUpcomingEvents(refreshedAfterGrace, afterGrace)).toHaveLength(
