@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import type { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
@@ -18,6 +19,7 @@ import {
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import { deriveReplayAmount } from "@/lib/payments/pricing/replay-price";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import type { replayChargeNotesSchema } from "@/lib/payments/webhooks/recording-purchase";
 import {
   isDiscoverablePlanPlan,
   loadOwnedListingRecording,
@@ -128,19 +130,20 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           };
         }
 
+        // The capture handler splits the charge from these; they sum to `amount`.
+        const metadata: z.input<typeof replayChargeNotesSchema> = {
+          type: "recording_purchase",
+          recordingId,
+          userId: buyerId,
+          originalAmountPaise: String(derived.originalAmount),
+          taxAmountPaise: String(derived.taxAmount),
+          buyerCountry,
+        };
         const order = await createRazorpayOrder({
           amount: derived.amount,
           currency: "INR",
           paymentGateway: "RAZORPAY",
-          metadata: {
-            type: "recording_purchase",
-            recordingId,
-            userId: buyerId,
-            // The capture handler splits the charge from these; they sum to `amount`.
-            originalAmountPaise: String(derived.originalAmount),
-            taxAmountPaise: String(derived.taxAmount),
-            buyerCountry,
-          },
+          metadata,
           customerId,
         });
 

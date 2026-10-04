@@ -5,8 +5,9 @@
  * retried the same order) to SUCCEEDED with the Payment, earnings and BOOKING
  * journal in one transaction. A capture that cannot fulfil a purchase (the
  * replay is no longer purchasable, the buyer already holds it, or a second
- * payment on a settled order) is recorded as a SUCCEEDED Payment carrying the
- * auto-refund marker and refunded after commit; retry-auto-refunds re-drives it.
+ * payment on a settled order, or a purchase row deleted with its recording) is
+ * recorded as a SUCCEEDED Payment carrying the auto-refund marker and refunded
+ * after commit; retry-auto-refunds re-drives it.
  */
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -24,12 +25,27 @@ import { isDurablyOurs } from "@/lib/stream/recording-storage";
 import { reportSentryError } from "@/lib/observability/report";
 import * as Sentry from "@sentry/nextjs";
 
-const paiseNote = z.coerce.number().int().nonnegative();
-const replayChargeNotesSchema = z.object({
+const paiseNote = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .pipe(z.number().int().nonnegative().safe());
+
+/** The notes a replay order is minted with; the capture reads them back. */
+export const replayChargeNotesSchema = z.object({
+  type: z.literal("recording_purchase"),
+  recordingId: z.string().min(1),
+  userId: z.string().min(1),
   originalAmountPaise: paiseNote,
   taxAmountPaise: paiseNote,
   buyerCountry: z.string().length(2),
 });
+const chargeSplitSchema = replayChargeNotesSchema.pick({
+  originalAmountPaise: true,
+  taxAmountPaise: true,
+  buyerCountry: true,
+});
+const replayBuyerSchema = replayChargeNotesSchema.pick({ userId: true });
 
 interface ReplayCharge {
   originalAmount: number;
@@ -46,7 +62,7 @@ function resolveReplayCharge(
   chargedPaise: number,
   notes: Record<string, string> | undefined,
 ): ReplayCharge {
-  const parsed = replayChargeNotesSchema.safeParse(notes ?? {});
+  const parsed = chargeSplitSchema.safeParse(notes ?? {});
   if (
     parsed.success &&
     parsed.data.originalAmountPaise + parsed.data.taxAmountPaise ===
@@ -241,6 +257,46 @@ async function stageCaptureRefund(
   };
 }
 
+/**
+ * Refund a capture whose purchase row is gone (deleted with its recording) to
+ * the buyer the order notes name. Without a captured amount or a live buyer
+ * there is nothing to stage a refund on, and the caller's alert is the record.
+ */
+async function refundOrphanCapture(
+  tx: Tx,
+  input: {
+    orderId: string;
+    gatewayPaymentId: string | undefined;
+    notes: Record<string, string> | undefined;
+    capturedPaise: number | undefined;
+  },
+): Promise<CaptureOutcome | null> {
+  const { orderId, capturedPaise } = input;
+  const buyer = replayBuyerSchema.safeParse(input.notes ?? {});
+  if (
+    !buyer.success ||
+    capturedPaise === undefined ||
+    !Number.isSafeInteger(capturedPaise) ||
+    capturedPaise <= 0
+  ) {
+    return null;
+  }
+  const buyerRow = await tx.user.findUnique({
+    where: { id: buyer.data.userId },
+    select: { id: true },
+  });
+  if (!buyerRow) return null;
+  return stageCaptureRefund(tx, {
+    paymentIntent: orderId,
+    buyerId: buyerRow.id,
+    chargedPaise: capturedPaise,
+    charge: resolveReplayCharge(orderId, capturedPaise, input.notes),
+    organizationId: null,
+    gatewayPaymentId: input.gatewayPaymentId,
+    reason: `capture on replay order ${orderId}; its purchase no longer exists`,
+  });
+}
+
 export async function handleRecordingPurchaseSuccess(
   orderId: string,
   gatewayPaymentId?: string,
@@ -329,7 +385,6 @@ export async function handleRecordingPurchaseSuccess(
       });
 
       if (!purchase) {
-        // Unknown order — log loudly; the sweeper can't re-drive what has no row.
         console.error(
           `[recording-purchase] captured order ${orderId} has no RecordingPurchase row`,
         );
@@ -337,7 +392,12 @@ export async function handleRecordingPurchaseSuccess(
           `[recording-purchase] captured order without row: ${orderId}`,
           { level: "error", tags: { subsystem: "payments" } },
         );
-        return null;
+        return refundOrphanCapture(tx, {
+          orderId,
+          gatewayPaymentId,
+          notes,
+          capturedPaise,
+        });
       }
 
       const chargedPaise = capturedPaise ?? Number(purchase.amountPaise);

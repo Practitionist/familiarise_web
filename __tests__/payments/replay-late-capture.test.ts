@@ -10,6 +10,7 @@ const mockTx = {
     updateMany: jest.fn(),
   },
   payment: { findUnique: jest.fn(), create: jest.fn() },
+  user: { findUnique: jest.fn() },
 };
 const mockSettleMarker = jest.fn();
 const mockRefund = jest.fn();
@@ -142,4 +143,32 @@ it("re-grants a late retry, refunds an unpurchasable replay and refunds a duplic
     expect.objectContaining({ paymentId: "pay-pay_D" }),
   );
   expect(mockCreateEarnings).not.toHaveBeenCalled();
+});
+
+it("refunds a capture whose purchase row was deleted with its recording", async () => {
+  mockTx.recordingPurchase.findUnique.mockResolvedValueOnce(null);
+  mockTx.user.findUnique.mockResolvedValueOnce({ id: "u-1" });
+  await handleRecordingPurchaseSuccess(
+    "order_4",
+    "pay_E",
+    { type: "recording_purchase", recordingId: "rec-gone", userId: "u-1" },
+    99900,
+  );
+  const staged = mockTx.payment.create.mock.calls[0][0].data;
+  expect(staged).toMatchObject({
+    userId: "u-1",
+    paymentIntent: "order_4",
+    amount: 99900,
+    gatewayPaymentId: "pay_E",
+  });
+  expect(staged.description).toMatch(/^Auto-refund pending:/);
+  expect(mockRefund).toHaveBeenCalledWith(
+    expect.objectContaining({
+      paymentId: "pay-order_4",
+      dedupeKey: "replay-capture:pay-order_4",
+    }),
+  );
+  expect(mockSettleMarker.mock.calls[0][0].data.description).toMatch(
+    /^Auto-refunded:/,
+  );
 });
