@@ -452,20 +452,22 @@ export function PendingPaymentsWidget({
                   <p className="text-sm font-medium text-foreground truncate">
                     {payment.title}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                    with {payment.consultantName}
+                  <div className="mt-0.5 flex items-baseline gap-1 text-xs text-muted-foreground">
+                    <p className="min-w-0 truncate">
+                      with {payment.consultantName}
+                    </p>
                     {detailsHref && (
                       <>
-                        {" · "}
+                        <span aria-hidden="true">·</span>
                         <Link
                           href={detailsHref}
-                          className="underline underline-offset-2 hover:text-foreground"
+                          className="shrink-0 underline underline-offset-2 hover:text-foreground"
                         >
                           Details
                         </Link>
                       </>
                     )}
-                  </p>
+                  </div>
                 </div>
                 <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
                   {/* `formatPrice` assumes INR paise and applies the viewer's
