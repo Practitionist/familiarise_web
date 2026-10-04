@@ -17,6 +17,7 @@ import {
   parseRequestListQuery,
   type RequestListQuery,
 } from "./list-query";
+export { APPROVAL_STATUSES_DETAIL_ONLY };
 
 /**
  * The response halves of the #1704 guards, shared by the consultation and

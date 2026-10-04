@@ -80,13 +80,12 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
+import { applyReversal, postPayoutClawback } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
-  applyReversal,
   type PendingConsultantClawback,
-  postPayoutClawback,
-} from "./reversal-engine";
+} from "@/lib/payments/payouts/paid-consultant-clawback";
 import {
   findDedupedRefund,
   isDedupeKeyConflict,

@@ -69,12 +69,12 @@ import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal"
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
+import { postPayoutClawback } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
   type PendingConsultantClawback,
-  postPayoutClawback,
-} from "./reversal-engine";
+} from "@/lib/payments/payouts/paid-consultant-clawback";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";

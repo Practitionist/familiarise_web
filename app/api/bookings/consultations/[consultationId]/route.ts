@@ -18,6 +18,7 @@ import {
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
   refusePlanNotOwned,
   releaseDeclinedRequestHold,
@@ -419,12 +420,23 @@ export async function PATCH(
       );
     }
 
+    if (
+      APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
+      existingConsultation.consultationPlan.consultantProfile.user.id ===
+        existingConsultation.requestedBy.user.id &&
+      !isPrivileged(session.user.role)
+    ) {
+      return NextResponse.json(
+        { error: "You cannot approve your own request", code: "SELF_APPROVAL" },
+        { status: 403 },
+      );
+    }
+
     const patchError = validateDetailRequestStatusPatch(
       status,
       isConsultant,
       isPrivileged(session.user.role),
-      existingConsultation.consultationPlan.consultantProfile.user.id ===
-        existingConsultation.requestedBy.user.id,
+      false,
     );
     if (patchError) return patchError;
 
