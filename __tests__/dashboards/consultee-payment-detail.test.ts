@@ -39,3 +39,19 @@ it("binds the charge to the payer and answers null for anyone else's", async () 
   });
   expect(prisma.refund.findMany).not.toHaveBeenCalled();
 });
+
+it("answers null for another user's payment and never reads its refunds", async () => {
+  const rows = [{ id: "pay-1", userId: "user-owner" }];
+  (prisma.payment.findFirst as jest.Mock).mockImplementation(
+    async ({ where }: { where: { id: string; userId: string } }) =>
+      rows.find((r) => r.id === where.id && r.userId === where.userId) ?? null,
+  );
+  (prisma.refund.findMany as jest.Mock).mockClear();
+  const detail = await readConsulteePaymentDetail({
+    paymentId: "pay-1",
+    consulteeId: "ce-9",
+    userId: "user-intruder",
+  });
+  expect(detail).toBeNull();
+  expect(prisma.refund.findMany).not.toHaveBeenCalled();
+});

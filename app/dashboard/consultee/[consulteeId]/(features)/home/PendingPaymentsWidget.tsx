@@ -177,6 +177,15 @@ function PayNowButton({
   );
 }
 
+/** The pending-checkout page for a row: a gateway row IS a Payment id, an approval row carries it in its pay-page path. */
+function pendingDetailsHref(payment: PendingPayment): string | null {
+  if (payment.source === "gateway_pending") {
+    return `/checkout/pending/${encodeURIComponent(payment.id)}`;
+  }
+  const match = /^\/checkout\/pay\/([^/?#]+)$/.exec(payment.paymentUrl ?? "");
+  return match ? `/checkout/pending/${match[1]}` : null;
+}
+
 type PendingCancelTarget =
   | { kind: "gateway"; paymentId: string; title: string }
   | { kind: "approval"; appointmentId: string; title: string };
@@ -418,6 +427,7 @@ export function PendingPaymentsWidget({
       <div className="divide-y divide-amber-100 flex-1">
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
+          const detailsHref = pendingDetailsHref(payment);
           const { bookingState, nextAction } = rowPresentation(payment);
           // #1763 — `nextAction.label` runs its own `money()` helper, so an
           // INR row diverged from the row's own `formatPrice` amount above.
@@ -439,6 +449,17 @@ export function PendingPaymentsWidget({
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5 truncate">
                     with {payment.consultantName}
+                    {detailsHref && (
+                      <>
+                        {" · "}
+                        <Link
+                          href={detailsHref}
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          Details
+                        </Link>
+                      </>
+                    )}
                   </p>
                 </div>
                 <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">

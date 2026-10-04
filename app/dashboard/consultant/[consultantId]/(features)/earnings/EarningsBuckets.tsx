@@ -316,11 +316,13 @@ function ByOfferingTable({ stats }: Readonly<{ stats: OfferingStats | null }>) {
  * Payouts) that used to sit under the tiles.
  */
 export function EarningsActivity({
+  consultantId,
   data,
   now: nowProp,
   isStale = false,
   initialSegment = "AVAILABLE",
 }: Readonly<{
+  consultantId: string;
   data: EarningsResponse;
   now?: Date;
   isStale?: boolean;
@@ -372,7 +374,12 @@ export function EarningsActivity({
 
   let segmentBody: React.ReactNode;
   if (segment === "PAID_OUT") {
-    segmentBody = <PayoutList payouts={data.payouts} />;
+    segmentBody = (
+      <PayoutList
+        payouts={data.payouts}
+        base={`/dashboard/consultant/${consultantId}`}
+      />
+    );
   } else if (pageRows.length === 0) {
     segmentBody = (
       <EmptyState
@@ -571,7 +578,10 @@ function EarningItem({
   );
 }
 
-function PayoutList({ payouts }: Readonly<{ payouts: PayoutRow[] }>) {
+function PayoutList({
+  payouts,
+  base,
+}: Readonly<{ payouts: PayoutRow[]; base: string }>) {
   if (payouts.length === 0) {
     return (
       <EmptyState
@@ -602,6 +612,12 @@ function PayoutList({ payouts }: Readonly<{ payouts: PayoutRow[] }>) {
             <div className="flex shrink-0 flex-col items-end gap-1">
               <StatusBadge {...presentationBadge(pres)} size="sm" />
               <PayoutWalkSheet payout={p} />
+              <Link
+                href={`${base}/earnings/payouts/${p.id}`}
+                className="text-xs font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+              >
+                Details
+              </Link>
             </div>
           </li>
         );

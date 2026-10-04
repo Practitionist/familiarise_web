@@ -15,6 +15,7 @@ import {
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import { receiptHref } from "@/lib/appointments/payment-display";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { toPlain } from "@/lib/data/serialize";
 import {
   paymentRowSelect,
@@ -28,12 +29,28 @@ export interface PaymentTimelineStep {
   tone: "success" | "info" | "critical";
 }
 
+export interface RefundDetail {
+  id: string;
+  amountPaise: number;
+  currency: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+  /** Why the gateway rejected it; set only for a FAILED refund. */
+  failureReason: string | null;
+  /** The gateway's refund id, shown so support can find the refund. */
+  gatewayRefundId: string;
+}
+
 export interface ConsulteePaymentDetail {
   row: ConsulteePaymentRow;
   moneyState: MoneyState;
   /** Sponsored money shows no amount unless the member paid a co-pay (locked 2026-09-13). */
   showAmount: boolean;
   refundTimeline: PaymentTimelineStep[];
+  refunds: RefundDetail[];
+  /** False while PLATFORM_GSTIN is unset: the PDF routes answer 503 then. */
+  taxDocumentsAvailable: boolean;
   receiptHref: string | null;
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
@@ -69,15 +86,18 @@ export async function readConsulteePaymentDetail(args: {
   if (!payment) return null;
 
   const [refunds, creditNotes] = await Promise.all([
-    // The gateway id only decides "requested" vs "processing"; it never
-    // leaves this function.
+    // Reached only after the payer-bound payment read above succeeded.
     prisma.refund.findMany({
       where: { paymentId, deletedAt: null },
       select: {
+        id: true,
         amountPaise: true,
+        currency: true,
         status: true,
         refundId: true,
+        failureReason: true,
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "asc" },
     }),
@@ -106,6 +126,17 @@ export async function readConsulteePaymentDetail(args: {
     moneyState: presentation.moneyState,
     showAmount:
       presentation.moneyState.state !== "SPONSORED" || coPays.length > 0,
+    refunds: refunds.map((r) => ({
+      id: r.id,
+      amountPaise: Number(r.amountPaise),
+      currency: r.currency,
+      status: r.status,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      failureReason: r.status === "FAILED" ? r.failureReason : null,
+      gatewayRefundId: r.refundId,
+    })),
+    taxDocumentsAvailable: getPlatformSupplier() !== null,
     refundTimeline: presentation.timeline
       .filter((step) => step.kind)
       .map((step) => ({
