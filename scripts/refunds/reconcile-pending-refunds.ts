@@ -40,7 +40,9 @@ import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -65,6 +67,8 @@ export interface RefundReconciliationResult {
    * for the row's gateway (no implementation) and it was over 24 h old.
    */
   failedGatewayDisabled: number;
+  /** SUCCEEDED refunds whose cascade the backstop pass re-drove. */
+  redrivenCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -509,6 +513,10 @@ async function reconcilePendingRefundsUnlocked(
     }
   }
 
+  const backstop = await redriveStrandedRefunds(opts.limit);
+  totalProcessed += backstop.scanned;
+  errors.push(...backstop.errors);
+
   // One expected warning per run listing the ids, never one per row per tick.
   if (retiredNoClient.length > 0) {
     reportSentryMessage(
@@ -547,6 +555,7 @@ async function reconcilePendingRefundsUnlocked(
     skippedCount,
     failedUnknownId,
     failedGatewayDisabled,
+    redrivenCount: backstop.redriven,
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -624,6 +633,76 @@ async function attemptRefundNotice(
     MONEY_EMAIL_TYPES.REFUND_PROCESSED,
     EMAIL_BUDGET_MS.JOB,
   );
+}
+
+// A SUCCEEDED refund still uncascaded this long after its last write is stranded.
+const STRANDED_AFTER_MS = 10 * 60 * 1000;
+const STRANDED_BATCH = 50;
+
+/**
+ * Backstop pass: re-drives the cascade of SUCCEEDED refunds whose cascade never
+ * committed. The cascadedAt claim inside applyRefundCascade keeps it idempotent.
+ */
+async function redriveStrandedRefunds(
+  limit: number | undefined,
+): Promise<{ scanned: number; redriven: number; errors: string[] }> {
+  const stranded = await prisma.refund.findMany({
+    where: {
+      status: RefundStatus.SUCCEEDED,
+      cascadedAt: null,
+      deletedAt: null,
+      // Credit restorations settle in place and never cascade.
+      refundId: { not: { startsWith: "credits_" } },
+      updatedAt: { lt: new Date(Date.now() - STRANDED_AFTER_MS) },
+    },
+    select: {
+      id: true,
+      paymentId: true,
+      amountPaise: true,
+      reason: true,
+      payment: { select: { amount: true } },
+    },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: limit ?? STRANDED_BATCH,
+  });
+
+  let redriven = 0;
+  const errors: string[] = [];
+  for (const refund of stranded) {
+    try {
+      await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            await applyRefundCascade(tx, {
+              paymentId: refund.paymentId,
+              refundId: refund.id,
+              amountPaise: refund.amountPaise,
+              reason: refund.reason ?? "Stranded refund re-driven",
+              initiatedByUserId: null,
+            });
+            await reverseCreditsForPayment(
+              refund.paymentId,
+              tx,
+              refund.amountPaise,
+              refund.payment.amount,
+            );
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        ),
+      );
+      redriven++;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      errors.push(`Refund ${refund.id}: ${errorMessage}`);
+      console.error(`Error re-driving refund ${refund.id}:`, errorMessage);
+    }
+  }
+  return { scanned: stranded.length, redriven, errors };
 }
 
 function prismaMetadataObject(metadata: unknown): Record<string, unknown> {

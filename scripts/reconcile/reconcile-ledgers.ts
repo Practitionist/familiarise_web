@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { UNAPPLIED_RECEIPT_KEY_PREFIX } from "@/lib/payments/ledger/unapplied-receipts";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -48,7 +49,9 @@ export type Finding = {
     | "OVERAGE_SETTLEMENT_MISMATCH"
     // An anti-invoice-fraud park older than 24h. Detect-only: age never
     // releases a park.
-    | "PENDING_TRUST_PARK_STALE";
+    | "PENDING_TRUST_PARK_STALE"
+    // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
+    | "UNAPPLIED_RECEIPTS_RESIDUE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -1150,6 +1153,81 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   }
 }
 
+// --- a refunded parked capture nets UNAPPLIED_RECEIPTS to zero per payment ---
+async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
+  const parked = await prisma.ledgerTransaction.findMany({
+    where: {
+      idempotencyKey: { startsWith: UNAPPLIED_RECEIPT_KEY_PREFIX },
+      paymentId: { not: null },
+    },
+    select: { paymentId: true },
+  });
+  const paymentIds = parked
+    .map((t) => t.paymentId)
+    .filter((p): p is string => !!p);
+
+  for (let i = 0; i < paymentIds.length; i += CHUNK) {
+    const slice = paymentIds.slice(i, i + CHUNK);
+    const entries = await prisma.ledgerEntry.findMany({
+      where: {
+        account: { kind: "UNAPPLIED_RECEIPTS" },
+        transaction: { paymentId: { in: slice } },
+      },
+      select: {
+        direction: true,
+        amountPaise: true,
+        transaction: { select: { paymentId: true } },
+      },
+    });
+    const refunds = await prisma.refund.findMany({
+      where: { paymentId: { in: slice } },
+      select: { paymentId: true, status: true, cascadedAt: true },
+    });
+
+    const owedByPayment = new Map<string, number>();
+    for (const e of entries) {
+      const paymentId = e.transaction.paymentId;
+      if (!paymentId) continue;
+      const paise = sumPaise(e.amountPaise);
+      owedByPayment.set(
+        paymentId,
+        (owedByPayment.get(paymentId) ?? 0) +
+          (e.direction === "CREDIT" ? paise : -paise),
+      );
+    }
+    const settled = new Set<string>();
+    const open = new Set<string>();
+    for (const r of refunds) {
+      if (
+        r.status === "PENDING" ||
+        (r.status === "SUCCEEDED" && r.cascadedAt === null)
+      ) {
+        open.add(r.paymentId);
+      } else if (r.status === "SUCCEEDED") {
+        settled.add(r.paymentId);
+      }
+    }
+
+    for (const paymentId of slice) {
+      const owed = owedByPayment.get(paymentId) ?? 0;
+      if (!settled.has(paymentId) || open.has(paymentId) || owed === 0) {
+        continue;
+      }
+      ctx.findings.push({
+        kind: "UNAPPLIED_RECEIPTS_RESIDUE",
+        paymentId,
+        expectedPaise: 0,
+        actualPaise: owed,
+        deltaPaise: owed,
+        details: {
+          unit: "paise",
+          note: "A parked capture's refunds settled but UNAPPLIED_RECEIPTS does not net to zero for the payment (positive: cash still owed to the payer).",
+        },
+      });
+    }
+  }
+}
+
 // --- PENDING_TRUST park watchdog ---
 // A park is released only when its sponsor is verified or pays an invoice, so
 // one that does neither withholds earnings forever. Report parks older than
@@ -1323,6 +1401,9 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   await stepSplitSums(ctx);
   await stepOverageSettlement(ctx);
   await stepPendingTrustParks(ctx);
+  if (!opts.organizationId) {
+    await stepUnappliedReceipts(ctx);
+  }
 
   return { ctx, durationMs: Date.now() - startedAt };
 }

@@ -83,6 +83,10 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  hasUnappliedReceipt,
+  postUnappliedRefund,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -1019,6 +1023,33 @@ export async function applyRefundCascade(
     // `reversal < 0` trigger and the journal rejects a 0 entry, which would
     // fail the tx at COMMIT and leave the refund re-cascading forever.
     // Still reverse the booking utilization so the seat returns.
+    if (payment.bookingUtilization) {
+      await reverseBookingUtilization(tx, {
+        paymentId: payment.id,
+        reason: input.reason,
+      });
+    }
+    return {
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+    };
+  }
+
+  // A parked capture never booked revenue, GST, earnings or an invoice, so its
+  // refund only returns the cash from UNAPPLIED_RECEIPTS.
+  if (
+    payment.earnings.length === 0 &&
+    payment.organizationEarnings.length === 0 &&
+    (await hasUnappliedReceipt(tx, payment.id))
+  ) {
+    await postUnappliedRefund(tx, {
+      paymentId: payment.id,
+      refundId: input.refundId,
+      amountPaise: input.amountPaise,
+    });
     if (payment.bookingUtilization) {
       await reverseBookingUtilization(tx, {
         paymentId: payment.id,
