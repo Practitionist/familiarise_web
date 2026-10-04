@@ -23,10 +23,14 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 | Section                                                       | Description                                                                 |
 | ------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [Checkout Flow](./checkout-flow/)                             | 4 appointment types, payment processing, edge cases                         |
-| [Gateways](./gateways/)                                       | Stripe and Razorpay setup, architecture, KYC                                |
+| [Gateways](./gateways/)                                       | Razorpay setup, architecture, KYC                                           |
 | [Approval Payments](./approval-payments/)                     | Consultant-approves-first workflow (formerly "pay later")                   |
 | [Refunds & Disputes](./refunds-disputes/)                     | Two-phase refund pattern, dispute lifecycle                                 |
 | [Cancellations & Rescheduling](./cancellations-rescheduling/) | Refund triggers, payment reuse on reschedule                                |
 | [Payouts](./payouts/)                                         | Earnings lifecycle, batch processing, gateway disbursement                  |
 | [Webhooks](./webhooks/)                                       | Monitoring, Razorpay webhook schema                                         |
 | [Backoffice](./backoffice/)                                   | The Money console: tabs, audited doors, the class-series and reconcile tabs |
+
+## Deprecated & Superseded Approaches
+
+On 2026-10-04 the Stripe gateway (checkout, webhooks, Stripe Connect payouts) was removed from the code, because Stripe is invite-only in India and Razorpay already served every buyer and payee; its enum labels and nullable columns stay in the live database only until the pre-MVP reset. The same change removed the GST-TCS (section 52) machinery (`GstTcsBatch`, `GstTcsAdjustment`, the per-payment and per-earning TCS columns and the GSTR-8 draft export), because the platform bills as principal supplier under ADR 26 and section 52 TCS therefore never applies. The never-built wallet auto-top-up mandate columns went with them.

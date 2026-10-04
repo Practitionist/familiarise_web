@@ -38,7 +38,6 @@ const earning = (
   platformFeePaise: 20_000,
   consultantSharePaise: 80_000,
   refundedShareAmount: 0,
-  gstTcsAccruedPaise: null,
   role: "OWNER",
   shareBps: 10_000,
   appointmentOccurrenceId: null,

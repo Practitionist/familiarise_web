@@ -338,8 +338,6 @@ const urgentDisputes = await prisma.dispute.count({
 | Disputes API          | `app/api/payments/disputes/route.ts`          |
 | Admin list            | `app/api/admin/disputes/route.ts`             |
 | Admin details         | `app/api/admin/disputes/[disputeId]/route.ts` |
-| Stripe implementation | `lib/payments/core/stripe.ts`                 |
-| Webhook handlers      | `app/api/webhooks/stripe/route.ts`            |
 
 ---
 

@@ -14,7 +14,7 @@
  *      flips it to SUCCEEDED. Use this when the refund originates inside
  *      the app and you want it gateway-bound + ledgered in one call.
  *
- *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (Stripe /
+ *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (the
  *      Razorpay webhook → `Refund` row already exists). The cascade
  *      cron in `scripts/refunds/cascade-refund-earnings.ts` calls this
  *      to fan out the side-effects without re-creating the Refund row.
@@ -1472,27 +1472,6 @@ export async function applyRefundCascade(
       { reversedAt: new Date() },
       { fromIn: ["CHARGED"] },
     );
-  }
-
-  // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
-  // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.
-  // Inert while gstTcsCollectedPaise stays null. Idempotency rides on the
-  // cascade's own exactly-once discipline (cascadedAt), not a unique here —
-  // partial refunds legitimately produce one adjustment per refund.
-  if ((payment.gstTcsCollectedPaise ?? 0) > 0) {
-    const tcsReverse = Math.floor(
-      (payment.gstTcsCollectedPaise! * input.amountPaise) / payment.amount,
-    );
-    if (tcsReverse > 0) {
-      await tx.gstTcsAdjustment.create({
-        data: {
-          paymentId: payment.id,
-          refundId: input.refundId,
-          amountPaise: -tcsReverse,
-          reason: `refund (${input.reason})`,
-        },
-      });
-    }
   }
 
   // -----------------------------------------------------------------------

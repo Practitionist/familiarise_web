@@ -24,12 +24,10 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   handleUnifiedCheckout,
   paymentGateways,
   reportPaymentsError,
@@ -282,7 +280,6 @@ export default function WebinarCheckoutPage({
     () => createHandleCheckoutSuccess(toast, "WEBINAR"),
     [toast],
   );
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
@@ -434,7 +431,7 @@ export default function WebinarCheckoutPage({
    * Re-check the seat count against the click, not the last render.
    *
    * The gate above lives inside `handleCheckout`, whose only production caller
-   * is the development mock-pay button — the real Razorpay and Stripe controls
+   * is the development mock-pay button — the real Razorpay controls
    * take `checkoutData` and open the gateway themselves. So the soft gate was
    * inert exactly where money moves: a webinar that filled while this tab sat
    * open still let the buyer pay into a rejection.
@@ -973,27 +970,6 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
-                          disabled={isMaintenanceBlocked || isSoldOut}
-                        />
-                      ) : validatedSearchParams &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
-                            planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
                           onBeforeCheckout={revalidateSeatsBeforePayment}
                           disabled={isMaintenanceBlocked || isSoldOut}
                         />

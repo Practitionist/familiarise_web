@@ -38,7 +38,7 @@ Think of it as the "Airbnb for expertise": a platform where professionals can mo
 | **In-App Messaging**     | Direct communication and document sharing between sessions                        |
 | **Document Review**      | Upload resumes, portfolios, or code for expert feedback                           |
 | **Smart Scheduling**     | Timezone-aware booking with weekly and custom availability                        |
-| **Secure Payments**      | Razorpay (primary, INR settlement) and Stripe (request→approve bookings), with escrow protection. **Consultees book from anywhere; consultants must be able to receive INR in India** — see below. |
+| **Secure Payments**      | Razorpay (INR settlement), with escrow protection. **Consultees book from anywhere; consultants must be able to receive INR in India** — see below. |
 | **Earnings Dashboard**   | 80/20 revenue split with transparent payout tracking                              |
 | **Referral System**      | Viral growth via referral links, credit rewards for referrer and referee          |
 | **Collaborators**        | Multi-creator webinars and classes with role-based revenue sharing                |
@@ -167,9 +167,6 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 
 | Variable | Description | Notes |
 |----------|-------------|-------|
-| `NEXT_PUBLIC_STRIPE_KEY` | Stripe publishable key | `pk_test_` for dev, `pk_live_` for prod |
-| `STRIPE_SECRET_KEY` | Stripe secret key | `sk_test_` for dev, `sk_live_` for prod |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret | Different per environment |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key ID | `rzp_test_` for dev, `rzp_live_` for prod |
 | `RAZORPAY_KEY_ID` | Razorpay key ID (server) | Same as public key |
 | `RAZORPAY_SECRET` | Razorpay secret | Different per environment |
@@ -183,8 +180,8 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 > payout, so it cannot be used by accident — see
 > [docs/payments/gateways/README.md](docs/payments/gateways/README.md).
 >
-> **For a finance or CA review:** the live rails are **Razorpay** (primary, INR
-> settlement) and **Stripe** (the request→approve booking path only). Dodo has
+> **For a finance or CA review:** the only live rail is **Razorpay** (INR
+> settlement); Stripe was removed from the code on 2026-10-04. Dodo has
 > never moved money and appears in no reconciliation or filing. Lemon Squeezy
 > and XFlow were evaluated in March 2026, rejected, and removed from the
 > codebase; they are not options.
@@ -304,7 +301,7 @@ npx prisma studio
 - **Database:** PostgreSQL via Supabase
 - **ORM:** Prisma 6
 - **Auth:** NextAuth.js
-- **Payments:** Stripe, Razorpay
+- **Payments:** Razorpay
 - **Real-time:** Stream.io
 - **Styling:** Tailwind CSS
 

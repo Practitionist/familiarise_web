@@ -78,8 +78,6 @@ updates:
       # HIGH - Payment Processing
       payment:
         patterns:
-          - "stripe"
-          - "@stripe/*"
           - "razorpay"
         update-types:
           - "minor"
@@ -255,7 +253,7 @@ updates:
 # - Core Framework (React, Next.js): Foundation dependencies
 # - Auth & Security: Authentication & encryption packages
 # - Database & Storage: Prisma, Supabase, Redis
-# - Payment: Stripe, Razorpay (business critical)
+# - Payment: Razorpay (business critical)
 #
 # HIGH (Weekly, Medium Priority):
 # - Stream & Communication: Video/chat functionality

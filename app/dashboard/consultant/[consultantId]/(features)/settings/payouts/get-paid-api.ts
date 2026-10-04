@@ -41,7 +41,7 @@ export async function createPayoutAccount(
   const res = await fetch("/api/consultant/payout-accounts", {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ provider: "RAZORPAY", ...input }),
+    body: JSON.stringify(input),
   });
   return (await requireJsonResponse(res, "Could not save the account")) as {
     account: PayoutAccountView;

@@ -94,16 +94,11 @@ interface OrgEarningsSummary {
 // Decimal as number); the raw Payment model type still says bigint/Decimal.
 type PaymentRow = Omit<
   Payment,
-  | "amount"
-  | "originalAmount"
-  | "taxAmount"
-  | "gstTcsCollectedPaise"
-  | "exchangeRateAtCheckout"
+  "amount" | "originalAmount" | "taxAmount" | "exchangeRateAtCheckout"
 > & {
   amount: number;
   originalAmount: number;
   taxAmount: number;
-  gstTcsCollectedPaise: number | null;
   exchangeRateAtCheckout: number | null;
 };
 

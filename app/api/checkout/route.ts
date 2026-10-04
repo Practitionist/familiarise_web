@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
       headers: req.headers,
     });
 
-    // Auto-route to optimal gateway (Razorpay domestic/IBT, Stripe fallback)
+    // Auto-route to the gateway (Razorpay for every buyer country)
     const gatewayRouting = routeGateway({
       buyerCountry,
       requestedGateway: validatedData.paymentGateway,

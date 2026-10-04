@@ -27,12 +27,6 @@ export type PayoutLookup =
   | { kind: "unknown_id"; detail: string }
   | { kind: "gateway_error"; detail: string };
 
-/** Stripe answers `resource_missing` / 404 for a payout or transfer id it never issued. */
-export function isStripeUnknownId(error: unknown): boolean {
-  const e = error as { code?: unknown; statusCode?: unknown } | null;
-  return e?.code === "resource_missing" || e?.statusCode === 404;
-}
-
 /** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
 async function razorpayErrorDescription(res: Response): Promise<string> {
   try {
@@ -61,50 +55,6 @@ export const WEBHOOK_STATUS_MAP: Partial<
   [PayoutStatus.FAILED]: "FAILED",
   [PayoutStatus.CANCELLED]: "CANCELLED",
 };
-
-/**
- * Query Stripe for payout/transfer status
- */
-export async function getStripePayoutStatus(
-  providerPayoutId: string,
-): Promise<PayoutLookup> {
-  const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-  if (!stripeSecretKey) {
-    console.warn("Stripe credentials not configured");
-    return {
-      kind: "gateway_error",
-      detail: "Stripe credentials not configured",
-    };
-  }
-
-  try {
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(stripeSecretKey);
-
-    // Check if it's a transfer (tr_) or payout (po_)
-    if (providerPayoutId.startsWith("tr_")) {
-      const transfer = await stripe.transfers.retrieve(providerPayoutId);
-      return {
-        kind: "status",
-        status: transfer.reversed ? "reversed" : "paid",
-      };
-    } else if (providerPayoutId.startsWith("po_")) {
-      const payout = await stripe.payouts.retrieve(providerPayoutId);
-      return {
-        kind: "status",
-        status: payout.status,
-        failureMessage: payout.failure_message || undefined,
-      };
-    }
-
-    return { kind: "gateway_error", detail: "unrecognised Stripe id prefix" };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (isStripeUnknownId(error)) return { kind: "unknown_id", detail };
-    console.error(`Failed to get Stripe payout status: ${error}`);
-    return { kind: "gateway_error", detail };
-  }
-}
 
 /**
  * Query RazorpayX for payout status
@@ -224,30 +174,7 @@ export function mapGatewayStatus(
   gateway: PaymentGateway,
   status: string,
 ): PayoutStatus | null {
-  if (gateway === PaymentGateway.STRIPE) {
-    switch (status.toLowerCase()) {
-      case "paid":
-        return PayoutStatus.COMPLETED;
-      case "pending":
-        return PayoutStatus.PROCESSING;
-      case "in_transit":
-        return PayoutStatus.PROCESSING;
-      case "canceled":
-        return PayoutStatus.CANCELLED;
-      case "failed":
-        return PayoutStatus.FAILED;
-      // This poller only walks PENDING/PROCESSING payouts, where the PAYOUT
-      // ledger txn was never posted — a gateway "reversed" here is a net-zero
-      // round trip, so FAILED handling (unlink earnings, reverse TDS) is the
-      // correct accounting. Post-COMPLETED reversals arrive via the
-      // payout.reversed webhook → markConsultantPayoutReversed (#812), which
-      // does post the counter-txn. The failureReason records the distinction.
-      case "reversed":
-        return PayoutStatus.FAILED;
-      default:
-        return null;
-    }
-  } else if (gateway === PaymentGateway.RAZORPAY) {
+  if (gateway === PaymentGateway.RAZORPAY) {
     switch (status.toLowerCase()) {
       case "processed":
         return PayoutStatus.COMPLETED;
@@ -263,8 +190,8 @@ export function mapGatewayStatus(
       // it was queued, and the arm had only `rejected`. That is precisely the
       // cohort this sweep walks, so the payout fell through as an unknown
       // status and was skipped: PENDING/PROCESSING forever, earnings still
-      // batched against money that never left. The Stripe arm has always
-      // mapped it. FAILED delegation un-batches the earnings and reverses TDS.
+      // batched against money that never left. FAILED delegation un-batches
+      // the earnings and reverses TDS.
       case "failed":
         return PayoutStatus.FAILED;
       case "reversed":

@@ -766,22 +766,6 @@ export function generateRazorpayPayoutId(): string {
 }
 
 /**
- * Generate Stripe Account ID (for Stripe Connect)
- * Format: acct_XXXXXXXXXXXXXXXX (16 alphanumeric chars)
- */
-export function generateStripeAccountId(): string {
-  return `acct_${faker.string.alphanumeric(16)}`;
-}
-
-/**
- * Generate Stripe Payout ID
- * Format: po_XXXXXXXXXXXXXXXXXXXXXXXX (24 alphanumeric chars)
- */
-export function generateStripePayoutId(): string {
-  return `po_${faker.string.alphanumeric(24)}`;
-}
-
-/**
  * Generate payout batch ID
  * Format: PAYOUT-BATCH-YYYYMMDD-XXXX
  */
@@ -946,17 +930,15 @@ export const PAYOUT_STATUS_WEIGHTS = [
  * Payout provider distribution for seeding
  */
 export const PAYOUT_PROVIDER_WEIGHTS = [
-  { value: "RAZORPAY" as const, weight: 0.85 },
-  { value: "STRIPE" as const, weight: 0.15 },
+  { value: "RAZORPAY" as const, weight: 1 },
 ];
 
 /**
  * Payout account type distribution for seeding
  */
 export const PAYOUT_ACCOUNT_TYPE_WEIGHTS = [
-  { value: "BANK_ACCOUNT" as const, weight: 0.6 },
-  { value: "UPI" as const, weight: 0.3 },
-  { value: "STRIPE_CONNECT" as const, weight: 0.1 },
+  { value: "BANK_ACCOUNT" as const, weight: 0.65 },
+  { value: "UPI" as const, weight: 0.35 },
 ];
 
 /**

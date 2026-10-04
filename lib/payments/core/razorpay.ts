@@ -747,7 +747,7 @@ export async function createRazorpayRefund({
   // #1584 P2-P0-01 — Razorpay refunds the ENTIRE payment when `amount` is
   // omitted, so `amount || undefined` promoted 0/NaN to a full refund. The
   // only caller (operations/refund.ts) already passes a positive Int; this
-  // is defence at the boundary, same shape as the Stripe guard.
+  // is defence at the boundary.
   if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
     throw new RefundError(
       `Refund amount must be a positive whole number of paise (got ${String(amount)})`,
