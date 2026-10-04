@@ -73,7 +73,17 @@ export async function GET(req: NextRequest) {
     const { error: authError } = await requireDisputesManager();
     if (authError) return authError;
 
-    const limit = parseInt(req.nextUrl.searchParams.get("limit") || "10");
+    const parsedLimit = z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(10)
+      .safeParse(req.nextUrl.searchParams.get("limit") ?? undefined);
+    if (!parsedLimit.success) {
+      return NextResponse.json({ error: "Invalid limit" }, { status: 400 });
+    }
+    const limit = parsedLimit.data;
 
     const disputes = await prisma.dispute.findMany({
       take: limit,

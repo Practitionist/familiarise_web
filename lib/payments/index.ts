@@ -65,17 +65,13 @@ export async function createPaymentIntent(
   // dev Mock Pay button still names a gateway.
   assertGatewayUsable(paymentGateway, "create a payment intent");
 
-  // Route to correct gateway
-  switch (paymentGateway) {
-    case "RAZORPAY":
-      return createRazorpayOrder(params);
-
-    default:
-      throw new PaymentError(
-        `Unsupported payment gateway: ${paymentGateway}`,
-        "UNSUPPORTED_GATEWAY",
-      );
+  if (paymentGateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Unsupported payment gateway: ${paymentGateway}`,
+      "UNSUPPORTED_GATEWAY",
+    );
   }
+  return createRazorpayOrder(params);
 }
 
 /**
@@ -147,17 +143,14 @@ export async function getRefund(
   refundId: string,
   gateway: PaymentGateway,
 ): Promise<RefundResult> {
-  switch (gateway) {
-    case "RAZORPAY":
-      return getRazorpayRefund(refundId);
-
-    default:
-      throw new PaymentError(
-        `Refund retrieval not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
+  if (gateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Refund retrieval not supported for: ${gateway}`,
+      "NOT_SUPPORTED",
+      gateway,
+    );
   }
+  return getRazorpayRefund(refundId);
 }
 
 /**
@@ -168,17 +161,14 @@ export async function listRefunds(
   gateway: PaymentGateway,
   limit: number = 10,
 ): Promise<RefundResult[]> {
-  switch (gateway) {
-    case "RAZORPAY":
-      return listRazorpayRefunds(paymentIntentId, limit);
-
-    default:
-      throw new PaymentError(
-        `Refund listing not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
+  if (gateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Refund listing not supported for: ${gateway}`,
+      "NOT_SUPPORTED",
+      gateway,
+    );
   }
+  return listRazorpayRefunds(paymentIntentId, limit);
 }
 
 // ============================================================================
@@ -195,15 +185,12 @@ export async function getDispute(
   disputeId: string,
   gateway: PaymentGateway,
 ): Promise<DisputeResult> {
-  switch (gateway) {
-    case "RAZORPAY":
-      return getRazorpayDispute(disputeId);
-
-    default:
-      throw new PaymentError(
-        `Dispute retrieval not supported for: ${gateway}`,
-        "NOT_SUPPORTED",
-        gateway,
-      );
+  if (gateway !== "RAZORPAY") {
+    throw new PaymentError(
+      `Dispute retrieval not supported for: ${gateway}`,
+      "NOT_SUPPORTED",
+      gateway,
+    );
   }
+  return getRazorpayDispute(disputeId);
 }

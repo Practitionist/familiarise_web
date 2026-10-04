@@ -70,7 +70,6 @@ jobs:
       PLATFORM_INVOICE_PREFIX: ${{ secrets.PLATFORM_INVOICE_PREFIX }}
       GST_REGISTER_CSV_OUT: gst-outward-register.csv
       PAN_ENCRYPTION_KEY: ${{ secrets.PAN_ENCRYPTION_KEY }}
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
     steps:
       - name: Checkout code

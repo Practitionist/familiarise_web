@@ -43,13 +43,9 @@ function generateMockPaymentId(gateway: PaymentGateway): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
 
-  switch (gateway) {
-    case "RAZORPAY":
-      return `order_mock_${random}${timestamp}`;
-
-    default:
-      return `mock_${random}_${timestamp}`;
-  }
+  return gateway === "RAZORPAY"
+    ? `order_mock_${random}${timestamp}`
+    : `mock_${random}_${timestamp}`;
 }
 
 /**

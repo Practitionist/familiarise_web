@@ -301,15 +301,8 @@ interface ConsultantPayoutDraft {
  * Atomically sums a consultant's READY earnings, creates the payout row, and
  * claims the earnings READY → BATCHED inside a single transaction.
  */
-function resolvePayoutMethodFromAccountType(
-  accountType: string,
-): PayoutMethod {
-  switch (accountType) {
-    case "UPI":
-      return PayoutMethod.UPI;
-    default:
-      return PayoutMethod.BANK_TRANSFER;
-  }
+function resolvePayoutMethodFromAccountType(accountType: string): PayoutMethod {
+  return accountType === "UPI" ? PayoutMethod.UPI : PayoutMethod.BANK_TRANSFER;
 }
 
 function resolveMintedPayoutCreator(
