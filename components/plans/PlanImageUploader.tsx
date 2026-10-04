@@ -1,42 +1,84 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import Image from "next/image";
-import { ImageIcon, X, Upload, Loader2 } from "lucide-react";
+import { ImageIcon, X, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 import type { TPlanImageType } from "@/lib/supabase";
 
+/** A cover-image change held in the editor until the offering is saved. */
+export type StagedPlanImage =
+  { kind: "upload"; file: File } | { kind: "remove" };
+
 interface IPlanImageUploaderProps {
-  planType: TPlanImageType;
-  planId: string;
   currentImageUrl?: string | null;
-  onImageChange?: (url: string | null) => void;
+  staged: StagedPlanImage | null;
+  onStage: (change: StagedPlanImage | null) => void;
   className?: string;
 }
 
 const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
+/** Writes a staged change through /api/plans/image, the only writer of a plan's imageUrl. */
+export async function commitPlanImage(
+  planType: TPlanImageType,
+  planId: string,
+  change: StagedPlanImage,
+): Promise<void> {
+  let response: Response;
+  if (change.kind === "upload") {
+    const formData = new FormData();
+    formData.append("file", change.file);
+    formData.append("planType", planType);
+    formData.append("planId", planId);
+    response = await fetch("/api/plans/image", {
+      method: "POST",
+      body: formData,
+    });
+  } else {
+    response = await fetch("/api/plans/image", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planType, planId }),
+    });
+  }
+  if (!response.ok) {
+    const result = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(result.error || "Couldn't update the cover image");
+  }
+}
+
 export function PlanImageUploader({
-  planType,
-  planId,
   currentImageUrl,
-  onImageChange,
+  staged,
+  onStage,
   className,
-}: IPlanImageUploaderProps) {
-  const [isUploading, setIsUploading] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+}: Readonly<IPlanImageUploaderProps>) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const displayImage = previewUrl || currentImageUrl;
+  const previewRef = useRef<string | null>(null);
+
+  const replacePreview = useCallback((file: File | null) => {
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    previewRef.current = file ? URL.createObjectURL(file) : null;
+    setPreviewUrl(previewRef.current);
+  }, []);
+
+  let displayImage = currentImageUrl ?? null;
+  if (staged?.kind === "upload") displayImage = previewUrl;
+  if (staged?.kind === "remove") displayImage = null;
 
   const handleFileSelect = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
+    (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
+      event.target.value = "";
       if (!file) return;
 
       if (!ALLOWED_TYPES.includes(file.type)) {
@@ -57,92 +99,18 @@ export function PlanImageUploader({
         return;
       }
 
-      const objectUrl = URL.createObjectURL(file);
-      setPreviewUrl(objectUrl);
-
-      setIsUploading(true);
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("planType", planType);
-        formData.append("planId", planId);
-
-        const response = await fetch("/api/plans/image", {
-          method: "POST",
-          body: formData,
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || "Failed to upload image");
-        }
-
-        toast({
-          title: "Cover image updated",
-          description: "Your plan cover image has been uploaded successfully.",
-        });
-
-        onImageChange?.(result.imageUrl);
-      } catch (error) {
-        console.error("Upload error:", error);
-        setPreviewUrl(null);
-        toast({
-          title: "Upload failed",
-          description:
-            error instanceof Error
-              ? error.message
-              : "Failed to upload cover image. Please try again.",
-          variant: "destructive",
-        });
-      } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-      }
+      replacePreview(file);
+      onStage({ kind: "upload", file });
     },
-    [planType, planId, toast, onImageChange],
+    [toast, onStage, replacePreview],
   );
 
-  const handleDelete = useCallback(async () => {
-    if (!currentImageUrl && !previewUrl) return;
-
-    setIsDeleting(true);
-    try {
-      const response = await fetch("/api/plans/image", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planType, planId }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete image");
-      }
-
-      setPreviewUrl(null);
-      toast({
-        title: "Cover image removed",
-        description: "Your plan cover image has been deleted.",
-      });
-
-      onImageChange?.(null);
-    } catch (error) {
-      console.error("Delete error:", error);
-      toast({
-        title: "Delete failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete cover image. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsDeleting(false);
-    }
-  }, [currentImageUrl, previewUrl, planType, planId, toast, onImageChange]);
+  // Removing a not-yet-saved pick just drops it; removing the saved image is staged.
+  const handleRemove = useCallback(() => {
+    const pickedOnly = staged?.kind === "upload" || !currentImageUrl;
+    replacePreview(null);
+    onStage(pickedOnly ? null : { kind: "remove" });
+  }, [staged, currentImageUrl, onStage, replacePreview]);
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -164,18 +132,6 @@ export function PlanImageUploader({
             </div>
           </div>
         )}
-
-        {/* Loading overlay */}
-        {(isUploading || isDeleting) && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-            <div className="text-white text-center">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-1" />
-              <p className="text-xs">
-                {isUploading ? "Uploading..." : "Removing..."}
-              </p>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Controls */}
@@ -185,7 +141,6 @@ export function PlanImageUploader({
           variant="secondary"
           size="sm"
           onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading || isDeleting}
         >
           <Upload className="w-4 h-4 mr-2" />
           {displayImage ? "Change" : "Upload"}
@@ -196,8 +151,7 @@ export function PlanImageUploader({
             type="button"
             variant="destructive"
             size="sm"
-            onClick={handleDelete}
-            disabled={isUploading || isDeleting}
+            onClick={handleRemove}
           >
             <X className="w-4 h-4 mr-2" />
             Remove
@@ -207,6 +161,7 @@ export function PlanImageUploader({
 
       <p className="text-xs text-zinc-500">
         Cover image, max 5MB. JPEG, PNG, or WebP.
+        {staged && " Saved when you save the offering."}
       </p>
 
       {/* Hidden file input */}

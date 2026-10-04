@@ -35,6 +35,10 @@ import {
 } from "./adapters";
 import { OFFERING_MANIFESTS, TRIAL_FIELD_NAMES } from "./manifests";
 import { OfferingMaterials } from "./OfferingMaterials";
+import {
+  commitPlanImage,
+  type StagedPlanImage,
+} from "@/components/plans/PlanImageUploader";
 import type { OfferingManifest, OfferingType } from "./manifest";
 import {
   applySponsorPricingHintToManifest,
@@ -137,6 +141,9 @@ export function OfferingEditorContainer({
   const [savingAction, setSavingAction] = React.useState<
     "draft" | "publish" | null
   >(null);
+  const [stagedImage, setStagedImage] = React.useState<StagedPlanImage | null>(
+    null,
+  );
 
   const existingPlan = initialEvent ? adapter.planOf(initialEvent) : undefined;
   const copySource = duplicateOf ? adapter.planOf(duplicateOf) : undefined;
@@ -251,6 +258,11 @@ export function OfferingEditorContainer({
       } else {
         await adapter.save(payload, consultantId, saveCtx);
       }
+      // Cover-image changes are staged in the editor so Cancel never persists one.
+      if (stagedImage && planId) {
+        await commitPlanImage(adapter.imageType, planId, stagedImage);
+        setStagedImage(null);
+      }
 
       toast(
         savedToast({
@@ -289,7 +301,9 @@ export function OfferingEditorContainer({
         manifest={effectiveManifest}
         form={form}
         planId={planId}
-        planImageType={adapter.imageType}
+        coverImage={
+          planId ? { staged: stagedImage, onStage: setStagedImage } : undefined
+        }
         status={status}
         draftLabel={
           hasRealDraft && status === "PUBLISHED"
