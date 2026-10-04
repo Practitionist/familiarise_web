@@ -41,8 +41,7 @@ if (require.main === module) {
         errors: result.errors,
       });
       if (!result.success) {
-        await disconnectDatabase();
-        process.exit(1);
+        process.exitCode = 1;
       }
     } finally {
       await disconnectDatabase();

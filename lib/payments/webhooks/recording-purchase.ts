@@ -210,15 +210,6 @@ export async function handleRecordingPurchaseSuccess(
 
     if (purchase.status === "SUCCEEDED") return; // idempotent replay
 
-    const claimed = await tx.recordingPurchase.updateMany({
-      where: { id: purchase.id, status: "PENDING" },
-      data: {
-        status: "SUCCEEDED",
-        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-      },
-    });
-    if (claimed.count === 0) return;
-
     const planInfo = resolvePurchasePlanInfo(purchase);
     if (!planInfo) {
       Sentry.captureMessage(
@@ -232,6 +223,15 @@ export async function handleRecordingPurchaseSuccess(
     if (!Number.isFinite(grossAmountPaise) || grossAmountPaise <= 0) {
       return;
     }
+
+    const claimed = await tx.recordingPurchase.updateMany({
+      where: { id: purchase.id, status: "PENDING" },
+      data: {
+        status: "SUCCEEDED",
+        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+      },
+    });
+    if (claimed.count === 0) return;
 
     const existingPayment = await tx.payment.findUnique({
       where: { paymentIntent: orderId },
