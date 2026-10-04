@@ -1159,7 +1159,6 @@ erDiagram
         boolean isDefault
         string razorpayContactId
         string razorpayFundAccId
-        string stripeAccountId
     }
     ConsultantTaxInfo {
         string id
@@ -1193,22 +1192,6 @@ erDiagram
         int amountPaise
         boolean reportedInForm26Q
     }
-    GstTcsBatch {
-        string id
-        string financialYear
-        int month
-        int netSupplyPaise
-        int tcsCollectedPaise
-        GstTcsBatchStatus status
-        datetime filedAt
-    }
-    GstTcsAdjustment {
-        string id
-        string batchId
-        string paymentId
-        string refundId
-        int amountPaise
-    }
 
     ConsultantProfile ||--o{ ConsultantEarnings : "earns"
     ConsultantProfile ||--o{ Payout : "batch payouts"
@@ -1218,15 +1201,11 @@ erDiagram
     ConsultantProfile ||--o{ TdsAdjustment : "TDS reversals (refund)"
     Payout ||--o{ ConsultantEarnings : "batches"
     Payout ||--o{ TDSRecord : "triggers TDS"
-    GstTcsBatch ||--o{ GstTcsAdjustment : "monthly GSTR-8 net"
 ```
 
 > **#778 §D refund-tax reversals.** `TdsAdjustment` posts a negative line in the
-> revised 26Q/27Q when previously-withheld TDS is reversed on refund;
-> `GstTcsBatch` aggregates GST TCS u/s 52 per month for GSTR-8 (e-commerce
-> operator, 1% on registered consultants), with `GstTcsAdjustment` netting
-> refund reversals into the period's batch. Collection + filing are flag-gated
-> pending CA signoff. `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
+> revised 26Q/27Q when previously-withheld TDS is reversed on refund.
+> `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
 > refund document — see section 20 (Enterprise Invoicing).
 
 ---
@@ -1340,8 +1319,8 @@ Commercial structure: `BillingAccount` → `Contract` → `Program` → `Program
 > `LicensedSeatConfig`/`CreditPoolConfig.{overageSurchargeBps,
 maxOveragePerCyclePaise}` (surcharge + circuit-breaker); `OverageEvent`
 > (append-only over-cap charge ledger, `basePaise`+`surchargePaise`=`marginalPaise`);
-> and `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise,
-autoTopUpMandateId}` (wallet floor + auto-top-up). Top-up lifecycle is
+> and `BillingAccount.{minBalancePaise, autoTopUpLastFiredAt}` (notify-only
+> wallet floor + its alert cooldown). Top-up lifecycle is
 > `WalletTopUp` (PENDING→CONFIRMED/FAILED) — the wallet \_balance* itself is a
 > credit-normal liability in the double-entry ledger, not a standalone table.
 
@@ -1354,9 +1333,6 @@ erDiagram
         int walletBalance
         int creditLimit
         int minBalancePaise
-        boolean autoTopUpEnabled
-        int autoTopUpAmountPaise
-        string autoTopUpMandateId
         datetime autoTopUpLastFiredAt
         string billingEmail
         Currency currency
@@ -1582,7 +1558,6 @@ erDiagram
         string ifscCode
         OrgPayoutAccountStatus status
         string razorpayContactId
-        string stripeConnectId
     }
     CreditNote {
         string id
@@ -1918,7 +1893,6 @@ Every enum in the schema and its values.
 | `IrpStatus`                    | PENDING, GENERATED, CANCELLED, FAILED                                                                                                                                                                                                                                                  |
 | `PoStatus`                     | ACTIVE, CLOSED, CANCELLED                                                                                                                                                                                                                                                              |
 | `CreditNoteStatus`             | DRAFT, ISSUED, CANCELLED                                                                                                                                                                                                                                                               |
-| `GstTcsBatchStatus`            | OPEN, FILED                                                                                                                                                                                                                                                                            |
 | `OrgDataExportStatus`          | PENDING, PROCESSING, READY, FAILED, EXPIRED                                                                                                                                                                                                                                            |
 | `PayoutRecipient`              | SELF, ORGANIZATION                                                                                                                                                                                                                                                                     |
 | `ResidencyStatus`              | RESIDENT, NON_RESIDENT                                                                                                                                                                                                                                                                 |

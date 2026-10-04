@@ -122,7 +122,7 @@ Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's nam
 - **It posts nothing to the ledger.** Output tax is already credited to `GST_PAYABLE` at settlement. A second posting from the document trail would double-count the liability.
 - **It derives no tax from a rate.** The heads are split out of the tax the buyer actually paid. A rate-recomputed figure would drift from the settled amount the first time a discount or a rounding boundary moved.
 - **It builds no IRN.** B2C is outside the e-invoicing scope; the IRP fields on `OrganizationInvoice` have no counterpart here.
-- **It does not handle GST-TCS under section 52.** That remains with `jobs/compliance/gstr8-draft-export.ts`.
+- **It does not handle GST-TCS under section 52.** Section 52 TCS does not apply under the principal-supplier model (ADR 26).
 - **It does not block checkout.** The billing-state picker is optional by design, because the statutory default already produces a correct invoice.
 
 ## Related

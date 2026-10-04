@@ -18,18 +18,14 @@ Familiarise uses **Razorpay as the sole payment gateway** for both domestic and 
 
 | Gateway | Status | Reason |
 |---------|--------|--------|
-| Stripe | **Still live — see the correction below** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
+| Stripe | **Removed from the code on 2026-10-04** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
 
-This table used to record Stripe as removed. That is wrong, and it is the kind
-of wrong that gets live payment code deleted, so it is corrected here rather
-than quietly edited away. Stripe is a **live rail** today: the request→approve
-booking flow hardcodes `PaymentGateway.STRIPE`
-(`app/api/bookings/consultations/[consultationId]/route.ts` and its
-subscriptions sibling), `lib/payments/core/stripe.ts` is a real client, and the
-database holds 86 Stripe payments against 240 Razorpay ones. What is true is
-that Stripe was rejected as the *primary* gateway and that new work should
-route through Razorpay. Do not delete Stripe code on the strength of the word
-"removed".
+Stripe checkout, Stripe webhooks and Stripe Connect payouts were deleted on
+2026-10-04, after the request→approve flow had moved to Razorpay and the rail
+had sat behind an off-by-default `STRIPE_ENABLED` fence. The `STRIPE` labels
+survive in the `PaymentGateway`, `PayoutMethod` and `PayoutAccountType` enums
+only until the pre-MVP reset, because existing seed rows still hold them; any
+money path that meets one refuses it as a gateway with no implementation.
 
 ### Future Consideration
 
@@ -62,8 +58,7 @@ exist.
 
 **For a finance or CA review:** treat Dodo as not existing. No money has ever
 moved through it, no fees are payable on it, and it appears in no reconciliation
-or filing. The only live rails are Razorpay (primary, INR settlement) and Stripe
-(the request→approve booking path).
+or filing. The only live rail is Razorpay (INR settlement).
 
 ### Who can transact, and from where
 
@@ -221,12 +216,6 @@ Both gateways share a common abstraction layer:
 - [02-architecture-and-flow.md](./razorpay/02-architecture-and-flow.md) — Payment flow, revenue split, webhook events
 - [03-payout-flow.md](./razorpay/03-payout-flow.md) — RazorpayX Payouts: Contacts, Fund Accounts, payout lifecycle
 - [04-kyc-and-onboarding.md](./razorpay/04-kyc-and-onboarding.md) — KYC requirements and onboarding checklist
-
-### Stripe (Historical — Removed)
-
-- [01-setup.md](./stripe/01-setup.md) — Account setup, env vars, dashboard config, testing
-- [02-architecture-and-flow.md](./stripe/02-architecture-and-flow.md) — Checkout Sessions flow, revenue split, webhook events
-- [03-payout-flow.md](./stripe/03-payout-flow.md) — Stripe Connect: Express accounts, transfers, payout lifecycle
 
 ---
 

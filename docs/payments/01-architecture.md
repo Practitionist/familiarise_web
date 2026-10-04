@@ -189,7 +189,6 @@ AppointmentStatus:
 | ---------------------------------------------- | ----------------------------- | ----- |
 | `lib/payments/operations/checkout.ts`          | Core checkout logic           | ~1445 |
 | `app/api/checkout/route.ts`                    | Checkout API endpoint         | ~150  |
-| `app/checkout/components/StripeCheckout.tsx`   | Stripe payment component      | ~120  |
 | `app/checkout/components/RazorpayCheckout.tsx` | Razorpay payment component    | ~140  |
 | `app/checkout/plans/utils.ts`                  | Checkout utilities & handlers | ~200  |
 | `schemas/checkout.ts`                          | Zod validation schemas        | ~180  |
@@ -210,13 +209,11 @@ AppointmentStatus:
 
 | File                                                     | Purpose                                                             | Lines |
 | -------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
-| `app/api/webhooks/stripe/route.ts`                       | Stripe webhook endpoint                                             | ~125  |
 | `app/api/webhooks/razorpay/route.ts`                     | Razorpay webhook endpoint                                           | ~147  |
 | `app/api/webhooks/utils.ts`                              | Shared webhook utilities & dispute/org handlers                     | ~2530 |
 | `lib/payments/webhooks/handlers.ts`                      | Payment success/failure state-machine handlers                      | ~1900 |
 | `lib/payments/webhooks/legacy-appointment-creation.ts`   | Legacy webhook fallback appointment creation & slot allocation      | ~810  |
 | `lib/payments/webhooks/staged-emails.ts`                 | Phase 1 transactional email outbox staging & notification context   | ~350  |
-| `schemas/webhooks/stripe.ts`                             | Stripe event schemas                                                | ~105  |
 | `schemas/webhooks/razorpay.ts`                           | Razorpay event schemas                                              | ~105  |
 | `schemas/webhooks/metadata.ts`                           | Appointment metadata validation                                     | ~115  |
 
@@ -253,7 +250,6 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `lib/payments/index.ts`                        | Payment library exports                                                  |
 | `lib/payments/core/types.ts`                   | Payment type definitions                                                 |
-| `lib/payments/core/stripe.ts`                  | Stripe gateway implementation                                            |
 | `lib/payments/core/razorpay.ts`                | Razorpay gateway implementation                                          |
 | `lib/payments/payouts/earnings-service.ts`     | Consultant & org earnings creation, splits, and hold/refund operations   |
 | `lib/payments/payouts/earning-reversal-cas.ts` | CAS-loop helpers for bounded consultant & org earning reversals          |
@@ -337,7 +333,7 @@ All payment, refund, dispute, and payout cleanup/reconciliation jobs are registe
 +-----------------------------------------------------------------------------------+
 |  USER CLICKS "Pay with Stripe" or "Pay with Razorpay"                             |
 |  ------------------------------------------------------------------------------   |
-|  Components: StripeCheckout.tsx / RazorpayCheckout.tsx                            |
+|  Components: RazorpayCheckout.tsx                                                 |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v

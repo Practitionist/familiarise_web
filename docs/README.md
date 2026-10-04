@@ -103,7 +103,6 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 #### Gateways
 
 - [gateways/razorpay/](./payments/gateways/razorpay/) - Razorpay setup, architecture, payout flow, KYC
-- [gateways/stripe/](./payments/gateways/stripe/) - Stripe setup, architecture, payout flow
 
 #### Approval Payments
 

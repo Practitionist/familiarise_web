@@ -71,8 +71,8 @@ one into a gap.
 
 ## Deferred, on purpose
 
-GST TCS under section 52 (`GstTcsBatch`, `GstTcsAdjustment`,
-`Payment.gstTcsCollectedPaise`) is flag-gated pending CA signoff, and the IGST-vs-CGST
+GST TCS under section 52 does not apply under the principal-supplier model, so its
+machinery was deleted on 2026-10-04. The IGST-vs-CGST
 split at **B2C** checkout is explicitly deferred — `Payment.consumerStateCode` is captured
 so the data exists when it is turned on. Live IRP upload is stubbed; the field shape is
 final.

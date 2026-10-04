@@ -18,9 +18,8 @@ How consultant earnings flow from payment success to bank deposit. Covers the fu
 | 05  | [API Reference](./05-api-reference.md)                     | Payout and earnings API endpoints                                    |
 | 06  | [Configuration](./06-configuration.md)                     | Hold periods, thresholds, batch schedules                            |
 | 07  | [Razorpay Implementation](./07-razorpay-implementation.md) | RazorpayX payout code and integration details                        |
-| 08  | [Stripe Implementation](./08-stripe-implementation.md)     | Stripe Connect payout code and integration details                   |
 
 ## Related
 
-- Gateway-level payout flows: [gateways/razorpay/03-payout-flow.md](../gateways/razorpay/03-payout-flow.md), [gateways/stripe/03-payout-flow.md](../gateways/stripe/03-payout-flow.md)
+- Gateway-level payout flow: [gateways/razorpay/03-payout-flow.md](../gateways/razorpay/03-payout-flow.md)
 - Revenue splits and commission rates: [finances/02-revenue-distribution.md](../../finances/02-revenue-distribution.md)
