@@ -56,13 +56,14 @@ function badAsset() {
 
 async function authorizeBrandingMutation(
   params: Promise<{ orgId: string; asset: string }>,
+  options: { permission: "settings.manage" },
 ) {
   const { orgId, asset: rawAsset } = await params;
   const asset = parseAsset(rawAsset);
   if (!asset) return { error: badAsset() };
 
   const access = await requireOrgAccess(orgId, {
-    permission: "settings.manage",
+    permission: options.permission,
     requireActive: true,
   });
   if (access.error) return { error: access.error };
@@ -95,7 +96,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
 ) {
-  const auth = await authorizeBrandingMutation(params);
+  const auth = await authorizeBrandingMutation(params, {
+    permission: "settings.manage",
+  });
   if (auth.error) return auth.error;
   const { orgId, asset, column, memberId } = auth;
 
@@ -183,7 +186,9 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
 ) {
-  const auth = await authorizeBrandingMutation(params);
+  const auth = await authorizeBrandingMutation(params, {
+    permission: "settings.manage",
+  });
   if (auth.error) return auth.error;
   const { orgId, asset, column, memberId } = auth;
 

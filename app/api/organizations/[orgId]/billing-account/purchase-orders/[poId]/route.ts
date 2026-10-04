@@ -101,10 +101,11 @@ export async function GET(
 
 async function authorizePurchaseOrderMutation(
   params: Promise<{ orgId: string; poId: string }>,
+  options: { permission: "purchaseOrders.manage" },
 ) {
   const { orgId, poId } = await params;
   const access = await requireOrgAccess(orgId, {
-    permission: "purchaseOrders.manage",
+    permission: options.permission,
     canSponsor: true,
     requireActive: true,
   });
@@ -134,7 +135,9 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string; poId: string }> },
 ) {
-  const auth = await authorizePurchaseOrderMutation(params);
+  const auth = await authorizePurchaseOrderMutation(params, {
+    permission: "purchaseOrders.manage",
+  });
   if (auth.error) return auth.error;
   const { orgId, poId, actorMembershipId } = auth;
 
@@ -250,7 +253,9 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string; poId: string }> },
 ) {
-  const auth = await authorizePurchaseOrderMutation(params);
+  const auth = await authorizePurchaseOrderMutation(params, {
+    permission: "purchaseOrders.manage",
+  });
   if (auth.error) return auth.error;
   const { orgId, poId, actorMembershipId } = auth;
 

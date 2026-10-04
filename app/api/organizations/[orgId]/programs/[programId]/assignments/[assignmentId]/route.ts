@@ -256,10 +256,11 @@ async function editAssignmentPeriod(
 
 async function authorizeAssignmentMutation(
   params: Promise<{ orgId: string; programId: string; assignmentId: string }>,
+  options: { permission: "programs.assign" },
 ) {
   const { orgId, programId, assignmentId } = await params;
   const access = await requireOrgAccess(orgId, {
-    permission: "programs.assign",
+    permission: options.permission,
     canSponsor: true,
     requireActive: true,
   });
@@ -301,7 +302,9 @@ export async function PATCH(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const auth = await authorizeAssignmentMutation(params);
+  const auth = await authorizeAssignmentMutation(params, {
+    permission: "programs.assign",
+  });
   if (auth.error) return auth.error;
   const { orgId, programId, assignmentId, member } = auth;
 
@@ -356,7 +359,9 @@ export async function DELETE(
     params: Promise<{ orgId: string; programId: string; assignmentId: string }>;
   },
 ) {
-  const auth = await authorizeAssignmentMutation(params);
+  const auth = await authorizeAssignmentMutation(params, {
+    permission: "programs.assign",
+  });
   if (auth.error) return auth.error;
   const { orgId, programId, assignmentId, member } = auth;
 
