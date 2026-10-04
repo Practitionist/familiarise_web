@@ -27,6 +27,11 @@ import {
   streamApiLimiter,
 } from "@/lib/rate-limit";
 import { Ratelimit } from "@upstash/ratelimit";
+import {
+  ATTRIBUTION_COOKIE_MAX_AGE_S,
+  EXPERT_VIA_COOKIE,
+  VIA_TOKEN_PATTERN,
+} from "@/lib/referrals/attribution-token-shape";
 
 const URLS = {
   SIGNIN: "/auth/signin",
@@ -290,12 +295,31 @@ export async function middleware(
   if (maintenance?.kind === "respond") return maintenance.response;
 
   const response = await routeRequest(req, pathname);
+  rememberExpertVia(req, pathname, response);
   if (maintenance?.kind === "banner") {
     for (const [key, value] of Object.entries(maintenance.headers)) {
       response.headers.set(key, value);
     }
   }
   return response;
+}
+
+/** An expert's signed share link: keep the token for checkout, which verifies it. */
+function rememberExpertVia(
+  req: NextRequest,
+  pathname: string,
+  response: NextResponse,
+): void {
+  if (!pathname.startsWith("/explore/experts/")) return;
+  const via = req.nextUrl.searchParams.get("via");
+  if (!via || !VIA_TOKEN_PATTERN.test(via)) return;
+  response.cookies.set(EXPERT_VIA_COOKIE, via, {
+    maxAge: ATTRIBUTION_COOKIE_MAX_AGE_S,
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
 }
 
 async function routeRequest(

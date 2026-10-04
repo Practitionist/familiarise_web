@@ -16,6 +16,7 @@ import {
   CONSULTANT_PATHLESS_SEGMENTS,
 } from "@/lib/dashboard/nav/consultant";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
 import {
@@ -132,7 +133,13 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
 
 function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consultantId } = use(params);
-  const nav = useMemo(() => buildConsultantNav(consultantId), [consultantId]);
+  const shareHref = useExpertShareHref(consultantId);
+  const nav = useMemo(() => {
+    const built = buildConsultantNav(consultantId);
+    return built.pinnedCta
+      ? { ...built, pinnedCta: { ...built.pinnedCta, copyText: shareHref } }
+      : built;
+  }, [consultantId, shareHref]);
   const settingsGroups = useMemo(
     () =>
       settingsSectionGroups().map((group) => ({

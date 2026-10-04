@@ -8,6 +8,7 @@ import { Section } from "@/components/dashboard/Section";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { Button } from "@/components/ui/button";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 
 /** Round numbers worth a line of recognition; the next one ahead is shown. */
 const MILESTONES = [1, 10, 25, 50, 100, 250, 500, 1000];
@@ -82,9 +83,12 @@ export function ShareProfilePrompt({
 }: Readonly<{ consultantId: string }>) {
   const [copied, setCopied] = useState(false);
   const href = `/explore/experts/${consultantId}`;
+  const shareHref = useExpertShareHref(consultantId);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}${href}`);
+      await navigator.clipboard.writeText(
+        `${window.location.origin}${shareHref}`,
+      );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
