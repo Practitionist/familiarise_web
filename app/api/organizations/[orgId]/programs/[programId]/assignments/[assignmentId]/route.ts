@@ -273,6 +273,26 @@ async function authorizeAssignmentMutation(
   };
 }
 
+function handleAssignmentError(assignmentError: unknown): NextResponse {
+  if (assignmentError instanceof Error && "httpStatus" in assignmentError) {
+    const { message, httpStatus, code } = assignmentError as Error & {
+      httpStatus?: unknown;
+      code?: unknown;
+    };
+    return NextResponse.json(
+      code ? { error: message, code } : { error: message },
+      { status: typeof httpStatus === "number" ? httpStatus : 500 },
+    );
+  }
+  Sentry.captureException(
+    assignmentError instanceof Error
+      ? assignmentError
+      : new Error(String(assignmentError)),
+    { tags: { subsystem: "enterprise" } },
+  );
+  throw assignmentError;
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -324,21 +344,7 @@ export async function PATCH(
 
     return NextResponse.json({ assignment: updated });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      // Code passthrough so clients can branch on ASSIGNMENT_NOT_LIVE etc.
-      // without string-matching messages (parity with supersede/invoices).
-      const code = "code" in err ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code ? { code } : {}) },
-        { status },
-      );
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    throw err;
+    return handleAssignmentError(err);
   }
 }
 
@@ -397,14 +403,6 @@ export async function DELETE(
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    throw err;
+    return handleAssignmentError(err);
   }
 }

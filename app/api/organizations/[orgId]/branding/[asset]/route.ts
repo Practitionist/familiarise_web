@@ -76,6 +76,21 @@ async function authorizeBrandingMutation(
   };
 }
 
+function handleBrandingError(
+  asset: Asset,
+  verb: "persist" | "clear",
+  err: unknown,
+) {
+  Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+    tags: { subsystem: "enterprise" },
+  });
+  console.error(`Failed to ${verb} organization ${asset}:`, err);
+  return NextResponse.json(
+    { error: "Failed to update organization branding" },
+    { status: 500 },
+  );
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ orgId: string; asset: string }> },
@@ -155,24 +170,12 @@ export async function POST(
         },
       });
 
-      return {
-        id: orgId,
-        logo: profile.logo,
-        bannerImage: profile.bannerImage,
-      };
+      return { id: orgId, ...profile };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    console.error(`Failed to persist organization ${asset}:`, err);
-    return NextResponse.json(
-      { error: "Failed to update organization branding" },
-      { status: 500 },
-    );
+    return handleBrandingError(asset, "persist", err);
   }
 }
 
@@ -238,23 +241,11 @@ export async function DELETE(
         },
       });
 
-      return {
-        id: orgId,
-        logo: profile.logo,
-        bannerImage: profile.bannerImage,
-      };
+      return { id: orgId, ...profile };
     });
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    console.error(`Failed to clear organization ${asset}:`, err);
-    return NextResponse.json(
-      { error: "Failed to update organization branding" },
-      { status: 500 },
-    );
+    return handleBrandingError(asset, "clear", err);
   }
 }

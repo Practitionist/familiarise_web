@@ -112,6 +112,24 @@ async function authorizePurchaseOrderMutation(
   return { error: null, orgId, poId, actorMembershipId: access.member.id };
 }
 
+function handlePurchaseOrderError(poError: unknown): NextResponse {
+  const tagged = poError as { httpStatus?: unknown; code?: unknown };
+  if (poError instanceof Error && "httpStatus" in poError) {
+    const status =
+      typeof tagged.httpStatus === "number" ? tagged.httpStatus : 500;
+    const payload =
+      typeof tagged.code === "string"
+        ? { error: poError.message, code: tagged.code }
+        : { error: poError.message };
+    return NextResponse.json(payload, { status });
+  }
+  Sentry.captureException(
+    poError instanceof Error ? poError : new Error(String(poError)),
+    { tags: { subsystem: "enterprise" } },
+  );
+  throw poError;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string; poId: string }> },
@@ -224,20 +242,7 @@ export async function PATCH(
     });
     return NextResponse.json({ purchaseOrder: updated });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      const code =
-        "code" in err && typeof err.code === "string" ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code && { code }) },
-        { status },
-      );
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    throw err;
+    return handlePurchaseOrderError(err);
   }
 }
 
@@ -291,14 +296,6 @@ export async function DELETE(
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "enterprise" } },
-    );
-    throw err;
+    return handlePurchaseOrderError(err);
   }
 }
