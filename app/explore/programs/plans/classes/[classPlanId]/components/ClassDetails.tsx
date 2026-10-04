@@ -44,7 +44,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+          src={generateProgramImageUrl(plan.imageUrl)}
           alt="Class cover"
           fill
           className="object-cover"

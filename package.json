@@ -46,8 +46,7 @@
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "db:push:no-sidecars-DANGEROUS": "prisma db push"
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@better-auth/core": "1.7.7",

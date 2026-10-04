@@ -19,6 +19,7 @@ update-postman-collection.js
 
 # Prisma
 migrations/
+!prisma/migrations/
 
 # Zipped Files
 *.zip

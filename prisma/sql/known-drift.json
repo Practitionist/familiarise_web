@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Known, tracked divergences between prisma/schema.prisma and the live database.",
-    "scripts/ci/check-db-drift.ts fails on any drift NOT listed here, so this file is",
+    "scripts/ci/check-db-live-drift.ts fails on any drift NOT listed here, so this file is",
     "the reviewed record of what we are knowingly carrying and until when.",
     "",
     "Every entry needs an owner, a reason, and an `expires` date. Past the expiry the",

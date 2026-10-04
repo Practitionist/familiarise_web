@@ -69,12 +69,9 @@ async function checkBetterStack(): Promise<{
   }
 }
 
-// #1169/#866 — cron dead-man threshold. Every locked job run refreshes
-// `cron:heartbeat:last` (lib/cron/with-cron-lock.ts); the dispatcher is
-// scheduled every minute and GitHub's throttling delivers it at worst about
-// every 2.75h measured, so >6h of total silence means the scheduled fleet has
-// stopped — the failure the Actions-API heartbeat cannot report about itself.
-const CRON_HEARTBEAT_STALE_MS = 6 * 60 * 60 * 1000;
+// Cron dead-man threshold. Only a successful locked job run refreshes `cron:heartbeat:last`
+// (lib/cron/with-cron-lock.ts), so 45 minutes stale means the fleet stopped or every run is failing.
+const CRON_HEARTBEAT_STALE_MS = 45 * 60 * 1000;
 
 type CronHeartbeat = {
   configured: boolean;

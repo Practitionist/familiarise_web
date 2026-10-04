@@ -42,6 +42,7 @@ import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { logMoneyFlags } from "@/lib/feature-flags";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
@@ -251,7 +252,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         // E2E-audit P1 fix — cron-issued invoices never emitted
         // `invoice.issued`, so integrators (HRIS/ERP) only ever saw
         // manually-created invoices. Same payload shape as the manual route.
-        void dispatchWebhookEvent({
+        await dispatchWebhookEvent({
           prisma,
           organizationId: orgId,
           eventType: "invoice.issued",
@@ -420,7 +421,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("generate-subscription-invoices", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
+  runJob("generate-subscription-invoices", () => {
+    logMoneyFlags("generate-subscription-invoices");
+    return main().finally(() => prisma.$disconnect());
+  });
 }

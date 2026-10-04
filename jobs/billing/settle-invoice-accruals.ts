@@ -31,6 +31,7 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { logMoneyFlags } from "@/lib/feature-flags";
 
 export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
@@ -155,7 +156,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("settle-invoice-accruals", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
+  runJob("settle-invoice-accruals", () => {
+    logMoneyFlags("settle-invoice-accruals");
+    return main().finally(() => prisma.$disconnect());
+  });
 }
