@@ -148,43 +148,21 @@ const validateDuration = (
   return null;
 };
 
-// Check for overlaps between two time slots (back-to-back allowed, true overlaps rejected)
+// Check for overlaps between two time slots on the SAME day key (back-to-back allowed, true overlaps rejected).
+// An overnight slot on Day D occupies [slotStart, 24*60] on Day D; its [0, slotEnd]
+// tail belongs to Day D+1 and must not false-conflict with morning slots on Day D.
 const checkSlotOverlap = (
   slot1Start: number,
   slot1End: number,
   slot2Start: number,
   slot2End: number,
 ): boolean => {
-  const slot1IsOvernight = isOvernightSlot(slot1Start, slot1End);
-  const slot2IsOvernight = isOvernightSlot(slot2Start, slot2End);
+  const end1OnDay = isOvernightSlot(slot1Start, slot1End) ? 24 * 60 : slot1End;
+  const end2OnDay = isOvernightSlot(slot2Start, slot2End) ? 24 * 60 : slot2End;
 
-  // Convert overnight slots to ranges that can be compared
-  const slot1Ranges = slot1IsOvernight
-    ? [
-        [slot1Start, 24 * 60],
-        [0, slot1End],
-      ]
-    : [[slot1Start, slot1End]];
-
-  const slot2Ranges = slot2IsOvernight
-    ? [
-        [slot2Start, 24 * 60],
-        [0, slot2End],
-      ]
-    : [[slot2Start, slot2End]];
-
-  // Check if any ranges truly overlap (back-to-back is allowed: end1 === start2)
-  for (const [start1, end1] of slot1Ranges) {
-    for (const [start2, end2] of slot2Ranges) {
-      // Overlap exists if: start1 < end2 AND start2 < end1
-      // Back-to-back (end1 === start2) is NOT an overlap
-      if (start1 < end2 && start2 < end1) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  // Overlap exists if: start1 < end2 AND start2 < end1
+  // Back-to-back (end1 === start2) is NOT an overlap
+  return slot1Start < end2OnDay && slot2Start < end1OnDay;
 };
 
 // Validate slot against other slots for overlaps
@@ -281,6 +259,31 @@ export const validateTimeSlot = (
   return { ...slot, isValid: true, errorMessage: undefined };
 };
 
+const WEEKDAY_KEYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function getNextScheduleKey(dayKey: string): string | null {
+  const lower = dayKey.toLowerCase();
+  const idx = WEEKDAY_KEYS.indexOf(lower);
+  if (idx !== -1) {
+    const nextLower = WEEKDAY_KEYS[(idx + 1) % 7];
+    return dayKey === dayKey.toUpperCase() ? nextLower.toUpperCase() : nextLower;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
+    const [y, m, d] = dayKey.split("-").map(Number);
+    const next = new Date(Date.UTC(y, m - 1, d + 1));
+    return next.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 /**
  * Validates all slots across all days/dates, collecting per-slot error messages.
  * Returns overall validity and a list of human-readable error strings.
@@ -298,6 +301,38 @@ export const validateAllSlotsDetailed = (
           slot.errorMessage ?? "Please complete both start and end time";
         errors.push(`${day} slot ${index + 1}: ${errorMsg}`);
         isValid = false;
+        return;
+      }
+
+      const startMinutes = getMinutes(slot.startTime);
+      const endMinutes = getMinutes(slot.endTime);
+      if (
+        startMinutes !== null &&
+        endMinutes !== null &&
+        endMinutes > 0 &&
+        isOvernightSlot(startMinutes, endMinutes)
+      ) {
+        const nextKey = getNextScheduleKey(day);
+        const nextDaySlots = nextKey
+          ? slots[nextKey] ??
+            slots[nextKey.toLowerCase()] ??
+            slots[nextKey.toUpperCase()]
+          : undefined;
+        if (nextDaySlots) {
+          for (const nextSlot of nextDaySlots) {
+            if (!nextSlot.isValid || !nextSlot.startTime || !nextSlot.endTime) {
+              continue;
+            }
+            const nextStart = getMinutes(nextSlot.startTime);
+            if (nextStart !== null && nextStart < endMinutes) {
+              errors.push(
+                `${day} slot ${index + 1}: Overnight tail overlaps with ${nextKey} slot starting at ${nextSlot.startTime}`,
+              );
+              isValid = false;
+              break;
+            }
+          }
+        }
       }
     });
   });

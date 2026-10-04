@@ -110,7 +110,8 @@ function hasBookableSlot(
   }
   return daySlots.some(
     (slot) =>
-      slot.bookingStatus !== "fully-booked" &&
+      !slot.isAllocated &&
+      (slot.bookingStatus ?? "available") === "available" &&
       new Date(slot.startsAt).getTime() >= cutoff,
   );
 }

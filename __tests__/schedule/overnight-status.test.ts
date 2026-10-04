@@ -90,13 +90,13 @@ describe("resolveOvernightStatus — local UI shape", () => {
     ).toBe(false);
   });
 
-  it("same-day local times with isOvernightUTC flag are overnight", () => {
+  it("same-day local times with isOvernightUTC flag report crossesMidnightUtc without promoting to local isOvernight", () => {
     const r = resolveOvernightStatus({
       startTime: "01:00",
       endTime: "05:00",
       isOvernightUTC: true,
     });
-    expect(r).toEqual({ isOvernight: true, crossesMidnightUtc: true });
+    expect(r).toEqual({ isOvernight: false, crossesMidnightUtc: true });
   });
 
   it("empty strings are not overnight", () => {

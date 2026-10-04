@@ -7,6 +7,7 @@ import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
   buildWeeklyOverlapWhere,
+  slotsOverlap,
 } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
@@ -95,7 +96,32 @@ async function applyWeeklySlotEdit(
           ),
         });
 
-        if (overlappingSlot) {
+        let hasUtcTimelineOverlap = Boolean(overlappingSlot);
+        if (
+          !hasUtcTimelineOverlap &&
+          typeof tx.availabilityWindowWeekly.findMany === "function"
+        ) {
+          const existingRows = await tx.availabilityWindowWeekly.findMany({
+            where: {
+              consultantProfileId: currentSlot.consultantProfileId,
+              id: { not: id },
+            },
+            select: {
+              startDay: true,
+              endDay: true,
+              startTimeUtc: true,
+              endTimeUtc: true,
+              utcOffsetMinutes: true,
+            },
+          });
+          if (Array.isArray(existingRows)) {
+            hasUtcTimelineOverlap = existingRows.some((existing) =>
+              slotsOverlap({ ...next, utcOffsetMinutes }, existing),
+            );
+          }
+        }
+
+        if (hasUtcTimelineOverlap) {
           return NextResponse.json(
             {
               error: `This slot (${minutesToTimeString(next.startTimeUtc)}-${minutesToTimeString(next.endTimeUtc)}) overlaps with an existing slot`,
@@ -181,7 +207,13 @@ export async function GET(
     const weeklySlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            scheduleType: true,
+          },
+        },
       },
     });
 
