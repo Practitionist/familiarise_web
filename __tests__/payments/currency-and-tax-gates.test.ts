@@ -205,29 +205,11 @@ describe("settlement is INR at the gateway boundary (#1396)", () => {
   });
 });
 
-describe("the Stripe rail is fenced unless it is switched on", () => {
-  // #1351 — Stripe was fully live: every checkout page offered the button and
-  // routeGateway honoured an explicit STRIPE request unconditionally, on
-  // sk_test_ keys. It is a contingency rail for an RBI rule change, so the
-  // flag is the gate.
-  const original = process.env.STRIPE_ENABLED;
-  afterEach(() => {
-    if (original === undefined) delete process.env.STRIPE_ENABLED;
-    else process.env.STRIPE_ENABLED = original;
-  });
-
-  it("rejects STRIPE with the flag unset and accepts it with the flag on", () => {
-    delete process.env.STRIPE_ENABLED;
+describe("a gateway with no implementation is refused", () => {
+  it("rejects STRIPE and leaves RAZORPAY open", () => {
     expect(() => assertGatewayUsable("STRIPE", "route a checkout")).toThrow(
-      /STRIPE_ENABLED/,
+      expect.objectContaining({ code: "UNSUPPORTED_GATEWAY" }),
     );
-
-    process.env.STRIPE_ENABLED = "true";
-    expect(() =>
-      assertGatewayUsable("STRIPE", "route a checkout"),
-    ).not.toThrow();
-
-    // The fence must not touch the gateway that actually takes money.
     expect(() =>
       assertGatewayUsable("RAZORPAY", "route a checkout"),
     ).not.toThrow();

@@ -47,8 +47,6 @@ export async function GET(
       // #777 §C — balance-alert config surfaced so the wallet tab can render
       // its config section off the same fetch.
       minBalancePaise: true,
-      autoTopUpEnabled: true,
-      autoTopUpAmountPaise: true,
     },
   });
   if (!ba) {
@@ -160,8 +158,6 @@ export async function GET(
       currency: ba.currency,
       walletBalance: ba.walletBalance ?? 0,
       minBalancePaise: ba.minBalancePaise,
-      autoTopUpEnabled: ba.autoTopUpEnabled,
-      autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
     },
     ledger,
     meta: { total, page, perPage },

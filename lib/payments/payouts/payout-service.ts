@@ -38,10 +38,6 @@ import {
   isDefinitiveGatewayRejection,
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
-import {
-  getStripeConnectService,
-  isStripeConnectConfigured,
-} from "./stripe-connect";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { randomUUID } from "crypto";
 import {
@@ -311,8 +307,6 @@ function resolvePayoutMethodFromAccountType(
   switch (accountType) {
     case "UPI":
       return PayoutMethod.UPI;
-    case "STRIPE_CONNECT":
-      return PayoutMethod.STRIPE_TRANSFER;
     default:
       return PayoutMethod.BANK_TRANSFER;
   }
@@ -1352,7 +1346,6 @@ async function processSinglePayout(
     consultantProfile: {
       payoutAccounts: Array<{
         razorpayFundAccId: string | null;
-        stripeAccountId: string | null;
         accountType: string;
         [key: string]: unknown;
       }>;
@@ -1499,12 +1492,6 @@ async function processSinglePayout(
         account,
         markSubmitted,
       );
-    } else if (payout.provider === PaymentGateway.STRIPE) {
-      providerPayoutId = await processStripePayout(
-        payoutForGateway,
-        account,
-        markSubmitted,
-      );
     } else {
       throw new Error(`Unsupported provider: ${payout.provider}`);
     }
@@ -1583,44 +1570,6 @@ async function processRazorpayPayout(
   });
 
   return result.id;
-}
-
-async function processStripePayout(
-  payout: {
-    id: string;
-    amount: number;
-    currency: string;
-    idempotencyKey: string | null;
-  },
-  account: {
-    stripeAccountId: string | null;
-  },
-  onSubmit: () => void,
-): Promise<string> {
-  if (!isStripeConnectConfigured()) {
-    throw new Error("Stripe Connect not configured");
-  }
-
-  if (!account.stripeAccountId) {
-    throw new Error("Stripe connected account not found");
-  }
-
-  const stripeConnect = getStripeConnectService();
-
-  onSubmit();
-  const transfer = await stripeConnect.createTransfer({
-    amount: payout.amount,
-    currency: payout.currency.toLowerCase(),
-    destinationAccountId: account.stripeAccountId,
-    description: `Payout ${payout.id}`,
-    idempotencyKey: payout.idempotencyKey || `payout_${payout.id}`,
-    metadata: {
-      payoutId: payout.id,
-      source: "familiarise_platform",
-    },
-  });
-
-  return transfer.id;
 }
 
 export async function reportUnknownPayoutStatus(input: {

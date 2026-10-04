@@ -1,7 +1,7 @@
 /**
  * Payment Status Reconciliation - Core Logic
  *
- * Reconciles payment status with payment gateways (Stripe/Razorpay).
+ * Reconciles payment status with Razorpay.
  * Finds PENDING payments and queries gateways for actual status.
  *
  * This catches cases where:
@@ -93,100 +93,10 @@ type GatewayLookup =
   | { kind: "unknown_id"; detail: string }
   | { kind: "gateway_error"; detail: string };
 
-// Matched on the error's own fields, not `instanceof` against the lazily
-// imported SDK — the same posture as cleanup-abandoned-payments (#1464).
-function isStripeUnknownId(error: unknown): boolean {
-  const e = error as { code?: unknown; statusCode?: unknown } | null;
-  return e?.code === "resource_missing" || e?.statusCode === 404;
-}
-
 export interface ReconcilePaymentStatusOptions {
   /** #1356 — caps the batch for the Netlify ticker; undefined keeps the
    * unbounded GitHub Actions behaviour. */
   limit?: number;
-}
-
-/**
- * Query Stripe for payment intent status
- */
-async function getStripePaymentStatus(
-  paymentIntent: string,
-): Promise<GatewayLookup> {
-  const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-  if (!stripeSecretKey) {
-    console.warn("Stripe credentials not configured");
-    return {
-      kind: "gateway_error",
-      detail: "Stripe credentials not configured",
-    };
-  }
-
-  try {
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(stripeSecretKey);
-
-    // Checkout-flow payments store the cs_ session id as the payment ref
-    // (the cancel path in lib/payments/core/stripe.ts handles the same
-    // split). Passing a cs_ id to paymentIntents.retrieve throws "No such
-    // payment_intent", which used to poison every run with the same two
-    // stale rows. Resolve the session to its intent; a session that never
-    // produced one maps on its own state — expired → canceled (the row
-    // finally EXPIREs), open → processing (Stripe auto-expires within 24h,
-    // the next sweep settles it).
-    if (paymentIntent.startsWith("cs_")) {
-      const session = await stripe.checkout.sessions.retrieve(paymentIntent);
-      const intentRef = session.payment_intent;
-      if (!intentRef) {
-        return {
-          kind: "status",
-          status: session.status === "expired" ? "canceled" : "processing",
-        };
-      }
-      const pi =
-        typeof intentRef === "string"
-          ? await stripe.paymentIntents.retrieve(intentRef)
-          : intentRef;
-      const mergedMetadata = {
-        ...session.metadata,
-        ...pi.metadata,
-      };
-      const sessionNotes = Object.fromEntries(
-        Object.entries(mergedMetadata)
-          .filter(([, v]) => v !== null && v !== undefined)
-          .map(([k, v]) => [k, String(v)]),
-      );
-      return {
-        kind: "status",
-        status: pi.status,
-        failureMessage: pi.last_payment_error?.message ?? undefined,
-        paymentId: pi.id,
-        notes: sessionNotes,
-        amountPaise: pi.amount_received ?? pi.amount,
-      };
-    }
-
-    const pi = await stripe.paymentIntents.retrieve(paymentIntent);
-    const piNotes = Object.fromEntries(
-      Object.entries(pi.metadata ?? {})
-        .filter(([, v]) => v !== null && v !== undefined)
-        .map(([k, v]) => [k, String(v)]),
-    );
-    return {
-      kind: "status",
-      status: pi.status,
-      failureMessage: pi.last_payment_error?.message,
-      paymentId: pi.id,
-      notes: piNotes,
-      amountPaise: pi.amount_received ?? pi.amount,
-    };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (isStripeUnknownId(error)) {
-      return { kind: "unknown_id", detail };
-    }
-    console.error(`Failed to get Stripe payment status: ${error}`);
-    return { kind: "gateway_error", detail };
-  }
 }
 
 /**
@@ -303,24 +213,7 @@ function mapGatewayStatus(
   gateway: PaymentGateway,
   status: string,
 ): PaymentStatus | null {
-  if (gateway === PaymentGateway.STRIPE) {
-    switch (status) {
-      case "succeeded":
-        return PaymentStatus.SUCCEEDED;
-      case "processing":
-        return PaymentStatus.PENDING;
-      case "requires_payment_method":
-        return PaymentStatus.FAILED;
-      case "requires_confirmation":
-        return PaymentStatus.PENDING;
-      case "requires_action":
-        return PaymentStatus.PENDING;
-      case "canceled":
-        return PaymentStatus.EXPIRED;
-      default:
-        return null;
-    }
-  } else if (gateway === PaymentGateway.RAZORPAY) {
+  if (gateway === PaymentGateway.RAZORPAY) {
     switch (status) {
       case "paid":
       case "captured":
@@ -400,7 +293,7 @@ async function reconcilePaymentStatusUnlocked(
     where: {
       paymentStatus: PaymentStatus.PENDING,
       createdAt: { lt: orphanCutoff },
-      paymentGateway: { in: [PaymentGateway.STRIPE, PaymentGateway.RAZORPAY] },
+      paymentGateway: PaymentGateway.RAZORPAY,
       NOT: { paymentIntent: "" },
     },
     include: {
@@ -458,9 +351,7 @@ async function reconcilePaymentStatusUnlocked(
     // instead of writing the status (ADR 21).
     let lookup: GatewayLookup;
 
-    if (payment.paymentGateway === PaymentGateway.STRIPE) {
-      lookup = await getStripePaymentStatus(payment.paymentIntent);
-    } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
+    if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
@@ -576,7 +467,7 @@ async function reconcilePaymentStatusUnlocked(
       // skipped permanently — and none of those are covered by another cron.
       // The old code even logged "may need manual appointment creation!"
       // instead of just creating it.
-      // #1905 — both Razorpay and Stripe SUCCEEDED reconciles go through
+      // #1905 — a SUCCEEDED reconcile goes through
       // routeCapturedPayment so appointment confirmation, earnings, and ledger
       // journaling are never bypassed by a raw paymentStatus=SUCCEEDED write.
       if (mappedStatus === PaymentStatus.SUCCEEDED) {

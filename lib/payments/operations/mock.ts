@@ -44,9 +44,6 @@ function generateMockPaymentId(gateway: PaymentGateway): string {
   const random = Math.random().toString(36).substring(2, 15);
 
   switch (gateway) {
-    case "STRIPE":
-      return `cs_mock_${random}_${timestamp}`;
-
     case "RAZORPAY":
       return `order_mock_${random}${timestamp}`;
 

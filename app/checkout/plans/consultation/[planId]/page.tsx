@@ -41,14 +41,12 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import { createHandleApiError, paymentGateways } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import {
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
@@ -452,7 +450,7 @@ export default function ConsultationCheckoutPage({
         }
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        // Real payments go through the RazorpayCheckout component.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
         if (
           data.skipPayment ||
@@ -967,45 +965,6 @@ export default function ConsultationCheckoutPage({
                               // `errorType` above is the coarse
                               // AVAILABILITY bucket and the buyer is told the
                               // listing is gone.
-                              code: error.code,
-                            })
-                          }
-                        />
-                      ) : validatedSearchParams &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CONSULTATION",
-                            planId: resolvedParams.planId,
-                            paymentGateway: "STRIPE",
-                            startsAt: validatedSearchParams.startsAt,
-                            endsAt: validatedSearchParams.endsAt,
-                            availabilityWindowWeeklyId:
-                              validatedSearchParams.availabilityWindowWeeklyId,
-                            availabilityWindowCustomId:
-                              validatedSearchParams.availabilityWindowCustomId,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            notes: validatedSearchParams.notes,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={
-                            createStripeCheckoutHandlers(toast).onPaymentSuccess
-                          }
-                          disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: {
-                            message?: string;
-                            description?: string;
-                            errorType?: string;
-                            code?: string;
-                          }) =>
-                            handleApiError({
-                              error: error.message ?? error.description,
-                              errorType: error.errorType,
                               code: error.code,
                             })
                           }

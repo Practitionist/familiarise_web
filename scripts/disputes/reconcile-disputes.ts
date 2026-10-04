@@ -3,7 +3,7 @@
  *
  * Reconciles dispute status with payment gateways to ensure data consistency.
  * Handles cases where:
- * - DB update failed after Stripe API call succeeded
+ * - DB update failed after a gateway call succeeded
  * - Webhooks were missed or delayed
  * - Dispute status changed but webhook wasn't received
  *
@@ -41,8 +41,6 @@ export interface DisputeReconciliationResult {
   reconciledCount: number;
   urgentCount: number;
   razorpayManualReviewCount: number;
-  /** #1459 — Stripe disputes left untouched because the gateway fence is shut. */
-  skippedFenced: number;
   errors: string[];
   timestamp: string;
 }
@@ -60,39 +58,24 @@ async function resolveRazorpayDisputePayment(
       id: string;
       amount: number;
       gatewayPaymentId: string | null;
-      gstTcsCollectedPaise: number | null;
     } | null;
   },
   gatewayPaymentId: string | null,
-): Promise<{
-  id: string;
-  amount: number;
-  gstTcsCollectedPaise: number | null;
-} | null> {
+): Promise<{ id: string; amount: number } | null> {
   const linked = dispute.payment;
   if (
     linked &&
     linked.gatewayPaymentId &&
     linked.gatewayPaymentId === gatewayPaymentId
   ) {
-    return {
-      id: linked.id,
-      amount: linked.amount,
-      gstTcsCollectedPaise: linked.gstTcsCollectedPaise ?? null,
-    };
+    return { id: linked.id, amount: linked.amount };
   }
   if (gatewayPaymentId) {
     const byGatewayId = await prisma.payment.findFirst({
       where: { gatewayPaymentId },
-      select: { id: true, amount: true, gstTcsCollectedPaise: true },
+      select: { id: true, amount: true },
     });
-    if (byGatewayId) {
-      return {
-        id: byGatewayId.id,
-        amount: byGatewayId.amount,
-        gstTcsCollectedPaise: byGatewayId.gstTcsCollectedPaise ?? null,
-      };
-    }
+    if (byGatewayId) return byGatewayId;
     try {
       const client = getRazorpayClient();
       const gatewayPayment = client
@@ -104,15 +87,9 @@ async function resolveRazorpayDisputePayment(
       if (orderId) {
         const byOrder = await prisma.payment.findFirst({
           where: { paymentIntent: orderId },
-          select: { id: true, amount: true, gstTcsCollectedPaise: true },
+          select: { id: true, amount: true },
         });
-        if (byOrder) {
-          return {
-            id: byOrder.id,
-            amount: byOrder.amount,
-            gstTcsCollectedPaise: byOrder.gstTcsCollectedPaise ?? null,
-          };
-        }
+        if (byOrder) return byOrder;
       }
     } catch (joinError) {
       console.error(
@@ -127,7 +104,7 @@ async function resolveRazorpayDisputePayment(
 /**
  * Stamp a dispute for manual review without moving its status — the poll saw
  * something it cannot adopt (unknown gateway id, unmapped status, unlinked
- * payment). Mirrors the Stripe resource_missing note shape.
+ * payment).
  */
 async function flagDisputeForManualReview(
   dispute: { disputeId: string; status: DisputeStatus; evidence: unknown },
@@ -169,11 +146,6 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
   let reconciledCount = 0;
   let urgentCount = 0;
   let razorpayManualReviewCount = 0;
-  let skippedFenced = 0;
-  // #1351 — Stripe is a contingency rail that is off in production, so the
-  // client has no usable credentials. Read once: the fence cannot change
-  // mid-run, and a per-dispute read would suggest it could.
-  const stripeEnabled = process.env.STRIPE_ENABLED === "true";
 
   // Find disputes needing reconciliation
   const disputesToReconcile = await prisma.dispute.findMany({
@@ -209,11 +181,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
     rowId: string,
     disputeId: string,
     amountPaise: number,
-    payment: {
-      id: string;
-      amount: number;
-      gstTcsCollectedPaise: number | null;
-    },
+    payment: { id: string; amount: number },
   ): Promise<void> {
     try {
       const { settleLostDispute } = await import("@/app/api/webhooks/utils");
@@ -225,10 +193,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
               disputeId,
               amountPaise,
               paymentId: payment.id,
-              payment: {
-                amount: payment.amount,
-                gstTcsCollectedPaise: payment.gstTcsCollectedPaise,
-              },
+              payment: { amount: payment.amount },
             }),
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -270,76 +235,28 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         );
       }
 
-      const isRazorpay = dispute.paymentGateway === PaymentGateway.RAZORPAY;
+      if (dispute.paymentGateway !== PaymentGateway.RAZORPAY) {
+        console.log(
+          `⏭️ Skipping dispute ${dispute.disputeId} - unsupported gateway: ${dispute.paymentGateway}`,
+        );
+        continue;
+      }
 
-      // Razorpay polls via GET /v1/disputes/:id regardless of STRIPE_ENABLED;
-      // the Stripe fence below is untouched and stays ordered after this branch.
-      let gatewayDispute: {
-        status: string;
-        evidence?: Record<string, unknown>;
-        isChargeRefundable: boolean;
-        dueBy?: Date;
-      };
-      let settlementPayment: {
-        id: string;
-        amount: number;
-        gstTcsCollectedPaise: number | null;
-      } | null = null;
-
-      if (isRazorpay) {
-        const fetched = (await getDispute(
-          dispute.disputeId,
-          PaymentGateway.RAZORPAY,
-        )) as RazorpayDisputeResult;
-        const resolved = await resolveRazorpayDisputePayment(
+      const gatewayDispute = (await getDispute(
+        dispute.disputeId,
+        PaymentGateway.RAZORPAY,
+      )) as RazorpayDisputeResult;
+      const settlementPayment = await resolveRazorpayDisputePayment(
+        dispute,
+        gatewayDispute.paymentId,
+      );
+      if (!settlementPayment) {
+        await flagDisputeForManualReview(
           dispute,
-          fetched.paymentId,
+          `Razorpay dispute ${dispute.disputeId} could not be linked to a payment (gateway payment ${gatewayDispute.paymentId ?? "unknown"}) — flagged for manual review (status unchanged)`,
         );
-        if (!resolved) {
-          await flagDisputeForManualReview(
-            dispute,
-            `Razorpay dispute ${dispute.disputeId} could not be linked to a payment (gateway payment ${fetched.paymentId ?? "unknown"}) — flagged for manual review (status unchanged)`,
-          );
-          razorpayManualReviewCount++;
-          continue;
-        }
-        gatewayDispute = fetched;
-        settlementPayment = resolved;
-      } else {
-        // Skip non-Stripe gateways
-        if (dispute.paymentGateway !== PaymentGateway.STRIPE) {
-          console.log(
-            `⏭️ Skipping dispute ${dispute.disputeId} - unsupported gateway: ${dispute.paymentGateway}`,
-          );
-          continue;
-        }
-
-        // #1459 — with the fence shut every getDispute call throws, so the run
-        // reported success:false and the sweep looked broken when it was simply
-        // asked to reconcile a gateway we deliberately turned off. Count the skip
-        // instead: these disputes are still visible to an operator in the result.
-        if (!stripeEnabled) {
-          skippedFenced++;
-          console.log(
-            `⏭️ Skipping Stripe dispute ${dispute.disputeId} — STRIPE_ENABLED is not "true"`,
-          );
-          continue;
-        }
-
-        // Query Stripe for current dispute status
-        const fetched = await getDispute(
-          dispute.disputeId,
-          PaymentGateway.STRIPE,
-        );
-        gatewayDispute = fetched;
-        settlementPayment = dispute.payment
-          ? {
-              id: dispute.payment.id,
-              amount: dispute.payment.amount,
-              gstTcsCollectedPaise:
-                dispute.payment.gstTcsCollectedPaise ?? null,
-            }
-          : null;
+        razorpayManualReviewCount++;
+        continue;
       }
 
       // Check if status has changed
@@ -347,7 +264,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
       // webhook landing between fetch and write must not be overwritten by
       // the stale gateway snapshot. A miss is skipped; the next tick re-reads.
       const casWhere = { disputeId: dispute.disputeId, status: dispute.status };
-      // Canonical mapping for both gateways: Razorpay `open` lands on
+      // Canonical mapping: Razorpay `open` lands on
       // NEEDS_RESPONSE and `closed` on CLOSED; an unmapped status answers
       // null and is flagged for manual review, never coerced into a live
       // state.
@@ -360,7 +277,7 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
           dispute,
           `Unknown gateway dispute status "${gatewayDispute.status}" — flagged for manual review (status unchanged)`,
         );
-        if (isRazorpay) razorpayManualReviewCount++;
+        razorpayManualReviewCount++;
         continue;
       }
       if (newStatus !== dispute.status) {
@@ -392,18 +309,12 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
           newStatus === DisputeStatus.LOST ||
           newStatus === DisputeStatus.CHARGE_REFUNDED
         ) {
-          if (settlementPayment) {
-            await settleAdoptedLoss(
-              dispute.id,
-              dispute.disputeId,
-              dispute.amountPaise,
-              settlementPayment,
-            );
-          } else {
-            errors.push(
-              `Dispute ${dispute.disputeId}: adopted ${newStatus} with no linked payment — earnings not settled`,
-            );
-          }
+          await settleAdoptedLoss(
+            dispute.id,
+            dispute.disputeId,
+            dispute.amountPaise,
+            settlementPayment,
+          );
         }
       } else {
         // Update dueBy and evidence even if status unchanged
@@ -420,67 +331,22 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
-      // Razorpay failures never crash the loop: an unknown gateway id is
-      // terminal for the row (note for manual review, like the Stripe
-      // resource_missing path below), anything else counts toward manual
-      // review and is also reported.
-      if (dispute.paymentGateway === PaymentGateway.RAZORPAY) {
-        if (isRazorpayUnknownDisputeIdError(error)) {
-          await flagDisputeForManualReview(
-            dispute,
-            `Dispute ${dispute.disputeId} unknown at Razorpay — flagged for manual review (status unchanged)`,
-          );
-          razorpayManualReviewCount++;
-          continue;
-        }
-        razorpayManualReviewCount++;
-        errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
-        console.error(
-          `Error reconciling Razorpay dispute ${dispute.disputeId}:`,
-          errorMessage,
+      // Failures never crash the loop: an unknown gateway id is terminal for
+      // the row (note for manual review); anything else is also reported.
+      if (isRazorpayUnknownDisputeIdError(error)) {
+        await flagDisputeForManualReview(
+          dispute,
+          `Dispute ${dispute.disputeId} unknown at Razorpay — flagged for manual review (status unchanged)`,
         );
+        razorpayManualReviewCount++;
         continue;
       }
-
-      // Also check error code as fallback for StripeError
-      const errorCode = (error as { code?: string })?.code;
-
-      // Handle "dispute not found" case - check both error code and message patterns.
-      // FIX #566: Do NOT mark as WON — a missing dispute could be a transient
-      // API error, a Stripe-side delay, or a dispute that was resolved outside
-      // our system. Log it for manual review instead.
-      if (
-        errorCode === "resource_missing" ||
-        errorMessage.includes("resource_missing") ||
-        errorMessage.includes("not found") ||
-        errorMessage.includes("No such") ||
-        errorMessage.includes("does not exist")
-      ) {
-        const existingEvidence = (dispute.evidence ?? {}) as Record<
-          string,
-          unknown
-        >;
-        await prisma.dispute.updateMany({
-          where: { disputeId: dispute.disputeId, status: dispute.status },
-          data: {
-            evidence: {
-              ...existingEvidence,
-              reconciliation_note:
-                "Dispute not found at gateway — flagged for manual review (not auto-resolved)",
-              reconciled_at: new Date().toISOString(),
-            } as Prisma.InputJsonValue,
-          },
-        });
-        console.warn(
-          `⚠️ Dispute ${dispute.disputeId} not found at gateway — flagged for manual review (status unchanged)`,
-        );
-      } else {
-        errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
-        console.error(
-          `Error reconciling dispute ${dispute.disputeId}:`,
-          errorMessage,
-        );
-      }
+      razorpayManualReviewCount++;
+      errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
+      console.error(
+        `Error reconciling Razorpay dispute ${dispute.disputeId}:`,
+        errorMessage,
+      );
     }
   }
 
@@ -490,7 +356,6 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
     reconciledCount,
     urgentCount,
     razorpayManualReviewCount,
-    skippedFenced,
     errors,
     timestamp: new Date().toISOString(),
   };

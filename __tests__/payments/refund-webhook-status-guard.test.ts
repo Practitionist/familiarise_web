@@ -35,7 +35,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
   razorpayClient: { payments: { fetch: jest.fn() } },
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
 jest.mock("../../lib/novu/service", () => ({
   notifyRefundProcessed: jest.fn().mockResolvedValue(undefined),
   notifyRefundFailed: jest.fn(),

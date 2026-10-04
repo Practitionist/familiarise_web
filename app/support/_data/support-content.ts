@@ -525,7 +525,7 @@ export const supportArticles: SupportArticle[] = [
     category: "payments",
     title: "Which payment methods work, and why did my payment fail?",
     excerpt:
-      "UPI, cards, netbanking, and wallets via Razorpay and Stripe — plus failure fixes.",
+      "UPI, cards, netbanking, and wallets via Razorpay — plus failure fixes.",
     updated: "September 2026",
     contactCategory: "billing",
     related: [
@@ -536,7 +536,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Supported methods",
         paragraphs: [
-          "Checkout accepts UPI, credit and debit cards, netbanking, and wallets through Razorpay, with Stripe available for international cards. Prices are set by experts with the platform fee included in the displayed price, and INR is the default currency.",
+          "Checkout accepts UPI, credit and debit cards, netbanking, and wallets through Razorpay, including international cards. Prices are set by experts with the platform fee included in the displayed price, and INR is the default currency.",
         ],
       },
       {

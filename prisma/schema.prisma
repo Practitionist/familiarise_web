@@ -1437,14 +1437,9 @@ model BillingAccount {
   // INVOICE funding
   creditLimit BigInt? // paise; null = unlimited
 
-  /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
-  /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
-  /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
+  /// Notify-only floor: the wallet-low-balance cron alerts finance below it.
   minBalancePaise      BigInt?
-  autoTopUpEnabled     Boolean   @default(false)
-  autoTopUpAmountPaise BigInt?
-  autoTopUpMandateId   String? // gateway recurring-payment token
-  autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
+  autoTopUpLastFiredAt DateTime? // low-balance alert cooldown, CAS-stamped by the cron
 
   invoices     OrganizationInvoice[]
   contracts    Contract[]
@@ -1990,7 +1985,6 @@ model OrganizationPayoutAccount {
   routingNumber          String?
   swiftCode              String?
 
-  stripeConnectId       String? @unique
   razorpayContactId     String? @unique
   razorpayFundAccountId String?
 
@@ -2112,12 +2106,11 @@ model OrganizationPayout {
   approvedAt      DateTime? @db.Timestamptz
   approvedBy      String?
 
-  /// A1: live RazorpayX/Stripe Connect submission response.
-  /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
-  /// Stripe transfer id). UTR — Unique Transaction Reference; the bank/RBI
+  /// A1: live RazorpayX submission response.
+  /// `gatewayPayoutId` is the RazorpayX payout id. UTR — Unique Transaction Reference; the bank/RBI
   /// settlement reference the gateway returns on a completed NEFT/IMPS/UPI
   /// payout. `gatewayUtr` populates only after the
-  /// `payout.processed`/`transfer.paid` webhook reconciles. The full
+  /// `payout.processed` webhook reconciles. The full
   /// response is stashed in `gatewayResponseRaw` for debugging.
   gatewayPayoutId    String? @unique
   gatewayUtr         String?
@@ -5510,14 +5503,7 @@ model Payment {
 
   // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
   // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
-  consumerStateCode    String? @db.VarChar(2)
-  // #778 §D — GST TCS u/s 52 collected on this payment. The rate is 0.5%
-  // (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024, Notification
-  // 15/2024-CT — halved from the 1% this comment used to state. paise; #780
-  // widens to BigInt. #1360 — collection stays CA-gated because the platform
-  // bills as PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE
-  // booked in earnings-service), so §52 does not currently bite.
-  gstTcsCollectedPaise BigInt?
+  consumerStateCode String? @db.VarChar(2)
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -5692,7 +5678,7 @@ model Refund {
   currency             Currency       @default(INR)
   reason               String? // Reason for refund
   status               RefundStatus
-  refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  refundId             String         @unique // Gateway-specific refund ID
   dedupeKey            String?        @unique // #1780 — one refund per (payment, occurrence|seat|series): a DB guarantee
   paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
@@ -5847,14 +5833,7 @@ model ConsultantEarnings {
   grossAmount          BigInt // Total sale price (paise)
   platformFeePaise     BigInt // Platform cut (20%)
   consultantSharePaise BigInt // Consultant cut (80%)
-  refundedShareAmount  BigInt  @default(0) // Cumulative refunded amount in paise
-  // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
-  // govt, reconciled into GstTcsBatch) at 0.5% (0.25% CGST + 0.25% SGST, or
-  // 0.5% IGST) w.e.f. 10-Jul-2024, Notification 15/2024-CT. paise; #780 widens
-  // to BigInt. #1360 — impl stays CA-gated because the platform bills as
-  // PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
-  // earnings-service), so §52 does not currently bite.
-  gstTcsAccruedPaise   BigInt?
+  refundedShareAmount  BigInt @default(0) // Cumulative refunded amount in paise
 
   // Collaborator support
   role     EarningRole @default(OWNER)
@@ -5989,10 +5968,8 @@ model PayoutAccount {
   upiId String?
 
   // Gateway IDs
-  stripeAccountId     String? @unique
-  stripeAccountStatus String?
-  razorpayContactId   String?
-  razorpayFundAccId   String? @unique
+  razorpayContactId String?
+  razorpayFundAccId String? @unique
 
   // Verification
   isVerified Boolean @default(false)
@@ -6263,61 +6240,6 @@ model TdsAdjustment {
   @@index([consultantProfileId, financialYear])
   @@index([organizationId, financialYear])
   @@index([payoutId])
-}
-
-// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. Were we an
-// e-commerce operator collecting on registered consultants, the rate would be
-// 0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024,
-// Notification 15/2024-CT — this block used to say 1%, the pre-July-2024 rate.
-// Per-payment collection (Payment.gstTcsCollectedPaise) + per-earning accrual
-// (ConsultantEarnings.gstTcsAccruedPaise) reconcile into one batch per month.
-// #1360 — collection + filing stay CA-gated because the platform bills as
-// PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
-// earnings-service), so §52 does not currently bite.
-enum GstTcsBatchStatus {
-  OPEN
-  FILED
-}
-
-model GstTcsBatch {
-  id            String @id @default(cuid())
-  financialYear String // "2026-27"
-  month         Int // 1-12 (GSTR-8 is monthly)
-
-  // Aggregates for the period (paise; #780 widens to BigInt).
-  netSupplyPaise    BigInt @default(0)
-  tcsCollectedPaise BigInt @default(0)
-
-  status         GstTcsBatchStatus @default(OPEN)
-  filedAt        DateTime?
-  gstr8AckNumber String?
-
-  adjustments GstTcsAdjustment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([financialYear, month])
-  @@index([status])
-}
-
-// #778 §D — refund reversal of previously-collected GST TCS, netted into the
-// batch for the period in which the refund occurs.
-model GstTcsAdjustment {
-  id      String       @id @default(cuid())
-  batchId String?
-  batch   GstTcsBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
-  paymentId   String? // original payment
-  refundId    String? // triggering refund
-  // Signed paise; negative reverses TCS on refund (#780 widens to BigInt).
-  amountPaise BigInt
-  reason      String?
-
-  createdAt DateTime @default(now())
-
-  @@index([batchId])
-  @@index([paymentId])
 }
 
 /// Request-level idempotency for money mutations that have no natural dedupe

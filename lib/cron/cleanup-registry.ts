@@ -577,7 +577,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           reconciledCount: r.reconciledCount,
           urgentCount: r.urgentCount,
           razorpayManualReviewCount: r.razorpayManualReviewCount,
-          skippedFenced: r.skippedFenced,
         }),
         failureMessage: "Failed to reconcile disputes",
       }),
@@ -771,10 +770,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           reconciledCount: r.reconciledCount,
           failedCount: r.failedCount,
           skippedCount: r.skippedCount,
-          skippedFenced: r.skippedFenced,
           failedUnknownId: r.failedUnknownId,
         }),
-        status: (r) => statusFor(r, r.skippedFenced > 0),
         failureMessage: "Failed to reconcile refunds",
       }),
 

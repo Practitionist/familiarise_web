@@ -62,8 +62,7 @@ function resolvePeriod(): { periodStart: Date; periodEnd: Date } {
       "GST_REGISTER_PERIOD_START and GST_REGISTER_PERIOD_END must be set together",
     );
   }
-  // Default: the previous calendar month, reckoned in IST. Shared with the
-  // GSTR-8 draft export so the two never drift apart on the boundary.
+  // Default: the previous calendar month, reckoned in IST.
   const periodStart = previousIstCalendarMonthStart();
   return { periodStart, periodEnd: nextMonthStart(periodStart) };
 }

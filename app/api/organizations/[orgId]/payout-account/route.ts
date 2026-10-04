@@ -59,7 +59,6 @@ export async function GET(
       ifscCode: true,
       routingNumber: true,
       swiftCode: true,
-      stripeConnectId: true,
       razorpayContactId: true,
       razorpayFundAccountId: true,
       status: true,

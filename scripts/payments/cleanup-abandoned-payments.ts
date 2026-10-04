@@ -24,7 +24,6 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
-import type Stripe from "stripe";
 import {
   cancelRazorpayOrder,
   type RazorpayOrderCancelResult,
@@ -72,111 +71,9 @@ export interface CleanupAbandonedOptions {
 }
 
 /**
- * #1386 — the same fence every money path reads, in the same shape
- * `assertGatewayUsable` and the disputes sweep use: an env read at call time,
- * because the gateway cores load lazily and jest flips the flag between cases.
- */
-function isStripeEnabled(): boolean {
-  return process.env.STRIPE_ENABLED === "true";
-}
-
-/**
- * #1464 — the fence is a property of the deployment, not of a payment, so one
- * line per run says everything an operator needs; one line per fenced row
- * would bury the rest of the summary. Reset at the top of each sweep so a
- * later run still explains itself.
- */
-let stripeFenceLogged = false;
-
-function logStripeFenceOnce(): void {
-  if (stripeFenceLogged) return;
-  stripeFenceLogged = true;
-  console.log(
-    '⏭️ Leaving Stripe intents alone — STRIPE_ENABLED is not "true" (#1386). ' +
-      "There is nothing to cancel on a gateway this deployment never charged.",
-  );
-}
-
-/** The two intent states that mean the hold this cancel was for is gone. */
-const TERMINAL_INTENT_STATUSES = new Set(["canceled", "succeeded"]);
-
-/**
- * #1461 — `payment_intent_unexpected_state` does not mean "already gone". It
- * means "the intent's current state forbids a cancel", which covers a
- * `canceled` or `succeeded` intent (genuinely nothing to do) and equally a
- * `processing` or `requires_capture` one, where the gateway is still holding
- * the buyer's money. Stripe attaches the offending intent to the error, so the
- * two can be told apart without spending a `retrieve` round trip out of this
- * sweep's 4 s per-cancel budget. Read defensively off both the top level and
- * `raw`, because which one carries it depends on the SDK's error wrapping.
- */
-function unexpectedStateIsTerminal(error: unknown): boolean {
-  const err = error as
-    | {
-        payment_intent?: { status?: unknown };
-        raw?: { payment_intent?: { status?: unknown } };
-      }
-    | null
-    | undefined;
-  const status =
-    err?.payment_intent?.status ?? err?.raw?.payment_intent?.status;
-  return typeof status === "string" && TERMINAL_INTENT_STATUSES.has(status);
-}
-
-/**
- * #1464 — an intent Stripe cannot find, or one that is already in a terminal
- * state, is nothing to cancel rather than a failure: the hold it represented
- * is gone, which is exactly what the cancel was for. Matched on the error's
- * own fields instead of `instanceof Stripe.errors.StripeError` so the check
- * does not depend on the lazily-imported SDK's class identity.
- *
- * #1461 — the row is expired either way (that is #1464's point), so what this
- * decides is only whether an operator is told. A live intent we could not
- * cancel, sitting behind a locally EXPIRED payment, is exactly the state
- * someone has to look at, even though #1439 heals a capture that lands late.
- */
-function isNothingToCancel(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  if (code === "resource_missing") return true;
-  // Terminal by the payload's own account, or a failure. An absent status is
-  // a failure too: unproven is not the same as safe.
-  if (code === "payment_intent_unexpected_state")
-    return unexpectedStateIsTerminal(error);
-  return error instanceof Error && error.message.includes("already");
-}
-
-/**
- * Cancel one Stripe intent through the fenced client.
- *
- * The id shape decides the call, as in `cancelStripePayment`: checkout
- * sessions (`cs_…`) are expired and payment intents (`pi_…`) are cancelled.
- * Anything the gateway genuinely refused is rethrown, because the caller
- * counts it.
- */
-async function cancelStripeIntent(
-  stripe: Stripe,
-  paymentIntent: string,
-): Promise<void> {
-  try {
-    if (paymentIntent.startsWith("cs_")) {
-      await stripe.checkout.sessions.expire(paymentIntent);
-    } else {
-      await stripe.paymentIntents.cancel(paymentIntent);
-    }
-    console.log(`✅ Cancelled Stripe payment intent: ${paymentIntent}`);
-  } catch (error) {
-    if (!isNothingToCancel(error)) throw error;
-    console.log(
-      `✅ Stripe intent ${paymentIntent} was already gone — nothing to cancel`,
-    );
-  }
-}
-
-/**
  * Cancel payment intent with the appropriate payment gateway.
  *
- * #1861 L2 — resolves to what the gateway still holds; a Stripe cancel that
- * the gateway refused still throws, as before.
+ * #1861 L2 — resolves to what the gateway still holds.
  */
 export async function cancelPaymentIntent(
   paymentIntent: string,
@@ -184,26 +81,9 @@ export async function cancelPaymentIntent(
 ): Promise<RazorpayOrderCancelResult> {
   try {
     switch (gateway) {
-      case PaymentGateway.STRIPE: {
-        // #1464 — respect the #1386 fence. This arm used to build a raw client
-        // around STRIPE_SECRET_KEY, so it bypassed both the fence and the
-        // test-key guard: with Stripe off, the key is absent or a test key and
-        // the call can only fail, which then blocked the expiry below.
-        if (!isStripeEnabled()) {
-          logStripeFenceOnce();
-          return "no_live_payment";
-        }
-        // #1376 — gateway cores load at call time, and this module is reached
-        // from the cleanup route's graph.
-        const { getStripeClient } = await import("@/lib/payments/core/stripe");
-        const stripe = getStripeClient();
-        if (!stripe) {
-          console.warn("⚠️ STRIPE_SECRET_KEY not configured");
-          return "no_live_payment";
-        }
-        await cancelStripeIntent(stripe, paymentIntent);
+      // Stripe was removed and never charged in production; nothing to cancel.
+      case PaymentGateway.STRIPE:
         return "no_live_payment";
-      }
 
       case PaymentGateway.RAZORPAY:
         return await cancelRazorpayOrder(paymentIntent);
@@ -933,7 +813,6 @@ async function cleanupAbandonedPaymentsUnlocked(
   opts: CleanupAbandonedOptions = {},
 ): Promise<CleanupResult> {
   console.log("🧹 Starting abandoned payment cleanup...");
-  stripeFenceLogged = false;
 
   const result: CleanupResult = {
     success: false,

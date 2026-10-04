@@ -15,14 +15,6 @@ export {
 } from "./razorpay-payouts";
 export type { Contact, RazorpayPayout } from "./razorpay-payouts";
 
-// Stripe Connect
-export {
-  StripeConnectService,
-  getStripeConnectService,
-  isStripeConnectConfigured,
-} from "./stripe-connect";
-export type { AccountLink } from "./stripe-connect";
-
 // Payout Service
 export {
   getPendingPayouts,

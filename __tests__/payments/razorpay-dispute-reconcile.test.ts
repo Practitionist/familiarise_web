@@ -49,7 +49,6 @@ interface PaymentRow {
   amount: number;
   gatewayPaymentId: string | null;
   paymentIntent: string;
-  gstTcsCollectedPaise: number | null;
 }
 
 interface DisputeRow {
@@ -109,7 +108,6 @@ function seedLinkedDispute(overrides?: Partial<DisputeRow>): DisputeRow {
     amount: 10_000,
     gatewayPaymentId: "pay_rzp_1",
     paymentIntent: "order_1",
-    gstTcsCollectedPaise: null,
   };
   const dispute: DisputeRow = {
     id: "row_1",
@@ -135,7 +133,6 @@ function seedLinkedDispute(overrides?: Partial<DisputeRow>): DisputeRow {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.STRIPE_ENABLED = "true";
   store.disputes = [];
   store.payments = [];
   store.earnings = [];
@@ -241,7 +238,6 @@ describe("razorpay dispute reconcile", () => {
       amount: 5_000,
       gatewayPaymentId: null,
       paymentIntent: "order_9",
-      gstTcsCollectedPaise: null,
     };
     store.payments = [payment];
     store.disputes = [
@@ -286,7 +282,6 @@ describe("razorpay dispute reconcile", () => {
       amount: 7_000,
       gatewayPaymentId: "pay_rzp_b",
       paymentIntent: "order_b",
-      gstTcsCollectedPaise: null,
     };
     store.payments = [paymentB];
     store.disputes = [

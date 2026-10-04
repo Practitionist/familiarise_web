@@ -32,10 +32,10 @@ jest.mock("../../lib/prisma", () => ({
         {
           disputeId: "dp_1",
           status: "UNDER_REVIEW",
-          paymentGateway: "STRIPE",
+          paymentGateway: "RAZORPAY",
           dueBy: null,
           evidence: null,
-          payment: {},
+          payment: { id: "p1", amount: 1000, gatewayPaymentId: "pay_1" },
         },
       ]),
       updateMany: (...a: unknown[]) => updateMany(...(a as [never])),
@@ -48,12 +48,12 @@ import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.STRIPE_ENABLED = "true";
 });
 
 describe("dispute reconciliation is a CAS on the status it read", () => {
   it("does not overwrite a dispute whose status changed mid-run", async () => {
     getDispute.mockResolvedValue({
+      paymentId: "pay_1",
       status: "needs_response",
       evidence: {},
       isChargeRefundable: true,

@@ -16,7 +16,7 @@ import {
 
 // Validation schemas
 const createBankAccountSchema = z.object({
-  provider: z.enum(["RAZORPAY", "STRIPE"]),
+  provider: z.enum(["RAZORPAY"]),
   accountType: z.enum(["BANK_ACCOUNT", "UPI"]),
   accountHolderName: z.string().min(2),
   bankName: z.string().optional(),
@@ -93,18 +93,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
         { status: 404 },
-      );
-    }
-
-    // Validate provider/accountType compatibility
-    if (data.provider === "STRIPE" && data.accountType !== "BANK_ACCOUNT") {
-      // Stripe Connect requires separate onboarding flow, not BANK_ACCOUNT/UPI creation
-      return NextResponse.json(
-        {
-          error:
-            "Stripe payouts require Stripe Connect onboarding. Use the Stripe Connect flow instead.",
-        },
-        { status: 400 },
       );
     }
 

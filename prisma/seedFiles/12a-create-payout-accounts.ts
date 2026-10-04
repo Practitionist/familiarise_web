@@ -5,7 +5,6 @@ import {
   INDIAN_BANKS,
   generateIfscCode,
   generateUpiId,
-  generateStripeAccountId,
   generateRazorpayContactId,
   generateRazorpayFundAccountId,
   generateAccountNumberLast4,
@@ -15,7 +14,7 @@ import {
 
 // Configuration
 const MIN_ACCOUNTS_PER_CONSULTANT = 1;
-const MAX_ACCOUNTS_PER_CONSULTANT = 3;
+const MAX_ACCOUNTS_PER_CONSULTANT = 2;
 const VERIFICATION_RATE = 0.8; // 80% verified
 
 interface PayoutAccountData {
@@ -27,8 +26,6 @@ interface PayoutAccountData {
   accountNumberLast4?: string;
   ifscCode?: string;
   upiId?: string;
-  stripeAccountId?: string;
-  stripeAccountStatus?: string;
   razorpayContactId?: string;
   razorpayFundAccId?: string;
   isVerified: boolean;
@@ -77,22 +74,6 @@ function generateUpiAccountDetails(
 }
 
 /**
- * Generate Stripe Connect account details
- */
-function generateStripeConnectDetails(
-  consultantName: string,
-): PayoutAccountDetails {
-  const statuses = ["active", "pending", "restricted"];
-  return {
-    provider: PaymentGateway.STRIPE,
-    accountType: PayoutAccountType.STRIPE_CONNECT,
-    accountHolderName: consultantName,
-    stripeAccountId: generateStripeAccountId(),
-    stripeAccountStatus: faker.helpers.arrayElement(statuses),
-  };
-}
-
-/**
  * Generate payout account data based on account type
  */
 function generatePayoutAccountData(
@@ -109,9 +90,6 @@ function generatePayoutAccountData(
       break;
     case PayoutAccountType.UPI:
       accountDetails = generateUpiAccountDetails(consultantName);
-      break;
-    case PayoutAccountType.STRIPE_CONNECT:
-      accountDetails = generateStripeConnectDetails(consultantName);
       break;
     default:
       accountDetails = generateBankAccountDetails(consultantName);
@@ -178,7 +156,10 @@ export async function createPayoutAccounts(): Promise<void> {
       let accountType: PayoutAccountType;
       do {
         accountType = weightedRandom(PAYOUT_ACCOUNT_TYPE_WEIGHTS);
-      } while (usedTypes.has(accountType) && usedTypes.size < 3);
+      } while (
+        usedTypes.has(accountType) &&
+        usedTypes.size < PAYOUT_ACCOUNT_TYPE_WEIGHTS.length
+      );
 
       usedTypes.add(accountType);
 
@@ -209,8 +190,6 @@ export async function createPayoutAccounts(): Promise<void> {
           accountNumberLast4: account.accountNumberLast4,
           ifscCode: account.ifscCode,
           upiId: account.upiId,
-          stripeAccountId: account.stripeAccountId,
-          stripeAccountStatus: account.stripeAccountStatus,
           razorpayContactId: account.razorpayContactId,
           razorpayFundAccId: account.razorpayFundAccId,
           isVerified: account.isVerified,

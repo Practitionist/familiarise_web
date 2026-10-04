@@ -55,13 +55,6 @@ export interface RefundReconciliationResult {
   failedCount: number;
   skippedCount: number;
   /**
-   * #1458 — the subset of `skippedCount` that was left alone because its
-   * gateway is fenced off for this deployment. Reported separately so an
-   * operator can tell "nothing to do" from "there is settled money we are not
-   * polling because STRIPE_ENABLED is off".
-   */
-  skippedFenced: number;
-  /**
    * FAMILIARISE_WEB-3V — the subset of `failedCount` whose gateway has no
    * record of the refund id, or of a placeholder's order (unknown id, or a
    * test-mode id read with live keys). Terminal: moved to FAILED, not polled.
@@ -69,7 +62,7 @@ export interface RefundReconciliationResult {
   failedUnknownId: number;
   /**
    * #1757 — the subset of `failedCount` retired because no live client exists
-   * for the row's gateway (fenced or unimplemented) and it was over 24 h old.
+   * for the row's gateway (no implementation) and it was over 24 h old.
    */
   failedGatewayDisabled: number;
   errors: string[];
@@ -128,7 +121,6 @@ async function reconcilePendingRefundsUnlocked(
   let reconciledCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
-  let skippedFenced = 0;
   let failedUnknownId = 0;
   let failedGatewayDisabled = 0;
   let totalProcessed = 0;
@@ -136,21 +128,8 @@ async function reconcilePendingRefundsUnlocked(
   const failedUnknownOrder: string[] = [];
 
   /**
-   * #1458 — a PENDING refund on a gateway this deployment has fenced off is not
-   * reconcilable: the gateway client is never constructed, so `listRefunds` /
-   * `getRefund` throw, every fenced row lands in `errors`, and the whole run
-   * reports `success: false` — a 500 from the cleanup route for a condition
-   * that is deliberate configuration. `assertGatewayUsable` cannot be reused
-   * here because it deliberately leaves refund LOOKUPS open, so that a Payment
-   * already written against Stripe stays refundable after the fence goes up.
-   * Skip the row, count it, and let the summary say so.
-   */
-  const isFencedGateway = (gateway: PaymentGateway): boolean =>
-    gateway === PaymentGateway.STRIPE && process.env.STRIPE_ENABLED !== "true";
-
-  /**
-   * #1757 — a row no live client can ever settle (fenced or unimplemented
-   * gateway) was skipped on every tick forever. Past 24 h it is FAILED with
+   * #1757 — a row no live client can ever settle (a gateway with no
+   * implementation) was skipped on every tick forever. Past 24 h it is FAILED with
    * `GATEWAY_DISABLED` through the same CAS the unknown-id path uses, which
    * re-opens the refundable balance; younger rows keep the skip.
    */
@@ -211,24 +190,12 @@ async function reconcilePendingRefundsUnlocked(
   for (const refund of stalePlaceholders) {
     try {
       // Skip if payment gateway is not supported
-      if (
-        refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
-        refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
-      ) {
+      if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
         if (await retireIfNoLiveClient(refund)) continue;
         console.log(
           `⏭️ Skipping refund ${refund.id} - unsupported gateway: ${refund.payment.paymentGateway}`,
         );
         skippedCount++;
-        continue;
-      }
-      if (isFencedGateway(refund.payment.paymentGateway)) {
-        if (await retireIfNoLiveClient(refund)) continue;
-        console.log(
-          `⏭️ Skipping refund ${refund.id} - ${refund.payment.paymentGateway} is fenced off for this deployment`,
-        );
-        skippedCount++;
-        skippedFenced++;
         continue;
       }
 
@@ -418,18 +385,9 @@ async function reconcilePendingRefundsUnlocked(
 
   for (const refund of pendingRealId) {
     try {
-      if (
-        refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
-        refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
-      ) {
+      if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
         if (await retireIfNoLiveClient(refund)) continue;
         skippedCount++;
-        continue;
-      }
-      if (isFencedGateway(refund.payment.paymentGateway)) {
-        if (await retireIfNoLiveClient(refund)) continue;
-        skippedCount++;
-        skippedFenced++;
         continue;
       }
 
@@ -589,7 +547,6 @@ async function reconcilePendingRefundsUnlocked(
     reconciledCount,
     failedCount,
     skippedCount,
-    skippedFenced,
     failedUnknownId,
     failedGatewayDisabled,
     errors,

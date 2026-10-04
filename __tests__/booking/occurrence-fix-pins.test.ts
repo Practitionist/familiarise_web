@@ -450,20 +450,6 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
     expect(res!.status).toBe(409);
   });
 
-  it("does not resume a Stripe PENDING attempt (hosted URL is not persisted)", async () => {
-    mockPaymentFindFirst.mockResolvedValue({
-      paymentIntent: "cs_test_x",
-      paymentStatus: "PENDING",
-      paymentGateway: "STRIPE",
-      amount: BigInt(50000),
-      currency: "INR",
-      appointmentId: null,
-      isMockPayment: false,
-    });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    expect(res!.status).toBe(409);
-  });
-
   it("returns null for an unknown key (fresh attempt proceeds)", async () => {
     mockPaymentFindFirst.mockResolvedValue(null);
     await expect(

@@ -29,9 +29,8 @@ export const MINIMUM_BOOKING_LEAD_TIME_MINUTES = 15;
  * live type to this day and are what broke reconcile-disputes and
  * cleanup-abandoned-payments with Prisma P2023.
  *
- * DODO_PAYMENTS is the sanctioned post-MVP second gateway. There is no
- * implementation, no timeline, and no partial support: it is a schema
- * placeholder only.
+ * DODO_PAYMENTS is the sanctioned post-MVP second gateway and STRIPE a
+ * removed one; neither has any implementation behind its label.
  *
  * `schemas/checkout.ts` already narrows checkout to the implemented subset, so
  * a stub cannot be selected at checkout. This list plus `assertGatewayUsable`
@@ -39,7 +38,7 @@ export const MINIMUM_BOOKING_LEAD_TIME_MINUTES = 15;
  * value read back off an existing row would otherwise fall through a `default`
  * branch and be treated as a working gateway.
  */
-export const POST_MVP_GATEWAY_STUBS = ["DODO_PAYMENTS"] as const;
+export const POST_MVP_GATEWAY_STUBS = ["STRIPE", "DODO_PAYMENTS"] as const;
 
 export type PostMvpGatewayStub = (typeof POST_MVP_GATEWAY_STUBS)[number];
 

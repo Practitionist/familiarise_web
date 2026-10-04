@@ -1,7 +1,7 @@
 /**
  * Payout Status Reconciliation - Core Logic
  *
- * Reconciles payout status with payment gateways (Stripe/RazorpayX).
+ * Reconciles payout status with RazorpayX.
  * Finds PENDING/PROCESSING payouts older than 48h and queries gateways for actual status.
  *
  * This catches cases where:
@@ -25,7 +25,6 @@ import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-pay
 import {
   type PayoutLookup,
   WEBHOOK_STATUS_MAP,
-  getStripePayoutStatus,
   getRazorpayPayoutStatus,
   mapGatewayStatus,
   retireUnknownGatewayPayout,
@@ -139,9 +138,7 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     // Query gateway for actual status
     let lookup: PayoutLookup | null = null;
 
-    if (payout.provider === PaymentGateway.STRIPE) {
-      lookup = await getStripePayoutStatus(payout.providerPayoutId);
-    } else if (payout.provider === PaymentGateway.RAZORPAY) {
+    if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;

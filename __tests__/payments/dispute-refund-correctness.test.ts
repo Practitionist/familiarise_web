@@ -46,10 +46,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
     payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
   }),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({
-  stripeClient: null,
-  getStripeClient: () => null,
-}));
 
 // Minimal stubs for the rest of utils.ts's import graph so module load works.
 jest.mock("../../lib/novu", () => ({

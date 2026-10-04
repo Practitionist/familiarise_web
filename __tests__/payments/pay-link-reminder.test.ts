@@ -46,10 +46,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   // #1861 L2 — the sweep expires only an order proven to hold no payment.
   cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({
-  __esModule: true,
-  getStripeClient: jest.fn(),
-}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
     fn(),

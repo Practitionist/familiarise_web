@@ -12,17 +12,6 @@
  * writes `Payment` state (ADR 21).
  */
 
-// The script imports the SDK lazily and constructs it, so the mock is a class
-// with the one method the pin drives, exposed statically for the assertions.
-jest.mock("stripe", () => ({
-  __esModule: true,
-  default: class StripeMock {
-    static retrieve = jest.fn();
-    paymentIntents = { retrieve: StripeMock.retrieve };
-    checkout = { sessions: { retrieve: jest.fn() } };
-  },
-}));
-
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
@@ -90,13 +79,42 @@ jest.mock("../../lib/enterprise/system-events", () => {
 
 import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 
 const { POST } = getCleanupJobHandlers("reconcile-payment-status")!;
 
-const mockRetrieve = (Stripe as unknown as { retrieve: jest.Mock }).retrieve;
+// The script reads Razorpay over plain `fetch`, so the pin drives that.
+const mockFetch = jest.fn();
+global.fetch = mockFetch as unknown as typeof fetch;
+
+/** Razorpay answers 400 BAD_REQUEST_ERROR for an order id it has no record of. */
+function razorpayUnknownId() {
+  mockFetch.mockResolvedValue({
+    ok: false,
+    status: 400,
+    json: async () => ({
+      error: {
+        code: "BAD_REQUEST_ERROR",
+        description: "The id provided does not exist",
+      },
+    }),
+  });
+}
+
+function razorpayCaptured(capture: Record<string, unknown>) {
+  mockFetch
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "paid" }) })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [{ status: "captured", ...capture }] }),
+    });
+}
+
+function setRazorpayEnv() {
+  process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+  process.env.RAZORPAY_SECRET = "secret_x";
+}
 const mockCaptureMessage = Sentry.captureMessage as jest.Mock;
 
 const SECRET = "test-cron-secret";
@@ -109,9 +127,9 @@ function request(): NextRequest {
   } as unknown as NextRequest;
 }
 
-const pendingStripeRow = {
+const pendingRow = {
   id: "pay-1",
-  paymentGateway: "STRIPE",
+  paymentGateway: "RAZORPAY",
   paymentIntent: "103e6474-6cc3-4d37-9673-25af4b1dd566",
   paymentStatus: "PENDING",
   // Relative, never fixed: the row must sit inside the 7d reconcile window
@@ -127,21 +145,15 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
-    process.env.STRIPE_SECRET_KEY = "sk_test_x";
+    setRazorpayEnv();
     // The window query answers with the row; the orphan-cohort query is empty.
     (prisma.payment.findMany as jest.Mock)
-      .mockResolvedValueOnce([pendingStripeRow])
+      .mockResolvedValueOnce([pendingRow])
       .mockResolvedValueOnce([]);
   });
 
-  it("counts a resource_missing row as unresolvable and answers 207", async () => {
-    mockRetrieve.mockRejectedValue(
-      Object.assign(new Error("No such payment_intent: '103e6474-…'"), {
-        type: "StripeInvalidRequestError",
-        code: "resource_missing",
-        statusCode: 404,
-      }),
-    );
+  it("counts an unknown order id as unresolvable and answers 207", async () => {
+    razorpayUnknownId();
 
     const res = await POST(request());
     const body = await res.json();
@@ -168,12 +180,7 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
   // what turned a second-largest issue (1,147 events, same 4 rows) into a
   // near-budget-sized cost. Reported at most once per 24h per distinct id set.
   it("does not re-report the same unresolvable id set within 24h", async () => {
-    mockRetrieve.mockRejectedValue(
-      Object.assign(new Error("No such payment_intent"), {
-        code: "resource_missing",
-        statusCode: 404,
-      }),
-    );
+    razorpayUnknownId();
     // `Once`, not a persistent override — the mock is a module-level
     // singleton shared across every test in this file, and a persistent
     // stub here would leak into later describe blocks that expect the
@@ -206,12 +213,7 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
   // #1822 — replay: run 1's lookup fails (still reports, still 207); run 2
   // finds run 1's recorded correlationId and stays quiet.
   it("reports despite a failed lookup, then suppresses the replay", async () => {
-    mockRetrieve.mockRejectedValue(
-      Object.assign(new Error("No such payment_intent"), {
-        code: "resource_missing",
-        statusCode: 404,
-      }),
-    );
+    razorpayUnknownId();
     const recorded = new Set<string>();
     recordSystemEvent.mockImplementation(
       async (e: { correlationId: string }) => {
@@ -227,7 +229,7 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
 
     expect((await POST(request())).status).toBe(207);
     (prisma.payment.findMany as jest.Mock)
-      .mockResolvedValueOnce([pendingStripeRow])
+      .mockResolvedValueOnce([pendingRow])
       .mockResolvedValueOnce([]);
     expect((await POST(request())).status).toBe(207);
 
@@ -236,7 +238,7 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
   });
 
   it("keeps a gateway that cannot be reached as a run failure — 500", async () => {
-    mockRetrieve.mockRejectedValue(new Error("ECONNRESET"));
+    mockFetch.mockRejectedValue(new Error("ECONNRESET"));
 
     const res = await POST(request());
     const body = await res.json();
@@ -261,12 +263,12 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
 describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)", () => {
   const DAY = 24 * 60 * 60 * 1000;
   const oldRow = {
-    ...pendingStripeRow,
+    ...pendingRow,
     id: "pay-old",
     createdAt: new Date(Date.now() - 10 * DAY),
   };
   const youngRow = {
-    ...pendingStripeRow,
+    ...pendingRow,
     id: "pay-young",
     createdAt: new Date(Date.now() - 1 * DAY),
   };
@@ -274,14 +276,9 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
-    process.env.STRIPE_SECRET_KEY = "sk_test_x";
+    setRazorpayEnv();
     delete process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS;
-    mockRetrieve.mockRejectedValue(
-      Object.assign(new Error("No such payment_intent"), {
-        code: "resource_missing",
-        statusCode: 404,
-      }),
-    );
+    razorpayUnknownId();
     retireOrphanPendingPayment.mockResolvedValue({
       outcome: "retired",
       errors: [],
@@ -353,31 +350,29 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
   });
 });
 
-describe("reconcile-payment-status — Stripe SUCCEEDED routes through routeCapturedPayment (#1905)", () => {
+describe("reconcile-payment-status — SUCCEEDED routes through routeCapturedPayment (#1905)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
-    process.env.STRIPE_SECRET_KEY = "sk_test_x";
+    setRazorpayEnv();
     routeCapturedPayment.mockResolvedValue(undefined);
   });
 
-  it("routes a succeeded Stripe PaymentIntent with booking metadata through routeCapturedPayment instead of direct status stamp", async () => {
-    const stripeBookingRow = {
-      ...pendingStripeRow,
-      id: "pay-stripe-ok",
-      paymentIntent: "pi_test_1905",
+  it("routes a captured payment with booking notes through routeCapturedPayment instead of direct status stamp", async () => {
+    const bookingRow = {
+      ...pendingRow,
+      id: "pay-ok",
+      paymentIntent: "order_1905",
       appointmentId: "appt-1905",
       appointment: { id: "appt-1905", slotsOfAppointment: [] },
     };
     (prisma.payment.findMany as jest.Mock)
-      .mockResolvedValueOnce([stripeBookingRow])
+      .mockResolvedValueOnce([bookingRow])
       .mockResolvedValueOnce([]);
-    mockRetrieve.mockResolvedValueOnce({
-      id: "pi_test_1905",
-      status: "succeeded",
+    razorpayCaptured({
+      id: "pay_1905",
       amount: 50000,
-      amount_received: 50000,
-      metadata: { appointmentId: "appt-1905", consultantProfileId: "cp-1" },
+      notes: { appointmentId: "appt-1905", consultantProfileId: "cp-1" },
     });
 
     const res = await POST(request());
@@ -386,32 +381,26 @@ describe("reconcile-payment-status — Stripe SUCCEEDED routes through routeCapt
     expect(res.status).toBe(207);
     expect(body.reconciledCount).toBe(1);
     expect(routeCapturedPayment).toHaveBeenCalledWith({
-      orderId: "pi_test_1905",
-      gatewayPaymentId: "pi_test_1905",
+      orderId: "order_1905",
+      gatewayPaymentId: "pay_1905",
       notes: { appointmentId: "appt-1905", consultantProfileId: "cp-1" },
       amountPaise: 50000,
     });
     expect(prisma.payment.updateMany).not.toHaveBeenCalled();
   });
 
-  it("refuses to stamp SUCCEEDED and records PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT when Stripe booking lacks appointment and metadata", async () => {
-    const orphanStripeRow = {
-      ...pendingStripeRow,
-      id: "pay-stripe-no-ctx",
-      paymentIntent: "pi_test_no_ctx",
+  it("refuses to stamp SUCCEEDED and records PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT when a booking lacks appointment and notes", async () => {
+    const orphanRow = {
+      ...pendingRow,
+      id: "pay-no-ctx",
+      paymentIntent: "order_no_ctx",
       appointmentId: null,
       appointment: null,
     };
     (prisma.payment.findMany as jest.Mock)
-      .mockResolvedValueOnce([orphanStripeRow])
+      .mockResolvedValueOnce([orphanRow])
       .mockResolvedValueOnce([]);
-    mockRetrieve.mockResolvedValueOnce({
-      id: "pi_test_no_ctx",
-      status: "succeeded",
-      amount: 50000,
-      amount_received: 50000,
-      metadata: {},
-    });
+    razorpayCaptured({ id: "pay_no_ctx", amount: 50000, notes: {} });
 
     const res = await POST(request());
     const body = await res.json();

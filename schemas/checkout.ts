@@ -27,7 +27,7 @@ export const appointmentTypeSchema = z.enum([
   "TRIAL",
 ]);
 
-export const paymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
+export const paymentGatewaySchema = z.enum(["RAZORPAY", "CARD"]);
 
 // The implemented checkout gateways — a strict subset of the PaymentGateway
 // Prisma enum. Post-MVP stubs (e.g. DODO_PAYMENTS, #984) are NOT valid at

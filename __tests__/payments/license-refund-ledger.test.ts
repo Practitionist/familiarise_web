@@ -98,7 +98,6 @@ function paymentRow(overrides: Record<string, unknown> = {}) {
     billingAccountId: null,
     billableToOrgInvoiceId: null,
     parentPaymentId: null,
-    gstTcsCollectedPaise: null,
     // The whole point: one leg, worth nothing.
     legs: [
       {
@@ -168,7 +167,6 @@ function txStub() {
     overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     paymentLeg: { upsert: jest.fn().mockResolvedValue({}) },
-    gstTcsAdjustment: { create: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
     organization: { findUnique: jest.fn().mockResolvedValue(null) },
   };

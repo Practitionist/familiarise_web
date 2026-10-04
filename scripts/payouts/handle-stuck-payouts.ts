@@ -26,7 +26,6 @@ import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-pay
 import {
   type PayoutLookup,
   WEBHOOK_STATUS_MAP,
-  getStripePayoutStatus,
   getRazorpayPayoutStatus,
   findRazorpayPayoutByReference,
   mapGatewayStatus,
@@ -131,9 +130,8 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
       // failing. Only "none" makes either safe; a found payout is stamped and
       // settled below like any other.
       if (payout.provider !== PaymentGateway.RAZORPAY) {
-        // Stripe has no reference lookup here and its idempotency keys expire
-        // after 24 hours, which is this sweep's threshold, so a resubmission
-        // could pay twice. An operator settles these.
+        // Only RazorpayX has a reference lookup; resubmitting any other
+        // provider's payout could pay twice, so an operator settles these.
         skippedCount++;
         errors.push(
           `Payout ${payout.id}: ${payout.provider} payout with no provider id needs manual review`,
@@ -252,9 +250,7 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     // Query gateway for actual status
     let lookup: PayoutLookup | null = null;
 
-    if (payout.provider === PaymentGateway.STRIPE) {
-      lookup = await getStripePayoutStatus(providerPayoutId);
-    } else if (payout.provider === PaymentGateway.RAZORPAY) {
+    if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;

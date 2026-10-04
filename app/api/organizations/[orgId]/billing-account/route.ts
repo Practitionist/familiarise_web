@@ -41,8 +41,8 @@ const FundingSourceSchema = z.enum([
 // ₹1,000 top-up as a $1,000 order.
 const CurrencySchema = z.literal("INR");
 
-// #777 §C — wallet minimum-balance + auto-top-up config. NOTIFY-ONLY floor for
-// now (cron emails finance below the minimum); the mandate charge lands later.
+// #777 §C — wallet minimum balance: a notify-only floor (the cron emails
+// finance below it).
 const PatchBodySchema = z
   .object({
     billingEmail: z.string().email().optional(),
@@ -50,25 +50,10 @@ const PatchBodySchema = z
     fundingSource: FundingSourceSchema.optional(),
     creditLimit: z.coerce.number().int().min(0).nullable().optional(),
     minBalancePaise: z.coerce.number().int().min(0).nullable().optional(),
-    autoTopUpEnabled: z.boolean().optional(),
-    autoTopUpAmountPaise: z.coerce
-      .number()
-      .int()
-      .positive()
-      .nullable()
-      .optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
-
-// #777 §C — the three wallet-alert fields are only meaningful for WALLET
-// funding; presence of any lets the handler reject non-WALLET accounts.
-const WALLET_ALERT_FIELDS = [
-  "minBalancePaise",
-  "autoTopUpEnabled",
-  "autoTopUpAmountPaise",
-] as const;
 
 export async function GET(
   _req: NextRequest,
@@ -154,38 +139,14 @@ export async function PATCH(
         );
       }
 
-      // #777 §C — wallet-alert config guards. The effective funding source
-      // is the incoming one if being changed, else the stored one. These
-      // fields only apply to WALLET funding, and enabling auto-top-up needs
-      // both the floor and the charge amount set so the cron has a target.
-      const walletAlertTouched = WALLET_ALERT_FIELDS.some(
-        (f) => body[f] !== undefined,
-      );
-      if (walletAlertTouched) {
+      // #777 §C — the balance alert applies only to WALLET funding: the
+      // incoming funding source if being changed, else the stored one.
+      if (body.minBalancePaise !== undefined) {
         const effectiveFunding = body.fundingSource ?? ba.fundingSource;
         if (effectiveFunding !== "WALLET") {
           throw Object.assign(
-            new Error(
-              "Balance alerts and auto-top-up only apply to WALLET-funded accounts.",
-            ),
+            new Error("Balance alerts only apply to WALLET-funded accounts."),
             { httpStatus: 400, code: "WALLET_ONLY" },
-          );
-        }
-        const nextEnabled = body.autoTopUpEnabled ?? ba.autoTopUpEnabled;
-        const nextMin =
-          body.minBalancePaise !== undefined
-            ? body.minBalancePaise
-            : ba.minBalancePaise;
-        const nextAmount =
-          body.autoTopUpAmountPaise !== undefined
-            ? body.autoTopUpAmountPaise
-            : ba.autoTopUpAmountPaise;
-        if (nextEnabled && (nextMin === null || nextAmount === null)) {
-          throw Object.assign(
-            new Error(
-              "Enabling auto-top-up requires both a minimum balance and a top-up amount.",
-            ),
-            { httpStatus: 400 },
           );
         }
       }
@@ -250,12 +211,6 @@ export async function PATCH(
           ...(body.minBalancePaise !== undefined && {
             minBalancePaise: body.minBalancePaise,
           }),
-          ...(body.autoTopUpEnabled !== undefined && {
-            autoTopUpEnabled: body.autoTopUpEnabled,
-          }),
-          ...(body.autoTopUpAmountPaise !== undefined && {
-            autoTopUpAmountPaise: body.autoTopUpAmountPaise,
-          }),
         },
       });
 
@@ -286,16 +241,12 @@ export async function PATCH(
               currency: ba.currency,
               creditLimit: ba.creditLimit,
               minBalancePaise: ba.minBalancePaise,
-              autoTopUpEnabled: ba.autoTopUpEnabled,
-              autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
             },
             to: {
               fundingSource: next.fundingSource,
               currency: next.currency,
               creditLimit: next.creditLimit,
               minBalancePaise: next.minBalancePaise,
-              autoTopUpEnabled: next.autoTopUpEnabled,
-              autoTopUpAmountPaise: next.autoTopUpAmountPaise,
             },
           },
         },

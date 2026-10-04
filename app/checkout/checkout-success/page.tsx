@@ -46,9 +46,7 @@ function CheckoutSuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Support both Stripe Checkout (sends session_id) and direct PI flow (sends payment_intent)
-  const paymentIntent =
-    searchParams.get("session_id") || searchParams.get("payment_intent");
+  const paymentIntent = searchParams.get("payment_intent");
 
   useEffect(() => {
     let cancelled = false;

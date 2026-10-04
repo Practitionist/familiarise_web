@@ -5136,10 +5136,7 @@ export async function handleCheckout(
       if (paymentResponse && !isZeroAmountPayment) {
         try {
           const { cancelPaymentIntent } = await import("../index");
-          await cancelPaymentIntent(
-            paymentResponse.id,
-            "Database operation failed - preventing orphaned payment intent",
-          );
+          await cancelPaymentIntent(paymentResponse.id);
         } catch (cancelErr) {
           console.error(
             `Failed to cancel payment intent ${paymentResponse.id}:`,
