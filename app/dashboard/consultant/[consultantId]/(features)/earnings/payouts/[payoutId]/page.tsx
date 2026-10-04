@@ -22,6 +22,12 @@ const when = (d: Date) =>
   formatInTimeZone(d, PAYOUT_ZONE, "d MMM yyyy, h:mm a");
 const pct = (bps: number) => `${Number((bps / 100).toFixed(2))}%`;
 
+function tdsLabel(rateBps: number | null, financialYear: string | null) {
+  if (!rateBps) return "TDS deducted";
+  const year = financialYear ? `, FY ${financialYear}` : "";
+  return `TDS deducted (${pct(rateBps)}${year})`;
+}
+
 /**
  * /dashboard/consultant/[consultantId]/earnings/payouts/[payoutId] — ownership
  * is enforced here and again in the read's WHERE; anything else is a 404.
@@ -68,9 +74,7 @@ export default async function PayoutDetailPage({
           items={[
             { label: "Payout amount", value: money(payout.amountPaise) },
             {
-              label: payout.tdsRateBps
-                ? `TDS deducted (${pct(payout.tdsRateBps)}${payout.tdsFinancialYear ? `, FY ${payout.tdsFinancialYear}` : ""})`
-                : "TDS deducted",
+              label: tdsLabel(payout.tdsRateBps, payout.tdsFinancialYear),
               value: money(payout.tdsPaise),
             },
             { label: "Net to your account", value: money(payout.netPaise) },

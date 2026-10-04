@@ -17,6 +17,7 @@ import {
 import { receiptHref } from "@/lib/appointments/payment-display";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { toPlain } from "@/lib/data/serialize";
+import { BUYER_REFUND_DETAIL_SELECT } from "@/lib/data/payments-select";
 import {
   paymentRowSelect,
   toRow,
@@ -36,8 +37,8 @@ export interface RefundDetail {
   status: string;
   createdAt: Date;
   updatedAt: Date;
-  /** Why the gateway rejected it; set only for a FAILED refund. */
-  failureReason: string | null;
+  /** Buyer-facing copy for a FAILED refund; the gateway's raw reason stays server-side. */
+  failureNotice: string | null;
   /** The gateway's refund id, shown so support can find the refund. */
   gatewayRefundId: string;
 }
@@ -58,6 +59,9 @@ export interface ConsulteePaymentDetail {
   legs: { source: string; amountPaise: number }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
 }
+
+export const REFUND_FAILED_NOTICE =
+  "This refund didn't go through. Our team has been alerted and will retry or contact you.";
 
 const TIMELINE_TONE = {
   "refund-completed": "success",
@@ -89,16 +93,7 @@ export async function readConsulteePaymentDetail(args: {
     // Reached only after the payer-bound payment read above succeeded.
     prisma.refund.findMany({
       where: { paymentId, deletedAt: null },
-      select: {
-        id: true,
-        amountPaise: true,
-        currency: true,
-        status: true,
-        refundId: true,
-        failureReason: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: BUYER_REFUND_DETAIL_SELECT,
       orderBy: { createdAt: "asc" },
     }),
     payment.consumerInvoice
@@ -133,7 +128,7 @@ export async function readConsulteePaymentDetail(args: {
       status: r.status,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
-      failureReason: r.status === "FAILED" ? r.failureReason : null,
+      failureNotice: r.status === "FAILED" ? REFUND_FAILED_NOTICE : null,
       gatewayRefundId: r.refundId,
     })),
     taxDocumentsAvailable: getPlatformSupplier() !== null,

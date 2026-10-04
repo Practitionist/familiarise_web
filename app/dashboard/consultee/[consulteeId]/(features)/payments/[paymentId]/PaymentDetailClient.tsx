@@ -23,26 +23,11 @@ const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
 });
 const formatWhen = (value: Date | string) => DATE_TIME.format(new Date(value));
 
-/**
- * #1527 Q5 — "What happened to this charge?": the money line and its facts,
- * the refund timeline with arrival times, every document for it, and the
- * same "Problem with this charge" door the appointment page has.
- */
-export function PaymentDetailClient({
-  consulteeId,
-  detail,
-}: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
-  const { row, moneyState } = detail;
-  useSetBreadcrumbLabel(row.planTitle);
-  const basePath = `/dashboard/consultee/${consulteeId}`;
-  const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
-  // #1527 — the booking's request page, opened on the payment intent; a
-  // charge with no booking goes to the Platform tab's request form.
-  const helpHref = row.appointmentId
-    ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
-    : `${basePath}/support?view=platform`;
+type Money = (paise: number) => string;
 
-  const facts = [
+function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
+  const { row, moneyState } = detail;
+  return [
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
       ? [
           {
@@ -78,13 +63,10 @@ export function PaymentDetailClient({
     { label: "Date", value: formatWhen(row.createdAt) },
     { label: "For", value: `${row.planTitle} with ${row.consultantName}` },
   ];
+}
 
-  const taxDocsPending =
-    !detail.taxDocumentsAvailable &&
-    (detail.invoicePdfHref !== null ||
-      detail.creditNotes.length > 0 ||
-      row.status === "SUCCEEDED");
-  const documents = [
+function chargeDocuments(detail: ConsulteePaymentDetail) {
+  return [
     ...(detail.invoicePdfHref && detail.taxDocumentsAvailable
       ? [
           {
@@ -103,6 +85,34 @@ export function PaymentDetailClient({
       href: note.href,
     })),
   ];
+}
+
+/**
+ * "What happened to this charge?": the money line and its facts,
+ * the refund timeline with arrival times, every document for it, and the
+ * same "Problem with this charge" door the appointment page has.
+ */
+export function PaymentDetailClient({
+  consulteeId,
+  detail,
+}: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
+  const { row, moneyState } = detail;
+  useSetBreadcrumbLabel(row.planTitle);
+  const basePath = `/dashboard/consultee/${consulteeId}`;
+  const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
+  // The booking's request page, opened on the payment intent; a
+  // charge with no booking goes to the Platform tab's request form.
+  const helpHref = row.appointmentId
+    ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
+    : `${basePath}/support?view=platform`;
+
+  const facts = chargeFacts(detail, money);
+  const taxDocsPending =
+    !detail.taxDocumentsAvailable &&
+    (detail.invoicePdfHref !== null ||
+      detail.creditNotes.length > 0 ||
+      row.status === "SUCCEEDED");
+  const documents = chargeDocuments(detail);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -152,9 +162,9 @@ export function PaymentDetailClient({
                   Requested {formatWhen(refund.createdAt)} · Updated{" "}
                   {formatWhen(refund.updatedAt)}
                 </p>
-                {refund.failureReason && (
+                {refund.failureNotice && (
                   <p className="text-xs text-foreground">
-                    Why it failed: {refund.failureReason}
+                    {refund.failureNotice}
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">

@@ -11,6 +11,10 @@ import { payPagePath } from "@/lib/payments/pay-link-href";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+// The expiry sweep may lag the hold's clock; re-ask the server a bounded number of times.
+const STATUS_CHECK_INTERVAL_MS = 15_000;
+const MAX_STATUS_CHECKS = 8;
+
 function remainingLabel(msLeft: number): string {
   const totalSeconds = Math.max(0, Math.floor(msLeft / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -49,6 +53,7 @@ export function PendingCheckoutClient({
   const [now, setNow] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checks, setChecks] = useState(0);
 
   useEffect(() => {
     setNow(Date.now());
@@ -62,9 +67,18 @@ export function PendingCheckoutClient({
   // The timer only says the window ended; the server decides what happened.
   const checking =
     !lapsed && expiresAtMs !== null && now !== null && now >= expiresAtMs;
+  const checksExhausted = checks >= MAX_STATUS_CHECKS;
   useEffect(() => {
-    if (checking) router.refresh();
-  }, [checking, router]);
+    if (!checking || checksExhausted) return;
+    const timer = setTimeout(
+      () => {
+        router.refresh();
+        setChecks((n) => n + 1);
+      },
+      checks === 0 ? 0 : STATUS_CHECK_INTERVAL_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [checking, checks, checksExhausted, router]);
 
   const detailsHref = pending.consulteeProfileId
     ? `/dashboard/consultee/${pending.consulteeProfileId}/payments`
@@ -104,8 +118,10 @@ export function PendingCheckoutClient({
           </CardHeader>
           <CardContent className="space-y-5">
             <p className="text-sm text-muted-foreground">
-              The payment window for {pending.planTitle} has ended. We are
-              checking whether your payment landed.
+              The payment window for {pending.planTitle} has ended.{" "}
+              {checksExhausted
+                ? "We could not confirm the result yet. Your payments page will show it once it settles."
+                : "We are checking whether your payment landed."}
             </p>
             <Button asChild variant="outline" className="w-full">
               <Link href={detailsHref}>Go to your payments</Link>
