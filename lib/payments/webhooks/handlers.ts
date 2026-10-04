@@ -682,6 +682,8 @@ export async function handlePaymentSuccess(
             });
             await parkCapture();
           } else {
+            // Outside the savepoint: the booking confirms even when earnings
+            // defer, and the deferred retry must not see the cash as parked.
             if (recoverable) {
               await releaseUnappliedReceipt(tx, payment.id);
             }
