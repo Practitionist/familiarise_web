@@ -402,35 +402,24 @@ async function alertMissingSecret(error: string): Promise<void> {
 }
 
 /**
- * The Sentry event for a tick with failing targets, as data.
- *
- * FIXED MESSAGE AND FINGERPRINT. Sentry groups by message text, so naming the
- * failed targets in the message would mint a NEW issue for every distinct
- * combination of failures and bury the single issue this is meant to be — the
- * exact opposite of what "one event per tick" is for. The detail rides along as
- * context instead, and the fingerprint pins the grouping explicitly so a
- * future edit to the message cannot silently split the issue.
- *
- * Exported so a test can pin the shape without standing up the SDK.
+ * The Sentry event for one failing target. The target name is in the message
+ * and fingerprint so the shared repeat filter and Sentry grouping are per target.
  */
-export function buildFailedTargetsEvent(
-  failed: { name: string; status: number }[],
-) {
+export function buildFailedTargetEvent(failed: {
+  name: string;
+  status: number;
+}) {
   return {
-    message: "cron-tick: one or more cleanup targets failed",
+    message: `cron-tick: target ${failed.name} failed`,
     level: "error" as const,
-    fingerprint: ["cron-tick-failed-targets"],
-    tags: { subsystem: "cron", op: "cron-tick" },
+    fingerprint: ["cron-tick", failed.name],
+    tags: { subsystem: "cron", op: "cron-tick", target: failed.name },
     contexts: {
       tick: {
-        failedCount: failed.length,
-        targets: failed.map((f) => ({
-          name: f.name,
-          // 0 is this module's "never got an answer" value, not an HTTP
-          // status — see hitTarget.
-          status: f.status,
-          outcome: f.status === 0 ? ("network" as const) : ("http" as const),
-        })),
+        target: failed.name,
+        // 0 is this module's "never got an answer" value, not an HTTP status.
+        status: failed.status,
+        outcome: failed.status === 0 ? ("network" as const) : ("http" as const),
       },
     },
   };
@@ -451,23 +440,9 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
 }
 
 /**
- * Report one failing target to Sentry.
- *
- * This is the change that makes a persistently-broken sweep visible. Before
- * it, a target could fail on every five-minute tick for weeks and the only
- * trace was one JSON line per tick in the Netlify function log: `failed` was
- * computed, logged, and then thrown away, because {@link statusFor} returns
- * 200 by design (#1686, so a failing target does not cost three re-invokes).
- * Neither branch reported to Sentry — the ticker's only Sentry call was the
- * missing-secret fatal above. A crew reading the Sentry dashboard saw
- * `CronLockUnavailableError` and `UpstashError` (from the routes themselves)
- * but nothing that said "the ticker cannot reach sweep X", which is the one
- * fact that distinguishes a broken sweep from a broken dependency.
- *
- * ONE event per tick, never one per target: a total outage would otherwise emit
- * ~20 identical events every five minutes, and the 2026-09-21 Upstash incident
- * already showed this project will spend its whole error quota on a single
- * dependency.
+ * Report each failing target to Sentry, once an hour per target. `statusFor`
+ * answers 200 regardless, so without this a broken sweep only shows in the log;
+ * a total outage is bounded by the shared 30/hour breaker.
  */
 async function alertFailedTargets(
   failed: { name: string; status: number }[],
@@ -496,8 +471,10 @@ async function alertFailedTargets(
         stackFrameVariables: false,
       },
     });
-    const event = buildFailedTargetsEvent(due);
-    Sentry.captureMessage(event.message, event);
+    for (const f of due) {
+      const event = buildFailedTargetEvent(f);
+      Sentry.captureMessage(event.message, event);
+    }
     await Sentry.flush(2_000);
   } catch (err) {
     // Telemetry must never be the reason a tick throws.

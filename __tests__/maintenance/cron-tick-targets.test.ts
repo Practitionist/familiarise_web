@@ -17,6 +17,11 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
+import {
+  applyErrorBudget,
+  resetSentryBudgetState,
+} from "../../sentry.shared.config";
+
 type Ticker = Pick<
   typeof import("../../netlify/functions/cron-tick.mjs"),
   | "targetRequest"
@@ -25,7 +30,7 @@ type Ticker = Pick<
   | "reportableToSentry"
   | "isFirstDueTickOfHour"
   | "bucketFor"
-  | "buildFailedTargetsEvent"
+  | "buildFailedTargetEvent"
 >;
 type Target = ReturnType<Ticker["dueTargets"]>[number];
 
@@ -329,45 +334,40 @@ describe("cron-tick bucketFor", () => {
 });
 
 describe("cron-tick failed-target reporting", () => {
-  const { buildFailedTargetsEvent } = loadTicker();
+  const { buildFailedTargetEvent } = loadTicker();
 
-  // Sentry groups by message text. Naming the failed targets in the message
-  // would mint a separate issue for every distinct combination of failures, so
-  // a sweep that degrades over time fragments into a dozen near-identical
-  // issues and the one that matters gets lost among them.
-  it("uses one fixed message and fingerprint regardless of which targets failed", () => {
-    const a = buildFailedTargetsEvent([
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-    const b = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "release-earnings", status: 503 },
-    ]);
-
-    expect(a.message).toBe(b.message);
-    expect(a.fingerprint).toEqual(b.fingerprint);
-    expect(a.fingerprint).toEqual(["cron-tick-failed-targets"]);
+  beforeEach(() => {
+    resetSentryBudgetState();
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-04T00:00:00Z"));
   });
+  afterEach(() => jest.useRealTimers());
 
-  it("carries the detail as context, not in the message", () => {
-    const ev = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-
-    expect(ev.message).not.toContain("reconcile-refunds");
-    expect(ev.contexts.tick.failedCount).toBe(2);
-    expect(ev.contexts.tick.targets).toEqual([
-      { name: "reconcile-refunds", status: 500, outcome: "http" },
-      // 0 is this module's "never got an answer" value, not an HTTP status.
-      { name: "sweep-stuck-webhook-events", status: 0, outcome: "network" },
-    ]);
-  });
-
-  it("reports at error level, so it is not grouped with the expected refusals", () => {
-    expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
-      "error",
+  it("names the target in the message and fingerprint", () => {
+    const ev = buildFailedTargetEvent({
+      name: "sweep-stuck-webhook-events",
+      status: 0,
+    });
+    expect(ev.message).toBe(
+      "cron-tick: target sweep-stuck-webhook-events failed",
     );
+    expect(ev.fingerprint).toEqual(["cron-tick", "sweep-stuck-webhook-events"]);
+    expect(ev.level).toBe("error");
+    expect(ev.contexts.tick).toEqual({
+      target: "sweep-stuck-webhook-events",
+      status: 0,
+      outcome: "network",
+    });
+  });
+
+  it("the shared repeat filter throttles per target, not across targets", () => {
+    const a = buildFailedTargetEvent({
+      name: "reconcile-refunds",
+      status: 500,
+    });
+    const b = buildFailedTargetEvent({ name: "release-earnings", status: 503 });
+    expect(applyErrorBudget({ ...a })).not.toBeNull();
+    expect(applyErrorBudget({ ...b })).not.toBeNull();
+    expect(applyErrorBudget({ ...a })).toBeNull();
   });
 });
 

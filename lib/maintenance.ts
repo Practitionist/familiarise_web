@@ -35,8 +35,40 @@ const OFF_STATE: MaintenanceState = {
   betterstackIncidentId: null,
 };
 
-/** Redis keys are refreshed on every active read, so a window may outlive this TTL. */
+/** Upper bound on the Redis key TTL; a window with no planned end expires after this. */
 const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
+/** How long past its planned end an untended window stays up before the keys expire. */
+const MAINTENANCE_GRACE_MS = 60 * 60 * 1000;
+
+/** TTL capped at the planned end plus grace; null once that deadline has passed. */
+function maintenanceKeyTtlSeconds(
+  estimatedEnd: Date | null | undefined,
+  now: number,
+): number | null {
+  if (!estimatedEnd) return MAINTENANCE_KEY_TTL_SECONDS;
+  const remainingMs = estimatedEnd.getTime() + MAINTENANCE_GRACE_MS - now;
+  if (remainingMs <= 0) return null;
+  return Math.min(MAINTENANCE_KEY_TTL_SECONDS, Math.ceil(remainingMs / 1000));
+}
+
+/**
+ * The DB row is the source of truth: Redis keys are re-armed only while the
+ * platform window is open and its planned end plus grace is still ahead.
+ */
+async function refreshMaintenanceKeysFromWindow(): Promise<void> {
+  const row = await prisma.maintenanceWindow.findFirst({
+    where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+    orderBy: { createdAt: "desc" },
+    select: { estimatedEnd: true },
+  });
+  if (!row?.estimatedEnd) return;
+  const ttlSeconds = maintenanceKeyTtlSeconds(row.estimatedEnd, Date.now());
+  if (ttlSeconds === null) return;
+  await Promise.all([
+    redis.pexpire(REDIS_KEYS.PHASE, ttlSeconds * 1000),
+    redis.pexpire(REDIS_KEYS.CONFIG, ttlSeconds * 1000),
+  ]);
+}
 
 /**
  * Read current maintenance state directly from Redis (uncached on entry so
@@ -52,10 +84,12 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
       if (!phase || phase === "OFF") return OFF_STATE;
 
       // A failed refresh must not turn an active window into OFF_STATE.
-      await Promise.allSettled([
-        redis.pexpire(REDIS_KEYS.PHASE, MAINTENANCE_KEY_TTL_SECONDS * 1000),
-        redis.pexpire(REDIS_KEYS.CONFIG, MAINTENANCE_KEY_TTL_SECONDS * 1000),
-      ]);
+      await refreshMaintenanceKeysFromWindow().catch((error: unknown) => {
+        console.warn(
+          "[maintenance] TTL refresh failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
 
       const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
       let config: Partial<MaintenanceState> = {};
@@ -94,8 +128,19 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
+  const estimatedEndDate =
+    config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+      ? new Date(config.estimatedEnd)
+      : undefined;
+  // A planned end already past its grace still gets one grace period to be tended.
+  const ttlSeconds =
+    phase === MaintenancePhase.OFF
+      ? MAINTENANCE_KEY_TTL_SECONDS
+      : (maintenanceKeyTtlSeconds(estimatedEndDate, Date.now()) ??
+        MAINTENANCE_GRACE_MS / 1000);
+
   await Promise.all([
-    redis.set(REDIS_KEYS.PHASE, phase, { ex: MAINTENANCE_KEY_TTL_SECONDS }),
+    redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
     redis.set(
       REDIS_KEYS.CONFIG,
       JSON.stringify({
@@ -104,15 +149,10 @@ export async function setMaintenanceState(
         bypassSecret: config.bypassSecret ?? null,
         betterstackIncidentId: config.betterstackIncidentId ?? null,
       }),
-      { ex: MAINTENANCE_KEY_TTL_SECONDS },
+      { ex: ttlSeconds },
     ),
   ]);
   invalidateMaintenancePhaseCache();
-
-  const estimatedEndDate =
-    config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
-      ? new Date(config.estimatedEnd)
-      : undefined;
 
   await prisma.$transaction(async (tx) => {
     const activeWindow = await tx.maintenanceWindow.findFirst({
