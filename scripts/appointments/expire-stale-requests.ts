@@ -344,7 +344,9 @@ async function expirePendingConsultations(
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
-        // Never reap a booking whose reschedule proposal is still live.
+        // Never reap a booking whose reschedule proposal is still live or
+        // that is parked with an unplaced RESCHEDULED slot awaiting placement.
+        ...NO_UNPLACED_SLOT,
         appointment: {
           rescheduleRequests: {
             none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
@@ -404,6 +406,7 @@ async function expirePendingConsultations(
               // a reschedule-refreshed requestedAt between read and write
               // matches zero rows instead of expiring a live request.
               requestedAt: { lt: expirationDate },
+              ...NO_UNPLACED_SLOT,
               appointment: {
                 rescheduleRequests: {
                   none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },

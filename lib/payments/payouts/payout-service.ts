@@ -40,6 +40,7 @@ import {
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { postConsultantPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { randomUUID } from "crypto";
 import {
   acquireLock,
@@ -1690,6 +1691,7 @@ async function completeConsultantPayoutInTx(
   const loaderAvailable =
     typeof tx.consultantEarnings.findMany === "function" ||
     completionEarnings.length > 0;
+  let shortfallPaise = 0;
   if (loaderAvailable) {
     const owedPaise = completionEarnings.reduce(
       (sum, e) =>
@@ -1698,7 +1700,7 @@ async function completeConsultantPayoutInTx(
       0,
     );
     if (owedPaise < matched.amount) {
-      const shortfallPaise = matched.amount - owedPaise;
+      shortfallPaise = matched.amount - owedPaise;
       if (typeof tx.consultantPayout.update === "function") {
         await tx.consultantPayout.update({
           where: { id: matched.id },
@@ -1710,6 +1712,13 @@ async function completeConsultantPayoutInTx(
           data: { clawbackAmountPaise: { increment: shortfallPaise } },
         });
       }
+      await postConsultantPayoutClawback(tx, {
+        refundId: `shortfall:${matched.id}`,
+        consultantPayoutId: matched.id,
+        consultantProfileId: matched.consultantProfileId,
+        amountPaise: shortfallPaise,
+        reason: "in-flight refund shortfall at payout completion",
+      });
       await recordSystemEventSafe({
         db: tx,
         category: "PAYOUT",
@@ -1750,17 +1759,33 @@ async function completeConsultantPayoutInTx(
       where: { payoutId: matched.id, isReversal: false },
     });
 
-    await recordTDSDeduction({
-      consultantProfileId: matched.consultantProfileId,
-      financialYear,
-      quarter,
-      tdsDeducted: matched.tdsDeducted,
-      tdsRateBps: matched.tdsRateAppliedBps,
-      cumulativeAmountCredited: cumulativeCreditedPayments,
-      payoutId: matched.id,
-      tdsSection: "194O",
-      db: tx,
-    });
+    const effectiveTdsDeducted =
+      shortfallPaise > 0 && matched.amount > 0
+        ? Math.max(
+            0,
+            matched.tdsDeducted -
+              Math.floor(
+                (matched.tdsDeducted * shortfallPaise) / matched.amount,
+              ),
+          )
+        : matched.tdsDeducted;
+
+    if (effectiveTdsDeducted > 0) {
+      await recordTDSDeduction({
+        consultantProfileId: matched.consultantProfileId,
+        financialYear,
+        quarter,
+        tdsDeducted: effectiveTdsDeducted,
+        tdsRateBps: matched.tdsRateAppliedBps,
+        cumulativeAmountCredited: Math.max(
+          0,
+          cumulativeCreditedPayments - shortfallPaise,
+        ),
+        payoutId: matched.id,
+        tdsSection: "194O",
+        db: tx,
+      });
+    }
   }
 }
 

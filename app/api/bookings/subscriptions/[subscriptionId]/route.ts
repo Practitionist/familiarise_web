@@ -1,8 +1,8 @@
 import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import prisma from "@/lib/prisma";
-import { Prisma, AppointmentStatus } from "@prisma/client";
+import prisma, { type Tx } from "@/lib/prisma";
+import { Prisma, AppointmentStatus, PaymentStatus } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -18,7 +18,12 @@ import {
   renewApprovalLock,
   unlockApproval,
 } from "@/utils/appointmentlock";
-import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import {
+  transitionOccurrenceCompletion,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
+import { transitionParticipant } from "@/lib/booking/participants";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import {
   refuseMalformedEventId,
   refusePlanNotOwned,
@@ -30,11 +35,7 @@ import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
-import {
-  notifySubscriptionStarted,
-  notifySubscriptionCancelled,
-} from "@/lib/novu";
-import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
+import { notifySubscriptionStarted } from "@/lib/novu";
 import { goHref } from "@/lib/dashboard/go";
 import {
   UpdateSubscriptionSchema,
@@ -416,6 +417,39 @@ export async function PATCH(
       );
     }
 
+    if (
+      status === AppointmentStatus.APPROVED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse("Only the consultant can approve a request.");
+    }
+
+    if (status === AppointmentStatus.CANCELLED) {
+      return NextResponse.json(
+        {
+          error:
+            "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
+          code: "USE_CANCEL_ENDPOINT",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      status !== AppointmentStatus.APPROVED &&
+      status !== AppointmentStatus.REJECTED
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Only APPROVED and REJECTED status transitions are permitted on this endpoint.",
+          code: "UNSUPPORTED_STATUS_PATCH",
+        },
+        { status: 400 },
+      );
+    }
+
     const startDate = new Date();
     const endDate = addMonths(
       startDate,
@@ -508,14 +542,18 @@ export async function PATCH(
             await transitionSubscriptionRequest(tx, {
               where: { id: subscriptionId },
               to: status,
+              data:
+                status === AppointmentStatus.REJECTED
+                  ? { pendingPaymentUrl: null }
+                  : undefined,
             });
-            // #1778 — a decline frees the held times: tell anyone waiting.
+            // #1778 — a decline frees the held times: tell anyone waiting and release holds.
             if (status === AppointmentStatus.REJECTED) {
-              const held = await tx.appointment.findFirst({
-                where: { subscriptionId: subscriptionId, deletedAt: null },
-                select: { id: true },
-              });
-              if (held) await stageNoticesForAppointmentHolds(tx, held.id);
+              await releaseDeclinedSubscriptionHold(
+                tx,
+                subscriptionId,
+                session.user.id,
+              );
             }
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
@@ -702,40 +740,6 @@ export async function PATCH(
             dashboardUrl: goHref("client", "appointments"),
           });
         }
-
-        if (status === AppointmentStatus.CANCELLED) {
-          const userIds = [consultantUserId, consulteeUserId].filter(
-            (id): id is string => !!id,
-          );
-          if (userIds.length > 0) {
-            await notifySubscriptionCancelled(userIds, {
-              subscriptionId: subData.id,
-              planTitle: subData.subscriptionPlan?.title || "Subscription",
-              consultantName:
-                subData.subscriptionPlan?.consultantProfile?.user?.name ||
-                "Consultant",
-              consulteeName: subData.requestedBy?.user?.name || undefined,
-              // #1527 — both consultant and consultee are recipients here.
-              dashboardUrl: goHref("auto", "appointments"),
-            });
-          }
-
-          // Log cancellation activity (awaited — DB write should not be dropped in serverless)
-          const cpId = subData.subscriptionPlan?.consultantProfileId;
-          if (cpId) {
-            await logSubscriptionCancelled(
-              cpId,
-              subData.id,
-              {
-                id: session.user.id,
-                name: session.user.name || "User",
-                image: session.user.image,
-              },
-              subData.subscriptionPlan?.title || "Subscription",
-              session.user.id === consultantUserId ? "consultant" : "consultee",
-            );
-          }
-        }
       }
 
       // --- Stream channel creation (fire-and-forget, after transaction) ---
@@ -832,5 +836,43 @@ export async function PATCH(
       { error: "An error occurred while updating subscription" },
       { status: 500 },
     );
+  }
+}
+
+async function releaseDeclinedSubscriptionHold(
+  tx: Tx,
+  subscriptionId: string,
+  actorUserId?: string | null,
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { subscriptionId: subscriptionId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!held) return;
+  await stageNoticesForAppointmentHolds(tx, held.id);
+  if (typeof tx.appointmentOccurrence?.updateMany === "function") {
+    await transitionOccurrenceCompletion(tx, {
+      actorUserId: actorUserId ?? null,
+      reason: "Request declined by consultant",
+      where: { appointmentId: held.id, deletedAt: null },
+      to: "CANCELLED",
+      data: { deletedAt: new Date(), isTentative: false },
+      allowZero: true,
+    });
+  }
+  if (typeof tx.appointmentParticipant?.findMany === "function") {
+    await transitionParticipant(tx, { appointmentId: held.id }, "CANCELLED");
+  }
+  if (typeof tx.rescheduleRequest?.findMany === "function") {
+    await declineOpenReschedules(tx, held.id, {
+      actorUserId: actorUserId ?? null,
+      reason: "Request declined by consultant",
+    });
+  }
+  if (typeof tx.payment?.updateMany === "function") {
+    await tx.payment.updateMany({
+      where: { appointmentId: held.id, paymentStatus: PaymentStatus.PENDING },
+      data: { paymentStatus: PaymentStatus.EXPIRED },
+    });
   }
 }

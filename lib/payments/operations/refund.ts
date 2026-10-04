@@ -69,7 +69,10 @@ import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal"
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
-import { postPayoutClawback } from "./reversal-engine";
+import {
+  postPayoutClawback,
+  postConsultantPayoutClawback,
+} from "./reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
@@ -950,10 +953,18 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
-      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
-      // to find the original TDSRecord; the prior `payout` TDS-field include was
-      // dead (review finding).
-      earnings: true,
+      earnings: {
+        include: {
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
+        },
+      },
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
@@ -1257,6 +1268,15 @@ export async function applyRefundCascade(
   // debits and the TDS filing read this, never `reversalOf(row)`: booking the
   // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
   const appliedByEarning = new Map<string, number>();
+  let clawbackInitiated = false;
+  const consultantClawbacks = new Map<
+    string,
+    {
+      consultantProfileId: string;
+      netAmountPaise: number;
+      clawbackInitiatedAt: Date | null;
+    }
+  >();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1293,8 +1313,9 @@ export async function applyRefundCascade(
     //
     // Skipped when the CAS applied 0. The basis stays booking-level
     // (`input.amountPaise / payment.amount`): 26Q is filed per payout.
+    let tdsRev: Awaited<ReturnType<typeof recordTdsReversal>> = null;
     if (earnings.payoutId && reversal.reversedPaise > 0) {
-      await recordTdsReversal(tx, {
+      tdsRev = await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
@@ -1303,13 +1324,82 @@ export async function applyRefundCascade(
         refundId: input.refundId,
       });
     }
+
+    if (
+      earnings.status === "PAID" &&
+      !payment.organizationId &&
+      earnings.payoutId &&
+      earnings.payout?.status === "COMPLETED" &&
+      reversal.reversedPaise > 0
+    ) {
+      const payoutGross = Number(earnings.payout.amount ?? 0);
+      const payoutTds = Number(earnings.payout.tdsDeducted ?? 0);
+      const tdsFromRecord =
+        tdsRev && typeof tdsRev.tdsDeducted === "number"
+          ? Math.abs(Number(tdsRev.tdsDeducted))
+          : null;
+      const netClawbackPaise =
+        tdsFromRecord !== null && tdsFromRecord > 0
+          ? Math.max(0, reversal.reversedPaise - tdsFromRecord)
+          : payoutGross > 0 && payoutTds > 0
+            ? Math.floor(
+                reversal.reversedPaise *
+                  Math.max(0, 1 - payoutTds / payoutGross),
+              )
+            : reversal.reversedPaise;
+      const prev = consultantClawbacks.get(earnings.payoutId);
+      consultantClawbacks.set(earnings.payoutId, {
+        consultantProfileId: earnings.consultantProfileId,
+        netAmountPaise: (prev?.netAmountPaise ?? 0) + netClawbackPaise,
+        clawbackInitiatedAt:
+          prev?.clawbackInitiatedAt ??
+          earnings.payout.clawbackInitiatedAt ??
+          null,
+      });
+    }
+  }
+
+  for (const [consultantPayoutId, claw] of consultantClawbacks) {
+    if (claw.netAmountPaise <= 0) continue;
+    if (typeof tx.consultantPayout?.update === "function") {
+      await tx.consultantPayout.update({
+        where: { id: consultantPayoutId },
+        data: {
+          clawbackAmountPaise: { increment: claw.netAmountPaise },
+          clawbackInitiatedAt: claw.clawbackInitiatedAt
+            ? undefined
+            : new Date(),
+        },
+      });
+    }
+    await postConsultantPayoutClawback(tx, {
+      refundId: input.refundId,
+      consultantPayoutId,
+      consultantProfileId: claw.consultantProfileId,
+      amountPaise: claw.netAmountPaise,
+      reason: input.reason,
+    });
+    await recordSystemEventSafe({
+      db: tx,
+      organizationId: null,
+      category: "PAYOUT",
+      severity: "WARN",
+      message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
+      context: {
+        paymentId: payment.id,
+        refundId: input.refundId,
+        consultantPayoutId,
+        consultantProfileId: claw.consultantProfileId,
+        clawbackPaise: claw.netAmountPaise,
+      },
+    });
+    clawbackInitiated = true;
   }
 
   // -----------------------------------------------------------------------
   // Step 7: OrganizationEarnings reversal + clawback.
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
-  let clawbackInitiated = false;
   // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
   // `appliedByEarning` above, for the identical reason.
   const appliedByOrgEarning = new Map<string, number>();
@@ -1674,7 +1764,19 @@ export async function applyRefundCascade(
           });
         }
       }
-      if (orgRev > 0 && orgId) {
+      if (payment.organizationEarnings.length > 0) {
+        for (const orgEarn of payment.organizationEarnings) {
+          const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
+          const hostOrgId = orgEarn.organizationId ?? orgId;
+          if (orgDelta > 0 && hostOrgId) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: hostOrgId },
+              direction: "DEBIT",
+              amountPaise: orgDelta,
+            });
+          }
+        }
+      } else if (orgRev > 0 && orgId) {
         debits.push({
           account: { kind: "ORG_PAYABLE", organizationId: orgId },
           direction: "DEBIT",

@@ -45,6 +45,10 @@ import { reportSentryError } from "@/lib/observability/report";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+} from "@/lib/payments/payouts/earnings-hold";
 
 export interface SettleCancelledSessionsResult {
   success: boolean;
@@ -540,6 +544,34 @@ async function settleSubscriptionVoid(
     });
     if (refunded === null) pending += 1;
     else if (refunded) result.refunded += 1;
+  }
+  if (pending === 0 && payments.length > 0) {
+    const holdUntil = computeHoldUntil({
+      capturedAt: new Date(),
+      lastOccurrenceEndsAt: null,
+      holdHours: holdHoursFor("SUBSCRIPTION"),
+    });
+    const paymentIds = payments.map((p) => p.id);
+    if (typeof prisma.consultantEarnings?.updateMany === "function") {
+      await prisma.consultantEarnings.updateMany({
+        where: {
+          paymentId: { in: paymentIds },
+          holdUntil: null,
+          status: { in: ["PENDING", "PENDING_TRUST"] },
+        },
+        data: { holdUntil },
+      });
+    }
+    if (typeof prisma.organizationEarnings?.updateMany === "function") {
+      await prisma.organizationEarnings.updateMany({
+        where: {
+          paymentId: { in: paymentIds },
+          holdUntil: null,
+          status: { in: ["PENDING", "PENDING_TRUST"] },
+        },
+        data: { holdUntil },
+      });
+    }
   }
   return pending === 0;
 }

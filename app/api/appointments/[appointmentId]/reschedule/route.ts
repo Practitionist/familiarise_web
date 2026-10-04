@@ -418,6 +418,31 @@ export async function POST(
             }
           }
 
+          if (initiatorRole === "CONSULTEE" && !isPrivilegedUser) {
+            const MAX_CONSULTEE_RESCHEDULES = 2;
+            const historicalRescheduledOccurrences =
+              appointment.occurrences.filter(
+                (o) =>
+                  (o as { deletedAt?: Date | null }).deletedAt != null ||
+                  o.completionStatus === "RESCHEDULED",
+              ).length;
+            const targetSessionCount = Math.max(1, slotsToReschedule.length);
+            if (
+              historicalRescheduledOccurrences >=
+              MAX_CONSULTEE_RESCHEDULES * targetSessionCount
+            ) {
+              throw Object.assign(
+                new Error(
+                  `You can reschedule a booking at most ${MAX_CONSULTEE_RESCHEDULES} times.`,
+                ),
+                {
+                  httpStatus: 422,
+                  code: "MAX_RESCHEDULES_EXCEEDED",
+                },
+              );
+            }
+          }
+
           // #1851 decision 2 — the org's own trail, beside the booking's.
           if (isOrgAdminActor && fundingOrgActor) {
             await recordActForOrg(tx, {

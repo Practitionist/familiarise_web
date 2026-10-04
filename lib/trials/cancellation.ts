@@ -34,6 +34,10 @@ import {
   fundingRailForIntent,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+} from "@/lib/payments/payouts/earnings-hold";
 
 export type TrialRefundOutcome = {
   refundPct: number;
@@ -79,7 +83,10 @@ export async function softCancelTrialAppointmentInTx(
     | "appointment"
     | "appointmentParticipant"
     | "bookingStatusHistory"
-  >,
+  > & {
+    consultantEarnings?: Pick<Tx["consultantEarnings"], "updateMany">;
+    organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
+  },
   appointmentId: string,
 ): Promise<number> {
   const now = new Date();
@@ -99,6 +106,36 @@ export async function softCancelTrialAppointmentInTx(
   });
   // #1319 A9 — seat released with the tombstone.
   await transitionParticipant(tx, { appointmentId }, "CANCELLED");
+
+  // Stamp holdUntil on any unstamped trial earnings (created with holdUntil: null
+  // while the trial was live) so the retained share on a late cancel/0% refund
+  // does not remain permanently unreleasable.
+  const holdUntil = computeHoldUntil({
+    capturedAt: now,
+    lastOccurrenceEndsAt: null,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  if (typeof tx.consultantEarnings?.updateMany === "function") {
+    await tx.consultantEarnings.updateMany({
+      where: {
+        payment: { appointmentId },
+        holdUntil: null,
+        status: { in: ["PENDING", "PENDING_TRUST"] },
+      },
+      data: { holdUntil },
+    });
+  }
+  if (typeof tx.organizationEarnings?.updateMany === "function") {
+    await tx.organizationEarnings.updateMany({
+      where: {
+        payment: { appointmentId },
+        holdUntil: null,
+        status: { in: ["PENDING", "PENDING_TRUST"] },
+      },
+      data: { holdUntil },
+    });
+  }
+
   return released;
 }
 

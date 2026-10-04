@@ -80,7 +80,11 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { applyReversal, postPayoutClawback } from "./reversal-engine";
+import {
+  applyReversal,
+  postPayoutClawback,
+  postConsultantPayoutClawback,
+} from "./reversal-engine";
 import {
   findDedupedRefund,
   isDedupeKeyConflict,
@@ -688,6 +692,14 @@ async function reverseFreeCreditSettlement(
           refundedShareAmount: true,
           status: true,
           payoutId: true,
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
         },
       },
       organizationEarnings: {
@@ -736,6 +748,14 @@ async function reverseFreeCreditSettlement(
   // `appliedByEarning` is what each row ACTUALLY absorbed (<= request); the TDS
   // filing and counter-posting below must read it, never the request.
   const appliedByEarning = new Map<string, number>();
+  const consultantClawbacks = new Map<
+    string,
+    {
+      consultantProfileId: string;
+      netAmountPaise: number;
+      clawbackInitiatedAt: Date | null;
+    }
+  >();
   for (const earnings of payment.earnings) {
     const delta = part(earnings.consultantSharePaise);
     // #CASC — the shared writer repeats the cap and legal-source predicate in
@@ -749,11 +769,12 @@ async function reverseFreeCreditSettlement(
           `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
       );
     }
+    let tdsRev: Awaited<ReturnType<typeof recordTdsReversal>> = null;
     if (earnings.payoutId && reversal.reversedPaise > 0) {
       // Full reversal of this share → full TDS reversal for it; the helper's
       // own dedup + original-cap keeps a re-run bounded. Numerator is the
       // APPLIED paise; skipped at 0 so a refused CAS nets no withholding out.
-      await recordTdsReversal(tx, {
+      tdsRev = await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
@@ -762,6 +783,60 @@ async function reverseFreeCreditSettlement(
         refundId: input.refundId,
       });
     }
+
+    if (
+      earnings.status === "PAID" &&
+      earnings.payoutId &&
+      earnings.payout?.status === "COMPLETED" &&
+      reversal.reversedPaise > 0
+    ) {
+      const payoutGross = Number(earnings.payout.amount ?? 0);
+      const payoutTds = Number(earnings.payout.tdsDeducted ?? 0);
+      const tdsFromRecord =
+        tdsRev && typeof tdsRev.tdsDeducted === "number"
+          ? Math.abs(Number(tdsRev.tdsDeducted))
+          : null;
+      const netClawbackPaise =
+        tdsFromRecord !== null && tdsFromRecord > 0
+          ? Math.max(0, reversal.reversedPaise - tdsFromRecord)
+          : payoutGross > 0 && payoutTds > 0
+            ? Math.floor(
+                reversal.reversedPaise *
+                  Math.max(0, 1 - payoutTds / payoutGross),
+              )
+            : reversal.reversedPaise;
+      const prev = consultantClawbacks.get(earnings.payoutId);
+      consultantClawbacks.set(earnings.payoutId, {
+        consultantProfileId: earnings.consultantProfileId,
+        netAmountPaise: (prev?.netAmountPaise ?? 0) + netClawbackPaise,
+        clawbackInitiatedAt:
+          prev?.clawbackInitiatedAt ??
+          earnings.payout.clawbackInitiatedAt ??
+          null,
+      });
+    }
+  }
+
+  for (const [consultantPayoutId, claw] of consultantClawbacks) {
+    if (claw.netAmountPaise <= 0) continue;
+    if (typeof tx.consultantPayout?.update === "function") {
+      await tx.consultantPayout.update({
+        where: { id: consultantPayoutId },
+        data: {
+          clawbackAmountPaise: { increment: claw.netAmountPaise },
+          clawbackInitiatedAt: claw.clawbackInitiatedAt
+            ? undefined
+            : new Date(),
+        },
+      });
+    }
+    await postConsultantPayoutClawback(tx, {
+      refundId: input.refundId,
+      consultantPayoutId,
+      consultantProfileId: claw.consultantProfileId,
+      amountPaise: claw.netAmountPaise,
+      reason: `credit-funded refund (${input.refundId})`,
+    });
   }
 
   // Org earnings (the consultant's host org / collaborator orgs — not a

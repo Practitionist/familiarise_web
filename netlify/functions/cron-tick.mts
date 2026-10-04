@@ -320,7 +320,12 @@ async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
-): Promise<{ name: string; status: number; maintenance?: boolean }> {
+): Promise<{
+  name: string;
+  status: number;
+  maintenance?: boolean;
+  errorBody?: string;
+}> {
   const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -333,13 +338,53 @@ async function hitTarget(
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
+    let errorBody: string | undefined;
     if (res.status === 503) {
-      const body = (await res.json().catch(() => null)) as {
-        phase?: unknown;
-      } | null;
+      const rawText =
+        typeof res.text === "function"
+          ? await res.text().catch(() => "")
+          : "";
+      let body: { phase?: unknown } | null = null;
+      if (rawText) {
+        try {
+          body = JSON.parse(rawText) as { phase?: unknown };
+        } catch {
+          body = null;
+        }
+      } else if (typeof res.json === "function") {
+        body = (await res.json().catch(() => null)) as {
+          phase?: unknown;
+        } | null;
+      }
       maintenance = typeof body?.phase === "string";
+      if (!maintenance && rawText) {
+        errorBody = rawText.slice(0, 500);
+      }
+    } else if (bucketFor(res.status, false) === "failed") {
+      const rawText =
+        typeof res.text === "function"
+          ? await res.text().catch(() => "")
+          : "";
+      if (rawText) {
+        errorBody = rawText.slice(0, 500);
+      }
     }
-    return { name, status: res.status, maintenance };
+    if (bucketFor(res.status, maintenance) === "failed" && errorBody) {
+      console.error(
+        JSON.stringify({
+          event: "cron-tick-target-failed",
+          target: name,
+          status: res.status,
+          errorBody,
+        }),
+      );
+    }
+    return {
+      name,
+      status: res.status,
+      maintenance,
+      ...(errorBody ? { errorBody } : {}),
+    };
   } catch {
     return { name, status: 0, maintenance: false };
   } finally {
@@ -408,6 +453,7 @@ async function alertMissingSecret(error: string): Promise<void> {
 export function buildFailedTargetEvent(failed: {
   name: string;
   status: number;
+  errorBody?: string;
 }) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
@@ -420,6 +466,7 @@ export function buildFailedTargetEvent(failed: {
         // 0 is this module's "never got an answer" value, not an HTTP status.
         status: failed.status,
         outcome: failed.status === 0 ? ("network" as const) : ("http" as const),
+        ...(failed.errorBody ? { errorBody: failed.errorBody } : {}),
       },
     },
   };
