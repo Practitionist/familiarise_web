@@ -546,8 +546,7 @@ describe("the call describes the session it belongs to", () => {
     // "settings_override is undefined" only by not existing at all, whereas now
     // it fails on the key set.
     const settingsOverride = mockCallPayloads[0].data?.settings_override as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(Object.keys(settingsOverride ?? {})).toEqual(["limits"]);
     expect(
       Object.keys((settingsOverride?.limits as Record<string, unknown>) ?? {}),
@@ -871,5 +870,70 @@ describe("only a participant may create a session", () => {
     await expect(
       createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
     ).resolves.toMatchObject({ streamCallId: "occurrence-A" });
+  });
+});
+
+describe("organization scoping on Stream Call custom and DB Meeting row", () => {
+  it("stamps both organizationId and organization_id in buildCallCustom and resolves plan-level org via bookingOrgId", async () => {
+    const orgHostedWebinar = {
+      appointmentType: "WEBINAR",
+      organizationId: null,
+      webinar: {
+        webinarPlan: {
+          title: "Enterprise Town Hall",
+          organizationId: "org-plan-77",
+          consultantProfile: profile("cp-owner", "user-owner"),
+          collaborators: [],
+        },
+      },
+    };
+    const row = slotRow("A", "10:00", "11:00", {
+      user: [{ id: "user-attendee" }],
+    });
+    seed([row], orgHostedWebinar, { id: "user-attendee" });
+    db.appointment.findUnique.mockResolvedValue({
+      organizationId: null,
+      webinar: { webinarPlan: { organizationId: "org-plan-77" } },
+    });
+
+    await getOrCreateAppointmentMeeting({
+      id: row.id,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+    });
+
+    const custom = mockCallPayloads[0].data?.custom;
+    expect(custom?.appointmentId).toBe("appt-1");
+    expect(custom?.organizationId).toBe("org-plan-77");
+    expect(custom?.organization_id).toBe("org-plan-77");
+    expect(db.meeting.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organization: { connect: { id: "org-plan-77" } },
+        }),
+      }),
+    );
+  });
+
+  it("resolves organizationId via bookingOrgId from the authorized appointment and authorized.slot.appointmentId in createDbMeeting", async () => {
+    const row = slotRow("A", "10:00", "11:00");
+    seed([row]);
+    db.appointment.findUnique.mockResolvedValueOnce({
+      organizationId: null,
+      consultation: { consultationPlan: { organizationId: "org-from-plan" } },
+    });
+
+    await createDbMeeting(
+      { id: row.id, startsAt: row.startsAt, endsAt: row.endsAt },
+      "occurrence-A",
+    );
+
+    expect(db.meeting.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organization: { connect: { id: "org-from-plan" } },
+        }),
+      }),
+    );
   });
 });

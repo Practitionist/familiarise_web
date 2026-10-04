@@ -7,6 +7,7 @@ const mockCheckConsent = jest.fn();
 const mockUpsertUsersToStream = jest.fn();
 const mockGetOrCreate = jest.fn();
 const mockUpdateCallMembers = jest.fn();
+const mockUpdateUserPermissions = jest.fn();
 const mockEnd = jest.fn();
 const mockGoLive = jest.fn();
 const mockCallGet = jest.fn();
@@ -63,6 +64,8 @@ jest.mock("../../lib/stream-client", () => ({
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
         },
+        updateUserPermissions: (...a: unknown[]) =>
+          mockUpdateUserPermissions(...a),
         end: (...a: unknown[]) => mockEnd(...a),
         goLive: (...a: unknown[]) => mockGoLive(...a),
         get: (...a: unknown[]) => mockCallGet(...a),
@@ -137,10 +140,13 @@ function makeLiveMeetingRow(opts?: {
   endedAt?: Date | null;
   endedReason?: string | null;
   hostProfileId?: string;
+  appointmentType?: "CONSULTATION" | "WEBINAR" | "CLASS";
 }) {
   const now = Date.now();
   const startsAt = new Date(now - 10 * MINUTE);
   const endsAt = new Date(now + (opts?.endsInMs ?? 20 * MINUTE));
+  const appointmentType = opts?.appointmentType ?? "CONSULTATION";
+  const hostProfileId = opts?.hostProfileId ?? "cp-host";
   return {
     id: "ms-1",
     streamCallId: "occurrence-slot-1",
@@ -154,21 +160,45 @@ function makeLiveMeetingRow(opts?: {
       isTentative: false,
       completionStatus: "SCHEDULED",
       deletedAt: null,
-      consultantProfileId: opts?.hostProfileId ?? "cp-host",
+      consultantProfileId: hostProfileId,
       appointmentId: "appt-1",
       appointment: {
         id: "appt-1",
+        appointmentType,
         deletedAt: null,
-        consultation: {
-          status: "APPROVED",
-          consultationPlan: {
-            consultantProfileId: opts?.hostProfileId ?? "cp-host",
-            recordingEnabled: true,
-          },
-        },
+        consultation:
+          appointmentType === "CONSULTATION"
+            ? {
+                status: "APPROVED",
+                consultationPlan: {
+                  consultantProfileId: hostProfileId,
+                  recordingEnabled: true,
+                },
+              }
+            : null,
         subscription: null,
-        webinar: null,
-        class: null,
+        webinar:
+          appointmentType === "WEBINAR"
+            ? {
+                status: "SCHEDULED",
+                webinarPlan: {
+                  id: "wp-1",
+                  consultantProfileId: hostProfileId,
+                  recordingEnabled: true,
+                },
+              }
+            : null,
+        class:
+          appointmentType === "CLASS"
+            ? {
+                status: "SCHEDULED",
+                classPlan: {
+                  id: "cp-1",
+                  consultantProfileId: hostProfileId,
+                  recordingEnabled: true,
+                },
+              }
+            : null,
         trial: null,
       },
     },
@@ -193,6 +223,7 @@ beforeEach(() => {
   mockUpsertUsersToStream.mockResolvedValue({ users: {} });
   mockGetOrCreate.mockResolvedValue({});
   mockUpdateCallMembers.mockResolvedValue({});
+  mockUpdateUserPermissions.mockResolvedValue({});
   mockEnd.mockResolvedValue({});
   mockGoLive.mockResolvedValue({});
   mockOccurrenceFindFirst.mockResolvedValue(null);
@@ -328,6 +359,75 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(mockAttendanceUpsert).not.toHaveBeenCalled();
     expect(mockPresenceCreate).not.toHaveBeenCalled();
     expect(mockParticipantUpdateMany).not.toHaveBeenCalled();
+    expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
+  });
+
+  it("grants backstage, stage-moderation, and publish permissions to WEBINAR and CLASS hosts on join", async () => {
+    for (const appointmentType of ["WEBINAR", "CLASS"] as const) {
+      mockUpdateUserPermissions.mockClear();
+      mockMeetingFindUnique.mockResolvedValue(
+        makeLiveMeetingRow({ appointmentType }),
+      );
+
+      const res = await joinPOST(req, { params });
+      expect(res.status).toBe(200);
+      expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
+        user_id: "user-host",
+        grant_permissions: [
+          "join-backstage",
+          "update-call-permissions",
+          "mute-users",
+          "pin-call-track",
+          "send-audio",
+          "send-video",
+          "screenshare",
+        ],
+      });
+    }
+  });
+
+  it("grants join-backstage while revoking publish and permission-granting capabilities from WEBINAR and CLASS attendees on join", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "user-attendee", banned: false },
+    });
+    mockUserFindUnique.mockResolvedValue({ consultantProfileId: null });
+
+    for (const appointmentType of ["WEBINAR", "CLASS"] as const) {
+      mockUpdateUserPermissions.mockClear();
+      mockMeetingFindUnique.mockResolvedValue(
+        makeLiveMeetingRow({ appointmentType }),
+      );
+
+      const res = await joinPOST(req, { params });
+      expect(res.status).toBe(200);
+      expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
+        user_id: "user-attendee",
+        grant_permissions: ["join-backstage"],
+        revoke_permissions: [
+          "send-audio",
+          "send-video",
+          "screenshare",
+          "update-call-permissions",
+        ],
+      });
+    }
+  });
+
+  it("revokes only update-call-permissions from 1:1 consultees while keeping audio/video/screenshare intact", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "user-consultee", banned: false },
+    });
+    mockUserFindUnique.mockResolvedValue({ consultantProfileId: null });
+    mockMeetingFindUnique.mockResolvedValue(
+      makeLiveMeetingRow({ appointmentType: "CONSULTATION" }),
+    );
+
+    const res = await joinPOST(req, { params });
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
+      user_id: "user-consultee",
+      revoke_permissions: ["update-call-permissions"],
+    });
   });
 
   it("ends the Stream call for the host and leaves Meeting.endedAt to the call.ended webhook", async () => {

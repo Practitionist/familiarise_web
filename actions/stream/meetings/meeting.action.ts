@@ -22,6 +22,7 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { bookingOrgId } from "@/lib/stream-utils";
 import { liveParticipant } from "@/lib/booking/participants";
 
 interface MeetingSlot {
@@ -83,14 +84,22 @@ const appointmentAccessSelect = (userId: string) =>
     consultation: {
       select: {
         consultationPlan: {
-          select: { title: true, consultantProfile: ownerProfileSelect },
+          select: {
+            title: true,
+            organizationId: true,
+            consultantProfile: ownerProfileSelect,
+          },
         },
       },
     },
     subscription: {
       select: {
         subscriptionPlan: {
-          select: { title: true, consultantProfile: ownerProfileSelect },
+          select: {
+            title: true,
+            organizationId: true,
+            consultantProfile: ownerProfileSelect,
+          },
         },
       },
     },
@@ -99,6 +108,7 @@ const appointmentAccessSelect = (userId: string) =>
         webinarPlan: {
           select: {
             title: true,
+            organizationId: true,
             consultantProfile: ownerProfileSelect,
             collaborators: collaboratorsSelect,
           },
@@ -110,6 +120,7 @@ const appointmentAccessSelect = (userId: string) =>
         classPlan: {
           select: {
             title: true,
+            organizationId: true,
             consultantProfile: ownerProfileSelect,
             collaborators: collaboratorsSelect,
           },
@@ -119,7 +130,11 @@ const appointmentAccessSelect = (userId: string) =>
     trial: {
       select: {
         subscriptionPlan: {
-          select: { title: true, consultantProfile: ownerProfileSelect },
+          select: {
+            title: true,
+            organizationId: true,
+            consultantProfile: ownerProfileSelect,
+          },
         },
       },
     },
@@ -162,10 +177,12 @@ async function readSlotForCaller(slotId: string) {
 
 class MeetingRefusal extends Error {}
 
-async function requireEntitledCaller(slotId: string): Promise<void> {
-  if (!(await readSlotForCaller(slotId))) {
+async function requireEntitledCaller(slotId: string) {
+  const authorized = await readSlotForCaller(slotId);
+  if (!authorized) {
     throw new MeetingRefusal("You are not a participant in this session.");
   }
+  return authorized;
 }
 
 const slotSchema = z.object({
@@ -571,15 +588,85 @@ async function getMeetingCreationRefusal(
   }
 }
 
+function resolveAppointmentOrgId(
+  appointment: {
+    organizationId?: string | null;
+    consultation?: {
+      consultationPlan?: { organizationId?: string | null } | null;
+    } | null;
+    subscription?: {
+      subscriptionPlan?: { organizationId?: string | null } | null;
+    } | null;
+    webinar?: {
+      webinarPlan?: { organizationId?: string | null } | null;
+    } | null;
+    class?: {
+      classPlan?: { organizationId?: string | null } | null;
+    } | null;
+    trial?: {
+      subscriptionPlan?: { organizationId?: string | null } | null;
+    } | null;
+  } | null,
+): string | null {
+  if (!appointment) return null;
+  return bookingOrgId({
+    consultationPlan: appointment.consultation?.consultationPlan
+      ? {
+          organizationId:
+            appointment.consultation.consultationPlan.organizationId ?? null,
+        }
+      : null,
+    subscriptionPlan:
+      appointment.subscription?.subscriptionPlan ||
+      appointment.trial?.subscriptionPlan
+        ? {
+            organizationId:
+              appointment.subscription?.subscriptionPlan?.organizationId ??
+              appointment.trial?.subscriptionPlan?.organizationId ??
+              null,
+          }
+        : null,
+    webinarPlan: appointment.webinar?.webinarPlan
+      ? {
+          organizationId:
+            appointment.webinar.webinarPlan.organizationId ?? null,
+        }
+      : null,
+    classPlan: appointment.class?.classPlan
+      ? {
+          organizationId: appointment.class.classPlan.organizationId ?? null,
+        }
+      : null,
+    appointment: { organizationId: appointment.organizationId ?? null },
+  });
+}
+
 async function readAppointmentOrganizationId(
   appointmentId: string | null | undefined,
 ): Promise<string | null> {
   if (!appointmentId) return null;
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    select: { organizationId: true },
+    select: {
+      organizationId: true,
+      consultation: {
+        select: { consultationPlan: { select: { organizationId: true } } },
+      },
+      subscription: {
+        select: { subscriptionPlan: { select: { organizationId: true } } },
+      },
+      webinar: {
+        select: { webinarPlan: { select: { organizationId: true } } },
+      },
+      class: {
+        select: { classPlan: { select: { organizationId: true } } },
+      },
+      trial: {
+        select: { subscriptionPlan: { select: { organizationId: true } } },
+      },
+    },
   });
-  return appointment?.organizationId ?? null;
+  return resolveAppointmentOrgId(appointment);
 }
 
 /** Persists the Meeting row for an occurrence after verifying caller entitlement and booking state. */
@@ -588,7 +675,7 @@ export async function createDbMeeting(
   streamCallId: string,
 ): Promise<Meeting> {
   try {
-    await requireEntitledCaller(slot.id);
+    const authorized = await requireEntitledCaller(slot.id);
 
     const refusal = await refuseMeetingCreation(slot);
     if (refusal) throw new MeetingRefusal(refusal);
@@ -600,9 +687,9 @@ export async function createDbMeeting(
       streamCallId: validatedStreamCallId,
     });
 
-    const organizationId = await readAppointmentOrganizationId(
-      slot.appointmentId,
-    );
+    const organizationId =
+      resolveAppointmentOrgId(authorized.appointment) ??
+      (await readAppointmentOrganizationId(authorized.slot.appointmentId));
 
     const meeting = await prisma.meeting.create({
       data: {
@@ -731,6 +818,7 @@ function buildCallCustom(args: {
     ...(args.organizationId
       ? {
           organizationId: args.organizationId,
+          organization_id: args.organizationId,
         }
       : {}),
     ...(consultantUserId ? { consultantUserId } : {}),
@@ -809,6 +897,10 @@ export async function provisionAppointmentMeeting(
     authorized.appointment.appointmentType,
     maxDurationSeconds,
   );
+  const resolvedAppointmentId = authorized.slot.appointmentId;
+  const resolvedOrganizationId = resolveAppointmentOrgId(
+    authorized.appointment,
+  );
 
   try {
     await withStreamCircuitBreaker(async () => {
@@ -825,9 +917,9 @@ export async function provisionAppointmentMeeting(
           ...(settingsOverride ? { settings_override: settingsOverride } : {}),
           custom: buildCallCustom({
             occurrenceId: anchorSlot.id,
-            appointmentId: anchorSlot.appointmentId,
+            appointmentId: resolvedAppointmentId,
             appointmentType: authorized.appointment.appointmentType,
-            organizationId: authorized.appointment.organizationId ?? null,
+            organizationId: resolvedOrganizationId,
             profile: callProfile,
           }),
           ...(callProfile && callProfile.members.length > 0
@@ -881,7 +973,10 @@ export async function provisionAppointmentMeeting(
     return { ok: true, streamCallId };
   }
 
-  await createDbMeeting(anchorSlot, streamCallId);
+  await createDbMeeting(
+    { ...anchorSlot, appointmentId: resolvedAppointmentId },
+    streamCallId,
+  );
 
   return { ok: true, streamCallId };
 }
