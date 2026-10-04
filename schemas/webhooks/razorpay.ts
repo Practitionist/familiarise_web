@@ -56,6 +56,7 @@ export const razorpayFetchedPaymentSchema = z.object({
   order_id: z.string(),
   status: z.string(),
   amount: z.number().int().positive(),
+  currency: z.string(),
   notes: z
     .union([
       z.record(

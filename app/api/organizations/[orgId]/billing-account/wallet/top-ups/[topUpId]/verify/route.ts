@@ -89,7 +89,7 @@ export async function POST(
   }
 
   // The signature proves the id pair; capture state, amount and notes come
-  // from the gateway, and only a positive integer paise amount is credited.
+  // from the gateway, and only a positive integer INR paise amount is credited.
   // Any doubt answers "pending" and leaves the webhook to it.
   let notes: Record<string, string>;
   let capturedAmountPaise: number;
@@ -101,7 +101,8 @@ export async function POST(
     );
     if (
       gatewayPayment.order_id !== orderId ||
-      gatewayPayment.status !== "captured"
+      gatewayPayment.status !== "captured" ||
+      gatewayPayment.currency !== "INR"
     ) {
       return NextResponse.json({ status: "pending" satisfies TopUpStatus });
     }

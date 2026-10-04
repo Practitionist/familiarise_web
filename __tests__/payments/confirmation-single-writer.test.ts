@@ -150,6 +150,7 @@ beforeEach(() => {
     id: PAY_ID,
     order_id: ORDER_ID,
     amount: 250000,
+    currency: "INR",
     status: "captured",
     notes: { appointmentType: "CONSULTATION" },
   });
@@ -248,6 +249,7 @@ describe("capture state is verified, not assumed", () => {
       id: PAY_ID,
       order_id: ORDER_ID,
       amount: 250000,
+      currency: "INR",
       status: "authorized",
       notes: { appointmentType: "CONSULTATION" },
     });
