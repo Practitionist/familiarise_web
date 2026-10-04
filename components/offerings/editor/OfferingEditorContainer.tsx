@@ -260,8 +260,18 @@ export function OfferingEditorContainer({
       }
       // Cover-image changes are staged in the editor so Cancel never persists one.
       if (stagedImage && planId) {
-        await commitPlanImage(adapter.imageType, planId, stagedImage);
-        setStagedImage(null);
+        try {
+          await commitPlanImage(adapter.imageType, planId, stagedImage);
+          setStagedImage(null);
+        } catch (imageError) {
+          // The offering saved; keep the staged image and stay so a re-save retries it.
+          toast({
+            title: "Saved, but the cover image wasn't updated",
+            description: `${imageError instanceof Error ? imageError.message : "Please try again."} Save again to retry.`,
+            variant: "destructive",
+          });
+          return;
+        }
       }
 
       toast(

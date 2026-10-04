@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import { ImageIcon, X, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -63,12 +63,16 @@ export function PlanImageUploader({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const previewRef = useRef<string | null>(null);
+  // Each preview URL is revoked when it is replaced and on unmount.
+  useEffect(
+    () => () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    },
+    [previewUrl],
+  );
 
   const replacePreview = useCallback((file: File | null) => {
-    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
-    previewRef.current = file ? URL.createObjectURL(file) : null;
-    setPreviewUrl(previewRef.current);
+    setPreviewUrl(file ? URL.createObjectURL(file) : null);
   }, []);
 
   let displayImage = currentImageUrl ?? null;
