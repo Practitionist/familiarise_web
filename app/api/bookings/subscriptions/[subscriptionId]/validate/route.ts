@@ -133,6 +133,28 @@ export async function POST(
       // Convert slots to Date objects
       const slotDates = body.slots.map((slot) => new Date(slot));
 
+      // Exclude this subscription's own tentative occurrences (initial request
+      // holds or released reschedule occurrences) so they are not reported as
+      // conflicts or double-counted against weekly/total limits.
+      const tentativeAppointments =
+        (await prisma.appointment?.findMany?.({
+          where: {
+            subscriptionId,
+            occurrences: { some: { isTentative: true, deletedAt: null } },
+          },
+          select: {
+            id: true,
+            occurrences: {
+              where: { isTentative: true, deletedAt: null },
+              select: { id: true },
+            },
+          },
+        })) ?? [];
+      const excludeOccurrenceIds = tentativeAppointments.flatMap((a) =>
+        (a.occurrences ?? []).map((o) => o.id),
+      );
+      const consulteeUserId = subscription.requestedBy?.user?.id;
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -154,6 +176,13 @@ export async function POST(
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
           schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+          schedulingTimezone: subscription.schedulingTimezone,
+        },
+        [],
+        {
+          consulteeUserId,
+          excludeOccurrenceIds,
+          consultantProfileId: subscriptionPlan.consultantProfileId,
         },
       );
       const viewer = {
@@ -171,6 +200,8 @@ export async function POST(
         await subscriptionValidationService.validateSubscriptionSlots(
           subscriptionId,
           body.slots,
+          [],
+          excludeOccurrenceIds,
         );
 
       // Build response
@@ -210,16 +241,28 @@ export async function POST(
             );
             if (slotMatch) {
               result.outsideAvailability.push({ slot: slotMatch[1] });
+            } else {
+              for (const bodySlot of body.slots) {
+                const normalized = new Date(bodySlot)
+                  .toISOString()
+                  .slice(0, 19);
+                if (
+                  !result.outsideAvailability.some((o) => o.slot === normalized)
+                ) {
+                  result.outsideAvailability.push({ slot: normalized });
+                }
+              }
             }
           }
           // [VALIDATION] errors don't need slot-level parsing
         }
 
-        // Filter valid slots
-        result.validSlots = body.slots.filter((slot) => {
+        // Filter valid slots by normalizing to seconds-precision UTC ISO
+        result.validSlots = body.slots.filter((bodySlot) => {
+          const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
           return (
-            !result.conflicts.some((c) => c.slot === slot) &&
-            !result.outsideAvailability.some((o) => o.slot === slot)
+            !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
+            !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
           );
         });
       }

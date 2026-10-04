@@ -20,6 +20,11 @@ import {
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
+import {
+  conflictDetailsBySlot,
+  describeConflict,
+} from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const webinarInclude = {
@@ -46,6 +51,9 @@ export async function POST(
     if (authResult.error) return authResult.error;
 
     const { webinarId } = await params;
+
+    const malformed = refuseMalformedEventId(webinarId);
+    if (malformed) return malformed;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
@@ -95,6 +103,25 @@ export async function POST(
       // Convert slots to Date objects
       const slotDates = body.slots.map((slot) => new Date(slot));
 
+      // Exclude this webinar's own tentative occurrences during re-allocation
+      const tentativeAppointments =
+        (await prisma.appointment?.findMany?.({
+          where: {
+            webinarId,
+            occurrences: { some: { isTentative: true, deletedAt: null } },
+          },
+          select: {
+            id: true,
+            occurrences: {
+              where: { isTentative: true, deletedAt: null },
+              select: { id: true },
+            },
+          },
+        })) ?? [];
+      const excludeOccurrenceIds = tentativeAppointments.flatMap((a) =>
+        (a.occurrences ?? []).map((o) => o.id),
+      );
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -113,7 +140,18 @@ export async function POST(
         {
           durationInHours: webinarPlan.durationInHours || 1,
         },
+        [],
+        {
+          excludeOccurrenceIds,
+          consultantProfileId: webinarPlan.consultantProfileId ?? undefined,
+        },
       );
+      const viewer = {
+        userId: authResult.session.user.id,
+        isEventConsultant:
+          authResult.session.user.id === consultantProfile.user.id,
+      };
+      const conflictDetails = conflictDetailsBySlot(validationResult.conflicts);
 
       // If validation passed, all slots are valid
       if (validationResult.isValid) {
@@ -140,19 +178,18 @@ export async function POST(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
-            const slot = slotMatch[1];
-            result.conflicts.push({
-              slot,
-              existingAppointment: {
-                type: message.includes("subscription")
+            result.conflicts.push(
+              describeConflict(
+                slotMatch[1],
+                conflictDetails.get(slotMatch[1]),
+                viewer,
+                message.includes("subscription")
                   ? "Subscription"
                   : message.includes("webinar")
                     ? "Webinar"
                     : "Consultation",
-                with: "Another user",
-                time: new Date(slot).toLocaleString(),
-              },
-            });
+              ),
+            );
           }
         } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
           const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
@@ -161,16 +198,26 @@ export async function POST(
           );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
+          } else {
+            for (const bodySlot of body.slots) {
+              const normalized = new Date(bodySlot).toISOString().slice(0, 19);
+              if (
+                !result.outsideAvailability.some((o) => o.slot === normalized)
+              ) {
+                result.outsideAvailability.push({ slot: normalized });
+              }
+            }
           }
         }
         // [VALIDATION] errors don't need slot-level parsing
       }
 
       // Valid slots are those not in conflicts or outside availability
-      result.validSlots = body.slots.filter((slot) => {
+      result.validSlots = body.slots.filter((bodySlot) => {
+        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
         return (
-          !result.conflicts.some((c) => c.slot === slot) &&
-          !result.outsideAvailability.some((o) => o.slot === slot)
+          !result.conflicts.some((c) => c.slot === bodySlotSeconds) &&
+          !result.outsideAvailability.some((o) => o.slot === bodySlotSeconds)
         );
       });
 

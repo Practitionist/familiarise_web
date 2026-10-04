@@ -312,6 +312,7 @@ export class SchedulingService {
           // the event consultant by the route (canOverride) before dispatch.
           request.override,
           request.allowPartial,
+          request.topUp,
         );
 
       case "requested":
@@ -1369,7 +1370,11 @@ export class SchedulingService {
     eventId: string,
     appointments: {
       deletedAt?: Date | null;
-      occurrences?: { deletedAt?: Date | null; completionStatus?: string }[];
+      occurrences?: {
+        deletedAt?: Date | null;
+        isTentative?: boolean;
+        completionStatus?: string;
+      }[];
     }[],
     db: PrismaLike = prisma,
   ): Promise<Partial<AllocationResult>> {
@@ -1398,13 +1403,13 @@ export class SchedulingService {
 
     if (!requiredSessions || requiredSessions <= 0) return {};
 
-    // #1554 — placed sessions are the wrapper's live occurrences. Tombstoned
-    // rows are not placed sessions; the returned batch is left as it was so
-    // the replay still hands back exactly what the first call did.
+    // #1554 — placed sessions are the wrapper's live confirmed occurrences.
+    // Tombstoned or tentative rows are not placed sessions; the returned batch
+    // is left as it was so the replay still hands back what the first call did.
     const placedSessions = appointments
       .filter((a) => !a.deletedAt)
       .flatMap((a) => a.occurrences ?? [])
-      .filter((o) => !isDeadOccurrence(o)).length;
+      .filter((o) => !o.isTentative && !isDeadOccurrence(o)).length;
     return {
       partial: placedSessions < requiredSessions,
       placedSessions,
@@ -1824,19 +1829,6 @@ export class SchedulingService {
       const isFreshAllocation =
         initialAllocation === true || existingNonTentativeSlotCount === 0;
 
-      // Detect in-progress reallocation: past confirmed slots exist for recurring events
-      const now = new Date();
-      const pastConfirmedSlotCount = isReschedule
-        ? 0
-        : this.confirmedIntervalsOf(
-            existingAppointments,
-            (slot) => new Date(slot.endsAt) <= now,
-          );
-      const isInProgressReallocation =
-        !isReschedule &&
-        pastConfirmedSlotCount > 0 &&
-        isRecurringEventType(eventType);
-
       const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
         config.sessionDurationInHours || config.durationInHours || 1,
       );
@@ -1876,12 +1868,40 @@ export class SchedulingService {
       // #1766 — a subscription with held sessions is ALWAYS additive: the
       // next cycle appends; the delete-and-replan path is for classes only.
       const isTopUp =
-        topUp === true ||
-        this.isSubscriptionTopUp(
-          eventType,
-          existingConfirmedSessionCount,
-          isReschedule,
-        );
+        !isReschedule &&
+        (topUp === true ||
+          this.isSubscriptionTopUp(
+            eventType,
+            existingConfirmedSessionCount,
+            isReschedule,
+          ));
+
+      // Detect in-progress reallocation: past confirmed slots exist for recurring events.
+      // Once triggered, deleteExistingAppointments also preserves imminent (<24h)
+      // confirmed slots, so include them in pastConfirmedSlotCount to avoid over-allocating.
+      const now = new Date();
+      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
+      const hasPastConfirmedSlots =
+        !isReschedule &&
+        !isTopUp &&
+        this.confirmedIntervalsOf(
+          existingAppointments,
+          (slot) => new Date(slot.endsAt) <= now,
+        ) > 0;
+      const pastConfirmedSlotCount = hasPastConfirmedSlots
+        ? this.confirmedIntervalsOf(
+            existingAppointments,
+            (slot) =>
+              new Date(slot.endsAt) <= now ||
+              new Date(slot.startsAt) < imminentCutoff,
+          )
+        : 0;
+      const isInProgressReallocation =
+        !isReschedule &&
+        !isTopUp &&
+        pastConfirmedSlotCount > 0 &&
+        isRecurringEventType(eventType);
+
       const topUpPlanSessions = isTopUp
         ? this.topUpTargetSessions(
             eventType,
@@ -2354,6 +2374,11 @@ export class SchedulingService {
      * sessions on recurring events (matching autoAllocate's #1206 behavior).
      */
     allowPartial = false,
+    /**
+     * #1206 / #1766 — additive top-up on recurring events (preserves existing
+     * confirmed sessions and places only the remaining sessions).
+     */
+    topUp = false,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     // A same-key submit with different slots is a client bug, not a retry:
@@ -2540,16 +2565,37 @@ export class SchedulingService {
       const existingNonTentativeSlotCount =
         this.confirmedIntervalsOf(existingAppointments);
 
+      if (topUp === true) {
+        if (!isRecurringEventType(eventType)) {
+          throw new AllocationValidationError(
+            "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
+          );
+        }
+        if (isReschedule) {
+          throw new AllocationValidationError(
+            "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
+          );
+        }
+        if (existingNonTentativeSlotCount === 0) {
+          throw new AllocationValidationError(
+            "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
+          );
+        }
+      }
+
       // #1766 — see autoAllocate: held sessions on a subscription mean the
       // next cycle is being appended, so nothing is deleted or excluded.
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
         .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
-      const isTopUp = this.isSubscriptionTopUp(
-        eventType,
-        existingConfirmedSessionCount,
-        isReschedule,
-      );
+      const isTopUp =
+        !isReschedule &&
+        (topUp === true ||
+          this.isSubscriptionTopUp(
+            eventType,
+            existingConfirmedSessionCount,
+            isReschedule,
+          ));
       if (initialAllocation && eventType === "subscription" && !isTopUp) {
         await this.assertNoConfirmedSlots(prisma, eventType, eventId);
       }
@@ -2567,14 +2613,26 @@ export class SchedulingService {
         !isTopUp &&
         (initialAllocation === true || existingNonTentativeSlotCount === 0);
 
-      // Detect in-progress reallocation: past confirmed slots exist for recurring events
+      // Detect in-progress reallocation: past confirmed slots exist for recurring events.
+      // Once triggered, deleteExistingAppointments also preserves imminent (<24h)
+      // confirmed slots, so include them in pastConfirmedSlotCount to avoid over-allocating.
       const now = new Date();
-      const pastConfirmedSlotCount = isReschedule
-        ? 0
-        : this.confirmedIntervalsOf(
+      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
+      const hasPastConfirmedSlots =
+        !isReschedule &&
+        !isTopUp &&
+        this.confirmedIntervalsOf(
+          existingAppointments,
+          (slot) => new Date(slot.endsAt) <= now,
+        ) > 0;
+      const pastConfirmedSlotCount = hasPastConfirmedSlots
+        ? this.confirmedIntervalsOf(
             existingAppointments,
-            (slot) => new Date(slot.endsAt) <= now,
-          );
+            (slot) =>
+              new Date(slot.endsAt) <= now ||
+              new Date(slot.startsAt) < imminentCutoff,
+          )
+        : 0;
       const isInProgressReallocation =
         !isReschedule &&
         !isTopUp &&
@@ -2808,22 +2866,36 @@ export class SchedulingService {
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
-          // #1766 top-up: nothing — the next cycle appends to the wrapper.
-          const {
-            enrolledUserIds,
-            deletedAppointmentIds,
-            freedOrdinals,
-            freedWindows,
-            reusableAppointmentId,
-          } = isTopUp
-            ? SchedulingService.nothingDeleted()
-            : await this.deleteExistingAppointments(
-                tx,
-                eventType,
-                eventId,
-                isReschedule,
-                isInProgressReallocation,
-              );
+          // #1766 / #1206 top-up: nothing — the next cycle appends to the wrapper.
+          let enrolledUserIds: string[] = [];
+          let deletedAppointmentIds: string[] = [];
+          let freedOrdinals: number[] = [];
+          let freedWindows: FreedWindow[] = [];
+          let reusableAppointmentId: string | undefined;
+          if (isTopUp) {
+            if (eventType === "class") {
+              enrolledUserIds =
+                await SchedulingService.collectEventParticipantIds(
+                  tx,
+                  eventType,
+                  eventId,
+                );
+            }
+          } else {
+            ({
+              enrolledUserIds,
+              deletedAppointmentIds,
+              freedOrdinals,
+              freedWindows,
+              reusableAppointmentId,
+            } = await this.deleteExistingAppointments(
+              tx,
+              eventType,
+              eventId,
+              isReschedule,
+              isInProgressReallocation,
+            ));
+          }
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -3916,7 +3988,13 @@ export class SchedulingService {
             { participants: { some: liveParticipant(consulteeUserId) } },
             {
               occurrences: {
-                some: { endsAt: { gt: occupancyClock }, deletedAt: null },
+                some: {
+                  endsAt: { gt: occupancyClock },
+                  deletedAt: null,
+                  ...(excludeOccurrenceIds.length > 0
+                    ? { id: { notIn: excludeOccurrenceIds } }
+                    : {}),
+                },
               },
             },
             ...(excludeAppointmentIds.length > 0
@@ -3931,7 +4009,13 @@ export class SchedulingService {
           // materializing them only re-creates pool pressure on long-lived
           // appointments (CodeRabbit triage).
           occurrences: {
-            where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+            where: {
+              deletedAt: null,
+              endsAt: { gt: occupancyClock },
+              ...(excludeOccurrenceIds.length > 0
+                ? { id: { notIn: excludeOccurrenceIds } }
+                : {}),
+            },
           },
           consultation: { select: { status: true, bookingSource: true } },
           subscription: { select: { status: true, bookingSource: true } },

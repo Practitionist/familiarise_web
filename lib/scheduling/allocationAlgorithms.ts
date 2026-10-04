@@ -166,24 +166,20 @@ export class AllocationAlgorithms {
           };
         }
 
-        // Every scheduling-timezone day must decompose into complete
-        // CONSECUTIVE sessions — a length-modulo check would let scattered
-        // fragments reach the required total while forming no real session,
-        // which the server then rejects.
-        const byDay = ScheduleCalculationService.groupSlotsByDay(
+        // Selected slots must decompose into complete CONSECUTIVE sessions
+        // (including sessions that cross midnight) — a length-modulo check
+        // alone would let scattered fragments reach the required total while
+        // forming no real session, which the server then rejects.
+        const { sessions } = countSessionsForDay(
           selectedSlots,
-          options.schedulingTimezone ??
-            ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+          slotsPerSession,
         );
-        for (const [, daySlots] of Array.from(byDay)) {
-          const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
-          if (sessions * slotsPerSession !== daySlots.length) {
-            return {
-              success: false,
-              selectedSlots: [],
-              error: `Each session needs ${slotsPerSession} consecutive slots on one day; an incomplete session is selected.`,
-            };
-          }
+        if (sessions * slotsPerSession !== selectedSlots.length) {
+          return {
+            success: false,
+            selectedSlots: [],
+            error: `Each session needs ${slotsPerSession} consecutive slots; an incomplete session is selected.`,
+          };
         }
       }
 
