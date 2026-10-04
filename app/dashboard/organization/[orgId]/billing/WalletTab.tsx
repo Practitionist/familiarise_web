@@ -558,13 +558,10 @@ export function WalletTab({
           </div>
 
           {pendingTopUpId && (
-            <div
-              role="status"
-              className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
-            >
+            <output className="mb-4 block rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
               Top-up pending — waiting for Razorpay to confirm a recent payment.
               Your balance updates here once it does.
-            </div>
+            </output>
           )}
 
           <DashboardGrid columns={2}>

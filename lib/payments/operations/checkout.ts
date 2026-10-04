@@ -5016,16 +5016,25 @@ export async function handleCheckout(
         }
       }
 
+      let message =
+        "Payment intent created. Complete payment to book appointment.";
+      if (isZeroAmountPayment) {
+        message =
+          "Payment completed via referral credits. Appointment booked successfully.";
+      } else if (isMockPayment) {
+        message = "Mock payment completed and appointment created successfully";
+      } else if (isOrgSponsoredPayment) {
+        message =
+          "Payment completed via organization funding. Appointment booked successfully.";
+        if (referralCreditsDropped) {
+          message += ` ${REFERRAL_CREDITS_DROPPED_NOTICE}`;
+        }
+      }
+
       return {
         success: true,
         paymentIntent: paymentResponse,
-        message: isZeroAmountPayment
-          ? "Payment completed via referral credits. Appointment booked successfully."
-          : isMockPayment
-            ? "Mock payment completed and appointment created successfully"
-            : isOrgSponsoredPayment
-              ? `Payment completed via organization funding. Appointment booked successfully.${referralCreditsDropped ? ` ${REFERRAL_CREDITS_DROPPED_NOTICE}` : ""}`
-              : "Payment intent created. Complete payment to book appointment.",
+        message,
         referralCreditsDropped,
         amount,
         currency,
