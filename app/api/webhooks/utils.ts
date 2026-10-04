@@ -41,7 +41,7 @@ import {
   mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
-import { revokeReplayEntitlement } from "@/lib/payments/webhooks/recording-purchase";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -1776,6 +1776,7 @@ export async function settleLostDispute(
       billingAccountId: true,
       amount: true,
       paymentIntent: true,
+      appointmentId: true,
     },
   });
   if (disputedPayment?.organizationId) {
@@ -1811,7 +1812,8 @@ export async function settleLostDispute(
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
-  if (disputedPayment) {
+  // Replay sales are the only appointment-less payments that grant playback.
+  if (disputedPayment && disputedPayment.appointmentId === null) {
     await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
   }
 

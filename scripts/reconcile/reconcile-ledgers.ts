@@ -706,7 +706,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
       details: {
         unit: "payments",
         samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold (#773).",
+        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold.",
       },
     });
   }

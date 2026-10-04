@@ -84,7 +84,7 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { revokeReplayEntitlement } from "@/lib/payments/webhooks/recording-purchase";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 
 import {
   applyCappedEarningReversal,
@@ -1000,7 +1000,10 @@ export async function applyRefundCascade(
     });
   }
 
-  await revokeReplayEntitlement(tx, payment.paymentIntent);
+  // Replay sales are the only appointment-less payments that grant playback.
+  if (payment.appointmentId === null) {
+    await revokeReplayEntitlement(tx, payment.paymentIntent);
+  }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {
     // Zero-amount payments (LICENSE-only) have no money to refund, and a

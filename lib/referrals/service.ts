@@ -602,7 +602,9 @@ export async function reverseCreditsForPayment(
     // #780 — aggregates bypass the result extension and still return bigint
     const refundedSum = aggregate._sum?.amountPaise;
     cumulativeRefunded =
-      refundedSum == null ? (refundAmount ?? 0) : sumPaise(refundedSum);
+      refundedSum === null || refundedSum === undefined
+        ? (refundAmount ?? 0)
+        : sumPaise(refundedSum);
   }
 
   let totalRestored = 0;
@@ -813,8 +815,8 @@ export async function getUserReferrals(
     const expiresAt = (r as { expiresAt?: Date | null }).expiresAt;
     const isStale =
       (r.status === "SIGNED_UP" || (r.status as string) === "PENDING") &&
-      ((expiresAt != null && expiresAt < now) ||
-        (r.signedUpAt != null && r.signedUpAt < windowCutoff));
+      ((expiresAt !== null && expiresAt !== undefined && expiresAt < now) ||
+        (r.signedUpAt !== null && r.signedUpAt < windowCutoff));
     return isStale ? { ...r, status: "EXPIRED" as const } : r;
   });
 }

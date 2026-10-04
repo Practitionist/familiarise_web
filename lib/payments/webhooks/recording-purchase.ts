@@ -12,7 +12,7 @@
  * so a capture that raced ahead of the failure event wins.
  */
 import { z } from "zod";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
@@ -339,20 +339,6 @@ export async function handleRecordingPurchaseSuccess(
   if (settledPaymentId) {
     await mintConsumerInvoiceBestEffort({ paymentId: settledPaymentId });
   }
-}
-
-/**
- * A refunded or charged-back replay sale stops entitling playback: every
- * entitlement read requires SUCCEEDED, so the purchase moves to REFUNDED.
- */
-export async function revokeReplayEntitlement(
-  tx: Tx,
-  paymentIntent: string,
-): Promise<void> {
-  await tx.recordingPurchase.updateMany({
-    where: { gatewayOrderId: paymentIntent, status: "SUCCEEDED" },
-    data: { status: "REFUNDED" },
-  });
 }
 
 export async function handleRecordingPurchaseFailure(

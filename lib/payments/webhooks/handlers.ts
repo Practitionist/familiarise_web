@@ -37,7 +37,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
