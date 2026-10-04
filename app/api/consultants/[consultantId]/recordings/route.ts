@@ -317,7 +317,7 @@ function formatConsultantRecording(
     isPrimaryOwner &&
     recording.status === "READY" &&
     recording.storageType === "STREAM_S3" &&
-    storagePolicy === "SUPABASE_PERMANENT";
+    storagePolicy === "PERMANENT";
   const canPublish =
     isPrimaryOwner &&
     listingPlan !== null &&

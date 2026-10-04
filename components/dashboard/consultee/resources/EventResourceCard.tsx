@@ -43,7 +43,14 @@ export interface EventResource {
     playbackUrl: string | null;
     thumbnailUrl: string | null;
     status: string;
+    previewTranscript?: string | null;
   }[];
+}
+
+export function getRecordingStatusLabel(status: string): string {
+  if (status === "EXPIRED") return "Expired";
+  if (status === "FAILED") return "Unavailable";
+  return "Processing";
 }
 
 function formatFileSize(bytes: number): string {
@@ -264,8 +271,15 @@ export function EventResourceCard({
                           Watch
                         </Button>
                       ) : (
-                        <span className="text-xs text-muted-foreground/70 px-2">
-                          Processing
+                        <span
+                          className={cn(
+                            "text-xs px-2",
+                            rec.status === "FAILED"
+                              ? "text-destructive"
+                              : "text-muted-foreground/70",
+                          )}
+                        >
+                          {getRecordingStatusLabel(rec.status)}
                         </span>
                       )}
                     </div>
@@ -290,6 +304,7 @@ export function EventResourceCard({
                 recordedAt: activeRecording.recordedAt,
                 durationInMinutes: activeRecording.durationInMinutes,
                 playbackUrl: activeRecording.playbackUrl,
+                previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: event.planTitle,
               }
             : null
