@@ -1,24 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { liveParticipant } from "@/lib/booking/participants";
+import { PUBLIC_USER_SELECT } from "@/lib/booking/list-selects";
+
+/** What a caller may read of an appointment: every attendee's rows, only their own, or nothing. */
+type AppointmentAccess = "every-seat" | "own-seat";
 
 /**
- * Check if the authenticated user is a participant in the given appointment.
- * A user is a participant if they are:
- * - Connected to any slot of the appointment (as consultant or consultee)
- * - The consultation/subscription requester
- * - The plan owner (consultant)
- * - An accepted collaborator on the webinar/class plan
+ * Hosts (plan consultant or accepted collaborator) and 1:1 parties see every seat;
+ * a group seat holder sees only their own. Null when the caller is no party.
  */
-async function isAppointmentParticipant(
+async function appointmentAccess(
   userId: string,
   consultantProfileId: string | null | undefined,
   consulteeProfileId: string | null | undefined,
   appointmentId: string,
-): Promise<boolean> {
+): Promise<AppointmentAccess | null> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: {
@@ -68,187 +67,35 @@ async function isAppointmentParticipant(
     },
   });
 
-  if (!appointment) return false;
+  if (!appointment) return null;
 
-  // The user holds a seat on the appointment (#1554)
-  if (appointment.participants.length > 0) return true;
-
-  // Check consultation ownership
-  if (appointment.consultation) {
-    if (
-      consultantProfileId ===
-      appointment.consultation.consultationPlan.consultantProfileId
-    )
-      return true;
-    if (consulteeProfileId === appointment.consultation.requestedById)
-      return true;
+  const groupPlan =
+    appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+  if (groupPlan) {
+    const isHost =
+      !!consultantProfileId &&
+      (groupPlan.consultantProfileId === consultantProfileId ||
+        groupPlan.collaborators.some(
+          (c) => c.consultantProfileId === consultantProfileId,
+        ));
+    if (isHost) return "every-seat";
+    return appointment.participants.length > 0 ? "own-seat" : null;
   }
 
-  // Check subscription ownership
-  if (appointment.subscription) {
-    if (
-      consultantProfileId ===
-      appointment.subscription.subscriptionPlan.consultantProfileId
-    )
-      return true;
-    if (consulteeProfileId === appointment.subscription.requestedById)
-      return true;
-  }
-
-  // Check webinar ownership/collaboration
-  if (appointment.webinar) {
-    if (
-      consultantProfileId ===
-      appointment.webinar.webinarPlan.consultantProfileId
-    )
-      return true;
-    if (
-      consultantProfileId &&
-      appointment.webinar.webinarPlan.collaborators.some(
-        (c) => c.consultantProfileId === consultantProfileId,
-      )
-    )
-      return true;
-  }
-
-  // Check class ownership/collaboration
-  if (appointment.class) {
-    if (consultantProfileId === appointment.class.classPlan.consultantProfileId)
-      return true;
-    if (
-      consultantProfileId &&
-      appointment.class.classPlan.collaborators.some(
-        (c) => c.consultantProfileId === consultantProfileId,
-      )
-    )
-      return true;
-  }
-
-  return false;
+  if (appointment.participants.length > 0) return "every-seat";
+  const request = appointment.consultation ?? appointment.subscription;
+  const requestPlanConsultantId =
+    appointment.consultation?.consultationPlan.consultantProfileId ??
+    appointment.subscription?.subscriptionPlan.consultantProfileId;
+  if (
+    request &&
+    ((!!consultantProfileId &&
+      requestPlanConsultantId === consultantProfileId) ||
+      (!!consulteeProfileId && request.requestedById === consulteeProfileId))
+  )
+    return "every-seat";
+  return null;
 }
-
-type _AppointmentInclude = Prisma.AppointmentGetPayload<{
-  include: {
-    occurrences: true;
-    participants: {
-      include: {
-        user: {
-          select: {
-            id: true;
-            name: true;
-            email: true;
-            image: true;
-            consulteeProfile: true;
-          };
-        };
-      };
-    };
-    consultation: {
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true;
-                    name: true;
-                    email: true;
-                    image: true;
-                  };
-                };
-              };
-            };
-          };
-        };
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true;
-                name: true;
-                email: true;
-                image: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    subscription: {
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true;
-                    name: true;
-                    email: true;
-                    image: true;
-                  };
-                };
-              };
-            };
-          };
-        };
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true;
-                name: true;
-                email: true;
-                image: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    webinar: {
-      include: {
-        webinarPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true;
-                    name: true;
-                    email: true;
-                    image: true;
-                  };
-                };
-              };
-            };
-          };
-        };
-      };
-    };
-    class: {
-      include: {
-        classPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true;
-                    name: true;
-                    email: true;
-                    image: true;
-                  };
-                };
-              };
-            };
-          };
-        };
-      };
-    };
-  };
-}>;
 
 export async function GET(
   request: NextRequest,
@@ -261,18 +108,19 @@ export async function GET(
   try {
     const { appointmentId } = await params;
 
-    // Authorization: must be a participant or privileged
-    if (!isPrivileged(session.user.role)) {
-      const allowed = await isAppointmentParticipant(
-        session.user.id,
-        session.user.consultantProfileId,
-        session.user.consulteeProfileId,
-        appointmentId,
-      );
-      if (!allowed) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
+    const access = isPrivileged(session.user.role)
+      ? "every-seat"
+      : await appointmentAccess(
+          session.user.id,
+          session.user.consultantProfileId,
+          session.user.consulteeProfileId,
+          appointmentId,
+        );
+    if (!access) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    // A group seat holder reads only their own seat and Payment; the filter rides the WHERE.
+    const ownSeatUserId = access === "own-seat" ? session.user.id : undefined;
 
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -280,18 +128,8 @@ export async function GET(
         occurrences: true,
         // #1554 — the roster lives on the appointment, not on each occurrence.
         participants: {
-          where: liveParticipant(),
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-                consulteeProfile: true,
-              },
-            },
-          },
+          where: liveParticipant(ownSeatUserId),
+          include: { user: PUBLIC_USER_SELECT },
         },
         consultation: {
           include: {
@@ -398,15 +236,17 @@ export async function GET(
           },
         },
         payment: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
+          where: ownSeatUserId ? { userId: ownSeatUserId } : undefined,
+          select: {
+            id: true,
+            amount: true,
+            taxAmount: true,
+            currency: true,
+            paymentStatus: true,
+            paymentMethod: true,
+            createdAt: true,
+            userId: true,
+            user: PUBLIC_USER_SELECT,
           },
         },
       },
@@ -419,27 +259,7 @@ export async function GET(
       );
     }
 
-    // A group appointment carries every attendee's Payment and seat; only ops and the plan's host see them all.
-    const hostProfileId =
-      appointment.webinar?.webinarPlan.consultantProfileId ??
-      appointment.class?.classPlan.consultantProfileId;
-    const seesEveryAttendee =
-      isPrivileged(session.user.role) ||
-      (!appointment.webinarId && !appointment.classId) ||
-      (!!hostProfileId && hostProfileId === session.user.consultantProfileId);
-    const data = seesEveryAttendee
-      ? appointment
-      : {
-          ...appointment,
-          payment: appointment.payment.filter(
-            (p) => p.userId === session.user.id,
-          ),
-          participants: appointment.participants.filter(
-            (p) => p.userId === session.user.id,
-          ),
-        };
-
-    return NextResponse.json({ data }, { status: 200 });
+    return NextResponse.json({ data: appointment }, { status: 200 });
   } catch (error) {
     console.error("Error fetching appointment:", error);
     Sentry.captureException(

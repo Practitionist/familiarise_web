@@ -276,6 +276,8 @@ export function OfferingEditorContainer({
       } else {
         await adapter.save(payload, consultantId, saveCtx);
       }
+      // Re-read before the image commit so a failed image still shows the saved status.
+      void invalidateOfferingQueries(queryClient, consultantId);
       if (!(await commitStagedImage())) return;
 
       toast(
@@ -286,9 +288,6 @@ export function OfferingEditorContainer({
         }),
       );
 
-      // #1527 QA — the list and its status chips re-read on return instead
-      // of showing the pre-publish copy until a reload.
-      void invalidateOfferingQueries(queryClient, consultantId);
       router.push(
         returnHref ?? `/dashboard/consultant/${consultantId}/offerings`,
       );
