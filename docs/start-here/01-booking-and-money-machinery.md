@@ -1331,7 +1331,6 @@ Reconciliation Engine V2 (26 Set-Based Invariant Checks across 4 Groups)
 ```
 
 - **No grace window**: an earnings row and its `booking:<paymentId>` journal always commit in one transaction, and the check reads earnings before journal transactions, so a fresh payment can never look unjournaled.
-- **Chunked Resumable Engine (`#1454`)**: Full sweeps execute in bounded cursor chunks under `RECONCILE_CHUNK_BUDGET_MS` (`12s` soft deadline) so serverless functions never hit 504 gateway timeouts.
 
 ---
 
