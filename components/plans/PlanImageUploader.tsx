@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 import type { TPlanImageType } from "@/lib/supabase";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
 
 /** A cover-image change held in the editor until the offering is saved. */
 export type StagedPlanImage =
@@ -46,10 +47,12 @@ export async function commitPlanImage(
     });
   }
   if (!response.ok) {
-    const result = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
-    throw new Error(result.error || "Couldn't update the cover image");
+    throw new Error(
+      errorMessageFromBody(
+        await response.json().catch(() => null),
+        "Couldn't update the cover image",
+      ),
+    );
   }
 }
 

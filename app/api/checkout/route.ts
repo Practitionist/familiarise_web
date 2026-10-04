@@ -28,19 +28,19 @@ import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { isDeadlock, isExclusionViolation } from "@/lib/db/pg-errors";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "@/lib/booking/booking-rule-error";
 
 /** Contention refusals per reason; their share of checkout attempts is the slot-reservation trigger. */
 function countCheckoutConflict(reason: string): void {
-  Sentry.metrics?.count?.("checkout.conflict", 1, { attributes: { reason } });
+  Sentry.metrics.count("checkout.conflict", 1, { attributes: { reason } });
 }
 
 /** A 1:1 time another buyer holds: the pre-check refusal or the overlap constraint at insert. */
 function isSlotTaken(error: unknown): boolean {
-  return (
-    isExclusionViolation(error) ||
-    (error instanceof Error && error.message === "Time slot is already booked")
-  );
+  return isExclusionViolation(error) || error instanceof SlotTakenError;
 }
 
 export async function POST(req: NextRequest) {
