@@ -171,6 +171,9 @@ function txStub() {
     gstTcsAdjustment: { create: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
     organization: { findUnique: jest.fn().mockResolvedValue(null) },
+    recordingPurchase: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
 }
 
@@ -322,5 +325,39 @@ describe("bookings that genuinely have nothing to reverse", () => {
     // No share was ever credited, so there is nothing to take back. Inventing
     // a DISCOUNT credit here would fabricate a one-sided journal.
     expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+  });
+});
+
+describe("a replay sale's playback", () => {
+  it("survives a partial refund and is revoked once the charge is fully refunded", async () => {
+    const replay = { appointmentId: null, paymentIntent: "order_replay" };
+    payment = paymentRow({
+      ...replay,
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "PENDING" }],
+    });
+    const partialTx = txStub();
+    await applyRefundCascade(partialTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: "rf-0",
+      amountPaise: GROSS / 2,
+      reason: "goodwill",
+    });
+    expect(partialTx.recordingPurchase.updateMany).not.toHaveBeenCalled();
+
+    payment = paymentRow({
+      ...replay,
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "SUCCEEDED" }],
+    });
+    const fullTx = txStub();
+    await applyRefundCascade(fullTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: GROSS / 2,
+      reason: "rest of the charge",
+    });
+    expect(fullTx.recordingPurchase.updateMany).toHaveBeenCalledWith({
+      where: { gatewayOrderId: "order_replay", status: "SUCCEEDED" },
+      data: { status: "REFUNDED" },
+    });
   });
 });

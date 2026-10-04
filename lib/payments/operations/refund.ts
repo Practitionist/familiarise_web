@@ -1000,9 +1000,18 @@ export async function applyRefundCascade(
     });
   }
 
-  // Replay sales are the only appointment-less payments that grant playback.
+  // Replay sales are the only appointment-less payments that grant playback;
+  // only a full refund revokes it, so a partial goodwill refund keeps access.
   if (payment.appointmentId === null) {
-    await revokeReplayEntitlement(tx, payment.paymentIntent);
+    const otherSucceededPaise = payment.refunds
+      .filter(
+        (r) =>
+          r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+      )
+      .reduce((sum, r) => sum + r.amountPaise, 0);
+    if (otherSucceededPaise + input.amountPaise >= payment.amount) {
+      await revokeReplayEntitlement(tx, payment.paymentIntent);
+    }
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {

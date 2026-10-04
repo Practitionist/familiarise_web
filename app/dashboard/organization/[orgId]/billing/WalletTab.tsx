@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
@@ -58,6 +58,14 @@ const walletResponseSchema = z.object({
       reason: z.string(),
       balanceAfter: z.number(),
       notes: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+  // Recent top-ups the gateway has not confirmed yet, newest first.
+  pendingTopUps: z.array(
+    z.object({
+      topUpId: z.string(),
+      amountPaise: z.number(),
       createdAt: z.string(),
     }),
   ),
@@ -259,6 +267,8 @@ export function WalletTab({
     queryKey: ["org-wallet", orgId],
     queryFn: () => fetchWallet(orgId),
   });
+  const walletResponse = data && isWalletResponse(data) ? data : null;
+  const walletError = data && !isWalletResponse(data) ? data : null;
 
   const [showBuy, setShowBuy] = useState(false);
   const [amountMajor, setAmountMajor] = useState("1000");
@@ -266,9 +276,11 @@ export function WalletTab({
   // it lands (see effect below) so the inputs reflect persisted state.
   const [minBalanceMajor, setMinBalanceMajor] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(false);
-  // A paid top-up the gateway has not confirmed yet; cleared once it settles.
-  const [pendingTopUpId, setPendingTopUpId] = useState<string | null>(null);
   const { toast } = useToast();
+  // Server-derived, so the pending banner survives a reload.
+  const pendingTopUpId = walletResponse?.pendingTopUps[0]?.topUpId ?? null;
+  // Settled top-ups already toasted, so the checkout flow and the poll never both announce one.
+  const announcedTopUpIds = useRef(new Set<string>());
 
   const pendingTopUp = useQuery({
     queryKey: ["org-wallet-top-up", orgId, pendingTopUpId],
@@ -276,13 +288,18 @@ export function WalletTab({
     enabled: pendingTopUpId !== null,
     refetchInterval: TOPUP_PENDING_REFETCH_MS,
   });
+  const settledTopUpId = pendingTopUp.data?.topUpId;
   const pendingTopUpStatus = pendingTopUp.data?.status;
   const pendingTopUpAmount = pendingTopUp.data?.amountPaise;
   useEffect(() => {
-    if (pendingTopUpStatus !== "confirmed" && pendingTopUpStatus !== "failed")
+    if (
+      !settledTopUpId ||
+      (pendingTopUpStatus !== "confirmed" && pendingTopUpStatus !== "failed")
+    )
       return;
-    setPendingTopUpId(null);
     queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+    if (announcedTopUpIds.current.has(settledTopUpId)) return;
+    announcedTopUpIds.current.add(settledTopUpId);
     toast(
       pendingTopUpStatus === "confirmed"
         ? {
@@ -295,7 +312,14 @@ export function WalletTab({
             variant: "destructive",
           },
     );
-  }, [pendingTopUpStatus, pendingTopUpAmount, orgId, queryClient, toast]);
+  }, [
+    settledTopUpId,
+    pendingTopUpStatus,
+    pendingTopUpAmount,
+    orgId,
+    queryClient,
+    toast,
+  ]);
 
   const topUpMutation = useMutation({
     mutationFn: async (): Promise<TopUpMutationResult> => {
@@ -367,18 +391,14 @@ export function WalletTab({
       setShowBuy(false);
       queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
       if (data.outcome === "confirmed") {
+        announcedTopUpIds.current.add(data.result.topUpId);
         toast({
           title: "Top-up confirmed",
           description: `₹${(data.confirmed.amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
         });
-      } else if (data.outcome === "pending") {
-        setPendingTopUpId(data.result.topUpId);
       }
     },
   });
-
-  const walletResponse = data && isWalletResponse(data) ? data : null;
-  const walletError = data && !isWalletResponse(data) ? data : null;
 
   // #777 §C — finance can see + edit balance alerts. billing.read includes
   // MANAGER (read-only); the PATCH gate is billing.manage, so only those
@@ -542,8 +562,8 @@ export function WalletTab({
               role="status"
               className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
             >
-              Top-up pending — payment received, waiting for Razorpay to confirm
-              it. Your balance updates here once it does.
+              Top-up pending — waiting for Razorpay to confirm a recent payment.
+              Your balance updates here once it does.
             </div>
           )}
 

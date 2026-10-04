@@ -1,7 +1,7 @@
 import type { Tx } from "@/lib/prisma";
 
 /**
- * A refunded or charged-back replay sale stops entitling playback: every
+ * A fully refunded or charged-back replay sale stops entitling playback: every
  * entitlement read requires SUCCEEDED, so the purchase moves to REFUNDED.
  */
 export async function revokeReplayEntitlement(

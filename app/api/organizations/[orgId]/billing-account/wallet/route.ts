@@ -26,6 +26,9 @@ const LedgerQuerySchema = z.object({
   perPage: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+/** A PENDING top-up younger than this is shown as awaiting gateway confirmation. */
+const PENDING_TOP_UP_WINDOW_MS = 30 * 60 * 1000;
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
@@ -98,25 +101,35 @@ export async function GET(
   // tie, and every query below sorts identically so they agree about which
   // entries are "newer".
   const ledgerOrder = [{ createdAt: "desc" as const }, { id: "desc" as const }];
-  const [total, entries, directionTotals] = await prisma.$transaction([
-    prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),
-    prisma.ledgerEntry.findMany({
-      where: { accountId: walletAccountId },
-      orderBy: ledgerOrder,
-      skip,
-      take: perPage,
-      include: {
-        transaction: {
-          select: { kind: true, paymentId: true, description: true },
+  const [total, entries, directionTotals, pendingTopUps] =
+    await prisma.$transaction([
+      prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),
+      prisma.ledgerEntry.findMany({
+        where: { accountId: walletAccountId },
+        orderBy: ledgerOrder,
+        skip,
+        take: perPage,
+        include: {
+          transaction: {
+            select: { kind: true, paymentId: true, description: true },
+          },
         },
-      },
-    }),
-    prisma.ledgerEntry.groupBy({
-      by: ["direction"],
-      where: { accountId: walletAccountId },
-      _sum: { amountPaise: true },
-    }),
-  ]);
+      }),
+      prisma.ledgerEntry.groupBy({
+        by: ["direction"],
+        where: { accountId: walletAccountId },
+        _sum: { amountPaise: true },
+      }),
+      prisma.walletTopUp.findMany({
+        where: {
+          billingAccountId: ba.id,
+          status: "PENDING",
+          createdAt: { gte: new Date(Date.now() - PENDING_TOP_UP_WINDOW_MS) },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { providerOrderId: true, amountPaise: true, createdAt: true },
+      }),
+    ]);
 
   // The client's ledger table renders a "Balance" column, and nothing has ever
   // produced the field: see withRunningBalance for what that cost. Anchor on
@@ -164,6 +177,11 @@ export async function GET(
       autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
     },
     ledger,
+    pendingTopUps: pendingTopUps.map((t) => ({
+      topUpId: t.providerOrderId,
+      amountPaise: Number(t.amountPaise),
+      createdAt: t.createdAt,
+    })),
     meta: { total, page, perPage },
   });
 }
