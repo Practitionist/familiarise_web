@@ -51,7 +51,8 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
       });
       if (!phase || phase === "OFF") return OFF_STATE;
 
-      await Promise.all([
+      // A failed refresh must not turn an active window into OFF_STATE.
+      await Promise.allSettled([
         redis.pexpire(REDIS_KEYS.PHASE, MAINTENANCE_KEY_TTL_SECONDS * 1000),
         redis.pexpire(REDIS_KEYS.CONFIG, MAINTENANCE_KEY_TTL_SECONDS * 1000),
       ]);

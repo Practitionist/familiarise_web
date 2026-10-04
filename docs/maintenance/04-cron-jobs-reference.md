@@ -8,7 +8,7 @@ Every HTTP cleanup twin is served by the unified dynamic route `app/api/cleanup/
 
 Cron locking is now universal. Before PR 6 of that train, one scheduled job ran with no mutual exclusion of any kind, and nothing in the repository could tell you that. Today every scheduled workflow either takes a `withCronLock` lock or holds a documented bespoke lock, and `__tests__/maintenance/cron-lock-registry.test.ts` re-derives that claim from source on every CI run, so the next unlocked job fails the build instead of quietly double-running for a year.
 
-The same PR gave the fleet a way to notice its own death. Every locked run refreshes a single Redis key, `cron:heartbeat:last`, and `GET /api/health` reports its age under `cron`. If that key goes stale for more than six hours the scheduled fleet has stopped — the one failure the Actions-API heartbeat below cannot report, because it would have stopped too.
+The same PR gave the fleet a way to notice its own death. Every locked run refreshes a single Redis key, `cron:heartbeat:last`, and `GET /api/health` reports its age under `cron`. If that key goes stale for more than 45 minutes the scheduled fleet has stopped — the one failure the Actions-API heartbeat below cannot report, because it would have stopped too.
 
 ## What changed in #1270
 
@@ -285,7 +285,7 @@ The second closes that gap from the other side. Every locked run refreshes `cron
 }
 ```
 
-`stale` turns true once the key is older than six hours, and is `null` before the fleet has ever written one, when Redis is not configured, or when the stored timestamp will not parse — the last of those is a heartbeat we cannot date, which the probe treats exactly like one that was never written rather than guessing at an age. When the probe itself fails, `stale` is the string `"unknown"` and a `probeError: true` field appears alongside it. Those two cases used to be indistinguishable: an unreadable Redis returned exactly the same body as a fleet that had never run, so a monitor watching the field could not tell an outage from a cold start. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
+`stale` turns true once the key is older than 45 minutes, and is `null` before the fleet has ever written one, when Redis is not configured, or when the stored timestamp will not parse — the last of those is a heartbeat we cannot date, which the probe treats exactly like one that was never written rather than guessing at an age. When the probe itself fails, `stale` is the string `"unknown"` and a `probeError: true` field appears alongside it. Those two cases used to be indistinguishable: an unreadable Redis returned exactly the same body as a fleet that had never run, so a monitor watching the field could not tell an outage from a cold start. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
 
 ## Keeping this page true
 

@@ -282,7 +282,9 @@ export async function createConsultantReviews(consultants: UserWithProfiles[]) {
     where: { consultantProfileId: { in: seedProfileIds } },
   });
 
-  const held = await loadHeldSlots(now);
+  const held = (await loadHeldSlots(now)).filter((h) =>
+    seedProfileIds.includes(h.consultantProfileId),
+  );
   const reviews = await createReviews(held);
   const feedback = await createAppointmentFeedback(held);
   console.log(

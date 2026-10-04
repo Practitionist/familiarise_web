@@ -82,7 +82,10 @@ describe("cleanup job schedulers", () => {
       .filter(({ slug, names }) => {
         if (targets.has(slug) || manual.includes(slug)) return false;
         return !names.some((n) =>
-          new RegExp(`(^|[^a-z0-9-])${n}([^a-z0-9-]|$)`).test(workflows),
+          new RegExp(
+            `(id:\\s*${n}\\s*$)|(/${n}\\.ts)|(api/cleanup/${n}\\b)`,
+            "m",
+          ).test(workflows),
         );
       })
       .map((j) => j.slug);

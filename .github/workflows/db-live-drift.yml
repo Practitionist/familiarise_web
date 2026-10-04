@@ -41,7 +41,9 @@ jobs:
         run: npx --no-install prisma generate
 
       - name: Live drift check (read-only)
-        run: node_modules/.bin/tsx scripts/ci/check-db-live-drift.ts
+        run: |
+          node_modules/.bin/tsx scripts/ci/check-db-live-drift.ts
+          node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
 
       - name: Notify on failure
         if: failure()
