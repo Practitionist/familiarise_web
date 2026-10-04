@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -43,6 +44,46 @@ export async function POST(
       await call.updateCallMembers({
         update_members: [{ user_id: userId, role }],
       });
+
+      const appointmentType =
+        access.appointment?.appointmentType ??
+        (access.appointment?.webinar
+          ? "WEBINAR"
+          : access.appointment?.class
+            ? "CLASS"
+            : null);
+      const isOneToMany = isOneToManyAppointmentType(appointmentType);
+
+      if (isOneToMany && access.role === "host") {
+        await call.updateUserPermissions?.({
+          user_id: userId,
+          grant_permissions: [
+            "join-backstage",
+            "update-call-permissions",
+            "mute-users",
+            "pin-call-track",
+            "send-audio",
+            "send-video",
+            "screenshare",
+          ],
+        });
+      } else if (isOneToMany) {
+        await call.updateUserPermissions?.({
+          user_id: userId,
+          grant_permissions: ["join-backstage"],
+          revoke_permissions: [
+            "send-audio",
+            "send-video",
+            "screenshare",
+            "update-call-permissions",
+          ],
+        });
+      } else if (access.role !== "host") {
+        await call.updateUserPermissions?.({
+          user_id: userId,
+          revoke_permissions: ["update-call-permissions"],
+        });
+      }
     });
 
     streamLogger.info("Admitted to meeting", {

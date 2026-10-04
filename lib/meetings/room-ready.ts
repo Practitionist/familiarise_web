@@ -26,15 +26,36 @@ export function isInCallChatAllowed(
   return appointmentType !== "TRIAL";
 }
 
-/** Builds per-call Stream settings_override for session duration limits. */
+/** Builds per-call Stream settings_override for session duration limits and 1-to-Many backstage moderation. */
 export function buildCallSettingsOverride(
-  _appointmentType: AppointmentsType | string,
+  appointmentType: AppointmentTypeInput,
   maxDurationSeconds: number | null,
 ): Record<string, unknown> | undefined {
-  if (maxDurationSeconds !== null) {
-    return {
-      limits: { max_duration_seconds: maxDurationSeconds },
-    };
+  const isOneToMany = isOneToManyAppointmentType(appointmentType);
+  if (!isOneToMany && maxDurationSeconds === null) {
+    return undefined;
   }
-  return undefined;
+
+  return {
+    ...(isOneToMany
+      ? {
+          backstage: {
+            enabled: true,
+            join_ahead_time_seconds: 900,
+          },
+          audio: {
+            mic_default_on: false,
+            default_device: "speaker",
+            access_request_enabled: true,
+          },
+          video: {
+            camera_default_on: false,
+            access_request_enabled: true,
+          },
+        }
+      : {}),
+    ...(maxDurationSeconds !== null
+      ? { limits: { max_duration_seconds: maxDurationSeconds } }
+      : {}),
+  };
 }

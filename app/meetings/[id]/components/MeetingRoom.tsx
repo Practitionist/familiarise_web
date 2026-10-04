@@ -25,6 +25,7 @@ import {
   X,
   Phone,
   MoreVertical,
+  Radio,
 } from "lucide-react";
 
 import {
@@ -60,11 +61,15 @@ import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
 import {
+  isAwaitingHostGoLive,
   isInCallChatAllowed,
   isOneToManyAppointmentType,
 } from "@/lib/meetings/room-ready";
 
 export { isInCallChatAllowed };
+
+const useDefaultTrue = () => true;
+const useDefaultUndefined = () => undefined;
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
@@ -149,14 +154,19 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
+  const callStateHooks = useCallStateHooks();
   const { useCallCallingState, useCallEndedAt, useParticipantCount } =
-    useCallStateHooks();
+    callStateHooks;
+  const useIsCallLive = callStateHooks.useIsCallLive ?? useDefaultTrue;
+  const useCallSettings = callStateHooks.useCallSettings ?? useDefaultUndefined;
 
   const { meetingId, recordingEnabled } = useMeetingRecording(call?.id);
 
   const callingState = useCallCallingState();
   const callEndedAt = useCallEndedAt();
   const participantCount = useParticipantCount();
+  const isCallLive = useIsCallLive();
+  const callSettings = useCallSettings();
 
   // Set Stream disconnection timeout so dropped connections emit participant_left events.
   useEffect(() => {
@@ -167,6 +177,12 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const isHost = info.isHost;
   const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
   const isOneToMany = isOneToManyAppointmentType(info.appointmentType);
+  const isBackstageEnabled = Boolean(callSettings?.backstage?.enabled);
+  const awaitingGoLive = isAwaitingHostGoLive({
+    appointmentType: info.appointmentType,
+    isCallLive,
+    isBackstageEnabled,
+  });
   const defaultIncomingVideoCap: IncomingVideoSetting = isOneToMany
     ? "720p"
     : "480p";
@@ -265,7 +281,25 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
         <div className="relative flex h-full w-full">
           <div className="flex-1 flex items-center justify-center px-6 pt-16 pb-24">
             <div className="w-full h-full max-w-6xl flex items-center justify-center">
-              <CallLayout layout={layout} />
+              {awaitingGoLive && !isHost ? (
+                <div
+                  data-testid="backstage-waiting-room"
+                  className="flex max-w-md flex-col items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/80 px-8 py-10 text-center backdrop-blur-md"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-400">
+                    <Radio className="h-6 w-6 animate-pulse" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-white">
+                    The session will begin shortly
+                  </h2>
+                  <p className="text-sm text-zinc-400">
+                    You are in the waiting room. The stage will appear
+                    automatically as soon as the host goes live.
+                  </p>
+                </div>
+              ) : (
+                <CallLayout layout={layout} />
+              )}
             </div>
           </div>
 
