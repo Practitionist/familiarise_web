@@ -272,8 +272,15 @@ export async function createConsultantReviews(consultants: UserWithProfiles[]) {
   // #1551 — revisions are immutable while their review exists (the
   // review_revision_immutable trigger), so the reviews go first and the
   // Cascade FK takes the revisions with them.
-  await prisma.consultantReview.deleteMany({});
-  await prisma.appointmentFeedback.deleteMany({});
+  const seedProfileIds = consultants.flatMap((c) =>
+    c.consultantProfile ? [c.consultantProfile.id] : [],
+  );
+  await prisma.consultantReview.deleteMany({
+    where: { consultantProfileId: { in: seedProfileIds } },
+  });
+  await prisma.appointmentFeedback.deleteMany({
+    where: { consultantProfileId: { in: seedProfileIds } },
+  });
 
   const held = await loadHeldSlots(now);
   const reviews = await createReviews(held);
