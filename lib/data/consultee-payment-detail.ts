@@ -9,13 +9,16 @@
  * page binds the profile to the session first (requirePersonalProfileAccess).
  */
 
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   deriveBookingPresentation,
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import { receiptHref } from "@/lib/appointments/payment-display";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { toPlain } from "@/lib/data/serialize";
+import { BUYER_REFUND_DETAIL_SELECT } from "@/lib/data/payments-select";
 import {
   paymentRowSelect,
   toRow,
@@ -28,12 +31,30 @@ export interface PaymentTimelineStep {
   tone: "success" | "info" | "critical";
 }
 
+type BuyerRefundRow = Prisma.RefundGetPayload<{
+  select: typeof BUYER_REFUND_DETAIL_SELECT;
+}>;
+
+export type RefundDetail = Pick<
+  BuyerRefundRow,
+  "id" | "currency" | "status" | "createdAt" | "updatedAt"
+> & {
+  amountPaise: number;
+  /** Buyer-facing copy for a FAILED refund; the gateway's raw reason stays server-side. */
+  failureNotice: string | null;
+  /** The gateway's refund id, shown so support can find the refund. */
+  gatewayRefundId: BuyerRefundRow["refundId"];
+};
+
 export interface ConsulteePaymentDetail {
   row: ConsulteePaymentRow;
   moneyState: MoneyState;
   /** Sponsored money shows no amount unless the member paid a co-pay (locked 2026-09-13). */
   showAmount: boolean;
   refundTimeline: PaymentTimelineStep[];
+  refunds: RefundDetail[];
+  /** False while PLATFORM_GSTIN is unset: the PDF routes answer 503 then. */
+  taxDocumentsAvailable: boolean;
   receiptHref: string | null;
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
@@ -41,6 +62,9 @@ export interface ConsulteePaymentDetail {
   legs: { source: string; amountPaise: number }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
 }
+
+export const REFUND_FAILED_NOTICE =
+  "This refund didn't go through. Our team has been alerted and will retry or contact you.";
 
 const TIMELINE_TONE = {
   "refund-completed": "success",
@@ -69,16 +93,10 @@ export async function readConsulteePaymentDetail(args: {
   if (!payment) return null;
 
   const [refunds, creditNotes] = await Promise.all([
-    // The gateway id only decides "requested" vs "processing"; it never
-    // leaves this function.
+    // Reached only after the payer-bound payment read above succeeded.
     prisma.refund.findMany({
       where: { paymentId, deletedAt: null },
-      select: {
-        amountPaise: true,
-        status: true,
-        refundId: true,
-        createdAt: true,
-      },
+      select: BUYER_REFUND_DETAIL_SELECT,
       orderBy: { createdAt: "asc" },
     }),
     payment.consumerInvoice
@@ -106,6 +124,17 @@ export async function readConsulteePaymentDetail(args: {
     moneyState: presentation.moneyState,
     showAmount:
       presentation.moneyState.state !== "SPONSORED" || coPays.length > 0,
+    refunds: refunds.map((r) => ({
+      id: r.id,
+      amountPaise: Number(r.amountPaise),
+      currency: r.currency,
+      status: r.status,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      failureNotice: r.status === "FAILED" ? REFUND_FAILED_NOTICE : null,
+      gatewayRefundId: r.refundId,
+    })),
+    taxDocumentsAvailable: getPlatformSupplier() !== null,
     refundTimeline: presentation.timeline
       .filter((step) => step.kind)
       .map((step) => ({
