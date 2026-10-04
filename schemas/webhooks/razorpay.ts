@@ -47,6 +47,26 @@ const razorpayOrderEntitySchema = z.object({
   created_at: z.number(),
 });
 
+/**
+ * A `payments.fetch` answer: the gateway's word on capture state, amount and
+ * notes. Razorpay sends empty notes as `[]` and may echo numbers, so notes
+ * normalise to a string map.
+ */
+export const razorpayFetchedPaymentSchema = z.object({
+  order_id: z.string(),
+  status: z.string(),
+  amount: z.number().int().positive(),
+  notes: z
+    .union([
+      z.record(
+        z.union([z.string(), z.number(), z.boolean()]).transform(String),
+      ),
+      z.array(z.never()).transform((): Record<string, string> => ({})),
+    ])
+    .nullish()
+    .transform((notes): Record<string, string> => notes ?? {}),
+});
+
 // Event payload schemas
 const paymentEventPayloadSchema = z.object({
   payment: z.object({

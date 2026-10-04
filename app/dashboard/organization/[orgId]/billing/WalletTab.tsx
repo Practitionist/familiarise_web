@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
+import { topUpStatusSchema, type TopUpStatus } from "@/schemas/wallet";
 
 import { useOrgRole } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
@@ -103,26 +104,18 @@ const topUpStatusResponseSchema = z.object({
   topUp: z.object({
     topUpId: z.string(),
     providerPaymentId: z.string().nullable(),
-    // The route maps WalletTopUp.status through three values, not two.
-    // Omitting "failed" meant a rejected top-up threw here instead of being
-    // reported, and the member — who had just been through the gateway — saw a
-    // raw Zod issue dump in the still-open dialog.
-    status: z.enum(["pending", "confirmed", "failed"]),
+    status: topUpStatusSchema,
     amountPaise: z.number(),
     // `balanceAfter` used to be required here and the route does not return it.
     // Nothing read it, so it existed only to reject every response.
     createdAt: z.string(),
   }),
 });
-type TopUpStatus = z.infer<typeof topUpStatusResponseSchema>["topUp"];
+type TopUpSnapshot = z.infer<typeof topUpStatusResponseSchema>["topUp"];
 
 const apiErrorSchema = z.object({
   error: z.string().optional(),
   errorType: z.string().optional(),
-});
-
-const topUpVerifyResponseSchema = z.object({
-  status: z.enum(["pending", "confirmed", "failed"]),
 });
 
 const TOPUP_POLL_INTERVAL_MS = 1000;
@@ -131,13 +124,17 @@ const TOPUP_POLL_MAX_ATTEMPTS = 20;
 const TOPUP_PENDING_REFETCH_MS = 5000;
 
 type TopUpMutationResult =
-  | { result: TopUpInitiateResponse; outcome: "settled"; settled: TopUpStatus }
+  | {
+      result: TopUpInitiateResponse;
+      outcome: "settled";
+      settled: TopUpSnapshot;
+    }
   | { result: TopUpInitiateResponse; outcome: "pending"; settled: null }
   | { result: TopUpInitiateResponse; outcome: "not_paid"; settled: null };
 
 /** The toast for a top-up the gateway has settled, confirmed or failed. */
 function settledTopUpToast(
-  status: "confirmed" | "failed",
+  status: Exclude<TopUpStatus, "pending">,
   amountPaise: number,
 ) {
   return status === "confirmed"
@@ -211,7 +208,7 @@ async function patchBalanceAlerts(
 async function fetchTopUpStatus(
   orgId: string,
   topUpId: string,
-): Promise<TopUpStatus | null> {
+): Promise<TopUpSnapshot | null> {
   const res = await fetch(
     `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}`,
   );
@@ -225,7 +222,8 @@ async function verifyTopUp(
   topUpId: string,
   response: RazorpayCheckoutResponse,
 ): Promise<void> {
-  const res = await fetch(
+  // Best effort: the status poll reads the outcome and the webhook backstops it.
+  await fetch(
     `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}/verify`,
     {
       method: "POST",
@@ -237,15 +235,13 @@ async function verifyTopUp(
       }),
     },
   );
-  // Best effort: a refusal here still leaves the capture webhook to confirm.
-  if (res.ok) topUpVerifyResponseSchema.parse(await res.json());
 }
 
 /** The top-up once confirmed or failed, or null while still pending. */
 async function pollTopUpUntilSettled(
   orgId: string,
   topUpId: string,
-): Promise<TopUpStatus | null> {
+): Promise<TopUpSnapshot | null> {
   for (let attempt = 0; attempt < TOPUP_POLL_MAX_ATTEMPTS; attempt++) {
     const status = await fetchTopUpStatus(orgId, topUpId);
     if (status && status.status !== "pending") return status;

@@ -12,13 +12,15 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import type { WalletTopUpStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { parseMintedOrderId } from "@/lib/api/organizations/wallet";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { verifyRazorpaySignature } from "@/app/api/webhooks/razorpay/signature";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
+import { toTopUpStatus, type TopUpStatus } from "@/schemas/wallet";
 
 const verifyBodySchema = z.object({
   razorpay_order_id: z.string().startsWith("order_"),
@@ -28,19 +30,6 @@ const verifyBodySchema = z.object({
     .length(64)
     .regex(/^[0-9a-fA-F]+$/),
 });
-
-type VerifyStatus = "pending" | "confirmed" | "failed";
-
-function toVerifyStatus(status: WalletTopUpStatus): VerifyStatus {
-  if (status === "CONFIRMED") return "confirmed";
-  if (status === "FAILED") return "failed";
-  return "pending";
-}
-
-/** The order id the top-up POST appended to the row's notes. */
-function mintedOrderId(notes: string | null): string | null {
-  return /razorpay_order=(order_\w+)/.exec(notes ?? "")?.[1] ?? null;
-}
 
 export async function POST(
   req: NextRequest,
@@ -75,14 +64,14 @@ export async function POST(
   if (!topUp) {
     return NextResponse.json({ error: "Top-up not found" }, { status: 404 });
   }
-  if (mintedOrderId(topUp.notes) !== orderId) {
+  if (parseMintedOrderId(topUp.notes) !== orderId) {
     return NextResponse.json(
       { error: "This payment does not belong to this top-up" },
       { status: 400 },
     );
   }
   if (topUp.status !== "PENDING") {
-    return NextResponse.json({ status: toVerifyStatus(topUp.status) });
+    return NextResponse.json({ status: toTopUpStatus(topUp.status) });
   }
 
   const secret = process.env.RAZORPAY_SECRET;
@@ -100,32 +89,30 @@ export async function POST(
   }
 
   // The signature proves the id pair; capture state, amount and notes come
-  // from the gateway. Any doubt answers "pending" and leaves the webhook to it.
+  // from the gateway, and only a positive integer paise amount is credited.
+  // Any doubt answers "pending" and leaves the webhook to it.
   let notes: Record<string, string>;
   let capturedAmountPaise: number;
   try {
     const client = getRazorpayClient();
     if (!client) throw new Error("RAZORPAY_NOT_INITIALIZED");
-    const gatewayPayment = await client.payments.fetch(paymentId);
+    const gatewayPayment = razorpayFetchedPaymentSchema.parse(
+      await client.payments.fetch(paymentId),
+    );
     if (
       gatewayPayment.order_id !== orderId ||
       gatewayPayment.status !== "captured"
     ) {
-      return NextResponse.json({ status: "pending" satisfies VerifyStatus });
+      return NextResponse.json({ status: "pending" satisfies TopUpStatus });
     }
-    notes = Object.fromEntries(
-      Object.entries(gatewayPayment.notes ?? {}).map(([k, v]) => [
-        k,
-        String(v),
-      ]),
-    );
-    capturedAmountPaise = Number(gatewayPayment.amount);
+    notes = gatewayPayment.notes;
+    capturedAmountPaise = gatewayPayment.amount;
   } catch (fetchError) {
     Sentry.captureException(fetchError, {
       tags: { subsystem: "enterprise" },
       contexts: { topUp: { topUpId, orderId } },
     });
-    return NextResponse.json({ status: "pending" satisfies VerifyStatus });
+    return NextResponse.json({ status: "pending" satisfies TopUpStatus });
   }
 
   if (
@@ -151,7 +138,7 @@ export async function POST(
       tags: { subsystem: "enterprise" },
       contexts: { topUp: { topUpId, orderId } },
     });
-    return NextResponse.json({ status: "pending" satisfies VerifyStatus });
+    return NextResponse.json({ status: "pending" satisfies TopUpStatus });
   }
 
   const settled = await prisma.walletTopUp.findFirst({
@@ -159,6 +146,6 @@ export async function POST(
     select: { status: true },
   });
   return NextResponse.json({
-    status: settled ? toVerifyStatus(settled.status) : "pending",
+    status: settled ? toTopUpStatus(settled.status) : "pending",
   });
 }

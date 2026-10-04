@@ -248,6 +248,13 @@ export async function initiateTopUp(
   });
 }
 
+/** The Razorpay order id the top-up POST stamped into the row's notes as `razorpay_order=<id>`. */
+export function parseMintedOrderId(
+  notes: string | null | undefined,
+): string | null {
+  return /razorpay_order=(order_\w+)/.exec(notes ?? "")?.[1] ?? null;
+}
+
 /**
  * Confirm a top-up from a webhook. Idempotent: if the same providerOrderId
  * is confirmed twice, the second call is a no-op.
