@@ -18,6 +18,10 @@ import {
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 import { generateRecordingTitle } from "@/lib/stream/recording-utils";
+import {
+  RecordingTransferService,
+  resolveAppointmentStoragePolicy,
+} from "@/lib/stream/recording-transfer-service";
 import type {
   RecordingRow,
   ConsultantRecordingWithDetails,
@@ -1066,24 +1070,26 @@ export class RecordingService {
           continue;
         }
 
-        // Calculate duration in minutes
+        // Calculate duration in minutes (clamped to >= 0)
         const startDate = new Date(streamRec.start_time);
         const endDate = new Date(streamRec.end_time);
-        const durationInMinutes = Math.round(
-          (endDate.getTime() - startDate.getTime()) / (1000 * 60),
-        );
+        const rawDurationMs = endDate.getTime() - startDate.getTime();
+        const durationInMinutes = Number.isFinite(rawDurationMs)
+          ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))
+          : 0;
 
         // Generate title from appointment info (same logic as handleRecordingReady)
         const appointment = session.occurrence.appointment;
         const title = generateRecordingTitle(appointment, startDate);
 
-        // Calculate Stream URL expiration (2 weeks from now)
-        const streamUrlExpiresAt = new Date();
-        streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+        // Stream retains recordings for 14 days from when the recording ended
+        const expiryAnchorMs = Number.isFinite(endDate.getTime())
+          ? endDate.getTime()
+          : Date.now();
+        const streamUrlExpiresAt = new Date(
+          expiryAnchorMs + 14 * 24 * 60 * 60 * 1000,
+        );
 
-        // #1166 ORG-6 — mirror the parent appointment's org tag, as the webhook
-        // writer does: the personal recordings read now filters on this column,
-        // so a sync that left it null would surface an org session as personal.
         const recording = await prisma.recording.create({
           data: {
             title,
@@ -1101,6 +1107,22 @@ export class RecordingService {
         });
 
         syncedRecordings.push(recording);
+
+        const storagePolicy = resolveAppointmentStoragePolicy(
+          appointment as Parameters<typeof resolveAppointmentStoragePolicy>[0],
+        );
+        if (
+          storagePolicy === "PERMANENT" ||
+          storagePolicy === "SUPABASE_PERMANENT"
+        ) {
+          await RecordingTransferService.queueRecordingTransfer(
+            recording.id,
+          ).catch((err) =>
+            streamLogger.error("Synced recording transfer kick threw", err, {
+              recordingId: recording.id,
+            }),
+          );
+        }
 
         streamLogger.info("Recording synced successfully", {
           recordingId: recording.id,
