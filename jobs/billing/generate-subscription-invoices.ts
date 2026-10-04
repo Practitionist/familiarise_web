@@ -42,6 +42,7 @@ import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { logMoneyFlags } from "@/lib/feature-flags";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
@@ -420,7 +421,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("generate-subscription-invoices", () =>
-    main().finally(() => prisma.$disconnect()),
-  );
+  runJob("generate-subscription-invoices", () => {
+    logMoneyFlags("generate-subscription-invoices");
+    return main().finally(() => prisma.$disconnect());
+  });
 }

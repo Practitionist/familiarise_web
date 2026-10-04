@@ -41,6 +41,7 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { logMoneyFlags } from "@/lib/feature-flags";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -387,5 +388,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("dunning", () => main().finally(() => prisma.$disconnect()));
+  runJob("dunning", () => {
+    logMoneyFlags("dunning");
+    return main().finally(() => prisma.$disconnect());
+  });
 }

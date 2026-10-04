@@ -24,6 +24,7 @@ import { ENABLE_LIVE_PAYOUTS } from "../../lib/feature-flags";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
+import { logMoneyFlags } from "../../lib/feature-flags";
 
 interface JobSummary {
   processed: number;
@@ -197,5 +198,8 @@ async function main(): Promise<void> {
 
 // Only run when invoked directly, so the verdict helper can be unit-tested.
 if (require.main === module) {
-  runJob("process-payouts", main);
+  runJob("process-payouts", () => {
+    logMoneyFlags("process-payouts");
+    return main();
+  });
 }

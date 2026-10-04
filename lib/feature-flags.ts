@@ -30,3 +30,13 @@ export const ENABLE_SAVED_CARDS = process.env.ENABLE_SAVED_CARDS === "true";
 
 /** Bank EMI at checkout (#1780 row 1). */
 export const ENABLE_CHECKOUT_EMI = process.env.ENABLE_CHECKOUT_EMI === "true";
+
+/** One log line with the money flags a job sees, so a missing Actions variable is visible. */
+export function logMoneyFlags(job: string): void {
+  console.log(
+    `[${job}] money flags: ENABLE_LIVE_PAYOUTS=${process.env.ENABLE_LIVE_PAYOUTS ?? "unset"} ` +
+      `ENABLE_DUNNING_SUSPEND=${process.env.ENABLE_DUNNING_SUSPEND ?? "unset"} ` +
+      `RATE_CARD_SCOPED_RESOLUTION=${process.env.RATE_CARD_SCOPED_RESOLUTION ?? "unset"} ` +
+      `TDS_ENGINE=${process.env.TDS_ENGINE ?? "unset"}`,
+  );
+}
