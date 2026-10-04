@@ -115,6 +115,7 @@ import {
   type PendingOverageNotification,
 } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -225,6 +226,9 @@ const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
   [AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED],
 );
 
+const REFERRAL_CREDITS_DROPPED_NOTICE =
+  "Referral credits can't be used on organisation-funded bookings, so none were spent.";
+
 /** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
 const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
@@ -246,6 +250,7 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "CONSULTANT_NOT_ON_PANEL",
   "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
   "CREDIT_SHORTFALL",
+  "DISCOUNT_EXHAUSTED",
   "SUBSCRIPTION_ALREADY_ACTIVE",
   "ALREADY_RENEWED",
   "INVALID_RENEWAL_SOURCE",
@@ -1141,7 +1146,10 @@ export async function calculateAmountAndValidate(
           discount.maxUses !== null &&
           discount.currentUses >= discount.maxUses
         ) {
-          throw new Error("Discount code has reached maximum uses");
+          throw new DiscountExhaustedError(
+            discount.currentUses,
+            discount.maxUses,
+          );
         }
 
         discountCodeId = discount.id;
@@ -3591,6 +3599,8 @@ export async function handleCheckout(
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
   // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
   let creditEffectiveLimit: number | null = null;
+  // Set when org funding strips the buyer's referral credits; the UI says so.
+  let referralCreditsDropped = false;
 
   if (validatedData.organizationId) {
     const org = await prisma.organization.findUnique({
@@ -3706,6 +3716,7 @@ export async function handleCheckout(
     // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
       validatedData = { ...validatedData, useReferralCredits: false };
+      referralCreditsDropped = true;
     }
 
     // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
@@ -4766,8 +4777,9 @@ export async function handleCheckout(
                 discountForIncrement.maxUses !== null &&
                 discountForIncrement.currentUses >= discountForIncrement.maxUses
               ) {
-                throw new Error(
-                  "Discount code has reached maximum uses — please remove the code and try again.",
+                throw new DiscountExhaustedError(
+                  discountForIncrement.currentUses,
+                  discountForIncrement.maxUses,
                 );
               }
               await tx.discountCode.update({
@@ -5047,8 +5059,9 @@ export async function handleCheckout(
           : isMockPayment
             ? "Mock payment completed and appointment created successfully"
             : isOrgSponsoredPayment
-              ? "Payment completed via organization funding. Appointment booked successfully."
+              ? `Payment completed via organization funding. Appointment booked successfully.${referralCreditsDropped ? ` ${REFERRAL_CREDITS_DROPPED_NOTICE}` : ""}`
               : "Payment intent created. Complete payment to book appointment.",
+        referralCreditsDropped,
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,

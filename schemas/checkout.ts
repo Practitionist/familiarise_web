@@ -287,6 +287,7 @@ export const checkoutSuccessResponseSchema = z.object({
   skipPayment: z.boolean().optional(),
   isMockPayment: z.boolean().optional(), // Mock payment flag
   isZeroAmountPayment: z.boolean().optional(), // Credits fully covered payment
+  referralCreditsDropped: z.boolean().optional(), // Org funding refused the buyer's credits
   // Production flow fields
   paymentIntent: z
     .object({

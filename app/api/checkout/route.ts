@@ -29,6 +29,7 @@ import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { isDeadlock } from "@/lib/db/pg-errors";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -353,6 +354,13 @@ export async function POST(req: NextRequest) {
         errorType: classified.errorType,
         // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
         ...(error instanceof BookingRuleError ? { code: error.code } : {}),
+        ...(error instanceof DiscountExhaustedError
+          ? {
+              code: error.code,
+              currentUses: error.currentUses,
+              maxUses: error.maxUses,
+            }
+          : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         ...(errorId ? { errorId } : {}),
         timestamp: new Date().toISOString(),

@@ -73,6 +73,7 @@ export const ErrorTypes = {
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
+  DISCOUNT_EXHAUSTED: "DISCOUNT_EXHAUSTED_ERROR",
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
@@ -487,6 +488,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     httpStatus: 400,
     userMessage:
       "This discount code is for a different currency and cannot be applied to this plan.",
+  },
+  {
+    code: "DISCOUNT_EXHAUSTED",
+    errorType: ErrorTypes.DISCOUNT_EXHAUSTED,
+    httpStatus: 409,
+    userMessage:
+      "This discount code has been fully redeemed. Remove it and try again — your card was not charged.",
   },
   // #1775 / #1780 — BookingRuleError codes; the thrown sentence is the copy.
   ...(
