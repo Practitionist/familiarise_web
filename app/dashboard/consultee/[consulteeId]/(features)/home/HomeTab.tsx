@@ -83,12 +83,16 @@ import {
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus; trials carry TrialStatus.
-const processedEventBadge = (event: ProcessedEvent) =>
-  event.type === "webinar" || event.type === "class"
-    ? eventStatusBadge(event.status?.toUpperCase())
-    : event.type === "trial"
-      ? eventUnionStatusBadge(event.status?.toUpperCase())
-      : appointmentStatusBadge(event.status?.toUpperCase());
+const processedEventBadge = (event: ProcessedEvent) => {
+  const normalizedStatus = event.status?.toUpperCase();
+  if (event.type === "webinar" || event.type === "class") {
+    return eventStatusBadge(normalizedStatus);
+  }
+  if (event.type === "trial") {
+    return eventUnionStatusBadge(normalizedStatus);
+  }
+  return appointmentStatusBadge(normalizedStatus);
+};
 
 const NEXT_UP_LIMIT = 3;
 const RATE_PROMPT_LIMIT = 2;

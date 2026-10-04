@@ -1759,33 +1759,17 @@ async function completeConsultantPayoutInTx(
       where: { payoutId: matched.id, isReversal: false },
     });
 
-    const effectiveTdsDeducted =
-      shortfallPaise > 0 && matched.amount > 0
-        ? Math.max(
-            0,
-            matched.tdsDeducted -
-              Math.floor(
-                (matched.tdsDeducted * shortfallPaise) / matched.amount,
-              ),
-          )
-        : matched.tdsDeducted;
-
-    if (effectiveTdsDeducted > 0) {
-      await recordTDSDeduction({
-        consultantProfileId: matched.consultantProfileId,
-        financialYear,
-        quarter,
-        tdsDeducted: effectiveTdsDeducted,
-        tdsRateBps: matched.tdsRateAppliedBps,
-        cumulativeAmountCredited: Math.max(
-          0,
-          cumulativeCreditedPayments - shortfallPaise,
-        ),
-        payoutId: matched.id,
-        tdsSection: "194O",
-        db: tx,
-      });
-    }
+    await recordTDSDeduction({
+      consultantProfileId: matched.consultantProfileId,
+      financialYear,
+      quarter,
+      tdsDeducted: matched.tdsDeducted,
+      tdsRateBps: matched.tdsRateAppliedBps,
+      cumulativeAmountCredited: cumulativeCreditedPayments,
+      payoutId: matched.id,
+      tdsSection: "194O",
+      db: tx,
+    });
   }
 }
 

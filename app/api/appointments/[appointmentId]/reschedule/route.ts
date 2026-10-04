@@ -422,14 +422,16 @@ export async function POST(
             const MAX_CONSULTEE_RESCHEDULES = 2;
             const historicalRescheduledOccurrences =
               appointment.occurrences.filter(
-                (o) =>
-                  (o as { deletedAt?: Date | null }).deletedAt != null ||
-                  o.completionStatus === "RESCHEDULED",
+                (o) => o.completionStatus === "RESCHEDULED",
               ).length;
-            const targetSessionCount = Math.max(1, slotsToReschedule.length);
+            const baselineSessionCount = Math.max(
+              1,
+              slotsToReschedule.length,
+              liveOccurrences.length,
+            );
             if (
               historicalRescheduledOccurrences >=
-              MAX_CONSULTEE_RESCHEDULES * targetSessionCount
+              MAX_CONSULTEE_RESCHEDULES * baselineSessionCount
             ) {
               throw Object.assign(
                 new Error(

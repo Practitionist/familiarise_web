@@ -800,7 +800,7 @@ export async function POST(
             refund = {
               amountRefundedPaise: r.amountRefundedPaise,
               refundPct,
-              status: "REFUNDED",
+              status: r.status === "PENDING" ? "PENDING" : "REFUNDED",
               rail: r.rail,
             };
           } catch (refundErr) {
@@ -862,10 +862,21 @@ export async function POST(
             refund.status === "POLICY_ZERO" ||
             refund.status === "NOTHING_REFUNDABLE")
         ) {
-          await stampTranchesOnCancel(prisma, {
-            paymentId: paidPayment.id,
-            now: result.cancelledAt,
-          });
+          try {
+            await stampTranchesOnCancel(prisma, {
+              paymentId: paidPayment.id,
+              now: result.cancelledAt,
+            });
+          } catch (stampErr) {
+            reportRefundFailure(stampErr, "appointments");
+            await recordSystemErrorSafe({
+              organizationId: appointment.organizationId ?? null,
+              category: "PAYMENT",
+              summary: `Failed to stamp subscription tranches after cancel for payment ${paidPayment.id}`,
+              err: stampErr,
+              context: { appointmentId, paymentId: paidPayment.id },
+            });
+          }
         }
       }
     }

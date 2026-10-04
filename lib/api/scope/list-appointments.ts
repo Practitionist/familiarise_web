@@ -71,6 +71,37 @@ export interface ListAppointmentsResult {
  *     too, where the member's own card paid.
  *   - `all`: no scope filter; admin-only.
  */
+function deliveredGroupEventArms(uid: string): Prisma.AppointmentWhereInput[] {
+  return [
+    { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+    {
+      webinar: {
+        webinarPlan: {
+          collaborators: {
+            some: {
+              consultantProfile: { userId: uid },
+              status: "ACCEPTED",
+            },
+          },
+        },
+      },
+    },
+    { class: { classPlan: { consultantProfile: { userId: uid } } } },
+    {
+      class: {
+        classPlan: {
+          collaborators: {
+            some: {
+              consultantProfile: { userId: uid },
+              status: "ACCEPTED",
+            },
+          },
+        },
+      },
+    },
+  ];
+}
+
 export function buildWhere(
   params: ListAppointmentsParams,
 ): Prisma.AppointmentWhereInput {
@@ -112,32 +143,7 @@ export function buildWhere(
           },
         },
         { trial: { consultantProfile: { userId: uid } } },
-        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
-        {
-          webinar: {
-            webinarPlan: {
-              collaborators: {
-                some: {
-                  consultantProfile: { userId: uid },
-                  status: "ACCEPTED",
-                },
-              },
-            },
-          },
-        },
-        { class: { classPlan: { consultantProfile: { userId: uid } } } },
-        {
-          class: {
-            classPlan: {
-              collaborators: {
-                some: {
-                  consultantProfile: { userId: uid },
-                  status: "ACCEPTED",
-                },
-              },
-            },
-          },
-        },
+        ...deliveredGroupEventArms(uid),
       ],
     };
   }
@@ -178,32 +184,7 @@ export function buildWhere(
             subscriptionPlan: { consultantProfile: { userId: uid } },
           },
         },
-        { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
-        {
-          webinar: {
-            webinarPlan: {
-              collaborators: {
-                some: {
-                  consultantProfile: { userId: uid },
-                  status: "ACCEPTED",
-                },
-              },
-            },
-          },
-        },
-        { class: { classPlan: { consultantProfile: { userId: uid } } } },
-        {
-          class: {
-            classPlan: {
-              collaborators: {
-                some: {
-                  consultantProfile: { userId: uid },
-                  status: "ACCEPTED",
-                },
-              },
-            },
-          },
-        },
+        ...deliveredGroupEventArms(uid),
       ],
     };
   }

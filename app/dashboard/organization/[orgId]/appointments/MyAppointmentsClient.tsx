@@ -40,16 +40,18 @@ import { useNowTick } from "@/hooks/use-now-tick";
 // Slot shape as delivered by getOrgMemberAppointments (see the include in
 // lib/api/scope/list-appointments.ts). Dates survive the RSC boundary as
 // Date instances (toPlain preserves them); typed loosely so either survives.
+type SlotTimestamp = string | Date;
+
 export interface MyAppointmentSlot {
   id: string;
-  startsAt: string | Date;
-  endsAt: string | Date | null;
+  startsAt: SlotTimestamp;
+  endsAt: SlotTimestamp | null;
   isTentative: boolean;
   completionStatus: string | null;
-  deletedAt?: string | Date | null;
+  deletedAt?: SlotTimestamp | null;
   meeting?: {
     id: string;
-    endedAt: string | Date | null;
+    endedAt: SlotTimestamp | null;
     endedReason: string | null;
   } | null;
 }
@@ -341,7 +343,7 @@ export function MyAppointmentsClient({
                     Details
                   </Link>
                 </Button>
-                {joinable ? (
+                {joinable && (
                   <Button
                     size="sm"
                     disabled={busy}
@@ -354,11 +356,12 @@ export function MyAppointmentsClient({
                     )}
                     Join
                   </Button>
-                ) : hasUpcomingCountdown ? (
+                )}
+                {!joinable && hasUpcomingCountdown && (
                   <span className="text-xs text-muted-foreground">
                     Join opens near the start time
                   </span>
-                ) : null}
+                )}
               </div>
             </li>
           );

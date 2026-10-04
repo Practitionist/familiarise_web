@@ -24,6 +24,7 @@ import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
   conflictDetailsBySlot,
   describeConflict,
+  findTentativeOccurrenceIdsForEvent,
 } from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -104,22 +105,9 @@ export async function POST(
       const slotDates = body.slots.map((slot) => new Date(slot));
 
       // Exclude this webinar's own tentative occurrences during re-allocation
-      const tentativeAppointments =
-        (await prisma.appointment?.findMany?.({
-          where: {
-            webinarId,
-            occurrences: { some: { isTentative: true, deletedAt: null } },
-          },
-          select: {
-            id: true,
-            occurrences: {
-              where: { isTentative: true, deletedAt: null },
-              select: { id: true },
-            },
-          },
-        })) ?? [];
-      const excludeOccurrenceIds = tentativeAppointments.flatMap((a) =>
-        (a.occurrences ?? []).map((o) => o.id),
+      const excludeOccurrenceIds = await findTentativeOccurrenceIdsForEvent(
+        prisma,
+        { webinarId },
       );
 
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)

@@ -1328,22 +1328,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
 
     const orgTdsRateBps = payout.tdsRateAppliedBps;
     const hasOrgTdsRate = orgTdsRateBps !== null && orgTdsRateBps > 0;
-    const shortfallPaise = completionShortfall?.shortfallPaise ?? 0;
-    const effectiveOrgTds =
-      shortfallPaise > 0 && payout.netPayoutPaise > 0
-        ? Math.max(
-            0,
-            orgTds -
-              Math.floor((orgTds * shortfallPaise) / payout.netPayoutPaise),
-          )
-        : orgTds;
-    if (effectiveOrgTds > 0 && hasOrgTdsRate) {
+    if (orgTds > 0 && hasOrgTdsRate) {
       await recordOrgPayoutCompletionTdsInTx(
         tx,
         payout,
-        effectiveOrgTds,
+        orgTds,
         orgTdsRateBps,
-        shortfallPaise,
       );
     }
 

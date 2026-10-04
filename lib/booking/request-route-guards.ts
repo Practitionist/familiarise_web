@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import type { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, PaymentStatus } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
+import { forbiddenResponse } from "@/lib/auth-helpers";
+import { stageNoticesForAppointmentHolds } from "./backup-interest";
+import { transitionParticipant } from "./participants";
+import { declineOpenReschedules } from "./reschedule-decline";
+import { transitionOccurrenceCompletion } from "./transitions";
 
 import {
   EVENT_ID_INVALID_MESSAGE,
@@ -57,6 +63,155 @@ export function refuseApprovalOnListRoute(
     { error: USE_DETAIL_APPROVAL_MESSAGE, code: "USE_DETAIL_APPROVAL" },
     { status: 409 },
   );
+}
+
+/**
+ * Shared guard for `PATCH /api/bookings/{consultations,subscriptions}` list
+ * endpoints: only `REJECTED` (by the consultant or privileged actor) is legal.
+ */
+export function validateListRequestStatusPatch(
+  status: AppointmentStatus,
+  isConsultant: boolean,
+  isPrivilegedActor: boolean,
+): NextResponse | null {
+  const approvalRefusal = refuseApprovalOnListRoute(status);
+  if (approvalRefusal) return approvalRefusal;
+
+  if (
+    status === AppointmentStatus.REJECTED &&
+    !isConsultant &&
+    !isPrivilegedActor
+  ) {
+    return forbiddenResponse(
+      "Only the consultant can decline a request. Cancel it instead.",
+    );
+  }
+
+  if (status === AppointmentStatus.CANCELLED) {
+    return NextResponse.json(
+      {
+        error:
+          "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
+        code: "USE_CANCEL_ENDPOINT",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (status !== AppointmentStatus.REJECTED) {
+    return NextResponse.json(
+      {
+        error:
+          "Only REJECTED status transitions are permitted on this endpoint.",
+        code: "UNSUPPORTED_STATUS_PATCH",
+      },
+      { status: 400 },
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Shared guard for `PATCH /api/bookings/{consultations,subscriptions}/[id]`
+ * detail endpoints: only `APPROVED` and `REJECTED` (by the consultant or
+ * privileged actor, and never self-approved) are legal.
+ */
+export function validateDetailRequestStatusPatch(
+  status: AppointmentStatus,
+  isConsultant: boolean,
+  isPrivilegedActor: boolean,
+  isSelfApproval: boolean,
+): NextResponse | null {
+  if (
+    APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
+    isSelfApproval &&
+    !isPrivilegedActor
+  ) {
+    return NextResponse.json(
+      { error: "You cannot approve your own request", code: "SELF_APPROVAL" },
+      { status: 403 },
+    );
+  }
+
+  if (
+    status === AppointmentStatus.REJECTED &&
+    !isConsultant &&
+    !isPrivilegedActor
+  ) {
+    return forbiddenResponse(
+      "Only the consultant can decline a request. Cancel it instead.",
+    );
+  }
+
+  if (
+    status === AppointmentStatus.APPROVED &&
+    !isConsultant &&
+    !isPrivilegedActor
+  ) {
+    return forbiddenResponse("Only the consultant can approve a request.");
+  }
+
+  if (status === AppointmentStatus.CANCELLED) {
+    return NextResponse.json(
+      {
+        error:
+          "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
+        code: "USE_CANCEL_ENDPOINT",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (
+    status !== AppointmentStatus.APPROVED &&
+    status !== AppointmentStatus.REJECTED
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only APPROVED and REJECTED status transitions are permitted on this endpoint.",
+        code: "UNSUPPORTED_STATUS_PATCH",
+      },
+      { status: 400 },
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Release any tentative appointment occurrences, participant seats, open
+ * reschedule proposals, and pending payment rows held by a declined request.
+ */
+export async function releaseDeclinedRequestHold(
+  tx: Tx,
+  where: { consultationId: string } | { subscriptionId: string },
+  actorUserId?: string | null,
+): Promise<void> {
+  const held = await tx.appointment?.findFirst?.({
+    where: { ...where, deletedAt: null },
+    select: { id: true },
+  });
+  if (!held) return;
+  await stageNoticesForAppointmentHolds(tx, held.id);
+  await transitionOccurrenceCompletion(tx, {
+    actorUserId: actorUserId ?? null,
+    reason: "Request declined by consultant",
+    where: { appointmentId: held.id, deletedAt: null },
+    to: "CANCELLED",
+    data: { deletedAt: new Date(), isTentative: false },
+    allowZero: true,
+  });
+  await transitionParticipant(tx, { appointmentId: held.id }, "CANCELLED");
+  await declineOpenReschedules(tx, held.id, {
+    actorUserId: actorUserId ?? null,
+    reason: "Request declined by consultant",
+  });
+  await tx.payment?.updateMany?.({
+    where: { appointmentId: held.id, paymentStatus: PaymentStatus.PENDING },
+    data: { paymentStatus: PaymentStatus.EXPIRED },
+  });
 }
 
 /** What the two PUT routes read off the plan a `planId` names. */

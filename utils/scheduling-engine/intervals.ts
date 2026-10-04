@@ -238,6 +238,15 @@ export function hasTimeOverlap(
  * happens downstream in `splitSlotsByDay` and `groupSlotsByDate`, which is why
  * the timezone argument is gone.
  */
+function isValidWeeklySlotRow(slot: WeeklySlot | null | undefined): boolean {
+  return Boolean(
+    slot?.id &&
+      slot.startDay &&
+      typeof slot.startTimeUtc === "number" &&
+      typeof slot.endTimeUtc === "number",
+  );
+}
+
 export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
@@ -245,7 +254,6 @@ export function processWeeklySlots(
 ): AvailabilityInterval[] {
   const processedSlots: AvailabilityInterval[] = [];
 
-  // Defensive: Validate input parameters
   if (!Array.isArray(weeklySlots)) {
     console.warn("⚠️ processWeeklySlots: weeklySlots is not an array");
     return processedSlots;
@@ -267,14 +275,7 @@ export function processWeeklySlots(
   }
 
   for (const slot of weeklySlots) {
-    // Defensive: Skip slots with invalid data
-    if (
-      !slot ||
-      !slot.id ||
-      !slot.startDay ||
-      typeof slot.startTimeUtc !== "number" ||
-      typeof slot.endTimeUtc !== "number"
-    ) {
+    if (!isValidWeeklySlotRow(slot)) {
       console.warn(
         `⚠️ processWeeklySlots: skipping slot with missing required fields`,
       );
@@ -286,9 +287,12 @@ export function processWeeklySlots(
       startDate,
       endDate,
     )) {
-      const clippedStart =
-        occurrence.start < startDate ? startDate : occurrence.start;
-      const clippedEnd = occurrence.end > endDate ? endDate : occurrence.end;
+      const clippedStart = new Date(
+        Math.max(occurrence.start.getTime(), startDate.getTime()),
+      );
+      const clippedEnd = new Date(
+        Math.min(occurrence.end.getTime(), endDate.getTime()),
+      );
       if (clippedStart < clippedEnd) {
         processedSlots.push({
           start: clippedStart,

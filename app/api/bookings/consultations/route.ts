@@ -1,23 +1,18 @@
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   PROFILE_WITH_USER_SELECT,
   APPOINTMENT_LIST_SELECT,
 } from "@/lib/booking/list-selects";
-import { Prisma, AppointmentStatus, PaymentStatus } from "@prisma/client";
+import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  transitionConsultationRequest,
-  transitionOccurrenceCompletion,
-} from "@/lib/booking/transitions";
-import { transitionParticipant } from "@/lib/booking/participants";
-import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
 import {
   parseRequestListQueryOrRespond,
-  refuseApprovalOnListRoute,
+  releaseDeclinedRequestHold,
+  validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -280,46 +275,12 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // #1704 — approval lives on the [id] route only, for everyone.
-    const approvalRefusal = refuseApprovalOnListRoute(status);
-    if (approvalRefusal) return approvalRefusal;
-
-    // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
-    // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee
-    // could reject their own PAID direct-checkout booking and ride the
-    // consultant-initiated 100% refund tier on demand. Mirrors the hardened
-    // [consultationId] PATCH route.
-    if (
-      status === AppointmentStatus.REJECTED &&
-      !isConsultant &&
-      !isPrivileged(session.user.role)
-    ) {
-      return forbiddenResponse(
-        "Only the consultant can decline a request. Cancel it instead.",
-      );
-    }
-
-    if (status === AppointmentStatus.CANCELLED) {
-      return NextResponse.json(
-        {
-          error:
-            "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
-          code: "USE_CANCEL_ENDPOINT",
-        },
-        { status: 400 },
-      );
-    }
-
-    if (status !== AppointmentStatus.REJECTED) {
-      return NextResponse.json(
-        {
-          error:
-            "Only REJECTED status transitions are permitted on this endpoint.",
-          code: "UNSUPPORTED_STATUS_PATCH",
-        },
-        { status: 400 },
-      );
-    }
+    const patchError = validateListRequestStatusPatch(
+      status,
+      isConsultant,
+      isPrivileged(session.user.role),
+    );
+    if (patchError) return patchError;
 
     // #836 — allowed-from guard rides the WHERE; updateMany returns no row,
     // so re-read for the heavy include.
@@ -329,47 +290,7 @@ export async function PATCH(request: NextRequest) {
         to: status,
         data: { pendingPaymentUrl: null },
       });
-      if (typeof tx.appointment?.findFirst === "function") {
-        const held = await tx.appointment.findFirst({
-          where: { consultationId: id, deletedAt: null },
-          select: { id: true },
-        });
-        if (held) {
-          await stageNoticesForAppointmentHolds(tx, held.id);
-          if (typeof tx.appointmentOccurrence?.updateMany === "function") {
-            await transitionOccurrenceCompletion(tx, {
-              actorUserId: session.user.id,
-              reason: "Request declined by consultant",
-              where: { appointmentId: held.id, deletedAt: null },
-              to: "CANCELLED",
-              data: { deletedAt: new Date(), isTentative: false },
-              allowZero: true,
-            });
-          }
-          if (typeof tx.appointmentParticipant?.findMany === "function") {
-            await transitionParticipant(
-              tx,
-              { appointmentId: held.id },
-              "CANCELLED",
-            );
-          }
-          if (typeof tx.rescheduleRequest?.findMany === "function") {
-            await declineOpenReschedules(tx, held.id, {
-              actorUserId: session.user.id,
-              reason: "Request declined by consultant",
-            });
-          }
-          if (typeof tx.payment?.updateMany === "function") {
-            await tx.payment.updateMany({
-              where: {
-                appointmentId: held.id,
-                paymentStatus: PaymentStatus.PENDING,
-              },
-              data: { paymentStatus: PaymentStatus.EXPIRED },
-            });
-          }
-        }
-      }
+      await releaseDeclinedRequestHold(tx, { consultationId: id }, session.user.id);
     });
 
     // #1004 — a rejected request that was already paid has to give the money

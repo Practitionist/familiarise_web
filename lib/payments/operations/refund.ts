@@ -70,9 +70,13 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
   postPayoutClawback,
-  postConsultantPayoutClawback,
 } from "./reversal-engine";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
@@ -967,6 +971,12 @@ export async function applyRefundCascade(
       },
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
+      appointment: {
+        select: {
+          subscription: { select: { status: true } },
+          trial: { select: { status: true } },
+        },
+      },
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
       refunds: { select: { id: true, amountPaise: true, status: true } },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
@@ -1269,14 +1279,7 @@ export async function applyRefundCascade(
   // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
   const appliedByEarning = new Map<string, number>();
   let clawbackInitiated = false;
-  const consultantClawbacks = new Map<
-    string,
-    {
-      consultantProfileId: string;
-      netAmountPaise: number;
-      clawbackInitiatedAt: Date | null;
-    }
-  >();
+  const consultantClawbacks = new Map<string, PendingConsultantClawback>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1313,9 +1316,8 @@ export async function applyRefundCascade(
     //
     // Skipped when the CAS applied 0. The basis stays booking-level
     // (`input.amountPaise / payment.amount`): 26Q is filed per payout.
-    let tdsRev: Awaited<ReturnType<typeof recordTdsReversal>> = null;
     if (earnings.payoutId && reversal.reversedPaise > 0) {
-      tdsRev = await recordTdsReversal(tx, {
+      await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
@@ -1325,74 +1327,36 @@ export async function applyRefundCascade(
       });
     }
 
-    if (
-      earnings.status === "PAID" &&
-      !payment.organizationId &&
-      earnings.payoutId &&
-      earnings.payout?.status === "COMPLETED" &&
-      reversal.reversedPaise > 0
-    ) {
-      const payoutGross = Number(earnings.payout.amount ?? 0);
-      const payoutTds = Number(earnings.payout.tdsDeducted ?? 0);
-      const tdsFromRecord =
-        tdsRev && typeof tdsRev.tdsDeducted === "number"
-          ? Math.abs(Number(tdsRev.tdsDeducted))
-          : null;
-      const netClawbackPaise =
-        tdsFromRecord !== null && tdsFromRecord > 0
-          ? Math.max(0, reversal.reversedPaise - tdsFromRecord)
-          : payoutGross > 0 && payoutTds > 0
-            ? Math.floor(
-                reversal.reversedPaise *
-                  Math.max(0, 1 - payoutTds / payoutGross),
-              )
-            : reversal.reversedPaise;
-      const prev = consultantClawbacks.get(earnings.payoutId);
-      consultantClawbacks.set(earnings.payoutId, {
-        consultantProfileId: earnings.consultantProfileId,
-        netAmountPaise: (prev?.netAmountPaise ?? 0) + netClawbackPaise,
-        clawbackInitiatedAt:
-          prev?.clawbackInitiatedAt ??
-          earnings.payout.clawbackInitiatedAt ??
-          null,
-      });
-    }
+    accumulatePaidConsultantClawback(
+      consultantClawbacks,
+      earnings,
+      reversal.reversedPaise,
+      { isOrgPayment: Boolean(payment.organizationId) },
+    );
   }
 
-  for (const [consultantPayoutId, claw] of consultantClawbacks) {
-    if (claw.netAmountPaise <= 0) continue;
-    if (typeof tx.consultantPayout?.update === "function") {
-      await tx.consultantPayout.update({
-        where: { id: consultantPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: claw.netAmountPaise },
-          clawbackInitiatedAt: claw.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-    }
-    await postConsultantPayoutClawback(tx, {
+  if (
+    await applyPaidConsultantClawbacks(tx, consultantClawbacks, {
       refundId: input.refundId,
-      consultantPayoutId,
-      consultantProfileId: claw.consultantProfileId,
-      amountPaise: claw.netAmountPaise,
       reason: input.reason,
-    });
-    await recordSystemEventSafe({
-      db: tx,
-      organizationId: null,
-      category: "PAYOUT",
-      severity: "WARN",
-      message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
-      context: {
-        paymentId: payment.id,
-        refundId: input.refundId,
-        consultantPayoutId,
-        consultantProfileId: claw.consultantProfileId,
-        clawbackPaise: claw.netAmountPaise,
+      onApplied: async (consultantPayoutId, claw) => {
+        await recordSystemEventSafe({
+          db: tx,
+          organizationId: null,
+          category: "PAYOUT",
+          severity: "WARN",
+          message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
+          context: {
+            paymentId: payment.id,
+            refundId: input.refundId,
+            consultantPayoutId,
+            consultantProfileId: claw.consultantProfileId,
+            clawbackPaise: claw.netAmountPaise,
+          },
+        });
       },
-    });
+    })
+  ) {
     clawbackInitiated = true;
   }
 
@@ -1849,6 +1813,22 @@ export async function applyRefundCascade(
       context: { paymentId: payment.id, refundId: input.refundId },
     });
     throw err;
+  }
+
+  if (payment.appointment?.subscription?.status === "CANCELLED") {
+    await stampTranchesOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
+  }
+  if (
+    payment.appointment?.trial?.status === "CANCELLED" ||
+    payment.appointment?.trial?.status === "REJECTED"
+  ) {
+    await stampTrialEarningsOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
   }
 
   return {

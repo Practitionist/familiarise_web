@@ -1316,7 +1316,8 @@ export function UnifiedCalendar({
           // server validator uses), fetched alongside eventSlots. Replaces
           // re-deriving this from a separate whole-window appointment fetch
           // on every slot click.
-          const completedCalls = weeklyConfirmedCallCounts[targetWeekKey] || 0;
+          const completedCalls =
+            effectiveWeeklyConfirmedCallCounts[targetWeekKey] || 0;
 
           // Also include already selected complete calls in this same week
           const selectedCompleted = countCompletedSelectedCallsForWeek(
@@ -1426,7 +1427,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       selectedSlots,
-      weeklyConfirmedCallCounts,
+      effectiveWeeklyConfirmedCallCounts,
       eventSlotsSet,
       eventTentativeSlotsSet,
       toast,

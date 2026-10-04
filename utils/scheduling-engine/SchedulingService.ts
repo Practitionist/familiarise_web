@@ -1455,6 +1455,80 @@ export class SchedulingService {
     );
   }
 
+  private static resolveAllocationModeAndPastSlots(
+    eventType: EventType,
+    existingAppointments: AppointmentWithSlots[],
+    existingNonTentativeSlotCount: number,
+    isReschedule: boolean,
+    topUp: boolean,
+  ): {
+    existingConfirmedSessionCount: number;
+    isTopUp: boolean;
+    pastConfirmedSlotCount: number;
+    isInProgressReallocation: boolean;
+  } {
+    if (topUp === true) {
+      if (!isRecurringEventType(eventType)) {
+        throw new AllocationValidationError(
+          "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
+        );
+      }
+      if (isReschedule) {
+        throw new AllocationValidationError(
+          "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
+        );
+      }
+      if (existingNonTentativeSlotCount === 0) {
+        throw new AllocationValidationError(
+          "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
+        );
+      }
+    }
+
+    const existingConfirmedSessionCount = existingAppointments
+      .flatMap((a) => a.occurrences)
+      .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
+    const isTopUp =
+      !isReschedule &&
+      (topUp === true ||
+        this.isSubscriptionTopUp(
+          eventType,
+          existingConfirmedSessionCount,
+          isReschedule,
+        ));
+
+    const now = new Date();
+    const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
+    const hasPastConfirmedSlots =
+      !isReschedule &&
+      !isTopUp &&
+      this.confirmedIntervalsOf(
+        existingAppointments,
+        (slot) => new Date(slot.endsAt) <= now,
+      ) > 0;
+    const pastConfirmedSlotCount = hasPastConfirmedSlots
+      ? this.confirmedIntervalsOf(
+          existingAppointments,
+          (slot) =>
+            new Date(slot.endsAt) <= now ||
+            new Date(slot.startsAt) < imminentCutoff,
+        )
+      : 0;
+    const isInProgressReallocation =
+      !isReschedule &&
+      !isTopUp &&
+      pastConfirmedSlotCount > 0 &&
+      isRecurringEventType(eventType);
+
+    return {
+      existingConfirmedSessionCount,
+      isTopUp,
+      pastConfirmedSlotCount,
+      isInProgressReallocation,
+    };
+  }
+
+
   /**
    * One read on `AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`
    * with the exclusion constraint's own predicate (confirmed, live, this
@@ -1833,74 +1907,18 @@ export class SchedulingService {
         config.sessionDurationInHours || config.durationInHours || 1,
       );
 
-      // #1206 — a top-up preserves what is confirmed and places only the
-      // shortfall. It is the one auto path that never deletes, so it is gated
-      // narrowly: a reschedule's tentative rows ARE the sessions being moved,
-      // a single-session event has nothing to top up, and an event with no
-      // confirmed sessions is an ordinary fresh allocation already.
-      // A top-up that cannot apply is refused, never downgraded: the caller
-      // asked to preserve, and the ordinary path deletes and re-plans.
-      if (topUp === true) {
-        if (!isRecurringEventType(eventType)) {
-          throw new AllocationValidationError(
-            "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
-          );
-        }
-        if (isReschedule) {
-          throw new AllocationValidationError(
-            "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
-          );
-        }
-        if (existingNonTentativeSlotCount === 0) {
-          throw new AllocationValidationError(
-            "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
-          );
-        }
-      }
-
-      // 1 occurrence = 1 session (#1554), the same identity the reschedule
-      // branch below counts on. Counted by row rather than by dividing an
-      // interval count, so a plan whose session duration changed mid-flight
-      // cannot turn the shortfall into a fraction.
-      const existingConfirmedSessionCount = existingAppointments
-        .flatMap((a) => a.occurrences)
-        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
-      // #1766 — a subscription with held sessions is ALWAYS additive: the
-      // next cycle appends; the delete-and-replan path is for classes only.
-      const isTopUp =
-        !isReschedule &&
-        (topUp === true ||
-          this.isSubscriptionTopUp(
-            eventType,
-            existingConfirmedSessionCount,
-            isReschedule,
-          ));
-
-      // Detect in-progress reallocation: past confirmed slots exist for recurring events.
-      // Once triggered, deleteExistingAppointments also preserves imminent (<24h)
-      // confirmed slots, so include them in pastConfirmedSlotCount to avoid over-allocating.
-      const now = new Date();
-      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
-      const hasPastConfirmedSlots =
-        !isReschedule &&
-        !isTopUp &&
-        this.confirmedIntervalsOf(
-          existingAppointments,
-          (slot) => new Date(slot.endsAt) <= now,
-        ) > 0;
-      const pastConfirmedSlotCount = hasPastConfirmedSlots
-        ? this.confirmedIntervalsOf(
-            existingAppointments,
-            (slot) =>
-              new Date(slot.endsAt) <= now ||
-              new Date(slot.startsAt) < imminentCutoff,
-          )
-        : 0;
-      const isInProgressReallocation =
-        !isReschedule &&
-        !isTopUp &&
-        pastConfirmedSlotCount > 0 &&
-        isRecurringEventType(eventType);
+      const {
+        existingConfirmedSessionCount,
+        isTopUp,
+        pastConfirmedSlotCount,
+        isInProgressReallocation,
+      } = this.resolveAllocationModeAndPastSlots(
+        eventType,
+        existingAppointments,
+        existingNonTentativeSlotCount,
+        isReschedule,
+        topUp,
+      );
 
       const topUpPlanSessions = isTopUp
         ? this.topUpTargetSessions(
@@ -2565,37 +2583,18 @@ export class SchedulingService {
       const existingNonTentativeSlotCount =
         this.confirmedIntervalsOf(existingAppointments);
 
-      if (topUp === true) {
-        if (!isRecurringEventType(eventType)) {
-          throw new AllocationValidationError(
-            "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
-          );
-        }
-        if (isReschedule) {
-          throw new AllocationValidationError(
-            "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
-          );
-        }
-        if (existingNonTentativeSlotCount === 0) {
-          throw new AllocationValidationError(
-            "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
-          );
-        }
-      }
-
-      // #1766 — see autoAllocate: held sessions on a subscription mean the
-      // next cycle is being appended, so nothing is deleted or excluded.
-      const existingConfirmedSessionCount = existingAppointments
-        .flatMap((a) => a.occurrences)
-        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
-      const isTopUp =
-        !isReschedule &&
-        (topUp === true ||
-          this.isSubscriptionTopUp(
-            eventType,
-            existingConfirmedSessionCount,
-            isReschedule,
-          ));
+      const {
+        existingConfirmedSessionCount,
+        isTopUp,
+        pastConfirmedSlotCount,
+        isInProgressReallocation,
+      } = this.resolveAllocationModeAndPastSlots(
+        eventType,
+        existingAppointments,
+        existingNonTentativeSlotCount,
+        isReschedule,
+        topUp,
+      );
       if (initialAllocation && eventType === "subscription" && !isTopUp) {
         await this.assertNoConfirmedSlots(prisma, eventType, eventId);
       }
@@ -2612,32 +2611,6 @@ export class SchedulingService {
       const isFreshAllocation =
         !isTopUp &&
         (initialAllocation === true || existingNonTentativeSlotCount === 0);
-
-      // Detect in-progress reallocation: past confirmed slots exist for recurring events.
-      // Once triggered, deleteExistingAppointments also preserves imminent (<24h)
-      // confirmed slots, so include them in pastConfirmedSlotCount to avoid over-allocating.
-      const now = new Date();
-      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
-      const hasPastConfirmedSlots =
-        !isReschedule &&
-        !isTopUp &&
-        this.confirmedIntervalsOf(
-          existingAppointments,
-          (slot) => new Date(slot.endsAt) <= now,
-        ) > 0;
-      const pastConfirmedSlotCount = hasPastConfirmedSlots
-        ? this.confirmedIntervalsOf(
-            existingAppointments,
-            (slot) =>
-              new Date(slot.endsAt) <= now ||
-              new Date(slot.startsAt) < imminentCutoff,
-          )
-        : 0;
-      const isInProgressReallocation =
-        !isReschedule &&
-        !isTopUp &&
-        pastConfirmedSlotCount > 0 &&
-        isRecurringEventType(eventType);
 
       // What to leave out of conflict detection and the weekly/daily limits
       // (#1554 — see autoAllocate: a reschedule excludes the tentative

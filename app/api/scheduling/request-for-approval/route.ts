@@ -199,10 +199,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (
-      availabilityWindowWeeklyId &&
-      typeof prisma.availabilityWindowWeekly?.findFirst === "function"
-    ) {
+    if (availabilityWindowWeeklyId && availabilityWindowCustomId) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide either availabilityWindowWeeklyId or availabilityWindowCustomId, not both.",
+          code: "AMBIGUOUS_AVAILABILITY_WINDOW",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (availabilityWindowWeeklyId && prisma.availabilityWindowWeekly?.findFirst) {
       const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
         where: { id: availabilityWindowWeeklyId, consultantProfileId },
         select: { id: true },
@@ -216,10 +224,9 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-    } else if (
-      availabilityWindowCustomId &&
-      typeof prisma.availabilityWindowCustom?.findFirst === "function"
-    ) {
+    }
+
+    if (availabilityWindowCustomId && prisma.availabilityWindowCustom?.findFirst) {
       const customWindow = await prisma.availabilityWindowCustom.findFirst({
         where: { id: availabilityWindowCustomId, consultantProfileId },
         select: { id: true },

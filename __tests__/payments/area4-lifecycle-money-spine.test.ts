@@ -9,7 +9,10 @@ import ts from "typescript";
 
 import { resolveBookingRefundContext } from "../../lib/booking/cancellation-scope";
 import { stampTranchesOnCancel } from "../../lib/booking/subscription-cycle";
-import { softCancelTrialAppointmentInTx } from "../../lib/trials/cancellation";
+import {
+  softCancelTrialAppointmentInTx,
+  stampTrialEarningsOnCancel,
+} from "../../lib/trials/cancellation";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -123,8 +126,8 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
     });
   });
 
-  describe("F-4.8 — Trial soft-cancel stamps holdUntil on unstamped consultant & org earnings", () => {
-    it("stamps holdUntil on both consultantEarnings and organizationEarnings when soft-cancelling a trial", async () => {
+  describe("F-4.8 — Trial soft-cancel releases occurrences and stampTrialEarningsOnCancel stamps holdUntil", () => {
+    it("releases trial occurrences in softCancelTrialAppointmentInTx and stamps holdUntil on both consultantEarnings and organizationEarnings in stampTrialEarningsOnCancel", async () => {
       const tx = {
         appointmentOccurrence: {
           findMany: jest.fn().mockResolvedValue([
@@ -154,10 +157,16 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
           updateManyAndReturn: jest.fn().mockResolvedValue([]),
         },
         consultantEarnings: {
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          updateMany: jest
+            .fn()
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 }),
         },
         organizationEarnings: {
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          updateMany: jest
+            .fn()
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 }),
         },
       };
 
@@ -165,8 +174,12 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
         tx as never,
         "apt-trial-1",
       );
-
       expect(released).toBe(1);
+
+      const stamped = await stampTrialEarningsOnCancel(tx as never, {
+        appointmentId: "apt-trial-1",
+      });
+      expect(stamped).toBe(1);
       expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -185,18 +198,30 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
           data: { holdUntil: expect.any(Date) },
         }),
       );
+
+      // Idempotent second call when holdUntil is already non-null
+      const secondStamped = await stampTrialEarningsOnCancel(tx as never, {
+        appointmentId: "apt-trial-1",
+      });
+      expect(secondStamped).toBe(0);
     });
   });
 
   describe("F-4.9 & F-4.13 (User Decision A4) — Subscription cancellation stamps both consultant & organization earnings", () => {
-    it("stamps holdUntil on remaining unstamped consultant tranches and organization earnings", async () => {
+    it("stamps holdUntil on remaining unstamped consultant tranches and organization earnings and is idempotent on repeat calls", async () => {
       const now = new Date("2026-06-10T10:00:00.000Z");
       const tx = {
         consultantEarnings: {
-          updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+          updateMany: jest
+            .fn()
+            .mockResolvedValueOnce({ count: 2 })
+            .mockResolvedValueOnce({ count: 0 }),
         },
         organizationEarnings: {
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          updateMany: jest
+            .fn()
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 }),
         },
       };
 
@@ -225,6 +250,13 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
           data: { holdUntil: expect.any(Date) },
         }),
       );
+
+      // Second call is a no-op once holdUntil is already stamped
+      const secondCount = await stampTranchesOnCancel(tx as never, {
+        paymentId: "pay-sub-1",
+        now,
+      });
+      expect(secondCount).toBe(0);
     });
   });
 

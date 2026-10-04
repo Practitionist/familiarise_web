@@ -52,3 +52,32 @@ export function conflictDetailsBySlot(
 ): Map<string, ConflictDetail> {
   return new Map((details ?? []).map((d) => [d.slot, d]));
 }
+
+import type prisma from "@/lib/prisma";
+
+export async function findTentativeOccurrenceIdsForEvent(
+  db: {
+    appointment?: Partial<Pick<(typeof prisma)["appointment"], "findMany">>;
+  },
+  where:
+    | { webinarId: string }
+    | { classId: string }
+    | { subscriptionId: string },
+): Promise<string[]> {
+  const rows =
+    (await db.appointment?.findMany?.({
+      where: {
+        ...where,
+        occurrences: { some: { isTentative: true, deletedAt: null } },
+      },
+      select: {
+        id: true,
+        occurrences: {
+          where: { isTentative: true, deletedAt: null },
+          select: { id: true },
+        },
+      },
+    })) ?? [];
+  return rows.flatMap((a) => (a.occurrences ?? []).map((o) => o.id));
+}
+

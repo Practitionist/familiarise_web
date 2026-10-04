@@ -51,29 +51,24 @@ export async function stampTranchesOnCancel(
     lastOccurrenceEndsAt: null,
     holdHours: holdHoursFor("SUBSCRIPTION"),
   });
-  const { count } =
-    typeof tx.consultantEarnings?.updateMany === "function"
-      ? await tx.consultantEarnings.updateMany({
-          where: {
-            paymentId: args.paymentId,
-            cycleOrdinal: { not: null },
-            holdUntil: null,
-            status: { in: [...UNSTAMPED_STATUSES] },
-          },
-          data: { holdUntil },
-        })
-      : { count: 0 };
-  if (typeof tx.organizationEarnings?.updateMany === "function") {
-    await tx.organizationEarnings.updateMany({
-      where: {
-        paymentId: args.paymentId,
-        holdUntil: null,
-        status: { in: [...UNSTAMPED_STATUSES] },
-      },
-      data: { holdUntil },
-    });
-  }
-  return count;
+  const res = await tx.consultantEarnings?.updateMany?.({
+    where: {
+      paymentId: args.paymentId,
+      cycleOrdinal: { not: null },
+      holdUntil: null,
+      status: { in: [...UNSTAMPED_STATUSES] },
+    },
+    data: { holdUntil },
+  });
+  await tx.organizationEarnings?.updateMany?.({
+    where: {
+      paymentId: args.paymentId,
+      holdUntil: null,
+      status: { in: [...UNSTAMPED_STATUSES] },
+    },
+    data: { holdUntil },
+  });
+  return res?.count ?? 0;
 }
 
 export async function settleSubscriptionCycle(
@@ -125,7 +120,9 @@ export async function settleSubscriptionCycle(
     },
   });
   const sub = wrapper?.subscription;
-  if (!sub || sub.status !== "APPROVED") return [];
+  if (!sub || (sub.status !== "APPROVED" && sub.status !== "SCHEDULED")) {
+    return [];
+  }
 
   const entitlement = subscriptionEntitlement({
     sessionsTotal: sessionsTotalOf(sub),
@@ -167,11 +164,8 @@ export async function settleSubscriptionCycle(
         holdUntil,
       },
     });
-    if (
-      matured >= tranches.count - 1 &&
-      typeof tx.organizationEarnings?.updateMany === "function"
-    ) {
-      await tx.organizationEarnings.updateMany({
+    if (matured >= tranches.count - 1) {
+      await tx.organizationEarnings?.updateMany?.({
         where: {
           paymentId: { in: wrapper.payment.map((p) => p.id) },
           holdUntil: null,

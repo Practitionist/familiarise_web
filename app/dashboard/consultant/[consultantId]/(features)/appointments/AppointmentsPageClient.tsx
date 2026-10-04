@@ -110,12 +110,26 @@ export default function AppointmentsPageClient({
     staleTime: 2 * 60_000,
     queryKey: ["trials", consultantId, "ALL"] as const,
     queryFn: async () => {
-      const res = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&limit=100`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch trials");
-      const { data } = await res.json();
-      return data;
+      const allTrials: NonNullable<
+        Parameters<typeof mapConsultantAppointments>[0]["scheduledTrials"]
+      > = [];
+      let page = 1;
+      let totalPages = 1;
+      const MAX_PAGES = 10;
+      while (page <= totalPages && page <= MAX_PAGES) {
+        const res = await fetch(
+          `/api/trials?consultantProfileId=${consultantId}&limit=100&page=${page}`,
+        );
+        if (!res.ok) throw new Error("Failed to fetch trials");
+        const json = await res.json();
+        if (Array.isArray(json.data)) {
+          allTrials.push(...json.data);
+        }
+        totalPages =
+          typeof json.meta?.totalPages === "number" ? json.meta.totalPages : 1;
+        page += 1;
+      }
+      return allTrials;
     },
   });
 

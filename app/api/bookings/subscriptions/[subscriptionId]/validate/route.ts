@@ -26,6 +26,7 @@ import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import {
   conflictDetailsBySlot,
   describeConflict,
+  findTentativeOccurrenceIdsForEvent,
 } from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -136,22 +137,9 @@ export async function POST(
       // Exclude this subscription's own tentative occurrences (initial request
       // holds or released reschedule occurrences) so they are not reported as
       // conflicts or double-counted against weekly/total limits.
-      const tentativeAppointments =
-        (await prisma.appointment?.findMany?.({
-          where: {
-            subscriptionId,
-            occurrences: { some: { isTentative: true, deletedAt: null } },
-          },
-          select: {
-            id: true,
-            occurrences: {
-              where: { isTentative: true, deletedAt: null },
-              select: { id: true },
-            },
-          },
-        })) ?? [];
-      const excludeOccurrenceIds = tentativeAppointments.flatMap((a) =>
-        (a.occurrences ?? []).map((o) => o.id),
+      const excludeOccurrenceIds = await findTentativeOccurrenceIdsForEvent(
+        prisma,
+        { subscriptionId },
       );
       const consulteeUserId = subscription.requestedBy?.user?.id;
 

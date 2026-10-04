@@ -236,6 +236,7 @@ async function reconcilePendingRefundsUnlocked(
           {
             paymentId,
             amountPaise: refund.amountPaise,
+            paymentAmountPaise: refund.payment.amount,
             reason: refund.reason ?? "Gateway refund reconciled",
           },
         );
@@ -359,6 +360,7 @@ async function reconcilePendingRefundsUnlocked(
       payment: {
         select: {
           id: true,
+          amount: true,
           paymentGateway: true,
           userId: true,
           organizationId: true,
@@ -412,9 +414,12 @@ async function reconcilePendingRefundsUnlocked(
                 reason: refund.reason ?? "Gateway refund reconciled",
                 initiatedByUserId: null,
               });
-              if (typeof tx.referralCredit?.findMany === "function") {
-                await reverseCreditsForPayment(refund.payment.id, tx);
-              }
+              await reverseCreditsForPayment(
+                refund.payment.id,
+                tx,
+                refund.amountPaise,
+                refund.payment.amount,
+              );
               const notice = await notifyRefundProcessed(
                 refund.payment.userId,
                 {
@@ -571,6 +576,7 @@ async function bindGatewayRefundToPlaceholder(
   cascade: {
     paymentId: string;
     amountPaise: number;
+    paymentAmountPaise?: number;
     reason: string;
   },
 ): Promise<"bound" | "superseded"> {
@@ -601,9 +607,12 @@ async function bindGatewayRefundToPlaceholder(
               reason: cascade.reason,
               initiatedByUserId: null,
             });
-            if (typeof tx.referralCredit?.findMany === "function") {
-              await reverseCreditsForPayment(cascade.paymentId, tx);
-            }
+            await reverseCreditsForPayment(
+              cascade.paymentId,
+              tx,
+              cascade.amountPaise,
+              cascade.paymentAmountPaise,
+            );
           }
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

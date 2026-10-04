@@ -4,7 +4,6 @@ import {
   calculateRequiredSlots,
   validateSlotDistribution,
 } from "./calendarUtils";
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { countSessionsForDay } from "./intervalSelectionValidation";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import { AllocationService } from "./allocationService";

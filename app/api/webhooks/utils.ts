@@ -2013,13 +2013,24 @@ export async function handleDisputeUpdated(
             },
             data: { status: "PENDING", preDisputeStatus: null },
           });
+          const orgRelTrust = await tx.organizationEarnings.updateMany({
+            where: {
+              paymentId: dispute.paymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING_TRUST",
+            },
+            data: { status: "PENDING_TRUST", preDisputeStatus: null },
+          });
           const orgReleased = await tx.organizationEarnings.updateMany({
             where: { paymentId: dispute.paymentId, status: "HELD" },
             data: { status: "READY", preDisputeStatus: null },
           });
-          if (orgReleased.count + orgRelPending.count > 0) {
+          if (
+            orgReleased.count + orgRelPending.count + orgRelTrust.count >
+            0
+          ) {
             console.log(
-              `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING) — dispute ${disputeId} won`,
+              `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
             );
           }
         } else if (

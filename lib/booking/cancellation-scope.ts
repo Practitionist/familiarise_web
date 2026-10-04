@@ -240,75 +240,22 @@ export async function resolveBookingRefundContext(
     .map((s) => s.startsAt.getTime())
     .sort((a, b) => a - b);
 
-  const tombstonedSlots: Array<{
-    startsAt: Date;
-    updatedAt?: Date | null;
-    deletedAt?: Date | null;
-    completionStatus: string;
-  }> =
-    row?.id &&
-    typeof (
-      db as {
-        appointmentOccurrence?: {
-          findMany?: (args: unknown) => Promise<unknown>;
-        };
-      }
-    ).appointmentOccurrence?.findMany === "function"
-      ? ((await (
-          db as unknown as {
-            appointmentOccurrence: {
-              findMany: (args: unknown) => Promise<
-                Array<{
-                  startsAt: Date;
-                  updatedAt?: Date | null;
-                  deletedAt?: Date | null;
-                  completionStatus: string;
-                }>
-              >;
-            };
-          }
-        ).appointmentOccurrence.findMany({
-          where: {
-            appointmentId: row.id,
-            deletedAt: { not: null },
-          },
-          select: {
-            startsAt: true,
-            updatedAt: true,
-            deletedAt: true,
-            completionStatus: true,
-          },
-        })) ?? [])
-      : [];
-
   const rawHoursUntilNextSession =
     liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null;
-
-  const priorRescheduleNoticeHours: number[] = [];
-  for (const s of slots) {
-    const updatedAt = (s as { updatedAt?: Date | null }).updatedAt;
-    if (s.completionStatus === "RESCHEDULED" && updatedAt instanceof Date) {
-      const noticeHours =
-        (s.startsAt.getTime() - updatedAt.getTime()) / 3_600_000;
-      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
-    }
+  const noticeFloorHours = await computeRescheduleNoticeFloorHours(
+    db,
+    row?.id,
+    slots,
+  );
+  let hoursUntilNextSession = rawHoursUntilNextSession;
+  if (rawHoursUntilNextSession !== null && noticeFloorHours !== null) {
+    hoursUntilNextSession = Math.min(
+      rawHoursUntilNextSession,
+      noticeFloorHours,
+    );
+  } else if (noticeFloorHours !== null) {
+    hoursUntilNextSession = noticeFloorHours;
   }
-  for (const t of tombstonedSlots) {
-    const movedAt = t.deletedAt ?? t.updatedAt;
-    if (movedAt instanceof Date) {
-      const noticeHours =
-        (t.startsAt.getTime() - movedAt.getTime()) / 3_600_000;
-      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
-    }
-  }
-
-  const hoursUntilNextSession =
-    rawHoursUntilNextSession !== null && priorRescheduleNoticeHours.length > 0
-      ? Math.min(
-          rawHoursUntilNextSession,
-          Math.min(...priorRescheduleNoticeHours),
-        )
-      : rawHoursUntilNextSession;
 
   return {
     paidPayment,
@@ -321,3 +268,65 @@ export async function resolveBookingRefundContext(
     scheduledStarts,
   };
 }
+
+async function computeRescheduleNoticeFloorHours(
+  db: unknown,
+  appointmentId: string | undefined,
+  slots: Array<{
+    startsAt: Date;
+    updatedAt?: Date | null;
+    completionStatus: string;
+  }>,
+): Promise<number | null> {
+  const occurrenceDelegate = (
+    db as {
+      appointmentOccurrence?: {
+        findMany?: (args: unknown) => Promise<
+          Array<{
+            startsAt: Date;
+            updatedAt?: Date | null;
+            deletedAt?: Date | null;
+            completionStatus: string;
+          }>
+        >;
+      };
+    }
+  ).appointmentOccurrence;
+
+  const tombstonedSlots = appointmentId
+    ? ((await occurrenceDelegate?.findMany?.({
+        where: {
+          appointmentId,
+          deletedAt: { not: null },
+          completionStatus: "RESCHEDULED",
+        },
+        select: {
+          startsAt: true,
+          updatedAt: true,
+          deletedAt: true,
+          completionStatus: true,
+        },
+      })) ?? [])
+    : [];
+
+  const priorRescheduleNoticeHours: number[] = [];
+  for (const s of slots) {
+    if (s.completionStatus === "RESCHEDULED" && s.updatedAt instanceof Date) {
+      const noticeHours =
+        (s.startsAt.getTime() - s.updatedAt.getTime()) / 3_600_000;
+      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
+    }
+  }
+  for (const t of tombstonedSlots) {
+    if (t.completionStatus === "RESCHEDULED" && t.deletedAt instanceof Date) {
+      const noticeHours =
+        (t.startsAt.getTime() - t.deletedAt.getTime()) / 3_600_000;
+      if (noticeHours >= 0) priorRescheduleNoticeHours.push(noticeHours);
+    }
+  }
+
+  return priorRescheduleNoticeHours.length > 0
+    ? Math.min(...priorRescheduleNoticeHours)
+    : null;
+}
+

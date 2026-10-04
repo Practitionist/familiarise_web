@@ -288,6 +288,43 @@ function getNextScheduleKey(dayKey: string): string | null {
  * Validates all slots across all days/dates, collecting per-slot error messages.
  * Returns overall validity and a list of human-readable error strings.
  */
+function findOvernightTailOverlapError(
+  slots: Record<string, SlotType[]>,
+  day: string,
+  slot: SlotType,
+  index: number,
+): string | null {
+  const startMinutes = getMinutes(slot.startTime);
+  const endMinutes = getMinutes(slot.endTime);
+  if (
+    startMinutes === null ||
+    endMinutes === null ||
+    endMinutes <= 0 ||
+    !isOvernightSlot(startMinutes, endMinutes)
+  ) {
+    return null;
+  }
+
+  const nextKey = getNextScheduleKey(day);
+  const nextDaySlots = nextKey
+    ? (slots[nextKey] ??
+      slots[nextKey.toLowerCase()] ??
+      slots[nextKey.toUpperCase()])
+    : undefined;
+  if (!nextDaySlots) return null;
+
+  for (const nextSlot of nextDaySlots) {
+    if (!nextSlot.isValid || !nextSlot.startTime || !nextSlot.endTime) {
+      continue;
+    }
+    const nextStart = getMinutes(nextSlot.startTime);
+    if (nextStart !== null && nextStart < endMinutes) {
+      return `${day} slot ${index + 1}: Overnight tail overlaps with ${nextKey} slot starting at ${nextSlot.startTime}`;
+    }
+  }
+  return null;
+}
+
 export const validateAllSlotsDetailed = (
   slots: Record<string, SlotType[]>,
 ): { isValid: boolean; errors: string[] } => {
@@ -304,35 +341,15 @@ export const validateAllSlotsDetailed = (
         return;
       }
 
-      const startMinutes = getMinutes(slot.startTime);
-      const endMinutes = getMinutes(slot.endTime);
-      if (
-        startMinutes !== null &&
-        endMinutes !== null &&
-        endMinutes > 0 &&
-        isOvernightSlot(startMinutes, endMinutes)
-      ) {
-        const nextKey = getNextScheduleKey(day);
-        const nextDaySlots = nextKey
-          ? slots[nextKey] ??
-            slots[nextKey.toLowerCase()] ??
-            slots[nextKey.toUpperCase()]
-          : undefined;
-        if (nextDaySlots) {
-          for (const nextSlot of nextDaySlots) {
-            if (!nextSlot.isValid || !nextSlot.startTime || !nextSlot.endTime) {
-              continue;
-            }
-            const nextStart = getMinutes(nextSlot.startTime);
-            if (nextStart !== null && nextStart < endMinutes) {
-              errors.push(
-                `${day} slot ${index + 1}: Overnight tail overlaps with ${nextKey} slot starting at ${nextSlot.startTime}`,
-              );
-              isValid = false;
-              break;
-            }
-          }
-        }
+      const overlapError = findOvernightTailOverlapError(
+        slots,
+        day,
+        slot,
+        index,
+      );
+      if (overlapError) {
+        errors.push(overlapError);
+        isValid = false;
       }
     });
   });
