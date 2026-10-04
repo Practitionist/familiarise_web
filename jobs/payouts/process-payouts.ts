@@ -20,11 +20,10 @@ import {
 } from "../../lib/payments/payouts";
 
 import fs from "fs";
-import { ENABLE_LIVE_PAYOUTS } from "../../lib/feature-flags";
+import { ENABLE_LIVE_PAYOUTS, logMoneyFlags } from "../../lib/feature-flags";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
-import { logMoneyFlags } from "../../lib/feature-flags";
 
 interface JobSummary {
   processed: number;

@@ -68,12 +68,13 @@ import { createOrgCatalog } from "./seedFiles/14b-create-org-catalog";
 import { createTdsRates } from "./seedFiles/15a-create-tds-rates";
 import { createPlatformCancellationPolicy } from "./seedFiles/15b-create-cancellation-policy";
 
-/** The seed writes through DATABASE_URL, so that host must be confirmed explicitly. */
+/** The seed writes through DATABASE_URL, so the operator must confirm its host (a socket URL's `?host=`). */
 function assertSeedTarget(): void {
   const raw = process.env.DATABASE_URL;
   let host = "";
   try {
-    host = raw ? new URL(raw).hostname : "";
+    const url = raw ? new URL(raw) : null;
+    host = url ? url.hostname || (url.searchParams.get("host") ?? "") : "";
   } catch {
     host = "";
   }
@@ -81,10 +82,9 @@ function assertSeedTarget(): void {
     console.error("Seed refused: DATABASE_URL is missing or not a valid URL.");
     process.exit(1);
   }
-  console.log(`Seed target host: ${host}`);
   if (process.env.SEED_TARGET_CONFIRM !== host) {
     console.error(
-      `Seed refused: set SEED_TARGET_CONFIRM=${host} to confirm this database.`,
+      "Seed refused: set SEED_TARGET_CONFIRM to the host in DATABASE_URL to confirm this database.",
     );
     process.exit(1);
   }

@@ -41,7 +41,9 @@ jobs:
         run: npx --no-install prisma generate
 
       - name: Live drift check (read-only)
+        # check-db-sidecars.ts exits 0 when DATABASE_URL is unset, so require it here.
         run: |
+          test -n "$DATABASE_URL" || { echo "::error title=DB live drift::DATABASE_URL secret is not set"; exit 1; }
           node_modules/.bin/tsx scripts/ci/check-db-live-drift.ts
           node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
 

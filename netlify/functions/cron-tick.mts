@@ -436,9 +436,18 @@ export function buildFailedTargetsEvent(
   };
 }
 
-/** At most one ticker-failure event per hour slot: only the tick in minutes 0-4 may report. */
-export function isFirstTickOfHour(now: Date): boolean {
-  return now.getUTCMinutes() < 5;
+const EVERY_BY_NAME: Partial<Record<string, number>> = TARGET_EVERY_MINUTES;
+const OFFSET_BY_NAME: Partial<Record<string, number>> = TARGET_OFFSET_MINUTES;
+
+/** A failing target reports at most once an hour: on its own first due tick of that hour. */
+export function isFirstDueTickOfHour(name: string, now: Date): boolean {
+  const every = EVERY_BY_NAME[name];
+  const first =
+    every === undefined
+      ? 0
+      : (((OFFSET_BY_NAME[name] ?? 0) % every) + every) % every;
+  const sinceFirst = now.getUTCMinutes() - first;
+  return sinceFirst >= 0 && sinceFirst < 5;
 }
 
 /**
@@ -463,7 +472,9 @@ export function isFirstTickOfHour(now: Date): boolean {
 async function alertFailedTargets(
   failed: { name: string; status: number }[],
 ): Promise<void> {
-  if (failed.length === 0 || !isFirstTickOfHour(new Date())) return;
+  const now = new Date();
+  const due = failed.filter((f) => isFirstDueTickOfHour(f.name, now));
+  if (due.length === 0) return;
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
@@ -484,7 +495,7 @@ async function alertFailedTargets(
         stackFrameVariables: false,
       },
     });
-    const event = buildFailedTargetsEvent(failed);
+    const event = buildFailedTargetsEvent(due);
     Sentry.captureMessage(event.message, event);
     await Sentry.flush(2_000);
   } catch (err) {

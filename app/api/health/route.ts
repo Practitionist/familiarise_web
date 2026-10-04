@@ -69,9 +69,8 @@ async function checkBetterStack(): Promise<{
   }
 }
 
-// Cron dead-man threshold. Every locked job run refreshes `cron:heartbeat:last`
-// (lib/cron/with-cron-lock.ts) and the Netlify ticker runs every five minutes,
-// so 45 minutes of total silence means the scheduled fleet has stopped.
+// Cron dead-man threshold. Only a successful locked job run refreshes `cron:heartbeat:last`
+// (lib/cron/with-cron-lock.ts), so 45 minutes stale means the fleet stopped or every run is failing.
 const CRON_HEARTBEAT_STALE_MS = 45 * 60 * 1000;
 
 type CronHeartbeat = {

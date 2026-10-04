@@ -27,7 +27,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
-import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { ENABLE_DUNNING_SUSPEND, logMoneyFlags } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   notifyOrgInvoiceOverdue,
@@ -41,7 +41,6 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
-import { logMoneyFlags } from "@/lib/feature-flags";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;

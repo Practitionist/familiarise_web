@@ -48,13 +48,11 @@ const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 
 // The 1-connection pool is a deploy invariant on Netlify; a missing value would
 // silently fall back to pg's default of 10 per instance. The build phase is exempt.
-if (
-  process.env.NETLIFY &&
-  !IS_NEXT_BUILD &&
-  !(Number(process.env.PG_POOL_MAX) > 0)
-) {
+const PG_POOL_MAX = Number(process.env.PG_POOL_MAX);
+const PG_POOL_MAX_VALID = Number.isInteger(PG_POOL_MAX) && PG_POOL_MAX >= 1;
+if (process.env.NETLIFY && !IS_NEXT_BUILD && !PG_POOL_MAX_VALID) {
   throw new Error(
-    "PG_POOL_MAX is not set on Netlify. Set PG_POOL_MAX=1 in the site's environment variables.",
+    `PG_POOL_MAX must be a positive integer on Netlify (got "${process.env.PG_POOL_MAX ?? ""}"). Set PG_POOL_MAX=1 in the site's environment variables.`,
   );
 }
 
@@ -75,9 +73,7 @@ const adapter = new PrismaPg({
   // concurrent invocations that can dwarf Supavisor's client cap. Set
   // PG_POOL_MAX=1 (or 2) in serverless deploy env; unset = pg default for
   // long-lived local dev/jobs.
-  ...(Number(process.env.PG_POOL_MAX) > 0
-    ? { max: Number(process.env.PG_POOL_MAX) }
-    : {}),
+  ...(PG_POOL_MAX_VALID ? { max: PG_POOL_MAX } : {}),
 });
 
 // Slow-query threshold (ms). A query exceeding this is logged via the

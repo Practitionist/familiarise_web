@@ -9,6 +9,7 @@ import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 
 import {
   droppedIndexName,
@@ -20,7 +21,11 @@ import {
 const ROOT = path.join(__dirname, "..", "..");
 const SQL_DIR = path.join(ROOT, "prisma", "sql");
 
-type KnownStatement = { statement: string; expires: string };
+const KnownStatementSchema = z.object({
+  statement: z.string(),
+  expires: z.string(),
+});
+type KnownStatement = z.infer<typeof KnownStatementSchema>;
 
 /** Every index a sidecar creates; the schema omits them, so each push plans to drop them. */
 function sidecarOwnedIndexes(): Set<string> {
@@ -41,13 +46,23 @@ function knownStatements(): KnownStatement[] {
   const parsed: unknown = JSON.parse(
     fs.readFileSync(path.join(SQL_DIR, "known-drift.json"), "utf8"),
   );
-  const raw = (parsed as Record<string, unknown>).destructiveStatementsAllowed;
-  return Array.isArray(raw) ? (raw as KnownStatement[]) : [];
+  const raw = z
+    .object({ destructiveStatementsAllowed: z.unknown() })
+    .parse(parsed).destructiveStatementsAllowed;
+  if (!Array.isArray(raw)) return [];
+  const entries = z.array(KnownStatementSchema).safeParse(raw);
+  if (!entries.success) {
+    throw new Error(
+      `prisma/sql/known-drift.json: invalid destructiveStatementsAllowed entry: ${entries.error.message}`,
+    );
+  }
+  return entries.data;
 }
 
 function main(): void {
-  if (!process.env.DIRECT_URL && !process.env.DATABASE_URL) {
-    console.error("::error title=DB drift check::no database URL is set");
+  // prisma.config.ts reads only DIRECT_URL; without it the diff targets a placeholder.
+  if (!process.env.DIRECT_URL) {
+    console.error("::error title=DB drift check::DIRECT_URL is not set");
     process.exit(1);
   }
   const prismaBin = path.join(ROOT, "node_modules", ".bin", "prisma");

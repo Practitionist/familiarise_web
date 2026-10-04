@@ -64,15 +64,16 @@ without the sidecars has been removed, so the push-then-sidecars-then-assert
 chain is the only supported path. "The Prisma schema is up to date" says nothing
 at all about whether the sidecars are present.
 
-Seeding is guarded the same way. `prisma/seed.ts` prints the `DATABASE_URL` host
-and exits non-zero unless `SEED_TARGET_CONFIRM` equals that host, because one
+Seeding is guarded the same way. `prisma/seed.ts` exits non-zero unless
+`SEED_TARGET_CONFIRM` equals the `DATABASE_URL` host (it does not print the host), because one
 shared Postgres database serves both dev and prod and a seed run against the wrong
 `DATABASE_URL` would write test data into production.
 
-CI's `db-guards` job runs both guards (`scripts/ci/check-db-sidecars.ts` and
-`scripts/ci/check-db-drift.ts`) on every pull request, against a throwaway
-Postgres that gets the branch's `db push` + `db:sidecars`. `db-live-drift.yml`
-runs them against the live database daily and on every push to `dev`.
+CI's `db-guards` job runs `scripts/ci/check-db-sidecars.ts` on every pull request,
+against a throwaway Postgres that gets the branch's `db push` + `db:sidecars`.
+`db-live-drift.yml` runs `scripts/ci/check-db-live-drift.ts` and
+`scripts/ci/check-db-sidecars.ts` against the live database daily and on manual
+trigger.
 
 ## Connections
 

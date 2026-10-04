@@ -275,16 +275,23 @@ export async function createConsultantReviews(consultants: UserWithProfiles[]) {
   const seedProfileIds = consultants.flatMap((c) =>
     c.consultantProfile ? [c.consultantProfile.id] : [],
   );
-  await prisma.consultantReview.deleteMany({
-    where: { consultantProfileId: { in: seedProfileIds } },
-  });
-  await prisma.appointmentFeedback.deleteMany({
-    where: { consultantProfileId: { in: seedProfileIds } },
-  });
-
   const held = (await loadHeldSlots(now)).filter((h) =>
     seedProfileIds.includes(h.consultantProfileId),
   );
+  await prisma.consultantReview.deleteMany({
+    where: { consultantProfileId: { in: seedProfileIds } },
+  });
+  // Also by appointment: a row with a NULL consultantProfileId still holds the (appointment, occurrence, user) unique.
+  await prisma.appointmentFeedback.deleteMany({
+    where: {
+      OR: [
+        { consultantProfileId: { in: seedProfileIds } },
+        {
+          appointmentId: { in: [...new Set(held.map((h) => h.appointmentId))] },
+        },
+      ],
+    },
+  });
   const reviews = await createReviews(held);
   const feedback = await createAppointmentFeedback(held);
   console.log(

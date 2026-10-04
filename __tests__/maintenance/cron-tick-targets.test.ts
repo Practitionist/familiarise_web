@@ -27,7 +27,7 @@ function loadTicker(): {
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
   reportableToSentry: (name: string) => boolean;
-  isFirstTickOfHour: (now: Date) => boolean;
+  isFirstDueTickOfHour: (name: string, now: Date) => boolean;
   bucketFor: (
     status: number,
     maintenance?: boolean,
@@ -387,7 +387,7 @@ describe("cron-tick failed-target reporting", () => {
 });
 
 describe("cron-tick drain targets and failure reporting", () => {
-  const { dueTargets, isFirstTickOfHour } = loadTicker();
+  const { dueTargets, isFirstDueTickOfHour } = loadTicker();
   const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
 
   it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {
@@ -401,10 +401,14 @@ describe("cron-tick drain targets and failure reporting", () => {
     expect(moderationMinutes).toEqual([25, 55]);
   });
 
-  it("lets only the first tick of an hour report to Sentry", () => {
-    expect(isFirstTickOfHour(at(0))).toBe(true);
-    expect(isFirstTickOfHour(at(4))).toBe(true);
-    expect(isFirstTickOfHour(at(5))).toBe(false);
-    expect(isFirstTickOfHour(at(55))).toBe(false);
+  it("lets each target report once an hour, on its own first due tick", () => {
+    const reportMinutes = (name: string) =>
+      [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((m) =>
+        isFirstDueTickOfHour(name, at(m)),
+      );
+    expect(reportMinutes("sweep-stuck-webhook-events")).toEqual([0]);
+    expect(reportMinutes("release-earnings")).toEqual([5]);
+    expect(reportMinutes("retry-moderation-enforcement")).toEqual([25]);
+    expect(reportMinutes("sentry-ingest-canary")).toEqual([0]);
   });
 });
