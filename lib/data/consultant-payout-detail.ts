@@ -7,7 +7,7 @@
  * session first (requirePersonalProfileAccess).
  */
 
-import type { PayoutStatus } from "@prisma/client";
+import type { Currency, PayoutMethod, PayoutStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { sanitizePayoutFailure } from "@/lib/dashboard/earnings-state";
@@ -20,8 +20,8 @@ export interface PayoutTimelineStep {
 export interface ConsultantPayoutDetail {
   id: string;
   status: PayoutStatus;
-  method: string;
-  currency: string;
+  method: PayoutMethod;
+  currency: Currency;
   amountPaise: number;
   tdsPaise: number;
   tdsRateBps: number | null;
@@ -45,7 +45,7 @@ export interface ConsultantPayoutDetail {
 
 const planTitle = { select: { title: true } } as const;
 
-const FINAL_STEP: Record<string, string> = {
+const FINAL_STEP: Partial<Record<PayoutStatus, string>> = {
   PROCESSING: "Sent to your bank",
   COMPLETED: "Paid",
   FAILED: "Failed",

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { payPagePath } from "@/lib/payments/pay-link-href";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -98,10 +99,10 @@ export function PendingCheckoutClient({
         router.refresh();
         return;
       }
-      const data: { error?: string } | null = await response
-        .json()
-        .catch(() => null);
-      setError(data?.error ?? "Could not cancel the booking. Try again.");
+      const body: unknown = await response.json().catch(() => null);
+      setError(
+        errorMessageFromBody(body, "Could not cancel the booking. Try again."),
+      );
     } catch {
       setError("Could not cancel the booking. Try again.");
     } finally {

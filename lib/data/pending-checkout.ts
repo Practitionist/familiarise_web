@@ -4,14 +4,15 @@
  * as "not found" and never as "not yours".
  */
 
+import type { Currency, PaymentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 
 export interface PendingCheckout {
   paymentId: string;
-  status: "PENDING" | "SUCCEEDED" | "FAILED" | "EXPIRED";
+  status: PaymentStatus;
   planTitle: string;
-  currency: string;
+  currency: Currency;
   /** Plan price before discount, GST and credits. */
   basePaise: number;
   discountPaise: number;

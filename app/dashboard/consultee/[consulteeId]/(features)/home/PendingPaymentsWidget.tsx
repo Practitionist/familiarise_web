@@ -33,7 +33,10 @@ import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
 import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
-import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import {
+  isExternalPayHref,
+  paymentIdFromPayPath,
+} from "@/lib/payments/pay-link-href";
 
 interface PendingPayment {
   id: string;
@@ -182,8 +185,10 @@ function pendingDetailsHref(payment: PendingPayment): string | null {
   if (payment.source === "gateway_pending") {
     return `/checkout/pending/${encodeURIComponent(payment.id)}`;
   }
-  const match = /^\/checkout\/pay\/([^/?#]+)$/.exec(payment.paymentUrl ?? "");
-  return match ? `/checkout/pending/${match[1]}` : null;
+  const paymentId = paymentIdFromPayPath(payment.paymentUrl);
+  return paymentId
+    ? `/checkout/pending/${encodeURIComponent(paymentId)}`
+    : null;
 }
 
 type PendingCancelTarget =

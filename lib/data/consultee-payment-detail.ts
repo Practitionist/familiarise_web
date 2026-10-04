@@ -9,6 +9,7 @@
  * page binds the profile to the session first (requirePersonalProfileAccess).
  */
 
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   deriveBookingPresentation,
@@ -30,18 +31,20 @@ export interface PaymentTimelineStep {
   tone: "success" | "info" | "critical";
 }
 
-export interface RefundDetail {
-  id: string;
+type BuyerRefundRow = Prisma.RefundGetPayload<{
+  select: typeof BUYER_REFUND_DETAIL_SELECT;
+}>;
+
+export type RefundDetail = Pick<
+  BuyerRefundRow,
+  "id" | "currency" | "status" | "createdAt" | "updatedAt"
+> & {
   amountPaise: number;
-  currency: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
   /** Buyer-facing copy for a FAILED refund; the gateway's raw reason stays server-side. */
   failureNotice: string | null;
   /** The gateway's refund id, shown so support can find the refund. */
-  gatewayRefundId: string;
-}
+  gatewayRefundId: BuyerRefundRow["refundId"];
+};
 
 export interface ConsulteePaymentDetail {
   row: ConsulteePaymentRow;
