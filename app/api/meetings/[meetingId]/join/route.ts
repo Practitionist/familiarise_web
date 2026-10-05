@@ -44,7 +44,7 @@ export async function POST(
     const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : "call_member";
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
-    await withStreamCircuitBreaker(async () => {
+    const admitted = await withStreamCircuitBreaker(async () => {
       await upsertUsersToStream([userId]);
 
       const call = getStreamVideoClient().video.call(
@@ -52,9 +52,15 @@ export async function POST(
         resolvedCallId,
       );
 
-      await call.updateCallMembers({
-        update_members: [{ user_id: userId, role }],
-      });
+      try {
+        await call.updateCallMembers({
+          update_members: [{ user_id: userId, role }],
+        });
+      } catch (error) {
+        // Only a not-found from the membership write proves the call itself is missing.
+        if (isExpectedStreamError(error)) return false;
+        throw error;
+      }
 
       const appointmentType =
         access.appointment?.appointmentType ??
@@ -76,7 +82,22 @@ export async function POST(
           revoke_permissions: [...PUBLISH_PERMISSIONS],
         });
       }
+      return true;
     });
+
+    if (!admitted) {
+      streamLogger.warn("Meeting join refused — Stream call missing", {
+        meetingId: resolvedCallId,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "This session's video room is not available. Please contact support.",
+          code: "ROOM_NOT_PROVISIONED",
+        },
+        { status: 409 },
+      );
+    }
 
     streamLogger.info("Admitted to meeting", {
       userId,
@@ -90,19 +111,6 @@ export async function POST(
       role: access.role,
     });
   } catch (error) {
-    if (isExpectedStreamError(error)) {
-      streamLogger.warn("Meeting join refused — Stream call missing", {
-        meetingId: meetingIdForLog,
-      });
-      return NextResponse.json(
-        {
-          error:
-            "This session's video room is not available. Please contact support.",
-          code: "ROOM_NOT_PROVISIONED",
-        },
-        { status: 409 },
-      );
-    }
     if (error instanceof StreamUnavailableError) {
       streamLogger.warn("Meeting join unavailable — Stream circuit open", {
         meetingId: meetingIdForLog,
