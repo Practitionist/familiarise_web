@@ -20,6 +20,7 @@ import { claimProgramAssignment } from "@/lib/api/organizations/program-helpers"
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const CreateBodySchema = z.object({
   membershipId: z.string().min(1),
@@ -208,6 +209,20 @@ export async function POST(
             },
           },
         });
+        if (isNew && typeof tx.webhookEndpoint?.findMany === "function") {
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: orgId,
+            eventType: "program.assigned",
+            payload: {
+              assignmentId: created.id,
+              programId,
+              membershipId: body.membershipId,
+              periodStart: body.periodStart.toISOString(),
+              periodEnd: body.periodEnd.toISOString(),
+            },
+          });
+        }
         return { ok: true as const, assignment: created };
       },
       { isolationLevel: "Serializable" },

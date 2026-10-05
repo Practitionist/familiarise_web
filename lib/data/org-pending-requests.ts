@@ -21,6 +21,7 @@ import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 
 export interface OrgPendingRequest {
   id: string;
+  appointmentId?: string | null;
   kind: "CONSULTATION" | "SUBSCRIPTION";
   planTitle: string;
   learnerName: string | null;
@@ -55,6 +56,7 @@ export async function readOrgPendingRequests(
       select: {
         id: true,
         requestedAt: true,
+        appointment: { select: { id: true } },
         consultationPlan: planSelect,
         requestedBy: learnerSelect,
       },
@@ -69,6 +71,7 @@ export async function readOrgPendingRequests(
       select: {
         id: true,
         requestedAt: true,
+        appointment: { select: { id: true } },
         subscriptionPlan: planSelect,
         requestedBy: learnerSelect,
       },
@@ -81,6 +84,7 @@ export async function readOrgPendingRequests(
     [
       ...consultations.map((c) => ({
         id: c.id,
+        appointmentId: c.appointment?.id ?? null,
         kind: "CONSULTATION" as const,
         planTitle: c.consultationPlan.title,
         learnerName: c.requestedBy.user.name,
@@ -89,6 +93,7 @@ export async function readOrgPendingRequests(
       })),
       ...subscriptions.map((s) => ({
         id: s.id,
+        appointmentId: s.appointment?.id ?? null,
         kind: "SUBSCRIPTION" as const,
         planTitle: s.subscriptionPlan.title,
         learnerName: s.requestedBy.user.name,
@@ -96,8 +101,6 @@ export async function readOrgPendingRequests(
         requestedAt: s.requestedAt.toISOString(),
       })),
     ]
-      // Plain string comparison, not localeCompare: ISO-8601 sorts lexically and
-      // collation would make the order ICU-dependent.
       .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
       .slice(0, PENDING_TAKE)
   );

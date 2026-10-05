@@ -86,11 +86,23 @@ With the flag on, settlement forwards three more fields, all derived inside the 
 | `planId`     | The plan already resolved for the org-ownership lookup.                                                                                                   | Consultation and subscription bookings, whose plan ids are not carried in the settlement payload. Those still resolve at `planType` granularity (tiers 4 and 5).                                                                    |
 | `contractId` | `BookingUtilization` (unique on `paymentId`) → `ProgramAssignment` → `Program` → `Contract`, which is the only link a settling payment has to a contract. | Marketplace and self-funded bookings, which have no contract; subscription bookings, which meter utilization at slot-allocation time and so have none yet at settlement; and any contract that does not belong to the settling org. |
 
-That last exclusion is a tenancy guard rather than a nicety. A contract-scoped card is created under `POST /organizations/{orgId}/rate-cards`, which checks the contract against that org, so `ownerContractId` alone identifies the owner — and `resolveEffectiveRateCard()` matches `ownerContractId` without re-asserting the org. Since `Contract.organizationId` is the **sponsoring** org while `resolveOrgSplit()` resolves the expert's **host** org, forwarding the contract unguarded would let one tenant's booking settle on another tenant's negotiated split. Contract scope is therefore reachable only where the sponsor and the host are the same organization, which is the HYBRID case the tier was designed for.
+That last exclusion is a tenancy guard rather than a nicety. A contract-scoped card is created under `POST /organizations/{orgId}/rate-cards`, which checks the contract against that org, so `ownerContractId` alone identifies the owner — and `resolveEffectiveRateCard()` matches `ownerContractId` without re-asserting the org. Since `Contract.organizationId` is the **sponsoring** (buyer) org (`Payment.organizationId`) while `resolveOrgSplit()` resolves the expert's **host** (supply) org (`Payment.hostOrganizationId`), forwarding a buyer contract unguarded would let one tenant's booking settle on another tenant's negotiated split. Contract scope is therefore reachable when `Payment.organizationId === Payment.hostOrganizationId` (the same-org HYBRID case); on a **Cross-Org Booking (`Buyer Org != Host Org`)**, `resolveOrgSplit()` resolves the Host Org's org-scoped `RateCard` tiers (`planId` → `planType` → org default → `DEFAULT_RATE_CARD`).
 
-The collaborator leg passes no scope at all under either flag state. ADR 18 makes collaborations org-blind, so the seller's contract and plan must not select a card owned by the collaborator's own org.
+### 2.0 Cross-Org Bookings (`Buyer Org != Host Org`)
 
-**The bps invariant:** `platformBps + orgBps + consultantBps === 10000` on every row — enforced at the creation site (`bumpRateCard()` + the rate-card POST handler), not yet a Postgres CHECK (follow-up).
+A single booking can involve two distinct organizations simultaneously:
+
+- **Buyer / Sponsor Org (`Payment.organizationId`, `@relation("PaymentOrgTag")`)**: The organization whose member booked the session and whose `BillingAccount` (`Payment.billingAccountId`) or `ProgramAssignment` funds it (`WALLET`, `INVOICE_ACCRUAL`, `LICENSE`, or `PERSONAL`).
+- **Supply / Host Org (`Payment.hostOrganizationId`, `@relation("PaymentHostOrg")`)**: The `canHost = true` organization whose `EXPERT` member delivered the consultation, subscription, webinar, or class.
+
+When `Payment.organizationId !== Payment.hostOrganizationId`:
+
+1. **Funding Debit (Buyer Org A)**: The `BOOKING` ledger transaction debits Buyer Org A's funding rail (`Dr WALLET(orgA)` or `Dr ORG_RECEIVABLE(orgA)`, or `Dr CASH` on a `CARD` co-pay leg).
+2. **Earnings & Payable Credit (Host Org B)**: `resolveOrgSplit()` resolves Host Org B's effective `RateCard` (`ownerOrgId = orgB.id`), creates `OrganizationEarnings` (`organizationId = orgB.id`) and `ConsultantEarnings`, and posts `Cr ORG_PAYABLE(orgB)` + `Cr CONSULTANT_PAYABLE(expert)` + `Cr PLATFORM_FEE` + `Cr GST_PAYABLE` in the same balanced `booking:<paymentId>` transaction.
+
+The collaborator leg passes each collaborator's own host org (`collaboratorHostOrgId`) into `resolveOrgSplit()` without forwarding the buyer's contract scope, so a seller's contract never selects a rate card owned by a collaborator's separate host organization.
+
+**The bps invariant:** `platformBps + orgBps + consultantBps === 10000` on every row — enforced at the creation site (`bumpRateCard()` + the rate-card POST handler) and by the SQL check constraint in `prisma/sql/check-constraints.sql`.
 
 > **Everything is bps now.** #772 unified splits on integer basis points (`10000 = 100%`). The old `Float` `sharePercentage` / `revenueSharePercentage` columns are gone — `ConsultantEarnings.shareBps` and the collaborator `revenueShareBps` columns replace them. Float money math is banned.
 
@@ -108,7 +120,7 @@ totalConsultantPool  = 800_000 − 160_000         = 640_000   (Arjun's Consulta
 
 Arjun nets **₹6,400**; the platform recognizes **₹1,600**. His `ConsultantEarnings.consultantSharePaise` carries the full ₹6,400 — no `OrganizationEarnings` row exists because no org is in the loop.
 
-**HOST org — a LearnPro panel expert (seeded RateCard 10 / 10 / 80).** Now `resolveOrgSplit()` finds the LearnPro EXPERT membership and computes the split inline against the resolved rate card. Each independent share is **floored**, and the **org leg absorbs the rounding remainder**:
+**HOST org — a LearnPro panel expert (seeded RateCard 10 / 10 / 80).** Now `resolveOrgSplit()` finds the LearnPro EXPERT membership (`Payment.hostOrganizationId = learnpro.id`) and computes the split inline against the resolved rate card. Each independent share is **floored**, and the **org leg absorbs the rounding remainder**:
 
 ```
 grossAmount          = 800_000 paise
@@ -128,45 +140,61 @@ So the same ₹8,000 splits ₹800 platform / ₹6,400 to the panel expert / ₹
 The split becomes one balanced transaction (`booking:<paymentId>`, kind `BOOKING`). The funding legs ([payment legs](09-payment-legs.md)) are the debits; the split is the credits:
 
 ```
-Dr CASH / WALLET(org) / ORG_RECEIVABLE(org) / PLATFORM_PROMO   (the funding legs)
+Dr CASH / WALLET(buyerOrg) / ORG_RECEIVABLE(buyerOrg) / PLATFORM_PROMO   (the funding legs)
 Dr DISCOUNT            max(0, originalAmount + taxAmount − Σ(funding-leg debits))
-   Cr PLATFORM_FEE              platform fee
-   Cr CONSULTANT_PAYABLE(consultant)   total consultant pool
-   Cr ORG_PAYABLE(org)         org share (only if > 0)
-   Cr GST_PAYABLE              tax amount
+   Cr PLATFORM_FEE                    platform fee (+ any overage surchargePaise)
+   Cr CONSULTANT_PAYABLE(consultant)  consultant share (one leg per earning consultant)
+   Cr ORG_PAYABLE(hostOrg)            host org share (one leg per earning host org, if > 0)
+   Cr GST_PAYABLE                     tax amount (incl. GST on overage surcharge if applicable)
 ```
 
-See [ledger & postings §4.2](03-ledger-and-postings.md) for the exact leg-to-account mapping. **Every earnings-bearing booking now posts inline — multi-collaborator included** (#773, closed in the #778 finance-correctness PR). The splits path resolves each collaborator's HOST-org settlement up front and posts one balanced `booking:<paymentId>` transaction: funding debits by leg source, then credits of `PLATFORM_FEE` (the primary fee plus the settled collaborators' fee slices), one `CONSULTANT_PAYABLE` per party (a settled collaborator's earnings row stores the share **net** of the host-org cut, so cache equals journal credit exactly), one `ORG_PAYABLE` per host org, and `GST_PAYABLE`. A posting failure rolls the whole earnings creation back, and the reconciler's `EARNINGS_WITHOUT_BOOKING_TXN` finding (threshold 0) enforces that the platform never again runs partially journaled. One related standing pattern: a member-paid overage capture credits `ORG_PAYABLE` without an earnings row, so that account legitimately carries an overage-relief credit until the payout batch drains ledger payables — reconcile treats it as expected, not as drift.
+See [ledger & postings §4.2](03-ledger-and-postings.md) for the exact leg-to-account mapping. **Every earnings-bearing booking posts inline — multi-collaborator and cross-org included** (#773, #778). The splits path resolves the primary expert's and each collaborator's HOST-org settlement up front and posts one balanced `booking:<paymentId>` transaction: funding debits by leg source against `Payment.organizationId` (buyer org), then credits of `PLATFORM_FEE` (the primary fee plus the settled collaborators' fee slices), one `CONSULTANT_PAYABLE` per party (a settled collaborator's earnings row stores the share **net** of the host-org cut, so cache equals journal credit exactly), one `ORG_PAYABLE` per distinct host org, and `GST_PAYABLE`. A posting failure rolls the whole earnings creation back, and the reconciler's `EARNINGS_WITHOUT_BOOKING_TXN` finding (threshold 0) enforces that the platform never again runs partially journaled.
 
 ---
 
-## 4. Earnings rows are reconciled caches
+## 4. Earnings rows are reconciled caches (Multi-Collaborator Same-Org & Cycle-Ordinal Keying)
 
 Both earnings tables carry **bps snapshots** so a later rate bump can't rewrite them, plus cached amount columns the reconciler checks:
 
 ```prisma
 model OrganizationEarnings {
-  orgSharePaise        Int
-  platformFeePaise     Int
-  consultantSharePaise Int
+  id                   String       @id @default(uuid())
+  paymentId            String
+  organizationId       String       // the HOST org earning the split
+  consultantProfileId  String?      // the specific expert whose slice produced this row
+  role                 EarningRole  @default(OWNER) // OWNER | COLLABORATOR
+  cycleOrdinal         Int?         // recurring subscription billing cycle index
+  grossAmountPaise     BigInt
+  orgSharePaise        BigInt
+  platformFeePaise     BigInt
+  consultantSharePaise BigInt
+  refundedAmountPaise  BigInt       @default(0)
   rateCardIdApplied    String?
   platformBpsApplied   Int?
   orgBpsApplied        Int?
   consultantBpsApplied Int?
-  @@unique([paymentId, organizationId])  // one row per (payment, HOST org)
+  status               EarningStatus // PENDING → READY → BATCHED → PAID (HELD on dispute or CHARGE_MEMBER overage hold)
+  holdUntil            DateTime?     @db.Timestamptz
+  preDisputeStatus     EarningStatus?
+  @@unique([paymentId, organizationId, consultantProfileId, role, cycleOrdinal])
 }
 model ConsultantEarnings {
-  shareBps             Int    // multi-collaborator split, basis points
-  platformFeePaise     Int
-  consultantSharePaise Int
-  status               EarningStatus  // PENDING → READY → BATCHED → PAID (HELD on dispute)
-  holdUntil            DateTime?
+  shareBps             Int           // multi-collaborator split, basis points
+  role                 EarningRole   @default(OWNER)
+  cycleOrdinal         Int?
+  platformFeePaise     BigInt
+  consultantSharePaise BigInt
+  status               EarningStatus // PENDING → READY → BATCHED → PAID (HELD on dispute or CHARGE_MEMBER overage hold)
+  holdUntil            DateTime?     @db.Timestamptz
 }
 ```
 
 Settlement/payout code reads the `*Applied` / `*AtBooking` snapshots and the cached amounts — **never** the live `RateCard`. The reconciler asserts the cached amounts equal the booking journal's `PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE` credits (`EARNINGS_LEDGER_DRIFT`, [ledger integrity](13-ledger-integrity.md)).
 
-Note (per-collaborator, A3): one `Payment` can carry **N** `OrganizationEarnings` rows — the primary expert's org plus one per collaborator-at-a-different-HOST-org, capped by the `@@unique([paymentId, organizationId])` constraint.
+**Why the 5-column unique key `@@unique([paymentId, organizationId, consultantProfileId, role, cycleOrdinal])` matters:**
+
+- **Multi-collaborator same-org group sessions**: On a webinar or class where the primary instructor (`role = OWNER`) and one or more co-instructors (`role = COLLABORATOR`) belong to the **same** Host Org (`organizationId`), each expert can carry their own `Membership.rateCardOverride` and revenue share (`shareBps`). Keying by `(paymentId, organizationId, consultantProfileId, role, cycleOrdinal)` allows multiple `OrganizationEarnings` rows for the same `(paymentId, organizationId)` — one per `(consultantProfileId, role)` — without unique-constraint collisions, preserving per-expert rate-card snapshots and per-slice refund attribution.
+- **Recurring subscription cycles**: When a subscription releases earnings per cycle (`cycleOrdinal = 1, 2, ...`), each cycle mints its own `OrganizationEarnings` row under the same `paymentId`.
 
 ---
 
@@ -181,9 +209,9 @@ See [expert lifecycle](../30-programs-and-lifecycle/03-expert-lifecycle.md) for 
 
 ---
 
-## 6. Program overage — when a booking breaches the cap
+## 6. Program overage & Co-Pay Split `PaymentLeg`s — when a booking breaches the cap
 
-A sponsored booking can exceed the covering `ProgramAssignment`'s cap (a LICENSED_SEAT's `coveredEngagementsPerCycle` or a CREDIT_POOL's `creditBudgetPerCycle`). What happens is governed by the program's `OverageBehavior` (`BLOCK` / `CHARGE_MEMBER` / `CHARGE_ORG`) and computed by one pure mapper, `computeOverageForBooking` (`lib/payments/billing/overage.ts`), shared by both the pre-checkout preview and the at-checkout recorder so the two can never drift.
+A sponsored booking can exceed the covering `ProgramAssignment`'s cap (a `LICENSED_SEAT`'s `coveredEngagementsPerCycle` or a `CREDIT_POOL`'s `creditBudgetPerCycle`). What happens is governed by the program's `OverageBehavior` (`BLOCK` / `CHARGE_MEMBER` / `CHARGE_ORG`) and computed by one pure mapper, `computeOverageForBooking` (`lib/payments/billing/overage.ts`), shared by both the pre-checkout preview and the at-checkout recorder so the two can never drift. All `(FundingSource × ProgramType × OverageBehavior × overageSurchargeBps)` permutations are unlocked in the engine (guided in the UI via `<MotivationBanner />` and `<AdvancedPermutationGate />`).
 
 ### 6.1 The marginal: base + surcharge
 
@@ -191,28 +219,34 @@ The marginal is the **over-cap portion of the real booking price** (consulting r
 
 - `basePaise` — the pass-through over-cap portion. **Invariant: `coveredPaise + basePaise == booking price`.**
 - `surchargePaise` — `floor(basePaise × overageSurchargeBps / 10000)`. The surcharge is what can push the marginal _above_ a single booking price (overage costs more, by design).
-- `marginalPaise` — the authoritative charged total, `basePaise + surchargePaise`.
+- `marginalPaise` — the authoritative charged total, `basePaise + surchargePaise` plus 18% GST on the surcharge.
+
+The surcharge is the only part of an overage that carries new GST. `basePaise` is a slice of the parent booking's tax-inclusive price, and the parent's `booking:` journal already credited its GST, so taxing it again would book the same tax twice. GST on the surcharge comes from the shared tax engine (`determineTax`) for the payer's place of supply: the member's own buyer country for `CHARGE_MEMBER`, the organisation's `dataResidencyRegion` for `CHARGE_ORG`. On `CHARGE_MEMBER` it is the side-`Payment`'s `taxAmount`; on `CHARGE_ORG` it rides the tax-inclusive `OVERAGE_INVOICE_ACCRUAL` leg and is added to the parent's `taxAmount`, so the booking journal credits `GST_PAYABLE` and the rollup bills it once. The pre-checkout preview below still quotes the pre-tax marginal.
 
 ### 6.2 Pre-checkout preview
 
-`previewOverageForBooking` (`lib/payments/billing/overage-preview.ts`, surfaced at `POST /api/organizations/[orgId]/checkout/overage-preview`) answers "if this member books this plan via this org now, will it breach the cap and what does it cost?" — so the checkout UI warns **before** pay. It resolves the same active assignment as checkout and runs the same mapper over the assignment's _current_ (pre-booking) usage, returning `coveredPaise` / `marginalPaise` / `surchargePaise`, `willExceedCap`, `willBlock`, and `chargeTo`. PERSONAL funding, no covering assignment, or an unlimited LICENSE seat → `applicable: false` (no overage line shown).
+`previewOverageForBooking` (`lib/payments/billing/overage-preview.ts`, surfaced at `POST /api/organizations/[orgId]/checkout/overage-preview`) answers "if this member books this plan via this org now, will it breach the cap and what does it cost?" — so the checkout UI warns **before** pay. It resolves the same active assignment as checkout and runs the same mapper over the assignment's _current_ (pre-booking) usage, returning `coveredPaise` / `marginalPaise` / `surchargePaise`, `willExceedCap`, `willBlock`, and `chargeTo`. `PERSONAL` funding without a covering program or an unlimited `LICENSE` seat → `applicable: false` (no overage line shown).
 
-### 6.3 At-checkout recording + the circuit breaker
+### 6.3 At-checkout recording, `LICENSE + CARD` Co-Pay Split Legs, & the circuit breaker
 
-On a real over-cap checkout, `recordOverageAtCheckout` (`lib/payments/billing/overage-settlement.ts`) runs inside the booking's Serializable tx:
+On a real over-cap checkout, `recordOverageAtCheckout` (`lib/payments/billing/overage-settlement.ts`) runs inside the booking's `Serializable` tx:
 
 - **Circuit breaker.** `maxOveragePerCyclePaise` is a per-cycle overage ceiling. If `cycleOverageSoFarPaise + marginal` would breach it, the mapper returns `decision: BLOCK, chargeTo: null` **regardless of `overageBehavior`** — the recorder throws `PROGRAM_CAP_EXHAUSTED` (HTTP 402), the same shape as a `BLOCK`-behavior refusal but with a distinct code so the dashboard can say "cycle ceiling" vs "per-member allocation". An unknown/missing `overageBehavior` also **fails safe to `BLOCK`**.
-- **`CHARGE_MEMBER`** → a parent-linked **PENDING side-`Payment`** for the marginal (gateway _not_ called inside the tx; the order is minted lazily when the member opens the resume-checkout surface) + an `OverageEvent(PENDING)`. To avoid double-collecting `basePaise`, checkout carves it out of the org-funded parent's `INVOICE_ACCRUAL` leg (fail-closed: a non-invoice-funded parent has no credit-back path yet, #715, so it aborts rather than double-charge). Member is notified (`notifyOrgProgramOverageDue`) with a pay deep link. The webhook later posts the `OVERAGE_MEMBER` org-relief leg ([§4.8 of ledger & postings](03-ledger-and-postings.md)).
-- **`CHARGE_ORG` on the INVOICE rail** → carve `basePaise` out of the base `INVOICE_ACCRUAL` leg and write the marginal as a distinct **`OVERAGE_INVOICE_ACCRUAL`** leg (the distinct source dodges the `@@unique([paymentId, source])` clash) + an `OverageEvent(PENDING)`. The cycle-close rollup turns it into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED → CHARGED` ([invoicing](08-invoicing.md)).
-- **`CHARGE_ORG` on the WALLET rail (legacy programmes only)** → new configurations are refused with `WALLET_CHARGE_ORG_RETIRED`; a programme saved before that keeps settling this way. Nothing is billed, because the wallet debit taken when the booking committed is the whole nominal price and therefore already contains the over-cap pass-through. The recorder writes **no** leg and does **not** touch `Payment.amount`; it records an `OverageEvent` that is born `CHARGED` with `settledAt` stamped and `paymentId` pointing at the booking payment whose `WALLET` leg collected it. That event carries no `invoiceLineItemId`, so the reconciler's link invariant accepts either link as proof of collection. Anything else on this rail fails closed with a business error rather than inflating the payment: a positive `overageSurchargeBps` is a markup the wallet debit never took, and an org-sponsored payment carrying none of the `WALLET` / `INVOICE_ACCRUAL` / `LICENSE` funding legs means the funding seam itself has drifted.
-- **`CHARGE_ORG` on the LICENSE rail is refused (#1458).** A licence is a flat fee settled at contract time, so a licence-funded booking moves no money per booking: its funding leg is deliberately ₹0 while `Payment.amount` stays at the full price, and the leg-sum guard excuses that only while the licence leg is the payment's _only_ funding leg. Adding an overage leg re-arms the comparison, so `assert_payment_legs_ok` raised at COMMIT and the booking died with an opaque database error. There is no per-booking rail to collect the marginal on, so `overageConfigRefusals` refuses any charging behaviour on a licence-funded account (`LICENSE_OVERAGE_UNSUPPORTED`) and checkout keeps the fail-closed backstop.
-- **`CHARGE_MEMBER` is not available on a WALLET account (#715, guarded in #1458).** Collecting from the member requires carving the over-cap portion back out of the parent, which on the wallet rail would mean crediting the wallet mid-transaction — a path that has never been built. `overageConfigRefusals` (`lib/enterprise/reachable-paths.ts`) refuses it when the programme is created or patched, so an operator cannot save a configuration whose only outcome is a refused booking. Checkout keeps its fail-closed throw for programmes configured before that guard existed, now carrying the code `OVERAGE_CHARGE_MEMBER_UNSUPPORTED` and an HTTP 409.
+- **`CHARGE_MEMBER` — Synchronous Co-Pay Split `PaymentLeg`s (`LICENSE + CARD`, `WALLET + CARD`, `INVOICE_ACCRUAL + CARD`)**:
+  - When a member pays their overage synchronously at checkout (including a partial-cap breach on a `LICENSE`, `WALLET`, or `INVOICE` program), a single `Payment` row writes **two stackable `PaymentLeg`s**:
+    1. The org-covered leg: `LICENSE` (`amountPaise = 0` representing `coveredPaise`), `WALLET` (`amountPaise = coveredPaise`), or `INVOICE_ACCRUAL` (`amountPaise = coveredPaise`).
+    2. The learner co-pay leg: `CARD` (`amountPaise = marginalPaise + marginalGstPaise`, `sourceRef = gatewayPaymentId`).
+  - The SQL leg-sum trigger (`prisma/sql/payment-legs-triggers.sql`, `assert_payment_legs_ok`) explicitly permits mixed `LICENSE` (`0`) + monetary (`CARD` / `OVERAGE_INVOICE_ACCRUAL`) legs on the same `Payment`, verifying that the non-`LICENSE`, non-`REFERRAL_CREDIT` legs equal the payable `Payment.amount`.
+- **`CHARGE_MEMBER` — Post-Hoc Side-Payment (`/dashboard/overage`) with Earnings Hold**:
+  - When the member overage is collected asynchronously via a parent-linked **PENDING side-`Payment`** (`parentPaymentId`) and an `OverageEvent(PENDING)`, checkout carves `basePaise` out of the parent org leg (`INVOICE_ACCRUAL`, `WALLET`, or `LICENSE`) and places an **earnings hold** (`EarningStatus.HELD`) on the over-cap share of `ConsultantEarnings` and `OrganizationEarnings`.
+  - Holding the over-cap consultant/org earnings share until the member's side-payment transitions to `CHARGED` eliminates the unsecured write-off risk: if the member never pays and the 14-day timeout (`jobs/billing/timeout-member-overages.ts`) flips the `OverageEvent` to `FAILED`, the held over-cap earnings slice is reversed cleanly without platform loss. When the member's side-payment succeeds, the webhook posts the `OVERAGE_MEMBER` org-relief leg and releases the earnings hold (`HELD → PENDING/READY`).
+- **`CHARGE_ORG` on the `INVOICE` rail (`overageSurchargeBps >= 0`)** → carves `basePaise` out of the base `INVOICE_ACCRUAL` leg and writes `marginalPaise` (`basePaise + surchargePaise` + surcharge GST) as a distinct **`OVERAGE_INVOICE_ACCRUAL`** leg (dodging the `@@unique([paymentId, source])` clash) + an `OverageEvent(PENDING)`. The cycle-close rollup turns it into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED → CHARGED` ([invoicing](08-invoicing.md)).
+- **`CHARGE_ORG` on the `WALLET` rail (`overageSurchargeBps >= 0`)** → `walletDebit()` atomically debits `coveredPaise + marginalPaise` (including any `surchargePaise` and its GST) in the payment's `WALLET` leg (`Dr WALLET(org)`), and records an `OverageEvent` born `CHARGED` with `settledAt` stamped and `paymentId` pointing at the booking payment. On cancellation, `applyRefundCascade` credits the full `WALLET` leg back to `BillingAccount.walletBalance` and transitions the `OverageEvent` to `REVERSED`.
+- **`CHARGE_ORG` on the `LICENSE` rail (`overageSurchargeBps >= 0`)** → writes a ₹0 `LICENSE` leg for `coveredPaise` plus an **`OVERAGE_INVOICE_ACCRUAL`** leg (`Dr ORG_RECEIVABLE(org)`) for `marginalPaise` + an `OverageEvent(PENDING)`, which rolls into a child/monthly `OrganizationInvoice` at cycle close.
 
 The `chargeStatus` state machine itself is a single guarded transition (`transitionOverage`, `overage-transitions.ts`); the overage-event lifecycle table of states (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) is in [funding & programs](../00-foundations/03-funding-and-programs.md) / [programs](../30-programs-and-lifecycle/02-programs.md).
 
-Because a wallet-funded overage never adds to `Payment.amount`, a cancellation of such a booking refunds exactly what the wallet was debited. The refund cascade splits the refund across the payment's legs, and the single `WALLET` leg equals `Payment.amount`, so a full refund credits the wallet back to the balance it held before the booking. The same cascade reverses the `CHARGED` event, because the money it represented has just been returned and the programme's per-cycle ceiling has to be released with it.
-
-An overage also has to keep the booking journal balanced, and that is a tighter constraint than the leg-sum identity. Every credit in the BOOKING posting is derived from `Payment.originalAmount` plus `taxAmount` — the nominal price — while the debits are the funding legs plus a `DISCOUNT` plug clamped at zero or above. The posting therefore balances only while the funding legs sum to no more than the nominal gross. On the wallet rail that now holds by construction. On the invoice rail it does not: the base carve keeps `basePaise` inside the price, but `marginal = base + surcharge` raises both the accrual leg and `Payment.amount` by the surcharge, which is real funding sitting outside the nominal price. The posting therefore credits that surcharge to `PLATFORM_FEE`, because an over-cap surcharge is a markup the platform charges the organisation for exceeding its own cap and not consultant income — the consultant is paid out of `originalAmount`. Without that credit the posting was short by exactly `surchargePaise`, threw `LedgerImbalanceError`, and the booking committed with no journal entry at all (Sentry `FAMILIARISE_WEB-28`).
+An overage always keeps the `BOOKING` journal balanced: `surchargePaise` is credited to `PLATFORM_FEE` (an over-cap surcharge is a platform markup for exceeding the program cap, while the consultant is paid out of `originalAmount`), and the 18% GST on `surchargePaise` is credited to `GST_PAYABLE`, matching `OrganizationInvoice.taxAmount` and the nightly ledger reconciler.
 
 The refusals checkout can raise from inside its transaction all carry a machine-readable code, and the catch around that transaction rethrows any error whose code is registered in `BUSINESS_ERROR_CODES` instead of rewriting it. `PROGRAM_CAP_EXHAUSTED` therefore reaches the buyer as the HTTP 402 it was thrown as, with a toast that names the admin action, rather than as the 500 "Something Went Wrong" it used to collapse into.
 

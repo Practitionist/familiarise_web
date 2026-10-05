@@ -19,7 +19,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    paymentLeg: { upsert: jest.fn() },
+    paymentLeg: { updateMany: jest.fn() },
   };
   return {
     __esModule: true,
@@ -29,6 +29,9 @@ jest.mock("../../lib/prisma", () => {
     },
   };
 });
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerInvoiceBestEffort: jest.fn().mockResolvedValue({}),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue(undefined),
 }));
@@ -57,7 +60,7 @@ const tx = (
   prisma as unknown as {
     __tx: {
       payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-      paymentLeg: { upsert: jest.Mock };
+      paymentLeg: { updateMany: jest.Mock };
     };
   }
 ).__tx;
@@ -67,7 +70,8 @@ const mockSystemError = recordSystemError as jest.Mock;
 
 const side = {
   id: "side1",
-  amount: 125_000,
+  amount: 129_500,
+  taxAmount: 4_500,
   organizationId: "org1",
   paymentStatus: "PENDING",
   parentPaymentId: "parent1",
@@ -79,7 +83,7 @@ beforeEach(() => {
 });
 
 describe("handleOverageMemberSuccess", () => {
-  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE == marginal", async () => {
+  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
@@ -90,16 +94,11 @@ describe("handleOverageMemberSuccess", () => {
       where: { id: "side1", paymentStatus: "PENDING" },
       data: { paymentStatus: "SUCCEEDED" },
     });
-    // funding-invariant CARD leg, idempotent upsert
-    expect(tx.paymentLeg.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          source: "CARD",
-          amountPaise: 125_000,
-        }),
-        update: {},
-      }),
-    );
+    // the CARD leg minted with the side charge gets the gateway order id
+    expect(tx.paymentLeg.updateMany).toHaveBeenCalledWith({
+      where: { paymentId: "side1", source: "CARD" },
+      data: { sourceRef: "order_abc" },
+    });
     // #812 — two-step CAS: the still-carved edge is tried first.
     expect(mockTransition).toHaveBeenCalledWith(
       tx,
@@ -114,11 +113,16 @@ describe("handleOverageMemberSuccess", () => {
       kind: "OVERAGE_MEMBER",
       paymentId: "side1",
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 125_000 },
+        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 129_500 },
         {
           account: { kind: "ORG_PAYABLE", organizationId: "org1" },
           direction: "CREDIT",
           amountPaise: 125_000,
+        },
+        {
+          account: { kind: "GST_PAYABLE" },
+          direction: "CREDIT",
+          amountPaise: 4_500,
         },
       ],
     });

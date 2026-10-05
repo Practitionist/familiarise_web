@@ -46,9 +46,10 @@ BEGIN
   END IF;
 
   -- Both counts span every non-reversal leg INCLUDING REFERRAL_CREDIT, so the
-  -- carve fires on exactly the shapes checkPaymentLegsSumToAmount carves: a
-  -- credit sitting beside a licence leg is a real funding leg and keeps the
-  -- payment in the comparison.
+  -- carve fires on pure LICENSE bookings (where every non-reversal leg is a
+  -- 0-value LICENSE leg) while split LICENSE + CARD co-pay bookings (one 0-value
+  -- LICENSE leg plus non-LICENSE legs summing to Payment.amount) proceed into
+  -- the non-LICENSE funding-sum check below.
   SELECT
     COUNT(*),
     COUNT(*) FILTER (
@@ -64,7 +65,7 @@ BEGIN
     FROM "PaymentLeg"
     WHERE "paymentId" = p_payment_id
       AND RIGHT("source"::text, 9) <> '_REVERSAL'
-      AND "source"::text <> 'REFERRAL_CREDIT';
+      AND "source"::text NOT IN ('REFERRAL_CREDIT', 'LICENSE');
 
     IF v_funding_sum <> v_amount THEN
       RAISE EXCEPTION 'payment_legs_sum_to_amount violated for payment %: legs sum to % but Payment.amount is %',

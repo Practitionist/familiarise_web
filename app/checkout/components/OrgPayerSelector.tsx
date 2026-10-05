@@ -73,15 +73,33 @@ function OverageWarning({
   }
 
   if (data.willExceedCap && data.marginalPaise > 0) {
-    const who =
-      data.chargeTo === "MEMBER"
-        ? `you'll be charged ${inr(data.marginalPaise)}`
-        : `${inr(data.marginalPaise)} will be billed to ${organizationName}`;
+    // marginalPaise is the GST-inclusive total the payer will owe.
+    const total = `${inr(data.marginalPaise)} (incl. GST)`;
+    if (data.chargeTo === "MEMBER") {
+      return (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="space-y-1 text-amber-950">
+            <p className="font-medium">
+              Co-Pay Split Checkout — {total} Personal Overage
+            </p>
+            <p className="text-xs text-amber-900 leading-relaxed">
+              This booking exceeds your covered allocation under{" "}
+              {data.programName ?? organizationName}. Your organization covers
+              your remaining entitlement, and you&apos;ll be charged{" "}
+              <strong>{total}</strong> with your personal card or UPI at
+              checkout.
+            </p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
         <span className="text-amber-900">
-          This exceeds your covered allocation — {who} as an overage charge.
+          This exceeds your covered allocation — {total} will be billed to{" "}
+          {organizationName} as an overage charge.
         </span>
       </div>
     );
@@ -253,7 +271,23 @@ export function OrgPayerSelector({
         </p>
       )}
 
-      {/* #777 §C — pre-checkout overage warning for the selected org. */}
+      {selectedMembership?.fundingSource === "PERSONAL" && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-xs text-amber-950">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="space-y-0.5 leading-relaxed">
+            <p className="font-medium">
+              Personal Card + Reimbursement Tracking ({selectedMembership.organizationName})
+            </p>
+            <p className="text-amber-900">
+              You pay 100% with your personal card or UPI at checkout. Your
+              booking receipt is automatically logged in{" "}
+              {selectedMembership.organizationName}&apos;s Member Spend report
+              for off-platform expense reimbursement.
+            </p>
+          </div>
+        </div>
+      )}
+
       {selectedOrganizationId && selectedMembership && planType && planId && (
         <OverageWarning
           organizationId={selectedOrganizationId}

@@ -639,7 +639,7 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
   const cacheByPaymentId = new Map<string, number>();
   for (let i = 0; i < paymentIds.length; i += CHUNK) {
     const slice = paymentIds.slice(i, i + CHUNK);
-    const [ceRows, oeRows] = await Promise.all([
+    const [ceRows, oeRows, overageRows] = await Promise.all([
       prisma.consultantEarnings.groupBy({
         by: ["paymentId"],
         where: { paymentId: { in: slice } },
@@ -650,6 +650,20 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
         where: { paymentId: { in: slice } },
         _sum: { orgSharePaise: true },
       }),
+      typeof prisma.overageEvent?.findMany === "function"
+        ? prisma.overageEvent.findMany({
+            where: {
+              overageBehavior: "CHARGE_ORG",
+              surchargePaise: { gt: 0 },
+              chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
+              bookingUtilization: { paymentId: { in: slice } },
+            },
+            select: {
+              surchargePaise: true,
+              bookingUtilization: { select: { paymentId: true } },
+            },
+          })
+        : Promise.resolve([]),
     ]);
     for (const ce of ceRows) {
       if (!ce.paymentId) continue;
@@ -666,6 +680,13 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
         oe.paymentId,
         (cacheByPaymentId.get(oe.paymentId) ?? 0) +
           sumPaise(oe._sum.orgSharePaise),
+      );
+    }
+    for (const ov of overageRows) {
+      const pid = ov.bookingUtilization.paymentId;
+      cacheByPaymentId.set(
+        pid,
+        (cacheByPaymentId.get(pid) ?? 0) + sumPaise(ov.surchargePaise),
       );
     }
   }

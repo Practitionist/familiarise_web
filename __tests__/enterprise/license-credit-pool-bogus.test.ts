@@ -88,19 +88,24 @@ beforeEach(() => {
   });
 });
 
-describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL guard", () => {
-  it("rejects a CREDIT_POOL program under a LICENSE-funded contract (400 UNREACHABLE_FUNDING_PATH)", async () => {
+describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL unlocked permutation", () => {
+  it("allows a CREDIT_POOL program under a LICENSE-funded contract (201)", async () => {
     mockedPrisma.contract.findUnique.mockResolvedValueOnce({
       organizationId: "org-1",
       status: "ACTIVE",
       billingAccount: { fundingSource: "LICENSE" },
+    });
+    mockedPrisma.program.create.mockResolvedValueOnce({
+      id: "p-lic-pool",
+      type: "CREDIT_POOL",
+      name: "Pool program under license — unlocked",
     });
 
     const res = (await programsPOST(
       makeRequest({
         type: "CREDIT_POOL",
         contractId: "c-1",
-        name: "Pool program under license — bogus",
+        name: "Pool program under license — unlocked",
         coveredPlanTypes: [],
         allowedCategories: [],
         creditPoolConfig: {
@@ -111,13 +116,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
       { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.code).toBe("UNREACHABLE_FUNDING_PATH");
-    expect(body.error).toMatch(/LICENSE/);
-    expect(body.error).toMatch(/CREDIT_POOL/);
-    // Critical: program.create must NOT have fired
-    expect(mockedPrisma.program.create).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(mockedPrisma.program.create).toHaveBeenCalled();
   });
 
   it("allows a CREDIT_POOL program under a WALLET-funded contract", async () => {

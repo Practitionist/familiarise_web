@@ -24,6 +24,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { promises as dns } from "node:dns";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -40,12 +41,27 @@ export async function POST(
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
-    requireActive: true,
+    // Unverified orgs verify domain claims to unlock >5 seats (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Domain verification is paused while the organization is suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   const claim = await prisma.orgDomainClaim.findUnique({
-    where: { domain },
+    where: {
+      organizationId_domain: {
+        organizationId: orgId,
+        domain,
+      },
+    },
     select: {
       id: true,
       organizationId: true,
@@ -138,22 +154,71 @@ export async function POST(
   }
 
   const verifiedAt = new Date();
-  await prisma.$transaction(async (tx) => {
-    await tx.orgDomainClaim.update({
-      where: { id: claim.id },
-      data: { verifiedAt },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const competingVerified = await tx.orgDomainClaim.findFirst({
+        where: {
+          domain,
+          organizationId: { not: orgId },
+          verifiedAt: { not: null },
+        },
+        select: { id: true },
+      });
+      if (competingVerified) {
+        throw Object.assign(
+          new Error(
+            `Domain '${domain}' has already been verified by another organization.`,
+          ),
+          { httpStatus: 409, code: "DOMAIN_ALREADY_CLAIMED" },
+        );
+      }
+
+      await tx.orgDomainClaim.update({
+        where: { id: claim.id },
+        data: { verifiedAt },
+      });
+      await tx.orgDomainClaim.deleteMany({
+        where: {
+          domain,
+          organizationId: { not: orgId },
+          verifiedAt: null,
+        },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SETTINGS",
+          action: AUDIT_ACTIONS.SETTINGS.DOMAIN_VERIFIED,
+          description: `Domain '${domain}' verified via DNS TXT`,
+          details: { domain, claimId: claim.id },
+        },
+      });
     });
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "SETTINGS",
-        action: AUDIT_ACTIONS.SETTINGS.DOMAIN_VERIFIED,
-        description: `Domain '${domain}' verified via DNS TXT`,
-        details: { domain, claimId: claim.id },
-      },
-    });
-  });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
+    }
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: `Domain '${domain}' has already been verified by another organization.`,
+          code: "DOMAIN_ALREADY_CLAIMED",
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   return NextResponse.json({ verifiedAt, alreadyVerified: false });
 }

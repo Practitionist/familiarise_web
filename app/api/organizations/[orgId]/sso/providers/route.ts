@@ -191,7 +191,12 @@ export async function POST(
     // belt-and-suspenders check, but now operators see the
     // problem at the point of action.
     const claim = await prisma.orgDomainClaim.findUnique({
-      where: { domain: normalizedDomain },
+      where: {
+        organizationId_domain: {
+          organizationId: orgId,
+          domain: normalizedDomain,
+        },
+      },
       select: { organizationId: true, verifiedAt: true },
     });
     if (!claim || claim.organizationId !== orgId) {

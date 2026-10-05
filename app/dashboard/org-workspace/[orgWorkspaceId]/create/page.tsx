@@ -14,7 +14,7 @@
  */
 
 import { CreateOrganizationWizard } from "@/components/organization/create-wizard/Wizard";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 
 export default async function OrgWorkspaceCreatePage({
   params,
@@ -25,7 +25,7 @@ export default async function OrgWorkspaceCreatePage({
   return (
     <CreateOrganizationWizard
       cancelHref={`/dashboard/org-workspace/${orgWorkspaceId}/home`}
-      hostOrgsEnabled={ENABLE_HOST_ORGS}
+      hostOrgsEnabled={isHostOrgsEnabled()}
     />
   );
 }

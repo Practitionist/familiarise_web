@@ -16,6 +16,10 @@ import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { CreateTicketDialog } from "@/components/dashboard/shared/support/CreateTicketDialog";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { BillingBlockBanner } from "@/components/billing/BillingBlockBanner";
+import {
+  MotivationBanner,
+  resolveFundingRailMotivation,
+} from "@/components/organization/MotivationBanner";
 import { Button } from "@/components/ui/button";
 import type { OrgReceivablesPayload } from "@/lib/data/org-receivables";
 
@@ -28,41 +32,38 @@ import { PurchaseOrdersPanel } from "../purchase-orders/PurchaseOrdersPanel";
 import { DisputesPanel } from "../disputes/DisputesPanel";
 import { MemberSpendPanel } from "../reimbursements/MemberSpendPanel";
 
-function moneyBlockReason(opts: {
+function resolveWalletTopUpBlockReason(opts: {
   walletFrozen: boolean;
   walletFrozenReason: string | null | undefined;
-  dunningSuspended: boolean;
   orgStatus: string | undefined;
 }): string {
   if (opts.walletFrozen) {
     return opts.walletFrozenReason ?? "Wallet spend is frozen";
   }
-  if (opts.dunningSuspended) {
-    return "Bookings are paused until the overdue invoice is settled";
-  }
   if (opts.orgStatus === "SUSPENDED") return "Organization suspended";
   return "Verify your organization to move money";
 }
 
+function resolveInvoicePaymentBlockReason(
+  orgStatus: string | undefined,
+): string {
+  if (orgStatus === "SUSPENDED") return "Organization suspended";
+  return "Verify your organization to move money";
+}
+
 /**
- * Org Billing (#1527 Q7): every money tab the org's funding shape uses, one
- * page. Purchase orders, disputes and member spend used to be sidebar items;
- * each tab now shows only when the funding source, flags and the viewer's
- * permissions make it meaningful. Q8: orgs no longer compose invoices here —
- * "Request an invoice" asks the platform, which issues it from the backoffice.
+ * Org Billing: every money tab the org's funding shape uses on a single page.
+ * Each tab shows when the funding source, flags, and viewer permissions make
+ * it meaningful. Orgs request invoices from the platform via support tickets.
  */
 export function BillingPageClient({
   orgId,
-  // #1319 — read on the server (lib/data/org-receivables) and handed down, so
-  // the ledger is never queried from the browser. Null when the server gate
-  // said no, which is the same case in which nothing below renders anyway.
   receivables = null,
 }: {
   orgId: string;
   receivables?: OrgReceivablesPayload | null;
 }) {
   const { can } = useOrgRole(orgId);
-  // #1527 — a new request opens on its own page, inside this dashboard.
   const requestHref = (ticketId: string) =>
     `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -83,26 +84,31 @@ export function BillingPageClient({
   });
   const org = orgDetails.data?.organization;
 
-  // #1427/#1430 — a frozen wallet or a dunning-suspended org blocks the same
-  // pay/top-up affordances as an unverified org; the server rejects either way.
+  // Wallet top-ups and invoice payments have distinct block conditions:
+  // a dunning-suspended or wallet-frozen org must remain able to pay its
+  // overdue/issued invoices so it can settle its balance and lift dunning.
   const walletFrozen = summary.data?.walletFrozen ?? false;
   const dunningSuspended = summary.data?.dunningSuspended ?? false;
-  const moneyMoveBlocked =
+  const walletTopUpBlocked =
     org?.status === "PENDING_VERIFICATION" ||
     org?.status === "SUSPENDED" ||
-    walletFrozen ||
-    dunningSuspended;
-  const moneyMoveReason = moneyBlockReason({
+    walletFrozen;
+  const walletTopUpReason = resolveWalletTopUpBlockReason({
     walletFrozen,
     walletFrozenReason: summary.data?.walletFrozenReason,
-    dunningSuspended,
     orgStatus: org?.status,
   });
+  const invoicePaymentBlocked =
+    org?.status === "PENDING_VERIFICATION" || org?.status === "SUSPENDED";
+  const invoicePaymentReason = resolveInvoicePaymentBlockReason(org?.status);
 
   if (!allowed) return null;
 
   const fundingSource =
     summary.data?.fundingSource ?? org?.fundingSource ?? null;
+  const fundingMotivation = fundingSource
+    ? resolveFundingRailMotivation(fundingSource)
+    : null;
   const orgName = org?.name ?? "our organization";
   // The org Support page is operations.read; finance-only roles lack it.
   const supportHref = can("operations.read")
@@ -116,7 +122,6 @@ export function BillingPageClient({
         description="Invoices, balances and everything this organization pays for."
         actions={
           <div className="flex flex-wrap gap-2">
-            {/* Wave-4b (#1230) — register export for finance reconciliation. */}
             <Button asChild size="sm" variant="outline">
               <a
                 href={`/api/organizations/${orgId}/billing-account/invoices/export`}
@@ -146,21 +151,29 @@ export function BillingPageClient({
         }
       />
       <DashboardContent>
-        {/* #1427 — shown above every Money tab, not only Invoices. */}
         <BillingBlockBanner
           walletFrozen={walletFrozen}
           walletFrozenReason={summary.data?.walletFrozenReason}
           dunningSuspended={dunningSuspended}
           supportHref={supportHref}
         />
-        {moneyMoveBlocked && !walletFrozen && !dunningSuspended && (
+        {invoicePaymentBlocked && (
           <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <Lock className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              {moneyMoveReason}. Paying invoices and wallet top-ups are disabled
-              until then.
+              {invoicePaymentReason}. Paying invoices and wallet top-ups are
+              disabled until then.
             </p>
           </div>
+        )}
+        {fundingMotivation && (
+          <MotivationBanner
+            tier={fundingMotivation.tier}
+            title={fundingMotivation.title}
+            message={fundingMotivation.message}
+            recommendation={fundingMotivation.recommendation}
+            compact
+          />
         )}
 
         <UrlTabs
@@ -173,8 +186,9 @@ export function BillingPageClient({
                   orgId={orgId}
                   summary={summary}
                   canPay={can("billing.manage")}
-                  moneyMoveBlocked={moneyMoveBlocked}
-                  moneyMoveReason={moneyMoveReason}
+                  orgStatus={org?.status}
+                  moneyMoveBlocked={invoicePaymentBlocked}
+                  moneyMoveReason={invoicePaymentReason}
                 />
               ),
             },
@@ -194,8 +208,8 @@ export function BillingPageClient({
               content: (
                 <WalletTab
                   orgId={orgId}
-                  moneyMoveBlocked={moneyMoveBlocked}
-                  moneyMoveReason={moneyMoveReason}
+                  moneyMoveBlocked={walletTopUpBlocked}
+                  moneyMoveReason={walletTopUpReason}
                 />
               ),
             },

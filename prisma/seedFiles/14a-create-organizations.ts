@@ -501,7 +501,6 @@ async function seedLearnPro(
     await prisma.consultantProfile.update({
       where: { id: user.consultantProfile.id },
       data: {
-        panNumber: `ABCDE${String(1000 + idx)}F`,
         residencyStatus: ResidencyStatus.RESIDENT,
         tdsSection: "194J",
         tdsRateBps: 1000, // 10% (#781 §C — bps)
@@ -607,6 +606,7 @@ async function seedIit(params: {
         create: {
           cycle: "MONTHLY",
           creditBudgetPerCycle: 10_000, // 10k credits = ₹10k / month
+          priceCapPerEngagementPaise: 5_000 * 100, // ₹5K per-engagement cap
         },
       },
     },

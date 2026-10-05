@@ -561,3 +561,31 @@ describe("#1458 org-overage rails keep the booking journal balanced", () => {
     ).toBe(80_000);
   });
 });
+
+describe("a LICENSE-funded booking", () => {
+  it("books no GST: the licence invoice already carries it", async () => {
+    setMembershipMap({ [PRIMARY_PROFILE]: null });
+    mockedCalculateSplit.mockResolvedValue([]);
+    mockedTx.paymentLeg.findMany.mockResolvedValue([
+      { source: "LICENSE", amountPaise: 0 },
+    ]);
+
+    // Checkout writes taxAmount 0 for a licence booking.
+    await createEarningsFromPayment({
+      payment: makePayment({
+        amount: 118_000,
+        originalAmount: 100_000,
+        taxAmount: 0,
+      }),
+      appointmentType: "CONSULTATION",
+    });
+
+    const txn = capturedLedgerTxns[0];
+    expect(legAmount(txn, "DEBIT", "DISCOUNT|_|_|INR")).toBe(100_000);
+    expect(legAmount(txn, "CREDIT", "GST_PAYABLE|_|_|INR")).toBe(0);
+    const credit = legsOf(txn)
+      .filter((l) => l.direction === "CREDIT")
+      .reduce((s, l) => s + l.paise, 0);
+    expect(credit).toBe(100_000);
+  });
+});
