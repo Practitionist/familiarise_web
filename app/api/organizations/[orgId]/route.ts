@@ -482,11 +482,21 @@ export async function PATCH(
     ? (numericStateCode(body.gstin, null) ?? body.gstStateCode)
     : body.gstStateCode;
   // A sponsoring domestic org is invoiced B2B, so its GST state is mandatory.
-  if (
-    gstStateCode === null &&
+  const invoicedB2b =
     (body.canSponsor ?? access.org.canSponsor) &&
-    access.org.dataResidencyRegion === "IN"
-  ) {
+    access.org.dataResidencyRegion === "IN";
+  const startsSponsoring = body.canSponsor === true && !access.org.canSponsor;
+  const leavesNoGstState =
+    gstStateCode === null ||
+    (gstStateCode === undefined &&
+      startsSponsoring &&
+      !(
+        await prisma.organizationTaxInfo.findUnique({
+          where: { organizationId: orgId },
+          select: { gstStateCode: true },
+        })
+      )?.gstStateCode);
+  if (invoicedB2b && leavesNoGstState) {
     return NextResponse.json(
       {
         error:
