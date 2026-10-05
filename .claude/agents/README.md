@@ -26,6 +26,17 @@ The full rationale — session-budget economics, the resume-from-worktree patter
 
 Nine vendor-specific agents operate on and audit this repo's Razorpay and RazorpayX integration (`Prisma` + `BigInt` paise, Orders/Standard Checkout, saved cards, webhooks, two-phase refunds, REST disputes API, RazorpayX payouts + Penny Drop / Reverse Penny Drop, and in-house GST invoicing): `razorpay-setup`, `razorpay-one-time-payment`, `razorpay-subscription`, `razorpay-webhook`, `razorpay-test-webhook`, `razorpay-invoice`, `razorpay-db-schema`, `razorpay-diagnostics`, and `razorpay-code-audit`. They are narrower and more mechanical than the role agents above, are scoped to Razorpay integration code specifically, and are documented in full at `.claude/skills/finance/references/razorpay/README.md`.
 
+## The multi-gateway & cross-border pack
+
+Four gateway-expansion and compliance agents cover our sanctioned backup gateways, foreign consultant payout treasury, high-ticket B2B export rail, and MoR/FEMA regulatory guardrails (documented in `.claude/skills/finance/references/gateways/README.md` and `docs/payments/gateways/gateway-evaluation-2026.md`):
+
+| Agent | Scope |
+| --- | --- |
+| `cashfree-integration.md` | **Cashfree Payments (`CASHFREE`) & Cashfree Payouts v2**: Our #1 full-stack domestic + PA-CB backup to Razorpay PG and RazorpayX Payouts (`x-api-version: 2025-01-01`, decimal rupee conversion at boundary vs `BigInt` paise in Prisma, `x-webhook-timestamp + rawBody` base64 HMAC, Secure ID Penny Drop / Reverse Penny Drop, and Easy Split). |
+| `tazapay-global-payouts.md` | **Tazapay (`TAZAPAY`) Global Checkout & Foreign Consultant Payouts**: 80+ local collection rails in 173+ countries + multi-currency `USD`/`EUR`/`GBP` treasury to pay foreign (non-Indian) consultants in 70+ countries (`POST /v3/payout`, `purpose: "PYR003"`) without double-FX conversion or Indian Section 393 / Forms 145 & 146 (pre-cutover Section 195 / Forms 15CA & 15CB) friction. |
+| `xflow-b2b-export.md` | **Xflow (`XFLOW`) High-Ticket (`>= $500`) & B2B Export Collection**: Stripe + JPMorgan Chase N.A. local USD/EUR/GBP accounts (`0.4%–0.6%` tiered fee, `0%` FX markup over live Google rate, `POST /v1/receivables` with export invoice & RBI purpose code `P1006`, `Webhook-Id` / `Webhook-Timestamp` / `Webhook-Signature` Base64 verification, and 24-hour automated `e-FIRA`). |
+| `gateway-compliance-advisor.md` | **Regulatory & Gateway Routing Guardrails**: Enforces why **Dodo Payments (`DODO_PAYMENTS`)** and **Polar.sh** are disqualified for 1:1 consulting and marketplaces under their official AUPs (Dodo Clauses #2/#10/#14/#30/#31 + $425k fine; Polar Items #2/#4), US LLC FEMA Overseas Direct Investment (ODI) rules (`Form FC` + `UIN` + `APR` + IRS `Form 5472`), and RBI PA-CB limits. |
+
 ## Dispatch rule
 
 Money code goes to `pr-builder` at opus/high. Money review triage also goes to `pr-builder`, because verifying a reviewer's claim against money-path code needs the same multi-file coherence as building the code did. Non-money triage goes to `pr-triager`. Docs work goes to `sweeper`; end-to-end preview QA goes to `qa-preview`. Purely mechanical work goes to `mechanic`.
