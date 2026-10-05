@@ -197,17 +197,36 @@ export async function handleOverageMemberSuccess(
     }
 
     if (side.parentPaymentId) {
-      if (typeof tx.consultantEarnings?.updateMany === "function") {
-        await tx.consultantEarnings.updateMany({
-          where: { paymentId: side.parentPaymentId, status: "HELD" },
-          data: { status: "PENDING" },
-        });
-      }
-      if (typeof tx.organizationEarnings?.updateMany === "function") {
-        await tx.organizationEarnings.updateMany({
-          where: { paymentId: side.parentPaymentId, status: "HELD" },
-          data: { status: "PENDING", preDisputeStatus: null },
-        });
+      const openDisputes =
+        typeof tx.dispute?.count === "function"
+          ? await tx.dispute.count({
+              where: {
+                paymentId: side.parentPaymentId,
+                status: { notIn: ["WON", "LOST"] },
+              },
+            })
+          : 0;
+      if (openDisputes === 0) {
+        if (typeof tx.consultantEarnings?.updateMany === "function") {
+          await tx.consultantEarnings.updateMany({
+            where: {
+              paymentId: side.parentPaymentId,
+              status: "HELD",
+              preDisputeStatus: null,
+            },
+            data: { status: "PENDING" },
+          });
+        }
+        if (typeof tx.organizationEarnings?.updateMany === "function") {
+          await tx.organizationEarnings.updateMany({
+            where: {
+              paymentId: side.parentPaymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING",
+            },
+            data: { status: "PENDING", preDisputeStatus: null },
+          });
+        }
       }
     }
 

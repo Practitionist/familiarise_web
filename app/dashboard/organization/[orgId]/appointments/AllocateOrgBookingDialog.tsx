@@ -47,14 +47,18 @@ export function AllocateOrgBookingDialog({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"auto" | "manual">("auto");
-  const [slots, setSlots] = useState<string[]>([""]);
+  const [slots, setSlots] = useState<{ id: string; value: string }[]>([
+    { id: "slot-0", value: "" },
+  ]);
+  const [nextSlotSeq, setNextSlotSeq] = useState(1);
   const [overrideReason, setOverrideReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setMode("auto");
-    setSlots([""]);
+    setSlots([{ id: "slot-0", value: "" }]);
+    setNextSlotSeq(1);
     setOverrideReason("");
     setError(null);
   };
@@ -71,7 +75,9 @@ export function AllocateOrgBookingDialog({
 
     let isoSlots: string[] | undefined;
     if (mode === "manual") {
-      const cleaned = slots.map((s) => s.trim()).filter((s) => s.length > 0);
+      const cleaned = slots
+        .map((s) => s.value.trim())
+        .filter((s) => s.length > 0);
       if (cleaned.length === 0) {
         setError("Add at least one slot start time for manual allocation.");
         return;
@@ -127,14 +133,16 @@ export function AllocateOrgBookingDialog({
   return (
     <>
       {trigger ? (
-        <span
+        <button
+          type="button"
+          className="inline-flex appearance-none bg-transparent p-0 text-left"
           onClick={(e) => {
             e.stopPropagation();
             setOpen(true);
           }}
         >
           {trigger}
-        </span>
+        </button>
       ) : (
         <Button
           size="sm"
@@ -198,15 +206,20 @@ export function AllocateOrgBookingDialog({
               <div className="space-y-2">
                 <Label>Slot start time(s)</Label>
                 <div className="space-y-2">
-                  {slots.map((slot, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
+                  {slots.map((slot) => (
+                    <div key={slot.id} className="flex items-center gap-2">
                       <Input
                         type="datetime-local"
-                        value={slot}
+                        value={slot.value}
                         onChange={(e) => {
-                          const next = [...slots];
-                          next[idx] = e.target.value;
-                          setSlots(next);
+                          const nextValue = e.target.value;
+                          setSlots((prev) =>
+                            prev.map((item) =>
+                              item.id === slot.id
+                                ? { ...item, value: nextValue }
+                                : item,
+                            ),
+                          );
                         }}
                       />
                       {slots.length > 1 && (
@@ -215,7 +228,9 @@ export function AllocateOrgBookingDialog({
                           size="icon"
                           variant="ghost"
                           onClick={() =>
-                            setSlots(slots.filter((_, i) => i !== idx))
+                            setSlots((prev) =>
+                              prev.filter((item) => item.id !== slot.id),
+                            )
                           }
                         >
                           <Trash2 className="h-4 w-4" />
@@ -228,7 +243,13 @@ export function AllocateOrgBookingDialog({
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => setSlots([...slots, ""])}
+                  onClick={() => {
+                    setSlots((prev) => [
+                      ...prev,
+                      { id: `slot-${nextSlotSeq}`, value: "" },
+                    ]);
+                    setNextSlotSeq((seq) => seq + 1);
+                  }}
                 >
                   <Plus className="mr-1 h-3.5 w-3.5" /> Add another slot
                 </Button>

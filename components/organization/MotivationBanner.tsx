@@ -8,6 +8,7 @@ import type {
 } from "@prisma/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getPermutationGuidance } from "@/lib/enterprise/reachable-paths";
 
 export type MotivationTier = "RECOMMENDED" | "ADVANCED" | "DISCOURAGED";
 
@@ -209,98 +210,47 @@ export function resolveProgramMotivation(params: {
     overageSurchargeBps?: null;
   };
 } {
-  const {
-    fundingSource,
-    programType,
-    overageBehavior,
-    overageSurchargeBps = null,
-  } = params;
+  const guidance = getPermutationGuidance(params);
 
-  if (overageBehavior === "CHARGE_MEMBER") {
-    const recBehavior: OverageBehavior =
-      fundingSource === "INVOICE" ? "CHARGE_ORG" : "BLOCK";
-    return {
-      tier: "DISCOURAGED",
-      title: "Member Co-Pay Overage — High Checkout Drop-Off & Lost GST ITC",
-      message:
-        "When a learner exceeds their covered cap, CHARGE_MEMBER forces them onto a personal Razorpay checkout for the marginal balance. This creates surprise out-of-pocket charges for employees, splits a single booking across B2B and B2C tax receipts, and forfeits corporate GST Input Tax Credit on the overage portion.",
-      recommendation:
-        fundingSource === "INVOICE"
-          ? "Switch overage behavior to Charge Org (with a per-cycle safety ceiling) so over-cap sessions roll cleanly onto your monthly B2B GST invoice."
-          : "Switch overage behavior to Block (so learners request a cap increase) or Charge Org with a per-cycle circuit-breaker ceiling.",
-      recommendedPatch: {
-        overageBehavior: recBehavior,
+  let recommendedPatch:
+    | {
+        programType?: "LICENSED_SEAT" | "CREDIT_POOL";
+        overageBehavior?: OverageBehavior;
+        overageSurchargeBps?: null;
+      }
+    | undefined;
+
+  switch (guidance.code) {
+    case "WALLET_CHARGE_ORG_SURCHARGE":
+    case "CHARGE_ORG_WITH_SURCHARGE":
+      recommendedPatch = { overageSurchargeBps: null };
+      break;
+    case "LICENSE_CHARGE_ORG":
+    case "PERSONAL_CHARGE_ORG":
+      recommendedPatch = {
+        overageBehavior: "BLOCK",
         overageSurchargeBps: null,
-      },
-    };
-  }
-
-  if (fundingSource === "PERSONAL") {
-    return {
-      tier: "DISCOURAGED",
-      title: "Personal Allowance Program — Out-of-Pocket Employee Checkout",
-      message:
-        "Under a Personal funding contract, this program only tracks allowance utilization for reimbursement reporting; learners still pay 100% out of pocket at checkout with personal cards.",
-      recommendation:
-        "Attach programs to a Prepaid Wallet or Monthly Invoice contract so the organization settles bookings directly at checkout.",
-    };
-  }
-
-  if (overageSurchargeBps && overageSurchargeBps > 0) {
-    return {
-      tier: "ADVANCED",
-      title: `Overage Admin Surcharge (${(overageSurchargeBps / 100).toFixed(2)}%) — 18% GST Applies`,
-      message:
-        "Adding a basis-point surcharge on over-cap bookings increases the billed overage amount and attracts 18% GST on the surcharge fee line.",
-      recommendation:
-        "Most enterprises leave the overage surcharge blank (0%) and rely on the Max Overage Per Cycle circuit breaker to bound spend.",
-      recommendedPatch: { overageSurchargeBps: null },
-    };
-  }
-
-  if (fundingSource === "WALLET" && programType === "LICENSED_SEAT") {
-    return {
-      tier: "ADVANCED",
-      title: "Dual-Cap Metering — Prepaid Wallet × Licensed Seat",
-      message:
-        "Each booking checks both the learner's per-cycle engagement seat cap AND your organization's live prepaid wallet balance.",
-      recommendation:
-        "Keep wallet balance alerts enabled so learners with remaining seat entitlements are never blocked by an empty org wallet.",
-    };
-  }
-
-  if (fundingSource === "LICENSE" && programType === "CREDIT_POOL") {
-    return {
-      tier: "ADVANCED",
-      title: "Dual-Cap Metering — Enterprise License × Credit Pool",
-      message:
-        "Bookings draw down each learner's rupee credit pool while billing at the contract level under your periodic license subscription.",
-      recommendation:
-        "Use Licensed Seat if you want session-count metering under a license, or keep Credit Pool when session prices vary across seniority levels.",
-    };
-  }
-
-  if (fundingSource === "LICENSE" && overageBehavior === "CHARGE_ORG") {
-    return {
-      tier: "ADVANCED",
-      title: "License + Post-Paid Overage Spillover",
-      message:
-        "Base usage is covered by your fixed license subscription, while any over-cap bookings accrue onto a post-paid receivables invoice up to your per-cycle overage ceiling.",
-      recommendation:
-        "Set a conservative Max Overage Per Cycle ceiling so finance has a predictable upper bound on post-paid spillover.",
-    };
+      };
+      break;
+    case "LICENSE_CREDIT_POOL":
+      recommendedPatch = { programType: "LICENSED_SEAT" };
+      break;
+    case "SPLIT_TENDER_CHARGE_MEMBER":
+      recommendedPatch = {
+        overageBehavior:
+          params.fundingSource === "INVOICE" ? "CHARGE_ORG" : "BLOCK",
+        overageSurchargeBps: null,
+      };
+      break;
+    default:
+      recommendedPatch = undefined;
   }
 
   return {
-    tier: "RECOMMENDED",
-    title: "Golden-Path Enterprise Configuration",
-    message:
-      programType === "LICENSED_SEAT"
-        ? "Assigned learners book covered sessions with zero checkout friction, predictable per-seat entitlements, and clean B2B GST accounting."
-        : "Assigned learners draw down their rupee credit budget seamlessly at checkout with automated cap enforcement and consolidated B2B GST billing.",
-    recommendation:
-      overageBehavior === "CHARGE_ORG"
-        ? "Over-cap bookings are bounded by your per-cycle circuit breaker and billed directly to the organization."
-        : "Bookings stop automatically at the cycle cap so spend never exceeds your approved budget.",
+    tier: guidance.tier,
+    title: guidance.title,
+    message: guidance.message,
+    recommendation: guidance.recommendation,
+    ...(recommendedPatch ? { recommendedPatch } : {}),
   };
 }

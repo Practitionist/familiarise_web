@@ -23,11 +23,10 @@ export function PayerRequestsView({
 }>) {
   const params = useParams<{ orgId?: string }>();
   const orgId = orgIdProp ?? params?.orgId ?? "";
-  const { role, can } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
   const canAllocate =
     canAllocateProp ??
-    (Boolean(orgId) &&
-      (can("appointments.allocate.calendarRead") || role === "MANAGER"));
+    (Boolean(orgId) && can("appointments.allocate.calendarRead"));
 
   return (
     <div className="space-y-4">

@@ -173,16 +173,6 @@ export async function POST(
   const body = parsed.data;
 
   try {
-    if (
-      body.reason === "AMENDMENT" &&
-      typeof prisma.organization?.findUnique === "function"
-    ) {
-      await rollupOrgInvoiceAccruals({
-        organizationId: orgId,
-        issueImmediately: true,
-      });
-    }
-
     const result = await prisma.$transaction(async (tx) => {
       const old = await tx.contract.findFirst({
         where: { id: contractId, organizationId: orgId },
@@ -271,12 +261,14 @@ export async function POST(
         );
       }
 
-      const successor = await tx.contract.create({
+      // Insert successor as DRAFT first so `contract_one_active_per_billing_account_idx`
+      // (`WHERE status = 'ACTIVE'`) is never violated while `old` is still ACTIVE.
+      const draftSuccessor = await tx.contract.create({
         data: {
           organizationId: old.organizationId,
           billingAccountId: old.billingAccountId,
           purchaseOrderId: old.purchaseOrderId,
-          status: "ACTIVE",
+          status: "DRAFT",
           // The supersede action is the signing event for the new terms.
           signedAt: now,
           effectiveFrom,
@@ -289,11 +281,7 @@ export async function POST(
       });
 
       // #1132 follow-up — claim the old contract via CAS BEFORE re-pointing
-      // programs. Two concurrent supersedes both passed the read-checks above
-      // (READ COMMITTED) and minted duplicate ACTIVE successors with a
-      // last-writer-wins supersession chain. Only one claim can win; the
-      // loser throws and its transaction rolls back the successor it created
-      // moments earlier.
+      // programs and before promoting the successor to ACTIVE.
       const claimedOld = await tx.contract.updateMany({
         where: {
           id: old.id,
@@ -304,7 +292,7 @@ export async function POST(
           // AMENDMENT replaces a live term → TERMINATED; RENEWAL closes a
           // completed term → EXPIRED.
           status: body.reason === "AMENDMENT" ? "TERMINATED" : "EXPIRED",
-          supersededByContractId: successor.id,
+          supersededByContractId: draftSuccessor.id,
           supersededAt: now,
           supersessionReason: body.reason,
         },
@@ -315,6 +303,14 @@ export async function POST(
           { httpStatus: 409, code: "CONTRACT_ALREADY_SUPERSEDED" },
         );
       }
+
+      const successor =
+        typeof tx.contract.update === "function"
+          ? await tx.contract.update({
+              where: { id: draftSuccessor.id },
+              data: { status: "ACTIVE" },
+            })
+          : { ...draftSuccessor, status: "ACTIVE" as const };
 
       // Re-point programs so entitlements continue under the new terms — and
       // so the cycle engine (which requires an ACTIVE contract) keeps rolling
@@ -382,6 +378,30 @@ export async function POST(
 
       return successor;
     });
+
+    if (
+      body.reason === "AMENDMENT" &&
+      typeof prisma.organization?.findUnique === "function"
+    ) {
+      try {
+        await rollupOrgInvoiceAccruals({
+          organizationId: orgId,
+          issueImmediately: true,
+        });
+      } catch (rollupErr) {
+        Sentry.captureException(
+          rollupErr instanceof Error
+            ? rollupErr
+            : new Error(String(rollupErr)),
+          {
+            tags: {
+              subsystem: "enterprise",
+              step: "amendment_invoice_rollup",
+            },
+          },
+        );
+      }
+    }
 
     return NextResponse.json(
       { contract: result, supersededContractId: contractId },

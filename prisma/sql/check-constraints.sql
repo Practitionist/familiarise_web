@@ -945,6 +945,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS "org_domain_claims_verified_domain_key"
   WHERE "verifiedAt" IS NOT NULL;
 
 -- SPLIT
+-- Deduplicate any pre-existing multiple ACTIVE contracts per BillingAccount
+-- before creating the partial unique index (keep the newest ACTIVE row).
+WITH ranked_active_contracts AS (
+  SELECT
+    "id",
+    ROW_NUMBER() OVER (
+      PARTITION BY "billingAccountId"
+      ORDER BY COALESCE("signedAt", "effectiveFrom", "createdAt") DESC, "id" DESC
+    ) AS rn
+  FROM "Contract"
+  WHERE "status" = 'ACTIVE'
+)
+UPDATE "Contract" c
+SET "status" = 'EXPIRED'
+FROM ranked_active_contracts r
+WHERE c."id" = r."id"
+  AND r.rn > 1;
+-- SPLIT
 -- At most one ACTIVE contract per BillingAccount so active billing-term lookups
 -- never face ambiguous active contracts.
 DROP INDEX IF EXISTS "contract_one_active_per_billing_account_idx";

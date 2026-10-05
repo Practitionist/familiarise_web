@@ -228,11 +228,10 @@ export async function POST(req: NextRequest) {
       // reject at the API boundary instead so an OWNER receives a
       // typed 400 rather than a half-functional org.
       if (body.canHost && !isHostOrgsEnabled()) {
-        throw Object.assign(
-          new Error(
-            "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
-          ),
-          { httpStatus: 400, code: "HOST_ORGS_GATED" },
+        throw new HttpError(
+          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+          400,
+          "HOST_ORGS_GATED",
         );
       }
       const org = await tx.organization.create({

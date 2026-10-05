@@ -19,6 +19,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
 import { overageConfigRefusals } from "@/lib/enterprise/reachable-paths";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -92,6 +93,7 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      const now = new Date();
       const old = await tx.program.findFirst({
         where: { id: programId, contract: { organizationId: orgId } },
         include: {
@@ -99,7 +101,7 @@ export async function POST(
           creditPoolConfig: true,
           consultantAllowlist: true,
           assignments: {
-            where: { status: "ACTIVE" },
+            where: { status: "ACTIVE", periodEnd: { gte: now } },
           },
           contract: {
             select: {
@@ -201,13 +203,15 @@ export async function POST(
         failOverage(overageRefusal.message);
       }
 
-      const now = new Date();
-
       const activeAssignments = Array.isArray(old.assignments)
-        ? old.assignments
+        ? old.assignments.filter((a) => !a.periodEnd || a.periodEnd >= now)
         : typeof tx.programAssignment?.findMany === "function"
           ? await tx.programAssignment.findMany({
-              where: { programId: old.id, status: "ACTIVE" },
+              where: {
+                programId: old.id,
+                status: "ACTIVE",
+                periodEnd: { gte: now },
+              },
             })
           : [];
 
@@ -332,11 +336,26 @@ export async function POST(
         });
       }
 
+      let closedSeatCount = activeAssignments.length;
       if (typeof tx.programAssignment?.updateMany === "function") {
-        await tx.programAssignment.updateMany({
+        const closed = await tx.programAssignment.updateMany({
           where: { programId: old.id, status: { in: ["ACTIVE", "PAUSED"] } },
           data: { status: "CANCELLED", periodEnd: now },
         });
+        if (typeof closed?.count === "number") {
+          closedSeatCount = closed.count;
+        }
+      }
+
+      const netReleasedSeats = Math.max(
+        0,
+        closedSeatCount - migratedAssignmentCount,
+      );
+      if (
+        netReleasedSeats > 0 &&
+        typeof tx.program?.findUnique === "function"
+      ) {
+        await releaseSeatsForClosedAssignments(tx, old.id, netReleasedSeats);
       }
 
       if (
@@ -347,7 +366,7 @@ export async function POST(
         const defaultPeriodEnd = computeCycleEnd(now, nextCycle);
         for (const assignment of activeAssignments) {
           const carryOver =
-            body.carryOverCyclePeriod === true &&
+            body.carryOverCyclePeriod !== false &&
             assignment.periodEnd > now;
           await tx.programAssignment.create({
             data: {
@@ -356,6 +375,12 @@ export async function POST(
               status: "ACTIVE",
               periodStart: carryOver ? assignment.periodStart : now,
               periodEnd: carryOver ? assignment.periodEnd : defaultPeriodEnd,
+              engagementsUsed: carryOver
+                ? (assignment.engagementsUsed ?? 0)
+                : 0,
+              consumedPaise: carryOver
+                ? BigInt(assignment.consumedPaise ?? 0)
+                : BigInt(0),
               rolledFromAssignment: { connect: { id: assignment.id } },
             },
           });
@@ -372,7 +397,7 @@ export async function POST(
           details: {
             programId: old.id,
             successorProgramId: successor.id,
-            reassignedSeats: activeAssignments.length,
+            reassignedSeats: migratedAssignmentCount,
           },
         },
       });

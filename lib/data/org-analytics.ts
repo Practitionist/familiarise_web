@@ -17,7 +17,7 @@ import prisma from "@/lib/prisma";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -249,7 +249,7 @@ export async function getOrgAnalytics(
       : Promise.resolve(0),
     // Honesty gate (#687): with ENABLE_HOST_ORGS off no new splits accrue, so
     // don't surface host earnings even if canHost is still set on the row.
-    ENABLE_HOST_ORGS && org.canHost
+    isHostOrgsEnabled() && org.canHost
       ? prisma.organizationEarnings.groupBy({
           by: ["status"],
           where: { organizationId: orgId },
@@ -524,7 +524,7 @@ export async function getOrgAnalytics(
     // Honesty gate (#687): mirror the query gate above — flag off ⇒ null, not
     // an empty array, so a still-canHost row doesn't imply zeroed host earnings.
     earnings:
-      ENABLE_HOST_ORGS && org.canHost
+      isHostOrgsEnabled() && org.canHost
         ? earningsAggregate.map((e) => ({
             status: e.status,
             count: e._count._all,

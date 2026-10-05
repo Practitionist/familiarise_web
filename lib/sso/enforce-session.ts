@@ -142,3 +142,86 @@ export async function shouldRejectSession(
     organizationId: enforced.organizationId,
   };
 }
+
+/**
+ * Revokes existing sessions for active organization members whose email address
+ * belongs to one of the organization's verified domains when SSO enforcement is
+ * flipped from `false` to `true`. External guests/experts on unverified domains
+ * keep their sessions because `shouldRejectSession` only enforces SSO on the
+ * organization's verified domains.
+ */
+export async function revokeEnforcedOrgMemberSessions(
+  tx: {
+    orgDomainClaim?: {
+      findMany?: (args: {
+        where: { organizationId: string; verifiedAt: { not: null } };
+        select: { domain: true };
+      }) => Promise<Array<{ domain: string }>>;
+    };
+    membership?: {
+      findMany?: (args: {
+        where: { organizationId: string; status: "ACTIVE" };
+        select: { userId: true; user?: { select: { email: true } } };
+      }) => Promise<
+        Array<{ userId: string; user?: { email?: string | null } | null }>
+      >;
+    };
+    session?: {
+      deleteMany?: (args: {
+        where: { userId: { in: string[] } };
+      }) => Promise<unknown>;
+    };
+  },
+  organizationId: string,
+): Promise<void> {
+  if (
+    typeof tx.membership?.findMany !== "function" ||
+    typeof tx.session?.deleteMany !== "function"
+  ) {
+    return;
+  }
+
+  const verifiedClaims =
+    typeof tx.orgDomainClaim?.findMany === "function"
+      ? await tx.orgDomainClaim.findMany({
+          where: { organizationId, verifiedAt: { not: null } },
+          select: { domain: true },
+        })
+      : null;
+
+  const verifiedDomains = verifiedClaims
+    ? new Set(
+        verifiedClaims
+          .map((c) => c.domain.trim().toLowerCase())
+          .filter((d) => d.length > 0),
+      )
+    : null;
+
+  if (verifiedDomains && verifiedDomains.size === 0) {
+    return;
+  }
+
+  const activeMembers = await tx.membership.findMany({
+    where: { organizationId, status: "ACTIVE" },
+    select: {
+      userId: true,
+      ...(verifiedDomains ? { user: { select: { email: true } } } : {}),
+    },
+  });
+
+  const memberUserIds = activeMembers
+    .filter((m) => {
+      if (!verifiedDomains) return true;
+      const email = m.user?.email;
+      if (!email) return true;
+      const domain = email.toLowerCase().split("@")[1];
+      return Boolean(domain && verifiedDomains.has(domain));
+    })
+    .map((m) => m.userId);
+
+  if (memberUserIds.length > 0) {
+    await tx.session.deleteMany({
+      where: { userId: { in: memberUserIds } },
+    });
+  }
+}

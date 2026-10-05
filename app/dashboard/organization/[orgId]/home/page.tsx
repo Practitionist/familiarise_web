@@ -21,7 +21,7 @@ export default async function OrgHomePage({
   const { orgId } = await params;
   const queryClient = new QueryClient();
 
-  const baseAccess = await requireOrgAccess(orgId);
+  const baseAccess = await requireOrgAccess(orgId, { allowSuspended: true });
   if (baseAccess.error) {
     redirect("/dashboard");
   }

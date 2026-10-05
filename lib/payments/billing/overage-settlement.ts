@@ -113,9 +113,33 @@ export async function recordOverageAtCheckout(
   // filter (a mid-cycle invoice run stamps settledAt but must not reset the
   // breaker); excludes REVERSED/BLOCKED/FAILED so a refunded/never-collected
   // overage frees the ceiling again.
+  const currentAssignment =
+    typeof tx.programAssignment?.findUnique === "function"
+      ? await tx.programAssignment.findUnique({
+          where: { id: programAssignmentId },
+          select: {
+            periodStart: true,
+            rolledFromAssignment: {
+              select: { id: true, status: true, periodStart: true },
+            },
+          },
+        })
+      : null;
+  const carriedOverPredecessorId =
+    currentAssignment?.rolledFromAssignment &&
+    currentAssignment.rolledFromAssignment.status === "CANCELLED" &&
+    currentAssignment.rolledFromAssignment.periodStart.getTime() ===
+      currentAssignment.periodStart.getTime()
+      ? currentAssignment.rolledFromAssignment.id
+      : null;
+  const cycleAssignmentIds = carriedOverPredecessorId
+    ? [programAssignmentId, carriedOverPredecessorId]
+    : null;
   const soFarAgg = await tx.overageEvent.aggregate({
     where: {
-      programAssignmentId,
+      programAssignmentId: cycleAssignmentIds
+        ? { in: cycleAssignmentIds }
+        : programAssignmentId,
       chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
     },
     _sum: { marginalPaise: true },
@@ -720,10 +744,13 @@ async function recordWalletCollectedOrgOverage(
             select: { billingAccountId: true },
           })
         : null;
-    if (
-      parentRow?.billingAccountId &&
-      typeof tx.billingAccount?.updateMany === "function"
-    ) {
+    if (typeof tx.billingAccount?.updateMany === "function") {
+      if (!parentRow?.billingAccountId) {
+        throw new PaymentError(
+          "Wallet overage surcharge has no billing account on parent payment.",
+          "OVERAGE_UNSUPPORTED_FUNDING",
+        );
+      }
       await walletDebit(tx, {
         billingAccountId: parentRow.billingAccountId,
         amountPaise: args.surchargePaise,

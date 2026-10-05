@@ -26,6 +26,7 @@ import {
   DomainVerificationRequiredError,
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
+import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
 
 const PatchBodySchema = z
   .object({
@@ -304,21 +305,7 @@ export async function PATCH(
 
       const next = await upsertSsoSettings(tx, orgId, body);
       if (body.enforceSSO === true && !(existing?.enforceSSO ?? false)) {
-        if (
-          typeof tx.membership?.findMany === "function" &&
-          typeof tx.session?.deleteMany === "function"
-        ) {
-          const activeMembers = await tx.membership.findMany({
-            where: { organizationId: orgId, status: "ACTIVE" },
-            select: { userId: true },
-          });
-          const memberUserIds = activeMembers.map((m) => m.userId);
-          if (memberUserIds.length > 0) {
-            await tx.session.deleteMany({
-              where: { userId: { in: memberUserIds } },
-            });
-          }
-        }
+        await revokeEnforcedOrgMemberSessions(tx, orgId);
       }
       await writeSsoAuditLog(tx, {
         orgId,

@@ -505,6 +505,29 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+  if (
+    access.org?.status &&
+    access.org.status !== "ACTIVE" &&
+    (body.canSponsor !== undefined ||
+      body.canHost !== undefined ||
+      body.slug !== undefined ||
+      body.requiresPO !== undefined ||
+      body.paymentTermsDays !== undefined ||
+      body.defaultCancellationPolicy !== undefined ||
+      body.defaultRefundPolicy !== undefined ||
+      body.isPublic !== undefined)
+  ) {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        code: "ORG_NOT_ACTIVE",
+        message:
+          "Only branding and tax verification fields can be updated before the organization is verified.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
   if (body.canHost && !isHostOrgsEnabled()) {
     return NextResponse.json(
       {

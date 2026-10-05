@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { canActForOrg } from "@/lib/booking/org-actor";
+import { canActForOrg, isOrgFundedByOrg } from "@/lib/booking/org-actor";
 import {
   CANCELLABLE_FROM,
   RESCHEDULABLE_FROM,
@@ -155,20 +155,31 @@ export default async function OrgAppointmentDetailPage({
   const role = access.member.role;
   const mayCancel = canActForOrg(role, "cancel");
   const mayReschedule = canActForOrg(role, "reschedule");
-  const mayAllocate =
-    hasOrgPermission(role, "appointments.allocate.calendarRead") ||
-    role === "MANAGER";
   if (
     !mayCancel &&
     !mayReschedule &&
-    !mayAllocate &&
     !hasOrgPermission(role, "operations.read")
   ) {
     notFound();
   }
+  const mayAllocate = hasOrgPermission(
+    role,
+    "appointments.allocate.calendarRead",
+  );
 
   const booking = appointment.consultation ?? appointment.subscription;
   const status = booking?.status ?? null;
+  const fundedByOrg =
+    booking !== null
+      ? await isOrgFundedByOrg(
+          {
+            organizationId: appointment.organizationId,
+            consultationId: appointment.consultation?.id ?? null,
+            subscriptionId: appointment.subscription?.id ?? null,
+          },
+          orgId,
+        )
+      : false;
 
   return (
     <OrgActorDetail
@@ -177,12 +188,14 @@ export default async function OrgAppointmentDetailPage({
       appointmentId={appointmentId}
       meta={toMetadata(appointment)}
       canCancel={
-        mayCancel && status !== null && CANCELLABLE_FROM.includes(status)
+        mayCancel && status !== null && fundedByOrg && CANCELLABLE_FROM.includes(status)
       }
       canReschedule={
-        mayReschedule && status !== null && RESCHEDULABLE_FROM.includes(status)
+        mayReschedule && status !== null && fundedByOrg && RESCHEDULABLE_FROM.includes(status)
       }
-      canAllocate={mayAllocate && booking !== null && status === "PENDING"}
+      canAllocate={
+        mayAllocate && status === "PENDING" && fundedByOrg && booking !== null
+      }
       isSubscription={appointment.subscription !== null}
     />
   );

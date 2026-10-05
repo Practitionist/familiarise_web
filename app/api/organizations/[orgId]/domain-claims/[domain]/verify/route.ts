@@ -24,6 +24,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { promises as dns } from "node:dns";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -202,6 +203,18 @@ export async function POST(
       return NextResponse.json(
         { error: err.message, ...(code && { code }) },
         { status },
+      );
+    }
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: `Domain '${domain}' has already been verified by another organization.`,
+          code: "DOMAIN_ALREADY_CLAIMED",
+        },
+        { status: 409 },
       );
     }
     throw err;

@@ -1223,7 +1223,7 @@ function EditProgramDialog({
     useState<OverageBehavior>("BLOCK");
   const [overageSurchargePct, setOverageSurchargePct] = useState("");
   const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
-  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(true);
+  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1266,7 +1266,7 @@ function EditProgramDialog({
     if (program.creditPoolConfig) {
       setCreditsPerCycle(String(program.creditPoolConfig.creditBudgetPerCycle));
     }
-    setAcknowledgedDiscouraged(true);
+    setAcknowledgedDiscouraged(false);
     setError(null);
   }, [program, savedSurchargeBps]);
 
@@ -1636,6 +1636,7 @@ function EditProgramDialog({
                     v === "CHARGE_ORG"
                   ) {
                     setOverageBehavior(v);
+                    setAcknowledgedDiscouraged(false);
                   }
                 }}
               >
@@ -1687,7 +1688,10 @@ function EditProgramDialog({
                     step="0.01"
                     disabled={locked}
                     value={overageSurchargePct}
-                    onChange={(e) => setOverageSurchargePct(e.target.value)}
+                    onChange={(e) => {
+                      setOverageSurchargePct(e.target.value);
+                      setAcknowledgedDiscouraged(false);
+                    }}
                     placeholder="leave blank for 0% markup"
                   />
                 </div>
@@ -1809,7 +1813,7 @@ function SupersedeProgramDialog({
     },
   );
   const [migrateAssignments, setMigrateAssignments] = useState(true);
-  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(true);
+  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const contractFunding = useMemo<FundingSource | null>(() => {
@@ -1973,7 +1977,8 @@ function SupersedeProgramDialog({
 
         <div className="space-y-4">
           <p className="text-xs text-zinc-600 rounded-md border bg-zinc-50 p-3">
-            Creates an amended successor program under the same contract, pauses{" "}
+            Creates an amended successor program under the same contract,
+            permanently cancels and archives{" "}
             <strong>{program.name}</strong> to preserve historical audit trails,
             and optionally migrates all live member assignments to the new
             program in one atomic step.
@@ -2110,6 +2115,7 @@ function SupersedeProgramDialog({
                   v === "CHARGE_ORG"
                 ) {
                   setOverageBehavior(v);
+                  setAcknowledgedDiscouraged(false);
                 }
               }}
             >
@@ -2155,7 +2161,10 @@ function SupersedeProgramDialog({
                   min={0}
                   step="0.01"
                   value={overageSurchargePct}
-                  onChange={(e) => setOverageSurchargePct(e.target.value)}
+                  onChange={(e) => {
+                    setOverageSurchargePct(e.target.value);
+                    setAcknowledgedDiscouraged(false);
+                  }}
                   placeholder="0%"
                 />
               </div>

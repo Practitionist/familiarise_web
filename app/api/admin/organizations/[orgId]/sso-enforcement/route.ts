@@ -14,6 +14,7 @@
 import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
 
 export const POST = withOpsAction(
   "organizations.manage",
@@ -59,21 +60,7 @@ export const POST = withOpsAction(
       });
 
       if (body.enforce && !(before?.enforceSSO ?? false)) {
-        if (
-          typeof tx.membership?.findMany === "function" &&
-          typeof tx.session?.deleteMany === "function"
-        ) {
-          const activeMembers = await tx.membership.findMany({
-            where: { organizationId: params.orgId, status: "ACTIVE" },
-            select: { userId: true },
-          });
-          const memberUserIds = activeMembers.map((m) => m.userId);
-          if (memberUserIds.length > 0) {
-            await tx.session.deleteMany({
-              where: { userId: { in: memberUserIds } },
-            });
-          }
-        }
+        await revokeEnforcedOrgMemberSessions(tx, params.orgId);
       }
 
       return {

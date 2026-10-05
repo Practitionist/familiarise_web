@@ -127,11 +127,7 @@ export function OrgActorDetail({
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
-  const showAllocate =
-    canAllocate ||
-    (meta.status === "PENDING" &&
-      (meta.kind === "CONSULTATION" || meta.kind === "SUBSCRIPTION") &&
-      (canCancel || canReschedule));
+  const showAllocate = Boolean(canAllocate);
   const acting = canCancel || canReschedule || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
 

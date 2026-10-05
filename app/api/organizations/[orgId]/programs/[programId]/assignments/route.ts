@@ -209,7 +209,7 @@ export async function POST(
             },
           },
         });
-        if (typeof tx.webhookEndpoint?.findMany === "function") {
+        if (isNew && typeof tx.webhookEndpoint?.findMany === "function") {
           await dispatchWebhookEvent({
             prisma: tx,
             organizationId: orgId,

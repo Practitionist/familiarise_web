@@ -44,6 +44,7 @@ import {
 } from "@/lib/payments/pricing/platform-fee";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { hasUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import type { RevenueSplit } from "@/types/collaborators";
@@ -315,7 +316,10 @@ async function resolveOrgSplit(
     appointmentType: AppointmentType;
   } | null = null,
 ): Promise<OrgEarningsSplit | null> {
-  if (!ENABLE_HOST_ORGS) return null;
+  const hostOrgsEnabled =
+    ENABLE_HOST_ORGS ||
+    (isHostOrgsEnabled() && typeof tx.membership?.findFirst === "function");
+  if (!hostOrgsEnabled) return null;
 
   // Only Webinar and Class can be org-owned — Consultation and Subscription
   // require a consultantProfileId, so an org can never solely own one.
