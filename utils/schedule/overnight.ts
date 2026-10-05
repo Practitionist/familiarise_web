@@ -86,11 +86,13 @@ export function resolveOvernightStatus(
     const crosses = slot.endTimeUtc <= slot.startTimeUtc;
     return { isOvernight: crosses, crossesMidnightUtc: crosses };
   }
-  // Local UI shape: overnight if the local times wrap OR the slot was
-  // overnight in UTC but appears same-day after timezone conversion.
+  // Local UI shape: `isOvernight` reflects local wall-clock midnight crossing
+  // (`endTime < startTime`). `isOvernightUTC` is an informational hint from
+  // reload when a local daytime slot crossed UTC midnight (`crossesMidnightUtc`)
+  // and must never add +24h to the local end date on re-save.
   const localCross = localTimesCrossMidnight(slot.startTime, slot.endTime);
   return {
-    isOvernight: localCross || !!slot.isOvernightUTC,
+    isOvernight: localCross,
     crossesMidnightUtc: !!slot.isOvernightUTC,
   };
 }

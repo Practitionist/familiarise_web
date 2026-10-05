@@ -70,6 +70,13 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
+import {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
@@ -962,12 +969,26 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
-      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
-      // to find the original TDSRecord; the prior `payout` TDS-field include was
-      // dead (review finding).
-      earnings: true,
+      earnings: {
+        include: {
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
+        },
+      },
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
+      appointment: {
+        select: {
+          subscription: { select: { status: true } },
+          trial: { select: { status: true } },
+        },
+      },
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
       refunds: { select: { id: true, amountPaise: true, status: true } },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
@@ -1296,6 +1317,8 @@ export async function applyRefundCascade(
   // debits and the TDS filing read this, never `reversalOf(row)`: booking the
   // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
   const appliedByEarning = new Map<string, number>();
+  let clawbackInitiated = false;
+  const consultantClawbacks = new Map<string, PendingConsultantClawback>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1342,13 +1365,44 @@ export async function applyRefundCascade(
         refundId: input.refundId,
       });
     }
+
+    accumulatePaidConsultantClawback(
+      consultantClawbacks,
+      earnings,
+      reversal.reversedPaise,
+      { isOrgPayment: Boolean(payment.organizationId) },
+    );
+  }
+
+  if (
+    await applyPaidConsultantClawbacks(tx, consultantClawbacks, {
+      refundId: input.refundId,
+      reason: input.reason,
+      onApplied: async (consultantPayoutId, claw) => {
+        await recordSystemEventSafe({
+          db: tx,
+          organizationId: null,
+          category: "PAYOUT",
+          severity: "WARN",
+          message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
+          context: {
+            paymentId: payment.id,
+            refundId: input.refundId,
+            consultantPayoutId,
+            consultantProfileId: claw.consultantProfileId,
+            clawbackPaise: claw.netAmountPaise,
+          },
+        });
+      },
+    })
+  ) {
+    clawbackInitiated = true;
   }
 
   // -----------------------------------------------------------------------
   // Step 7: OrganizationEarnings reversal + clawback.
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
-  let clawbackInitiated = false;
   // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
   // `appliedByEarning` above, for the identical reason.
   const appliedByOrgEarning = new Map<string, number>();
@@ -1713,7 +1767,19 @@ export async function applyRefundCascade(
           });
         }
       }
-      if (orgRev > 0 && orgId) {
+      if (payment.organizationEarnings.length > 0) {
+        for (const orgEarn of payment.organizationEarnings) {
+          const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
+          const hostOrgId = orgEarn.organizationId ?? orgId;
+          if (orgDelta > 0 && hostOrgId) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: hostOrgId },
+              direction: "DEBIT",
+              amountPaise: orgDelta,
+            });
+          }
+        }
+      } else if (orgRev > 0 && orgId) {
         debits.push({
           account: { kind: "ORG_PAYABLE", organizationId: orgId },
           direction: "DEBIT",
@@ -1786,6 +1852,22 @@ export async function applyRefundCascade(
       context: { paymentId: payment.id, refundId: input.refundId },
     });
     throw err;
+  }
+
+  if (payment.appointment?.subscription?.status === "CANCELLED") {
+    await stampTranchesOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
+  }
+  if (
+    payment.appointment?.trial?.status === "CANCELLED" ||
+    payment.appointment?.trial?.status === "REJECTED"
+  ) {
+    await stampTrialEarningsOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
   }
 
   return {

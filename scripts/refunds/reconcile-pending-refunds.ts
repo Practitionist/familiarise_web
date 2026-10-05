@@ -44,6 +44,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   applyRefundCascade,
   refundMemberOverageSidePayment,
+  type ApplyRefundCascadeResult,
 } from "../../lib/payments/operations/refund";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
@@ -237,26 +238,19 @@ async function reconcilePendingRefundsUnlocked(
       const matchingRefund = exactMatch ?? fallbackMatch;
 
       if (matchingRefund) {
+        const paymentId = refund.paymentId ?? refund.payment.id;
         const bound = await bindGatewayRefundToPlaceholder(
           refund.id,
           matchingRefund,
           prismaMetadataObject(refund.metadata),
+          {
+            paymentId,
+            amountPaise: refund.amountPaise,
+            paymentAmountPaise: refund.payment.amount,
+            reason: refund.reason ?? "Gateway refund reconciled",
+          },
         );
         if (bound === "bound") {
-          if (
-            mapGatewayRefundStatus(matchingRefund.status) ===
-            RefundStatus.SUCCEEDED
-          ) {
-            await prisma.$transaction(async (tx) => {
-              await applyRefundCascade(tx, {
-                paymentId: refund.paymentId ?? refund.payment.id,
-                refundId: refund.id,
-                amountPaise: refund.amountPaise,
-                reason: refund.reason ?? "Gateway refund reconciled",
-                initiatedByUserId: null,
-              });
-            });
-          }
           console.log(
             `✅ Reconciled refund ${refund.id} -> ${matchingRefund.refundId} (${exactMatch ? "reservation-id" : "unambiguous-amount"} match, status: ${matchingRefund.status})`,
           );
@@ -376,6 +370,7 @@ async function reconcilePendingRefundsUnlocked(
       payment: {
         select: {
           id: true,
+          amount: true,
           paymentGateway: true,
           userId: true,
           organizationId: true,
@@ -412,41 +407,56 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
-        const claimed = await prisma.$transaction(async (tx) => {
-          // Claim by status: a re-entrant run or a webhook that settled the
-          // row first matches zero rows and stages nothing.
-          const claim = await tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
-            data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
-          });
-          if (claim.count !== 1) return false;
-          await applyRefundCascade(tx, {
-            paymentId: refund.payment.id,
-            refundId: refund.id,
-            amountPaise: refund.amountPaise,
-            reason: refund.reason ?? "Gateway refund reconciled",
-            initiatedByUserId: null,
-          });
-          const notice = await notifyRefundProcessed(
-            refund.payment.userId,
-            {
-              ...notificationScope(refund.payment.organizationId),
-              amount: refund.amountPaise,
-              currency: refund.currency,
-              // The payer's money view, matching the other money bells.
-              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+        let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] =
+          null;
+        const claimed = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              overageDue = null;
+              // Claim by status: a re-entrant run or a webhook that settled the
+              // row first matches zero rows and stages nothing.
+              const claim = await tx.refund.updateMany({
+                where: { id: refund.id, status: RefundStatus.PENDING },
+                data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
+              });
+              if (claim.count !== 1) return false;
+              const cascade = await applyRefundCascade(tx, {
+                paymentId: refund.payment.id,
+                refundId: refund.id,
+                amountPaise: refund.amountPaise,
+                reason: refund.reason ?? "Gateway refund reconciled",
+                initiatedByUserId: null,
+              });
+              overageDue = cascade.memberOverageRefundDue;
+              await reverseCreditsForPayment(
+                refund.payment.id,
+                tx,
+                refund.amountPaise,
+                refund.payment.amount,
+              );
+              const notice = await notifyRefundProcessed(
+                refund.payment.userId,
+                {
+                  ...notificationScope(refund.payment.organizationId),
+                  amount: refund.amountPaise,
+                  currency: refund.currency,
+                  // The payer's money view, matching the other money bells.
+                  dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                },
+                { tx, entityRef: `payment:${refund.payment.id}` },
+              );
+              bell = notice?.staged ?? null;
+              emails = await stageRefundProcessedEmail(tx, {
+                userId: refund.payment.userId,
+                paymentId: refund.payment.id,
+                amountPaise: refund.amountPaise,
+                currency: refund.currency,
+              });
+              return true;
             },
-            { tx, entityRef: `payment:${refund.payment.id}` },
-          );
-          bell = notice?.staged ?? null;
-          emails = await stageRefundProcessedEmail(tx, {
-            userId: refund.payment.userId,
-            paymentId: refund.payment.id,
-            amountPaise: refund.amountPaise,
-            currency: refund.currency,
-          });
-          return true;
-        });
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
+        );
         if (!claimed) {
           console.log(
             `♻️ Real-id refund ${refund.id} (${refund.refundId}) was settled by another writer; nothing to mark`,
@@ -454,9 +464,14 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
+        await refundMemberOverageSidePayment({
+          parentPaymentId: refund.payment.id,
+          due: overageDue,
+          initiatedByUserId: null,
+        });
         await attemptRefundNotice(bell, emails);
         console.log(
-          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway; backstop cascade will complete it`,
+          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway and cascaded`,
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
@@ -584,6 +599,12 @@ async function bindGatewayRefundToPlaceholder(
   placeholderRowId: string,
   gatewayRefund: RefundResult,
   existingMetadata: Record<string, unknown>,
+  cascade: {
+    paymentId: string;
+    amountPaise: number;
+    paymentAmountPaise?: number;
+    reason: string;
+  },
 ): Promise<"bound" | "superseded"> {
   const nextStatus = mapGatewayRefundStatus(gatewayRefund.status);
   const mergedMetadata = {
@@ -593,13 +614,40 @@ async function bindGatewayRefundToPlaceholder(
   } as Prisma.InputJsonValue;
 
   try {
-    await prisma.refund.update({
-      where: { id: placeholderRowId },
-      data: {
-        refundId: gatewayRefund.refundId,
-        status: nextStatus,
-        metadata: mergedMetadata,
-      },
+    const overageDue = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          await tx.refund.update({
+            where: { id: placeholderRowId },
+            data: {
+              refundId: gatewayRefund.refundId,
+              status: nextStatus,
+              metadata: mergedMetadata,
+            },
+          });
+          if (nextStatus !== RefundStatus.SUCCEEDED) return null;
+          const result = await applyRefundCascade(tx, {
+            paymentId: cascade.paymentId,
+            refundId: placeholderRowId,
+            amountPaise: cascade.amountPaise,
+            reason: cascade.reason,
+            initiatedByUserId: null,
+          });
+          await reverseCreditsForPayment(
+            cascade.paymentId,
+            tx,
+            cascade.amountPaise,
+            cascade.paymentAmountPaise,
+          );
+          return result.memberOverageRefundDue;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+    await refundMemberOverageSidePayment({
+      parentPaymentId: cascade.paymentId,
+      due: overageDue,
+      initiatedByUserId: null,
     });
     return "bound";
   } catch (error) {

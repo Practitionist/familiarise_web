@@ -45,6 +45,7 @@ export interface WeeklyWindowInput {
   endDay: DayOfWeek;
   startTimeUtc: number;
   endTimeUtc: number;
+  utcOffsetMinutes?: number | null;
 }
 
 export interface CustomWindowInput {

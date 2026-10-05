@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
@@ -68,8 +69,9 @@ export function AppointmentSheet({
     ? (anchorSession?.endsAt?.getTime() ??
         vm.nextAt.getTime() + 60 * 60 * 1000) < Date.now()
     : false;
-  const hasConcreteSessions = vm.occurrences.some((s) => !s.isTentative);
-  const allTentative = vm.occurrences.length > 0 && !hasConcreteSessions;
+  const liveOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
+  const hasConcreteSessions = liveOccurrences.some((s) => !s.isTentative);
+  const allTentative = liveOccurrences.length > 0 && !hasConcreteSessions;
 
   return (
     <Sheet open onOpenChange={onOpenChange}>

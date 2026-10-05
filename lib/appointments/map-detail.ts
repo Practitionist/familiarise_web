@@ -16,6 +16,7 @@ import { deriveBucket } from "./bucket";
 import {
   REJOIN_GRACE_MS,
   getAnchorTime,
+  isDeadOccurrence,
   isDeliberateEnd,
   isOccurrenceOver,
   liveOccurrences,
@@ -163,6 +164,7 @@ export function mapAppointmentDetail(
       a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
     )
     .filter((slot) => {
+      if (isDeadOccurrence(slot)) return false;
       if (isDeliberateEnd(slot.meeting)) return false;
       const end = toDate(slot.endsAt ?? slot.startsAt);
       const graceMs = slot.endsAt ? REJOIN_GRACE_MS : 0;

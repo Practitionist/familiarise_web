@@ -97,12 +97,24 @@ function person(
   return { name: user?.name ?? fallback, image: user?.image ?? null };
 }
 
+type AppointmentWithTrial = TAppointment & {
+  trial?: {
+    id?: string;
+    status?: string | null;
+    subscriptionPlan?: { title?: string | null } | null;
+    consulteeProfile?: {
+      user?: { name?: string | null; image?: string | null } | null;
+    } | null;
+  } | null;
+};
+
 /** Title + counterpart + lifecycle status live on the polymorphic parent. */
 function eventFacts(appointment: TAppointment): {
   title: string;
   counterpart: PersonVM;
   status: string;
 } {
+  const appt = appointment as AppointmentWithTrial;
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return {
@@ -135,6 +147,12 @@ function eventFacts(appointment: TAppointment): {
           "Unknown Consultant",
         ),
         status: normalizeStatus(appointment.class?.status?.toString()),
+      };
+    case "TRIAL":
+      return {
+        title: appt.trial?.subscriptionPlan?.title ?? "Trial",
+        counterpart: person(appt.trial?.consulteeProfile?.user),
+        status: normalizeStatus(appt.trial?.status?.toString()),
       };
     default:
       return {
@@ -300,6 +318,14 @@ function mapTrial(
       : null,
   );
   const status = normalizeStatus(t.status);
+  const trialAppointment = t.appointment
+    ? ({
+        id: t.appointment.id,
+        appointmentType: "TRIAL",
+        occurrences: slotsOfAppointment,
+        trial: t,
+      } as unknown as TAppointment)
+    : undefined;
   return {
     id: `trial-${t.id}`,
     // Always the viewing consultant: this is their own list.
@@ -318,7 +344,10 @@ function mapTrial(
     pendingPaymentUrl: null,
     collaborators: [],
     collaboratorRole: null,
-    raw: { source: t },
+    raw: {
+      appointment: trialAppointment,
+      source: t,
+    },
   };
 }
 

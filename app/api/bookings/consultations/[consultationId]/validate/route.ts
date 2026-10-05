@@ -128,14 +128,16 @@ export async function POST(
       // conflicts, so a preflight that omitted them reported "no conflicts" for
       // times the very next call would reject. The dialog renders its verdict
       // from this response, so the omission made that verdict unsound.
-      const consulteeUserId = (
-        await prisma.consultation.findUnique({
-          where: { id: consultationId },
-          select: {
-            requestedBy: { select: { user: { select: { id: true } } } },
-          },
-        })
-      )?.requestedBy?.user?.id;
+      const consulteeUserId =
+        consultation.requestedBy?.user?.id ??
+        (
+          await prisma.consultation.findUnique({
+            where: { id: consultationId },
+            select: {
+              requestedBy: { select: { user: { select: { id: true } } } },
+            },
+          })
+        )?.requestedBy?.user?.id;
 
       const validationResult = await validationService.validate(
         "consultation",
@@ -154,7 +156,10 @@ export async function POST(
           durationInHours: consultationPlan.durationInHours,
         },
         excludeIds,
-        { consulteeUserId },
+        {
+          consulteeUserId,
+          consultantProfileId: consultationPlan.consultantProfileId,
+        },
       );
       const viewer = {
         userId: authResult.session.user.id,

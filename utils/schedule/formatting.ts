@@ -378,7 +378,6 @@ export function weeklySlotForSave(
   const { isOvernight: overnight } = resolveOvernightStatus({
     startTime: slot.startTime,
     endTime: slot.endTime,
-    isOvernightUTC: slot.isOvernightUTC,
   });
 
   // convertTimezoneToUtc returns "" for both an unparseable time and a caught

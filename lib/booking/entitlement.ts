@@ -59,6 +59,7 @@ export interface SubscriptionEntitlement {
   total: number;
   completed: number;
   scheduled: number;
+  rescheduling: number;
   held: number;
   remaining: number;
   cycle: SubscriptionCycle;
@@ -73,6 +74,12 @@ function isLiveOccurrence(o: EntitlementOccurrence): boolean {
   return (
     o.completionStatus !== "CANCELLED" && o.completionStatus !== "RESCHEDULED"
   );
+}
+
+/** Released for reschedule (tentative RESCHEDULED occurrence awaiting replacement). */
+function isReschedulingOccurrence(o: EntitlementOccurrence): boolean {
+  if (o.deletedAt) return false;
+  return Boolean(o.isTentative) && o.completionStatus === "RESCHEDULED";
 }
 
 /** Delivered: COMPLETED, or UNVERIFIED (past, parked for a human). */
@@ -189,6 +196,9 @@ export function subscriptionEntitlement(
   const live = input.occurrences.filter(isLiveOccurrence);
   const completed = live.filter(isCompleted).length;
   const scheduled = live.filter(isScheduled).length;
+  const rescheduling = input.occurrences.filter(
+    isReschedulingOccurrence,
+  ).length;
   const held = completed + scheduled;
   const remaining = Math.max(0, total - held);
 
@@ -202,14 +212,20 @@ export function subscriptionEntitlement(
   const nextBatch = Math.max(0, Math.min(capThisCycle - filled, remaining));
 
   const now = input.now ?? new Date();
-  const lastHeldEndsAt = live
-    .filter((o) => isCompleted(o) || isScheduled(o))
+  // During a reschedule (rescheduling > 0), remaining SCHEDULED sessions later
+  // in the active cycle must NOT push windowStart past earlier days of the
+  // cycle; anchor only to completed sessions so the whole active cycle stays
+  // selectable.
+  const anchorEndsAt = live
+    .filter((o) =>
+      rescheduling > 0 ? isCompleted(o) : isCompleted(o) || isScheduled(o),
+    )
     .reduce<number>((max, o) => Math.max(max, toDate(o.endsAt).getTime()), 0);
   const storedStart = toDate(input.schedulingPeriodStartsAt).getTime();
   const windowStart = new Date(
     Math.max(
       Number.isFinite(storedStart) ? storedStart : 0,
-      lastHeldEndsAt,
+      anchorEndsAt,
       now.getTime(),
     ),
   );
@@ -219,6 +235,7 @@ export function subscriptionEntitlement(
     total,
     completed,
     scheduled,
+    rescheduling,
     held,
     remaining,
     cycle: {
@@ -246,11 +263,13 @@ export function subscriptionCycleHeading(
 ): string {
   const { nextBatch, windowStart, windowEnd, capacity, unit } =
     entitlement.cycle;
-  const { held, total, remaining } = entitlement;
+  const { held, total, remaining, rescheduling } = entitlement;
   const booked = `${held} of ${total} booked`;
-  if (remaining === 0) return `All ${total} sessions booked`;
-  if (nextBatch === 0)
+  const targetBatch = rescheduling > 0 ? rescheduling : nextBatch;
+  if (remaining === 0 && targetBatch === 0)
+    return `All ${total} sessions booked`;
+  if (targetBatch === 0)
     return `This cycle is set · next opens after ${formatDateLabel(windowEnd, opts)} · ${booked}`;
   const window = formatDateRangeLabel(windowStart, windowEnd, opts);
-  return `Pick ${nextBatch} for ${window} · ${capacity} per ${unit} · ${booked}`;
+  return `Pick ${targetBatch} for ${window} · ${capacity} per ${unit} · ${booked}`;
 }

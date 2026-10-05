@@ -17,7 +17,10 @@ import {
   isNextDayOfWeek,
   resolveOvernightStatus,
 } from "@/utils/schedule/overnight";
-import { utcStartDayIndex } from "@/utils/schedule/weekly-projection";
+import {
+  utcStartDayIndex,
+  weeklyRowDurationMinutes,
+} from "@/utils/schedule/weekly-projection";
 
 /** 24 hours expressed in milliseconds */
 export const TWENTY_FOUR_HOURS_IN_MS = 24 * 60 * 60 * 1000;
@@ -259,35 +262,46 @@ export function slotsOverlap(
     endDay: DayOfWeek;
     startTimeUtc: number;
     endTimeUtc: number;
+    utcOffsetMinutes?: number | null;
   },
   b: {
     startDay: DayOfWeek;
     endDay: DayOfWeek;
     startTimeUtc: number;
     endTimeUtc: number;
+    utcOffsetMinutes?: number | null;
   },
 ): boolean {
-  // Convert a slot to an array of (dayIndex, startMinute, endMinute) ranges.
-  // Same-day slots produce 1 range; overnight slots produce 2 ranges.
-  const toRanges = (s: typeof a): Array<[number, number, number]> => {
-    const startIdx = DAY_ORDER.indexOf(s.startDay);
-    if (!resolveOvernightStatus(s).isOvernight) {
-      return [[startIdx, s.startTimeUtc, s.endTimeUtc]];
+  // Project each slot onto the 10,080-minute UTC week timeline [0, 10080)
+  // using utcStartDayIndex (which reduces to DAY_ORDER.indexOf(startDay) when
+  // utcOffsetMinutes is 0 or omitted) and weeklyRowDurationMinutes.
+  const MINUTES_PER_WEEK = 7 * 1440;
+  const toWeekRanges = (s: typeof a): Array<[number, number]> => {
+    const startDayIdx = utcStartDayIndex({
+      startDay: s.startDay,
+      startTimeUtc: s.startTimeUtc,
+      utcOffsetMinutes: s.utcOffsetMinutes ?? 0,
+    });
+    if (startDayIdx === -1) return [];
+    const duration = weeklyRowDurationMinutes(s);
+    if (duration <= 0) return [];
+    const startMin = startDayIdx * 1440 + s.startTimeUtc;
+    const endMin = startMin + duration;
+    if (endMin <= MINUTES_PER_WEEK) {
+      return [[startMin, endMin]];
     }
-    // Overnight: startDay startTimeUtc→1440, endDay 0→endTimeUtc
-    const endIdx = DAY_ORDER.indexOf(s.endDay);
     return [
-      [startIdx, s.startTimeUtc, 1440],
-      [endIdx, 0, s.endTimeUtc],
+      [startMin, MINUTES_PER_WEEK],
+      [0, endMin - MINUTES_PER_WEEK],
     ];
   };
 
-  const rangesA = toRanges(a);
-  const rangesB = toRanges(b);
+  const rangesA = toWeekRanges(a);
+  const rangesB = toWeekRanges(b);
 
-  for (const [dayA, startA, endA] of rangesA) {
-    for (const [dayB, startB, endB] of rangesB) {
-      if (dayA === dayB && startA < endB && startB < endA) {
+  for (const [startA, endA] of rangesA) {
+    for (const [startB, endB] of rangesB) {
+      if (startA < endB && startB < endA) {
         return true;
       }
     }

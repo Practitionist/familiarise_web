@@ -13,6 +13,7 @@ import {
   readAppointmentDetail,
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 
 import DetailPageClient from "./DetailPageClient";
 import { DelivererDetailClient } from "./DelivererDetailClient";
@@ -32,17 +33,28 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     appointment.class?.classPlan ??
     appointment.trial?.subscriptionPlan ??
     null;
+  const status = (appointment.consultation?.status ??
+    appointment.subscription?.status ??
+    appointment.webinar?.status ??
+    appointment.class?.status ??
+    appointment.trial?.status ??
+    null) as OrgActorDetailProps["meta"]["status"];
   return {
     title: plan?.title ?? "Session",
     kind: appointment.appointmentType,
-    status: booking?.status ?? null,
+    status,
     expertName: plan?.consultantProfile?.user?.name ?? null,
-    learnerName: booking?.requestedBy?.user?.name ?? null,
-    sessions: appointment.occurrences.map((o) => ({
-      id: o.id,
-      startsAt: o.startsAt,
-      endsAt: o.endsAt,
-    })),
+    learnerName:
+      booking?.requestedBy?.user?.name ??
+      appointment.trial?.consulteeProfile?.user?.name ??
+      null,
+    sessions: appointment.occurrences
+      .filter((o) => !isDeadOccurrence(o))
+      .map((o) => ({
+        id: o.id,
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+      })),
   };
 }
 

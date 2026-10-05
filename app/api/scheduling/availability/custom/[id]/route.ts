@@ -98,7 +98,13 @@ export async function GET(
     const customSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id: id },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            scheduleType: true,
+          },
+        },
       },
     });
 

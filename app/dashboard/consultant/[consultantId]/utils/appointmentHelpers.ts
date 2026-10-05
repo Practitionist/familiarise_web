@@ -115,11 +115,23 @@ export function getRoleBadgeStyle(role: string): string {
   return "bg-purple-100 text-purple-800";
 }
 
+type AppointmentWithTrial = TAppointment & {
+  trial?: {
+    id?: string;
+    status?: string | null;
+    subscriptionPlan?: { title?: string | null } | null;
+    consulteeProfile?: {
+      user?: { name?: string | null; image?: string | null } | null;
+    } | null;
+  } | null;
+};
+
 // Get the relevant name based on appointment type
-// For consultations/subscriptions: returns the consultee (requester) name
+// For consultations/subscriptions/trials: returns the consultee (requester) name
 // For webinars/classes: returns the consultant (host) name
 export const getConsumeeName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown User";
+  const appt = appointment as AppointmentWithTrial;
 
   switch (appointment.appointmentType) {
     case "CONSULTATION":
@@ -130,6 +142,8 @@ export const getConsumeeName = (appointment: TAppointment): string => {
       return (
         appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
+    case "TRIAL":
+      return appt.trial?.consulteeProfile?.user?.name ?? "Unknown User";
     case "WEBINAR":
       // For webinars, show the consultant (host) name
       return (
@@ -148,10 +162,11 @@ export const getConsumeeName = (appointment: TAppointment): string => {
 };
 
 // Get the relevant image based on appointment type
-// For consultations/subscriptions: returns the consultee (requester) image
+// For consultations/subscriptions/trials: returns the consultee (requester) image
 // For webinars/classes: returns the consultant (host) image
 export const getConsumeeImage = (appointment: TAppointment): string => {
   if (!appointment) return "/placeholder.svg";
+  const appt = appointment as AppointmentWithTrial;
 
   switch (appointment.appointmentType) {
     case "CONSULTATION":
@@ -163,6 +178,10 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
       return (
         appointment.subscription?.requestedBy?.user?.image ??
         "/placeholder-user.jpg"
+      );
+    case "TRIAL":
+      return (
+        appt.trial?.consulteeProfile?.user?.image ?? "/placeholder-user.jpg"
       );
     case "WEBINAR":
       // For webinars, show the consultant (host) image
@@ -186,6 +205,7 @@ export const getAppointmentTypeAndPlan = (
   appointment: TAppointment,
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
+  const appt = appointment as AppointmentWithTrial;
 
   const type =
     appointment.appointmentType.charAt(0) +
@@ -200,6 +220,9 @@ export const getAppointmentTypeAndPlan = (
     case "SUBSCRIPTION":
       plan =
         appointment.subscription?.subscriptionPlan?.title ?? "Unknown Plan";
+      break;
+    case "TRIAL":
+      plan = appt.trial?.subscriptionPlan?.title ?? "Unknown Plan";
       break;
     case "WEBINAR":
       plan = appointment.webinar?.webinarPlan?.title ?? "Unknown Plan";
@@ -469,7 +492,7 @@ export const getTodayAppointments = (
   const expandedAppointments = appointments.flatMap((appointment) => {
     const liveSlots = liveSlotsOf(appointment);
     if (liveSlots.length === 0) {
-      return [appointment];
+      return [];
     }
 
     // Only expand subscriptions and classes by slot

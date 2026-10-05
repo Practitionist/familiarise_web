@@ -1,4 +1,3 @@
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
@@ -20,21 +19,19 @@ import {
 } from "@/utils/appointmentlock";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
   refusePlanNotOwned,
+  releaseDeclinedRequestHold,
+  validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
-import { APPROVAL_STATUSES_DETAIL_ONLY } from "@/lib/booking/list-query";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
-import {
-  notifySubscriptionStarted,
-  notifySubscriptionCancelled,
-} from "@/lib/novu";
-import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
+import { notifySubscriptionStarted } from "@/lib/novu";
 import { goHref } from "@/lib/dashboard/go";
 import {
   UpdateSubscriptionSchema,
@@ -373,21 +370,6 @@ export async function PATCH(
       );
     }
 
-    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
-    // only the from-state, and REJECTED is legal from PENDING and
-    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
-    // their own paid request and collect the consultant-initiated 100% refund
-    // — every notice tier bypassed, on demand.
-    if (
-      status === AppointmentStatus.REJECTED &&
-      !isConsultant &&
-      !isPrivileged(session.user.role)
-    ) {
-      return forbiddenResponse(
-        "Only the consultant can decline a request. Cancel it instead.",
-      );
-    }
-
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Invalid subscription: missing consultant information" },
@@ -402,8 +384,6 @@ export async function PATCH(
       );
     }
 
-    // #1775 — a dual-profile user was both sides of the request, so the
-    // participant check passed and they could approve their own booking.
     if (
       APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
       existingSubscription.subscriptionPlan.consultantProfile.user.id ===
@@ -415,6 +395,14 @@ export async function PATCH(
         { status: 403 },
       );
     }
+
+    const patchError = validateDetailRequestStatusPatch(
+      status,
+      isConsultant,
+      isPrivileged(session.user.role),
+      false,
+    );
+    if (patchError) return patchError;
 
     const startDate = new Date();
     const endDate = addMonths(
@@ -508,14 +496,18 @@ export async function PATCH(
             await transitionSubscriptionRequest(tx, {
               where: { id: subscriptionId },
               to: status,
+              data:
+                status === AppointmentStatus.REJECTED
+                  ? { pendingPaymentUrl: null }
+                  : undefined,
             });
-            // #1778 — a decline frees the held times: tell anyone waiting.
+            // #1778 — a decline frees the held times: tell anyone waiting and release holds.
             if (status === AppointmentStatus.REJECTED) {
-              const held = await tx.appointment.findFirst({
-                where: { subscriptionId: subscriptionId, deletedAt: null },
-                select: { id: true },
-              });
-              if (held) await stageNoticesForAppointmentHolds(tx, held.id);
+              await releaseDeclinedRequestHold(
+                tx,
+                { subscriptionId },
+                session.user.id,
+              );
             }
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
@@ -687,8 +679,6 @@ export async function PATCH(
       if (!result.duplicate && "data" in result && result.data) {
         const subData = result.data;
         const consulteeUserId = subData.requestedBy?.user?.id;
-        const consultantUserId =
-          subData.subscriptionPlan?.consultantProfile?.user?.id;
 
         if (status === AppointmentStatus.APPROVED && consulteeUserId) {
           await notifySubscriptionStarted(consulteeUserId, {
@@ -701,40 +691,6 @@ export async function PATCH(
             // #1527 — single known recipient, the consultee.
             dashboardUrl: goHref("client", "appointments"),
           });
-        }
-
-        if (status === AppointmentStatus.CANCELLED) {
-          const userIds = [consultantUserId, consulteeUserId].filter(
-            (id): id is string => !!id,
-          );
-          if (userIds.length > 0) {
-            await notifySubscriptionCancelled(userIds, {
-              subscriptionId: subData.id,
-              planTitle: subData.subscriptionPlan?.title || "Subscription",
-              consultantName:
-                subData.subscriptionPlan?.consultantProfile?.user?.name ||
-                "Consultant",
-              consulteeName: subData.requestedBy?.user?.name || undefined,
-              // #1527 — both consultant and consultee are recipients here.
-              dashboardUrl: goHref("auto", "appointments"),
-            });
-          }
-
-          // Log cancellation activity (awaited — DB write should not be dropped in serverless)
-          const cpId = subData.subscriptionPlan?.consultantProfileId;
-          if (cpId) {
-            await logSubscriptionCancelled(
-              cpId,
-              subData.id,
-              {
-                id: session.user.id,
-                name: session.user.name || "User",
-                image: session.user.image,
-              },
-              subData.subscriptionPlan?.title || "Subscription",
-              session.user.id === consultantUserId ? "consultant" : "consultee",
-            );
-          }
         }
       }
 

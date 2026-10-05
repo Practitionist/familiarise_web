@@ -1,6 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
-import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
+import {
+  getTimezoneOffsetMinutes,
+  minutesToTimeString,
+} from "@/utils/scheduling-engine/slotTimeUtils";
+import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React, { useState } from "react";
 import {
@@ -95,22 +99,34 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 {formData.weeklySlots
                   .filter(isValidWeeklySlot)
                   .map((slot, index) => {
-                    const startTime = minutesToTimeString(slot.startTimeUtc);
-                    const endTime = minutesToTimeString(slot.endTimeUtc);
-                    const isSameDay = slot.startDay === slot.endDay;
+                    const tz = formData.timezone || "UTC";
+                    const offset = getTimezoneOffsetMinutes(tz);
+                    const localCols = weeklyRowLocalColumns(slot, tz, offset);
+                    const startTime = minutesToTimeString(
+                      localCols.localStartMinutes,
+                    );
+                    const endTime = minutesToTimeString(
+                      localCols.localEndMinutes,
+                    );
+                    const isSameDay =
+                      localCols.localStartDay === localCols.localEndDay;
 
                     return (
                       <div
                         key={index}
                         className="px-3 py-2 bg-background border rounded-lg text-sm"
                       >
-                        <span className="font-medium">{slot.startDay}</span>{" "}
+                        <span className="font-medium">
+                          {localCols.localStartDay}
+                        </span>{" "}
                         <span className="text-muted-foreground">
                           {startTime}
                         </span>
                         {" to "}
                         {!isSameDay && (
-                          <span className="font-medium">{slot.endDay} </span>
+                          <span className="font-medium">
+                            {localCols.localEndDay}{" "}
+                          </span>
                         )}
                         <span className="text-muted-foreground">{endTime}</span>
                       </div>

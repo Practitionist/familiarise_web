@@ -580,6 +580,8 @@ export interface UnifiedCalendarProps {
   allowedStart?: Date;
   allowedEnd?: Date;
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
+  /** Start instants of sessions being moved in select (proposal) mode so their weeks do not block same-week replacement selection. */
+  movingSessionStarts?: (Date | string)[];
   /** Event's scheduling timezone — defines the limit day/week buckets
    * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
   schedulingTimezone?: string;
@@ -609,9 +611,11 @@ export interface UnifiedCalendarProps {
 }
 
 /**
- * #1766 — a subscription's limit is THIS cycle: completed + nextBatch, with
- * the completed part subtracted again below, so requiredSlots comes out as
- * nextBatch × slotsPerCall without touching getSlotLimits.
+ * #1766 — a subscription's limit is THIS cycle: completed + nextBatch (or
+ * completed + rescheduling during a reschedule), with the completed part
+ * subtracted again below, so requiredSlots comes out as batch × slotsPerCall
+ * without touching getSlotLimits. In select mode (reschedule proposal),
+ * totalSessions is the exact number of sessions being moved.
  */
 function resolveMaxTotalCalls(
   entitlement: SubscriptionEntitlement | null,
@@ -620,9 +624,17 @@ function resolveMaxTotalCalls(
   allowedStart: Date | undefined,
   allowedEnd: Date | undefined,
   sessionsPerWeek: number | undefined,
+  mode?: UnifiedCalendarProps["mode"],
 ): number | undefined {
+  if (mode === "select" && totalSessions && totalSessions > 0) {
+    return totalSessions;
+  }
   if (entitlement) {
-    return entitlement.completed + entitlement.cycle.nextBatch;
+    const batch =
+      entitlement.rescheduling > 0
+        ? entitlement.rescheduling
+        : entitlement.cycle.nextBatch;
+    return entitlement.completed + batch;
   }
   if (!isRecurringEventType(eventType)) {
     return undefined;
@@ -644,7 +656,11 @@ function resolvePastConfirmedSlotCount(
   eventType: UnifiedCalendarProps["eventType"],
   slotsPerCallForCycle: number,
   pastEventSlotCount: number,
+  mode?: UnifiedCalendarProps["mode"],
 ): number | undefined {
+  if (mode === "select") {
+    return 0;
+  }
   if (entitlement) {
     return entitlement.completed * slotsPerCallForCycle;
   }
@@ -762,6 +778,7 @@ export function UnifiedCalendar({
   allowedStart,
   allowedEnd,
   totalSessions,
+  movingSessionStarts,
   schedulingTimezone,
   focus,
   viewerZone,
@@ -895,6 +912,47 @@ export function UnifiedCalendar({
     [eventType, subscriptionMeta, eventOccurrences, now],
   );
   const slotsPerCallForCycle = getSlotsPerCall(sessionDurationInHours);
+  const hasReschedule =
+    eventTentativeSlots.length > 0 ||
+    (entitlement ? entitlement.rescheduling > 0 : false);
+
+  // In select (proposal) mode, sessions being moved are still SCHEDULED in the
+  // DB until the proposal is approved; subtract their week buckets so a
+  // same-week replacement click is not blocked by weeklyLimitReached.
+  const effectiveWeeklyConfirmedCallCounts = useMemo(() => {
+    if (
+      mode !== "select" ||
+      !weeklyConfirmedCallCounts ||
+      !movingSessionStarts?.length
+    ) {
+      return weeklyConfirmedCallCounts;
+    }
+    const tentativeStartSeconds = new Set(
+      eventTentativeSlots.map((s) => Math.round(s.startTime.getTime() / 1000)),
+    );
+    const adjusted = { ...weeklyConfirmedCallCounts };
+    for (const start of movingSessionStarts) {
+      const startDate = start instanceof Date ? start : new Date(start);
+      if (Number.isNaN(startDate.getTime())) continue;
+      if (tentativeStartSeconds.has(Math.round(startDate.getTime() / 1000))) {
+        continue;
+      }
+      const weekKey = ScheduleCalculationService.weekKey(
+        startDate,
+        effectiveSchedulingTz ?? undefined,
+      );
+      if (adjusted[weekKey] && adjusted[weekKey] > 0) {
+        adjusted[weekKey] -= 1;
+      }
+    }
+    return adjusted;
+  }, [
+    mode,
+    weeklyConfirmedCallCounts,
+    movingSessionStarts,
+    eventTentativeSlots,
+    effectiveSchedulingTz,
+  ]);
 
   // Stay-open failures (slot taken, co-host busy, transient lock) leave the
   // dialog open against stale cells: refetch both grids so the retry is
@@ -949,16 +1007,21 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       sessionsPerWeek,
+      mode,
     ),
     pastConfirmedSlotCount: resolvePastConfirmedSlotCount(
       entitlement,
       eventType,
       slotsPerCallForCycle,
       pastEventSlotCount,
+      mode,
     ),
-    // #1766 — held sessions mean this run appends the next cycle.
-    topUp: entitlement ? entitlement.held > 0 : undefined,
-    weeklyConfirmedCallCounts,
+    // #1766 — held sessions mean this run appends the next cycle (never during a reschedule).
+    topUp:
+      mode === "allocate" && entitlement
+        ? !hasReschedule && entitlement.held > 0
+        : undefined,
+    weeklyConfirmedCallCounts: effectiveWeeklyConfirmedCallCounts,
     initialAllocation,
     expectedTentativeSlotCount,
     schedulingTimezone: effectiveSchedulingTz ?? undefined,
@@ -1087,7 +1150,6 @@ export function UnifiedCalendar({
       if (!targetSize || targetSize <= 1) return [clickedSlot];
 
       const clickedLocalStart = new Date(clickedSlot.startTime);
-      const bucketTz = effectiveSchedulingTz ?? undefined;
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
       const getEligibleSlot = (
@@ -1096,17 +1158,17 @@ export function UnifiedCalendar({
         const offsetMs = offsetSteps * 30 * 60 * 1000;
         const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
 
-        // Same-day constraint in the event's scheduling timezone — a session
-        // must not straddle the limit-bucket day boundary (ADR B9).
-        if (
-          ScheduleCalculationService.dayKey(targetTime, bucketTz) !==
-          ScheduleCalculationService.dayKey(clickedLocalStart, bucketTz)
-        )
-          return null;
-
-        const wall = ScheduleCalculationService.wallClock(targetTime, gridZone);
-        const interval = { hour: wall.hour, minute: wall.minute };
-        const status = getSlotStatusForInterval(interval, clickedDate);
+        // Derive the candidate's calendar day in gridZone so cross-midnight
+        // offsets look up the next/previous day's status cell rather than clickedDate.
+        const targetPos = focusGridPosition(targetTime, gridZone);
+        const targetGridDate = new Date(
+          targetPos.year,
+          targetPos.month - 1,
+          targetPos.day,
+          12,
+        );
+        const interval = { hour: targetPos.hour, minute: targetPos.minute };
+        const status = getSlotStatusForInterval(interval, targetGridDate);
 
         // Must be available, not booked, not in past
         if (!status.isAvailable || status.isBookedForDisplay || status.isInPast)
@@ -1254,7 +1316,8 @@ export function UnifiedCalendar({
           // server validator uses), fetched alongside eventSlots. Replaces
           // re-deriving this from a separate whole-window appointment fetch
           // on every slot click.
-          const completedCalls = weeklyConfirmedCallCounts[targetWeekKey] || 0;
+          const completedCalls =
+            effectiveWeeklyConfirmedCallCounts[targetWeekKey] || 0;
 
           // Also include already selected complete calls in this same week
           const selectedCompleted = countCompletedSelectedCallsForWeek(
@@ -1364,7 +1427,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       selectedSlots,
-      weeklyConfirmedCallCounts,
+      effectiveWeeklyConfirmedCallCounts,
       eventSlotsSet,
       eventTentativeSlotsSet,
       toast,

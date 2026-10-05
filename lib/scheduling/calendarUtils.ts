@@ -9,6 +9,7 @@ import {
 import { startOfWeek } from "date-fns";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
+import { utcStartDayIndex } from "@/utils/schedule/weekly-projection";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
 
 // Core types for the unified calendar system. CalendarInterval is the UI cell:
@@ -126,7 +127,7 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.availabilityWindowsWeekly.filter(
-      (slot) => DAY_INDEX[slot.startDay] === dayOfWeek,
+      (slot) => utcStartDayIndex(slot) === dayOfWeek,
     );
 
     matchingSlots.forEach((slot) => {
