@@ -64,7 +64,11 @@ class BudgetExhausted extends Error {
 const BLOCKING_REFUND_STATUSES = ["PENDING", "SUCCEEDED"] as const;
 /** Disputes that no longer threaten the payment. */
 const SETTLED_DISPUTE_STATUSES = ["WON", "CLOSED", "WARNING_CLOSED"] as const;
-const LOST_DISPUTE_STATUSES = ["LOST", "CHARGE_REFUNDED"] as const;
+const SETTLED_DISPUTES: ReadonlySet<string> = new Set(SETTLED_DISPUTE_STATUSES);
+const LOST_DISPUTES: ReadonlySet<string> = new Set(["LOST", "CHARGE_REFUNDED"]);
+const UNDELIVERED: ReadonlySet<string> = new Set(
+  UNDELIVERED_OCCURRENCE_STATUSES,
+);
 
 function holdHoursForAppointment(type: AppointmentsType): number {
   return type === "TRIAL" ? holdHoursFor("CONSULTATION") : holdHoursFor(type);
@@ -225,6 +229,23 @@ type Delivered =
   | { kind: "refunded"; paymentId: string; byBuyer: boolean }
   | { kind: "void"; reason: ReferralVoidReason };
 
+/** A settled refund or lost dispute on the qualifying purchase, which ends the referral. */
+function moneyOutcome(
+  pay: NonNullable<VestReferral["qualifyingPayment"]>,
+): Delivered | null {
+  if (pay.refunds.some((x) => x.status === "SUCCEEDED")) {
+    return {
+      kind: "refunded",
+      paymentId: pay.id,
+      byBuyer: buyerCancelled(pay.refunds, pay.userId),
+    };
+  }
+  if (pay.disputes.some((d) => LOST_DISPUTES.has(d.status))) {
+    return { kind: "void", reason: "CHARGEBACK" };
+  }
+  return null;
+}
+
 /** Refund, dispute and delivery state of the qualifying purchase. */
 async function deliveryState(
   tx: Tx,
@@ -234,20 +255,8 @@ async function deliveryState(
 ): Promise<Delivered> {
   const pay = r.qualifyingPayment;
   if (!pay) return { kind: "void", reason: "REFUNDED" };
-  if (pay.refunds.some((x) => x.status === "SUCCEEDED")) {
-    return {
-      kind: "refunded",
-      paymentId: pay.id,
-      byBuyer: buyerCancelled(pay.refunds, pay.userId),
-    };
-  }
-  if (
-    pay.disputes.some((d) =>
-      LOST_DISPUTE_STATUSES.some((lost) => lost === d.status),
-    )
-  ) {
-    return { kind: "void", reason: "CHARGEBACK" };
-  }
+  const ended = moneyOutcome(pay);
+  if (ended) return ended;
   const windowMs = cfg.qualifyWindowDays * DAY_MS;
 
   let occ = r.qualifyingOccurrence;
@@ -275,7 +284,7 @@ async function deliveryState(
       data: { qualifyingOccurrenceId: occ.id },
     });
   }
-  if (UNDELIVERED_OCCURRENCE_STATUSES.some((s) => s === occ.completionStatus)) {
+  if (UNDELIVERED.has(occ.completionStatus)) {
     return { kind: "void", reason: "SESSION_NOT_DELIVERED" };
   }
   if (occ.completionStatus !== "COMPLETED") {
@@ -285,9 +294,7 @@ async function deliveryState(
   }
   const blocked =
     pay.refunds.some((x) => x.status === "PENDING") ||
-    pay.disputes.some(
-      (d) => !SETTLED_DISPUTE_STATUSES.some((ok) => ok === d.status),
-    );
+    pay.disputes.some((d) => !SETTLED_DISPUTES.has(d.status));
   const type = pay.appointment?.appointmentType ?? "CONSULTATION";
   const deliveredBefore = new Date(
     now.getTime() - holdHoursForAppointment(type) * HOUR_MS,

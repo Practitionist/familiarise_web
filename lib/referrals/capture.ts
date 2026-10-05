@@ -123,6 +123,7 @@ export async function recordReferralCapture(
             source: "REFERRAL_BONUS",
             state: "VOID",
             vestedAt: null,
+            reversedAt: null,
             usedAmount: 0,
           },
           data: {

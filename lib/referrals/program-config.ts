@@ -31,7 +31,7 @@ const configSelect = {
 } as const;
 
 /** The programme row, or null before ops has created it (the programme is then off). */
-export async function readReferralProgramConfig(db: PrismaLike = prisma) {
+export function readReferralProgramConfig(db: PrismaLike = prisma) {
   return db.referralProgramConfig.findUnique({
     where: { id: REFERRAL_CONFIG_ID },
     select: configSelect,

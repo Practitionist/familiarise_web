@@ -826,11 +826,8 @@ export async function calculateAmountAndValidate(
    * actually resume. Null default keeps every non-org caller personal.
    */
   organizationId: string | null = null,
-  /** The signed own-link cookie and whether an org funds this booking. */
-  referral: { viaToken: string | null; orgFunded: boolean } = {
-    viaToken: null,
-    orgFunded: false,
-  },
+  /** The signed own-link cookie and whether an org funds this booking; null for neither. */
+  referral: { viaToken: string | null; orgFunded: boolean } | null = null,
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
@@ -1218,8 +1215,8 @@ export async function calculateAmountAndValidate(
       buyerUserId: userId,
       consultantProfileId: plan.consultantProfile?.id ?? null,
       consultantUserId: plan.consultantProfile?.userId ?? null,
-      viaToken: referral.viaToken,
-      orgFunded: referral.orgFunded,
+      viaToken: referral?.viaToken ?? null,
+      orgFunded: referral?.orgFunded ?? false,
       hasDiscountCode: appliedDiscount !== null,
     });
     const derived = await deriveCheckoutAmount({
@@ -4928,8 +4925,8 @@ export async function handleCheckout(
               }
               await recordReferralCaptureInSavepoint(tx, {
                 paymentId: payment.id,
-                consultantProfileId: async () =>
-                  resolvedEarnings?.consultantProfileId,
+                consultantProfileId: () =>
+                  Promise.resolve(resolvedEarnings?.consultantProfileId),
               });
             }
 

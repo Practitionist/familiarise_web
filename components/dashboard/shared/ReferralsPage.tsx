@@ -194,16 +194,24 @@ export function ReferralsPage({
   const referralLink =
     code && origin ? `${origin}/r/${code.customCode || code.code}` : "";
 
+  const sharePitch = friendOffer
+    ? `Use my referral link to get ${friendOffer}`
+    : "Join with my referral link";
+  const shareSubject = friendOffer
+    ? `Get ${friendOffer} on Familiarise`
+    : "Join me on Familiarise";
+  const capNote = terms
+    ? `, and can cover up to ${terms.redemptionCapPercent}% of a booking`
+    : "";
+  const balanceTooltip = `Credit you can spend now. Credit from a referral becomes spendable after your friend's first session${capNote}.`;
   const shareMessage = referralLink
-    ? friendOffer
-      ? `I've been using Familiarise. Use my referral link to get ${friendOffer}: ${referralLink}`
-      : `I've been using Familiarise. Join with my referral link: ${referralLink}`
+    ? `I've been using Familiarise. ${sharePitch}: ${referralLink}`
     : "";
   const whatsappUrl = referralLink
     ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
     : "";
   const emailUrl = referralLink
-    ? `mailto:?subject=${encodeURIComponent(friendOffer ? `Get ${friendOffer} on Familiarise` : "Join me on Familiarise")}&body=${encodeURIComponent(shareMessage)}`
+    ? `mailto:?subject=${encodeURIComponent(shareSubject)}&body=${encodeURIComponent(shareMessage)}`
     : "";
 
   const handleCopy = () => {
@@ -373,7 +381,7 @@ export function ReferralsPage({
               value={formatAmount(credits?.totalAvailable ?? 0)}
               icon={IndianRupee}
               variant="info"
-              tooltip={`Credit you can spend now. Credit from a referral becomes spendable after your friend's first session${terms ? `, and can cover up to ${terms.redemptionCapPercent}% of a booking` : ""}.`}
+              tooltip={balanceTooltip}
             />
           </DashboardGrid>
         )}
