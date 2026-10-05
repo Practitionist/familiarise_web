@@ -1,160 +1,115 @@
-# Refunds
+# Razorpay Refunds — Raw HTTP Idempotency, Two-Phase Reservation & Reconciliation
 
-Refunds are live in this repo. Read this before touching them — the flow has several
-non-obvious invariants that were each added to fix a real money bug.
+Official citations:
+- [Refunds API Overview](https://razorpay.com/docs/payments/refunds/apis/)
+- [Create a Normal Refund (`POST /v1/payments/:id/refund`)](https://razorpay.com/docs/api/refunds/create-normal/)
+- [Create an Instant Refund (`speed: "optimum"`)](https://razorpay.com/docs/api/refunds/create-instant/)
+- [Idempotent Normal Refunds (`X-Refund-Idempotency`)](https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/)
+- [Idempotent Instant Refunds (`X-Refund-Idempotency`)](https://razorpay.com/docs/api/refunds/instant-refunds-idempotent/)
+- [Refund Entity & Speed Fields](https://razorpay.com/docs/api/refunds/entity/)
+- [Refund Webhooks](https://razorpay.com/docs/webhooks/refunds/)
 
-## The path a refund takes
+## Where It Lives in This Repo
 
-`lib/payments/operations/refund.ts` → `createRefund` (`lib/payments/index.ts`) →
-`createRazorpayRefund` (`lib/payments/core/razorpay.ts`).
+| File | Responsibility |
+|---|---|
+| [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts) | `postRefund` (raw `fetch` with `X-Refund-Idempotency` and HTTP 409 conflict handling), `capturedPaymentIdOfOrder`, `createRazorpayRefund`, `getRazorpayRefund`, `listRazorpayRefunds`, `isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`. |
+| [`lib/payments/operations/refund.ts`](../../../../../lib/payments/operations/refund.ts) | Two-phase refund reservation (`pending_<uuid>`), `applyRefundCascade` (ledger reversal, `ConsultantEarnings` / `OrganizationEarnings` CAS clawback, TDS 194-O reversal, GST `CreditNote` minting). |
+| [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) | Routes `refund.created`, `refund.processed`, `refund.failed`, and `refund.speed_changed`. Resolves `payment_id` (`pay_...`) → `order_id` (`order_...`) via `Payment.gatewayPaymentId` index before calling `handleRefundCreated`. |
+| [`scripts/refunds/reconcile-pending-refunds.ts`](../../../../../scripts/refunds/reconcile-pending-refunds.ts) | Three-pass refund reconciler: (1) binds/retires `pending_<uuid>` placeholders via `notes.reservationId`, (2) polls real `rfnd_...` `PENDING` rows via `getRefund`, (3) re-drives stranded `SUCCEEDED` rows with `cascadedAt: null`. |
 
-`refundPayment()` is three phases, and the split is deliberate:
+---
 
-1. **Reserve.** In a Serializable transaction, create the `Refund` row as `PENDING` with a
-   placeholder `refundId` of `pending_<uuid>`. This happens before any network call, so a
-   crash mid-refund leaves a durable trace.
-2. **Call the gateway.** Outside the transaction — external I/O must never sit inside a
-   Serializable tx, and an SSI retry must not re-hit the gateway. On failure the
-   placeholder row stays `PENDING`; the reconcile cron owns recovery from there.
-3. **Settle.** Bind the real gateway refund id, then cascade the ledger/earnings effects.
-   Binding happens *outside* the cascade transaction so that if the cascade rolls back,
-   the row still points at the real refund and the webhook can complete it by id.
+## 1. Why `postRefund` Uses Raw `fetch` Instead of `razorpay-node`
 
-`Refund.cascadedAt` is an atomic claim stamp: exactly one caller flips it, so the cascade
-can never run twice.
+Every refund request must be idempotent so a network timeout or retry never refunds the buyer twice. Razorpay supports the `X-Refund-Idempotency` HTTP header on `POST /v1/payments/:id/refund`, **but `razorpay-node` v2.9.6 cannot send it**:
+- In `node_modules/razorpay/dist/api.js`, `getValidHeaders()` whitelists **only** `X-Razorpay-Account` and `Content-Type` and silently strips every other header.
+- Furthermore, `payments.refund(paymentId, params)` in `razorpay-node` has no `headers` parameter.
 
-**Never mark a refund SUCCEEDED before the gateway confirms.** That bug (M1) shipped once
-— refunds were marked succeeded while no card was ever credited.
+Therefore, `postRefund` in [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts) calls `fetch("https://api.razorpay.com/v1/payments/${paymentId}/refund")` directly with Basic Auth, `AbortSignal.timeout(30_000)`, and `X-Refund-Idempotency`.
 
-## Two things about the ids
+---
 
-`Payment.paymentIntent` holds the Razorpay **order** id, but refunds are created against a
-**payment** id. So `createRazorpayRefund` starts with `orders.fetchPayments(orderId)` and
-picks the **captured** payment — never `items[0]`, which can be an earlier failed attempt
-on the same order (PM-12).
+## 2. Verified `X-Refund-Idempotency` Rules & HTTP 409 Handling
 
-## Idempotency: why refund creation bypasses the SDK
+From [Official Razorpay Idempotent Refunds Docs](https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/):
 
-A network error between us and Razorpay is ambiguous — the refund may or may not have
-landed. Retrying blindly can debit the payer twice. Razorpay's answer is the
-`X-Refund-Idempotency` header: send the same key and it returns the *original* refund
-instead of issuing a second one. It works on both the Normal and Instant refund APIs.
+1. **Key Format (`IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{10,}$/`)**:
+   - **Minimum length**: **10 characters** (shorter keys fail with `400 BAD_REQUEST_ERROR: "The idempotency key must be at least 10 characters long."`).
+   - **Allowed characters**: **Alphanumeric (`A-Za-z0-9`), hyphens (`-`), and underscores (`_`) only** (`"The idempotency key must only contain alphanumeric characters, underscores and hyphens."`).
+   - **Our caller contract (`#1352`)**: We pass `Refund.id` (the Prisma row UUID/CUID created in Phase 1) as `idempotencyKey`. `postRefund` validates `IDEMPOTENCY_KEY_PATTERN` and fails closed (`REFUND_IDEMPOTENCY_KEY_INVALID`) rather than stripping invalid characters or omitting the header.
+2. **Duplicate Request Behavior & Two Distinct `409 Conflict` Cases (`#1451`)**:
+   - **Completed duplicate (same key + same body)**: Returns `200 OK` with the original refund entity.
+   - **In-flight concurrent duplicate (`409 Conflict`)**: `"Another request with the same idempotency key is still in progress."` `postRefund` waits `1,000 ms` and retries once so a race resolves to the original refund.
+   - **Payload mismatch (`409 Conflict`)**: `"Different request with the same idempotency key has already been processed."` Retrying will never succeed; `postRefund` immediately throws `RefundError(..., "REFUND_IDEMPOTENCY_KEY_REUSED")`.
+3. **Bonus Official Quirk — `receipt` Also Acts as an Idempotency Key**:
+   - Official docs (`https://razorpay.com/docs/api/refunds/create-normal/`) state that if `receipt` is passed on `POST /v1/payments/:id/refund`, Razorpay treats `receipt` as an idempotency key scoped to that `payment_id` and rejects duplicate `receipt` values with `400 BAD_REQUEST_ERROR`.
 
-**razorpay-node cannot send that header at all.** Not per-request, not per-client — `lib/api.js`
-hard-whitelists the headers it will pass:
+---
 
-```js
-var allowedHeaders = {
-  "X-Razorpay-Account": "",
-  "Content-Type": "application/json"
-};
-```
+## 3. Resolving `order_id` ↔ `payment_id` (`capturedPaymentIdOfOrder`)
 
-`getValidHeaders()` silently drops everything else, and `API.post()` has no per-request
-config argument to smuggle one through. (A commonly repeated claim is that the third
-argument to `payments.refund()` is treated as a callback — true, but it understates the
-problem: even a constructor-level header would be dropped.) So `postRefund()` in
-`lib/payments/core/razorpay.ts` issues a raw `POST /v1/payments/:id/refund` with Basic
-auth. The order/payment lookup still uses the SDK.
+Razorpay refunds are created against a **Payment ID (`pay_...`)**, whereas `Payment.paymentIntent` stores the **Order ID (`order_...`)** (except for duplicate-capture overflow rows, which store `pay_...` directly).
 
-The key rules, from the docs: at least 10 characters, and only letters, digits, hyphens
-and underscores.
+- **Outbound (`createRazorpayRefund`)**:
+  - If `paymentIntentId.startsWith("pay_")`, refunds that exact `pay_...` ID.
+  - Otherwise, calls `capturedPaymentIdOfOrder(razorpayClient, orderId)` (`razorpayClient.orders.fetchPayments(orderId)`) and selects `payments.items.find((p) => p.status === "captured")`.
+  - **Never fall back to `payments.items[0]`**: an order can have failed payment attempts before the captured one!
+- **Inbound Webhooks (`refund.created`, `refund.processed`, `refund.failed`)**:
+  - Webhook payloads only carry `payload.refund.entity.payment_id` (`pay_...`), not `order_id`.
+  - `razorpay-dispatch.ts` queries `prisma.payment.findFirst({ where: { gatewayPaymentId: refundEvent.payment_id } })` first (#1353), falling back to `razorpayClient.payments.fetch(refundEvent.payment_id)` only for legacy rows missing `gatewayPaymentId`.
 
-**Choose the key carefully.** It must identify the *logical refund*, not the payment:
+---
 
-```ts
-// WRONG — two legitimate partial refunds of ₹50 on the same payment collide, and
-// the second silently returns the first refund instead of paying out again.
-"X-Refund-Idempotency": `refund-${paymentId}-${amountPaise}`
+## 4. Partial vs. Full Refund Guard (`#1584 P2-P0-01`)
 
-// RIGHT — the Phase 1 reservation id. Minted before the gateway call, unchanged on
-// the error path, unique per logical refund.
-idempotencyKey: reserved.id
-```
+On `POST /v1/payments/:id/refund`, **omitting `amount` refunds the ENTIRE payment**.
+- Never write `amount: amount || undefined` — if `amount` is `0` or `NaN`, `|| undefined` silently promotes it to a 100% full refund!
+- `createRazorpayRefund` enforces:
+  ```ts
+  if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw new RefundError(
+      `Refund amount must be a positive whole number of paise (got ${String(amount)})`,
+      "INVALID_AMOUNT",
+      "RAZORPAY",
+    );
+  }
+  ```
 
-`createRazorpayRefund` sends the header only when the caller supplies a key. No key is
-safer than a guessed one.
+---
 
-Two responses to expect, and Razorpay answers both of them with a **409**. When another
-request carrying the same key is still in flight, the description reads "still in
-progress" and the conflict is retryable: `postRefund` retries once before giving up to the
-reconcile cron with `REFUND_IN_FLIGHT`. When the same key is replayed with a *different*
-payload, the description reads "Different request with the same idempotency key has
-already been processed" and no amount of retrying will change the answer, so `postRefund`
-throws it immediately as `REFUND_IDEMPOTENCY_KEY_REUSED` — a key collision is our bug, not
-the gateway's. The `receipt` field also acts as a secondary idempotency key ("Duplicate
-receipt found for this refund request").
+## 5. Refund `speed`, `speed_requested`, and `speed_processed`
 
-Sources: <https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/> ·
-<https://razorpay.com/docs/api/refunds/instant-refunds-idempotent/> ·
-<https://github.com/razorpay/razorpay-node/blob/master/lib/api.js>
+From [Official Razorpay Refund Entity Docs](https://razorpay.com/docs/api/refunds/entity/):
 
-## Status and speed
+| Field | Where It Appears | Valid Values | Meaning |
+|---|---|---|---|
+| `speed` | Request body (`POST /v1/payments/:id/refund`) | `"normal"` \| `"optimum"` | `"normal"` (default): 5–7 working days, no refund fee. `"optimum"`: attempts Instant Refund (IMPS/NEFT/UPI) for a small fee; automatically falls back to `"normal"` if unsupported. **Passing `"instant"` in the request fails with `400 BAD_REQUEST_ERROR`!** |
+| `speed_requested` | Refund entity response & webhook | `"normal"` \| `"optimum"` | Echoes the requested mode. Never `"instant"`. |
+| `speed_processed` | Refund entity response & webhook | `"normal"` \| `"instant"` *(mock JSON in docs also shows `"optimum"`)* | How the refund was actually processed. If `speed_requested` was `"optimum"` and instant rail was unavailable, `speed_processed` becomes `"normal"` and `refund.speed_changed` webhook fires. |
 
-The refund lifecycle is `pending` → `processed`, or `pending` → `failed`. Those three are
-the only statuses Razorpay returns — there is no `created` or `initiated`.
+### Refund Fee Policy (Verified)
+- **Original Gateway Fee Is Non-Refundable**: When a payment is refunded (normal or instant), Razorpay **does not return** the original ~2% + 18% GST gateway capture fee.
+- **Instant Refund Fee**: `speed: "optimum"` charges an additional instant-refund fee deducted from the merchant balance (credited back if instant refund falls back to normal 5–7 day processing). Our platform uses default `"normal"` speed (`postRefund` omits `speed`).
 
-They map onto the `RefundStatus` enum through `mapRazorpayRefundStatus`. Note there are
-**three copies** of this mapping in the repo — here, `mapRefundStatus` in
-`app/api/webhooks/utils.ts`, and `mapGatewayRefundStatus` in
-`scripts/refunds/reconcile-pending-refunds.ts`. Change one, check the others.
+---
 
-Speed is two separate fields and they are easy to conflate:
+## 6. Two-Phase Refund Reservation & 3-Pass Reconciliation
 
-| Field | Values | Meaning |
-|---|---|---|
-| `speed` (request) | `normal` (default), `optimum` | what you asked for |
-| `speed_requested` | `normal`, `optimum` | what Razorpay recorded you asking for |
-| `speed_processed` | `normal`, `instant` | how it actually settled |
+### Two-Phase Reservation (`lib/payments/operations/refund.ts`)
+1. **Phase 1 (Serializable DB Tx)**: Checks refundable balance, inserts a `Refund` row with `status: PENDING` and `refundId: "pending_<uuid>"`, saving the row's primary key `Refund.id`.
+2. **Phase 2 (External HTTP Call)**: Calls `createRazorpayRefund` with `idempotencyKey = Refund.id` and `metadata: { reservationId: Refund.id, ... }`.
+3. **Phase 3 (DB Finalization)**: Binds the returned `rfnd_...` ID onto the `Refund` row; once `status === "processed"` (either synchronously or via `refund.processed` webhook), runs `applyRefundCascade` inside a `Serializable` transaction.
 
-`optimum` requests an instant refund — money back in minutes, for an extra fee — but it
-can still fall back to `normal`, which is what `refund.speed_changed` tells you. `optimized`
-is not a value; it does not exist. **This repo never sends `speed`**, so every refund is
-`normal`.
-
-## Webhook events
-
-The events are top-level `refund.*`. There is no `payment.refund.*` family — a handler
-registered on those names silently processes zero refund webhooks.
-
-| Event | When | What this repo does |
-|---|---|---|
-| `refund.created` | Refund initiated | `handleRefundCreated` |
-| `refund.processed` | Money returned to the customer | `handleRefundCreated` |
-| `refund.failed` | Refund failed | `handleRefundCreated(..., "failed", ...)` |
-| `refund.speed_changed` | Razorpay re-evaluated the speed | logged only — the repo never requests `optimum`, so there is nothing to reconcile |
-
-Dispatch lives in `app/api/webhooks/razorpay-dispatch.ts`; the handler is
-`handleRefundCreated` in `app/api/webhooks/utils.ts`. Because the DB stores order ids, the
-handler resolves `payment_id → order_id` via `payments.fetch()` first, then branches three
-ways: B2C `Payment`, enterprise `WalletTopUp` (by `providerPaymentId`), enterprise
-`OrganizationInvoice` (by `providerPaymentId`).
-
-Delivery is at-least-once, so the handler must stay idempotent — key on the gateway refund
-id, never on "have I seen a refund for this payment".
-
-Source: <https://razorpay.com/docs/webhooks/refunds/>
-
-## Stuck in PENDING
-
-`scripts/refunds/reconcile-pending-refunds.ts` picks up refunds older than an hour,
-matches them against the gateway (with a 5-minute amount/time window for rows still
-carrying a `pending_` placeholder), and fails them after 24 hours — which fires
-`notifyRefundFailed` to the payer. If a refund is stuck, check that cron before suspecting
-the gateway.
-
-## Gotchas
-
-1. **Amounts are paise.** A ₹50 refund is `amount: 5000`.
-2. **API auth uses `RAZORPAY_SECRET`**, not the webhook secret. `RAZORPAY_WEBHOOK_SECRET`
-   only verifies inbound signatures, and they are different values.
-3. **Refunds cannot exceed the payment.** The sum of all refunds is capped at the original
-   amount; Razorpay rejects the overage. Validate before calling — this repo does, in
-   `refundPayment`.
-4. **Six-month window.** Razorpay refuses refunds on payments older than six months.
-5. **Test mode is not a timing guarantee.** Test-mode refunds usually process immediately,
-   but that is undocumented; live `normal` refunds take 5–7 business days. Never build a
-   flow that assumes instant — react to `refund.processed`.
-6. **An open dispute blocks a refund.** `refundPayment` throws
-   `REFUND_BLOCKED_BY_DISPUTE`; resolve the dispute first. Refunding a disputed payment
-   can mean paying twice.
+### 3-Pass Reconciler (`scripts/refunds/reconcile-pending-refunds.ts`)
+1. **Pass 1 (`pending_<uuid>` Placeholders > 1h old)**:
+   - Calls `listRefunds(paymentIntent)` (`razorpayClient.payments.fetchMultipleRefund`).
+   - Matches by `gr.metadata?.reservationId === refund.id` (or unambiguous single-amount fallback for pre-#676 rows).
+   - If matched, binds `rfnd_...` (handling `P2002` if the webhook already inserted the `rfnd_...` row by deleting the superseded placeholder).
+   - If no match exists at the gateway after **24 hours**, transitions the placeholder to `FAILED` so the refundable balance is restored.
+2. **Pass 2 (Real `rfnd_...` `PENDING` Rows > 1h old)**:
+   - Polls `getRazorpayRefund(refund.refundId)` (`razorpayClient.refunds.fetch`).
+   - **Never ages out locally** while Razorpay still reports `"pending"` (normal bank refunds take 5–7 business days).
+   - Only marks `FAILED` if Razorpay reports `"failed"` or returns `400 BAD_REQUEST_ERROR` / `input_validation_failed` (`isRazorpayUnknownRefundIdError`).
+3. **Pass 3 (`redriveStrandedRefunds`)**:
+   - Finds `Refund` rows with `status = 'SUCCEEDED' AND cascadedAt IS NULL` (>10 min old, up to 3 attempts) and re-drives `applyRefundCascade`.

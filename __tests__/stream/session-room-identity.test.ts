@@ -82,6 +82,7 @@ import { getSession } from "@/lib/auth-server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { createDbMeeting } from "@/actions/stream/meetings/meeting.action";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 
 const db = prisma as unknown as {
   appointmentOccurrence: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -498,6 +499,10 @@ describe("the call describes the session it belongs to", () => {
     await join(a);
 
     expect(mockCallPayloads[0].data?.created_by_id).toBe("user-consultant");
+    // A consultee session may only sync itself unless the server vouches.
+    expect(upsertUsersToStream).toHaveBeenCalledWith(["user-consultant"], {
+      serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+    });
   });
 
   it("resolves a webinar's hosts through plan ownership, not the joiner", async () => {
