@@ -345,7 +345,7 @@ describe("provisionAppointmentMeeting", () => {
         consultation: null,
         subscription: null,
         webinar: {
-          status: "CONFIRMED",
+          status: "SCHEDULED",
           webinarPlan: {
             title: "Webinar",
             consultantProfile: {

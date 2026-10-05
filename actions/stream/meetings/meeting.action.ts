@@ -498,9 +498,10 @@ async function findDbMeetingBySlot(slotId: string): Promise<Meeting | null> {
 
 async function refuseMeetingCreation(
   slot: MeetingSlot,
+  existingRoom = false,
 ): Promise<string | null> {
-  const maintenanceState = await getMaintenanceState();
-  if (maintenanceState.phase !== "OFF") {
+  // Maintenance blocks new rooms only, so a session in progress keeps its room.
+  if (!existingRoom && (await getMaintenanceState()).phase !== "OFF") {
     return "New calls cannot be created during maintenance.";
   }
 
@@ -588,9 +589,10 @@ const TERMINAL_APPOINTMENT_STATUSES = new Set([
 
 async function getMeetingCreationRefusal(
   slot: MeetingSlot,
+  existingRoom: boolean,
 ): Promise<string | null> {
   try {
-    const refusal = await refuseMeetingCreation(slot);
+    const refusal = await refuseMeetingCreation(slot, existingRoom);
     if (refusal) {
       streamLogger.warn("Refused a meeting before creating the call", {
         slotId: slot.id,
@@ -880,10 +882,8 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "You are not a participant in this session." };
   }
 
-  if (!reuseExisting) {
-    const refusal = await getMeetingCreationRefusal(anchorSlot);
-    if (refusal) return { ok: false, refusal };
-  }
+  const refusal = await getMeetingCreationRefusal(anchorSlot, reuseExisting);
+  if (refusal) return { ok: false, refusal };
 
   if (!isStreamConfigured()) {
     streamLogger.error("Stream not configured — cannot provision meeting", {

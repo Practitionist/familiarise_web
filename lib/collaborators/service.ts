@@ -14,6 +14,7 @@ import {
   isExpectedStreamError,
 } from "@/lib/stream-client";
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -950,7 +951,8 @@ async function revokeOpenCallPresenterRole(
     const occurrences = await prisma.appointmentOccurrence.findMany({
       where: {
         deletedAt: null,
-        endsAt: { gt: new Date() },
+        // Bounded by the longest possible call, so overruns and rejoin grace stay covered.
+        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
         appointment: livePlanAppointmentsWhere(planType, planId),
         meeting: { is: { endedAt: null } },
       },
