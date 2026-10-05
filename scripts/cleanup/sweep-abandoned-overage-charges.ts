@@ -94,7 +94,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   for (const a of abandoned) {
     const outcome = await prisma.$transaction(async (tx) => {
       const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
-        chargeFailureReason: `Abandoned before payment started (swept at ${ageDays}d)`,
+        chargeFailureReason: `Payment not started within ${ageDays} days`,
       });
       if (moved === 0) return null;
       // FAILing the side-charge means the member never pays basePaise — give

@@ -135,6 +135,7 @@ function issuingTx(opts: {
     organizationInvoice: { create: invoiceCreate },
     invoiceLineItem: { findMany: async () => [] },
     overageEvent: { findMany: overageFindMany, updateMany: overageUpdateMany },
+    purchaseOrder: { findMany: async () => [] },
   };
   return { tx, invoiceCreate, overageFindMany, overageUpdateMany };
 }
@@ -204,6 +205,7 @@ describe("rollupOrgInvoiceAccruals — supplier state", () => {
         organizationInvoice: { create: invoiceCreate },
         invoiceLineItem: { findMany: async () => [] },
         overageEvent: { findMany: async () => [] },
+        purchaseOrder: { findMany: async () => [] },
       }),
     );
 

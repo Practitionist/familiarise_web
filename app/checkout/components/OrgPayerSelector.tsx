@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Building2, CreditCard, AlertTriangle, Ban, Info } from "lucide-react";
 import type { CoveredPlanType } from "@prisma/client";
 import { dataConsentHref } from "@/lib/dashboard/account-href";
+import { payerSentence } from "@/lib/appointments/payment-display";
 
 interface OveragePreview {
   applicable: boolean;
@@ -237,6 +238,16 @@ export function OrgPayerSelector({
           </button>
         );
       })}
+
+      <p className="text-xs text-muted-foreground">
+        {payerSentence(
+          selectedMembership && selectedMembership.fundingSource !== "PERSONAL"
+            ? "ORG"
+            : "SELF",
+          selectedMembership?.organizationName ?? null,
+        )}
+        .
+      </p>
 
       {/* #777 §C — pre-checkout overage warning for the selected org. */}
       {selectedOrganizationId && selectedMembership && planType && planId && (

@@ -40,6 +40,14 @@ So LearnPro is owed ₹40,000, the platform withholds **₹40** of TDS to deposi
 
 For a payee with **no PAN on file**, the 194-O no-PAN carve-out withholds **5%** (`NO_PAN_RATE_194O`) instead of 0.1% — on this pool that is ₹2,000, fifty times the ₹40 with-PAN figure. That rate cliff is exactly what the `7f7e7d12` PAN-ciphertext war story below was about.
 
+### 1.2 Clawbacks are netted from the next payout
+
+A refund or lost dispute that lands after a payee was already paid leaves the payee owing the platform. On the consultant rail that balance sits on `CONSULTANT_RECEIVABLE`; on the org rail it is the net of the `clawback:*` journals on the org's `ORG_PAYABLE`, which book the amount against `CASH`. When the next payout is built, `recoverClawbackOnPayout` (`lib/payments/payouts/clawback-recovery.ts`) reads that outstanding balance from the ledger inside the creation transaction and nets it from the payout, never below the payout minimum, and on the consultant rail also never into the room the highest withholding rate may need, because consultant TDS is computed later at disbursement. The remainder carries to the following payout. The recovery posts `Dr <payable> / Cr <receivable>` under the key `clawback-recovery:<payoutId>`, so each payout recovers at most once.
+
+The payout row keeps its pre-recovery amount, which is why the TDS base does not move: `ConsultantPayout.amount` and `OrganizationPayout.netPayoutPaise` stay the earnings total, the gateway receives that total less TDS less the recovery, and the completion journal debits the payable for the total less the recovery (the recovery journal already took that slice). If a payout fails, is cancelled or is reversed, its recovery is released under `clawback-recovery-release:<payoutId>` when the payee's next payout is built, so the receivable is never lost. The consultant payout page shows the deduction as its own line, and `reconcile-ledgers` raises one `CLAWBACK_RECEIVABLE_STALE` finding per run, never per payee, for anything still owed after 90 days.
+
+Organisation payouts disburse through RazorpayX only. `createOrgPayoutBatch` refuses any other gateway at creation, and a legacy row on another gateway fails at submission rather than sitting in `PROCESSING`. `scripts/smoke/org-payout-sandbox-smoke.ts` proves the go-live gate against the sandbox and refuses to run with a live key or with live payouts switched on.
+
 ---
 
 ## 2. The `PayoutStatus` machine and the `ORG_PAYOUT` posting
@@ -231,6 +239,10 @@ The mock-Redis case is the sharper one, and it is why the check rejects mock out
 **TDS over-withholding 50× because the PAN was encrypted (`7f7e7d12`, #785).** Both payout services passed `OrganizationTaxInfo.panEncrypted` _ciphertext_ straight into `computeTdsForPayout` as `panNumber`. The ciphertext failed `isValidPan`'s `[A-Z]{5}[0-9]{4}[A-Z]` regex, so the engine took the **194-O no-PAN fallback (5%)** instead of the with-PAN **0.1%** — withholding fifty times too much from every host-org payout that had a PAN safely on file. The fix added `panOnFile: boolean` to `TdsConsultantInput`: callers now pass `panNumber: null, panOnFile: !!taxInfo.panEncrypted`, so "a PAN exists" is signalled without trying to format-check ciphertext that cannot be validated until decrypt-at-filing-time. This is why §1.1's with-PAN figure is ₹40, not ₹2,000.
 
 ---
+
+## Deprecated & Superseded Approaches
+
+Clawbacks on already-paid payouts used to be recovered by hand: `clawbackAmountPaise` recorded them and nothing collected them. They are now netted from the next payout as §1.2 describes. Non-RazorpayX organisation payouts used to be created and then skipped with a warning at submission, which left them in `PROCESSING`; they are now refused at creation.
 
 ### Related docs
 

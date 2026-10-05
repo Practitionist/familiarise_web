@@ -11,6 +11,10 @@ import type { Currency, PayoutMethod, PayoutStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { sanitizePayoutFailure } from "@/lib/dashboard/earnings-state";
+import {
+  RECOVERY_RELEASING_STATUSES,
+  clawbackRecoveredPaise,
+} from "@/lib/payments/payouts/clawback-recovery";
 
 export interface PayoutTimelineStep {
   label: string;
@@ -26,6 +30,8 @@ export interface ConsultantPayoutDetail {
   tdsPaise: number;
   tdsRateBps: number | null;
   tdsFinancialYear: string | null;
+  /** An earlier payout's clawback netted from this one; 0 when none stands. */
+  recoveredPaise: number;
   netPaise: number;
   /** Set only for a COMPLETED payout. */
   utr: string | null;
@@ -108,6 +114,9 @@ export async function readConsultantPayoutDetail(args: {
     },
   });
   if (!payout) return null;
+  const recoveredPaise = RECOVERY_RELEASING_STATUSES.includes(payout.status)
+    ? 0
+    : await clawbackRecoveredPaise(prisma, payout.id);
 
   const timeline: PayoutTimelineStep[] = [
     { label: "Queued", at: payout.createdAt },
@@ -132,7 +141,9 @@ export async function readConsultantPayoutDetail(args: {
     tdsPaise: payout.tdsDeducted,
     tdsRateBps: payout.tdsRateAppliedBps,
     tdsFinancialYear: payout.tdsFinancialYear,
-    netPaise: payout.netAmount ?? payout.amount - payout.tdsDeducted,
+    recoveredPaise,
+    netPaise:
+      payout.netAmount ?? payout.amount - payout.tdsDeducted - recoveredPaise,
     utr: payout.status === "COMPLETED" ? payout.gatewayUtr : null,
     failure:
       payout.status === "FAILED"

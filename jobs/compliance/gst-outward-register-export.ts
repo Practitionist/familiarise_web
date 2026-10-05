@@ -109,6 +109,7 @@ async function collectRows(
         select: {
           invoiceNumber: true,
           issuedAt: true,
+          supplyDate: true,
           placeOfSupply: true,
           taxableValuePaise: true,
           cgstPaise: true,
@@ -154,6 +155,7 @@ async function collectRows(
           consumerInvoice: {
             select: {
               invoiceNumber: true,
+              supplyDate: true,
               placeOfSupply: true,
               sacCode: true,
               paymentId: true,
@@ -179,6 +181,7 @@ async function collectRows(
           invoice: {
             select: {
               invoiceNumber: true,
+              issuedAt: true,
               placeOfSupply: true,
               gstin: true,
               hsnCode: true,
@@ -197,6 +200,7 @@ async function collectRows(
       docType: "INVOICE",
       docNumber: inv.invoiceNumber,
       docDate: inv.issuedAt,
+      supplyDate: inv.supplyDate,
       buyerType: "B2C",
       buyerGstin: null,
       placeOfSupply: inv.placeOfSupply,
@@ -219,6 +223,7 @@ async function collectRows(
       // An issued invoice always carries `issuedAt`; the column is nullable
       // only because DRAFT rows exist, and those are filtered out above.
       docDate: inv.issuedAt ?? new Date(0),
+      supplyDate: inv.issuedAt ?? new Date(0),
       buyerType: "B2B",
       buyerGstin: inv.gstin,
       placeOfSupply: inv.placeOfSupply,
@@ -239,6 +244,7 @@ async function collectRows(
       docType: "CREDIT_NOTE",
       docNumber: note.creditNoteNumber,
       docDate: note.issuedAt,
+      supplyDate: note.consumerInvoice.supplyDate,
       buyerType: "B2C",
       buyerGstin: null,
       placeOfSupply: note.consumerInvoice.placeOfSupply,
@@ -259,6 +265,7 @@ async function collectRows(
       docType: "CREDIT_NOTE",
       docNumber: note.creditNoteNumber,
       docDate: note.issuedAt ?? new Date(0),
+      supplyDate: note.invoice?.issuedAt ?? note.issuedAt ?? new Date(0),
       buyerType: "B2B",
       buyerGstin: note.invoice?.gstin ?? null,
       placeOfSupply: note.invoice?.placeOfSupply ?? null,

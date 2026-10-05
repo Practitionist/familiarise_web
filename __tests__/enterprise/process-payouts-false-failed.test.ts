@@ -30,6 +30,7 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   };
   // #1846 — the FAILED write and the earnings release share one transaction.
   db.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(db));

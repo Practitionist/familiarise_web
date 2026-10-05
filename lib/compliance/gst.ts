@@ -5,8 +5,9 @@
  * `deriveGstBreakdown` computes CGST/SGST vs IGST and zero-rated export. It
  * needs `buyerStateCode` (from Organization.gstStateCode) to pick intra- vs
  * inter-state; it falls back to IGST when the state is unknown — #771 §8 wants
- * that state made mandatory for B2B invoices. HSN default 999293 (educational);
- * set 998314 / 998399 for professional / IT-consulting lines.
+ * that state made mandatory for B2B invoices. SAC default 999293 (commercial
+ * training and coaching); 998311 is management consulting and 998314 is IT
+ * design and development, so neither fits a coaching line by default.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)
@@ -26,8 +27,8 @@
  *      - If place-of-supply state == supplier state → CGST (9%) + SGST (9%)
  *        = 18% total. Split 50/50.
  *      - If place-of-supply state != supplier state → IGST 18% only.
- *      - For services, default HSN/SAC code is 999293 (educational services).
- *      - Reclassify for consultancy: 998399 (other professional services).
+ *      - For services, default SAC code is 999293 (commercial training and coaching).
+ *      - Consultancy may be 998311 (management consulting) or 998399 (other professional services).
  *
  * 3. GSTIN format: 15 characters. First 2 = state code. Characters 3-12 =
  *    PAN. Character 13 = entity number. Character 14 = 'Z' literal.
@@ -61,7 +62,7 @@ export interface GstBreakdown {
   reason: string;
 }
 
-const GST_RATE = 0.18; // 18% standard rate for SAC 999293 / 998399
+const GST_RATE = 0.18; // 18% standard rate for SAC 999293, 998311 and 998399
 
 /**
  * Derives GST breakdown for an invoice line subtotal.

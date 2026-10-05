@@ -519,11 +519,6 @@ function CreateProgramDialog({
   // funding source blocks. `reset()` clears the touch so a reopened dialog
   // re-derives from the newly selected contract.
   const [overageTouched, setOverageTouched] = useState(false);
-  // #775 — optional markup on over-cap bookings, entered as a percentage and
-  // stored as bps (10% → 1000 bps). Blank = no markup. Shared across both
-  // program types (the selector + this field render for LICENSED_SEAT and
-  // CREDIT_POOL alike).
-  const [overageSurchargePct, setOverageSurchargePct] = useState("");
   // #768 #14/#15 — per-cycle overage ceiling in rupees (user-facing).
   // Server requires positive paise value whenever overageBehavior !== BLOCK;
   // shared across both program types.
@@ -582,7 +577,6 @@ function CreateProgramDialog({
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
     setOverageTouched(false);
-    setOverageSurchargePct("");
     setMaxOveragePerCycleRupees("");
     setCreditsPerCycle("1000");
     setCoveredPlanTypes(["CONSULTATION"]);
@@ -619,19 +613,6 @@ function CreateProgramDialog({
     }
     if (coveredPlanTypes.length === 0) {
       setError("Select at least one appointment type this program covers.");
-      return;
-    }
-    // #775 — percentage → bps (10% → 1000). Blank = no markup. Applies to both
-    // program types; only meaningful when overageBehavior charges (not BLOCK).
-    const surchargeBps =
-      overageSurchargePct.trim() === ""
-        ? null
-        : Math.round(parseFloat(overageSurchargePct) * 100);
-    if (
-      surchargeBps !== null &&
-      (!Number.isFinite(surchargeBps) || surchargeBps < 0)
-    ) {
-      setError("Overage surcharge must be blank or a non-negative percentage.");
       return;
     }
     // #768 #14/#15 — per-cycle ceiling. Required (>=1 paise) for CHARGE_*,
@@ -689,7 +670,7 @@ function CreateProgramDialog({
           cycle,
           coveredEngagementsPerCycle: cap,
           overageBehavior: effectiveOverageBehavior,
-          overageSurchargeBps: surchargeBps,
+          overageSurchargeBps: null,
           maxOveragePerCyclePaise,
         },
       });
@@ -712,7 +693,7 @@ function CreateProgramDialog({
           cycle,
           creditBudgetPerCycle: credits,
           overageBehavior: effectiveOverageBehavior,
-          overageSurchargeBps: surchargeBps,
+          overageSurchargeBps: null,
           maxOveragePerCyclePaise,
         },
       });
@@ -980,28 +961,6 @@ function CreateProgramDialog({
             </p>
           </div>
 
-          {/* Overage surcharge — only meaningful when bookings can overage. */}
-          {effectiveOverageBehavior !== "BLOCK" && (
-            <div className="space-y-2">
-              <Label htmlFor="overage-surcharge">Overage surcharge (%)</Label>
-              <Input
-                id="overage-surcharge"
-                type="number"
-                min={0}
-                step="0.01"
-                value={overageSurchargePct}
-                onChange={(e) => setOverageSurchargePct(e.target.value)}
-                placeholder="e.g. 10 — leave blank for no markup"
-              />
-              <p className="text-xs text-zinc-500">
-                Optional markup on the over-cap amount (the real session price
-                passes through; consulting rates are heterogeneous, so this is a
-                percentage knob rather than a flat per-unit tier). Blank = no
-                markup.
-              </p>
-            </div>
-          )}
-
           {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
               Server requires a positive value when overage charges. */}
           {effectiveOverageBehavior !== "BLOCK" && (
@@ -1090,6 +1049,10 @@ function EditProgramDialog({
   });
   const program = detail.data?.program;
   const locked = program?.locked ?? true; // fail-safe: lock until we know
+  const savedSurchargeBps =
+    program?.licensedSeatConfig?.overageSurchargeBps ??
+    program?.creditPoolConfig?.overageSurchargeBps ??
+    null;
 
   const [name, setName] = useState("");
   const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(
@@ -1116,11 +1079,9 @@ function EditProgramDialog({
         program.creditPoolConfig?.overageBehavior ??
         "BLOCK",
     );
-    const bps =
-      program.licensedSeatConfig?.overageSurchargeBps ??
-      program.creditPoolConfig?.overageSurchargeBps ??
-      null;
-    setOverageSurchargePct(bps === null ? "" : String(bps / 100));
+    setOverageSurchargePct(
+      savedSurchargeBps === null ? "" : String(savedSurchargeBps / 100),
+    );
     const maxOverage =
       program.licensedSeatConfig?.maxOveragePerCyclePaise ??
       program.creditPoolConfig?.maxOveragePerCyclePaise ??
@@ -1142,7 +1103,7 @@ function EditProgramDialog({
       setCreditsPerCycle(String(program.creditPoolConfig.creditBudgetPerCycle));
     }
     setError(null);
-  }, [program]);
+  }, [program, savedSurchargeBps]);
 
   const patchMutation = useMutation({
     mutationFn: (body: PatchProgramBody) =>
@@ -1185,20 +1146,17 @@ function EditProgramDialog({
         );
         return;
       }
-      // #1744 — a legacy CHARGE_MEMBER value is refused if re-sent; leave it
-      // out when unchanged so rate/cap edits still save.
+      // A refused legacy value (member charge, wallet org charge, surcharge) is
+      // only rejected when re-sent, so unchanged overage fields stay out.
       const savedOverageBehavior =
         program.licensedSeatConfig?.overageBehavior ??
         program.creditPoolConfig?.overageBehavior;
-      if (
-        !(
-          overageBehavior === "CHARGE_MEMBER" &&
-          savedOverageBehavior === "CHARGE_MEMBER"
-        )
-      ) {
+      if (overageBehavior !== savedOverageBehavior) {
         body.overageBehavior = overageBehavior;
       }
-      body.overageSurchargeBps = surchargeBps;
+      if (surchargeBps !== savedSurchargeBps) {
+        body.overageSurchargeBps = surchargeBps;
+      }
       // #768 #14/#15 — circuit-breaker ceiling. PATCH validation at
       // [programId]/route.ts:225-239 merges with the existing config and
       // requires the merged value to be positive when overage charges. We
@@ -1441,7 +1399,8 @@ function EditProgramDialog({
               </Select>
             </div>
 
-            {overageBehavior !== "BLOCK" && (
+            {/* Surcharges are no longer offered; a saved one shows so it can be cleared. */}
+            {overageBehavior !== "BLOCK" && savedSurchargeBps !== null && (
               <div className="space-y-2">
                 <Label htmlFor="edit-overage-surcharge">
                   Overage surcharge (%)

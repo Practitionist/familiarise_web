@@ -77,6 +77,14 @@ export default async function PayoutDetailPage({
               label: tdsLabel(payout.tdsRateBps, payout.tdsFinancialYear),
               value: money(payout.tdsPaise),
             },
+            ...(payout.recoveredPaise > 0
+              ? [
+                  {
+                    label: "Taken back for an earlier refund",
+                    value: `−${money(payout.recoveredPaise)}`,
+                  },
+                ]
+              : []),
             { label: "Net to your account", value: money(payout.netPaise) },
             { label: "Method", value: humanizeEnum(payout.method) },
             ...(payout.utr ? [{ label: "UTR", value: payout.utr }] : []),

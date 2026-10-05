@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 jest.mock("../../lib/feature-flags", () => ({
@@ -119,10 +120,14 @@ const APPROVED = {
   },
 };
 
-type RefundRow = { status: RefundStatus; cascadedAt: Date | null };
+type RefundRow = {
+  status: RefundStatus;
+  cascadedAt: Date | null;
+  refundId?: string;
+};
 
 /** The filter keys refundRowBlocks knows how to interpret. */
-const SUPPORTED_KEYS = new Set(["status", "cascadedAt", "OR"]);
+const SUPPORTED_KEYS = new Set(["status", "cascadedAt", "OR", "NOT"]);
 
 /**
  * Applies the guard's own Prisma refund filter to one fixture row, so the
@@ -154,6 +159,12 @@ function refundRowBlocks(
   }
 
   if (filter.cascadedAt !== undefined && filter.cascadedAt !== row.cascadedAt) {
+    return false;
+  }
+
+  const not = filter.NOT as { refundId?: { startsWith?: string } } | undefined;
+  const prefix = not?.refundId?.startsWith;
+  if (prefix !== undefined && (row.refundId ?? "").startsWith(prefix)) {
     return false;
   }
 
@@ -272,6 +283,21 @@ describe("consultant rail — uncascaded-refund disbursement block", () => {
     // The share is already deducted from the earning, so paying it is correct.
     stubEarnings([
       { status: RefundStatus.SUCCEEDED, cascadedAt: new Date("2026-09-01") },
+    ]);
+
+    await processApprovedPayouts();
+
+    expect(mocks.consultantPayout.updateMany).toHaveBeenCalled();
+    expect(gatewayFetch).toHaveBeenCalled();
+  });
+
+  it("a credit-restoration row (SUCCEEDED, never cascaded) does NOT block", async () => {
+    stubEarnings([
+      {
+        status: RefundStatus.SUCCEEDED,
+        cascadedAt: null,
+        refundId: "credits_abc",
+      },
     ]);
 
     await processApprovedPayouts();

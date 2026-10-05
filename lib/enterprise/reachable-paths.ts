@@ -40,10 +40,9 @@ export interface ReachablePath {
  * the route gate, the wizard, and the regression test.
  *
  * HYBRID enumerates the same 4 sponsor pairs rather than carrying an
- * `any/any` wildcard (#1676 S4): the wildcard silently re-opened the three
- * refused intersections (`WALLET+CHARGE_MEMBER`, `WALLET+CHARGE_ORG` with a
- * surcharge, `LICENSE+non-BLOCK`) that `overageBehaviorUnsupportedReason`
- * and the checkout fail-closed guards exist to keep unreachable.
+ * `any/any` wildcard: a wildcard would re-open the refused overage shapes
+ * (`CHARGE_MEMBER`, `WALLET+CHARGE_ORG`, `LICENSE+non-BLOCK`, any surcharge)
+ * that `overageConfigRefusals` and the checkout fail-closed guards keep unreachable.
  */
 export const REACHABLE_ORG_FUNDING_PATHS: ReadonlyArray<ReachablePath> = [
   { capability: "PERSONAL_TAG", fundingSource: null, programType: null },
@@ -76,84 +75,86 @@ export function isReachableOrgFundingPath(
 }
 
 /**
- * The reason a programme's overage behaviour cannot be honoured on a given
- * funding source, or `null` when the combination is supported.
+ * Every typed refusal an overage configuration trips, most fundamental first;
+ * empty when it is supported. Only INVOICE+CHARGE_ORG and BLOCK are sellable.
  *
- * #1458 — the funding matrix above says which (capability, funding, programme
- * type) shapes exist; it says nothing about what happens once a booking goes
- * past the cap, and that gap let a wallet-funded organisation save a programme
- * that charges its members. Collecting from a member requires carving the
- * over-cap portion back out of the parent payment, which on the wallet rail
- * would mean crediting the wallet mid-transaction — the credit-back that #715
- * has never built. Checkout therefore refused the booking at commit, after the
- * member had already picked a slot. Refusing the CONFIGURATION instead means
- * the state is unreachable rather than merely fatal.
- *
- * `overageSurchargeBps` participates because the surcharge, not the behaviour
- * alone, decides collectability on the wallet rail: the plain over-cap amount is
- * a slice of the price the wallet already debited, while a markup on top of that
- * price is money no rail ever collects.
- *
- * The message is returned rather than thrown so both the create route (a Zod
- * refinement) and the patch route (an inline `fail()`) can raise it in their own
- * shape without either of them owning the rule.
+ * `field` names the input that carries the refused value, so a PATCH that
+ * leaves a legacy value untouched can still edit its other money fields.
+ * Returned rather than thrown so the create route (a 400) and the patch route
+ * (an inline `fail()`) raise it in their own shape.
  */
+export type OverageRefusalCode =
+  | "CHARGE_MEMBER_NEEDS_EARNINGS_HOLD"
+  | "WALLET_CHARGE_ORG_RETIRED"
+  | "LICENSE_OVERAGE_UNSUPPORTED"
+  | "OVERAGE_SURCHARGE_UNSUPPORTED";
+
+export interface OverageRefusal {
+  code: OverageRefusalCode;
+  field: "overageBehavior" | "overageSurchargeBps";
+  message: string;
+}
+
 /**
  * #1744 (owner decision 2026-09-20) — CHARGE_MEMBER is refused on EVERY rail
- * until an earnings hold exists. The member's side-charge is collected after
- * the session (or never: the 14-day timeout only flips `chargeStatus`), while
- * the consultant's earnings are computed on the full price and the org is
- * invoiced only the covered part — an unsecured write-off of `basePaise`.
- * Existing PENDING member overages keep settling; only new configuration is
- * refused. Exported so the refusal copy and the audit share one sentence.
+ * until an earnings hold exists: the member pays after the session while the
+ * consultant is paid on the full price. Exported so the refusal copy and the
+ * audit share one sentence.
  */
 export const CHARGE_MEMBER_NEEDS_EARNINGS_HOLD =
   "Charging members for bookings past the programme cap is not available yet: the member pays after the session, so the consultant would be paid for money that may never arrive. " +
   "Choose CHARGE_ORG to bill the organisation for the over-cap portion, or BLOCK to stop over-cap bookings.";
 
-export function overageBehaviorUnsupportedReason(
+export function overageConfigRefusals(
   fundingSource: FundingSource | null,
   overageBehavior: OverageBehavior,
   overageSurchargeBps?: number | null,
-): string | null {
-  // #1744 — first, so the rail-specific WALLET/LICENSE reasons below never
-  // describe a behaviour that is refused everywhere.
+): OverageRefusal[] {
+  const refusals: OverageRefusal[] = [];
   if (overageBehavior === "CHARGE_MEMBER") {
-    return CHARGE_MEMBER_NEEDS_EARNINGS_HOLD;
+    refusals.push({
+      code: "CHARGE_MEMBER_NEEDS_EARNINGS_HOLD",
+      field: "overageBehavior",
+      message: CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
+    });
   }
-  // #1458 — CHARGE_ORG on the wallet rail is collectable only while the marginal
-  // is a slice of the price the wallet already debited. A surcharge is a markup
-  // ON TOP of that price, so nothing collected it; the only way to would be to
-  // raise `Payment.amount`, which re-arms the leg-sum trigger against an
-  // unchanged WALLET leg. recordWalletCollectedOrgOverage() therefore refuses it
-  // at checkout — after the member has picked a slot — so refuse the
-  // configuration here for the same reason CHARGE_MEMBER is refused above.
+  // A wallet debit takes the booking price at commit, so there is no later bill
+  // for an over-cap charge to ride on; the wallet rail blocks at the cap instead.
+  if (fundingSource === "WALLET" && overageBehavior === "CHARGE_ORG") {
+    refusals.push({
+      code: "WALLET_CHARGE_ORG_RETIRED",
+      field: "overageBehavior",
+      message:
+        "A wallet-funded programme stops bookings at its cap; charging the organisation for over-cap bookings is only available on invoice billing. " +
+        "Choose BLOCK, or fund the programme from the organisation's invoice account.",
+    });
+  }
+  // A licence is a flat fee settled at contract time: no money moves per
+  // booking to carry an overage, and a second funding leg fails the leg-sum guard.
   if (
-    fundingSource === "WALLET" &&
-    overageBehavior === "CHARGE_ORG" &&
-    (overageSurchargeBps ?? 0) > 0
+    fundingSource === "LICENSE" &&
+    overageBehavior !== "BLOCK" &&
+    overageBehavior !== "CHARGE_MEMBER"
   ) {
-    return (
-      "A wallet-funded organisation cannot be charged an overage surcharge, because the wallet debit collects the booking price and a surcharge is a markup on top of it that no rail collects afterwards. " +
-      "Remove the overage surcharge to keep charging the organisation the plain over-cap amount, or choose BLOCK to stop over-cap bookings."
-    );
+    refusals.push({
+      code: "LICENSE_OVERAGE_UNSUPPORTED",
+      field: "overageBehavior",
+      message:
+        "A licence-funded programme cannot charge for bookings past its cap, because a licence is a flat fee settled at contract time and no money moves per booking to carry the overage. " +
+        "Choose BLOCK to stop over-cap bookings, or fund the programme from the organisation's invoice account.",
+    });
   }
-  // A licence is a flat fee settled at contract time, so a licence-funded
-  // booking collects nothing per booking: its funding leg is deliberately ₹0
-  // while `Payment.amount` stays at the full price, and the leg-sum guard
-  // excuses that only while the licence leg is the payment's ONLY funding leg.
-  // Charging an overage adds a second leg, which re-arms the comparison and
-  // makes `assert_payment_legs_ok` raise at COMMIT — so every over-cap booking
-  // under such a programme died with an opaque database error. There is no
-  // per-booking rail to collect the marginal on, so the configuration itself is
-  // refused.
-  if (fundingSource === "LICENSE" && overageBehavior !== "BLOCK") {
-    return (
-      "A licence-funded programme cannot charge for bookings past its cap, because a licence is a flat fee settled at contract time and no money moves per booking to carry the overage. " +
-      "Choose BLOCK to stop over-cap bookings, or fund the programme from the organisation's wallet or invoice account."
-    );
+  // Interim: the surcharge is booked as platform fee but no invoice charges GST on it.
+  if ((overageSurchargeBps ?? 0) > 0) {
+    refusals.push({
+      code: "OVERAGE_SURCHARGE_UNSUPPORTED",
+      field: "overageSurchargeBps",
+      message:
+        "An overage surcharge cannot be added yet, because the tax on it is not invoiced. " +
+        "Remove the surcharge; over-cap bookings are still billed at their session price.",
+    });
   }
-  return null;
+  return refusals;
 }
 
 /**

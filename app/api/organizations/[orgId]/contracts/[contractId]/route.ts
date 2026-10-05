@@ -150,6 +150,24 @@ export async function PATCH(
         }
       }
 
+      const signs =
+        (body.status === "ACTIVE" && current.status !== "ACTIVE") ||
+        (body.signedAt !== undefined &&
+          body.signedAt !== null &&
+          current.signedAt === null);
+      const purchaseOrderId =
+        body.purchaseOrderId !== undefined
+          ? body.purchaseOrderId
+          : current.purchaseOrderId;
+      if (access.org.requiresPO && signs && !purchaseOrderId) {
+        throw Object.assign(
+          new Error(
+            "This organisation needs a purchase order on every signed contract. Attach an active purchase order and try again.",
+          ),
+          { httpStatus: 409, code: "PO_REQUIRED" },
+        );
+      }
+
       if (body.purchaseOrderId) {
         const po = await tx.purchaseOrder.findUnique({
           where: { id: body.purchaseOrderId },

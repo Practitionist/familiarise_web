@@ -40,6 +40,11 @@ import {
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import {
+  clawbackRecoveredPaise,
+  recoverClawbackOnPayout,
+  recoverablePaise,
+} from "./clawback-recovery";
 import { postConsultantPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { randomUUID } from "crypto";
 import {
@@ -229,6 +234,9 @@ const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
   RefundStatus.FAILED,
   RefundStatus.CANCELLED,
 ];
+
+/** Credit-restoration refunds settle in-ledger and are never cascaded, so they never gate. */
+const CREDIT_RESTORATION_REFUND_PREFIX = "credits_";
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -425,6 +433,16 @@ async function mintConsultantPayout(
           msmeProfile?.writtenAgreementWithFamiliarise,
         ),
       },
+    });
+
+    await recoverClawbackOnPayout(tx, {
+      payee: { rail: "CONSULTANT", consultantProfileId },
+      payoutId: payout.id,
+      recoverablePaise: recoverablePaise(
+        amount,
+        PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+        false,
+      ),
     });
 
     // Claim earnings READY → BATCHED; PAID transition only occurs at COMPLETED webhook.
@@ -981,6 +999,7 @@ async function runConsultantPayoutClaimGate(
           some: {
             status: { notIn: REFUND_INACTIVE_FOR_GATING },
             OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+            NOT: { refundId: { startsWith: CREDIT_RESTORATION_REFUND_PREFIX } },
           },
         },
       },
@@ -1446,7 +1465,14 @@ async function processSinglePayout(
               `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
           };
 
-    const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
+    const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
+    const payoutAmountAfterTDS =
+      payout.amount - tds.tdsAmountPaise - recoveredPaise;
+    if (payoutAmountAfterTDS <= 0) {
+      throw new Error(
+        `Payout ${payout.id} nets to ${payoutAmountAfterTDS} paise after TDS and clawback recovery`,
+      );
+    }
     const tdsRateAppliedBps = resolveTdsRateAppliedBps(tds);
 
     if (tds.tdsAmountPaise > 0) {
@@ -1735,9 +1761,11 @@ async function completeConsultantPayoutInTx(
     }
   }
 
-  if (matched.amount > 0) {
+  // The recovered slice already left the payable when the payout was built.
+  const recoveredPaise = await clawbackRecoveredPaise(tx, matched.id);
+  if (matched.amount - recoveredPaise > 0) {
     const tdsPaise = matched.tdsDeducted ?? 0;
-    const cashPaise = matched.amount - tdsPaise;
+    const cashPaise = matched.amount - tdsPaise - recoveredPaise;
     await postLedgerTxn(tx, {
       idempotencyKey: `payout:${matched.id}`,
       kind: "PAYOUT",
@@ -1747,7 +1775,7 @@ async function completeConsultantPayoutInTx(
           kind: "CONSULTANT_PAYABLE",
           consultantProfileId: matched.consultantProfileId,
         },
-        grossPayablePaise: matched.amount,
+        grossPayablePaise: matched.amount - recoveredPaise,
         netCashPaise: cashPaise,
         tdsPaise,
       }),
@@ -2034,9 +2062,10 @@ export async function markConsultantPayoutReversed(
       data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
     });
 
-    if (payout.amount > 0) {
+    const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
+    if (payout.amount - recoveredPaise > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
-      const cashPaise = payout.amount - tdsPaise;
+      const cashPaise = payout.amount - tdsPaise - recoveredPaise;
       await postLedgerTxn(tx, {
         idempotencyKey: `payout-reversal:${payout.id}`,
         kind: "PAYOUT",
@@ -2046,7 +2075,7 @@ export async function markConsultantPayoutReversed(
             kind: "CONSULTANT_PAYABLE",
             consultantProfileId: payout.consultantProfileId,
           },
-          grossPayablePaise: payout.amount,
+          grossPayablePaise: payout.amount - recoveredPaise,
           netCashPaise: cashPaise,
           tdsPaise,
         }),

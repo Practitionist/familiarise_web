@@ -13,7 +13,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { refundRailLine } from "@/lib/appointments/payment-display";
+import {
+  payerSentence,
+  refundRailLine,
+} from "@/lib/appointments/payment-display";
 
 /** What `GET /api/appointments/[id]/cancel/preview` answers. */
 interface CancelRefundPreview {
@@ -31,6 +34,8 @@ interface CancelRefundPreview {
    * roster funds through several at once and no single sentence is true.
    */
   fundingRail: "GATEWAY" | "INTERNAL" | "CREDITS" | null;
+  /** The sponsoring organisation, set only on the INTERNAL rail. */
+  payerOrganizationName?: string | null;
   /**
    * Cancelling a class or webinar refunds the entire roster in full, not the
    * viewer's own seat — `estimatedRefundPaise` is then the sum across
@@ -282,6 +287,15 @@ export function CancelConfirmationDialog({
             </strong>
             . At this notice the cancellation policy returns {preview.refundPct}
             % of it.
+          </p>
+        )}
+        {preview.fundingRail && (
+          <p className="text-muted-foreground text-sm">
+            {payerSentence(
+              preview.fundingRail === "INTERNAL" ? "ORG" : "SELF",
+              preview.payerOrganizationName ?? null,
+            )}
+            .
           </p>
         )}
         <p className="text-muted-foreground text-sm">

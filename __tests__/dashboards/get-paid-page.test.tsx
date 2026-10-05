@@ -96,7 +96,11 @@ function setup(overrides: SetupOverrides = {}): PayoutSetup {
     requirements: payoutRequirements({
       consultantProfileId: CP,
       taxInfo: taxInfo.panMasked
-        ? { panLast4: taxInfo.panMasked.slice(-4), gstin: taxInfo.gstin }
+        ? {
+            panLast4: taxInfo.panMasked.slice(-4),
+            gstin: taxInfo.gstin,
+            taxEntityType: taxInfo.taxEntityType,
+          }
         : null,
       defaultAccount,
       earningsCount: 1,

@@ -32,6 +32,7 @@ async function loadPreviewAppointment(appointmentId: string) {
     select: {
       id: true,
       organizationId: true,
+      organization: { select: { name: true } },
       consultationId: true,
       subscriptionId: true,
       webinarId: true,
@@ -293,6 +294,7 @@ async function quoteIndividualBooking(
     refundablePaise: ctx.paidPayment?.refundablePaise ?? 0,
   });
 
+  const fundingRail = fundingRailForIntent(bookingPayment?.paymentIntent);
   return {
     refundPct: quote.refundPct,
     estimatedRefundPaise: quote.refundPaise,
@@ -312,7 +314,12 @@ async function quoteIndividualBooking(
     // licence-funded learner was told their card would be credited in 5–7
     // working days for a card that was never charged, and the org whose
     // balance was actually restored was not mentioned at all.
-    fundingRail: fundingRailForIntent(bookingPayment?.paymentIntent),
+    fundingRail,
+    // The payer sentence names the org only on its own rail.
+    payerOrganizationName:
+      fundingRail === "INTERNAL"
+        ? (appointment.organization?.name ?? null)
+        : null,
     wholeEvent: false,
     attendeeCount: null,
   };

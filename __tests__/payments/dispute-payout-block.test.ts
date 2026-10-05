@@ -28,6 +28,7 @@ jest.mock("../../lib/prisma", () => ({
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 jest.mock("../../lib/feature-flags", () => ({

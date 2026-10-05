@@ -94,6 +94,7 @@ function paymentRow(overrides: Record<string, unknown> = {}) {
     amount: GROSS,
     originalAmount: GROSS,
     taxAmount: TAX,
+    createdAt: new Date(),
     organizationId: ORG,
     billingAccountId: null,
     billableToOrgInvoiceId: null,

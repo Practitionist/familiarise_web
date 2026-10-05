@@ -20,6 +20,8 @@ export interface OutwardRegisterRow {
   docType: "INVOICE" | "CREDIT_NOTE";
   docNumber: string;
   docDate: Date;
+  /** When the supply was made: payment date (B2C), issue date (B2B), the original invoice's on a credit note. */
+  supplyDate: Date;
   buyerType: "B2B" | "B2C";
   /** The buyer's GSTIN for a B2B supply; always null for B2C. */
   buyerGstin: string | null;
@@ -144,11 +146,12 @@ export function buildOutwardRegister(
 }
 
 /** The CSV column order the register is filed from. Changing it changes the
- *  file the CA's import template expects, so it is written out once here. */
+ *  file the CA's import template expects, so it is written out once here; new
+ *  columns are appended so existing positions never move. */
 export const OUTWARD_REGISTER_CSV_HEADER =
   "doc_type,doc_number,doc_date,buyer_type,buyer_gstin,place_of_supply," +
   "taxable_paise,cgst_paise,sgst_paise,igst_paise,total_paise,sac_code," +
-  "original_invoice_number,payment_id";
+  "original_invoice_number,payment_id,supply_date";
 
 export function buildOutwardRegisterCsv(rows: OutwardRegisterRow[]): string {
   const lines = [OUTWARD_REGISTER_CSV_HEADER];
@@ -171,6 +174,7 @@ export function buildOutwardRegisterCsv(rows: OutwardRegisterRow[]): string {
         row.sacCode,
         row.originalInvoiceNumber,
         row.paymentId,
+        istDateLabel(row.supplyDate),
       ]
         .map(escapeCsvField)
         .join(","),

@@ -34,6 +34,10 @@ import { numericStateCode } from "@/lib/compliance/state-codes";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
+  isPastGstCreditNoteCutoff,
+} from "@/lib/compliance/gst-credit-note-cutoff";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
@@ -568,6 +572,7 @@ export async function mintConsumerCreditNote(
     where: { paymentId: params.paymentId },
     select: {
       id: true,
+      supplyDate: true,
       cgstPaise: true,
       sgstPaise: true,
       igstPaise: true,
@@ -638,7 +643,16 @@ export async function mintConsumerCreditNote(
   if (derived.outcome === "NOTHING_TO_CREDIT") {
     return { consumerCreditNoteId: null };
   }
-  const amounts = derived.amounts;
+  const commercial = isPastGstCreditNoteCutoff(invoice.supplyDate);
+  const amounts = commercial
+    ? {
+        ...derived.amounts,
+        cgstPaise: 0,
+        sgstPaise: 0,
+        igstPaise: 0,
+        creditedTotalPaise: derived.amounts.taxableValuePaise,
+      }
+    : derived.amounts;
 
   const issuedAt = new Date();
   const { creditNoteNumber, fiscalYear } =
@@ -651,7 +665,9 @@ export async function mintConsumerCreditNote(
       consumerInvoiceId: invoice.id,
       refundId: params.refundId ?? null,
       disputeId: params.disputeId ?? null,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
       taxableValuePaise: amounts.taxableValuePaise,
       cgstPaise: amounts.cgstPaise,
       sgstPaise: amounts.sgstPaise,

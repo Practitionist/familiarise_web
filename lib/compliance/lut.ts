@@ -65,3 +65,12 @@ export function readPlatformLut(now: Date = new Date()): PlatformLutStatus {
 export function hasValidPlatformLut(now: Date = new Date()): boolean {
   return readPlatformLut(now).valid;
 }
+
+/** The LUT a zero-rated export invoice must quote (Rule 96A); null for any taxed supply. */
+export function lutNumberForSupply(
+  gstReason: string,
+  now: Date = new Date(),
+): string | null {
+  if (gstReason !== "ZERO_RATED_EXPORT") return null;
+  return readPlatformLut(now).number;
+}

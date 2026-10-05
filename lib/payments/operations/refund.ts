@@ -81,6 +81,10 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
+  COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
+  isPastGstCreditNoteCutoff,
+} from "@/lib/compliance/gst-credit-note-cutoff";
+import {
   recordSystemEventSafe,
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
@@ -1709,7 +1713,12 @@ export async function applyRefundCascade(
       // make gstRev NaN → the platform plug NaN → the posting silently lose a leg
       // and (now that the ledger blocks) roll the whole refund back. taxAmount
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
-      const gstRev = proportion(payment.taxAmount ?? 0);
+      // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
+      const taxPaise = payment.taxAmount ?? 0;
+      const gstRev =
+        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt)
+          ? 0
+          : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
       // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
       // pull that relief credit BACK from the org — not bill the platform.
@@ -2082,6 +2091,11 @@ export async function mintRefundCreditNote(
     cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
     cnSubtotal = cnTotal - cnTax;
   }
+  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt);
+  if (commercial) {
+    cnTax = 0;
+    cnTotal = cnSubtotal;
+  }
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
   const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
@@ -2100,7 +2114,9 @@ export async function mintRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       refundId: params.refundId,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,
@@ -2261,7 +2277,16 @@ export async function mintInvoiceRefundCreditNote(
     params.exactSubtotalPaise,
   );
   if (!amounts) return { creditNoteId: null };
-  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = amounts;
+  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt);
+  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = commercial
+    ? {
+        ...amounts,
+        cnIgst: 0,
+        cnCgst: 0,
+        cnSgst: 0,
+        cnTotal: amounts.cnSubtotal,
+      }
+    : amounts;
 
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
@@ -2277,7 +2302,9 @@ export async function mintInvoiceRefundCreditNote(
       invoiceId: invoice.id,
       refundId: params.refundId ?? null,
       overageEventId: params.overageEventId ?? null,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,

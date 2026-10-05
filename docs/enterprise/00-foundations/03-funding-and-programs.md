@@ -230,13 +230,22 @@ fourteen-day timeout merely flips the event's `chargeStatus` to `FAILED`, while
 the consultant's earnings are computed on the full booking price and the
 organisation is invoiced only the covered part. Until an earnings hold exists
 that parks the consultant's share of `basePaise` until the side-charge is
-`CHARGED`, `overageBehaviorUnsupportedReason` in `lib/enterprise/reachable-paths.ts`
+`CHARGED`, `overageConfigRefusals` in `lib/enterprise/reachable-paths.ts`
 returns `CHARGE_MEMBER_NEEDS_EARNINGS_HOLD` for the value on any rail, the
 create and patch routes answer 400 `INVALID_OVERAGE_CONFIG`, the programmes
 page no longer offers the option for a new programme, and a programme saved
 before the guard is listed in the organisation's action centre and by
 `scripts/payments/audit-legacy-overage-programs.ts`, which records one
 `SystemEvent` per such programme.
+
+The same helper retires `CHARGE_ORG` on a wallet-funded programme
+(`WALLET_CHARGE_ORG_RETIRED`), because the wallet debit already took the whole
+price and there is no later bill for an over-cap charge to ride on, and it
+refuses any `overageSurchargeBps` above zero (`OVERAGE_SURCHARGE_UNSUPPORTED`)
+until the GST on a surcharge is invoiced. Each refusal names the field that
+carries the refused value, so a patch that leaves a legacy value untouched still
+saves its other fields. The programmes page no longer offers a surcharge on a
+new programme and shows a saved one only so it can be cleared.
 
 Each overage materialises an `OverageEvent` row carrying
 `basePaise` / `surchargePaise` / `marginalPaise` (marginal = base +

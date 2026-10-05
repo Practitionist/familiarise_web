@@ -55,6 +55,8 @@ jest.mock("../../lib/prisma", () => {
       updateMany: (...a: unknown[]) => mockEarningsUpdateMany(...a),
     },
     consultantPayout: { create: (...a: unknown[]) => mockPayoutCreate(...a) },
+    ledgerTransaction: { findMany: jest.fn(async () => []) },
+    ledgerEntry: { groupBy: jest.fn(async () => []) },
   };
   return {
     __esModule: true,

@@ -62,6 +62,7 @@ import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpe
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
@@ -695,6 +696,7 @@ async function reverseFreeCreditSettlement(
     select: {
       originalAmount: true,
       taxAmount: true,
+      createdAt: true,
       legs: { select: { source: true, amountPaise: true } },
       earnings: {
         select: {
@@ -898,7 +900,11 @@ async function reverseFreeCreditSettlement(
     (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
     0,
   );
-  const gstRev = part(payment.taxAmount ?? 0);
+  const taxPaise = payment.taxAmount ?? 0;
+  const gstRev =
+    taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt)
+      ? 0
+      : part(taxPaise);
   // PLATFORM_FEE is the residual plug (cascade Step 9 convention): positive →
   // the platform gives back its fee slice; negative (discount gap between the
   // funding and the shares) → the fee credit absorbs the shortfall.

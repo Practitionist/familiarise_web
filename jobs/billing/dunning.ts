@@ -54,6 +54,8 @@ const MAX_REMINDERS = 3;
 // behind the SAME flag.
 const SUSPEND_ENABLED = ENABLE_DUNNING_SUSPEND;
 const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
+// Turning suspension on must not suspend the whole OVERDUE backlog in one tick.
+const MAX_SUSPENSIONS_PER_RUN = 20;
 
 // #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn
 // down; their invoices don't get chased.
@@ -317,6 +319,8 @@ export async function runDunning(): Promise<DunningStats> {
         totalPaise: true,
         displayCurrency: true,
       },
+      orderBy: { lastDunningReminderAt: "asc" },
+      take: MAX_SUSPENSIONS_PER_RUN,
     });
     for (const inv of toSuspend) {
       // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two

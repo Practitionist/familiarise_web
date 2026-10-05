@@ -7,6 +7,7 @@
  * - Database connectivity
  * - Redis connectivity
  * - Sends "we're back" broadcast notification
+ * - Returns the statutory follow-ups (GST register, IRP, TDS draft, full reconcile)
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -26,14 +27,28 @@ interface RecoveryResult {
   redis: boolean;
   notification: boolean;
   reconciliation?: { job: string; success: boolean }[];
+  /** Statutory steps an operator runs by hand once the platform is back. */
+  statutoryFollowUps?: string[];
   errors: string[];
 }
+
+/**
+ * The statutory tail of a recovery. Each step writes filings or numbers a
+ * gapless series, so an operator runs it deliberately rather than firing it here.
+ */
+const STATUTORY_FOLLOW_UPS = [
+  "Run gst-outward-register-export and check its warnings before the 11th-of-month GSTR-1 filing.",
+  "Re-run the irp-uploader workflow so B2B invoices issued during the outage get their IRN inside the 30-day window.",
+  "Run tds-return-draft again so the quarter's TDS return draft includes payouts settled during the outage.",
+  "Run reconcile-ledgers with full scope and clear every finding before reopening payouts.",
+];
 
 export async function runPostRecovery(): Promise<RecoveryResult> {
   const result: RecoveryResult = {
     database: false,
     redis: false,
     notification: false,
+    statutoryFollowUps: [...STATUTORY_FOLLOW_UPS],
     errors: [],
   };
 

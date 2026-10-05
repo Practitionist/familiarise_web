@@ -190,10 +190,13 @@ function setupOrg() {
     id: "org-1",
     name: "Acme",
     slug: "acme",
-    gstStateCode: "06",
-    gstin: "06ABCDE1234F1Z5",
-    hsnDefault: "9982",
+    taxInfo: {
+      gstStateCode: "06",
+      gstin: "06ABCDE1234F1Z5",
+      hsnDefault: "9982",
+    },
     dataResidencyRegion: "IN",
+    requiresPO: false,
     billingAccountId: "ba-1",
     invoiceNumberPrefix: "ACME",
   });
