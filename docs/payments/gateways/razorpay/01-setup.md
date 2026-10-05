@@ -122,7 +122,7 @@ Dashboard > Account & Settings > Webhooks > Add New Webhook (delivery logs live 
 | Payment & Order                   | `payment.authorized`, `payment.captured`, `order.paid`, `payment.failed`                                                                                              |
 | Refund                            | `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`                                                                                         |
 | Dispute                           | `payment.dispute.created`, `payment.dispute.under_review`, `payment.dispute.action_required`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed` |
-| Payout (RazorpayX)                | `payout.initiated`, `payout.updated`, `payout.processed`, `payout.failed`, `payout.reversed`, `payout.rejected`, `payout.queued`, `payout.pending`                    |
+| Payout (RazorpayX)                | `payout.initiated`, `payout.updated`, `payout.processed`, `payout.failed`, `payout.reversed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled` |
 | Fund Account Validation (FAV)     | `fund_account.validation.completed`, `fund_account.validation.failed`                                                                                                 |
 
 This list matches the go-live checklist and the dispatcher in `app/api/webhooks/razorpay-dispatch.ts`. Omitting `payout.failed` or `payout.initiated` is a costly mistake: `payout.initiated` is the webhook RazorpayX fires when a payout enters `processing`, and `payout.failed` is the terminal event when a transfer fails at the bank.
@@ -214,7 +214,7 @@ Set the tunnel URL as your test-mode webhook endpoint in the Razorpay dashboard.
 | File                                           | Purpose                                                                                      |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `lib/payments/core/razorpay.ts`                | Client initialization, signature verification, `ensureRazorpayCustomer()`, PM-10 live guards |
-| `lib/payments/operations/razorpay-disputes.ts` | REST Disputes & Documents API (`fetchRazorpayDispute`, `uploadRazorpayDisputeDocument`)       |
+| `lib/payments/core/razorpay-disputes.ts`       | REST Disputes & Documents API (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`) |
 | `lib/payments/payouts/razorpay-payouts.ts`     | RazorpayX Payouts service (Contacts, Fund Accounts, Payouts, `boundPayoutIdempotencyKey`)    |
 | `lib/payments/payouts/reverse-penny-drop.ts`   | Bank & UPI verification via Penny Drop (`/v1/fund_accounts/validations`) & UPI Intent RPD    |
 | `app/api/webhooks/razorpay/route.ts`           | Webhook ingress, signature verification, and `WebhookEvent` deduplication                    |

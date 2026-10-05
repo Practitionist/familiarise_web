@@ -107,18 +107,18 @@ In `determinePayoutMode(amountPaise, accountType)`:
 
 ## 5. Payout Statuses, `status_details` & Webhooks
 
-### Status Mapping (`mapPayoutStatus` & `handleRazorpayPayoutWebhook`)
+### Status Mapping (`mapPayoutStatus`, `mapGatewayStatus` & `handleRazorpayPayoutWebhook`)
 
 | RazorpayX Status | Webhook Event | Internal `PayoutStatus` | Notes |
 |---|---|---|---|
-| `queued` | `payout.queued` | `PENDING` (or `PROCESSING` in poll) | Held due to `queue_if_low_balance: true` or partner bank downtime. Can be cancelled via `POST /v1/payouts/:id/cancel`. |
+| `queued` | `payout.queued` | `PENDING` (webhook via `mapPayoutStatus`) / `PROCESSING` (poll via `mapGatewayStatus`) | Held due to `queue_if_low_balance: true` or partner bank downtime. Webhook leaves row `PENDING`; polling maps `queued` to `PROCESSING` so in-flight reconciliation continues tracking it. Can be cancelled via `POST /v1/payouts/:id/cancel`. |
 | `pending` | `payout.pending` | `PENDING` | Awaiting RazorpayX maker-checker approval workflow. |
 | `processing` | **`payout.initiated`** | `PROCESSING` | Sent to partner bank/NPCI. **Note:** RazorpayX names this webhook `payout.initiated` (there is no `payout.processing` event!). May stay `processing` up to **T+3 working days** if NPCI marks it Deemed Success. |
 | `processed` | `payout.processed` (`payout.updated`) | `COMPLETED` | Credited to beneficiary; bank reference populated in `utr`. |
 | `failed` | `payout.failed` | `FAILED` | Terminal failure; un-batches `ConsultantEarnings` / `OrganizationEarnings` back to `READY` and reverses TDS (#1377 / #1451). |
 | `rejected` | `payout.rejected` | `FAILED` | Rejected in maker-checker workflow; un-batches earnings. |
 | `reversed` | `payout.reversed` | `FAILED` | Partner bank reversed funds back to RazorpayX balance (can occur up to **T+3 working days** even after `processed`!). If the payout was already marked `COMPLETED`, `markConsultantPayoutReversed` / `markOrgPayoutReversed` posts the inverse ledger journal and re-opens earnings (#812/#813). |
-| `cancelled` | *(API response / poll)* | `CANCELLED` | Cancelled while `queued` or `scheduled`. |
+| `cancelled` | `payout.cancelled` / API poll | `CANCELLED` | Cancelled while `queued` or `scheduled`; un-batches earnings back to `READY`. |
 
 ### Deprecated `failure_reason` vs `status_details`
 Official RazorpayX docs mark top-level `failure_reason` on the payout entity as **deprecated** in favor of `status_details: { description, source, reason }`. Both `app/api/webhooks/razorpay-dispatch.ts` and `lib/payments/payouts/payout-gateway-lookup.ts` read:

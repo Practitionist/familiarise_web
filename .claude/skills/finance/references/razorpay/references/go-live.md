@@ -47,14 +47,14 @@ Test Mode and Live Mode webhooks are completely separate. Configure both in **Li
 - **Secret**: Value of `RAZORPAY_WEBHOOK_SECRET`
 - **Alert Email**: Engineering/ops alert distribution address (Razorpay emails this address if the webhook fails for 24h and is auto-disabled)
 - **Active Events to Subscribe (`14` events)**:
-  - **Payments & Orders**: `payment.captured`, `payment.failed`, `order.paid`
+  - **Payments & Orders**: `payment.authorized`, `payment.captured`, `payment.failed`, `order.paid`
   - **Refunds**: `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`
   - **Disputes**: `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`
 
 ### B. RazorpayX Dashboard (Settings → Webhooks)
 - **Webhook URL**: `https://<production-domain>/api/webhooks/razorpay`
 - **Secret**: Value of `RAZORPAYX_WEBHOOK_SECRET`
-- **Active Events to Subscribe (`8` events)**:
+- **Active Events to Subscribe (`11` events)**:
   - `payout.initiated` *(mandatory for `processing` transition)*
   - `payout.processed`
   - `payout.updated`
@@ -63,6 +63,9 @@ Test Mode and Live Mode webhooks are completely separate. Configure both in **Li
   - `payout.rejected`
   - `payout.queued`
   - `payout.pending`
+  - `payout.cancelled`
+  - `fund_account.validation.completed`
+  - `fund_account.validation.failed`
 
 ---
 
@@ -95,7 +98,7 @@ If accepting international cards or bank transfers (`https://razorpay.com/docs/p
 
 ## 7. Live Smoke Test Verification
 
-1. ** ₹1 / Small Live Checkout**: Complete a real payment via UPI (`₹1` minimum on Razorpay Orders API).
+1. **₹1 / Small Live Checkout**: Complete a real payment via UPI (`₹1` minimum on Razorpay Orders API).
 2. **Verify Both Confirmation Doors**:
    - Check `SystemEvent` / logs for `/api/checkout/verify-signature` (`client-side payment confirmation`) and `WebhookEvent` for `payment.captured` (`processed = true`, `error = null`).
    - Confirm `Payment.paymentStatus = 'SUCCEEDED'`, `Payment.gatewayPaymentId = 'pay_...'`, `Appointment` confirmed, `ConsultantEarnings` created, and `LedgerTransaction` (`booking:<paymentId>`) balanced (`SUM(DEBIT) === SUM(CREDIT)`).

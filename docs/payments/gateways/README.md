@@ -135,7 +135,7 @@ All payments route through **Razorpay**. Currency is always **INR** — Razorpay
 | **Checkout** | Order (`POST /v1/orders`) → Standard Checkout Modal (`checkout.js`) |
 | **Saved Cards** | Customers API (`POST /v1/customers` with `fail_existing: 0`) + RBI Card-on-File Tokenization (CoFT) |
 | **Refunds** | Full API (`POST /v1/payments/:id/refund` with `X-Refund-Idempotency`). Original PG fee is NOT reversed. |
-| **Disputes** | Full REST API (`GET /v1/disputes/:id`, `POST /v1/documents`, `PATCH /v1/disputes/:id/contest`) + all 6 `payment.dispute.*` webhooks (`lib/payments/operations/razorpay-disputes.ts`) |
+| **Disputes** | Full REST API (`GET /v1/disputes/:id`, `POST /v1/documents`, `PATCH /v1/disputes/:id/contest`) + all 6 `payment.dispute.*` webhooks (`lib/payments/core/razorpay-disputes.ts`) |
 | **Payouts** | RazorpayX: Contacts + Fund Accounts + Penny Drop / Reverse Penny Drop (`POST /v1/fund_accounts/validations`) + Payouts API (`X-Payout-Idempotency`), Section 194-O TDS |
 | **KYC & Bank Verification** | Platform collects payee details, creates Contact + Fund Account via API, verifies via Penny Drop (`₹1` IMPS) or Reverse Penny Drop (UPI Intent) |
 | **Payment methods** | Cards (Visa, Mastercard, RuPay, Amex, Diners), UPI (0%), Net Banking, Wallets, EMI, PayLater |
@@ -162,7 +162,7 @@ Customer pays grossAmount (+ 18% GST for domestic IN buyers)
                     FY gross earnings exceed ₹5,00,000/yr; 0.1% from ₹1 for Company/Firm; 5% without PAN)
 ```
 
-**Sources**: `lib/payments/payouts/constants.ts`, `lib/payments/pricing/platform-fee.ts`, `lib/payments/payouts/earnings-service.ts`, `lib/payments/payouts/tax-calculator.ts`
+**Sources**: `lib/payments/payouts/constants.ts`, `lib/payments/pricing/platform-fee.ts`, `lib/payments/payouts/earnings-service.ts`, `lib/payments/tax/tds-service.ts`
 
 ---
 
@@ -200,7 +200,7 @@ The payment and payout subsystem shares a common orchestration layer:
 | `lib/payments/index.ts`                        | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the active gateway                                |
 | `lib/payments/core/razorpay.ts`                | Razorpay SDK singleton, checkout & webhook HMAC verification, `ensureRazorpayCustomer()`, PM-10 live-key guard                                         |
 | `lib/payments/core/types.ts`                   | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`) and error classes (`PaymentError`, `RefundError`, `DisputeError`)                      |
-| `lib/payments/operations/razorpay-disputes.ts` | Razorpay REST Disputes & Documents API client (`fetchRazorpayDispute`, `uploadRazorpayDisputeDocument`, `submitRazorpayDisputeEvidence`)               |
+| `lib/payments/core/razorpay-disputes.ts`       | Razorpay REST Disputes & Documents API client (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`, `isRazorpayUnknownDisputeIdError`)      |
 | `lib/payments/payouts/razorpay-payouts.ts`     | RazorpayX Contacts, Fund Accounts, and Payouts REST client (`X-Payout-Idempotency`, `boundPayoutIdempotencyKey`)                                       |
 | `lib/payments/payouts/reverse-penny-drop.ts`   | Bank & UPI verification via Penny Drop (`POST /v1/fund_accounts/validations`) and Reverse Penny Drop (UPI Intent)                                      |
 | `lib/payments/payouts/payout-service.ts`       | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                    |

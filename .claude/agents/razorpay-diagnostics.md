@@ -44,7 +44,8 @@ Inspect `.env.local`, `.env`, and `.env.example` (never print secret values — 
 Test Standard API credentials using `/v1/orders?count=1`:
 
 ```bash
-source .env.local 2>/dev/null || source .env 2>/dev/null
+[ -f .env ] && source .env 2>/dev/null
+[ -f .env.local ] && source .env.local 2>/dev/null
 if [ -n "$RAZORPAY_KEY_ID" ] && [ -n "$RAZORPAY_SECRET" ]; then
   curl -s -o /dev/null -w "%{http_code}" -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" "https://api.razorpay.com/v1/orders?count=1" --max-time 5
 fi
@@ -61,16 +62,16 @@ fi
 Verify the critical files in this repo:
 
 1. **Webhook ingress (`app/api/webhooks/razorpay/route.ts`)**:
-   - Reads raw body via `await req.text()`.
+   - Reads raw body via `await req.text()` / `readBodyWithinCap(req)`.
    - Verifies `x-razorpay-signature` via `verifyRazorpayWebhookSignature(body, signature)` using `RAZORPAY_WEBHOOK_SECRET` (and `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`).
-   - Deduplicates via `WebhookEvent` (`x-razorpay-event-id`).
+   - Deduplicates via `WebhookEvent` using a deterministic body-derived `eventId` (ignoring the unsigned `x-razorpay-event-id` header).
 2. **Webhook dispatch & schema (`app/api/webhooks/razorpay-dispatch.ts`, `schemas/webhooks/razorpay.ts`)**:
-   - Dispatches `payment.captured`, `payment.authorized`, `payment.failed`, `order.paid`, `refund.*` (`created`, `processed`, `failed`, `speed_changed`), all 6 `payment.dispute.*` events, `payout.*` (`initiated`, `updated`, `processed`, `reversed`, `failed`, `rejected`, `queued`, `pending`), and `fund_account.validation.*` (`completed`, `failed`).
+   - Dispatches `payment.captured`, `payment.authorized`, `payment.failed`, `order.paid`, `refund.*` (`created`, `processed`, `failed`, `speed_changed`), all 6 `payment.dispute.*` events, `payout.*` (`initiated`, `updated`, `processed`, `reversed`, `failed`, `rejected`, `queued`, `pending`, `cancelled`), and `fund_account.validation.*` (`completed`, `failed`).
    - Unhandled events return `200` (`status: "ignored"`).
 3. **Timing-safe signature comparisons (`lib/payments/core/razorpay.ts`)**:
    - Both `verifyRazorpaySignature` and `verifyRazorpayWebhookSignature` check `Buffer.byteLength` equality before calling `crypto.timingSafeEqual`.
 4. **Outbound Idempotency**:
-   - `lib/payments/operations/Execute-Refund.ts` passes `X-Refund-Idempotency`.
+   - `lib/payments/core/razorpay.ts` / `lib/payments/operations/refund.ts` passes `X-Refund-Idempotency`.
    - `lib/payments/payouts/razorpay-payouts.ts` passes `X-Payout-Idempotency` (4–36 chars).
 
 ---
@@ -81,6 +82,7 @@ Run the repo's doc-drift script and webhook dispatch test suite:
 
 ```bash
 bash .claude/skills/finance/references/razorpay/scripts/check-doc-drift.sh
+npx jest __tests__/enterprise/webhook-dispatch-gaps.test.ts --coverage=false
 ```
 
 ---

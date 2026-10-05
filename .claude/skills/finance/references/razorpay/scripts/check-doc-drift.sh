@@ -23,7 +23,7 @@ TARGETS=(
 FAILED=0
 
 for target in "${TARGETS[@]}"; do
-  if [ ! -e "$target" ]; then
+  if [[ ! -e "$target" ]]; then
     echo "FAIL: target path does not exist: $target"
     echo "      update TARGETS in $(basename "${BASH_SOURCE[0]}")"
     exit 1
@@ -41,7 +41,7 @@ check() {
     --include='*.md' --include='*.sh' \
     --exclude="$(basename "${BASH_SOURCE[0]}")" \
     | grep -v 'drift-ok' || true)
-  if [ -n "$hits" ]; then
+  if [[ -n "$hits" ]]; then
     echo "FAIL: $why"
     echo "$hits" | sed 's/^/      /'
     echo
@@ -90,7 +90,7 @@ check '(payload|entity|response|Razorpay)[^.]{0,20}\.current_period_end' \
 check 'Webhook-only \(no API management\)|Razorpay does \*\*not\*\* provide a direct API for managing disputes' \
   "Razorpay provides a full REST Disputes & Documents API (/v1/disputes, /v1/documents, PATCH /v1/disputes/:id/contest)"
 
-if [ "$FAILED" -eq 0 ]; then
+if [[ "$FAILED" -eq 0 ]]; then
   echo "OK: no known-stale Razorpay claims found."
 fi
 exit "$FAILED"

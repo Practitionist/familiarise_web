@@ -38,6 +38,7 @@ These cards deterministically trigger specific failure reasons (`payment.failed`
 | `authentication_failed` | `4100 2800 0000 0009` | `5305 6200 0000 0009` |
 
 ### International Cards
+
 | Network | Card Number |
 |---|---|
 | **Visa (International)** | `4012 8888 8888 1881` |
@@ -63,7 +64,7 @@ These cards deterministically trigger specific failure reasons (`payment.failed`
 
 ## 3. Simulating Signed Webhooks Locally (`POST /api/webhooks/razorpay`)
 
-Unlike Stripe, Razorpay has **no official CLI** (`razorpay listen` does not exist). You can either:
+Unlike Stripe (`stripe listen`), Razorpay's CLI does **not** provide a local webhook-forwarding (`listen`) command. You can either:
 1. Expose `localhost:3000` with `ngrok http 3000` or `cloudflared tunnel --url http://localhost:3000` and register `https://<tunnel>/api/webhooks/razorpay` in **Razorpay Dashboard (Test Mode) → Developers → Webhooks**, OR
 2. Send a locally signed webhook directly to `http://localhost:3000/api/webhooks/razorpay` using the script below.
 

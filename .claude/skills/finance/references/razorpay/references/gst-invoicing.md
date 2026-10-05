@@ -9,9 +9,10 @@ Official citations:
 
 | File | Responsibility |
 |---|---|
-| [`lib/payments/tax/tax-engine.ts`](../../../../../lib/payments/tax/tax-engine.ts) | `determineTax` — computes additive 18% GST (`CGST 9% + SGST 9%` for intra-state Maharashtra `27`, `IGST 18%` for inter-state, `0%` for LUT export with `export_lut`). |
+| [`lib/payments/tax/tax-engine.ts`](../../../../../lib/payments/tax/tax-engine.ts) | `determineTax` — computes aggregate checkout tax (`18%` GST for Indian buyers and non-Indian buyers when `hasValidPlatformLut()` is false; `0%` zero-rated export when `buyerCountry !== "IN"` and `hasValidPlatformLut()` is true). |
+| [`lib/compliance/gst.ts`](../../../../../lib/compliance/gst.ts) | `deriveGstBreakdown` — derives the invoice-level `CGST 9% + SGST 9%` (intra-state) vs `IGST 18%` (inter-state or export without LUT) vs `0%` (export under LUT) breakdown from place of supply. |
 | [`lib/payments/payouts/constants.ts`](../../../../../lib/payments/payouts/constants.ts) | `TAX_CONSTANTS` (`GST_RATE: 18`, `SAC_CODE: "999293"`, `HSN_CODES`). |
-| [`lib/payments/billing/consumer-invoice.ts`](../../../../../lib/payments/billing/consumer-invoice.ts) | Mints B2C GST tax invoices (`Invoice`) and consumer credit notes (`mintConsumerCreditNote`). |
+| [`lib/payments/billing/consumer-invoice.ts`](../../../../../lib/payments/billing/consumer-invoice.ts) | Mints B2C GST tax invoices (`Invoice`) via `deriveConsumerInvoiceTax` and consumer credit notes (`mintConsumerCreditNote`). |
 | [`lib/payments/billing/invoice-numbering.ts`](../../../../../lib/payments/billing/invoice-numbering.ts) & [`credit-note-numbering.ts`](../../../../../lib/payments/billing/credit-note-numbering.ts) | Gap-free, Indian-FY-scoped (`FAM/26-27/000001`), ≤16-char Rule 46 CGST compliant serial numbers via `FiscalCounter`. |
 | [`lib/compliance/gst-credit-note-cutoff.ts`](../../../../../lib/compliance/gst-credit-note-cutoff.ts) | Section 34(2) CGST Act credit-note cutoff guard (November 30 following the end of the financial year in which the supply was made). |
 
@@ -38,15 +39,18 @@ From [Official Razorpay Invoices API Docs](https://razorpay.com/docs/api/payment
 
 We use Razorpay **strictly as the payment rail (`POST /v1/orders`)** and generate our own Rule 46 CGST-compliant tax invoices and Section 34 credit notes in Postgres + PDF (`lib/payments/billing/` & `lib/pdf/`).
 
-### Additive 18% GST Calculation (`lib/payments/tax/tax-engine.ts`)
+### Checkout Tax (`lib/payments/tax/tax-engine.ts`) & Invoice Tax-Head Split (`lib/compliance/gst.ts`, `lib/payments/billing/consumer-invoice.ts`)
 
-All plan prices in this repo are **base (tax-exclusive) amounts in integer paise**. GST is added on top at checkout:
+All plan prices in this repo are **base (tax-exclusive) amounts in integer paise**:
+1. **At checkout (`determineTax` in `lib/payments/tax/tax-engine.ts`)**: Computes the aggregate tax amount from `buyerCountry` and `hasValidPlatformLut()` (`18%` for `buyerCountry === "IN"` or when `hasValidPlatformLut()` is `false`; `0%` when `buyerCountry !== "IN"` and `hasValidPlatformLut()` is `true`).
+2. **At invoice minting (`deriveGstBreakdown` in `lib/compliance/gst.ts` & `deriveConsumerInvoiceTax` in `lib/payments/billing/consumer-invoice.ts`)**: Splits the collected tax into `CGST + SGST` vs `IGST` based on Place of Supply:
 
-| Buyer Location / Context | Tax Mode | Breakdown | Total Charged |
+| Buyer Location / Context | Invoice Tax Split | Breakdown | Total Charged |
 |---|---|---|---|
-| **Intra-state** (`buyerState === supplierState`, e.g., `"27"` Maharashtra) | `CGST_SGST` | `9% CGST` (`900` bps) + `9% SGST` (`900` bps) | `basePaise + cgstPaise + sgstPaise` (`118%` of base) |
+| **Intra-state** (`buyerState === supplierState`, e.g., `"27"` Maharashtra) | `CGST + SGST` | `9% CGST` (`900` bps) + `9% SGST` (`900` bps) | `basePaise + cgstPaise + sgstPaise` (`118%` of base) |
 | **Inter-state** (Indian buyer outside supplier state, or state unknown) | `IGST` | `18% IGST` (`1800` bps) | `basePaise + igstPaise` (`118%` of base) |
-| **International Export under LUT** (`buyerCountry !== "IN"` with valid LUT) | `EXPORT_LUT` | `0%` zero-rated export under Bond/LUT (Section 16 IGST Act) | `basePaise` (`100%` of base) |
+| **International Export without valid LUT** (`buyerCountry !== "IN"`, `!hasValidPlatformLut()`) | `IGST` | `18% IGST` (`1800` bps, fail-closed per Rule 96A) | `basePaise + igstPaise` (`118%` of base) |
+| **International Export under LUT** (`buyerCountry !== "IN"` with valid LUT) | `Zero-rated (LUT)` | `0%` zero-rated export under Bond/LUT (Section 16 IGST Act) | `basePaise` (`100%` of base) |
 
 > **Never back-calculate GST from gross using `amount / 1.18`** — always read the authoritative `Payment.originalAmount` (base paise) and `Payment.taxAmount` (tax paise) stored at checkout time, or use `determineTax()` in `lib/payments/tax/tax-engine.ts`.
 

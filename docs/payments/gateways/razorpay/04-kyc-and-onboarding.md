@@ -15,7 +15,7 @@ Razorpay requires KYC (Know Your Customer) verification before live payments can
 | **Razorpay Account** (Platform)  | Accept payments from customers  | Razorpay     |
 | **RazorpayX Account** (Platform) | Disburse payouts to consultants | Razorpay     |
 
-> **Note**: Individual consultants do **not** need their own Razorpay/KYC accounts. We create RazorpayX Contacts and Fund Accounts for them via API. Their bank account/UPI details are stored by RazorpayX, not by us.
+> **Note**: Individual consultants do **not** need their own Razorpay/KYC accounts. We create RazorpayX Contacts and Fund Accounts for them via API. Full bank account numbers live only in RazorpayX; our `PayoutAccount` table stores only RazorpayX reference IDs (`razorpayContactId`, `razorpayFundAccId`), `accountNumberLast4`, `ifscCode`, `bankName`, `accountHolderName`, and `upiId`.
 
 ---
 
@@ -86,8 +86,8 @@ Individual consultants do **not** go through Razorpay KYC. Instead:
 1. Consultant provides bank account details or initiates UPI verification through our platform
 2. Our server creates a **Contact** in RazorpayX (`POST /v1/contacts`)
 3. Our server creates a **Fund Account** (`POST /v1/fund_accounts`) linked to that Contact
-4. Ownership is verified via **Penny Drop** (`POST /v1/fund_accounts/validations` — transfers Rs. 1.00 to the beneficiary bank account and returns `results.account_status` + `results.registered_name`; note that the Rs. 1.00 is not reversed by RazorpayX) or **Reverse Penny Drop** (consultant pays Rs. 1.00 via UPI Intent, which is then auto-refunded)
-5. Consultant is ready to receive payouts (`ConsultantBankAccount.isVerified = true`)
+4. Ownership is verified via **Penny Drop** (`POST /v1/fund_accounts/validations` — transfers Rs. 1.00 to the beneficiary bank account and returns `results.account_status` + `results.registered_name`; note that the Rs. 1.00 is not reversed by RazorpayX) or **Reverse Penny Drop** (`POST /v1/fund_accounts/validations` with `validation_type: "upi_intent"`, where the consultant pays Rs. 1.00 via UPI Intent and RazorpayX refunds the Rs. 1.00 while returning `validation_results.bank_account`)
+5. Consultant is ready to receive payouts (`PayoutAccount.isVerified = true`)
 
 This is handled by `app/api/consultant/payout-accounts/route.ts` and `lib/payments/payouts/reverse-penny-drop.ts`.
 
@@ -103,15 +103,15 @@ This is handled by `app/api/consultant/payout-accounts/route.ts` and `lib/paymen
 
 - UPI ID (VPA) or ₹1 UPI Intent payment via Reverse Penny Drop
 
-### What We Store
+### What We Store (`PayoutAccount` / `OrganizationPayoutAccount`)
 
-- RazorpayX Contact ID (`cont_...`)
-- RazorpayX Fund Account ID (`fa_...`)
-- RazorpayX Validation ID (`fav_...`) and verified account holder name (`verifiedName`)
-- Masked account display (e.g., "HDFC \*\*\*\*4521") or verified UPI VPA (`upiId`)
-- Account verification and active status (`isVerified`, `isActive`)
+- RazorpayX Contact ID (`razorpayContactId`, `cont_...`)
+- RazorpayX Fund Account ID (`razorpayFundAccId`, `fa_...`)
+- Account holder name (`accountHolderName`) and bank name (`bankName`)
+- Masked account tail (`accountNumberLast4`), IFSC code (`ifscCode`), or verified UPI VPA (`upiId`)
+- Account verification and default status (`isVerified`, `isDefault`, `verificationError`)
 
-We **never** store full bank account numbers in plaintext — those are held by RazorpayX.
+We **never** store full bank account numbers in plaintext — those are held only by RazorpayX.
 
 ---
 

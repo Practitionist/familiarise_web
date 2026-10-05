@@ -121,7 +121,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 }
 ```
 
-### 4. `payment.dispute.created` / `payment.dispute.action_required`
+### 4. `payment.dispute.created` & `payment.dispute.action_required`
 ```json
 {
   "entity": "event",
@@ -149,7 +149,70 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 }
 ```
 
+```json
+{
+  "entity": "event",
+  "account_id": "acc_test123456",
+  "event": "payment.dispute.action_required",
+  "contains": ["dispute", "payment"],
+  "payload": {
+    "dispute": {
+      "entity": {
+        "id": "disp_test_001",
+        "entity": "dispute",
+        "payment_id": "pay_test_captured_001",
+        "amount": 50000,
+        "currency": "INR",
+        "amount_deducted": 0,
+        "reason_code": "goods_or_services_not_provided",
+        "respond_by": 1710600000,
+        "status": "open",
+        "phase": "chargeback",
+        "created_at": 1710000035
+      }
+    }
+  },
+  "created_at": 1710000035
+}
+```
+
 ### 5. `payout.initiated` & `payout.failed` (with `status_details`)
+```json
+{
+  "entity": "event",
+  "account_id": "acc_test123456",
+  "event": "payout.initiated",
+  "contains": ["payout"],
+  "payload": {
+    "payout": {
+      "entity": {
+        "id": "pout_test_001",
+        "entity": "payout",
+        "fund_account_id": "fa_test_001",
+        "amount": 100000,
+        "currency": "INR",
+        "notes": {},
+        "fees": 0,
+        "tax": 0,
+        "status": "processing",
+        "purpose": "payout",
+        "utr": null,
+        "mode": "IMPS",
+        "reference_id": "payout_ref_001",
+        "failure_reason": null,
+        "status_details": {
+          "reason": "payout_processing",
+          "description": "Payout is being processed by partner bank",
+          "source": "beneficiary_bank"
+        },
+        "created_at": 1710000038
+      }
+    }
+  },
+  "created_at": 1710000038
+}
+```
+
 ```json
 {
   "entity": "event",
@@ -221,10 +284,10 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 7. Signature Rejection Test
-Send a request with `x-razorpay-signature: invalid_signature` and verify `POST /api/webhooks/razorpay` returns HTTP `401`.
+Send a request with `x-razorpay-signature: invalid_signature` and verify `POST /api/webhooks/razorpay` returns HTTP `400`.
 
 ---
 
 ## Step 3: Report Pass/Fail Summary
 
-Compile the results from Jest and any live `curl` probes into a clear pass/fail table, noting HTTP status codes, deduplication behavior (`x-razorpay-event-id`), and any schema or handler errors.
+Compile the results from Jest and any live `curl` probes into a clear pass/fail table, noting HTTP status codes, body-derived deduplication behavior, and any schema or handler errors.

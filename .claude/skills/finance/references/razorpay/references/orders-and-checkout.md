@@ -143,5 +143,5 @@ Razorpay Orders have **no cancel endpoint** (`orders` remain in `created` or `at
 
 ## 7. GST & Tax Invoicing Note
 
-- Our checkout pricing adds **18% GST on top of the base price** (`determineTax` in [`lib/payments/tax/tax-engine.ts`](../../../../../lib/payments/tax/tax-engine.ts), SAC `999293`). Never back-calculate GST from a gross total with `amount / 1.18`.
+- Our checkout pricing (`determineTax` in [`lib/payments/tax/tax-engine.ts`](../../../../../lib/payments/tax/tax-engine.ts), SAC `999293`) adds **18% GST** on top of the base price for Indian buyers (and for non-Indian buyers when `hasValidPlatformLut()` is `false`), or charges **0% GST** for international exports under a valid platform LUT (`buyerCountry !== "IN"` with `hasValidPlatformLut()`). Never back-calculate GST from a gross total with `amount / 1.18`.
 - **Never use `razorpay.invoices.create()` (`POST /v1/invoices`) for GST invoices**: official Razorpay docs explicitly state *"You can only create non-GST Invoices via APIs"* (`tax_rate`, `sac_code`, `hsn_code` cannot be set via API). See [`gst-invoicing.md`](gst-invoicing.md).

@@ -1,6 +1,6 @@
 ---
 name: razorpay-db-schema
-description: Inspects and extends this repo's Prisma money and Razorpay schema (Payment, PaymentLeg, Refund, Dispute, WebhookEvent, Payout, ConsultantBankAccount, Invoice, BillingSubscription). Use when adding or modifying Razorpay-related fields, indexes, or migrations in prisma/schema.prisma.
+description: Inspects and extends this repo's Prisma money and Razorpay schema (Payment, PaymentLeg, Refund, Dispute, WebhookEvent, ConsultantPayout, OrganizationPayout, PayoutAccount, OrganizationPayoutAccount, Invoice, BillingSubscription). Use when adding or modifying Razorpay-related fields, indexes, or migrations in prisma/schema.prisma.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
 model: inherit
 color: white
@@ -25,13 +25,13 @@ Before proposing any schema change, inspect the existing models in `prisma/schem
 | Model | Purpose in This Repo | Key Razorpay / Money Fields |
 |---|---|---|
 | `User` | Customer identity & saved-card linkage | `razorpayCustomerId String? @unique` (`cust_...` via `ensureRazorpayCustomer`) |
-| `Payment` | Order & payment lifecycle | `paymentIntent String @unique` (`order_...`), `razorpayPaymentId String?`, `amount BigInt` (paise), `currency String`, `paymentStatus PaymentStatus`, `paymentGateway PaymentGateway` |
-| `PaymentLeg` | Funding-leg breakdown (gateway vs credits/wallet) | `paymentId`, `legType`, `amount BigInt` (paise — protected by `prisma/sql/payment-legs-triggers.sql`) |
-| `Refund` | Two-phase refund state machine | `refundId String? @unique` (`rfnd_...`), `amount BigInt` (paise), `status RefundStatus`, `gateway PaymentGateway`, `metadata Json?` (stores ARN, `speed_processed`) |
-| `Dispute` | Chargeback & dispute tracking | `disputeId String @unique` (`disp_...`), `paymentId`, `amount BigInt`, `amountDeducted BigInt?`, `status DisputeStatus`, `phase String?`, `dueBy DateTime?`, `evidence Json?`, `isWin Boolean?` |
-| `WebhookEvent` | At-least-once webhook deduplication | `eventId String @unique` (`x-razorpay-event-id` or SHA-256 fallback), `eventType String`, `status WebhookEventStatus`, `payload Json` |
-| `ConsultantBankAccount` | Payee bank/UPI details & Penny Drop / RPD verification | `razorpayContactId` (`cont_...`), `razorpayFundAccountId` (`fa_...`), `razorpayValidationId` (`fav_...`), `verificationMethod`, `isVerified Boolean`, `verifiedName String?`, `upiId String?` |
-| `Payout` | RazorpayX consultant payouts & Section 194-O TDS | `id String @id` (passed as `X-Payout-Idempotency`), `gatewayPayoutId String? @unique` (`pout_...`), `amount BigInt`, `grossAmount BigInt?`, `tdsAmount BigInt?`, `status PayoutStatus`, `method PayoutMethod`, `failureReason String?` |
+| `Payment` | Order & payment lifecycle | `paymentIntent String @unique` (`order_...`), `gatewayPaymentId String?` (`pay_...`), `amount BigInt` (paise), `currency String`, `paymentStatus PaymentStatus`, `paymentGateway PaymentGateway` |
+| `PaymentLeg` | Funding-leg breakdown (gateway vs credits/wallet) | `paymentId`, `legType`, `amountPaise BigInt` (paise — protected by `prisma/sql/payment-legs-triggers.sql`) |
+| `Refund` | Two-phase refund state machine | `refundId String @unique` (`rfnd_...`), `amountPaise BigInt` (paise), `status RefundStatus`, `paymentGateway PaymentGateway`, `metadata Json?` (stores ARN, `speed_processed`) |
+| `Dispute` | Chargeback & dispute tracking | `disputeId String @unique` (`disp_...`), `paymentId`, `amountPaise BigInt`, `status DisputeStatus`, `evidence Json?`, `dueBy DateTime?`, `isChargeRefundable Boolean` |
+| `WebhookEvent` | At-least-once webhook deduplication | `eventId String @unique` (body-derived `${eventType}:${entityId}` or digest), `eventType String`, `processed Boolean`, `payload Json` |
+| `PayoutAccount` / `OrganizationPayoutAccount` | Payee bank/UPI details & Penny Drop / RPD verification | `razorpayContactId` (`cont_...`), `razorpayFundAccId` (`fa_...`), `accountHolderName`, `bankName`, `accountNumberLast4`, `ifscCode`, `upiId`, `isVerified Boolean`, `isDefault Boolean` |
+| `ConsultantPayout` / `OrganizationPayout` | RazorpayX payouts & Section 194-O TDS | `id String @id`, `idempotencyKey String @unique` (folded via `boundPayoutIdempotencyKey` for `X-Payout-Idempotency`), `providerPayoutId` / `gatewayPayoutId` (`pout_...`), `amount BigInt` / `amountPaise BigInt`, `tdsDeductedPaise BigInt`, `status PayoutStatus`, `method PayoutMethod`, `failureReason String?` |
 | `Invoice` / `OrganizationInvoice` | In-house GST tax invoices (SAC `999293`) | `invoiceNumber`, `hsnCode` (`999293`), `cgstAmount`, `sgstAmount`, `igstAmount`, `placeOfSupply`, `paymentId` |
 | `CreditNote` | GST credit notes on post-invoice refunds/lost disputes | `creditNoteNumber`, `invoiceId`, `refundId`, `disputeId`, GST reversal columns |
 | `BillingSubscription` | In-house recurring platform subscriptions | Paid via per-cycle `Order` + `Payment` rows (does NOT use Razorpay `/v1/subscriptions`) |

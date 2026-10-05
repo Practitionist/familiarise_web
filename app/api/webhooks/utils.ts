@@ -2473,6 +2473,18 @@ export async function handleRazorpayPayoutWebhook(
         );
         break;
       }
+      case "payout.updated": {
+        if (payoutData.utr) {
+          await prismaClient.organizationPayout.update({
+            where: { id: orgPayout.id },
+            data: { gatewayUtr: payoutData.utr },
+          });
+        }
+        console.log(
+          `[orgPayoutWebhook] payout.updated for ${orgPayout.id} (utr=${payoutData.utr ? "updated" : "unchanged"})`,
+        );
+        break;
+      }
       // queued / initiated / pending / cancelled — informational only;
       // the row already sits in PROCESSING and we wait for the terminal
       // event. No state change here.

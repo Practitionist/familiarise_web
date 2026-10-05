@@ -185,16 +185,16 @@ In our system, these map to `PaymentStatus`: `PENDING` (created/authorized), `SU
 | `payout.rejected`                   | Approval rejected in RazorpayX workflow         | Update `Payout` to `FAILED`, alert admin                                                       |
 | `payout.queued`                     | Queued due to low balance (`queue_if_low_balance`)| Keep `Payout` in `PENDING`                                                                   |
 | `payout.pending`                    | Awaiting approval workflow                      | Keep `Payout` in `PENDING`                                                                     |
-| `fund_account.validation.completed` | Penny Drop / FAV finished (`fav_...`)           | Check `results.account_status === "active"`; mark `ConsultantBankAccount` verified or rejected |
-| `fund_account.validation.failed`    | Penny Drop / FAV request failed                 | Record validation failure on `ConsultantBankAccount`                                           |
+| `payout.cancelled`                  | Queued payout cancelled                         | Update `Payout` to `CANCELLED`, restore earnings to `READY`                                    |
+| `fund_account.validation.completed` | Penny Drop / FAV finished (`fav_...`)           | Check `results.account_status === "active"`; mark `PayoutAccount` verified or rejected         |
+| `fund_account.validation.failed`    | Penny Drop / FAV request failed                 | Record validation failure on `PayoutAccount`                                                   |
 
 **Sources**: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `schemas/webhooks/razorpay.ts`
 
 ### Webhook Idempotency
 
 Inbound webhooks are deduplicated via the `WebhookEvent` table (`lib/webhooks/webhook-Deduplication.ts`):
-- **Primary key**: The `x-razorpay-event-id` HTTP header sent by Razorpay, which remains identical across all retries of the same webhook delivery over the 24-hour retry window.
-- **Fallback key**: If `x-razorpay-event-id` is missing (e.g., synthetic local test payloads), the route falls back to a deterministic composite/digest key so different event types on the same entity never collide.
+- **Body-derived key (security invariant)**: `app/api/webhooks/razorpay/route.ts` deliberately **ignores** the unsigned `x-razorpay-event-id` HTTP header (which is not covered by `x-razorpay-signature` and could otherwise be spoofed to poison deduplication) and instead derives `eventId` deterministically from the HMAC-verified body (`${eventType}:${entityId}`, plus `:${bodyDigest}` on `payout.updated` so status and subsequent UTR updates do not collide, or `body_${bodyDigest}` when no entity ID is present).
 
 ---
 
@@ -211,11 +211,11 @@ All amounts are stored as **`BigInt` paise** in Prisma and transmitted as intege
 Razorpay provides both **`payment.dispute.*` webhooks** and a **REST Disputes & Documents API**, both of which are integrated in this repo:
 
 - **Webhook lifecycle (`lib/payments/webhooks/handlers.ts`)**: Handles all 6 `payment.dispute.*` events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`), freezing consultant earnings on creation, releasing them on win, or reversing earnings and issuing a GST Credit Note on loss.
-- **REST Disputes & Evidence API (`lib/payments/operations/razorpay-disputes.ts`)**:
-  - `fetchRazorpayDispute(disputeId)` → `GET /v1/disputes/:id`
-  - `uploadRazorpayDisputeDocument({ file, fileName, mimeType })` → `POST /v1/documents` (`multipart/form-data` with `purpose: "dispute_evidence"`)
-  - `submitRazorpayDisputeEvidence(disputeId, evidence)` → `PATCH /v1/disputes/:id/contest` (`action: "draft" | "submit"`)
-  - Or accept liability via `POST /v1/disputes/:id/accept`.
+- **REST Disputes & Evidence API (`lib/payments/core/razorpay-disputes.ts`)**:
+  - `getRazorpayDispute(disputeId)` → `GET /v1/disputes/:id` (plus `isRazorpayUnknownDisputeIdError`)
+  - `uploadDisputeDocument(file, mime, fileName)` → `POST /v1/documents` (`multipart/form-data` with `purpose: "dispute_evidence"`)
+  - `contestDispute(disputeId, { action, amountPaise, summary, evidence })` → `PATCH /v1/disputes/:id/contest` (`action: "draft" | "submit"`)
+  - Razorpay's API also supports accepting liability via `POST /v1/disputes/:id/accept`.
 
 ---
 

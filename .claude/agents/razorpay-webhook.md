@@ -25,7 +25,7 @@ This repo has a single canonical webhook endpoint at `app/api/webhooks/razorpay/
    - Verifies `x-razorpay-signature` via `verifyRazorpayWebhookSignature(body, signature)` in `lib/payments/core/razorpay.ts`.
    - Supports zero-downtime rotation: checks `RAZORPAY_WEBHOOK_SECRET` first, then falls back to `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` if configured, using length-guarded `crypto.timingSafeEqual`.
 2. **Idempotency via `WebhookEvent` (`lib/webhooks/webhook-Deduplication.ts`)**:
-   - Uses the `x-razorpay-event-id` header (which Razorpay keeps identical across all retries of the same event delivery over 24 hours), falling back to a SHA-256 payload digest only when the header is absent.
+   - `app/api/webhooks/razorpay/route.ts` deliberately ignores the unsigned `x-razorpay-event-id` header and derives `eventId` deterministically from the HMAC-verified body (`${eventType}:${entityId}`, plus `:${bodyDigest}` on `payout.updated`, or `body_${bodyDigest}` fallback).
    - Claims the event atomically before running handlers; marks it completed on `200` or failed on error so Razorpay can retry transient failures.
 3. **Zod Schema Validation (`schemas/webhooks/razorpay.ts`)**:
    - Validates the event type against `RazorpayEventTypeSchema` (currently 24 events across `payment.*`, `order.*`, `refund.*`, `payment.dispute.*`, `payout.*`, `fund_account.validation.*`, and `settlement.*`).
@@ -35,11 +35,11 @@ This repo has a single canonical webhook endpoint at `app/api/webhooks/razorpay/
      - `payout.entity.status_details`: `{ reason, description, source }` (modern replacement for deprecated top-level `failure_reason`).
      - `fund_account.validation.entity`: supports both `results` (official REST/webhook field) and `validation_results` fallback.
 4. **Event Dispatch (`app/api/webhooks/razorpay-dispatch.ts`)**:
-   - `payment.captured`, `payment.authorized`, `payment.failed`, `order.paid`: routed to `lib/payments/webhooks/handlers.ts` (`handleRazorpayPaymentCaptured`, `handleRazorpayPaymentFailed`, `handleRazorpayOrderPaid`). Note that `order.paid` carries both `payload.order.entity` and `payload.payment.entity`.
-   - `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`: routed to `handleRazorpayRefundEvent` (`lib/payments/webhooks/handlers.ts`).
-   - `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`: routed to `handleRazorpayDisputeEvent` (`lib/payments/webhooks/handlers.ts`).
-   - `payout.initiated`, `payout.updated`, `payout.processed`, `payout.reversed`, `payout.failed`, `payout.rejected`, `payout.queued`, `payout.pending`: routed to `handlePayoutWebhook` (`lib/payments/payouts/processor.ts`), extracting failure reason from `failure_reason ?? status_details?.description ?? status_details?.reason`.
-   - `fund_account.validation.completed`, `fund_account.validation.failed`: routed to `completeReversePennyDrop` / `handleValidationWebhook` (`lib/payments/payouts/reverse-penny-drop.ts`). Remember: `status: "completed"` can still have `results.account_status: "invalid"`.
+   - `payment.captured`, `payment.authorized`, `payment.failed`, `order.paid`: routed to `lib/payments/webhooks/handlers.ts` / `routeCapturedPayment`. Note that `order.paid` carries both `payload.order.entity` and `payload.payment.entity`.
+   - `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`: routed to `handleRazorpayRefundWebhook` (`app/api/webhooks/utils.ts`).
+   - `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`: routed to `handleRazorpayDisputeCreated` / `handleRazorpayDisputeUpdated` / `handleRazorpayDisputeClosed` (`app/api/webhooks/utils.ts`).
+   - `payout.initiated`, `payout.updated`, `payout.processed`, `payout.reversed`, `payout.failed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled`: routed to `handleRazorpayPayoutWebhook` (`app/api/webhooks/utils.ts` → `handlePayoutWebhook` in `lib/payments/payouts/payout-service.ts` and `markOrgPayout*` in `lib/payments/payouts/org-payout-service.ts`), extracting failure reason from `failure_reason ?? status_details?.description ?? status_details?.reason`.
+   - `fund_account.validation.completed`, `fund_account.validation.failed`: routed to `handleRazorpayFundAccountValidation` (`app/api/webhooks/razorpay-dispatch.ts`). Remember: `status: "completed"` can still have `results.account_status: "invalid"`.
    - Unhandled events log and return `{ status: "ignored" }` with HTTP `200` so Razorpay never auto-disables the endpoint.
 
 ---

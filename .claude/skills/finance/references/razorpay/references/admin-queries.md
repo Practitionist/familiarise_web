@@ -85,17 +85,33 @@ ORDER BY d."dueBy" ASC NULLS LAST;
 ### 1.5 Consultant & Organization Payouts In Flight
 ```sql
 SELECT
+  'CONSULTANT'          AS payee_type,
   id,
-  "consultantProfileId",
+  "consultantProfileId" AS payee_id,
   status,
   method,
-  amount / 100.0     AS payout_inr,
-  "providerPayoutId" AS razorpayx_payout_id,
+  amount / 100.0        AS payout_inr,
+  "providerPayoutId"    AS razorpayx_payout_id,
   "idempotencyKey",
   "failureReason",
   "createdAt",
   "updatedAt"
 FROM "ConsultantPayout"
+WHERE status IN ('PENDING', 'APPROVED', 'PROCESSING')
+UNION ALL
+SELECT
+  'ORGANIZATION'        AS payee_type,
+  id,
+  "organizationId"      AS payee_id,
+  status,
+  method,
+  "amountPaise" / 100.0 AS payout_inr,
+  "gatewayPayoutId"     AS razorpayx_payout_id,
+  "idempotencyKey",
+  "failureReason",
+  "createdAt",
+  "updatedAt"
+FROM "OrganizationPayout"
 WHERE status IN ('PENDING', 'APPROVED', 'PROCESSING')
 ORDER BY "updatedAt" ASC;
 ```
