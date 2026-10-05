@@ -119,6 +119,14 @@ export async function ensureDefaultCallTypeSettings(opts: {
   return 0;
 }
 
+function matchesCoPresenterGrants(grants: string[] | undefined): boolean {
+  const held = new Set(grants ?? []);
+  return (
+    held.size === CO_PRESENTER_GRANTS.length &&
+    CO_PRESENTER_GRANTS.every((perm) => held.has(perm))
+  );
+}
+
 export async function ensureCoPresenterRole(opts: {
   apply: boolean;
 }): Promise<number> {
@@ -133,11 +141,9 @@ export async function ensureCoPresenterRole(opts: {
   const { roles } = await client.listRoles();
   const roleExists = roles.some((r) => r.name === CO_PRESENTER_CALL_ROLE);
   const before = await client.video.getCallType({ name: STREAM_CALL_TYPE });
-  const current = [...(before.grants[CO_PRESENTER_CALL_ROLE] ?? [])].sort();
-  const desired = [...CO_PRESENTER_GRANTS].sort();
-  const grantsMatch =
-    current.length === desired.length &&
-    current.every((perm, i) => perm === desired[i]);
+  const grantsMatch = matchesCoPresenterGrants(
+    before.grants[CO_PRESENTER_CALL_ROLE],
+  );
 
   console.log(
     `\nRole '${CO_PRESENTER_CALL_ROLE}': ${roleExists ? "exists" : "missing"}; grants on '${STREAM_CALL_TYPE}': ${grantsMatch ? "match" : "differ"}`,
@@ -165,8 +171,8 @@ export async function ensureCoPresenterRole(opts: {
   }
 
   const after = await client.video.getCallType({ name: STREAM_CALL_TYPE });
-  const stored = [...(after.grants[CO_PRESENTER_CALL_ROLE] ?? [])].sort();
-  if (stored.join(",") !== desired.join(",")) {
+  const stored = after.grants[CO_PRESENTER_CALL_ROLE] ?? [];
+  if (!matchesCoPresenterGrants(stored)) {
     console.error(
       `\n🚨 Stream did not store the ${CO_PRESENTER_CALL_ROLE} grants (read back ${stored.join(", ") || "none"}).`,
     );

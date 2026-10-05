@@ -496,15 +496,16 @@ async function findDbMeetingBySlot(slotId: string): Promise<Meeting | null> {
   }
 }
 
+async function refuseDuringMaintenance(): Promise<string | null> {
+  const maintenanceState = await getMaintenanceState();
+  return maintenanceState.phase === "OFF"
+    ? null
+    : "New calls cannot be created during maintenance.";
+}
+
 async function refuseMeetingCreation(
   slot: MeetingSlot,
-  existingRoom = false,
 ): Promise<string | null> {
-  // Maintenance blocks new rooms only, so a session in progress keeps its room.
-  if (!existingRoom && (await getMaintenanceState()).phase !== "OFF") {
-    return "New calls cannot be created during maintenance.";
-  }
-
   const parsedSlot = slotSchema.safeParse({
     id: slot.id,
     startsAt: slot.startsAt,
@@ -592,7 +593,10 @@ async function getMeetingCreationRefusal(
   existingRoom: boolean,
 ): Promise<string | null> {
   try {
-    const refusal = await refuseMeetingCreation(slot, existingRoom);
+    // Maintenance blocks new rooms only, so a session in progress keeps its room.
+    const refusal =
+      (existingRoom ? null : await refuseDuringMaintenance()) ??
+      (await refuseMeetingCreation(slot));
     if (refusal) {
       streamLogger.warn("Refused a meeting before creating the call", {
         slotId: slot.id,
@@ -701,7 +705,8 @@ async function createDbMeeting(
   try {
     const authorized = await requireEntitledCaller(slot.id);
 
-    const refusal = await refuseMeetingCreation(slot);
+    const refusal =
+      (await refuseDuringMaintenance()) ?? (await refuseMeetingCreation(slot));
     if (refusal) throw new MeetingRefusal(refusal);
 
     const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
@@ -892,12 +897,12 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  const streamCallId =
-    reuseExisting && existingMeeting
-      ? existingMeeting.streamCallId
-      : rebuildEndedEarly
-        ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
-        : `occurrence-${anchorSlot.id}`;
+  let streamCallId = `occurrence-${anchorSlot.id}`;
+  if (reuseExisting && existingMeeting) {
+    streamCallId = existingMeeting.streamCallId;
+  } else if (rebuildEndedEarly) {
+    streamCallId = `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`;
+  }
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
   const startsAt =
