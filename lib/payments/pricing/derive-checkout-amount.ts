@@ -23,6 +23,12 @@ import {
   type TaxDetermination,
 } from "@/lib/payments/tax/tax-engine";
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import {
+  computeWelcomeDiscountPaise,
+  creditCapPaise,
+  keepsWelcomeDiscount,
+  type WelcomeDiscount,
+} from "@/lib/referrals/promo-math";
 
 /** The fields of a validated `DiscountCode` that move the price. */
 export interface CheckoutDiscountInput {
@@ -42,9 +48,9 @@ export interface DeriveCheckoutAmountInput {
   /** Already re-validated against the database by the caller, or null. */
   discount?: CheckoutDiscountInput | null;
   /** The referee's pre-tax welcome discount; ignored when a discount code is present. */
-  welcomeDiscount?: { bps: number; maxPaise: number } | null;
-  /** Credits may cover at most this many basis points of the list price. */
-  creditCapBps?: number | null;
+  welcomeDiscount?: WelcomeDiscount | null;
+  /** Promo (welcome discount plus credits) may cover at most this many bps of the list price; absent means no credits. */
+  creditCapBps?: number;
   /** Whether the buyer asked to spend referral credits on this order. */
   useReferralCredits?: boolean;
   /**
@@ -120,25 +126,6 @@ export function computeDiscountPaise(
   return 0;
 }
 
-/** Pre-tax welcome discount: `min(round(base × bps / 10 000), maxPaise)`. */
-export function computeWelcomeDiscountPaise(
-  basePaise: number,
-  welcome: { bps: number; maxPaise: number } | null | undefined,
-): number {
-  if (!welcome || welcome.bps <= 0) return 0;
-  const raw = Math.round((basePaise * welcome.bps) / 10_000);
-  return Math.min(raw, welcome.maxPaise, basePaise);
-}
-
-/** The most credit an order may spend: `floor(list price × capBps / 10 000)`; uncapped when null. */
-export function creditCapPaise(
-  basePaise: number,
-  capBps: number | null | undefined,
-): number {
-  if (capBps === null || capBps === undefined) return Number.POSITIVE_INFINITY;
-  return Math.floor((basePaise * Math.max(0, capBps)) / 10_000);
-}
-
 /**
  * Whether an order of `taxedAmount` paise may spend referral credits.
  *
@@ -158,50 +145,67 @@ export async function deriveCheckoutAmount(
   input: DeriveCheckoutAmountInput,
 ): Promise<DerivedCheckoutAmount> {
   const originalAmount = input.basePaise;
-
-  const welcomeDiscountPaise = input.discount
-    ? 0
-    : computeWelcomeDiscountPaise(originalAmount, input.welcomeDiscount);
-  const discountPaise =
-    computeDiscountPaise(originalAmount, input.discount) + welcomeDiscountPaise;
-  const discountedAmount = originalAmount - discountPaise;
-
-  const isInternational = input.buyerCountry !== "IN";
-  const tax = determineTax({
-    baseAmountPaise: discountedAmount,
-    buyerCountry: input.buyerCountry,
-    serviceType: input.serviceType ?? "CONSULTING",
-  });
-  const taxedAmount = discountedAmount + tax.taxAmount;
-
-  let creditsApplied = 0;
-  if (
-    input.useReferralCredits === true &&
-    isCreditRedemptionEligible(taxedAmount) &&
-    input.resolveAvailableCreditsPaise
-  ) {
-    const totalAvailable = await input.resolveAvailableCreditsPaise();
-    if (totalAvailable > 0) {
-      creditsApplied = Math.min(
-        totalAvailable,
-        taxedAmount,
-        creditCapPaise(originalAmount, input.creditCapBps),
-      );
-    }
-  }
-
-  return {
+  const codeDiscountPaise = computeDiscountPaise(
     originalAmount,
-    discountPaise,
-    welcomeDiscountPaise,
-    discountedAmount,
-    taxAmount: tax.taxAmount,
-    taxRate: tax.taxRate,
-    isZeroRated: tax.isZeroRated,
-    taxedAmount,
-    creditsApplied,
-    amount: taxedAmount - creditsApplied,
-    isInternational,
-    tax,
+    input.discount,
+  );
+  const isInternational = input.buyerCountry !== "IN";
+
+  let balance: Promise<number> | null = null;
+  const availableCredits = () => {
+    balance ??= Promise.resolve(input.resolveAvailableCreditsPaise?.() ?? 0);
+    return balance;
   };
+
+  const price = async (welcomeDiscountPaise: number) => {
+    const discountPaise = codeDiscountPaise + welcomeDiscountPaise;
+    const discountedAmount = originalAmount - discountPaise;
+    const tax = determineTax({
+      baseAmountPaise: discountedAmount,
+      buyerCountry: input.buyerCountry,
+      serviceType: input.serviceType ?? "CONSULTING",
+    });
+    const taxedAmount = discountedAmount + tax.taxAmount;
+    let creditsApplied = 0;
+    if (
+      input.useReferralCredits === true &&
+      isCreditRedemptionEligible(taxedAmount) &&
+      input.resolveAvailableCreditsPaise
+    ) {
+      const totalAvailable = await availableCredits();
+      if (totalAvailable > 0) {
+        creditsApplied = Math.min(
+          totalAvailable,
+          taxedAmount,
+          creditCapPaise(
+            originalAmount,
+            input.creditCapBps ?? 0,
+            welcomeDiscountPaise,
+          ),
+        );
+      }
+    }
+    return {
+      originalAmount,
+      discountPaise,
+      welcomeDiscountPaise,
+      discountedAmount,
+      taxAmount: tax.taxAmount,
+      taxRate: tax.taxRate,
+      isZeroRated: tax.isZeroRated,
+      taxedAmount,
+      creditsApplied,
+      amount: taxedAmount - creditsApplied,
+      isInternational,
+      tax,
+    };
+  };
+
+  const welcome = input.discount ? null : input.welcomeDiscount;
+  const welcomePaise = computeWelcomeDiscountPaise(originalAmount, welcome);
+  if (welcomePaise === 0) return price(0);
+  const withWelcome = await price(welcomePaise);
+  return keepsWelcomeDiscount(welcome, withWelcome.amount)
+    ? withWelcome
+    : price(0);
 }

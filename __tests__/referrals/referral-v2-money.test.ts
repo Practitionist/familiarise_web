@@ -3,7 +3,7 @@
  */
 
 /**
- * Referral v2 money edges: take rate by attribution and waiver consumption, the vest CAS
+ * Referral money edges: take rate by attribution and waiver consumption, the vest CAS
  * (refund present, void on refund, budget exhaustion, liability journal) and the credit cap.
  */
 
@@ -23,25 +23,31 @@ const tx = {
     aggregate: jest.fn(),
     updateMany: jest.fn(),
   },
-  referralCode: { updateMany: jest.fn() },
+  referralCode: { updateMany: jest.fn(), findUnique: jest.fn() },
   appointmentOccurrence: { findFirst: jest.fn(), findUnique: jest.fn() },
   platformFeeSchedule: { findFirst: jest.fn() },
   consultantFeeWaiver: { findFirst: jest.fn(), updateMany: jest.fn() },
   expertCustomerRelationship: { findUnique: jest.fn() },
-  payment: { updateMany: jest.fn() },
+  payment: { updateMany: jest.fn(), findFirst: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { $transaction: (fn: (t: unknown) => unknown) => fn(tx) },
 }));
 
+import prisma, { type Tx } from "@/lib/prisma";
 import { settleB2cPlatformFeePaise } from "@/lib/payments/pricing/platform-fee";
 import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amount";
 import { settleQualifyingReferral } from "@/lib/referrals/vesting";
 
 const NOW = new Date("2026-10-05T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
-const T = tx as never;
+/** The mocked client hands the stub to its callback, typed as the real transaction client. */
+const typedTx = (): Promise<Tx> => prisma.$transaction(async (t) => t);
+let T: Tx;
+beforeAll(async () => {
+  T = await typedTx();
+});
 
 const config = (over: Record<string, unknown> = {}) => ({
   id: "singleton",
@@ -60,6 +66,10 @@ const config = (over: Record<string, unknown> = {}) => ({
   perCodeLifetimeCap: 25,
   perReferrerYearlyCapPaise: 1_000_000,
   weeklyVestCap: 5,
+  expertYearlyReferralCap: 10,
+  expertWaiverSessions: 3,
+  expertWaiverDays: 90,
+  expertReferralBudgetPaise: 180_000,
   version: 3,
   updatedAt: NOW,
   ...over,
@@ -100,6 +110,7 @@ beforeEach(() => {
   tx.referral.count.mockResolvedValue(0);
   tx.referral.updateMany.mockResolvedValue({ count: 1 });
   tx.referralCode.updateMany.mockResolvedValue({ count: 1 });
+  tx.payment.findFirst.mockResolvedValue(null);
   tx.platformFeeSchedule.findFirst.mockResolvedValue({
     id: "fs-1",
     marketplaceBps: 2000,

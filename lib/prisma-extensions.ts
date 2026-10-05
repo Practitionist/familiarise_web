@@ -116,6 +116,7 @@ export const moneyResultExtensions = {
     amount: f("amount"),
     originalAmount: f("originalAmount"),
     taxAmount: f("taxAmount"),
+    welcomeDiscountPaise: fn("welcomeDiscountPaise"),
     exchangeRateAtCheckout: dn("exchangeRateAtCheckout"),
   },
   paymentLeg: { amountPaise: f("amountPaise") },
@@ -173,6 +174,7 @@ export const moneyResultExtensions = {
     discountMaxPaise: f("discountMaxPaise"),
     minOrderPaise: f("minOrderPaise"),
     perReferrerYearlyCapPaise: f("perReferrerYearlyCapPaise"),
+    expertReferralBudgetPaise: f("expertReferralBudgetPaise"),
   },
   platformPricingConfig: {
     minTrialPriceInPaise: f("minTrialPriceInPaise"),
@@ -181,6 +183,7 @@ export const moneyResultExtensions = {
     referrerReward: fn("referrerReward"),
     refereeReward: fn("refereeReward"),
     totalEarned: f("totalEarned"),
+    yearRewardPaise: f("yearRewardPaise"),
   },
   referral: {
     referrerRewardAmount: fn("referrerRewardAmount"),

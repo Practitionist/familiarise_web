@@ -7,11 +7,12 @@
  * payment's credits ride one aggregated REFERRAL_CREDIT leg.
  */
 
-import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
+const WINDOW_DAYS = 30;
 
 const mockTx = {
   referral: { findMany: jest.fn() },
   referralCode: { findUnique: jest.fn() },
+  referralProgramConfig: { findUnique: jest.fn() },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -24,6 +25,10 @@ jest.mock("../../lib/prisma", () => ({
     },
     referral: {
       findMany: (...args: unknown[]) => mockTx.referral.findMany(...args),
+    },
+    referralProgramConfig: {
+      findUnique: (...args: unknown[]) =>
+        mockTx.referralProgramConfig.findUnique(...args),
     },
   },
 }));
@@ -120,7 +125,7 @@ describe("applyCreditsToPayment — one REFERRAL_CREDIT leg per payment", () => 
           { id: "c1", remainingAmount: 3000 },
           { id: "c2", remainingAmount: 5000 },
         ]),
-        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       referralCreditUsage: {
         create: jest
@@ -150,12 +155,15 @@ describe("applyCreditsToPayment — one REFERRAL_CREDIT leg per payment", () => 
 describe("getUserReferrals — derives EXPIRED status at read time", () => {
   it("projects EXPIRED for stale SIGNED_UP referrals while keeping fresh or REWARDED rows intact", async () => {
     mockTx.referralCode.findUnique.mockResolvedValue({ id: "code-1" });
+    mockTx.referralProgramConfig.findUnique.mockResolvedValue({
+      qualifyWindowDays: WINDOW_DAYS,
+    });
     const now = Date.now();
     mockTx.referral.findMany.mockResolvedValue([
       {
         id: "ref-stale-window",
         status: "SIGNED_UP",
-        signedUpAt: new Date(now - (QUALIFICATION_WINDOW_DAYS + 2) * DAY_MS),
+        signedUpAt: new Date(now - (WINDOW_DAYS + 2) * DAY_MS),
         referredUser: { name: "Stale SignedUp", image: null },
       },
       {

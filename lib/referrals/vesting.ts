@@ -1,27 +1,28 @@
 import type { AppointmentsType, Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { LONG_JOB_TTL_MS, withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportSentryMessage } from "@/lib/observability/report";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
-import { sumPaise } from "@/lib/payments/utils/money";
 import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
-import { CONSULTANT_WAIVER_SESSIONS } from "./constants";
 import {
   firstLiveOccurrenceId,
   UNDELIVERED_OCCURRENCE_STATUSES,
 } from "./capture";
 import {
-  budgetPeriod,
   isProgramLive,
   readReferralProgramConfig,
   REFERRAL_CONFIG_ID,
+  rollBudgetPeriod,
   type ReferralProgramConfigRow,
 } from "./program-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-/** Days an expert-referral fee waiver stays usable once granted. */
-export const CONSULTANT_WAIVER_DAYS = 90;
+/** A sweep stops starting rows after this, inside the ticker's 20 s target budget. */
+const RUN_DEADLINE_MS = 12_000;
 
 export type ReferralVoidReason =
   | "REFUNDED"
@@ -31,10 +32,17 @@ export type ReferralVoidReason =
   | "SELF_DEALING"
   | "CODE_CAP_REACHED"
   | "REFERRER_YEARLY_CAP"
-  | "KYC_NOT_COMPLETED";
+  | "KYC_NOT_COMPLETED"
+  | "MISSING_CREDIT"
+  | "NO_EXPERT_PROFILE";
 
 export type VestOutcome =
-  "VESTED" | "VOIDED" | "DEFERRED" | "BUDGET_EXHAUSTED" | "SKIPPED";
+  | "VESTED"
+  | "VOIDED"
+  | "REOPENED"
+  | "DEFERRED"
+  | "BUDGET_EXHAUSTED"
+  | "SKIPPED";
 
 /** A predicate re-checked in a CAS no longer held; the whole row rolls back and retries next run. */
 class VestRaced extends Error {
@@ -94,7 +102,7 @@ const referralForVest = {
       userId: true,
       appointmentId: true,
       appointment: { select: { appointmentType: true } },
-      refunds: { select: { status: true } },
+      refunds: { select: { status: true, metadata: true } },
       disputes: { select: { status: true } },
       earnings: {
         where: { role: "OWNER" },
@@ -130,6 +138,63 @@ async function voidReferral(
   return "VOIDED";
 }
 
+/** Who asked for a refund, as the refund paths record it; null is an automated sweep. */
+const refundInitiatorSchema = z.object({
+  initiatedByUserId: z.string().nullable(),
+});
+
+/** A succeeded refund the buyer asked for, or one whose initiator was never recorded. */
+function buyerCancelled(
+  refunds: { status: string; metadata: Prisma.JsonValue }[],
+  buyerUserId: string,
+): boolean {
+  return refunds.some((x) => {
+    if (x.status !== "SUCCEEDED") return false;
+    const meta = refundInitiatorSchema.safeParse(x.metadata);
+    return !meta.success || meta.data.initiatedByUserId === buyerUserId;
+  });
+}
+
+/**
+ * The expert or the platform cancelled the referee's qualifying order: the referral goes
+ * back to SIGNED_UP inside its original window, the referrer's PENDING credit is voided, and
+ * the order stops counting as the first purchase or holding the welcome-discount slot.
+ */
+async function reopenReferral(
+  tx: Tx,
+  referralId: string,
+  paymentId: string,
+  now: Date,
+): Promise<VestOutcome> {
+  const moved = await tx.referral.updateMany({
+    where: {
+      id: referralId,
+      status: "QUALIFYING",
+      qualifyingPaymentId: paymentId,
+    },
+    data: {
+      status: "SIGNED_UP",
+      qualifyingPaymentId: null,
+      qualifyingOccurrenceId: null,
+      qualifiedAt: null,
+      qualifyingAction: null,
+    },
+  });
+  if (moved.count === 0) return "SKIPPED";
+  await tx.referralCredit.updateMany({
+    where: { referralId, state: "PENDING" },
+    data: { state: "VOID", voidedAt: now },
+  });
+  await tx.payment.updateMany({
+    where: { id: paymentId, referralReleasedAt: null },
+    data: { referralReleasedAt: now },
+  });
+  await tx.expertCustomerRelationship.deleteMany({
+    where: { firstPaymentId: paymentId, source: "CONSUMER_REFERRAL" },
+  });
+  return "REOPENED";
+}
+
 /** The predicates the vest CAS repeats against committed rows. */
 function vestableWhere(
   referralId: string,
@@ -157,19 +222,24 @@ function vestableWhere(
 type Delivered =
   | { kind: "ready"; occurrenceId: string; deliveredBefore: Date; endsAt: Date }
   | { kind: "wait" }
+  | { kind: "refunded"; paymentId: string; byBuyer: boolean }
   | { kind: "void"; reason: ReferralVoidReason };
 
 /** Refund, dispute and delivery state of the qualifying purchase. */
 async function deliveryState(
   tx: Tx,
   r: VestReferral,
-  cfg: ReferralProgramConfigRow | null,
+  cfg: ReferralProgramConfigRow,
   now: Date,
 ): Promise<Delivered> {
   const pay = r.qualifyingPayment;
   if (!pay) return { kind: "void", reason: "REFUNDED" };
   if (pay.refunds.some((x) => x.status === "SUCCEEDED")) {
-    return { kind: "void", reason: "REFUNDED" };
+    return {
+      kind: "refunded",
+      paymentId: pay.id,
+      byBuyer: buyerCancelled(pay.refunds, pay.userId),
+    };
   }
   if (
     pay.disputes.some((d) =>
@@ -178,7 +248,7 @@ async function deliveryState(
   ) {
     return { kind: "void", reason: "CHARGEBACK" };
   }
-  const windowMs = (cfg?.qualifyWindowDays ?? 30) * DAY_MS;
+  const windowMs = cfg.qualifyWindowDays * DAY_MS;
 
   let occ = r.qualifyingOccurrence;
   if (!occ || occ.deletedAt || occ.completionStatus === "RESCHEDULED") {
@@ -238,13 +308,7 @@ async function claimBudget(
   amount: number,
   now: Date,
 ): Promise<boolean> {
-  const period = budgetPeriod(now);
-  if (cfg.currentPeriod !== period) {
-    await tx.referralProgramConfig.updateMany({
-      where: { id: REFERRAL_CONFIG_ID, currentPeriod: { not: period } },
-      data: { currentPeriod: period, currentMonthSpentPaise: 0 },
-    });
-  }
+  const period = await rollBudgetPeriod(tx, now);
   if (amount > cfg.monthlyBudgetPaise) return false;
   const claimed = await tx.referralProgramConfig.updateMany({
     where: {
@@ -258,6 +322,55 @@ async function claimBudget(
     data: { currentMonthSpentPaise: { increment: amount } },
   });
   return claimed.count === 1;
+}
+
+/** UTC calendar-year and ISO-week (Monday) keys for the per-referrer vest counters. */
+function capKeys(now: Date): { year: string; week: string } {
+  const monday = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return {
+    year: now.toISOString().slice(0, 4),
+    week: monday.toISOString().slice(0, 10),
+  };
+}
+
+/** Starts the code's year and week counters afresh when their keys are stale. */
+async function rollCapPeriods(
+  tx: Tx,
+  referralCodeId: string,
+  keys: { year: string; week: string },
+): Promise<void> {
+  await tx.referralCode.updateMany({
+    where: { id: referralCodeId, capYear: { not: keys.year } },
+    data: { capYear: keys.year, yearRewardPaise: 0, yearExpertVests: 0 },
+  });
+  await tx.referralCode.updateMany({
+    where: { id: referralCodeId, capWeek: { not: keys.week } },
+    data: { capWeek: keys.week, weekVests: 0 },
+  });
+}
+
+/** Which cap refused the slot: the lifetime and yearly caps void, the weekly one waits. */
+async function capRefusal(
+  tx: Tx,
+  r: VestReferral,
+  cfg: ReferralProgramConfigRow,
+  reward: number,
+  now: Date,
+): Promise<VestOutcome> {
+  const code = await tx.referralCode.findUnique({
+    where: { id: r.referralCodeId },
+    select: { successfulReferrals: true, yearRewardPaise: true },
+  });
+  if (!code || code.successfulReferrals >= cfg.perCodeLifetimeCap) {
+    return voidReferral(tx, r.id, "CODE_CAP_REACHED", now);
+  }
+  if (code.yearRewardPaise + reward > cfg.perReferrerYearlyCapPaise) {
+    return voidReferral(tx, r.id, "REFERRER_YEARLY_CAP", now);
+  }
+  return "DEFERRED";
 }
 
 async function vestConsumerReferral(
@@ -277,47 +390,29 @@ async function vestConsumerReferral(
     },
     select: { id: true, amount: true },
   });
-  if (!credit) return voidReferral(tx, r.id, "SESSION_NOT_DELIVERED", now);
+  if (!credit) return voidReferral(tx, r.id, "MISSING_CREDIT", now);
   const reward = credit.amount;
 
-  const yearAgo = new Date(now.getTime() - 365 * DAY_MS);
-  const earnedThisYear = await tx.referralCredit.aggregate({
-    where: {
-      userId: referrerUserId,
-      source: "REFERRAL_BONUS",
-      state: { in: ["VESTED", "EXPIRED"] },
-      vestedAt: { gte: yearAgo },
-    },
-    _sum: { amount: true },
-  });
-  if (
-    sumPaise(earnedThisYear._sum.amount) + reward >
-    cfg.perReferrerYearlyCapPaise
-  ) {
-    return voidReferral(tx, r.id, "REFERRER_YEARLY_CAP", now);
-  }
-  const vestedThisWeek = await tx.referral.count({
-    where: {
-      referralCodeId: r.referralCodeId,
-      status: "VESTED",
-      vestedAt: { gte: new Date(now.getTime() - 7 * DAY_MS) },
-    },
-  });
-  if (vestedThisWeek >= cfg.weeklyVestCap) return "DEFERRED";
-
+  // Lifetime, yearly and weekly caps in one conditional update on the code row.
+  const keys = capKeys(now);
+  await rollCapPeriods(tx, r.referralCodeId, keys);
   const codeSlot = await tx.referralCode.updateMany({
     where: {
       id: r.referralCodeId,
+      capYear: keys.year,
+      capWeek: keys.week,
       successfulReferrals: { lt: cfg.perCodeLifetimeCap },
+      yearRewardPaise: { lte: cfg.perReferrerYearlyCapPaise - reward },
+      weekVests: { lt: cfg.weeklyVestCap },
     },
     data: {
       successfulReferrals: { increment: 1 },
       totalEarned: { increment: reward },
+      yearRewardPaise: { increment: reward },
+      weekVests: { increment: 1 },
     },
   });
-  if (codeSlot.count === 0) {
-    return voidReferral(tx, r.id, "CODE_CAP_REACHED", now);
-  }
+  if (codeSlot.count === 0) return capRefusal(tx, r, cfg, reward, now);
   if (!(await claimBudget(tx, cfg, reward, now))) throw new BudgetExhausted();
 
   const vested = await tx.referral.updateMany({
@@ -363,7 +458,7 @@ async function vestExpertReferral(
   now: Date,
 ): Promise<VestOutcome> {
   const referee = r.referredUser.consultantProfile;
-  if (!referee) return voidReferral(tx, r.id, "SELF_DEALING", now);
+  if (!referee) return voidReferral(tx, r.id, "NO_EXPERT_PROFILE", now);
   const kycDone =
     !!referee.taxInfo?.panLast4 &&
     referee.payoutAccounts.some((a) => a.isVerified);
@@ -375,20 +470,40 @@ async function vestExpertReferral(
       : "DEFERRED";
   }
 
+  const keys = capKeys(now);
+  await rollCapPeriods(tx, r.referralCodeId, keys);
+  const codeSlot = await tx.referralCode.updateMany({
+    where: {
+      id: r.referralCodeId,
+      capYear: keys.year,
+      yearExpertVests: { lt: cfg.expertYearlyReferralCap },
+    },
+    data: {
+      successfulReferrals: { increment: 1 },
+      yearExpertVests: { increment: 1 },
+    },
+  });
+  if (codeSlot.count === 0) {
+    return voidReferral(tx, r.id, "REFERRER_YEARLY_CAP", now);
+  }
+  if (!(await claimBudget(tx, cfg, cfg.expertReferralBudgetPaise, now))) {
+    throw new BudgetExhausted();
+  }
+
   const vested = await tx.referral.updateMany({
     where: vestableWhere(r.id, ready.occurrenceId, ready.deliveredBefore),
     data: { status: "VESTED", vestedAt: now, referrerRewardPaidAt: now },
   });
   if (vested.count === 0) throw new VestRaced("referral");
 
-  const expiresAt = new Date(now.getTime() + CONSULTANT_WAIVER_DAYS * DAY_MS);
+  const expiresAt = new Date(now.getTime() + cfg.expertWaiverDays * DAY_MS);
   const referrerProfileId = r.referralCode.user.consultantProfile?.id;
   await tx.consultantFeeWaiver.createMany({
     data: [
       {
         consultantProfileId: referee.id,
         reason: "REFERRED_EXPERT" as const,
-        sessionsRemaining: CONSULTANT_WAIVER_SESSIONS,
+        sessionsRemaining: cfg.expertWaiverSessions,
         expiresAt,
         referralId: r.id,
       },
@@ -397,7 +512,7 @@ async function vestExpertReferral(
             {
               consultantProfileId: referrerProfileId,
               reason: "REFERRING_EXPERT" as const,
-              sessionsRemaining: CONSULTANT_WAIVER_SESSIONS,
+              sessionsRemaining: cfg.expertWaiverSessions,
               expiresAt,
               referralId: r.id,
             },
@@ -405,10 +520,6 @@ async function vestExpertReferral(
         : []),
     ],
     skipDuplicates: true,
-  });
-  await tx.referralCode.update({
-    where: { id: r.referralCodeId },
-    data: { successfulReferrals: { increment: 1 } },
   });
   return "VESTED";
 }
@@ -428,13 +539,19 @@ export async function settleQualifyingReferral(
           });
           if (r?.status !== "QUALIFYING") return "SKIPPED";
           const cfg = await readReferralProgramConfig(tx);
+          if (!cfg) return "DEFERRED";
           const state = await deliveryState(tx, r, cfg, now);
+          const pay = r.qualifyingPayment;
+          const isExpertReferral = !!pay && pay.userId !== r.referredUserId;
+          if (state.kind === "refunded") {
+            return isExpertReferral || state.byBuyer
+              ? voidReferral(tx, r.id, "REFUNDED", now)
+              : reopenReferral(tx, r.id, state.paymentId, now);
+          }
           if (state.kind === "void") {
             return voidReferral(tx, r.id, state.reason, now);
           }
 
-          const pay = r.qualifyingPayment;
-          const isExpertReferral = !!pay && pay.userId !== r.referredUserId;
           const sellerUserId = pay?.earnings[0]?.consultantProfile.userId;
           const referrerUserId = r.referralCode.userId;
           if (
@@ -475,6 +592,7 @@ export async function vestQualifyingReferrals(opts: {
   now?: Date;
 }): Promise<VestRunResult> {
   const now = opts.now ?? new Date();
+  const started = Date.now();
   const rows = await prisma.referral.findMany({
     where: { status: "QUALIFYING" },
     orderBy: { updatedAt: "asc" },
@@ -482,7 +600,7 @@ export async function vestQualifyingReferrals(opts: {
     select: { id: true },
   });
   const result: VestRunResult = {
-    scanned: rows.length,
+    scanned: 0,
     vested: 0,
     voided: 0,
     deferred: 0,
@@ -491,10 +609,12 @@ export async function vestQualifyingReferrals(opts: {
     failures: [],
   };
   for (const { id } of rows) {
+    if (Date.now() - started > RUN_DEADLINE_MS) break;
+    result.scanned++;
     try {
       const outcome = await settleQualifyingReferral(id, now);
       if (outcome === "VESTED") result.vested++;
-      else if (outcome === "VOIDED") result.voided++;
+      else if (outcome === "VOIDED" || outcome === "REOPENED") result.voided++;
       else if (outcome === "DEFERRED" || outcome === "BUDGET_EXHAUSTED") {
         if (outcome === "DEFERRED") result.deferred++;
         else result.budgetExhausted++;
@@ -515,6 +635,30 @@ export async function vestQualifyingReferrals(opts: {
   return result;
 }
 
+/** The `vest-referral-credits` registry job; failures are reported once per run. */
+export async function runVestReferralCredits(opts: {
+  limit: number;
+}): Promise<VestRunResult> {
+  return withCronLock(
+    "vest-referral-credits",
+    { failMode: "closed" },
+    async () => {
+      const result = await vestQualifyingReferrals({ limit: opts.limit });
+      if (result.failed > 0) {
+        reportSentryMessage("REFERRAL_VEST_FAILURES", {
+          subsystem: "referrals",
+          level: "warning",
+          extra: {
+            failed: result.failed,
+            failures: result.failures.slice(0, 20),
+          },
+        });
+      }
+      return result;
+    },
+  );
+}
+
 export interface BreakageRunResult {
   expired: number;
   breakagePaise: number;
@@ -523,15 +667,15 @@ export interface BreakageRunResult {
 }
 
 /**
- * The monthly breakage step: every VESTED credit past its expiry becomes EXPIRED, and
- * a v2-vested balance is released from the liability back to PLATFORM_PROMO.
+ * The monthly breakage step: up to `limit` VESTED credits past their expiry become EXPIRED,
+ * and a balance with `vestedAt` set is released from the liability back to PLATFORM_PROMO.
  */
 export async function expireReferralCredits(opts: {
-  batchSize: number;
-  maxBatches: number;
+  limit: number;
   now?: Date;
 }): Promise<BreakageRunResult> {
   const now = opts.now ?? new Date();
+  const started = Date.now();
   const result: BreakageRunResult = {
     expired: 0,
     breakagePaise: 0,
@@ -539,7 +683,8 @@ export async function expireReferralCredits(opts: {
     failures: [],
   };
   const failedIds = new Set<string>();
-  for (let batch = 0; batch < opts.maxBatches; batch++) {
+  let examined = 0;
+  while (examined < opts.limit && Date.now() - started <= RUN_DEADLINE_MS) {
     const rows = await prisma.referralCredit.findMany({
       where: {
         state: "VESTED",
@@ -547,11 +692,13 @@ export async function expireReferralCredits(opts: {
         id: { notIn: [...failedIds] },
       },
       orderBy: { expiresAt: "asc" },
-      take: opts.batchSize,
+      take: Math.min(200, opts.limit - examined),
       select: { id: true },
     });
     if (rows.length === 0) break;
     for (const { id } of rows) {
+      if (Date.now() - started > RUN_DEADLINE_MS) break;
+      examined++;
       try {
         const released = await withSerializableRetry(() =>
           prisma.$transaction((tx) => expireOneCredit(tx, id, now), {
@@ -573,6 +720,30 @@ export async function expireReferralCredits(opts: {
     }
   }
   return result;
+}
+
+/** The `expire-referral-credits` registry job; failures are reported once per run. */
+export async function runExpireReferralCredits(opts: {
+  limit: number;
+}): Promise<BreakageRunResult> {
+  return withCronLock(
+    "expire-referral-credits",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    async () => {
+      const result = await expireReferralCredits({ limit: opts.limit });
+      if (result.failed > 0) {
+        reportSentryMessage("REFERRAL_BREAKAGE_FAILURES", {
+          subsystem: "referrals",
+          level: "warning",
+          extra: {
+            failed: result.failed,
+            failures: result.failures.slice(0, 20),
+          },
+        });
+      }
+      return result;
+    },
+  );
 }
 
 /** Null when the credit already moved; otherwise the paise released as breakage. */

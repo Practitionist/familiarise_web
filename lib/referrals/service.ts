@@ -4,17 +4,20 @@ import { Prisma as PrismaNamespace } from "@prisma/client";
 import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
-import { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_DAYS } from "./constants";
-import { isProgramLive, readReferralProgramConfig } from "./program-config";
+import {
+  acceptsNewReferees,
+  readReferralProgramConfig,
+} from "./program-config";
 
 // #780 — bare model types still say bigint; the extended client returns number
 export type ReferralCodeRow = Omit<
   ReferralCode,
-  "referrerReward" | "refereeReward" | "totalEarned"
+  "referrerReward" | "refereeReward" | "totalEarned" | "yearRewardPaise"
 > & {
   referrerReward: number | null;
   refereeReward: number | null;
   totalEarned: number;
+  yearRewardPaise: number;
 };
 export type ReferralRow = Omit<
   Referral,
@@ -31,9 +34,6 @@ export type ReferralCreditRow = Omit<
   usedAmount: number;
   remainingAmount: number;
 };
-
-// Re-export so existing server-side consumers can still import from service
-export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_DAYS };
 
 // Constants
 // #880 conservative launch: ₹300 each (the referrer reward ramps to ₹500 once
@@ -189,9 +189,10 @@ export async function applyReferralCode(
         }
 
         const cfg = await readReferralProgramConfig(tx);
-        if (!isProgramLive(cfg)) return null;
+        const now = new Date();
+        if (!acceptsNewReferees(cfg, now)) return null;
         const windowStart = new Date(
-          Date.now() - cfg.qualifyWindowDays * 24 * 60 * 60 * 1000,
+          now.getTime() - cfg.qualifyWindowDays * 24 * 60 * 60 * 1000,
         );
         const user = await tx.user.findUnique({
           where: { id: newUserId },
@@ -272,7 +273,7 @@ export async function getUserCredits(
 }
 
 /**
- * A v2-vested credit is a liability: redeeming it draws the liability down (Dr
+ * A credit with `vestedAt` set is a liability: redeeming it draws the liability down (Dr
  * REFERRAL_CREDIT_LIABILITY / Cr PLATFORM_PROMO) and restoring it on a refund or an
  * abandoned order re-raises it, so the liability always equals the vested balance.
  */
@@ -309,10 +310,9 @@ async function postReferralLiabilityMove(
 }
 
 /**
- * Applies referral credits to a payment at checkout.
- * Uses FIFO ordering by expiry date (expiring soonest first).
- * Creates per-payment usage records in ReferralCreditUsage ledger for accurate reversal.
- * Returns the total credits used and the remaining amount to pay.
+ * Applies referral credits to a payment at checkout, soonest-expiring first. Each draw is
+ * a CAS on a still-spendable balance; a credit that changed underneath aborts the checkout
+ * with CREDIT_SHORTFALL so it re-prices. Usage rows keep the per-payment trail.
  */
 export async function applyCreditsToPayment(
   userId: string,
@@ -320,6 +320,7 @@ export async function applyCreditsToPayment(
   tx: Tx,
   paymentId?: string,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
+  const now = new Date();
   const { credits } = await getUserCredits(userId, tx);
 
   let creditsUsed = 0;
@@ -331,16 +332,27 @@ export async function applyCreditsToPayment(
 
     const useAmount = Math.min(credit.remainingAmount, remainingToPay);
 
-    await tx.referralCredit.update({
-      where: { id: credit.id },
+    const drawn = await tx.referralCredit.updateMany({
+      where: {
+        id: credit.id,
+        state: "VESTED",
+        remainingAmount: { gte: useAmount },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       data: {
         usedAmount: { increment: useAmount },
         remainingAmount: { decrement: useAmount },
-        ...(credit.remainingAmount - useAmount === 0 && {
-          usedAt: new Date(),
-        }),
+        ...(credit.remainingAmount - useAmount === 0 && { usedAt: now }),
       },
     });
+    if (drawn.count !== 1) {
+      throw Object.assign(
+        new Error(
+          `CREDIT_SHORTFALL: credit ${credit.id} changed while it was being redeemed`,
+        ),
+        { httpStatus: 409, code: "CREDIT_SHORTFALL", retryAfter: 2 },
+      );
+    }
 
     // Create ledger entry for accurate per-payment tracking and reversal
     if (paymentId) {
@@ -657,9 +669,10 @@ export async function getUserReferrals(
     orderBy: { createdAt: "desc" },
   });
 
-  const now = new Date();
+  const cfg = await readReferralProgramConfig();
+  if (!cfg) return rows;
   const windowCutoff = new Date(
-    now.getTime() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - cfg.qualifyWindowDays * 24 * 60 * 60 * 1000,
   );
   return rows.map((r) => {
     const isStale = r.status === "SIGNED_UP" && r.signedUpAt < windowCutoff;

@@ -23,6 +23,8 @@ const KEY = "familiarise.pendingReferral";
 // they stay outside the schema.) The server remains the source of truth for
 // code validity; this is just a cheap client-side normalize.
 const referralCodeSchema = z.string().trim().min(1).max(64);
+/** The `/r/<code>` route writes the code verbatim, so the cookie is read raw. */
+const cookieCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 
 export function setPendingReferral(code: string): void {
   if (typeof window === "undefined") return;
@@ -42,9 +44,7 @@ function readReferralCookie(): string | null {
     .split("; ")
     .find((c) => c.startsWith(prefix))
     ?.slice(prefix.length);
-  const parsed = referralCodeSchema.safeParse(
-    raw ? decodeURIComponent(raw) : null,
-  );
+  const parsed = cookieCodeSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
 

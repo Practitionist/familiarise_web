@@ -1,6 +1,7 @@
 /**
  * GET  /api/admin/fee-schedules — the take-rate schedule history and the active row (STAFF + ADMIN).
- * POST /api/admin/fee-schedules — ADMIN proposes a schedule; a different ADMIN approves it.
+ * POST /api/admin/fee-schedules — ADMIN proposes a schedule; another ADMIN approves it (a sole
+ * ADMIN may approve their own after 24 hours).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";

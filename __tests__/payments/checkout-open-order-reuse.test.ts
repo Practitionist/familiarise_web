@@ -144,6 +144,7 @@ jest.mock("../../lib/referrals/capture", () => ({
 }));
 jest.mock("../../lib/referrals/attribution", () => ({
   __esModule: true,
+  asWelcomeDiscountConflict: (err: unknown) => err,
   resolveCheckoutAttribution: jest.fn(async () => ({
     source: "MARKETPLACE",
     referralId: null,

@@ -6,7 +6,11 @@ import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
 import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
-import { EXPERT_VIA_COOKIE } from "@/lib/referrals/attribution-token-shape";
+import {
+  EXPERT_VIA_COOKIE,
+  parseViaToken,
+} from "@/lib/referrals/attribution-token-shape";
+import type { ReferralPricing } from "@/lib/referrals/promo-math";
 
 const querySchema = z.object({
   consultantProfileId: z.string().min(1).max(64),
@@ -41,14 +45,15 @@ export async function GET(req: NextRequest) {
       buyerUserId: session.user.id,
       consultantProfileId: consultant?.id ?? null,
       consultantUserId: consultant?.userId ?? null,
-      viaToken: req.cookies.get(EXPERT_VIA_COOKIE)?.value ?? null,
+      viaToken: parseViaToken(req.cookies.get(EXPERT_VIA_COOKIE)?.value),
       orgFunded: false,
       hasDiscountCode: false,
     });
-    return NextResponse.json({
+    const body: ReferralPricing = {
       welcomeDiscount: attribution.welcomeDiscount,
       creditCapBps: attribution.creditCapBps,
-    });
+    };
+    return NextResponse.json(body);
   } catch (error) {
     reportSentryError(error, { subsystem: "checkout", op: "referral-pricing" });
     return NextResponse.json(

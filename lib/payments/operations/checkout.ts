@@ -77,7 +77,10 @@ import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
-import { resolveCheckoutAttribution } from "@/lib/referrals/attribution";
+import {
+  asWelcomeDiscountConflict,
+  resolveCheckoutAttribution,
+} from "@/lib/referrals/attribution";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   deriveCheckoutAmount,
@@ -254,6 +257,7 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "SUBSCRIPTION_ALREADY_ACTIVE",
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
+    "WELCOME_DISCOUNT_IN_USE",
   ]);
 
 /**
@@ -1264,6 +1268,7 @@ export async function calculateAmountAndValidate(
       attributionSource: attribution.source,
       attributionReferralId: attribution.referralId,
       platformFeeBps: attribution.platformFeeBps,
+      welcomeDiscountPaise: derived.welcomeDiscountPaise,
     };
   });
 }
@@ -3852,6 +3857,7 @@ export async function handleCheckout(
       attributionSource,
       attributionReferralId,
       platformFeeBps,
+      welcomeDiscountPaise,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -4515,6 +4521,8 @@ export async function handleCheckout(
                 attributionSource,
                 attributionReferralId,
                 platformFeeBps,
+                welcomeDiscountPaise:
+                  welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
               },
             });
 
@@ -5047,7 +5055,8 @@ export async function handleCheckout(
         // #1861 L1 — Checkout's `timeout` is sized to this.
         holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
       };
-    } catch (dbError) {
+    } catch (caught) {
+      const dbError = asWelcomeDiscountConflict(caught);
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
       // list `preservedMessages` below uses for the rethrow decision, so

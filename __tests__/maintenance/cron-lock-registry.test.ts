@@ -99,8 +99,7 @@ function findAllLocks(
 ): { jobName: string; failMode: string }[] {
   if (!src) return [];
   const out: { jobName: string; failMode: string }[] = [];
-  const re =
-    /withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/g;
+  const re = /withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/g;
   for (const m of src.matchAll(re)) {
     const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
     out.push({ jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" });
@@ -152,8 +151,7 @@ function lockFor(
   // One core file can host two sweeps sharing a module (the orphan
   // confirmation re-drive plus the orphan payment healer); prefer the lock
   // whose job matches the twin's own `job:` literal over the first in file.
-  const expectedJob =
-    entrySrc.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
+  const expectedJob = entrySrc.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
   for (const spec of extractImports(entrySrc)) {
     const resolved = resolveImport(entryFile, spec);
     if (!resolved) continue;
@@ -178,6 +176,19 @@ function tickerTargets(): string[] {
     block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
     (m) => m[1],
   );
+}
+
+/** Scheduled workflow steps that POST `/api/cleanup/<slug>` instead of running a tsx entrypoint. */
+function workflowTwinCalls(): [string, string][] {
+  const out: [string, string][] = [];
+  for (const workflow of fs.readdirSync(WORKFLOW_DIR).sort()) {
+    const src = read(path.join(WORKFLOW_DIR, workflow));
+    if (!src || !/^\s*schedule:/m.test(src)) continue;
+    for (const m of src.matchAll(/\/api\/cleanup\/([a-z0-9-]+)/g)) {
+      out.push([`${workflow}#${m[1]}`, m[1]]);
+    }
+  }
+  return out;
 }
 
 function entrypointsOf(workflowSrc: string): (string | null)[] {
@@ -231,12 +242,16 @@ function buildRegistry(): Row[] {
     }
   }
 
-  // Ticker-only jobs (no YAML twin): resolved from lib/cron/cleanup-registry.ts.
+  // Ticker targets and workflow steps that POST a cleanup twin: resolved from lib/cron/cleanup-registry.ts.
   const viaYaml = new Set(rows.map((r) => r.jobName));
   const twinBlocks = cleanupTwinBlocks();
   const registryRel = path.join("lib", "cron", "cleanup-registry.ts");
   const registryFile = path.join(ROOT, registryRel);
-  for (const target of tickerTargets()) {
+  const twinCallers: [string, string][] = [
+    ...tickerTargets().map((t): [string, string] => [`cron-tick:${t}`, t]),
+    ...workflowTwinCalls(),
+  ];
+  for (const [workflow, target] of twinCallers) {
     const entrySrc = twinBlocks.get(target) ?? null;
     const jobName =
       entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
@@ -249,7 +264,7 @@ function buildRegistry(): Row[] {
       /^(scripts|lib|jobs)\//,
     );
     rows.push({
-      workflow: `cron-tick:${target}`,
+      workflow,
       entrypoint: entrySrc ? entrypoint : null,
       jobName,
       lockedIn,

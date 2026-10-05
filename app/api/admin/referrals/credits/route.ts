@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma, type CreditSource, type Currency } from "@prisma/client";
+import { Prisma, type CreditSource } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
@@ -21,6 +21,7 @@ import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
 const CreditSourceSchema = z.enum([
   "REFERRAL_BONUS",
@@ -31,6 +32,7 @@ const CreditSourceSchema = z.enum([
 ]);
 
 const CreditStatusFilterSchema = z.enum([
+  "PENDING",
   "ACTIVE",
   "EXHAUSTED",
   "EXPIRED",
@@ -116,9 +118,12 @@ export async function GET(req: NextRequest) {
       remainingAmount: { gt: 0 },
       expiresAt: { lte: now },
     });
+  } else if (status === "PENDING") {
+    andConditions.push({ reversedAt: null, state: "PENDING" });
   } else if (status === "ACTIVE") {
     andConditions.push({
       reversedAt: null,
+      state: "VESTED",
       remainingAmount: { gt: 0 },
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     });
@@ -295,30 +300,25 @@ export const POST = withOpsAction(
         );
       }
 
-      const rawTx = tx as {
-        $executeRawUnsafe?: (query: string) => Promise<unknown>;
-      };
-      const hasSavepoint = typeof rawTx.$executeRawUnsafe === "function";
-
+      const now = new Date();
       let credit;
       try {
-        if (hasSavepoint) {
-          await rawTx.$executeRawUnsafe!(
-            "SAVEPOINT sp_issue_referral_credit",
-          );
-        }
+        await tx.$executeRaw`SAVEPOINT sp_issue_referral_credit`;
+        // Issued spendable: VESTED with vestedAt, so the liability always equals Σ vested unredeemed.
         credit = await tx.referralCredit.create({
           data: {
             userId: user.id,
             amount: body.amountPaise,
             usedAmount: 0,
             remainingAmount: body.amountPaise,
-            currency: body.currency as Currency,
+            currency: body.currency,
             source: body.source,
             expiresAt: expiresAtDate,
             idempotencyKey,
             reason: body.reason,
             issuedBy: actor.userId,
+            state: "VESTED",
+            vestedAt: now,
           },
           include: {
             user: {
@@ -331,19 +331,11 @@ export const POST = withOpsAction(
             usages: true,
           },
         });
-        if (hasSavepoint) {
-          await rawTx.$executeRawUnsafe!(
-            "RELEASE SAVEPOINT sp_issue_referral_credit",
-          );
-        }
+        await tx.$executeRaw`RELEASE SAVEPOINT sp_issue_referral_credit`;
       } catch (err) {
-        if (hasSavepoint) {
-          await rawTx
-            .$executeRawUnsafe!(
-              "ROLLBACK TO SAVEPOINT sp_issue_referral_credit",
-            )
-            .catch(() => undefined);
-        }
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_issue_referral_credit`.catch(
+          () => undefined,
+        );
         if (isUniqueViolationOn(err, "idempotencyKey")) {
           const raced = await tx.referralCredit.findUnique({
             where: { idempotencyKey },
@@ -382,6 +374,24 @@ export const POST = withOpsAction(
         }
         throw err;
       }
+
+      await postLedgerTxn(tx, {
+        idempotencyKey: `referral-issue:${credit.id}`,
+        kind: "REFERRAL_CREDIT",
+        description: `Referral credit ${credit.id} issued by ops`,
+        postings: [
+          {
+            account: { kind: "PLATFORM_PROMO" },
+            direction: "DEBIT",
+            amountPaise: body.amountPaise,
+          },
+          {
+            account: { kind: "REFERRAL_CREDIT_LIABILITY" },
+            direction: "CREDIT",
+            amountPaise: body.amountPaise,
+          },
+        ],
+      });
 
       return {
         target: { kind: "ReferralCredit", id: credit.id },

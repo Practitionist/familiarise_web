@@ -30,7 +30,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import {
   ATTRIBUTION_COOKIE_MAX_AGE_S,
   EXPERT_VIA_COOKIE,
-  VIA_TOKEN_PATTERN,
+  parseViaToken,
 } from "@/lib/referrals/attribution-token-shape";
 
 const URLS = {
@@ -311,8 +311,8 @@ function rememberExpertVia(
   response: NextResponse,
 ): void {
   if (!pathname.startsWith("/explore/experts/")) return;
-  const via = req.nextUrl.searchParams.get("via");
-  if (!via || !VIA_TOKEN_PATTERN.test(via)) return;
+  const via = parseViaToken(req.nextUrl.searchParams.get("via"));
+  if (!via) return;
   response.cookies.set(EXPERT_VIA_COOKIE, via, {
     maxAge: ATTRIBUTION_COOKIE_MAX_AGE_S,
     path: "/",

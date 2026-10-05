@@ -430,8 +430,8 @@ export async function readConsulteePayments(args: {
     query,
     args.now ?? new Date(),
   );
-  const [payments, total, credits, creditAgg, spendableAgg, creditUsages] =
-    await Promise.all([
+  const [payments, total, credits, creditAgg, creditUsages] = await Promise.all(
+    [
       findPayments(
         where,
         userId,
@@ -444,15 +444,11 @@ export async function readConsulteePayments(args: {
         orderBy: { createdAt: "desc" },
         take: HISTORY_CAP,
       }),
-      // Balances come from the UNCAPPED table: the display list is capped and a
-      // sum over it would underreport past 250 credits (PR #1247 review).
-      prisma.referralCredit.aggregate({
-        where: { userId },
-        _sum: { amount: true, usedAmount: true },
-      }),
+      // Balances come from the uncapped table over the spendable credits only,
+      // so total − used = remaining.
       prisma.referralCredit.aggregate({
         where: spendableCreditsWhere(userId),
-        _sum: { remainingAmount: true },
+        _sum: { amount: true, usedAmount: true, remainingAmount: true },
       }),
       prisma.referralCreditUsage.findMany({
         where: { credit: { userId } },
@@ -465,7 +461,8 @@ export async function readConsulteePayments(args: {
         orderBy: { createdAt: "desc" },
         take: HISTORY_CAP,
       }),
-    ]);
+    ],
+  );
 
   // Aggregations bypass the money result extensions and return raw BigInt
   // at runtime whatever the type says, so every sum goes through Number().
@@ -480,7 +477,7 @@ export async function readConsulteePayments(args: {
     creditSummary: {
       total: sum(creditAgg._sum.amount),
       used: sum(creditAgg._sum.usedAmount),
-      remaining: sum(spendableAgg._sum.remainingAmount),
+      remaining: sum(creditAgg._sum.remainingAmount),
     },
   };
 }

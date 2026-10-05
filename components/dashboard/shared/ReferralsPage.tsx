@@ -28,7 +28,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
-import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
+import {
+  referralTermsSchema,
+  type ReferralTerms,
+} from "@/lib/referrals/promo-math";
+import type { ReferralStatus } from "@prisma/client";
 import { creditSourceLabel } from "@/lib/labels/credit-source";
 import Link from "next/link";
 
@@ -45,17 +49,22 @@ interface ReferralCode {
   maxReferrals: number;
 }
 
-interface ReferralTerms {
-  discountPercent: number;
-  discountMaxPaise: number;
-  referrerRewardPaise: number;
-  minOrderPaise: number;
-  redemptionCapPercent: number;
-}
+/** A friend counts as qualified once their first paid booking is captured. */
+const QUALIFIED_STATUSES: ReadonlySet<ReferralStatus> = new Set([
+  "QUALIFIED",
+  "REWARDED",
+  "QUALIFYING",
+  "VESTED",
+]);
+/** Statuses whose referrer reward has been released. */
+const REWARDED_STATUSES: ReadonlySet<ReferralStatus> = new Set([
+  "REWARDED",
+  "VESTED",
+]);
 
 interface Referral {
   id: string;
-  status: string;
+  status: ReferralStatus;
   signedUpAt: string;
   qualifiedAt: string | null;
   referrerRewardAmount: number;
@@ -126,7 +135,9 @@ export function ReferralsPage({
     queryFn: async () => {
       const res = await fetch("/api/referrals/code", { method: "POST" });
       if (!res.ok) throw new Error("Failed to fetch referral code");
-      return res.json();
+      const body: { data: ReferralCode; terms?: unknown } = await res.json();
+      const terms = referralTermsSchema.safeParse(body.terms);
+      return { data: body.data, terms: terms.success ? terms.data : null };
     },
     staleTime: 60_000,
   });
@@ -169,10 +180,8 @@ export function ReferralsPage({
   const referrals = referralsData?.data ?? [];
   const credits = creditsData?.data;
   const totalReferred = referrals.length;
-  // A referral counts as qualified once it completes the paid booking
-  // (QUALIFIED) — REWARDED is the same milestone after the credit lands.
   const qualified = referrals.filter((r) =>
-    ["QUALIFIED", "REWARDED", "QUALIFYING", "VESTED"].includes(r.status),
+    QUALIFIED_STATUSES.has(r.status),
   ).length;
   // `window` is only safe here because `code` happens to be undefined on the
   // server pass today. Add an SSR prefetch for ["referral-code"] — the exact
@@ -283,7 +292,7 @@ export function ReferralsPage({
       headClassName: "text-right",
       className: "text-right",
       cell: (ref) =>
-        ref.status === "REWARDED"
+        REWARDED_STATUSES.has(ref.status)
           ? formatAmount(ref.referrerRewardAmount)
           : "-",
     },
@@ -346,7 +355,11 @@ export function ReferralsPage({
               value={statsError ? "—" : qualified}
               icon={Gift}
               variant="success"
-              tooltip={`Friends who made their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days of signing up`}
+              tooltip={
+                terms
+                  ? `Friends who made their first paid booking within ${terms.qualifyWindowDays} days of signing up`
+                  : "Friends who made their first paid booking after signing up"
+              }
             />
             {isConsultant && (
               <StatCard
@@ -394,13 +407,14 @@ export function ReferralsPage({
                         has passed.
                       </>
                     ) : (
-                      "The referral programme is paused right now. Your link still works and new rewards resume when it reopens."
+                      "The referral programme is paused right now. Friends who sign up while it is paused get no welcome discount and earn you nothing; rewards for new sign-ups resume when it reopens."
                     )}
-                    {isConsultant && (
+                    {isConsultant && terms && (
                       <span className="mt-1 block">
-                        Refer another expert and you both pay no platform fee on
-                        3 sessions once they have verified their payout details
-                        and delivered their first paid session.
+                        Refer another expert and you both pay no platform fee on{" "}
+                        {terms.expertWaiverSessions} sessions once they have
+                        verified their payout details and delivered their first
+                        paid session.
                       </span>
                     )}
                   </div>

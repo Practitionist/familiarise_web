@@ -72,6 +72,7 @@ async function serverAmount(input: ServerInputs): Promise<Amounts> {
         }
       : null,
     useReferralCredits: true,
+    creditCapBps: 10_000,
     resolveAvailableCreditsPaise: () => input.creditsAvailablePaise ?? 0,
   });
   return {
@@ -107,6 +108,7 @@ function clientAmount(input: ServerInputs): Amounts {
             )
           : undefined,
     creditsApplied: input.creditsAvailablePaise ?? 0,
+    creditCapBps: 10_000,
   });
   return {
     taxPaise: breakdown.taxAmount,
@@ -329,14 +331,15 @@ describe("checkout price parity — the edges that actually move money", () => {
     expect(clientAmount(input).totalPaise).toBe(0);
   });
 
-  it("never applies more credit than the total owed", async () => {
+  it("never applies more credit than the promo cap allows", async () => {
     const input: ServerInputs = {
       basePaise: 500000,
       buyerCountry: "IN",
       creditsAvailablePaise: 99_999_999,
     };
-    expect((await serverAmount(input)).totalPaise).toBe(0);
-    expect(clientAmount(input).totalPaise).toBe(0);
+    // A full-price cap still leaves the tax: credits never cover more than the list price.
+    expect((await serverAmount(input)).totalPaise).toBe(90000);
+    expect(clientAmount(input).totalPaise).toBe(90000);
   });
 
   it("leaves the earnings base at the list price, not the charged price", async () => {
@@ -347,6 +350,7 @@ describe("checkout price parity — the edges that actually move money", () => {
       buyerCountry: "IN",
       discount: { discountType: "PERCENTAGE", discountValue: 10 },
       useReferralCredits: true,
+      creditCapBps: 10_000,
       resolveAvailableCreditsPaise: () => 100000,
     });
     expect(derived.originalAmount).toBe(500000);

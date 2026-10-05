@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { applyReferralCode } from "@/lib/referrals/service";
 import { referralApplyLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { z } from "zod";
+
+const applyBodySchema = z.object({ code: z.string().trim().min(1).max(64) });
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,17 +18,15 @@ export async function POST(req: NextRequest) {
     const rl = await applyRateLimit(referralApplyLimiter, session.user.id);
     if (rl) return rl;
 
-    const body = await req.json();
-    const { code } = body;
-
-    if (!code || typeof code !== "string") {
+    const body = applyBodySchema.safeParse(await req.json().catch(() => null));
+    if (!body.success) {
       return NextResponse.json(
         { error: "Referral code is required" },
         { status: 400 },
       );
     }
 
-    const referral = await applyReferralCode(session.user.id, code);
+    const referral = await applyReferralCode(session.user.id, body.data.code);
 
     if (!referral) {
       return NextResponse.json(
@@ -43,7 +44,10 @@ export async function POST(req: NextRequest) {
         "Referral code applied. Your welcome discount is taken off your first booking at checkout.",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error applying referral code:", error);
     return NextResponse.json(
       { error: "Failed to apply referral code" },

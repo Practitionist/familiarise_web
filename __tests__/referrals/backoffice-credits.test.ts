@@ -18,7 +18,10 @@ jest.mock("../../lib/api/after-safe", () => ({
   scheduleAfter: jest.fn(),
 }));
 
-let currentMockUser: { id: string; role: "ADMIN" | "STAFF" | "CONSULTEE" } | null = {
+let currentMockUser: {
+  id: string;
+  role: "ADMIN" | "STAFF" | "CONSULTEE";
+} | null = {
   id: "admin_1",
   role: "ADMIN",
 };
@@ -55,7 +58,13 @@ const mockUserFindUnique = jest.fn();
 const mockUserFindFirst = jest.fn();
 const mockOpsActionLogCreate = jest.fn();
 
+const mockPostLedgerTxn = jest.fn();
+jest.mock("../../lib/payments/ledger/post", () => ({
+  postLedgerTxn: (...args: unknown[]) => mockPostLedgerTxn(...args),
+}));
+
 const mockTx = {
+  $executeRaw: jest.fn().mockResolvedValue(0),
   referralCredit: {
     findUnique: mockReferralCreditFindUnique,
     findUniqueOrThrow: mockReferralCreditFindUniqueOrThrow,
@@ -275,8 +284,14 @@ describe("#1839 — Backoffice Referral Credits API", () => {
             idempotencyKey: "idem_ticket_101",
             reason: "Ticket #101 — missed session compensation",
             issuedBy: "admin_1",
+            state: "VESTED",
+            vestedAt: expect.any(Date),
           }),
         }),
+      );
+      expect(mockPostLedgerTxn).toHaveBeenCalledWith(
+        mockTx,
+        expect.objectContaining({ idempotencyKey: "referral-issue:rc_new" }),
       );
       expect(mockOpsActionLogCreate).toHaveBeenCalledTimes(1);
       expect(mockOpsActionLogCreate).toHaveBeenCalledWith(
@@ -356,7 +371,9 @@ describe("#1839 — Backoffice Referral Credits API", () => {
         user: { id: "u_1", name: "Asha Learner", email: "asha@example.com" },
         usages: [],
       };
-      mockReferralCreditFindUnique.mockResolvedValueOnce(existingMatchingCredit);
+      mockReferralCreditFindUnique.mockResolvedValueOnce(
+        existingMatchingCredit,
+      );
 
       const replayReq = new NextRequest(
         "http://localhost/api/admin/referrals/credits",
@@ -381,7 +398,9 @@ describe("#1839 — Backoffice Referral Credits API", () => {
       expect(replayBody.credit.id).toBe("rc_existing");
 
       // Mismatched payload on same idempotencyKey -> 409 Conflict
-      mockReferralCreditFindUnique.mockResolvedValueOnce(existingMatchingCredit);
+      mockReferralCreditFindUnique.mockResolvedValueOnce(
+        existingMatchingCredit,
+      );
       const mismatchReq = new NextRequest(
         "http://localhost/api/admin/referrals/credits",
         {
@@ -404,7 +423,9 @@ describe("#1839 — Backoffice Referral Credits API", () => {
       expect(mismatchBody.code).toBe("DUPLICATE_IDEMPOTENCY_KEY");
 
       // Mismatched reason with identical amount on same idempotencyKey -> 409 Conflict
-      mockReferralCreditFindUnique.mockResolvedValueOnce(existingMatchingCredit);
+      mockReferralCreditFindUnique.mockResolvedValueOnce(
+        existingMatchingCredit,
+      );
       const mismatchReasonReq = new NextRequest(
         "http://localhost/api/admin/referrals/credits",
         {
@@ -490,6 +511,8 @@ describe("#1839 — Backoffice Referral Credits API", () => {
         remainingAmount: 30000,
         currency: "INR",
         reversedAt: null,
+        state: "VESTED",
+        vestedAt: new Date("2026-04-01T00:00:00.000Z"),
       });
       mockReferralCreditUpdateMany.mockResolvedValue({ count: 1 });
       mockReferralCreditFindUniqueOrThrow.mockResolvedValue({
@@ -528,6 +551,7 @@ describe("#1839 — Backoffice Referral Credits API", () => {
           where: {
             id: "rc_1",
             reversedAt: null,
+            state: "VESTED",
             usedAmount: 20000,
             remainingAmount: 30000,
           },

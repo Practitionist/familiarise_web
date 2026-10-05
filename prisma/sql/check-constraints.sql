@@ -876,14 +876,18 @@ ALTER TABLE "ConsultantFeeWaiver" ADD CONSTRAINT "consultant_fee_waiver_sessions
 
 -- SPLIT
 -- Take rates are basis points of the gross; own-link never exceeds marketplace, and the
--- approver of a fee schedule is never the person who proposed it.
+-- proposer approves their own schedule only once it has stood 24 hours (sole-admin rule).
 ALTER TABLE "PlatformFeeSchedule" DROP CONSTRAINT IF EXISTS "platform_fee_schedule_valid";
 -- SPLIT
 ALTER TABLE "PlatformFeeSchedule" ADD CONSTRAINT "platform_fee_schedule_valid"
   CHECK (
     "marketplaceBps" BETWEEN 0 AND 10000
     AND "ownLinkBps" BETWEEN 0 AND "marketplaceBps"
-    AND ("checkerUserId" IS NULL OR "checkerUserId" <> "makerUserId")
+    AND (
+      "checkerUserId" IS NULL
+      OR "checkerUserId" <> "makerUserId"
+      OR "approvedAt" >= "createdAt" + interval '24 hours'
+    )
     AND (("checkerUserId" IS NULL) = ("approvedAt" IS NULL))
   );
 
@@ -904,6 +908,10 @@ ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_rang
     AND "qualifyWindowDays" > 0
     AND "perCodeLifetimeCap" >= 0
     AND "weeklyVestCap" >= 0
+    AND "expertYearlyReferralCap" >= 0
+    AND "expertWaiverSessions" >= 0
+    AND "expertWaiverDays" > 0
+    AND "expertReferralBudgetPaise" >= 0
   );
 
 -- SPLIT
@@ -911,3 +919,18 @@ ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_platform_fee_bps_range"
 -- SPLIT
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_platform_fee_bps_range"
   CHECK ("platformFeeBps" IS NULL OR "platformFeeBps" BETWEEN 0 AND 10000);
+
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_welcome_discount_positive";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_welcome_discount_positive"
+  CHECK ("welcomeDiscountPaise" IS NULL OR "welcomeDiscountPaise" > 0);
+
+-- SPLIT
+-- At most one live welcome-discounted order per buyer; a second checkout must finish or abandon the first.
+CREATE UNIQUE INDEX IF NOT EXISTS "Payment_live_welcome_discount_user_key"
+  ON "Payment" ("userId")
+  WHERE "welcomeDiscountPaise" IS NOT NULL
+    AND "referralReleasedAt" IS NULL
+    AND "paymentStatus" IN ('PENDING', 'SUCCEEDED')
+    AND "deletedAt" IS NULL;

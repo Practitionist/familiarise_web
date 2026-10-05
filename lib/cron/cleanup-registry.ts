@@ -69,6 +69,8 @@ const MAX_RESCHEDULE_PROPOSALS = 25;
 const MAX_TENTATIVE_SLOTS = 200;
 /** QUALIFYING referrals per run; one Serializable transaction each. */
 const MAX_REFERRAL_VESTS = 50;
+/** Expired credits per breakage run; one Serializable transaction each. */
+const MAX_REFERRAL_BREAKAGE = 500;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -363,10 +365,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-referral-credits": () =>
       cleanupRoute({
         job: "expire-referral-credits",
-        run: async () => {
+        run: async (req) => {
           const { runExpireReferralCredits } =
-            await import("@/jobs/referrals/referral-credits");
-          return runExpireReferralCredits();
+            await import("@/lib/referrals/vesting");
+          return runExpireReferralCredits({
+            limit: parseLimitParamOrDefault(req, MAX_REFERRAL_BREAKAGE),
+          });
         },
         summarize: (r) => ({
           expired: r.expired,
@@ -1181,7 +1185,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "vest-referral-credits",
         run: async (req) => {
           const { runVestReferralCredits } =
-            await import("@/jobs/referrals/referral-credits");
+            await import("@/lib/referrals/vesting");
           return runVestReferralCredits({
             limit: parseLimitParamOrDefault(req, MAX_REFERRAL_VESTS),
           });

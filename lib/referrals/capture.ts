@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
-import { readReferralProgramConfig } from "./program-config";
+import { readReferralProgramConfig, recordBudgetSpend } from "./program-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,10 +32,11 @@ export async function firstLiveOccurrenceId(
 }
 
 /**
- * Runs in the capture transaction once the booking is confirmed. Records who owns the
- * buyer relationship (first writer wins), moves a referee's first paid marketplace
- * purchase to QUALIFYING with the referrer's credit PENDING, and moves a referred
- * expert's first paid sale to QUALIFYING. Nothing here is spendable; the vest sweep decides.
+ * Runs in the capture transaction once the booking is confirmed. A cash-funded sale records
+ * who owns the buyer relationship (first writer wins); a referee's first paid marketplace
+ * purchase moves to QUALIFYING with the referrer's credit PENDING and its welcome discount
+ * metered against the budget; a referred expert's first paid sale moves to QUALIFYING.
+ * Nothing here is spendable; the vest sweep decides.
  */
 export async function recordReferralCapture(
   tx: Tx,
@@ -51,6 +52,7 @@ export async function recordReferralCapture(
       appointmentId: true,
       attributionSource: true,
       attributionReferralId: true,
+      welcomeDiscountPaise: true,
       legs: { where: { source: "CARD" }, select: { amountPaise: true } },
     },
   });
@@ -61,21 +63,24 @@ export async function recordReferralCapture(
   });
   if (!consultant || consultant.userId === payment.userId) return;
 
-  await tx.expertCustomerRelationship.createMany({
-    data: [
-      {
-        consultantProfileId: input.consultantProfileId,
-        buyerUserId: payment.userId,
-        source: payment.attributionSource ?? "MARKETPLACE",
-        firstPaymentId: payment.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
+  // Only a gateway (cash) leg owns a relationship: never a ₹0, credit-only or org-funded sale.
+  const cashPaise = payment.legs.reduce((sum, l) => sum + l.amountPaise, 0);
+  if (cashPaise > 0) {
+    await tx.expertCustomerRelationship.createMany({
+      data: [
+        {
+          consultantProfileId: input.consultantProfileId,
+          buyerUserId: payment.userId,
+          source: payment.attributionSource ?? "MARKETPLACE",
+          firstPaymentId: payment.id,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  }
 
   const cfg = await readReferralProgramConfig(tx);
   if (!cfg) return;
-  const cashPaise = payment.legs.reduce((sum, l) => sum + l.amountPaise, 0);
   const windowStart = new Date(now.getTime() - cfg.qualifyWindowDays * DAY_MS);
   const qualifying = {
     status: "QUALIFYING" as const,
@@ -106,22 +111,45 @@ export async function recordReferralCapture(
         },
         data: { ...qualifying, qualifyingAction: "first_paid_booking" },
       });
+      if (claimed.count === 1) {
+        await recordBudgetSpend(tx, payment.welcomeDiscountPaise ?? 0, now);
+      }
       if (claimed.count === 1 && cfg.referrerRewardPaise > 0) {
-        await tx.referralCredit.createMany({
-          data: [
-            {
-              userId: referral.referralCode.userId,
-              amount: cfg.referrerRewardPaise,
-              remainingAmount: cfg.referrerRewardPaise,
-              currency: "INR",
-              source: "REFERRAL_BONUS",
-              referralId: referral.id,
-              state: "PENDING",
-              configVersion: cfg.version,
-            },
-          ],
-          skipDuplicates: true,
+        // A referral reopened after an expert or platform cancellation revives its voided credit.
+        const revived = await tx.referralCredit.updateMany({
+          where: {
+            userId: referral.referralCode.userId,
+            referralId: referral.id,
+            source: "REFERRAL_BONUS",
+            state: "VOID",
+            vestedAt: null,
+            usedAmount: 0,
+          },
+          data: {
+            state: "PENDING",
+            voidedAt: null,
+            amount: cfg.referrerRewardPaise,
+            remainingAmount: cfg.referrerRewardPaise,
+            configVersion: cfg.version,
+          },
         });
+        if (revived.count === 0) {
+          await tx.referralCredit.createMany({
+            data: [
+              {
+                userId: referral.referralCode.userId,
+                amount: cfg.referrerRewardPaise,
+                remainingAmount: cfg.referrerRewardPaise,
+                currency: "INR",
+                source: "REFERRAL_BONUS",
+                referralId: referral.id,
+                state: "PENDING",
+                configVersion: cfg.version,
+              },
+            ],
+            skipDuplicates: true,
+          });
+        }
       }
     }
   }

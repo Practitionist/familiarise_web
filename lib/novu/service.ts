@@ -60,10 +60,6 @@ import {
   type RecordingExpiringPayload,
   type RecordingFailedPayload,
   type RecordingPayload,
-  type RefereeWelcomeBonusInput,
-  type RefereeWelcomeBonusPayload,
-  type ReferralBonusInput,
-  type ReferralBonusPayload,
   type ReferralCreditsAppliedInput,
   type ReferralCreditsAppliedPayload,
   type RefundInput,
@@ -128,11 +124,7 @@ type BellUserRow = {
   timezone?: string | null;
   orgWorkspaceProfile?: {
     notificationRoutingMode?:
-      | "BELL_AND_EMAIL"
-      | "BELL_ONLY"
-      | "EMAIL_ONLY"
-      | "NEITHER"
-      | null;
+      "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER" | null;
   } | null;
   notificationPreferences?: Partial<
     Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | string | null>
@@ -626,7 +618,9 @@ function bookingRequestWire(
   };
 }
 
-function paymentSuccessWire(payload: PaymentSuccessInput): PaymentSuccessPayload {
+function paymentSuccessWire(
+  payload: PaymentSuccessInput,
+): PaymentSuccessPayload {
   return {
     ...payload,
     amount: formatNotificationAmountBare(payload.amount, payload.currency),
@@ -714,16 +708,6 @@ function recordingExpiringWire(
   };
 }
 
-function referralBonusWire<
-  T extends ReferralBonusInput | RefereeWelcomeBonusInput,
->(payload: T): ReferralBonusPayload | RefereeWelcomeBonusPayload {
-  return {
-    ...payload,
-    bonusAmount: formatNotificationMoney(payload.bonusAmount, payload.currency),
-    bonusAmountPaise: payload.bonusAmount,
-  };
-}
-
 function referralCreditsAppliedWire(
   payload: ReferralCreditsAppliedInput,
 ): ReferralCreditsAppliedPayload {
@@ -760,82 +744,202 @@ function maintenanceWire(payload: MaintenanceInput): MaintenancePayload {
 const W = NOVU_WORKFLOWS;
 
 // Appointments
-export const notifyAppointmentBooked = defineZonedMultiNotifier(W.APPOINTMENT_BOOKED, appointmentWire);
-export const notifyAppointmentPartiallyScheduled = defineZonedMultiNotifier(W.APPOINTMENT_PARTIALLY_SCHEDULED, partiallyScheduledWire);
-export const notifyAppointmentCancelled = defineZonedMultiNotifier(W.APPOINTMENT_CANCELLED, cancelledWire);
-export const notifyAppointmentRescheduled = defineZonedMultiNotifier(W.APPOINTMENT_RESCHEDULED, rescheduledWire);
-export const notifyAppointmentCompleted = defineZonedMultiNotifier(W.APPOINTMENT_COMPLETED, appointmentWire);
-export const notifyAppointmentReminder = defineZonedMultiNotifier(W.APPOINTMENT_REMINDER, appointmentWire);
+export const notifyAppointmentBooked = defineZonedMultiNotifier(
+  W.APPOINTMENT_BOOKED,
+  appointmentWire,
+);
+export const notifyAppointmentPartiallyScheduled = defineZonedMultiNotifier(
+  W.APPOINTMENT_PARTIALLY_SCHEDULED,
+  partiallyScheduledWire,
+);
+export const notifyAppointmentCancelled = defineZonedMultiNotifier(
+  W.APPOINTMENT_CANCELLED,
+  cancelledWire,
+);
+export const notifyAppointmentRescheduled = defineZonedMultiNotifier(
+  W.APPOINTMENT_RESCHEDULED,
+  rescheduledWire,
+);
+export const notifyAppointmentCompleted = defineZonedMultiNotifier(
+  W.APPOINTMENT_COMPLETED,
+  appointmentWire,
+);
+export const notifyAppointmentReminder = defineZonedMultiNotifier(
+  W.APPOINTMENT_REMINDER,
+  appointmentWire,
+);
 
 // Payments & Refunds
-export const notifyPaymentSuccess = defineSingleNotifier(W.PAYMENT_SUCCESS, paymentSuccessWire);
-export const notifyPaymentFailed = defineSingleNotifier(W.PAYMENT_FAILED, paymentFailedWire);
-export const notifyRefundProcessed = defineSingleNotifier(W.REFUND_PROCESSED, refundWire);
-export const notifyRefundFailed = defineSingleNotifier(W.REFUND_FAILED, refundWire);
-export const notifyRefundRequested = defineMultiNotifier(W.REFUND_REQUESTED, refundWire);
+export const notifyPaymentSuccess = defineSingleNotifier(
+  W.PAYMENT_SUCCESS,
+  paymentSuccessWire,
+);
+export const notifyPaymentFailed = defineSingleNotifier(
+  W.PAYMENT_FAILED,
+  paymentFailedWire,
+);
+export const notifyRefundProcessed = defineSingleNotifier(
+  W.REFUND_PROCESSED,
+  refundWire,
+);
+export const notifyRefundFailed = defineSingleNotifier(
+  W.REFUND_FAILED,
+  refundWire,
+);
+export const notifyRefundRequested = defineMultiNotifier(
+  W.REFUND_REQUESTED,
+  refundWire,
+);
 
 // Support Tickets
-export const notifySupportTicketCreated = defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_CREATED);
-export const notifySupportTicketUpdate = defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_UPDATE);
-export const notifySupportTicketActivity = defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_ACTIVITY);
-export const notifySupportTicketResponse = defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_RESPONSE);
+export const notifySupportTicketCreated =
+  defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_CREATED);
+export const notifySupportTicketUpdate =
+  defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_UPDATE);
+export const notifySupportTicketActivity =
+  defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_ACTIVITY);
+export const notifySupportTicketResponse =
+  defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_RESPONSE);
 
 // Feedback & Reviews
-export const notifyFeedbackReceived = defineMultiNotifier<FeedbackPayload>(W.FEEDBACK_RECEIVED);
-export const notifyNewReview = defineSingleNotifier<ReviewPayload>(W.NEW_REVIEW_RECEIVED);
+export const notifyFeedbackReceived = defineMultiNotifier<FeedbackPayload>(
+  W.FEEDBACK_RECEIVED,
+);
+export const notifyNewReview = defineSingleNotifier<ReviewPayload>(
+  W.NEW_REVIEW_RECEIVED,
+);
 
 // Trials
-export const notifyTrialRequested = defineZonedSingleNotifier(W.TRIAL_SESSION_REQUESTED, trialWire);
-export const notifyTrialScheduled = defineZonedSingleNotifier(W.TRIAL_SESSION_SCHEDULED, trialWire);
-export const notifyTrialCompleted = defineZonedMultiNotifier(W.TRIAL_SESSION_COMPLETED, trialWire);
-export const notifyTrialCancelled = defineZonedMultiNotifier(W.TRIAL_SESSION_CANCELLED, trialWire);
+export const notifyTrialRequested = defineZonedSingleNotifier(
+  W.TRIAL_SESSION_REQUESTED,
+  trialWire,
+);
+export const notifyTrialScheduled = defineZonedSingleNotifier(
+  W.TRIAL_SESSION_SCHEDULED,
+  trialWire,
+);
+export const notifyTrialCompleted = defineZonedMultiNotifier(
+  W.TRIAL_SESSION_COMPLETED,
+  trialWire,
+);
+export const notifyTrialCancelled = defineZonedMultiNotifier(
+  W.TRIAL_SESSION_CANCELLED,
+  trialWire,
+);
 
 // Subscriptions
-export const notifySubscriptionStarted = defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_STARTED);
-export const notifySubscriptionCancelled = defineMultiNotifier<SubscriptionPayload>(W.SUBSCRIPTION_CANCELLED);
-export const notifySubscriptionRenewed = defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_RENEWED);
+export const notifySubscriptionStarted =
+  defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_STARTED);
+export const notifySubscriptionCancelled =
+  defineMultiNotifier<SubscriptionPayload>(W.SUBSCRIPTION_CANCELLED);
+export const notifySubscriptionRenewed =
+  defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_RENEWED);
 
 // Consultant-Specific
-export const notifyNewBookingRequest = defineZonedSingleNotifier(W.NEW_BOOKING_REQUEST, bookingRequestWire);
-export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<BookingRequestInput & { nudgeHours: number }>(W.NEW_BOOKING_REQUEST, bookingRequestWire);
-export const notifyVerificationStatusChanged = defineSingleNotifier<VerificationPayload>(W.VERIFICATION_STATUS_CHANGED);
-export const notifyModerationWarning = defineSingleNotifier<ModerationWarningPayload>(W.MODERATION_WARNING);
-export const notifyAccountSuspended = defineZonedSingleNotifier(W.ACCOUNT_SUSPENDED, accountSuspendedWire);
-export const notifyAccountBanned = defineSingleNotifier<AccountBannedPayload>(W.ACCOUNT_BANNED);
-export const notifyPayoutProcessed = defineSingleNotifier(W.PAYOUT_PROCESSED, payoutWire);
-export const notifyPayoutFailed = defineSingleNotifier(W.PAYOUT_FAILED, ({ payoutId: _id, ...rest }: PayoutInput) => payoutWire(rest), { deferrable: false });
-export const notifyOrgExpertRemoved = defineSingleNotifier<OrgExpertRemovedPayload>(W.ORG_EXPERT_REMOVED, (p) => ({ organizationId: p.organizationId ?? null, scope: "org", ...p }));
+export const notifyNewBookingRequest = defineZonedSingleNotifier(
+  W.NEW_BOOKING_REQUEST,
+  bookingRequestWire,
+);
+export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<
+  BookingRequestInput & { nudgeHours: number }
+>(W.NEW_BOOKING_REQUEST, bookingRequestWire);
+export const notifyVerificationStatusChanged =
+  defineSingleNotifier<VerificationPayload>(W.VERIFICATION_STATUS_CHANGED);
+export const notifyModerationWarning =
+  defineSingleNotifier<ModerationWarningPayload>(W.MODERATION_WARNING);
+export const notifyAccountSuspended = defineZonedSingleNotifier(
+  W.ACCOUNT_SUSPENDED,
+  accountSuspendedWire,
+);
+export const notifyAccountBanned = defineSingleNotifier<AccountBannedPayload>(
+  W.ACCOUNT_BANNED,
+);
+export const notifyPayoutProcessed = defineSingleNotifier(
+  W.PAYOUT_PROCESSED,
+  payoutWire,
+);
+export const notifyPayoutFailed = defineSingleNotifier(
+  W.PAYOUT_FAILED,
+  ({ payoutId: _id, ...rest }: PayoutInput) => payoutWire(rest),
+  { deferrable: false },
+);
+export const notifyOrgExpertRemoved =
+  defineSingleNotifier<OrgExpertRemovedPayload>(W.ORG_EXPERT_REMOVED, (p) => ({
+    organizationId: p.organizationId ?? null,
+    scope: "org",
+    ...p,
+  }));
 
 // Admin / System
-export const notifyGeneralAnnouncement = defineBroadcastNotifier<AnnouncementPayload>(W.GENERAL_ANNOUNCEMENT);
-export const notifyNewConsultantApplication = defineMultiNotifier<ConsultantApplicationPayload>(W.NEW_CONSULTANT_APPLICATION);
+export const notifyGeneralAnnouncement =
+  defineBroadcastNotifier<AnnouncementPayload>(W.GENERAL_ANNOUNCEMENT);
+export const notifyNewConsultantApplication =
+  defineMultiNotifier<ConsultantApplicationPayload>(
+    W.NEW_CONSULTANT_APPLICATION,
+  );
 
 // Disputes
-export const notifyDisputeCreated = defineMultiNotifier(W.DISPUTE_CREATED, disputeWire);
-export const notifyDisputeResolved = defineMultiNotifier(W.DISPUTE_RESOLVED, disputeWire);
+export const notifyDisputeCreated = defineMultiNotifier(
+  W.DISPUTE_CREATED,
+  disputeWire,
+);
+export const notifyDisputeResolved = defineMultiNotifier(
+  W.DISPUTE_RESOLVED,
+  disputeWire,
+);
 
 // Recordings
-export const notifyRecordingAvailable = defineMultiNotifier<Omit<RecordingPayload, "appointmentTypeCode">>(W.RECORDING_AVAILABLE, (p) => ({ ...p, appointmentType: appointmentTypeLabel(p.appointmentType), appointmentTypeCode: p.appointmentType }));
-export const notifyRecordingFailed = defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED, ({ errorMessage: _vendorDetail, ...rest }) => rest);
-export const notifyRecordingExpiring = defineZonedSingleNotifier(W.RECORDING_EXPIRING, recordingExpiringWire);
+export const notifyRecordingAvailable = defineMultiNotifier<
+  Omit<RecordingPayload, "appointmentTypeCode">
+>(W.RECORDING_AVAILABLE, (p) => ({
+  ...p,
+  appointmentType: appointmentTypeLabel(p.appointmentType),
+  appointmentTypeCode: p.appointmentType,
+}));
+export const notifyRecordingFailed =
+  defineSingleNotifier<RecordingFailedPayload>(
+    W.RECORDING_FAILED,
+    ({ errorMessage: _vendorDetail, ...rest }) => rest,
+  );
+export const notifyRecordingExpiring = defineZonedSingleNotifier(
+  W.RECORDING_EXPIRING,
+  recordingExpiringWire,
+);
 
 // Document Review
-export const notifyDocumentUploaded = defineSingleNotifier<DocumentUploadedPayload>(W.DOCUMENT_UPLOADED);
-export const notifyDocumentReviewed = defineSingleNotifier<DocumentReviewedPayload>(W.DOCUMENT_REVIEWED);
+export const notifyDocumentUploaded =
+  defineSingleNotifier<DocumentUploadedPayload>(W.DOCUMENT_UPLOADED);
+export const notifyDocumentReviewed =
+  defineSingleNotifier<DocumentReviewedPayload>(W.DOCUMENT_REVIEWED);
 
 // Referrals
-export const notifyReferralBonusEarned = defineSingleNotifier<ReferralBonusInput>(W.REFERRAL_BONUS_EARNED, referralBonusWire);
-export const notifyRefereeWelcomeBonus = defineSingleNotifier<RefereeWelcomeBonusInput>(W.REFEREE_WELCOME_BONUS, referralBonusWire);
-export const notifyReferralCreditsApplied = defineSingleNotifier(W.REFERRAL_CREDITS_APPLIED, referralCreditsAppliedWire);
+export const notifyReferralCreditsApplied = defineSingleNotifier(
+  W.REFERRAL_CREDITS_APPLIED,
+  referralCreditsAppliedWire,
+);
 
 // Collaborators
-export const notifyCollaboratorInvited = defineSingleNotifier<CollaboratorInvitedPayload>(W.COLLABORATOR_INVITED);
-export const notifyCollaboratorAccepted = defineSingleNotifier<CollaboratorAcceptedPayload>(W.COLLABORATOR_ACCEPTED);
-export const notifyCollaboratorDeclined = defineSingleNotifier<CollaboratorDeclinedPayload>(W.COLLABORATOR_DECLINED);
-export const notifyCollaboratorRemoved = defineSingleNotifier<CollaboratorRemovedPayload>(W.COLLABORATOR_REMOVED);
-export const notifyCollaboratorWithdrawn = defineSingleNotifier<CollaboratorWithdrawnPayload>(W.COLLABORATOR_WITHDRAWN);
+export const notifyCollaboratorInvited =
+  defineSingleNotifier<CollaboratorInvitedPayload>(W.COLLABORATOR_INVITED);
+export const notifyCollaboratorAccepted =
+  defineSingleNotifier<CollaboratorAcceptedPayload>(W.COLLABORATOR_ACCEPTED);
+export const notifyCollaboratorDeclined =
+  defineSingleNotifier<CollaboratorDeclinedPayload>(W.COLLABORATOR_DECLINED);
+export const notifyCollaboratorRemoved =
+  defineSingleNotifier<CollaboratorRemovedPayload>(W.COLLABORATOR_REMOVED);
+export const notifyCollaboratorWithdrawn =
+  defineSingleNotifier<CollaboratorWithdrawnPayload>(W.COLLABORATOR_WITHDRAWN);
 
 // Maintenance
-export const notifyMaintenanceScheduled = defineBroadcastNotifier(W.MAINTENANCE_SCHEDULED, maintenanceWire);
-export const notifyMaintenanceStarted = defineBroadcastNotifier(W.MAINTENANCE_STARTED, maintenanceWire);
-export const notifyMaintenanceEnded = defineBroadcastNotifier(W.MAINTENANCE_ENDED, maintenanceWire);
+export const notifyMaintenanceScheduled = defineBroadcastNotifier(
+  W.MAINTENANCE_SCHEDULED,
+  maintenanceWire,
+);
+export const notifyMaintenanceStarted = defineBroadcastNotifier(
+  W.MAINTENANCE_STARTED,
+  maintenanceWire,
+);
+export const notifyMaintenanceEnded = defineBroadcastNotifier(
+  W.MAINTENANCE_ENDED,
+  maintenanceWire,
+);

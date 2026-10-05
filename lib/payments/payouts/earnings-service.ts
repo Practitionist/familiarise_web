@@ -98,12 +98,17 @@ interface OrgEarningsSummary {
 // Decimal as number); the raw Payment model type still says bigint/Decimal.
 type PaymentRow = Omit<
   Payment,
-  "amount" | "originalAmount" | "taxAmount" | "exchangeRateAtCheckout"
+  | "amount"
+  | "originalAmount"
+  | "taxAmount"
+  | "exchangeRateAtCheckout"
+  | "welcomeDiscountPaise"
 > & {
   amount: number;
   originalAmount: number;
   taxAmount: number;
   exchangeRateAtCheckout: number | null;
+  welcomeDiscountPaise: number | null;
 };
 
 export interface CreateEarningsParams {
@@ -702,7 +707,8 @@ async function planCollaboratorSettlements(
     collabOrgSplit: OrgEarningsSplit | null;
   }> = [];
   for (const split of collabSplits) {
-    const collabOrgSplit = await resolveOrgSplit( // NOSONAR
+    const collabOrgSplit = await resolveOrgSplit(
+      // NOSONAR
       db,
       split.consultantProfileId,
       split.share,
@@ -843,13 +849,9 @@ export async function planEarningsForPayment(
 
   const splits =
     planType && planId
-      ? await calculateRevenueSplit(
-          planType,
-          planId,
-          totalConsultantPool,
-          db,
-          { excludeBuyerUserId: payment.userId },
-        )
+      ? await calculateRevenueSplit(planType, planId, totalConsultantPool, db, {
+          excludeBuyerUserId: payment.userId,
+        })
       : [];
 
   const collabSettlements = await planCollaboratorSettlements(
@@ -1460,12 +1462,7 @@ export async function createEarningsFromPayment(
           tx: txArg,
           preplanned: preplannedArg,
         };
-  const {
-    payment,
-    appointmentType,
-    tx: outerTx,
-    preplanned,
-  } = normalized;
+  const { payment, appointmentType, tx: outerTx, preplanned } = normalized;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
   const consultantProfileId = payment.appointment?.consultantProfile?.id;
@@ -1616,8 +1613,7 @@ export async function createEarningsFromPayment(
   };
 
   const rawOuterTx = outerTx as
-    | { $executeRawUnsafe?: (query: string) => Promise<unknown> }
-    | undefined;
+    { $executeRawUnsafe?: (query: string) => Promise<unknown> } | undefined;
   const hasOuterSavepoint =
     !!outerTx && typeof rawOuterTx?.$executeRawUnsafe === "function";
 
@@ -1642,9 +1638,9 @@ export async function createEarningsFromPayment(
     );
   } catch (error) {
     if (hasOuterSavepoint) {
-      await rawOuterTx!
-        .$executeRawUnsafe!("ROLLBACK TO SAVEPOINT sp_create_earnings")
-        .catch(() => undefined);
+      await rawOuterTx!.$executeRawUnsafe!(
+        "ROLLBACK TO SAVEPOINT sp_create_earnings",
+      ).catch(() => undefined);
     }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

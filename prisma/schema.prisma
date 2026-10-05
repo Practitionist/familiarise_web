@@ -3038,7 +3038,7 @@ model ConsultantProfile {
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
 
-  // Referral v2: who owns each buyer relationship, and platform-fee waivers.
+  // Who owns each buyer relationship, and platform-fee waivers.
   customerRelationships ExpertCustomerRelationship[]
   feeWaivers            ConsultantFeeWaiver[]
 
@@ -5522,6 +5522,11 @@ model Payment {
   attributionReferral         Referral?                    @relation("PaymentAttributionReferral", fields: [attributionReferralId], references: [id], onDelete: SetNull)
   // Platform fee actually charged on this sale, in basis points (0 under a fee waiver).
   platformFeeBps              Int?
+  // Pre-tax referee welcome discount; non-null only on discounted orders (one live per buyer).
+  welcomeDiscountPaise        BigInt?
+  // Set when an expert or platform cancellation returned this order's referral to SIGNED_UP:
+  // the order no longer counts as the referee's first purchase or holds the welcome-discount slot.
+  referralReleasedAt          DateTime?                    @db.Timestamptz
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -6392,6 +6397,12 @@ model ReferralCode {
   totalEarned         BigInt  @default(0)
   maxReferrals        Int     @default(25) // #880 — tightened from 50 to bound farming/liability
   isActive            Boolean @default(true)
+  // Vest caps, gated by conditional update: UTC calendar year and ISO-week keys with their counters.
+  capYear             String  @default("")
+  yearRewardPaise     BigInt  @default(0)
+  yearExpertVests     Int     @default(0)
+  capWeek             String  @default("")
+  weekVests           Int     @default(0)
 
   user      User       @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   referrals Referral[]
@@ -6415,7 +6426,7 @@ model Referral {
   signedUpAt             DateTime               @default(now())
   qualifiedAt            DateTime?
   qualifyingAction       String?
-  // Referral v2: the capture that moved it to QUALIFYING and the session that must be delivered to vest.
+  // The capture that moved it to QUALIFYING and the session that must be delivered to vest.
   qualifyingPaymentId    String?
   qualifyingPayment      Payment?               @relation("ReferralQualifyingPayment", fields: [qualifyingPaymentId], references: [id], onDelete: SetNull)
   qualifyingOccurrenceId String?
@@ -6529,6 +6540,11 @@ model ReferralProgramConfig {
   perCodeLifetimeCap        Int      @default(25)
   perReferrerYearlyCapPaise BigInt   @default(1000000)
   weeklyVestCap             Int      @default(5)
+  expertYearlyReferralCap   Int      @default(10)
+  expertWaiverSessions      Int      @default(3)
+  expertWaiverDays          Int      @default(90)
+  // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
+  expertReferralBudgetPaise BigInt   @default(180000)
   version                   Int      @default(1)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
