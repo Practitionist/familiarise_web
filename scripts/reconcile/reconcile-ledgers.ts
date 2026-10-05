@@ -1152,7 +1152,7 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   }
 }
 
-// --- a refunded parked capture nets UNAPPLIED_RECEIPTS to zero per payment ---
+// --- a parked capture's UNAPPLIED_RECEIPTS balance matches what is still owed back ---
 async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
   const parked = await prisma.ledgerTransaction.findMany({
     where: { kind: "UNAPPLIED_RECEIPT", paymentId: { not: null } },
@@ -1165,30 +1165,43 @@ async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
 
   for (let i = 0; i < paymentIds.length; i += CHUNK) {
     const slice = paymentIds.slice(i, i + CHUNK);
-    const owedByPayment = await unappliedOwedByPayment(slice);
-    const settled = await settledRefundPayments(slice);
+    const balances = await unappliedBalances(slice);
+    const settled = await settledRefundTotals(slice);
     for (const paymentId of slice) {
-      const owed = owedByPayment.get(paymentId) ?? 0;
-      if (!settled.has(paymentId) || owed === 0) continue;
+      const refundedPaise = settled.get(paymentId);
+      const balance = balances.get(paymentId);
+      if (refundedPaise === undefined || !balance) continue;
+      // A recovered capture released its remainder; otherwise each settled refund returned its share.
+      const expectedPaise =
+        balance.releasedPaise > 0
+          ? 0
+          : Math.max(0, balance.parkedPaise - refundedPaise);
+      if (balance.owedPaise === expectedPaise) continue;
       ctx.findings.push({
         kind: "UNAPPLIED_RECEIPTS_RESIDUE",
         paymentId,
-        expectedPaise: 0,
-        actualPaise: owed,
-        deltaPaise: owed,
+        expectedPaise,
+        actualPaise: balance.owedPaise,
+        deltaPaise: balance.owedPaise - expectedPaise,
         details: {
           unit: "paise",
-          note: "A parked capture's refunds settled but UNAPPLIED_RECEIPTS does not net to zero for the payment (positive: cash still owed to the payer).",
+          note: "A parked capture's UNAPPLIED_RECEIPTS balance differs from the captured amount less its settled refunds (positive: a settled refund never posted its clearing entry).",
         },
       });
     }
   }
 }
 
-/** Net UNAPPLIED_RECEIPTS credit per payment (positive: still owed to the payer). */
-async function unappliedOwedByPayment(
+type UnappliedBalance = {
+  parkedPaise: number;
+  releasedPaise: number;
+  owedPaise: number;
+};
+
+/** Per payment: paise parked, paise released into a booking, and the net still held. */
+async function unappliedBalances(
   paymentIds: string[],
-): Promise<Map<string, number>> {
+): Promise<Map<string, UnappliedBalance>> {
   const entries = await prisma.ledgerEntry.findMany({
     where: {
       account: { kind: "UNAPPLIED_RECEIPTS" },
@@ -1197,37 +1210,60 @@ async function unappliedOwedByPayment(
     select: {
       direction: true,
       amountPaise: true,
-      transaction: { select: { paymentId: true } },
+      transaction: { select: { paymentId: true, kind: true } },
     },
   });
-  const owed = new Map<string, number>();
+  const balances = new Map<string, UnappliedBalance>();
   for (const e of entries) {
     const paymentId = e.transaction.paymentId;
     if (!paymentId) continue;
     const paise = sumPaise(e.amountPaise);
-    const signed = e.direction === "CREDIT" ? paise : -paise;
-    owed.set(paymentId, (owed.get(paymentId) ?? 0) + signed);
+    const b = balances.get(paymentId) ?? {
+      parkedPaise: 0,
+      releasedPaise: 0,
+      owedPaise: 0,
+    };
+    if (e.direction === "CREDIT") {
+      b.parkedPaise += paise;
+      b.owedPaise += paise;
+    } else {
+      if (e.transaction.kind === "UNAPPLIED_RECEIPT") b.releasedPaise += paise;
+      b.owedPaise -= paise;
+    }
+    balances.set(paymentId, b);
   }
-  return owed;
+  return balances;
 }
 
-/** Payments with a cascaded SUCCEEDED refund and no refund still in flight. */
-async function settledRefundPayments(
+/** Settled refund paise per payment, only for payments with no refund still in flight. */
+async function settledRefundTotals(
   paymentIds: string[],
-): Promise<Set<string>> {
+): Promise<Map<string, number>> {
   const refunds = await prisma.refund.findMany({
-    where: { paymentId: { in: paymentIds } },
-    select: { paymentId: true, status: true, cascadedAt: true },
+    where: { paymentId: { in: paymentIds }, deletedAt: null },
+    select: {
+      paymentId: true,
+      status: true,
+      cascadedAt: true,
+      amountPaise: true,
+    },
   });
+  // Credit restorations (0 paise) settle in place and never cascade.
   const inFlight = (r: (typeof refunds)[number]) =>
     r.status === "PENDING" ||
-    (r.status === "SUCCEEDED" && r.cascadedAt === null);
+    (r.status === "SUCCEEDED" &&
+      r.cascadedAt === null &&
+      sumPaise(r.amountPaise) > 0);
   const open = new Set(refunds.filter(inFlight).map((r) => r.paymentId));
-  return new Set(
-    refunds
-      .filter((r) => r.status === "SUCCEEDED" && !open.has(r.paymentId))
-      .map((r) => r.paymentId),
-  );
+  const totals = new Map<string, number>();
+  for (const r of refunds) {
+    if (r.status !== "SUCCEEDED" || open.has(r.paymentId)) continue;
+    totals.set(
+      r.paymentId,
+      (totals.get(r.paymentId) ?? 0) + sumPaise(r.amountPaise),
+    );
+  }
+  return totals;
 }
 
 // --- PENDING_TRUST park watchdog ---

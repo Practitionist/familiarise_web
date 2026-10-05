@@ -100,7 +100,7 @@ Every liability/revenue box is **credit-normal** (the meaningful figure is the *
 
 An account is **scoped** by who it belongs to:
 
-- **Platform-wide** (both owners null): `CASH`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `TDS_PAYABLE`, `GST_PAYABLE`. One account per kind per currency.
+- **Platform-wide** (both owners null): `CASH`, `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `TDS_PAYABLE`, `GST_PAYABLE`, `UNAPPLIED_RECEIPTS`. One account per kind per currency.
 - **Org-scoped** (`organizationId` set): `WALLET`, `ORG_PAYABLE`, `ORG_RECEIVABLE`. One per org per kind.
 - **Consultant-scoped** (`consultantProfileId` set): `CONSULTANT_PAYABLE`, `CONSULTANT_RECEIVABLE`. One per consultant per kind.
 

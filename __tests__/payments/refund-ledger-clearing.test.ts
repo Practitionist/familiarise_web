@@ -43,6 +43,7 @@ import {
   ParkedCaptureEarningsError,
   type CreateEarningsParams,
 } from "../../lib/payments/payouts/earnings-service";
+import { releaseUnappliedReceipt } from "../../lib/payments/ledger/unapplied-receipts";
 
 const AMOUNT = 118_000;
 const TAX = 18_000;
@@ -70,6 +71,7 @@ function txStub(payment: Record<string, unknown>, parked: boolean) {
             : null,
       ),
     },
+    ledgerEntry: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
@@ -182,5 +184,38 @@ it("createEarningsFromPayment refuses a parked capture before writing anything",
       tx: asTx(tx),
     }),
   ).rejects.toBeInstanceOf(ParkedCaptureEarningsError);
+  expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+});
+
+it("a recovery releases only what is still parked after a partial refund", async () => {
+  const tx = txStub(cardPayment([]), true);
+  tx.ledgerEntry.findMany.mockResolvedValue([
+    { direction: "CREDIT", amountPaise: AMOUNT },
+    { direction: "DEBIT", amountPaise: 30_000 },
+  ]);
+  await releaseUnappliedReceipt(asTx(tx), "pay-1");
+  expect(mockPostLedgerTxn).toHaveBeenCalledTimes(1);
+  expect(mockPostLedgerTxn.mock.calls[0][1].idempotencyKey).toBe(
+    "unapplied-released:pay-1",
+  );
+  expect(postings()).toEqual([
+    {
+      account: { kind: "UNAPPLIED_RECEIPTS" },
+      direction: "DEBIT",
+      amountPaise: AMOUNT - 30_000,
+    },
+    {
+      account: { kind: "CASH" },
+      direction: "CREDIT",
+      amountPaise: AMOUNT - 30_000,
+    },
+  ]);
+
+  mockPostLedgerTxn.mockClear();
+  tx.ledgerEntry.findMany.mockResolvedValue([
+    { direction: "CREDIT", amountPaise: AMOUNT },
+    { direction: "DEBIT", amountPaise: AMOUNT },
+  ]);
+  await releaseUnappliedReceipt(asTx(tx), "pay-1");
   expect(mockPostLedgerTxn).not.toHaveBeenCalled();
 });

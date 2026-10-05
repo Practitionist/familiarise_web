@@ -1,5 +1,6 @@
 import type { Tx } from "@/lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 /**
  * A capture that funds no booking parks its cash in the UNAPPLIED_RECEIPTS
@@ -63,15 +64,23 @@ export async function releaseUnappliedReceipt(
   tx: Tx,
   paymentId: string,
 ): Promise<void> {
-  const parked = await tx.ledgerEntry.findFirst({
+  // Only what is still parked: refunds of the parked capture already returned part of it.
+  const entries = await tx.ledgerEntry.findMany({
     where: {
-      direction: "CREDIT",
       account: { kind: "UNAPPLIED_RECEIPTS" },
-      transaction: { idempotencyKey: unappliedReceiptKey(paymentId) },
+      transaction: { paymentId },
     },
-    select: { amountPaise: true },
+    select: { direction: true, amountPaise: true },
   });
-  if (!parked) return;
+  const remainingPaise = entries.reduce(
+    (sum, e) =>
+      sum +
+      (e.direction === "CREDIT"
+        ? sumPaise(e.amountPaise)
+        : -sumPaise(e.amountPaise)),
+    0,
+  );
+  if (remainingPaise <= 0) return;
   await postLedgerTxn(tx, {
     idempotencyKey: releasedReceiptKey(paymentId),
     kind: "UNAPPLIED_RECEIPT",
@@ -81,12 +90,12 @@ export async function releaseUnappliedReceipt(
       {
         account: { kind: "UNAPPLIED_RECEIPTS" },
         direction: "DEBIT",
-        amountPaise: parked.amountPaise,
+        amountPaise: remainingPaise,
       },
       {
         account: { kind: "CASH" },
         direction: "CREDIT",
-        amountPaise: parked.amountPaise,
+        amountPaise: remainingPaise,
       },
     ],
   });
