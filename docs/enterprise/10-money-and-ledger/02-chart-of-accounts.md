@@ -46,7 +46,7 @@ classDiagram
 | `ORG_RECEIVABLE` | asset | DEBIT | org | an INVOICE-funded org owes us; accrued at booking, cleared on invoice payment |
 | `WALLET` | liability | CREDIT | org | prepaid balance we owe the org (an IOU) |
 | `CONSULTANT_PAYABLE` | liability | CREDIT | consultant | earnings owed to a consultant, not yet paid out |
-| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning, posted `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`: it reclassifies the debit the chargeback reversal left on the payable and never touches revenue. B2C only (an org-funded chargeback is borne by the org). Tracked alongside `ConsultantPayout.clawbackAmountPaise` for recovery. Net of TDS |
+| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning, posted `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`: it reclassifies the debit the chargeback reversal left on the payable and never touches revenue. B2C only (an org-funded chargeback is borne by the org). Tracked alongside `ConsultantPayout.clawbackAmountPaise` and recovered from the consultant's next payout (`Dr CONSULTANT_PAYABLE / Cr CONSULTANT_RECEIVABLE`, key `clawback-recovery:<payoutId>`). Net of TDS |
 | `ORG_PAYABLE` | liability | CREDIT | org | host-org share owed, not yet paid out |
 | `TDS_PAYABLE` | liability | CREDIT | platform | TDS withheld at payout, owed to the government |
 | `GST_PAYABLE` | liability | CREDIT | platform | GST collected on a booking, owed to the government |

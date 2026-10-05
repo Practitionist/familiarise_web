@@ -194,6 +194,28 @@ export async function POST(
       }
 
       const now = new Date();
+      // Supersede signs the successor, so it needs the same live PO a signing does.
+      if (access.org.requiresPO) {
+        const livePo = old.purchaseOrderId
+          ? await tx.purchaseOrder.count({
+              where: {
+                id: old.purchaseOrderId,
+                organizationId: orgId,
+                status: "ACTIVE",
+                OR: [{ validUntil: null }, { validUntil: { gte: now } }],
+              },
+            })
+          : 0;
+        if (livePo === 0) {
+          throw Object.assign(
+            new Error(
+              "This organisation needs an active purchase order on every signed contract. Attach an active purchase order and try again.",
+            ),
+            { httpStatus: 409, code: "PO_REQUIRED" },
+          );
+        }
+      }
+
       const { effectiveFrom, effectiveTo } = resolveEffectiveWindow(
         old,
         body,

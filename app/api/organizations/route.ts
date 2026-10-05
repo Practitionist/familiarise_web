@@ -113,6 +113,11 @@ const CreateBodySchema = z
       .refine((v) => v === null || v === undefined || isValidGstin(v), {
         message: "INVALID_GSTIN_FORMAT",
       }),
+    gstStateCode: z
+      .string()
+      .regex(/^\d{2}$/)
+      .nullable()
+      .optional(),
     pan: z
       .string()
       .nullable()
@@ -173,6 +178,20 @@ export async function POST(req: NextRequest) {
     );
   }
   const body = parsed.data;
+
+  // A sponsoring domestic org is invoiced B2B, so its GST state is mandatory.
+  const gstStateCode =
+    numericStateCode(body.gstin, null) ?? body.gstStateCode ?? null;
+  if (body.canSponsor && body.dataResidencyRegion === "IN" && !gstStateCode) {
+    return NextResponse.json(
+      {
+        error:
+          "A GST state is required for an organisation that is invoiced. Choose your state, or add your GSTIN.",
+        code: "GST_STATE_REQUIRED",
+      },
+      { status: 400 },
+    );
+  }
 
   const desiredSlug = body.slug ?? slugify(body.name);
   if (!SLUG_REGEX.test(desiredSlug)) {
@@ -249,8 +268,7 @@ export async function POST(req: NextRequest) {
           taxInfo: {
             create: {
               gstin: body.gstin ?? null,
-              // #1744 row 3 — the GSTIN prefix is the buyer's GST state.
-              gstStateCode: numericStateCode(body.gstin, null),
+              gstStateCode,
               // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
               ...(body.pan
                 ? (() => {

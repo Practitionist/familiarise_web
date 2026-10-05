@@ -30,6 +30,7 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   };
   // #1846 — the FAILED write and the earnings release share one transaction.
   db.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(db));
@@ -64,9 +65,14 @@ jest.mock("../../lib/redis", () => ({
 }));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   getCurrentFYCumulativePayments: jest.fn().mockResolvedValue(0),
-  getFYDateRange: jest.fn(),
+  getFYDateRange: jest.fn().mockReturnValue({
+    start: new Date("2026-04-01T00:00:00+05:30"),
+    end: new Date("2027-04-01T00:00:00+05:30"),
+  }),
   getIndianFinancialYear: jest.fn().mockReturnValue("2026-27"),
   recordTDSDeduction: jest.fn(),
+  resolve194OTaxablePaise: jest.requireActual("../../lib/compliance/tds-194o")
+    .resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
 jest.mock("../../lib/novu/service", () => ({

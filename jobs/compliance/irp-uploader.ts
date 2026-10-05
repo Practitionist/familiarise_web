@@ -20,8 +20,9 @@
  *
  * Schedule: daily at 02:50 UTC (08:20 IST; #709 minute map).
  * GH Actions: `.github/workflows/irp-uploader.yml`.
- * Scope: OrganizationInvoice with irpStatus=PENDING, issuedAt within 30d
- *        (CBIC cut-off for retroactive IRN generation). Batch size: 50.
+ * Scope: B2B OrganizationInvoice (buyer GSTIN on the document) with
+ *        irpStatus=PENDING, issuedAt within 30d (CBIC cut-off for retroactive
+ *        IRN generation). B2C is exempt from e-invoicing. Batch size: 50.
  */
 
 // Why: tsx does not auto-load .env when this script runs outside the
@@ -29,6 +30,7 @@
 // PrismaClient throws on the first query. See
 // docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
@@ -111,12 +113,23 @@ function buildPayloadFor(
   });
 }
 
+/**
+ * E-invoicing covers B2B supplies only: an invoice without the buyer's GSTIN is
+ * B2C and exempt, so it is never submitted to the IRP.
+ */
+export function irpCandidateWhere(
+  thirtyDaysAgo: Date,
+): Prisma.OrganizationInvoiceWhereInput {
+  return {
+    irpStatus: "PENDING",
+    issuedAt: { gte: thirtyDaysAgo, not: null },
+    gstin: { not: null },
+  };
+}
+
 async function fetchIrpCandidates(thirtyDaysAgo: Date) {
   return prisma.organizationInvoice.findMany({
-    where: {
-      irpStatus: "PENDING",
-      issuedAt: { gte: thirtyDaysAgo, not: null },
-    },
+    where: irpCandidateWhere(thirtyDaysAgo),
     // #703 — widen to everything the payload mapper needs (split paise,
     // place-of-supply, line items, buyer tax info). The mapper is pure;
     // the cron does the fetch.

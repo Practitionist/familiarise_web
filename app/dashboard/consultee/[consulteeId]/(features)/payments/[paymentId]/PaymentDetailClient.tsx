@@ -60,6 +60,7 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
     ...(row.refundedPaise > 0 && detail.showAmount
       ? [{ label: "Refunded", value: money(row.refundedPaise) }]
       : []),
+    { label: "Payer", value: detail.payer },
     { label: "Date", value: formatWhen(row.createdAt) },
     { label: "For", value: `${row.planTitle} with ${row.consultantName}` },
   ];

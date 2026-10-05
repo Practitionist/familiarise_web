@@ -177,6 +177,7 @@ function freeCreditSettlement() {
   return {
     originalAmount: 100_000,
     taxAmount: 18_000,
+    createdAt: new Date(),
     legs: [{ source: "REFERRAL_CREDIT", amountPaise: 118_000 }],
     earnings: [
       {
@@ -324,6 +325,43 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
           account: { kind: "PLATFORM_FEE" },
           direction: "DEBIT",
           amountPaise: 20_000,
+        }),
+      ]),
+    );
+  });
+
+  it("past the CGST s.34(2) cutoff posts no GST_PAYABLE debit — the platform bears the tax", async () => {
+    tx.payment.findUniqueOrThrow.mockResolvedValue({
+      ...freeCreditSettlement(),
+      createdAt: new Date("2024-05-01T00:00:00Z"),
+    });
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "free_1730000000_abc" })
+      .mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        currency: "INR",
+        paymentStatus: "SUCCEEDED",
+        paymentGateway: "RAZORPAY",
+      });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+      initiatedByUserId: "user-1",
+    });
+
+    const posting = mockPostLedgerTxn.mock.calls[0][1];
+    expect(
+      posting.postings.some(
+        (p: { account: { kind: string } }) => p.account.kind === "GST_PAYABLE",
+      ),
+    ).toBe(false);
+    expect(posting.postings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "DEBIT",
+          amountPaise: 38_000,
         }),
       ]),
     );

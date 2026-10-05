@@ -126,7 +126,7 @@ describe("sweepAbandonedOverageCharges (#785)", () => {
         expect.anything(),
         { id },
         "FAILED",
-        { chargeFailureReason: expect.stringContaining("swept at 7d") },
+        { chargeFailureReason: "Payment not started within 7 days" },
       );
     }
   });

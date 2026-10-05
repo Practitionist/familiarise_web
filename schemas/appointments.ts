@@ -54,3 +54,30 @@ export const RescheduleProposalSchema = z
     preferredDays: z.enum(["WEEKDAYS", "WEEKENDS"]).optional(),
   })
   .passthrough();
+
+/** A priced cancel quote from `GET /api/appointments/[id]/cancel/preview` or the trial twin. */
+const CancelRefundQuoteSchema = z.object({
+  refundPct: z.number(),
+  estimatedRefundPaise: z.number(),
+  currency: z.string(),
+  /** Null with no live session, and on the whole-event rail, which never consults the clock. */
+  hoursUntilNextSession: z.number().nullable(),
+  prorated: z.boolean(),
+  /** Null on the whole-event rail, where a roster refunds through several rails at once. */
+  fundingRail: z.enum(["GATEWAY", "INTERNAL", "CREDITS"]).nullable(),
+  /** The sponsoring organisation, set only on the INTERNAL rail. */
+  payerOrganizationName: z.string().nullable().optional(),
+  /** A class or webinar cancel refunds the whole roster: the sum across `attendeeCount` attendees. */
+  wholeEvent: z.boolean().optional(),
+  attendeeCount: z.number().nullable().optional(),
+  paid: z.literal(true).optional(),
+  /** What was paid, for the trial breakdown line. */
+  grossPaise: z.number().optional(),
+});
+
+/** The cancel preview: a priced quote, or the trial's `paid: false` when nothing was charged. */
+export const CancelRefundPreviewSchema = z.union([
+  z.object({ paid: z.literal(false) }),
+  CancelRefundQuoteSchema,
+]);
+export type CancelRefundPreview = z.infer<typeof CancelRefundPreviewSchema>;

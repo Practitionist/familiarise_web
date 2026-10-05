@@ -24,6 +24,7 @@ export interface OrgWizardData {
   // Step 1: Billing (only when canSponsor = true)
   fundingSource?: SelfServiceFundingSource;
   paymentTermsDays: number; // meaningful when fundingSource = INVOICE
+  gstStateCode?: string;
 
   // Step 1 alt: Revenue Rates (only when canHost = true). Stored as basis
   // points to avoid float drift; sum must equal 10000 at submit.

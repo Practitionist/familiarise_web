@@ -15,7 +15,11 @@ import {
   deriveBookingPresentation,
   type MoneyState,
 } from "@/lib/dashboard/money-state";
-import { receiptHref } from "@/lib/appointments/payment-display";
+import {
+  payerSentence,
+  paymentFunding,
+  receiptHref,
+} from "@/lib/appointments/payment-display";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { toPlain } from "@/lib/data/serialize";
 import { BUYER_REFUND_DETAIL_SELECT } from "@/lib/data/payments-select";
@@ -51,6 +55,8 @@ export interface ConsulteePaymentDetail {
   moneyState: MoneyState;
   /** Sponsored money shows no amount unless the member paid a co-pay (locked 2026-09-13). */
   showAmount: boolean;
+  /** "Paid by <org>" or "Paid by you". */
+  payer: string;
   refundTimeline: PaymentTimelineStep[];
   refunds: RefundDetail[];
   /** False while PLATFORM_GSTIN is unset: the PDF routes answer 503 then. */
@@ -124,6 +130,10 @@ export async function readConsulteePaymentDetail(args: {
     moneyState: presentation.moneyState,
     showAmount:
       presentation.moneyState.state !== "SPONSORED" || coPays.length > 0,
+    payer: payerSentence(
+      paymentFunding(payment),
+      payment.organization?.name ?? null,
+    ),
     refunds: refunds.map((r) => ({
       id: r.id,
       amountPaise: Number(r.amountPaise),

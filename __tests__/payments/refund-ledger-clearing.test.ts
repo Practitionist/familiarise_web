@@ -88,6 +88,7 @@ function cardPayment(earnings: unknown[]) {
     amount: AMOUNT,
     originalAmount: AMOUNT - TAX,
     taxAmount: TAX,
+    createdAt: new Date(),
     organizationId: null,
     billingAccountId: null,
     billableToOrgInvoiceId: null,

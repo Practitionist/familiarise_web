@@ -27,7 +27,10 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
@@ -76,6 +79,8 @@ export async function settleInvoiceAccruals(): Promise<{
   });
 
   let invoicesCreated = 0;
+  const unbackedPo: { organizationId: string; invoiceNumber: string }[] = [];
+  const noGstState: string[] = [];
   for (const row of rows) {
     if (!row.organizationId) continue;
     try {
@@ -83,6 +88,13 @@ export async function settleInvoiceAccruals(): Promise<{
         organizationId: row.organizationId,
         issueImmediately: true,
       });
+      if (r.skippedNoGstState) noGstState.push(row.organizationId);
+      if (r.unbackedPo && r.invoiceNumber) {
+        unbackedPo.push({
+          organizationId: row.organizationId,
+          invoiceNumber: r.invoiceNumber,
+        });
+      }
       if (r.invoiceId) {
         invoicesCreated++;
         console.log(
@@ -114,6 +126,24 @@ export async function settleInvoiceAccruals(): Promise<{
         tags: { subsystem: "jobs", job: "settle-invoice-accruals" },
       });
     }
+  }
+
+  // One row per run for each expected gap; ops fixes the org, not the cron.
+  if (noGstState.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_GST_STATE_MISSING: ${noGstState.length} domestic org(s) have no GST state or GSTIN, so their accruals were not invoiced this cycle`,
+      context: { organizationIds: noGstState.slice(0, 50) },
+    });
+  }
+  if (unbackedPo.length > 0) {
+    await recordSystemEvent({
+      category: "INVOICE",
+      severity: "WARN",
+      message: `ROLLUP_PO_NOT_COVERED: ${unbackedPo.length} invoice(s) issued without a covering purchase order on orgs that require one`,
+      context: { invoices: unbackedPo.slice(0, 50) },
+    });
   }
 
   return { orgsProcessed: rows.length, invoicesCreated };

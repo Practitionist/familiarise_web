@@ -265,7 +265,7 @@ PAYOUT events trace the full disbursement lifecycle — from batch creation and 
 | `EARNINGS_HELD` / `EARNINGS_RELEASED` | hold gate + release cron |
 | `PAYOUT_STATUS_OVERRIDDEN` | the org payout PATCH moving a batch to APPROVED; since #1860 its `details` carry `selfApproved: true` when the sole approver of a one-person org approved their own batch |
 | `PAYOUT_RECIPIENT_CHANGED` **(#1854)** | where an EXPERT's org share is paid changed, from the member PATCH or the Org › Payouts expert-routing section, through `auditPayoutRecipientChange` |
-| `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (manual recovery v1) |
+| `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (recovered from the next payout) |
 | `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
 
 ### `SETTINGS`

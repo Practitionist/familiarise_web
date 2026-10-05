@@ -32,8 +32,8 @@ Plus the orthogonal obligations:
 
 - Org-issued tax invoice → applies. `OrganizationInvoice` model is real.
 - TCS Sec 52 → **N/A**. No ECO event in B2B; the org pays the platform on consolidated invoice; there's no "supply by registered person through ECO" in this leg.
-- Place of supply uses **org's GST state** (`Organization.gstStateCode`).
-- E-invoicing IRN → applies if AATO ≥ ₹5 cr (Practitionist's AATO determines this on a rolling-year basis). Connector + cron now live as of Round 2.
+- Place of supply uses **org's GST state** (`OrganizationTaxInfo.gstStateCode`), which is mandatory: a manual invoice for a domestic org without it answers 409 `GST_STATE_REQUIRED`, and an invoiced org cannot clear it.
+- E-invoicing IRN → applies if AATO ≥ ₹5 cr (Practitionist's AATO determines this on a rolling-year basis). Connector + cron now live as of Round 2. The uploader submits only invoices that carry the buyer's GSTIN, because an organisation invoice without one is a B2C supply.
 - LUT → applies for org invoices billed to non-resident parents (GCC / overseas HQ) with India delivery.
 - Credit note on org refund → applies.
 

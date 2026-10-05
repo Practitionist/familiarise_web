@@ -17,10 +17,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
-import {
-  CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
-  overageBehaviorUnsupportedReason,
-} from "@/lib/enterprise/reachable-paths";
+import { overageConfigRefusals } from "@/lib/enterprise/reachable-paths";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -258,22 +255,16 @@ async function applyProgramPatch(
         "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG.",
       );
     }
-    // #1458 — same funding-source rule the create route applies, re-checked on
-    // the merged config so a patch cannot assemble a combination the create
-    // route would have refused.
-    const overageReason = overageBehaviorUnsupportedReason(
+    // Re-checked on the merged config so a patch cannot assemble a refused
+    // combination; a legacy value the patch leaves untouched stays editable.
+    const refusal = overageConfigRefusals(
       current.contract.billingAccount?.fundingSource ?? null,
       merged.overageBehavior,
-      // #1458 — merged, so a patch that adds a surcharge to an already-saved
-      // wallet CHARGE_ORG programme is refused as readily as one that sets both.
       merged.overageSurchargeBps,
-    );
-    // #1744 — a programme saved with CHARGE_MEMBER before the all-rail guard
-    // may still edit its other money fields; only re-asserting the value fails.
-    const reassertsLegacyMemberCharge =
-      overageReason === CHARGE_MEMBER_NEEDS_EARNINGS_HOLD &&
-      body.overageBehavior === undefined;
-    if (overageReason && !reassertsLegacyMemberCharge) fail(overageReason);
+    ).find((r) => body[r.field] !== undefined);
+    if (refusal) {
+      fail(refusal.message);
+    }
   }
 
   // #777 §B — archiving guard: an archived program is skipped by the cycle

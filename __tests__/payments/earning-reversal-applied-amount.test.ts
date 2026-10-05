@@ -160,6 +160,7 @@ function settlement(earnings: Earn[]) {
   return {
     originalAmount: 100_000,
     taxAmount: 18_000,
+    createdAt: new Date(),
     legs: [{ source: "REFERRAL_CREDIT", amountPaise: 118_000 }],
     earnings,
     organizationEarnings: [],

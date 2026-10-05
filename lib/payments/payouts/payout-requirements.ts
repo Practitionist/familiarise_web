@@ -15,6 +15,7 @@
 
 export type RequirementCode =
   | "PAN"
+  | "TAX_ENTITY_TYPE"
   | "PAYOUT_ACCOUNT"
   | "ACCOUNT_VERIFICATION"
   | "GSTIN";
@@ -35,7 +36,11 @@ export type PayoutEligibilityReason =
 
 export interface PayoutRequirementsInput {
   consultantProfileId: string;
-  taxInfo: { panLast4: string | null; gstin: string | null } | null;
+  taxInfo: {
+    panLast4: string | null;
+    gstin: string | null;
+    taxEntityType: string | null;
+  } | null;
   defaultAccount: { isVerified: boolean } | null;
   /** ConsultantEarnings rows of any status — the signal that money exists. */
   earningsCount: number;
@@ -59,6 +64,7 @@ const REQUIREMENT_LABEL: Record<RequirementCode, string> = {
   PAYOUT_ACCOUNT: "Add a bank account or UPI ID",
   ACCOUNT_VERIFICATION: "Verify your bank account",
   PAN: "Add your PAN",
+  TAX_ENTITY_TYPE: "Tell us if you work as an individual or a business",
   GSTIN: "Add your GSTIN if you are registered",
 };
 
@@ -67,6 +73,7 @@ const REQUIREMENT_ANCHOR: Record<RequirementCode, string> = {
   PAYOUT_ACCOUNT: "account",
   ACCOUNT_VERIFICATION: "account",
   PAN: "pan",
+  TAX_ENTITY_TYPE: "pan",
   GSTIN: "gstin",
 };
 
@@ -104,6 +111,11 @@ export function payoutRequirements(
   // Section 194-O reaches residents only; a non-resident's withholding is the
   // Section 195 path, which the payout job refuses to automate anyway.
   if (isIndianResident && !taxInfo?.panLast4) missing.push("PAN");
+  // A null entity type forfeits the ₹5L 194-O exemption, so it is asked for
+  // wherever PAN is.
+  if (isIndianResident && !taxInfo?.taxEntityType) {
+    missing.push("TAX_ENTITY_TYPE");
+  }
 
   const currentlyDue: Requirement[] = [];
   const eventuallyDue: Requirement[] = [];

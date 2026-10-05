@@ -32,6 +32,7 @@ import {
   deriveEarningPresentation,
   derivePayoutPresentation,
   nextPayoutCopy,
+  payoutNet,
   presentationBadge,
   type EarningBucket,
 } from "@/lib/dashboard/earnings-state";
@@ -595,7 +596,7 @@ function PayoutList({
     <ul className="divide-y divide-border">
       {payouts.map((p) => {
         const pres = derivePayoutPresentation(p);
-        const net = p.netAmount ?? p.amount - p.tdsDeducted;
+        const net = payoutNet(p);
         return (
           <li key={p.id} className="flex items-start gap-3 px-4 py-3.5 sm:px-5">
             <div className="min-w-0 flex-1">

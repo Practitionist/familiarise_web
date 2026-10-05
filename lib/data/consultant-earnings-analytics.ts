@@ -20,6 +20,7 @@ import {
   type BucketSums,
 } from "@/lib/dashboard/earnings-state";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 
 export interface MonthlyEarning {
   /** Calendar month bucket, "YYYY-MM". */
@@ -133,9 +134,13 @@ function toEarningRow(e: EarningRecord): ConsultantEarningRow {
 }
 
 /** The raw gateway text can embed provider ids; only plain words leave the server. */
-function toPayoutRow(p: ConsultantPayoutRow): ConsultantPayoutRow {
+function toPayoutRow(
+  p: ConsultantPayoutRow,
+  recoveredPaise: number,
+): ConsultantPayoutRow & { recoveredPaise: number } {
   return {
     ...p,
+    recoveredPaise,
     failureReason: p.failureReason
       ? sanitizePayoutFailure(p.failureReason)
       : null,
@@ -169,9 +174,13 @@ async function getConsultantBucketTotals(
     // counts are small (one batch a week at most), so the rows are reduced here.
     prisma.consultantPayout.findMany({
       where: { consultantProfileId, status: "COMPLETED" },
-      select: { amount: true, tdsDeducted: true, netAmount: true },
+      select: { id: true, amount: true, tdsDeducted: true, netAmount: true },
     }),
   ]);
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    paid.map((p) => p.id),
+  );
   const sums = sumEarningBuckets(
     byStatus.map((g) => ({
       status: g.status,
@@ -188,6 +197,7 @@ async function getConsultantBucketTotals(
         amount: sumPaise(p.amount),
         tdsDeducted: sumPaise(p.tdsDeducted),
         netAmount: p.netAmount === null ? null : sumPaise(p.netAmount),
+        recoveredPaise: recovered.get(p.id) ?? 0,
       }),
     0,
   );
@@ -234,12 +244,16 @@ export async function buildConsultantEarningsPayload(
   // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
   // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
   const payouts = await getConsultantPayouts(consultantProfileId);
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    payouts.map((p) => p.id),
+  );
 
   return {
     summary,
     eligibility,
     earnings: history.earnings.map(toEarningRow),
-    payouts: payouts.map(toPayoutRow),
+    payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
     totals,
     pagination: {
       total: history.total,

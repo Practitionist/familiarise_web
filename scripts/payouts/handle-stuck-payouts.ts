@@ -23,6 +23,7 @@ import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
+import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import {
   type PayoutLookup,
   WEBHOOK_STATUS_MAP,
@@ -200,6 +201,7 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
             where: { payoutId: payout.id, status: EarningStatus.BATCHED },
             data: { payoutId: null, status: EarningStatus.READY },
           });
+          await releaseClawbackRecovery(tx, payout.id);
           return { released: released.count, claimed: true };
         });
         failedCount++;

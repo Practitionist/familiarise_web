@@ -18,7 +18,7 @@ import {
   capabilityOf,
   defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
-  overageBehaviorUnsupportedReason,
+  overageConfigRefusals,
 } from "@/lib/enterprise/reachable-paths";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -30,8 +30,7 @@ const CoveredPlanTypeSchema = z.enum([
 ]);
 
 const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
-// The enum still parses CHARGE_MEMBER so the refusal below can name it;
-// #1744 — `overageBehaviorUnsupportedReason` refuses it on every rail.
+// CHARGE_MEMBER parses so `overageConfigRefusals` can refuse it by name on every rail.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
 // #768 #14/#15 — overage-combo guards shared by both config schemas:
@@ -391,17 +390,18 @@ export async function POST(
       { status: 400 },
     );
   }
-  const overageReason = overageBehaviorUnsupportedReason(
+  const [overageRefusal] = overageConfigRefusals(
     fundingSource,
     effectiveOverageBehavior,
-    // #1458 — the surcharge is part of the rule, not a separate knob: CHARGE_ORG
-    // is collectable on a wallet debit only while the marginal stays inside the
-    // price that debit took.
     overageConfig.overageSurchargeBps,
   );
-  if (overageReason) {
+  if (overageRefusal) {
     return NextResponse.json(
-      { error: overageReason, code: "INVALID_OVERAGE_CONFIG" },
+      {
+        error: overageRefusal.message,
+        code: "INVALID_OVERAGE_CONFIG",
+        refusal: overageRefusal.code,
+      },
       { status: 400 },
     );
   }
