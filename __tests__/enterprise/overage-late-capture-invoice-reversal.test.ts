@@ -43,6 +43,9 @@ jest.mock("../../lib/prisma", () => {
     },
   };
 });
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerInvoiceBestEffort: jest.fn().mockResolvedValue({}),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn(),
 }));
@@ -101,6 +104,7 @@ const REVERSAL_KEY = "overage-recarve-invoice:side1";
 const side = {
   id: "side1",
   amount: MARGINAL,
+  taxAmount: 0,
   organizationId: "org1",
   // The abandoned sweep FAILed it, so the recarve edge (FAILED→CHARGED) fires.
   paymentStatus: "FAILED",

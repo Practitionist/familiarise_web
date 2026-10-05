@@ -28,6 +28,10 @@ import { NextRequest } from "next/server";
 
 // ---- Mocks ------------------------------------------------------------
 
+jest.mock("../../lib/payments/billing/org-invoice-journal", () => ({
+  postInvoiceIssuedJournal: jest.fn().mockResolvedValue("POSTED"),
+  postInvoiceVoidedJournal: jest.fn().mockResolvedValue(true),
+}));
 // The route applies moneyOpsLimiter (10/min). Without this stub, the real
 // Upstash limiter 429s the later cases in CI — the same house mock every
 // other enterprise suite uses (see owner-role-escalation-guard.test.ts).

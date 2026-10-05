@@ -29,6 +29,9 @@ jest.mock("../../lib/prisma", () => {
     },
   };
 });
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerInvoiceBestEffort: jest.fn().mockResolvedValue({}),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue(undefined),
 }));
@@ -68,6 +71,7 @@ const mockSystemError = recordSystemError as jest.Mock;
 const side = {
   id: "side1",
   amount: 125_000,
+  taxAmount: 0,
   organizationId: "org1",
   paymentStatus: "PENDING",
   parentPaymentId: "parent1",

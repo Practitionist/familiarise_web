@@ -20,6 +20,7 @@ import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { lutNumberForSupply } from "@/lib/compliance/lut";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
+import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
 import {
   supplierStateCode,
   SupplierStateMismatchError,
@@ -351,6 +352,10 @@ export async function POST(
           },
         },
       });
+
+      if (body.issueImmediately) {
+        await postInvoiceIssuedJournal(tx, created.id);
+      }
 
       await tx.orgAuditLog.create({
         data: {

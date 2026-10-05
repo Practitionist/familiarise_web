@@ -241,15 +241,16 @@ before the guard is listed in the organisation's action centre and by
 The same helper retires `CHARGE_ORG` on a wallet-funded programme
 (`WALLET_CHARGE_ORG_RETIRED`), because the wallet debit already took the whole
 price and there is no later bill for an over-cap charge to ride on, and it
-refuses any `overageSurchargeBps` above zero (`OVERAGE_SURCHARGE_UNSUPPORTED`)
-until the GST on a surcharge is invoiced. Each refusal names the field that
+refuses any `overageSurchargeBps` above zero (`OVERAGE_SURCHARGE_UNSUPPORTED`);
+a legacy programme that still carries a surcharge is charged 18% GST on it at
+checkout. Each refusal names the field that
 carries the refused value, so a patch that leaves a legacy value untouched still
 saves its other fields. The programmes page no longer offers a surcharge on a
 new programme and shows a saved one only so it can be cleared.
 
 Each overage materialises an `OverageEvent` row carrying
 `basePaise` / `surchargePaise` / `marginalPaise` (marginal = base +
-surcharge, where surcharge = base × `overageSurchargeBps` / 10000). Two
+surcharge + GST on the surcharge, where surcharge = base × `overageSurchargeBps` / 10000). Two
 guards bound the runaway: `priceCapPerEngagementPaise` caps the
 per-engagement pass-through price, and `maxOveragePerCyclePaise` caps the
 cumulative marginal within the cycle — once exceeded, subsequent bookings

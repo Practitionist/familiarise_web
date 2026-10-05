@@ -2778,7 +2778,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// org invoice issued or voided (its GST not booked by a booking), and CHARGE_ORG overage accrual
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND

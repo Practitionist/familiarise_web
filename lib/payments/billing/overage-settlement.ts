@@ -14,6 +14,8 @@ import {
   type ProgramType,
 } from "@prisma/client";
 import { computeOverageForBooking } from "@/lib/payments/billing/overage";
+import { determineTax } from "@/lib/payments/tax/tax-engine";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -54,6 +56,36 @@ export interface PendingOverageNotification {
   /** #1653 — the email formats the amount; the bell keeps its INR default. */
   currency: Currency;
   overageEventId: string;
+}
+
+/**
+ * GST on the surcharge, by the payer's place of supply. The surcharge is the one
+ * part of an overage no taxed booking price already holds: `basePaise` is a
+ * slice of the parent's tax-inclusive price, whose GST the parent journal posts.
+ */
+function surchargeTaxPaise(
+  surchargePaise: number,
+  buyerCountry: string,
+): number {
+  if (surchargePaise <= 0) return 0;
+  return determineTax({ baseAmountPaise: surchargePaise, buyerCountry })
+    .taxAmount;
+}
+
+/** GST on a CHARGE_ORG surcharge: the org is the payer, so its own place of supply decides. */
+async function orgSurchargeTaxPaise(
+  tx: Tx,
+  organizationId: string | null,
+  surchargePaise: number,
+): Promise<number> {
+  if (surchargePaise <= 0) return 0;
+  const org = organizationId
+    ? await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { dataResidencyRegion: true },
+      })
+    : null;
+  return surchargeTaxPaise(surchargePaise, org?.dataResidencyRegion ?? "IN");
 }
 
 /**
@@ -184,7 +216,11 @@ export async function recordOverageAtCheckout(
     typeof tx.payment?.findUnique === "function"
       ? await tx.payment.findUnique({
           where: { id: paymentId },
-          select: { billableToOrgInvoiceId: true },
+          select: {
+            billableToOrgInvoiceId: true,
+            buyerCountry: true,
+            consumerStateCode: true,
+          },
         })
       : null;
   const parentInvoiced = !!parentPayment?.billableToOrgInvoiceId;
@@ -195,6 +231,8 @@ export async function recordOverageAtCheckout(
       basePaise,
       surchargePaise,
       parentInvoiced,
+      buyerCountry: parentPayment?.buyerCountry ?? "IN",
+      consumerStateCode: parentPayment?.consumerStateCode ?? null,
     });
   }
 
@@ -288,6 +326,8 @@ async function recordMemberOverageCharge(
     basePaise: number;
     surchargePaise: number;
     parentInvoiced: boolean;
+    buyerCountry: string;
+    consumerStateCode: string | null;
   },
 ): Promise<PendingOverageNotification | null> {
   const {
@@ -318,6 +358,10 @@ async function recordMemberOverageCharge(
     return null;
   }
 
+  // The member is a B2C buyer: GST on the surcharge by their own place of supply.
+  const taxPaise = surchargeTaxPaise(ctx.surchargePaise, ctx.buyerCountry);
+  const chargedPaise = effectiveMarginalPaise + taxPaise;
+
   // Instant member charge. The booking proceeds; create a parent-linked
   // PENDING side-Payment for the effective marginal. The gateway is NOT called
   // inside this Serializable TX — the order is minted lazily when the member
@@ -325,9 +369,12 @@ async function recordMemberOverageCharge(
   // `appointmentId: null` avoids the @@unique([userId, appointmentId]) clash.
   const sideCharge = await tx.payment.create({
     data: {
-      amount: effectiveMarginalPaise,
+      amount: chargedPaise,
       originalAmount: effectiveMarginalPaise,
-      taxAmount: 0,
+      taxAmount: taxPaise,
+      // The member's tax invoice places the supply exactly as the booking's.
+      buyerCountry: ctx.buyerCountry,
+      consumerStateCode: ctx.consumerStateCode,
       currency,
       paymentMethod: "CARD",
       paymentIntent: `overage:${paymentId}`,
@@ -348,7 +395,8 @@ async function recordMemberOverageCharge(
       overageBehavior: "CHARGE_MEMBER",
       basePaise: carvedBasePaise,
       surchargePaise: ctx.surchargePaise,
-      marginalPaise: effectiveMarginalPaise,
+      // GST-inclusive: what the member is charged, equal to the side-Payment amount.
+      marginalPaise: chargedPaise,
       // Mirrors the booking currency (the side-Payment + timeout notify
       // read it back); hardcoding INR mislabels a non-INR booking.
       currency,
@@ -360,22 +408,22 @@ async function recordMemberOverageCharge(
   return {
     userId,
     programAssignmentId,
-    marginalPaise: effectiveMarginalPaise,
+    marginalPaise: chargedPaise,
     currency,
     overageEventId: memberOverageEvent.id,
   };
 }
 
 /**
- * Mint a child `ENTERPRISE_INVOICE_ACCRUAL` Payment carrying an
- * `OVERAGE_INVOICE_ACCRUAL` leg. Like all enterprise invoice accrual payments,
- * `paymentStatus` is `SUCCEEDED` at birth because the booking is confirmed on
- * enterprise credit and the monthly invoice generator only rolls up legs whose
- * parent payment has `paymentStatus = SUCCEEDED` and `invoiceLineItemId = null`.
+ * Mint a child `ENTERPRISE_INVOICE_ACCRUAL` Payment carrying a tax-inclusive
+ * `OVERAGE_INVOICE_ACCRUAL` leg, born `SUCCEEDED` so the rollup bills it, and
+ * post its accrual journal (`Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`)
+ * since no booking journal ever runs for it.
  */
-function mintChildOverageAccrualPayment(
+async function mintChildOverageAccrualPayment(
   input: RecordOverageInput,
   accrualPaise: number,
+  taxPaise: number,
 ) {
   const {
     tx,
@@ -386,11 +434,12 @@ function mintChildOverageAccrualPayment(
     organizationId,
     paymentGateway,
   } = input;
-  return tx.payment.create({
+  const amount = accrualPaise + taxPaise;
+  const child = await tx.payment.create({
     data: {
-      amount: accrualPaise,
+      amount,
       originalAmount: accrualPaise,
-      taxAmount: 0,
+      taxAmount: taxPaise,
       currency,
       paymentMethod: "ENTERPRISE_INVOICE_ACCRUAL",
       paymentIntent: `overage_accrual_${globalThis.crypto.randomUUID()}`,
@@ -404,12 +453,46 @@ function mintChildOverageAccrualPayment(
       legs: {
         create: {
           source: "OVERAGE_INVOICE_ACCRUAL",
-          amountPaise: accrualPaise,
+          amountPaise: amount,
           sourceRef: programAssignmentId,
         },
       },
     },
   });
+  if (organizationId && amount > 0) {
+    await postLedgerTxn(tx, {
+      idempotencyKey: `overage-accrual:${child.id}`,
+      kind: "INVOICE_ISSUED",
+      paymentId: child.id,
+      description: "CHARGE_ORG overage accrued onto the next org invoice",
+      postings: [
+        {
+          account: { kind: "ORG_RECEIVABLE", organizationId },
+          direction: "DEBIT",
+          amountPaise: amount,
+        },
+        ...(accrualPaise > 0
+          ? [
+              {
+                account: { kind: "PLATFORM_FEE" as const },
+                direction: "CREDIT" as const,
+                amountPaise: accrualPaise,
+              },
+            ]
+          : []),
+        ...(taxPaise > 0
+          ? [
+              {
+                account: { kind: "GST_PAYABLE" as const },
+                direction: "CREDIT" as const,
+                amountPaise: taxPaise,
+              },
+            ]
+          : []),
+      ],
+    });
+  }
+  return child;
 }
 
 async function recordParentInvoicedOrgOverage(
@@ -419,9 +502,15 @@ async function recordParentInvoicedOrgOverage(
 ): Promise<null> {
   const { tx, programAssignmentId, currency, paymentId } = input;
   if (surchargePaise > 0) {
+    const taxPaise = await orgSurchargeTaxPaise(
+      tx,
+      input.organizationId,
+      surchargePaise,
+    );
     const childAccrualPayment = await mintChildOverageAccrualPayment(
       input,
       surchargePaise,
+      taxPaise,
     );
     await tx.overageEvent.create({
       data: {
@@ -430,7 +519,7 @@ async function recordParentInvoicedOrgOverage(
         overageBehavior: "CHARGE_ORG",
         basePaise: 0,
         surchargePaise,
-        marginalPaise: surchargePaise,
+        marginalPaise: surchargePaise + taxPaise,
         currency,
         chargeStatus: "PENDING",
         paymentId: childAccrualPayment.id,
@@ -508,9 +597,15 @@ async function recordOrgOverageCharge(
       // rollupOrgInvoiceAccruals picks up and bills the overage.
       const effectiveBasePaise = walletLeg ? 0 : basePaise;
       const accrualPaise = effectiveBasePaise + surchargePaise;
+      const taxPaise = await orgSurchargeTaxPaise(
+        tx,
+        input.organizationId,
+        surchargePaise,
+      );
       const childAccrualPayment = await mintChildOverageAccrualPayment(
         input,
         accrualPaise,
+        taxPaise,
       );
       await tx.overageEvent.create({
         data: {
@@ -519,7 +614,7 @@ async function recordOrgOverageCharge(
           overageBehavior: "CHARGE_ORG",
           basePaise: effectiveBasePaise,
           surchargePaise,
-          marginalPaise: accrualPaise,
+          marginalPaise: accrualPaise + taxPaise,
           currency,
           chargeStatus: "PENDING",
           paymentId: childAccrualPayment.id,
@@ -537,6 +632,15 @@ async function recordOrgOverageCharge(
     });
     throw fundingErr;
   }
+
+  // The org is the payer: GST on the surcharge rides the tax-inclusive overage
+  // leg and the parent's taxAmount, so the booking journal and the rollup carry it.
+  const taxPaise = await orgSurchargeTaxPaise(
+    tx,
+    input.organizationId,
+    surchargePaise,
+  );
+  const chargedPaise = marginalPaise + taxPaise;
 
   // #1744 row 1 — a short base leg (credits/discounts already netted) used to
   // carve nothing, so the slice it did hold was billed again inside the
@@ -567,23 +671,26 @@ async function recordOrgOverageCharge(
           source: "OVERAGE_INVOICE_ACCRUAL",
         },
       },
-      data: { amountPaise: { increment: marginalPaise } },
+      data: { amountPaise: { increment: chargedPaise } },
     });
   } else {
     await tx.paymentLeg.create({
       data: {
         paymentId,
         source: "OVERAGE_INVOICE_ACCRUAL",
-        amountPaise: marginalPaise,
+        amountPaise: chargedPaise,
         sourceRef: `overage:${programAssignmentId}`,
       },
     });
   }
-  const amountDelta = marginalPaise - carved;
+  const amountDelta = chargedPaise - carved;
   if (amountDelta > 0) {
     await tx.payment.update({
       where: { id: paymentId },
-      data: { amount: { increment: amountDelta } },
+      data: {
+        amount: { increment: amountDelta },
+        ...(taxPaise > 0 ? { taxAmount: { increment: taxPaise } } : {}),
+      },
     });
   }
   await tx.overageEvent.create({
@@ -593,7 +700,7 @@ async function recordOrgOverageCharge(
       overageBehavior: "CHARGE_ORG",
       basePaise,
       surchargePaise,
-      marginalPaise,
+      marginalPaise: chargedPaise,
       currency,
       chargeStatus: "PENDING",
       // paymentId / invoiceLineItemId / settledAt stamped by the rollup.

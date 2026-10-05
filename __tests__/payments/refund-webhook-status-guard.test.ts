@@ -71,7 +71,9 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
 const applyRefundCascade = jest.fn().mockResolvedValue({});
 jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: (...a: unknown[]) => applyRefundCascade(...a),
-  mintInvoiceRefundCreditNote: jest.fn(),
+  mintInvoiceRefundCreditNote: jest
+    .fn()
+    .mockResolvedValue({ creditNoteId: null }),
   mintRefundCreditNote: jest.fn(),
   refundMemberOverageSidePayment: jest.fn(),
 }));

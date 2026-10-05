@@ -41,6 +41,7 @@ import {
   type ApplyRefundCascadeResult,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { invoiceRefundDebits } from "@/lib/payments/billing/org-invoice-journal";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -839,7 +840,7 @@ export async function handleRefundCreated(
 
               // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
               // refunded invoice. One per gateway refund, idempotent on refundId.
-              await mintInvoiceRefundCreditNote(tx, {
+              const { creditNoteId } = await mintInvoiceRefundCreditNote(tx, {
                 invoiceId: invoice.id,
                 refundId,
                 amountPaise: amount,
@@ -897,11 +898,10 @@ export async function handleRefundCreated(
                     err,
                   ),
                 );
-              // Balanced reversal journal — mirrors `invoicepaid:<invoiceId>`
-              // (Dr CASH / Cr ORG_RECEIVABLE) with the credit side routed to
-              // wherever the value went: back to CASH when the gateway returns
-              // the money, or to the org's WALLET when the refund is granted as
-              // in-app credit (fundingSource WALLET).
+              // Balanced reversal journal. The credit side goes wherever the
+              // value went: back to CASH when the gateway returns the money, or
+              // to the org's WALLET when the refund is granted as in-app credit
+              // (fundingSource WALLET). The debit side comes from invoiceRefundDebits.
               //
               // #1128 (doctrine §1) — no swallow: a failed journal or wallet
               // credit propagates, the tx rolls back and the CN is never minted
@@ -921,14 +921,12 @@ export async function handleRefundCreated(
                 invoiceId: invoice.id,
                 description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
                 postings: [
-                  {
-                    account: {
-                      kind: "ORG_RECEIVABLE",
-                      organizationId: invoice.organizationId,
-                    },
-                    direction: "DEBIT",
+                  ...(await invoiceRefundDebits(tx, {
+                    invoiceId: invoice.id,
+                    organizationId: invoice.organizationId,
                     amountPaise: amount,
-                  },
+                    creditNoteId,
+                  })),
                   creditAsWallet
                     ? {
                         account: {

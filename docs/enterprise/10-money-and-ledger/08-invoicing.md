@@ -53,7 +53,21 @@ sequenceDiagram
   WH->>L: INVOICE_PAID — Dr CASH / Cr ORG_RECEIVABLE(org) (clears the accrual)
 ```
 
-On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) posts `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)` for the invoice total, in the same transaction that flips the status. Note **issuance posts no money leg** — the receivable was accrued at booking; issuance just rolls accrued bookings into the invoice and records an audit row ([ledger & postings §3](03-ledger-and-postings.md)).
+On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) posts `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)` for the invoice total, in the same transaction that flips the status. A rollup invoice posts no money leg at issue, because the receivable and the GST were booked booking by booking; issuance just rolls accrued bookings into the invoice and records an audit row. An invoice that bills a supply no booking has booked posts its own issue journal instead (§1.2).
+
+### 1.2 Which invoices journal at issue
+
+Whether issuance posts anything depends only on whether a booking journal already booked the supply's GST. `postInvoiceIssuedJournal` (`lib/payments/billing/org-invoice-journal.ts`) decides this from the invoice itself, inside the issuing transaction, so the cron, the manual `POST` and the `DRAFT → ISSUED` `PATCH` all share one rule.
+
+| Invoice kind                           | Created by                                        | GST already booked elsewhere?                                         | At issue          |
+| -------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- | ----------------- |
+| Accrual rollup                         | `rollupOrgInvoiceAccruals`                        | Yes — each billed booking's `booking:` journal credited `GST_PAYABLE` | Nothing           |
+| Manual invoice with a `paymentId` line | `POST …/invoices`                                 | Yes — it re-bills a booking                                           | Nothing           |
+| Licence subscription fee               | `generate-subscription-invoices`                  | No — the fee is billed once, here                                     | `invoice-issued:` |
+| Manual programme or contract fee       | `POST …/invoices` (no `paymentId` lines)          | No                                                                    | `invoice-issued:` |
+| Wallet top-up                          | Not an invoice (`WalletTopUp` + `topup:` journal) | The later wallet-funded bookings book their own GST                   | Not applicable    |
+
+The table reads as one sentence: a supply whose GST is already in the journal is never booked again, and a supply billed only on this document is booked here. A wallet top-up is an advance against future bookings, not a supply, so it mints no invoice and its cash sits in `WALLET` until a booking spends it. The posting shapes for issue, void and refund are in [ledger & postings §4.3a](03-ledger-and-postings.md).
 
 ### 1.1 Worked walkthrough — Wipro's month-end invoice
 
@@ -71,7 +85,7 @@ totalPaise    = 20_000_000 + 3_600_000           =  23_600_000   (₹2,36,000)
 
 (The code rounds the *whole* 18% tax first, then floors half for CGST and lets SGST take the remainder, so `cgst + sgst == taxPaise` exactly — `gst.ts:16`. On a round subtotal like this there's no residual; on an odd subtotal SGST carries the extra paise.)
 
-`invoiceNumber` is allocated gapless per `(orgId, FY)` — Wipro's first FY2026 invoice is `INV-WIP-2026-0001` (the seed's prefix). The OWNER issues it (`DRAFT → ISSUED`, `issuedAt` stamped, IRN enqueued), `dueDate = issuedAt + 60d` (NET-60). **Issuance posts no money leg** — the ₹2,36,000 receivable was already accrued booking-by-booking. Sixty days later Wipro pays; the invoice-paid webhook posts `Dr CASH 23_600_000 / Cr ORG_RECEIVABLE(wipro) 23_600_000` and flips `ISSUED → PAID` in one transaction. The `ORG_RECEIVABLE(wipro)` balance returns to zero for that invoice's bookings.
+`invoiceNumber` is allocated gapless per `(orgId, FY)` — Wipro's first FY2026 invoice is `INV-WIP-2026-0001` (the seed's prefix). The OWNER issues it (`DRAFT → ISSUED`, `issuedAt` stamped, IRN enqueued), `dueDate = issuedAt + 60d` (NET-60). **Issuance posts no money leg** for this rollup — the ₹2,36,000 receivable and its GST were already booked booking-by-booking. Sixty days later Wipro pays; the invoice-paid webhook posts `Dr CASH 23_600_000 / Cr ORG_RECEIVABLE(wipro) 23_600_000` and flips `ISSUED → PAID` in one transaction. The `ORG_RECEIVABLE(wipro)` balance returns to zero for that invoice's bookings.
 
 Were Wipro registered in a *different* state from the platform's supplier registration, the same ₹2,00,000 would carry `igstPaise = 36_00000` (₹36,000) and zero CGST/SGST — same total, different columns, because the place-of-supply crossed a state line.
 
@@ -231,7 +245,7 @@ A refund without a GST credit note is a filing mismatch, so a refund against an 
 - Idempotency is `CreditNote.refundId @unique`: it probes first and returns the existing CN on replay, so a webhook redelivery / cron retry never mints a duplicate or burns a sequence number.
 - Past the CGST s.34(2) cutoff (30 November after the financial year of the supply — the booking date, or a cycle invoice's cycle start — `lib/compliance/gst-credit-note-cutoff.ts`) the note is commercial: base amount only, every tax head zero, and a reason that starts with "Commercial credit note". The refund cascade then posts no `GST_PAYABLE` debit, so the GST portion is a platform cost.
 
-A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency.
+A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency. For an issue-journalled invoice the refund journal takes its GST share from this note, so a commercial note past the cutoff leaves the GST on `GST_PAYABLE` and the whole refund comes off `PLATFORM_FEE`.
 
 ```prisma
 model CreditNote {
@@ -275,7 +289,7 @@ A `CHARGE_ORG` program overage isn't billed instantly — its marginal accrues a
 
 For each rolled `CHARGE_ORG` `OverageEvent` it then walks the state machine `PENDING → ACCRUED` (via `transitionOverage`), stamping `settledAt` and the exact `invoiceLineItemId` the event landed on (auditability + reversal). The event reaches its terminal `CHARGED` only when the invoice is **paid** — the `INVOICE_PAID` ledger handler flips `ACCRUED → CHARGED`. This is why `settle-invoice-accruals` deliberately includes `OVERAGE_INVOICE_ACCRUAL` in its "orgs to bill" scan: an org whose base bookings are all LICENSE-covered (₹0 legs) but which has `CHARGE_ORG` overage would otherwise be skipped and never billed for the overage.
 
-The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` / `surchargePaise` / `marginalPaise`), so the charge stays GST-auditable even though the current rollup writes one combined line per booking; per-line surcharge itemization on the invoice is a future refinement.
+The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` / `surchargePaise` / `marginalPaise`), so the charge stays GST-auditable even though the current rollup writes one combined line per booking; per-line surcharge itemization on the invoice is a future refinement. The surcharge carries 18% GST by the organisation's place of supply: checkout adds it to the tax-inclusive `OVERAGE_INVOICE_ACCRUAL` leg and to the parent's `taxAmount`, so the booking journal credits it to `GST_PAYABLE` and the rollup bills it once through `accruedTaxPaise`. The `marginalPaise` it records is GST-inclusive.
 
 ---
 
@@ -283,6 +297,8 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 - `autoGenerated = true` — monthly roll-up cron; `billedPayments[]` lists captured payments.
 - `autoGenerated = false` — OWNER-created via `POST …/invoices` for ad-hoc charges (setup fees, overage bundles).
+
+`autoGenerated` is set by both the rollup and the subscription cron, so it does not tell the two apart. What does is whether the invoice bills bookings, which is the test the issue journal and the `ORG_INVOICE_GST_MISMATCH` reconcile step both use: a booking-billing invoice is compared against its bookings' GST, any other against its `invoice-issued:` and refund journals.
 
 ---
 
@@ -301,7 +317,7 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 ## Deprecated & Superseded Approaches
 
-The monthly rollup used to issue every invoice with `purchaseOrderId` null and draw nothing down, so a purchase order's balance ignored accrual invoices; it now draws through the shared CAS helper. `requiresPO` used to be a UI warning only; it is now a 409 on invoice creation and contract signing. A manual invoice for an organisation with no `gstStateCode` used to fall back to the GSTIN prefix for its place of supply; the route now requires the declared state. The IRP uploader used to pick up B2C organisation invoices and fail them permanently for a missing buyer GSTIN; it now never selects them.
+Every invoice kind used to post nothing at issue, which was right only for the rollup: a subscription or manual invoice drove `ORG_RECEIVABLE` negative when paid and never booked its GST. Those invoices now post `invoice-issued:`. The monthly rollup used to issue every invoice with `purchaseOrderId` null and draw nothing down, so a purchase order's balance ignored accrual invoices; it now draws through the shared CAS helper. `requiresPO` used to be a UI warning only; it is now a 409 on invoice creation and contract signing. A manual invoice for an organisation with no `gstStateCode` used to fall back to the GSTIN prefix for its place of supply; the route now requires the declared state. The IRP uploader used to pick up B2C organisation invoices and fail them permanently for a missing buyer GSTIN; it now never selects them.
 
 ### Related docs
 - [Funding & programs](../00-foundations/03-funding-and-programs.md) — the INVOICE funding source.

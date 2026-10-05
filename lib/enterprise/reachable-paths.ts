@@ -144,7 +144,7 @@ export function overageConfigRefusals(
         "Choose BLOCK to stop over-cap bookings, or fund the programme from the organisation's invoice account.",
     });
   }
-  // Interim: the surcharge is booked as platform fee but no invoice charges GST on it.
+  // New surcharges stay refused; a legacy one is booked as platform fee and taxed at checkout.
   if ((overageSurchargeBps ?? 0) > 0) {
     refusals.push({
       code: "OVERAGE_SURCHARGE_UNSUPPORTED",
