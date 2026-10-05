@@ -335,7 +335,7 @@ sequenceDiagram
 
 ### 5.12 Overage with surcharge + circuit breaker (v2)
 
-New programmes can no longer add a surcharge (`OVERAGE_SURCHARGE_UNSUPPORTED`), so this walkthrough describes how a programme saved with one still settles. The surcharge is taxed at checkout: 18% GST on it rides the marginal.
+Programmes with `overageSurchargeBps > 0` settle surcharges across all funding rails (`INVOICE`, `WALLET`, `LICENSE`, and `CHARGE_MEMBER`). The surcharge is taxed at checkout: 18% GST on it rides the marginal.
 
 **Seed-grounded shape (Wipro), hypothetical numbers.** Wipro's seed config: `coveredEngagementsPerCycle = 12`, `overageBehavior = CHARGE_ORG`, `priceCapPerEngagementPaise = ₹10,000`. The seed does **not** set `overageSurchargeBps` or `maxOveragePerCyclePaise` (both null = no markup, no ceiling); set them to walk this scenario. Say `overageSurchargeBps = 1500` (15%) and `maxOveragePerCyclePaise = ₹20,000`.
 

@@ -753,12 +753,11 @@ async function resolvePlannedWalletAndOverage(
     walletLegOrgId = walletOwner?.ownerOrgId ?? null;
   }
 
-  const nominalTotal =
-    payment.originalAmount !== undefined
-      ? payment.originalAmount + (payment.taxAmount ?? 0)
-      : wallet;
   let orgOverageSurchargePaise = 0;
-  if (overageAccrualPaise > 0 || wallet > nominalTotal) {
+  if (
+    typeof db.overageEvent?.findFirst === "function" &&
+    (overageAccrualPaise > 0 || wallet > 0)
+  ) {
     const orgOverage = await db.overageEvent.findFirst({
       where: {
         bookingUtilization: { paymentId: payment.id },
@@ -1214,8 +1213,7 @@ async function resolveBookingJournalDebits(
   if (legs.length > 0) {
     const tallied = tallyPaymentLegsBySource(legs);
     overageAccrualPaise = tallied.overageAccrualPaise;
-    hasWalletSurcharge =
-      tallied.wallet > payment.originalAmount + (payment.taxAmount ?? 0);
+    hasWalletSurcharge = tallied.wallet > 0;
     pushDebit({ kind: "CASH" }, tallied.card);
 
     let walletLegOrgId = orgId;

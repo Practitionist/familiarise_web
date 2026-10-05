@@ -70,8 +70,8 @@ const mockSystemError = recordSystemError as jest.Mock;
 
 const side = {
   id: "side1",
-  amount: 125_000,
-  taxAmount: 0,
+  amount: 129_500,
+  taxAmount: 4_500,
   organizationId: "org1",
   paymentStatus: "PENDING",
   parentPaymentId: "parent1",
@@ -83,7 +83,7 @@ beforeEach(() => {
 });
 
 describe("handleOverageMemberSuccess", () => {
-  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE == marginal", async () => {
+  it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
@@ -113,11 +113,16 @@ describe("handleOverageMemberSuccess", () => {
       kind: "OVERAGE_MEMBER",
       paymentId: "side1",
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 125_000 },
+        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: 129_500 },
         {
           account: { kind: "ORG_PAYABLE", organizationId: "org1" },
           direction: "CREDIT",
           amountPaise: 125_000,
+        },
+        {
+          account: { kind: "GST_PAYABLE" },
+          direction: "CREDIT",
+          amountPaise: 4_500,
         },
       ],
     });

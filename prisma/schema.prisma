@@ -2048,7 +2048,9 @@ model OrganizationEarnings {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([paymentId, organizationId, consultantProfileId, role, cycleOrdinal])
+  // One row per (payment, organization, consultant, role, cycle): the NULLS NOT
+  // DISTINCT sidecar unique organization_earnings_split_key in prisma/sql;
+  // no @@unique on that set here so Postgres doesn't carry a duplicate NULLS DISTINCT index.
   @@index([paymentId, organizationId])
   @@index([consultantProfileId])
   // #781 §D — createdAt-ordered finance reads (payout batching, statements)

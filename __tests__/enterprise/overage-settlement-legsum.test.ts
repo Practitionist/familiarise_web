@@ -13,6 +13,7 @@
  */
 
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";
 
 // jest.mock resolves via jest's resolver (no `@/` path mapping) — use relative
@@ -587,3 +588,143 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     );
   });
 });
+
+describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
+  it("WALLET parent: re-debits wallet, increments parent WALLET leg + amount, and releases overage-held earnings", async () => {
+    const { walletDebit } = jest.requireMock(
+      "../../lib/api/organizations/wallet",
+    );
+    walletDebit.mockClear();
+
+    const consultantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const orgUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const legUpdate = jest.fn().mockResolvedValue({});
+
+    const mockTx = {
+      overageEvent: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "oe_wallet_1",
+          basePaise: 40_000,
+          overageBehavior: "CHARGE_MEMBER",
+          payment: { id: "side_wallet_1", parentPaymentId: "parent_wallet_1" },
+        }),
+      },
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "parent_wallet_1",
+          billableToOrgInvoiceId: null,
+          billingAccountId: "ba_wallet_1",
+        }),
+        updateMany: paymentUpdateMany,
+      },
+      paymentLeg: {
+        findUnique: jest
+          .fn()
+          .mockImplementation(
+            async ({
+              where,
+            }: {
+              where: { paymentId_source: { source: string } };
+            }) =>
+              where.paymentId_source.source === "WALLET"
+                ? { amountPaise: 60_000 }
+                : null,
+          ),
+        update: legUpdate,
+      },
+      billingAccount: {
+        updateMany: jest.fn(),
+      },
+      consultantEarnings: { updateMany: consultantUpdateMany },
+      organizationEarnings: { updateMany: orgUpdateMany },
+    };
+
+    const outcome = await restoreOverageBaseCarve(mockTx as never, {
+      sidePaymentId: "side_wallet_1",
+    });
+
+    expect(outcome).toBe("restored");
+    expect(walletDebit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        billingAccountId: "ba_wallet_1",
+        amountPaise: 40_000,
+        reason: "BOOKING",
+        paymentId: "parent_wallet_1",
+      }),
+    );
+    expect(paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "parent_wallet_1" },
+      data: { amount: { increment: 40_000 } },
+    });
+    expect(legUpdate).toHaveBeenCalledWith({
+      where: {
+        paymentId_source: { paymentId: "parent_wallet_1", source: "WALLET" },
+      },
+      data: { amountPaise: { increment: 40_000 } },
+    });
+    expect(consultantUpdateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "parent_wallet_1",
+        status: "HELD",
+        preDisputeStatus: "PENDING",
+      },
+      data: { status: "PENDING", preDisputeStatus: null },
+    });
+  });
+
+  it("LICENSE parent: leaves ₹0 LICENSE leg untouched and keeps parent earnings HELD when member side-charge fails", async () => {
+    const consultantUpdateMany = jest.fn();
+    const paymentUpdateMany = jest.fn();
+    const legUpdate = jest.fn();
+
+    const mockTx = {
+      overageEvent: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "oe_license_1",
+          basePaise: 40_000,
+          overageBehavior: "CHARGE_MEMBER",
+          payment: {
+            id: "side_license_1",
+            parentPaymentId: "parent_license_1",
+          },
+        }),
+      },
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "parent_license_1",
+          billableToOrgInvoiceId: null,
+          billingAccountId: "ba_license_1",
+        }),
+        updateMany: paymentUpdateMany,
+      },
+      paymentLeg: {
+        findUnique: jest
+          .fn()
+          .mockImplementation(
+            async ({
+              where,
+            }: {
+              where: { paymentId_source: { source: string } };
+            }) =>
+              where.paymentId_source.source === "LICENSE"
+                ? { amountPaise: 0 }
+                : null,
+          ),
+        update: legUpdate,
+      },
+      consultantEarnings: { updateMany: consultantUpdateMany },
+    };
+
+    const outcome = await restoreOverageBaseCarve(mockTx as never, {
+      sidePaymentId: "side_license_1",
+    });
+
+    expect(outcome).toBe("none");
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(legUpdate).not.toHaveBeenCalled();
+    expect(consultantUpdateMany).not.toHaveBeenCalled();
+  });
+});
+

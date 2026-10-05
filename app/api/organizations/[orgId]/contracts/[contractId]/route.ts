@@ -28,7 +28,6 @@ const TERM_FIELDS = [
   "effectiveTo",
   "paymentTermsDays",
   "terms",
-  "purchaseOrderId",
 ] as const;
 
 const ContractStatusSchema = z.enum([

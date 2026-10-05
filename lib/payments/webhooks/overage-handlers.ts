@@ -97,12 +97,27 @@ export async function handleOverageMemberSuccess(
       if (claimed.count === 0) return null;
     }
 
-    // The side charge is born with its CARD leg; capture only stamps the
-    // gateway order id on it, so a replay rewrites the same value.
-    await tx.paymentLeg.updateMany({
-      where: { paymentId: side.id, source: "CARD" },
-      data: { sourceRef: paymentIntentId },
-    });
+    // The side charge is born with its CARD leg; upsert stamps the gateway
+    // order id on it (and creates the leg if a legacy/fallback row lacked one).
+    if (typeof tx.paymentLeg?.upsert === "function") {
+      await tx.paymentLeg.upsert({
+        where: {
+          paymentId_source: { paymentId: side.id, source: "CARD" },
+        },
+        update: { sourceRef: paymentIntentId },
+        create: {
+          paymentId: side.id,
+          source: "CARD",
+          amountPaise: side.amount,
+          sourceRef: paymentIntentId,
+        },
+      });
+    } else {
+      await tx.paymentLeg.updateMany({
+        where: { paymentId: side.id, source: "CARD" },
+        data: { sourceRef: paymentIntentId },
+      });
+    }
 
     // Transition FIRST so the journal below mirrors the state machine: the
     // org-relief credit posts only for an event that actually became CHARGED.
@@ -210,7 +225,7 @@ export async function handleOverageMemberSuccess(
             where: {
               paymentId: side.parentPaymentId,
               status: "HELD",
-              OR: [{ preDisputeStatus: "PENDING" }, { preDisputeStatus: null }],
+              preDisputeStatus: "PENDING",
             },
             data: { status: "PENDING", preDisputeStatus: null },
           });

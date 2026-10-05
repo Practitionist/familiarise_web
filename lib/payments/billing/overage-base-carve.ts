@@ -29,7 +29,18 @@ export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
 type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
-  Partial<Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">>;
+  Partial<
+    Pick<
+      Tx,
+      | "dispute"
+      | "consultantEarnings"
+      | "organizationEarnings"
+      | "billingAccount"
+      | "ledgerTransaction"
+      | "ledgerAccount"
+      | "ledgerAccountBalance"
+    >
+  >;
 
 export async function releaseOverageHeldParentEarnings(
   tx: Partial<
@@ -53,7 +64,7 @@ export async function releaseOverageHeldParentEarnings(
       where: {
         paymentId: parentPaymentId,
         status: "HELD",
-        OR: [{ preDisputeStatus: "PENDING" }, { preDisputeStatus: null }],
+        preDisputeStatus: "PENDING",
       },
       data: { status: "PENDING", preDisputeStatus: null },
     });
@@ -95,7 +106,11 @@ async function loadCarveContext(
   }
   const parent = await tx.payment.findUnique({
     where: { id: event.payment.parentPaymentId },
-    select: { id: true, billableToOrgInvoiceId: true },
+    select: {
+      id: true,
+      billableToOrgInvoiceId: true,
+      billingAccountId: true,
+    },
   });
   if (!parent) return null;
   return { event, parent };
@@ -103,8 +118,11 @@ async function loadCarveContext(
 
 /**
  * FAILED edge: return the carved basePaise to the parent's INVOICE_ACCRUAL
- * leg + amount and release any overage-held earnings on the parent payment.
- * Call ONLY after a successful PENDING→FAILED CAS, in the same tx.
+ * or WALLET leg + amount and release any overage-held earnings on the parent
+ * payment. For LICENSE parents (whose booking leg is ₹0 and cannot absorb the
+ * uncollected over-cap base), leave parent earnings held so uncollected base
+ * is never disbursed. Call ONLY after a successful PENDING→FAILED CAS, in the
+ * same tx.
  */
 export async function restoreOverageBaseCarve(
   tx: RestoreCarveTx,
@@ -113,9 +131,58 @@ export async function restoreOverageBaseCarve(
   const ctx = await loadCarveContext(tx, ref);
   if (!ctx) return "none";
 
-  await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+  if (ctx.event.basePaise <= 0) {
+    await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+    return "none";
+  }
 
-  if (ctx.event.basePaise <= 0) return "none";
+  if (typeof tx.paymentLeg?.findUnique === "function") {
+    const licenseLeg = await tx.paymentLeg.findUnique({
+      where: {
+        paymentId_source: { paymentId: ctx.parent.id, source: "LICENSE" },
+      },
+      select: { amountPaise: true },
+    });
+    if (licenseLeg) {
+      // LICENSE booking legs carry ₹0 (prepaid at contract level), so an
+      // abandoned member side-charge has no parent accrual or wallet leg to
+      // restore basePaise onto; keep parent earnings held until resolved.
+      return "none";
+    }
+
+    const walletLeg = await tx.paymentLeg.findUnique({
+      where: {
+        paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
+      },
+      select: { amountPaise: true },
+    });
+    if (walletLeg) {
+      if (
+        ctx.parent.billingAccountId &&
+        typeof tx.billingAccount?.updateMany === "function"
+      ) {
+        const { walletDebit } = await import("@/lib/api/organizations/wallet");
+        await walletDebit(tx as unknown as Tx, {
+          billingAccountId: ctx.parent.billingAccountId,
+          amountPaise: ctx.event.basePaise,
+          reason: "BOOKING",
+          paymentId: ctx.parent.id,
+        });
+      }
+      await tx.payment.updateMany({
+        where: { id: ctx.parent.id },
+        data: { amount: { increment: ctx.event.basePaise } },
+      });
+      await tx.paymentLeg.update({
+        where: {
+          paymentId_source: { paymentId: ctx.parent.id, source: "WALLET" },
+        },
+        data: { amountPaise: { increment: ctx.event.basePaise } },
+      });
+      await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+      return "restored";
+    }
+  }
 
   // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE
   // (re-evaluated under the row lock), so a rollup stamping
@@ -133,6 +200,7 @@ export async function restoreOverageBaseCarve(
     },
     data: { amountPaise: { increment: ctx.event.basePaise } },
   });
+  await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
   return "restored";
 }
 

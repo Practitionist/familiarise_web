@@ -120,21 +120,21 @@ describe("org invoice issue journal", () => {
       .mockResolvedValueOnce([
         {
           direction: "CREDIT",
-          amountPaise: 18_000n,
+          amountPaise: 18_000,
           transaction: { paymentId: "pay-wallet-1" },
         },
       ] as never);
     const paySpy = jest
       .spyOn(prismaClient.payment, "findMany")
       .mockResolvedValueOnce([
-        { id: "pay-wallet-1", taxAmount: 22_500n },
+        { id: "pay-wallet-1", taxAmount: 22_500 },
       ] as never);
     const overageSpy = jest
       .spyOn(prismaClient.overageEvent, "findMany")
       .mockResolvedValueOnce([
         {
           id: "oe-wallet-1",
-          surchargePaise: 25_000n,
+          surchargePaise: 25_000,
           paymentId: "pay-wallet-1",
           programAssignment: {
             program: {

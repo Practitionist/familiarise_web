@@ -705,7 +705,7 @@ async function recordOrgOverageCharge(
       // an OVERAGE_INVOICE_ACCRUAL leg and link paymentId on OverageEvent so
       // rollupOrgInvoiceAccruals picks up and bills the overage without
       // violating the parent's leg-sum trigger invariant.
-      const effectiveBasePaise = walletLeg ? 0 : basePaise;
+      const effectiveBasePaise = cardLeg ? 0 : basePaise;
       const accrualPaise = effectiveBasePaise + surchargePaise;
       const taxPaise = await orgSurchargeTaxPaise(
         tx,

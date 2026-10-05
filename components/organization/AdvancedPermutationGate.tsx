@@ -51,7 +51,7 @@ export function AdvancedPermutationGate({
   defaultExpanded = false,
   acknowledged = false,
   onAcknowledgeChange,
-  discouragedConfirmationText = "I understand that this configuration requires employees to pay with personal cards at checkout and forfeits corporate B2B GST Input Tax Credit on member-paid charges.",
+  discouragedConfirmationText,
   onSelectRecommended,
   onSelectGoldenPath,
   recommendedActionLabel = "Use Recommended Golden Path Instead",
@@ -64,6 +64,11 @@ export function AdvancedPermutationGate({
     isActivePermutation ??
     (motivation ? motivation.tier !== "RECOMMENDED" : false);
   const handleRecommended = onSelectRecommended ?? onSelectGoldenPath;
+  const effectiveConfirmationText =
+    discouragedConfirmationText ??
+    (motivation?.message
+      ? `I understand the operational and billing trade-offs of this configuration: ${motivation.message}`
+      : "I understand that this configuration introduces additional billing, tax, or member checkout friction compared to the recommended Golden Path.");
 
   const [expanded, setExpanded] = useState(defaultExpanded);
   const isOpen = expanded || effectiveIsActive;
@@ -114,7 +119,7 @@ export function AdvancedPermutationGate({
                   className="mt-0.5"
                 />
                 <Label className="text-xs font-normal leading-relaxed text-rose-900 cursor-pointer">
-                  {discouragedConfirmationText}
+                  {effectiveConfirmationText}
                 </Label>
               </label>
             </div>

@@ -105,6 +105,7 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import {
   recordOverageAtCheckout,
   notifyOverageDueAfterCommit,
@@ -3786,7 +3787,7 @@ export async function handleCheckout(
     // unassigned personal bookings to proceed).
     if (
       fundingSource !== "PERSONAL" ||
-      typeof prisma.programAssignment?.findFirst === "function"
+      Boolean(prisma.programAssignment?.findFirst)
     ) {
       const now = new Date();
       const assignment = await prisma.programAssignment.findFirst({
@@ -3959,6 +3960,14 @@ export async function handleCheckout(
     // rather than inside any of them — a rail that moved mid-checkout is read
     // once, here, instead of being re-asked at each use.
     if (freshOrgFunding) {
+      if (freshOrgFunding.fundingSource !== fundingSource) {
+        throw Object.assign(
+          new Error(
+            "This organization's funding source changed while this booking was in progress. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
+        );
+      }
       fundingSource = freshOrgFunding.fundingSource;
       billingAccountId = freshOrgFunding.billingAccountId;
       creditEffectiveLimit = freshOrgFunding.creditEffectiveLimit;
@@ -4418,24 +4427,41 @@ export async function handleCheckout(
                 );
             }
 
-            let hostOrganizationId: string | null =
-              bookedPlan?.organizationId ?? null;
-            if (
-              !hostOrganizationId &&
-              bookedPlan?.consultantProfileId &&
-              typeof tx.membership?.findFirst === "function"
-            ) {
-              const hostMembership = await tx.membership.findFirst({
-                where: {
-                  consultantProfileId: bookedPlan.consultantProfileId,
-                  role: "EXPERT",
-                  status: "ACTIVE",
-                  organization: { canHost: true, status: "ACTIVE" },
-                },
-                orderBy: { createdAt: "asc" },
-                select: { organizationId: true },
-              });
-              hostOrganizationId = hostMembership?.organizationId ?? null;
+            let hostOrganizationId: string | null = null;
+            if (ENABLE_HOST_ORGS) {
+              const planOwnerOrgId = bookedPlan?.organizationId ?? null;
+              if (
+                bookedPlan?.consultantProfileId &&
+                typeof tx.membership?.findFirst === "function"
+              ) {
+                const ownerMembership = planOwnerOrgId
+                  ? await tx.membership.findFirst({
+                      where: {
+                        consultantProfileId: bookedPlan.consultantProfileId,
+                        role: "EXPERT",
+                        status: "ACTIVE",
+                        organizationId: planOwnerOrgId,
+                        organization: { canHost: true, status: "ACTIVE" },
+                      },
+                      select: { organizationId: true },
+                    })
+                  : null;
+                const hostMembership =
+                  ownerMembership ??
+                  (await tx.membership.findFirst({
+                    where: {
+                      consultantProfileId: bookedPlan.consultantProfileId,
+                      role: "EXPERT",
+                      status: "ACTIVE",
+                      organization: { canHost: true, status: "ACTIVE" },
+                    },
+                    orderBy: { createdAt: "asc" },
+                    select: { organizationId: true },
+                  }));
+                hostOrganizationId = hostMembership?.organizationId ?? null;
+              } else {
+                hostOrganizationId = planOwnerOrgId;
+              }
             }
 
             // Create payment record linked to appointment (if created)
@@ -4814,18 +4840,17 @@ export async function handleCheckout(
             // its write site. Reconciliation jobs + tests call the
             // hard-throwing `assertPaymentLegsSumToAmount` instead.
             if (!isMockPayment) {
-              const [writtenLegs, currentPayment] = await Promise.all([
-                tx.paymentLeg.findMany({
-                  where: { paymentId: payment.id },
-                  select: { source: true, amountPaise: true },
-                }),
+              const writtenLegs = await tx.paymentLeg.findMany({
+                where: { paymentId: payment.id },
+                select: { source: true, amountPaise: true },
+              });
+              const currentPayment =
                 typeof tx.payment?.findUnique === "function"
-                  ? tx.payment.findUnique({
+                  ? await tx.payment.findUnique({
                       where: { id: payment.id },
                       select: { amount: true },
                     })
-                  : Promise.resolve(null),
-              ]);
+                  : null;
               const legMismatch = checkPaymentLegsSumToAmount({
                 paymentAmountPaise: currentPayment?.amount ?? payment.amount,
                 legs: writtenLegs,
