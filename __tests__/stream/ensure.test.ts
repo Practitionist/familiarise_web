@@ -23,6 +23,7 @@ jest.mock("../../scripts/stream/harden-unused-call-types", () => ({
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
   getStreamVideoClient: jest.fn(() => ({
+    listRoles: async () => ({ roles: [{ name: "co_presenter" }] }),
     video: {
       getCallType: (...a: unknown[]) => mockGetCallType(...a),
       updateCallType: (...a: unknown[]) => mockUpdateCallType(...a),
@@ -31,6 +32,7 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 import {
+  CO_PRESENTER_GRANTS,
   ensureDefaultCallTypeSettings,
   ensureStreamConfig,
   TARGET_INACTIVITY_TIMEOUT_SECONDS,
@@ -42,6 +44,10 @@ beforeEach(() => {
   mockEnsureCallTypeGrants.mockResolvedValue(0);
   mockHardenUnusedCallTypes.mockResolvedValue(0);
   mockGetCallType
+    .mockResolvedValue({
+      name: "default",
+      grants: { co_presenter: CO_PRESENTER_GRANTS },
+    })
     .mockResolvedValueOnce({
       name: "default",
       settings: { session: { inactivity_timeout_seconds: 60 } },
@@ -58,7 +64,7 @@ beforeEach(() => {
 });
 
 describe("scripts/stream/ensure", () => {
-  it("runs ensureAppSettings, ensureCallTypeGrants, hardenUnusedCallTypes, and ensureDefaultCallTypeSettings in sequence", async () => {
+  it("runs all five ensure steps in sequence", async () => {
     const code = await ensureStreamConfig({
       apply: true,
       deployConfirmed: true,
@@ -80,6 +86,7 @@ describe("scripts/stream/ensure", () => {
         }),
       }),
     );
+    expect(mockUpdateCallType).toHaveBeenCalledTimes(1);
   });
 
   it("is a no-op when session.inactivity_timeout_seconds is already 300", async () => {

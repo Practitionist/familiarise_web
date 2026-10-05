@@ -29,6 +29,7 @@ const MeetingPage = () => {
     error,
     access,
     consentRequired,
+    roomNotProvisioned,
     rejoin,
     retryJoin,
   } = useGetCallById(id as string);
@@ -186,6 +187,7 @@ const MeetingPage = () => {
       <Alert
         title="Meeting Error"
         description={`Failed to load meeting: ${error.message}`}
+        onRetry={roomNotProvisioned ? retryJoin : undefined}
       />
     );
   }

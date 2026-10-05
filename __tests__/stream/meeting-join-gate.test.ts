@@ -39,7 +39,8 @@ jest.mock("../../lib/meetings/access", () => ({
 // built INSIDE the factory and read back off the mocked module below.
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
-  isExpectedStreamError: (e: { code?: number }) => e?.code === 16,
+  streamHttpStatus: (e: { status?: number }) => e?.status ?? null,
+  streamErrorCode: (e: { code?: number }) => e?.code ?? null,
   StreamUnavailableError: class StreamUnavailableError extends Error {
     constructor() {
       super("Stream is unavailable");
@@ -58,6 +59,7 @@ jest.mock("../../lib/stream-client", () => ({
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
         },
+        updateUserPermissions: jest.fn(async () => ({})),
       }),
     },
   })),
@@ -94,6 +96,7 @@ jest.mock("../../lib/prisma", () => ({
 import { POST } from "../../app/api/meetings/[meetingId]/join/route";
 // The mocked class — `instanceof` in the route must match what we throw here.
 import { StreamUnavailableError } from "../../lib/stream-client";
+import { reportSentryError } from "../../lib/observability/report";
 
 const params = Promise.resolve({ meetingId: "slot-abc" });
 const req = {} as never;
@@ -126,7 +129,7 @@ describe("POST /api/meetings/[meetingId]/join", () => {
 
   it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
     mockUpdateCallMembers.mockRejectedValue(
-      Object.assign(new Error("Can't find call"), { code: 16 }),
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
     );
 
     const res = await POST(req, { params });
@@ -134,6 +137,20 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("ROOM_NOT_PROVISIONED");
     expect(mockGetOrCreate).not.toHaveBeenCalled();
+    expect(reportSentryError).toHaveBeenCalledWith(
+      new Error("ROOM_NOT_PROVISIONED"),
+      expect.objectContaining({ op: "meetings.join" }),
+    );
+  });
+
+  it("treats a bare 404 without Stream's not-found code as a fault", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Not Found"), { status: 404 }),
+    );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(500);
   });
 
   it("syncs the caller to Stream before naming them as a member", async () => {

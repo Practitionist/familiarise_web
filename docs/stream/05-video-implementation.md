@@ -95,8 +95,8 @@ graph TB
 ### Call Creation and Ownership
 
 The Stream call for a booking is created on the server and only on the server.
-`provisionAppointmentMeeting` (alongside `createDbMeeting`) in `actions/stream/meetings/meeting.action.ts`
-handles provisioning (`findDbMeetingBySlot` is an internal module helper), and `lib/meeting.ts` is a thin
+`provisionAppointmentMeeting` in `actions/stream/meetings/meeting.action.ts` handles provisioning
+(`findDbMeetingBySlot` and the `createDbMeeting` row writer are module-private helpers), and `lib/meeting.ts` is a thin
 client-side wrapper that calls `provisionAppointmentMeeting(slot)`, turns `result.refusal`
 back into a user-facing error for the toast, and hands the call id to
 `router.push("/meetings/<id>")`. Nothing in the browser constructs a `Call` in
@@ -105,13 +105,15 @@ order to create one.
 The order the action works in is load-bearing:
 
 1. Evaluate the target `MeetingSlot` (`AppointmentOccurrence`).
-2. Return early if a `Meeting` row already exists (unless `endedReason === "ended_early"`,
-   in which case the call is re-provisioned with a fresh `streamCallId`).
-3. Run every refusal that can block a join — maintenance, a tentative or
+2. Check entitlement (`readSlotForCaller`) before any Stream write, and again
+   first inside `createDbMeeting` as defense-in-depth.
+3. If a `Meeting` row already exists, re-run the same idempotent `getOrCreate` on its
+   `streamCallId` so a row whose call is missing (a seed row, a deleted call) is healed, then
+   return it. An `endedReason === "ended_early"` row is instead re-provisioned with a fresh
+   `streamCallId`.
+4. For a new room, run every refusal that can block a join — maintenance, a tentative or
    cancelled occurrence, a booking whose parent row is in a terminal state — before
    anything is minted.
-4. Check entitlement (`requireEntitledCaller`) before the Stream write and again
-   first inside `createDbMeeting` as defense-in-depth.
 5. Create the call with the server client (`buildCallSettingsOverride`), naming the
    appointment's host as `created_by_id`, every entitled user (excluding unconsented
    participants returned in `droppedIds`) as `call_member`, and setting `settings_override.limits.max_duration_seconds`
@@ -163,9 +165,12 @@ from a role's grants on the call type. The custom `co_presenter` role on
 `send-audio`, `send-video`, `screenshare`, `mute-users`, `pin-call-track`,
 `send-event`, `send-closed-captions`, `create-call-reaction`, `list-recordings`
 and `list-transcriptions`. It never holds `end-call`, `update-call-permissions`,
-`update-call-member` or any recording control. The role was created through the
-Stream API, and the grants scripts leave roles they do not manage
-untouched.
+`update-call-member` or any recording control. Step 5 of `scripts/stream/ensure.ts`
+(`ensureCoPresenterRole`) creates the role and writes exactly this grant list
+idempotently, and the other grants scripts leave the role untouched. If the role is
+missing, the admit route falls back to `call_member` and reports once to Sentry.
+Removing a collaborator downgrades their membership on the plan's open calls to
+`call_member`, or removes them when they hold no seat of their own.
 
 ```bash
 npx tsx scripts/stream/ensure.ts                                      # dry run, inspects app settings + call types

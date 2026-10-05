@@ -28,7 +28,7 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { liveParticipant } from "@/lib/booking/participants";
 
@@ -202,8 +202,6 @@ const slotSchema = z.object({
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
 });
-
-const CALL_MEMBER_ROLE = "call_member";
 
 export type SessionCallMember = { user_id: string; role: string };
 
@@ -694,7 +692,7 @@ async function readAppointmentOrganizationId(
 }
 
 /** Persists the Meeting row for an occurrence after verifying caller entitlement and booking state. */
-export async function createDbMeeting(
+async function createDbMeeting(
   slot: MeetingSlot,
   streamCallId: string,
 ): Promise<Meeting> {
@@ -874,17 +872,18 @@ export async function provisionAppointmentMeeting(
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
   const rebuildEndedEarly = existingMeeting?.endedReason === ENDED_EARLY_REASON;
-  if (existingMeeting && !rebuildEndedEarly) {
-    return { ok: true, streamCallId: existingMeeting.streamCallId };
-  }
+  // An existing row re-asserts its call below, so a row whose call is missing heals here.
+  const reuseExisting = !!existingMeeting && !rebuildEndedEarly;
 
   const authorized = await readSlotForCaller(anchorSlot.id);
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
   }
 
-  const refusal = await getMeetingCreationRefusal(anchorSlot);
-  if (refusal) return { ok: false, refusal };
+  if (!reuseExisting) {
+    const refusal = await getMeetingCreationRefusal(anchorSlot);
+    if (refusal) return { ok: false, refusal };
+  }
 
   if (!isStreamConfigured()) {
     streamLogger.error("Stream not configured — cannot provision meeting", {
@@ -893,9 +892,12 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  const streamCallId = rebuildEndedEarly
-    ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
-    : `occurrence-${anchorSlot.id}`;
+  const streamCallId =
+    reuseExisting && existingMeeting
+      ? existingMeeting.streamCallId
+      : rebuildEndedEarly
+        ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
+        : `occurrence-${anchorSlot.id}`;
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
   const startsAt =
@@ -969,6 +971,8 @@ export async function provisionAppointmentMeeting(
         })
       : new Error("Failed to create meeting session.", { cause: error });
   }
+
+  if (reuseExisting) return { ok: true, streamCallId };
 
   if (rebuildEndedEarly && existingMeeting) {
     const rebound = await prisma.meeting.updateMany({

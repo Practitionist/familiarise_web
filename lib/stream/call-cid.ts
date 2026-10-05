@@ -23,6 +23,9 @@
  */
 export const STREAM_CALL_TYPE = "default";
 
+/** The baseline call role on `default`; it holds `join-call` and every non-presenter participant joins under it. */
+export const CALL_MEMBER_ROLE = "call_member";
+
 /** Custom call role on `default` that adds mute, pin and backstage to the publish grants; never end or permission changes. */
 export const CO_PRESENTER_CALL_ROLE = "co_presenter";
 

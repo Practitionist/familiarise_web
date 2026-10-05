@@ -4,13 +4,15 @@ import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
-  isExpectedStreamError,
+  streamErrorCode,
+  streamHttpStatus,
   StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
 import {
+  CALL_MEMBER_ROLE,
   CO_PRESENTER_CALL_ROLE,
   STREAM_CALL_TYPE,
   toCallId,
@@ -41,7 +43,7 @@ export async function POST(
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
 
-    const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : "call_member";
+    const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : CALL_MEMBER_ROLE;
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
     const admitted = await withStreamCircuitBreaker(async () => {
@@ -52,13 +54,29 @@ export async function POST(
         resolvedCallId,
       );
 
+      const addMember = (memberRole: string) =>
+        call.updateCallMembers({
+          update_members: [{ user_id: userId, role: memberRole }],
+        });
       try {
-        await call.updateCallMembers({
-          update_members: [{ user_id: userId, role }],
+        await addMember(role).catch(async (error: unknown) => {
+          // An app missing the custom role still admits the presenter as a plain member.
+          if (
+            role !== CO_PRESENTER_CALL_ROLE ||
+            streamHttpStatus(error) !== 400
+          )
+            throw error;
+          reportSentryError(error, {
+            subsystem: "stream",
+            op: "meetings.join.coPresenterRole",
+            extra: { meetingId: resolvedCallId },
+          });
+          await addMember(CALL_MEMBER_ROLE);
         });
       } catch (error) {
-        // Only a not-found from the membership write proves the call itself is missing.
-        if (isExpectedStreamError(error)) return false;
+        // Only Stream's not-found (HTTP 404 with code 16) on the membership write proves the call is missing.
+        if (streamHttpStatus(error) === 404 && streamErrorCode(error) === 16)
+          return false;
         throw error;
       }
 
@@ -72,12 +90,12 @@ export async function POST(
       const isOneToMany = isOneToManyAppointmentType(appointmentType);
 
       if (isOneToMany && access.role === "host") {
-        await call.updateUserPermissions?.({
+        await call.updateUserPermissions({
           user_id: userId,
           grant_permissions: [...PUBLISH_PERMISSIONS],
         });
       } else if (isOneToMany) {
-        await call.updateUserPermissions?.({
+        await call.updateUserPermissions({
           user_id: userId,
           revoke_permissions: [...PUBLISH_PERMISSIONS],
         });
@@ -86,8 +104,10 @@ export async function POST(
     });
 
     if (!admitted) {
-      streamLogger.warn("Meeting join refused — Stream call missing", {
-        meetingId: resolvedCallId,
+      reportSentryError(new Error("ROOM_NOT_PROVISIONED"), {
+        subsystem: "stream",
+        op: "meetings.join",
+        extra: { meetingId },
       });
       return NextResponse.json(
         {

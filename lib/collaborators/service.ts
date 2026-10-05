@@ -10,8 +10,10 @@ import {
 } from "@/lib/stream/event-channel-service";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
 } from "@/lib/stream-client";
+import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -928,7 +930,91 @@ export async function revokeCollaboratorAccess(
     console.error("[collaborators] Failed to revoke Stream access:", error);
   }
 
+  if (!(await revokeOpenCallPresenterRole(planType, planId, userId))) {
+    success = false;
+  }
+
   return { success };
+}
+
+/**
+ * Drops a removed collaborator's `co_presenter` membership on the plan's open calls: downgraded to
+ * `call_member` where they still hold a seat, removed otherwise. Failures are reported once.
+ */
+async function revokeOpenCallPresenterRole(
+  planType: PlanType,
+  planId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    const occurrences = await prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        endsAt: { gt: new Date() },
+        appointment: livePlanAppointmentsWhere(planType, planId),
+        meeting: { is: { endedAt: null } },
+      },
+      select: {
+        appointmentId: true,
+        meeting: { select: { streamCallId: true } },
+      },
+    });
+    if (occurrences.length === 0) return true;
+
+    const seats = await prisma.appointmentParticipant.findMany({
+      where: {
+        ...liveParticipant(userId),
+        role: { not: "COLLABORATOR" },
+        appointmentId: { in: occurrences.map((o) => o.appointmentId) },
+      },
+      select: { appointmentId: true },
+    });
+    const seated = new Set(seats.map((seat) => seat.appointmentId));
+
+    const video = getStreamVideoClient().video;
+    const results = await Promise.allSettled(
+      occurrences.flatMap(({ appointmentId, meeting }) =>
+        meeting
+          ? [
+              video
+                .call(STREAM_CALL_TYPE, meeting.streamCallId)
+                .updateCallMembers(
+                  seated.has(appointmentId)
+                    ? {
+                        update_members: [
+                          { user_id: userId, role: CALL_MEMBER_ROLE },
+                        ],
+                      }
+                    : { remove_members: [userId] },
+                ),
+            ]
+          : [],
+      ),
+    );
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult =>
+        r.status === "rejected" && !isExpectedStreamError(r.reason),
+    );
+    if (failures.length === 0) return true;
+    reportSentryError(failures[0].reason, {
+      subsystem: "stream",
+      op: "removeCollaborator.revokeCallRole",
+      extra: {
+        planId,
+        planType,
+        failed: failures.length,
+        total: results.length,
+      },
+    });
+    return false;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "removeCollaborator.revokeCallRole",
+      extra: { planId, planType },
+    });
+    return false;
+  }
 }
 
 /**
