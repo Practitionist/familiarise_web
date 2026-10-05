@@ -80,6 +80,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 jest.mock("../../lib/compliance/gst", () => ({
+  orgBuyerCountry: () => "IN",
   // Why: we don't want the GST math to be the test surface — invoke
   // with the totalPaise the test asks for so the assertions read like
   // the route handler sees them. Real GST resolution is covered by

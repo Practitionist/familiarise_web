@@ -13,7 +13,7 @@
  */
 
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
-import type { Tx } from "@/lib/prisma";
+import { txDouble } from "../fixtures/tx-double";
 
 // jest.mock resolves via jest's resolver (no `@/` path mapping) — use relative
 // paths that resolve to the same module files the SUT imports as `@/…`.
@@ -57,9 +57,16 @@ function makeTx(opts: {
   ];
   const payment = { amount: opts.price, taxAmount: 0 };
   const children: { amount: number }[] = [];
+  /** Σ legs each child Payment is created with: what the deferred leg-sum trigger sees. */
+  const childLegSums: number[] = [];
   let childSeq = 0;
+  const legOf = (src: string): Leg => {
+    const leg = legs.find((l) => l.source === src);
+    if (!leg) throw new Error(`no ${src} leg`);
+    return leg;
+  };
   return {
-    state: { legs, payment, children },
+    state: { legs, payment, children, childLegSums },
     tx: {
       organization: {
         findUnique: jest.fn().mockResolvedValue({ dataResidencyRegion: "IN" }),
@@ -77,7 +84,9 @@ function makeTx(opts: {
         }),
       },
       overageEvent: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { marginalPaise: 0 } }),
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { basePaise: 0, surchargePaise: 0 } }),
         create: jest.fn().mockResolvedValue({ id: "ev1" }),
       },
       bookingUtilization: {
@@ -93,9 +102,10 @@ function makeTx(opts: {
             where,
             data,
           }: LegWhere & { data: { amountPaise: Step } }) => {
-            const src = where.paymentId_source.source;
-            const leg = legs.find((l) => l.source === src)!;
-            leg.amountPaise -= data.amountPaise.decrement ?? 0;
+            const leg = legOf(where.paymentId_source.source);
+            leg.amountPaise +=
+              (data.amountPaise.increment ?? 0) -
+              (data.amountPaise.decrement ?? 0);
           },
         ),
         create: jest.fn(async ({ data }: { data: Leg }) => {
@@ -103,10 +113,17 @@ function makeTx(opts: {
         }),
       },
       payment: {
-        create: jest.fn(async ({ data }: { data: { amount: number } }) => {
-          children.push({ amount: data.amount });
-          return { id: `child${++childSeq}` };
-        }),
+        create: jest.fn(
+          async ({
+            data,
+          }: {
+            data: { amount: number; legs?: { create: Leg } };
+          }) => {
+            children.push({ amount: data.amount });
+            childLegSums.push(data.legs?.create.amountPaise ?? 0);
+            return { id: `child${++childSeq}` };
+          },
+        ),
         update: jest.fn(
           async ({ data }: { data: { amount?: Step; taxAmount?: Step } }) => {
             payment.taxAmount += data.taxAmount?.increment ?? 0;
@@ -143,14 +160,12 @@ const callArgs = (price: number) => ({
   paymentGateway: "RAZORPAY" as const,
 });
 
-const asTx = (mock: object): Tx => mock as Tx;
-
 const sum = (legs: Leg[]) => legs.reduce((s, l) => s + l.amountPaise, 0);
 
 describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () => {
   it("no surcharge: carves basePaise out of the base leg, amount unchanged", async () => {
     const { state, tx } = makeTx({ price: 500_000, cap: 5, used: 5 });
-    await recordOverageAtCheckout({ tx: asTx(tx), ...callArgs(500_000) });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(500_000) });
 
     // base leg carved to 0 (whole over-cap engagement), overage holds the marginal
     expect(state.legs).toEqual([
@@ -170,7 +185,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
       used: 5,
       surchargeBps: 2500, // +25%
     });
-    await recordOverageAtCheckout({ tx: asTx(tx), ...callArgs(100_000) });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
 
     // base carved to 0; overage = base + surcharge + 18% GST on the surcharge
     expect(state.legs).toEqual([
@@ -190,7 +205,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
       used: 5,
       priceCap: 40_000,
     });
-    await recordOverageAtCheckout({ tx: asTx(tx), ...callArgs(100_000) });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
 
     expect(state.legs).toEqual([
       { source: "INVOICE_ACCRUAL", amountPaise: 60_000 }, // 100k − 40k carved
@@ -209,7 +224,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
       baseLegPaise: 400,
     });
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(1_000),
     });
 
@@ -232,7 +247,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
       baseSource: "WALLET",
     });
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(walletDebit),
     });
 
@@ -275,7 +290,7 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
 
     await expect(
       recordOverageAtCheckout({
-        tx: asTx(tx),
+        tx: txDouble(tx),
         ...callArgs(100_000),
       }),
     ).rejects.toMatchObject({ code: "OVERAGE_UNSUPPORTED_FUNDING" });
@@ -295,7 +310,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
       surchargeBps: 2500, // +25% → member owes 125_000
       overageBehavior: "CHARGE_MEMBER",
     });
-    await recordOverageAtCheckout({ tx: asTx(tx), ...callArgs(100_000) });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
 
     // org parent: base leg + amount shed basePaise (100_000) → org pays coveredPaise (0)
     expect(state.legs).toEqual([{ source: "INVOICE_ACCRUAL", amountPaise: 0 }]);
@@ -303,6 +318,8 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     expect(sum(state.legs)).toBe(state.payment.amount); // parent stays consistent
     // member side-charge holds base + surcharge + 18% GST on the surcharge
     expect(state.children).toEqual([{ amount: 129_500 }]);
+    // and is born with a CARD leg for all of it, so the leg-sum trigger passes at COMMIT
+    expect(state.childLegSums).toEqual([129_500]);
     expect(tx.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ taxAmount: 4_500 }),
@@ -321,7 +338,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
       priceCap: 40_000, // marginal capped at 40_000 → covered 60_000
       overageBehavior: "CHARGE_MEMBER",
     });
-    await recordOverageAtCheckout({ tx: asTx(tx), ...callArgs(100_000) });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
 
     expect(state.legs).toEqual([
       { source: "INVOICE_ACCRUAL", amountPaise: 60_000 }, // covered remainder
@@ -340,7 +357,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
       overageBehavior: "CHARGE_MEMBER",
     });
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(100_000),
       currency: "USD" as const,
     });
@@ -374,7 +391,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     });
 
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(100_000),
       isLazyAllocation: true,
     });
@@ -403,7 +420,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     });
 
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(100_000),
       isLazyAllocation: true,
     });
@@ -442,7 +459,7 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     });
 
     await recordOverageAtCheckout({
-      tx: asTx(tx),
+      tx: txDouble(tx),
       ...callArgs(100_000),
       isLazyAllocation: true,
     });

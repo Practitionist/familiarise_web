@@ -1694,7 +1694,7 @@ model LicensedSeatConfig {
   /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    BigInt?
@@ -7594,8 +7594,8 @@ model OverageEvent {
   /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
   /// portion of the real booking price (after `priceCapPerEngagementPaise`);
   /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
-  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
-  /// booking price. `marginalPaise` stays the authoritative charged total.
+  /// `marginalPaise == basePaise + surchargePaise + GST on the surcharge`, and
+  /// (covered) + basePaise == booking price. `marginalPaise` is the charged total.
   basePaise            BigInt              @default(0)
   surchargePaise       BigInt              @default(0)
   marginalPaise        BigInt

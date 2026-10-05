@@ -78,7 +78,7 @@ Each funding source pairs with a limited set of program types and drives a disti
 | `CHARGE_MEMBER` | member pays the overage on their own card | `CARD` leg → `Dr CASH`; `BookingUtilization.wasOverage = true`; `OverageEvent PENDING` |
 | `CHARGE_ORG` | org absorbs it | `OVERAGE_INVOICE_ACCRUAL` leg → `Dr ORG_RECEIVABLE` at booking, rolled into the cycle invoice; `OverageEvent PENDING→ACCRUED→CHARGED` |
 
-Two knobs ride on top of the marginal (both per [programs §6](../30-programs-and-lifecycle/02-programs.md)): `overageSurchargeBps` marks the pass-through up (`marginalPaise = basePaise + surchargePaise`), and `maxOveragePerCyclePaise` is a **circuit breaker** — once the cycle's cumulative `OverageEvent.marginalPaise` would breach it, the next booking falls back to `BLOCK` (distinct code `PROGRAM_CAP_EXHAUSTED`, 402) regardless of `overageBehavior`. The full overage state machine (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) lives in [programs](../30-programs-and-lifecycle/02-programs.md); worked numbers are in [§5.12](#512-overage-with-surcharge--circuit-breaker-v2); the cap-vs-cycle interplay is in [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
+Two knobs ride on top of the marginal (both per [programs §6](../30-programs-and-lifecycle/02-programs.md)): `overageSurchargeBps` marks the pass-through up (`marginalPaise = basePaise + surchargePaise`), and `maxOveragePerCyclePaise` is a **circuit breaker** — once the cycle's cumulative tax-exclusive overage (`basePaise + surchargePaise`) would breach it, the next booking falls back to `BLOCK` (distinct code `PROGRAM_CAP_EXHAUSTED`, 402) regardless of `overageBehavior`. The full overage state machine (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) lives in [programs](../30-programs-and-lifecycle/02-programs.md); worked numbers are in [§5.12](#512-overage-with-surcharge--circuit-breaker-v2); the cap-vs-cycle interplay is in [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
 
 ---
 
@@ -347,7 +347,7 @@ basePaise      = min(₹12,000, priceCap ₹10,000) carved over-cap   = 1000000
 surchargePaise = floor(basePaise × overageSurchargeBps / 10000)   =  150000   (15% of ₹10,000)
 marginalPaise  = basePaise + surchargePaise                       = 1150000   (₹11,500)
 ```
-Invariant on the `OverageEvent`: `coveredPaise + basePaise == booking price` and `marginalPaise == basePaise + surchargePaise` ([booking-to-earnings §6.1](../10-money-and-ledger/05-booking-to-earnings.md)).
+Invariant on the `OverageEvent`: `coveredPaise + basePaise == booking price` and `marginalPaise == basePaise + surchargePaise + GST on the surcharge` ([booking-to-earnings §6.1](../10-money-and-ledger/05-booking-to-earnings.md)).
 
 **Step 2 — pre-checkout preview (advisory).** Before Alice confirms, `GET /api/organizations/[orgId]/checkout/overage-preview` runs the **same** `computeOverageForBooking` mapper over her *current* usage and returns `willExceedCap = true`, `marginalPaise = 1150000`, `chargeTo = ORG`. The UI warns "this exceeds the cap; ₹11,500 will bill to Wipro." No money has moved — preview is read-only.
 

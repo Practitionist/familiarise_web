@@ -13,8 +13,11 @@ import {
   type PaymentGateway,
   type ProgramType,
 } from "@prisma/client";
-import { computeOverageForBooking } from "@/lib/payments/billing/overage";
-import { determineTax } from "@/lib/payments/tax/tax-engine";
+import {
+  computeOverageForBooking,
+  surchargeTaxPaise,
+} from "@/lib/payments/billing/overage";
+import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
@@ -58,20 +61,6 @@ export interface PendingOverageNotification {
   overageEventId: string;
 }
 
-/**
- * GST on the surcharge, by the payer's place of supply. The surcharge is the one
- * part of an overage no taxed booking price already holds: `basePaise` is a
- * slice of the parent's tax-inclusive price, whose GST the parent journal posts.
- */
-function surchargeTaxPaise(
-  surchargePaise: number,
-  buyerCountry: string,
-): number {
-  if (surchargePaise <= 0) return 0;
-  return determineTax({ baseAmountPaise: surchargePaise, buyerCountry })
-    .taxAmount;
-}
-
 /** GST on a CHARGE_ORG surcharge: the org is the payer, so its own place of supply decides. */
 async function orgSurchargeTaxPaise(
   tx: Tx,
@@ -85,7 +74,7 @@ async function orgSurchargeTaxPaise(
         select: { dataResidencyRegion: true },
       })
     : null;
-  return surchargeTaxPaise(surchargePaise, org?.dataResidencyRegion ?? "IN");
+  return surchargeTaxPaise(surchargePaise, org ? orgBuyerCountry(org) : "IN");
 }
 
 /**
@@ -143,15 +132,16 @@ export async function recordOverageAtCheckout(
   // OverageEvent on this assignmentId is already cycle-scoped. No settledAt
   // filter (a mid-cycle invoice run stamps settledAt but must not reset the
   // breaker); excludes REVERSED/BLOCKED/FAILED so a refunded/never-collected
-  // overage frees the ceiling again.
+  // overage frees the ceiling again. Tax-exclusive (base + surcharge), like the cap.
   const soFarAgg = await tx.overageEvent.aggregate({
     where: {
       programAssignmentId,
       chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
     },
-    _sum: { marginalPaise: true },
+    _sum: { basePaise: true, surchargePaise: true },
   });
-  const cycleOverageSoFarPaise = sumPaise(soFarAgg._sum.marginalPaise);
+  const cycleOverageSoFarPaise =
+    sumPaise(soFarAgg._sum.basePaise) + sumPaise(soFarAgg._sum.surchargePaise);
 
   // Drive the decision through the shared computeOverageForBooking() mapper.
   // For LICENSED_SEAT the PRE-booking engagement count is needed (the meter
@@ -212,17 +202,15 @@ export async function recordOverageAtCheckout(
   });
   if (!bu) return null;
 
-  const parentPayment =
-    typeof tx.payment?.findUnique === "function"
-      ? await tx.payment.findUnique({
-          where: { id: paymentId },
-          select: {
-            billableToOrgInvoiceId: true,
-            buyerCountry: true,
-            consumerStateCode: true,
-          },
-        })
-      : null;
+  const parentPayment = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      billableToOrgInvoiceId: true,
+      buyerCountry: true,
+      consumerStateCode: true,
+      isInternational: true,
+    },
+  });
   const parentInvoiced = !!parentPayment?.billableToOrgInvoiceId;
 
   if (overage.chargeTo === "MEMBER") {
@@ -233,6 +221,7 @@ export async function recordOverageAtCheckout(
       parentInvoiced,
       buyerCountry: parentPayment?.buyerCountry ?? "IN",
       consumerStateCode: parentPayment?.consumerStateCode ?? null,
+      isInternational: parentPayment?.isInternational ?? false,
     });
   }
 
@@ -328,6 +317,7 @@ async function recordMemberOverageCharge(
     parentInvoiced: boolean;
     buyerCountry: string;
     consumerStateCode: string | null;
+    isInternational: boolean;
   },
 ): Promise<PendingOverageNotification | null> {
   const {
@@ -374,6 +364,7 @@ async function recordMemberOverageCharge(
       taxAmount: taxPaise,
       // The member's tax invoice places the supply exactly as the booking's.
       buyerCountry: ctx.buyerCountry,
+      isInternational: ctx.isInternational,
       consumerStateCode: ctx.consumerStateCode,
       currency,
       paymentMethod: "CARD",
@@ -386,6 +377,8 @@ async function recordMemberOverageCharge(
       organizationId,
       parentPaymentId: paymentId,
       clientIdempotencyKey: `overage:${globalThis.crypto.randomUUID()}`,
+      // Born with its card leg: the deferred leg-sum trigger checks it at COMMIT.
+      legs: { create: { source: "CARD", amountPaise: chargedPaise } },
     },
   });
   const memberOverageEvent = await tx.overageEvent.create({

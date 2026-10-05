@@ -1,8 +1,8 @@
 /**
  * Issue-time journal for an org invoice whose GST no booking journal posted:
  * `Dr ORG_RECEIVABLE / Cr PLATFORM_FEE / Cr GST_PAYABLE`, reversed exactly on void.
- * An invoice that bills bookings (rollup lines, or manual lines carrying a
- * paymentId) never posts here — those bookings already credited GST_PAYABLE.
+ * An invoice that bills bookings (its rollup stamped `billedPayments`) never
+ * posts here — those bookings already credited GST_PAYABLE.
  */
 import type { Tx } from "@/lib/prisma";
 import {
@@ -35,14 +35,9 @@ export async function postInvoiceIssuedJournal(
       sgstPaise: true,
       totalPaise: true,
       billedPayments: { select: { id: true }, take: 1 },
-      lineItems: {
-        where: { paymentId: { not: null } },
-        select: { id: true },
-        take: 1,
-      },
     },
   });
-  if (invoice.billedPayments.length > 0 || invoice.lineItems.length > 0) {
+  if (invoice.billedPayments.length > 0) {
     return "BILLS_BOOKINGS";
   }
   if (invoice.totalPaise <= 0) return "NOTHING_TO_POST";

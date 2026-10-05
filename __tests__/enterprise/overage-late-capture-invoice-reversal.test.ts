@@ -28,7 +28,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    paymentLeg: { upsert: jest.fn() },
+    paymentLeg: { updateMany: jest.fn() },
     overageEvent: { findFirst: jest.fn() },
     organizationInvoice: {
       findUnique: jest.fn(),
@@ -77,7 +77,7 @@ import { handleOverageMemberSuccess } from "../../lib/payments/webhooks/overage-
 
 type MockTx = {
   payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-  paymentLeg: { upsert: jest.Mock };
+  paymentLeg: { updateMany: jest.Mock };
   overageEvent: { findFirst: jest.Mock };
   organizationInvoice: { findUnique: jest.Mock; updateMany: jest.Mock };
 };

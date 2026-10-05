@@ -6,12 +6,17 @@ import {
   postInvoiceIssuedJournal,
   postInvoiceVoidedJournal,
 } from "@/lib/payments/billing/org-invoice-journal";
-import type { Posting } from "@/lib/payments/ledger/post";
+import type { Posting, postLedgerTxn } from "@/lib/payments/ledger/post";
 import type { Tx } from "@/lib/prisma";
+import { txDouble } from "../fixtures/tx-double";
 
-const mockPost = jest.fn();
+const mockPost = jest.fn<
+  ReturnType<typeof postLedgerTxn>,
+  Parameters<typeof postLedgerTxn>
+>();
 jest.mock("../../lib/payments/ledger/post", () => ({
-  postLedgerTxn: (...args: unknown[]) => mockPost(...args),
+  postLedgerTxn: (...args: Parameters<typeof postLedgerTxn>) =>
+    mockPost(...args),
 }));
 
 const invoice = {
@@ -22,16 +27,14 @@ const invoice = {
   sgstPaise: 0,
   totalPaise: 118_000,
   billedPayments: [] as { id: string }[],
-  lineItems: [] as { id: string }[],
 };
 
 function makeTx(issued: unknown, note: unknown = null): Tx {
-  const mock: object = {
+  return txDouble({
     organizationInvoice: { findUniqueOrThrow: jest.fn(async () => invoice) },
     ledgerTransaction: { findUnique: jest.fn(async () => issued) },
     creditNote: { findUnique: jest.fn(async () => note) },
-  };
-  return mock as Tx;
+  });
 }
 
 const net = (postings: Posting[], kind: string) =>

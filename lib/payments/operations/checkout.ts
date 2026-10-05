@@ -4455,7 +4455,8 @@ export async function handleCheckout(
               data: {
                 amount,
                 originalAmount,
-                taxAmount,
+                // The licence invoice books the GST; a licensed booking books none.
+                taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
                 currency,
                 paymentMethod: isOrgWalletPayment
                   ? "WALLET"

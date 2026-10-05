@@ -135,7 +135,7 @@ engagement at ₹10,000 — so `basePaise = min(₹12,000, 1 × ₹10,000) = ₹
 `OrganizationInvoice` cycle (`PENDING → ACCRUED → CHARGED`). The learner pays
 nothing extra at checkout; their employer's AP sees the ₹10,000 on the invoice.
 Had Wipro set `maxOveragePerCyclePaise`, the same 13th booking would instead
-fall back to `BLOCK` once the cycle's cumulative `OverageEvent.marginalPaise`
+fall back to `BLOCK` once the cycle's cumulative tax-exclusive overage (`basePaise + surchargePaise`)
 crossed that ceiling — the circuit breaker overrides `CHARGE_ORG`.
 
 ### Walkthrough B — IIT Madras drains a credit pool (BLOCK)
@@ -220,7 +220,7 @@ model LicensedSeatConfig {
   /// `priceCapPerEngagementPaise`. Null = no markup (marginal == price).
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    Int?
@@ -240,7 +240,7 @@ model LicensedSeatConfig {
   basis-point markup. Our model passes through the heterogeneous real price
   rather than a flat per-unit tier, so this is the single surcharge lever.
 - `maxOveragePerCyclePaise` is the **circuit breaker** (#768): once the
-  cycle's cumulative `OverageEvent.marginalPaise` would exceed it, the next
+  cycle's cumulative tax-exclusive overage (`basePaise + surchargePaise`) would exceed it, the next
   booking falls back to `BLOCK` regardless of `overageBehavior`. Caps a
   CHARGE_ORG runaway at a known ceiling.
 - `activeSeatCount` is the aggregate across non-completed assignments.

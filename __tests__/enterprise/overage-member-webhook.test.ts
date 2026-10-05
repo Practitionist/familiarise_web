@@ -19,7 +19,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    paymentLeg: { upsert: jest.fn() },
+    paymentLeg: { updateMany: jest.fn() },
   };
   return {
     __esModule: true,
@@ -60,7 +60,7 @@ const tx = (
   prisma as unknown as {
     __tx: {
       payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-      paymentLeg: { upsert: jest.Mock };
+      paymentLeg: { updateMany: jest.Mock };
     };
   }
 ).__tx;
@@ -94,16 +94,11 @@ describe("handleOverageMemberSuccess", () => {
       where: { id: "side1", paymentStatus: "PENDING" },
       data: { paymentStatus: "SUCCEEDED" },
     });
-    // funding-invariant CARD leg, idempotent upsert
-    expect(tx.paymentLeg.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          source: "CARD",
-          amountPaise: 125_000,
-        }),
-        update: {},
-      }),
-    );
+    // the CARD leg minted with the side charge gets the gateway order id
+    expect(tx.paymentLeg.updateMany).toHaveBeenCalledWith({
+      where: { paymentId: "side1", source: "CARD" },
+      data: { sourceRef: "order_abc" },
+    });
     // #812 — two-step CAS: the still-carved edge is tried first.
     expect(mockTransition).toHaveBeenCalledWith(
       tx,

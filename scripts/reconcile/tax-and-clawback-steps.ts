@@ -48,10 +48,6 @@ export async function orgInvoiceGstFindings(
         cgstPaise: true,
         sgstPaise: true,
         billedPayments: { select: { id: true } },
-        lineItems: {
-          where: { paymentId: { not: null } },
-          select: { paymentId: true },
-        },
         creditNotes: {
           where: { status: "ISSUED" },
           select: { igstPaise: true, cgstPaise: true, sgstPaise: true },
@@ -64,10 +60,14 @@ export async function orgInvoiceGstFindings(
     const bookingIdsByInvoice = new Map<string, string[]>();
     const journalledIds: string[] = [];
     for (const inv of slice) {
-      const ids = new Set(inv.billedPayments.map((p) => p.id));
-      for (const li of inv.lineItems) if (li.paymentId) ids.add(li.paymentId);
-      if (ids.size > 0) bookingIdsByInvoice.set(inv.id, [...ids]);
-      else journalledIds.push(inv.id);
+      if (inv.billedPayments.length > 0) {
+        bookingIdsByInvoice.set(
+          inv.id,
+          inv.billedPayments.map((p) => p.id),
+        );
+      } else {
+        journalledIds.push(inv.id);
+      }
     }
 
     const entries = await prisma.ledgerEntry.findMany({

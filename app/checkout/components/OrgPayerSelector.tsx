@@ -73,10 +73,12 @@ function OverageWarning({
   }
 
   if (data.willExceedCap && data.marginalPaise > 0) {
+    // marginalPaise is the GST-inclusive total the payer will owe.
+    const total = `${inr(data.marginalPaise)} (incl. GST)`;
     const who =
       data.chargeTo === "MEMBER"
-        ? `you'll be charged ${inr(data.marginalPaise)}`
-        : `${inr(data.marginalPaise)} will be billed to ${organizationName}`;
+        ? `you'll be charged ${total}`
+        : `${total} will be billed to ${organizationName}`;
     return (
       <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />

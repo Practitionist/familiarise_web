@@ -97,17 +97,11 @@ export async function handleOverageMemberSuccess(
       if (claimed.count === 0) return null;
     }
 
-    // Every Payment must carry ≥1 leg (the funding invariant). The member paid
-    // by card; sourceRef is the gateway order id.
-    await tx.paymentLeg.upsert({
-      where: { paymentId_source: { paymentId: side.id, source: "CARD" } },
-      create: {
-        paymentId: side.id,
-        source: "CARD",
-        amountPaise: side.amount,
-        sourceRef: paymentIntentId,
-      },
-      update: {},
+    // The side charge is born with its CARD leg; capture only stamps the
+    // gateway order id on it, so a replay rewrites the same value.
+    await tx.paymentLeg.updateMany({
+      where: { paymentId: side.id, source: "CARD" },
+      data: { sourceRef: paymentIntentId },
     });
 
     // Transition FIRST so the journal below mirrors the state machine: the

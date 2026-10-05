@@ -16,7 +16,7 @@
  */
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { deriveGstBreakdown, orgBuyerCountry } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { lutNumberForSupply } from "@/lib/compliance/lut";
 import { recordSystemError } from "@/lib/enterprise/system-events";
@@ -107,8 +107,8 @@ export async function rollupOrgInvoiceAccruals(params: {
   // A domestic B2B invoice needs the buyer's state to pick its tax head.
   const buyerStateCode =
     org.taxInfo?.gstStateCode ?? numericStateCode(org.taxInfo?.gstin, null);
-  const domestic = org.dataResidencyRegion === "IN";
-  if (domestic && !buyerStateCode) {
+  const buyerCountry = orgBuyerCountry(org);
+  if (buyerCountry === "IN" && !buyerStateCode) {
     return { ...EMPTY, skippedNoGstState: true };
   }
 
@@ -212,7 +212,7 @@ export async function rollupOrgInvoiceAccruals(params: {
           supplierStateCode: supplierState,
           buyerStateCode,
           buyerGstin: org.taxInfo?.gstin ?? null,
-          buyerCountry: domestic ? "IN" : "US",
+          buyerCountry,
           hsnCode: org.taxInfo?.hsnDefault,
         });
 

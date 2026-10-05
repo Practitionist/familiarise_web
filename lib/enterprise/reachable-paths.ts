@@ -150,8 +150,7 @@ export function overageConfigRefusals(
       code: "OVERAGE_SURCHARGE_UNSUPPORTED",
       field: "overageSurchargeBps",
       message:
-        "An overage surcharge cannot be added yet, because the tax on it is not invoiced. " +
-        "Remove the surcharge; over-cap bookings are still billed at their session price.",
+        "An overage surcharge cannot be added yet. Remove the surcharge; over-cap bookings are still billed at their session price.",
     });
   }
   return refusals;
