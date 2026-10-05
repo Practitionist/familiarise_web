@@ -1,198 +1,102 @@
-# Referral Credits — Detailed Guide
+# Referral Credits and the Ledger
 
-## Overview
+A referral credit is a promotional balance in rupees that the platform grants to a referrer. It is not cash, cannot be withdrawn or transferred, and can only reduce what the holder pays on a later order. All amounts are in paise.
 
-Referral credits are a platform currency denominated in paise (100 paise = 1 INR). They function as a wallet system where users accumulate credits from referral rewards and spend them on service purchases.
+## 1. Credit sources
 
----
+The `source` column records how a credit came to exist. Only the first one is created by the referral programme itself.
 
-## Credit Sources
+| Source                       | Created by                                           | Notes                                                                                          |
+| ---------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `REFERRAL_BONUS`             | Capture of the referee's first paid booking          | Starts `PENDING` at the configured reward, becomes spendable only when it vests.               |
+| `COMPENSATION`               | An admin through `POST /api/admin/referrals/credits` | Issued spendable and already counted in the liability.                                         |
+| `MANUAL`                     | An admin through the same route                      | Same as above, with an optional expiry.                                                        |
+| `REFEREE_BONUS`, `PROMOTION` | Nothing at present                                   | Kept as enum values and in the admin filter. The referee's reward is a discount, not a credit. |
 
-| Source           | Recipient                | Amount              | Trigger                           |
-| ---------------- | ------------------------ | ------------------- | --------------------------------- |
-| `REFEREE_BONUS`  | New user (referee)       | ₹200 (20,000 paise) | Signs up via referral link        |
-| `REFERRAL_BONUS` | Existing user (referrer) | ₹500 (50,000 paise) | Referee makes first paid booking  |
-| `PROMOTION`      | Any user                 | Variable            | Platform campaign (admin-created) |
-| `COMPENSATION`   | Any user                 | Variable            | Customer support resolution       |
-| `MANUAL`         | Any user                 | Variable            | Staff/admin manual entry          |
+The pair `(userId, referralId, source)` is unique, so a referral can produce at most one `REFERRAL_BONUS` credit for the referrer.
 
----
+## 2. Credit lifecycle
 
-## Credit Lifecycle
-
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   CREATED    │────>│   ACTIVE     │────>│  PARTIALLY   │────>│   CONSUMED   │
-│              │     │              │     │   USED       │     │              │
-│ amount=50000 │     │ remaining=   │     │ remaining=   │     │ remaining=0  │
-│ remaining=   │     │  50000       │     │  30000       │     │ usedAt=now   │
-│  50000       │     │              │     │              │     │              │
-│ usedAmount=0 │     │ usedAmount=0 │     │ usedAmount=  │     │ usedAmount=  │
-│              │     │              │     │  20000       │     │  50000       │
-└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
-                            │
-                            │ (if expiresAt < now)
-                            ▼
-                     ┌──────────────┐
-                     │   EXPIRED    │
-                     │              │
-                     │ remaining→0  │
-                     │ (by cron)    │
-                     └──────────────┘
-```
-
-There is no explicit `status` field on ReferralCredit. Status is inferred:
-
-- **Active**: `remainingAmount > 0` and (`expiresAt IS NULL` or `expiresAt > now`)
-- **Partially Used**: `usedAmount > 0` and `remainingAmount > 0`
-- **Consumed**: `remainingAmount = 0` and `usedAt IS NOT NULL`
-- **Expired**: `remainingAmount = 0` and was zeroed by the expiry cron job
-
----
-
-## Consumption Algorithm (FIFO)
-
-When a user applies credits at checkout, the system consumes from the oldest-expiring credit first:
-
-```typescript
-// lib/referrals/service.ts — applyCreditsToPayment()
-
-async function applyCreditsToPayment(userId: string, amount: number) {
-  // 1. Fetch all active credits, ordered by expiresAt ASC (nulls last)
-  const credits = await prisma.referralCredit.findMany({
-    where: {
-      userId,
-      remainingAmount: { gt: 0 },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-    },
-    orderBy: { expiresAt: "asc" }, // Earliest expiry first
-  });
-
-  let remaining = amount;
-
-  // 2. Consume credits one by one
-  for (const credit of credits) {
-    if (remaining <= 0) break;
-
-    const deduction = Math.min(credit.remainingAmount, remaining);
-
-    await prisma.referralCredit.update({
-      where: { id: credit.id },
-      data: {
-        remainingAmount: credit.remainingAmount - deduction,
-        usedAmount: credit.usedAmount + deduction,
-        ...(credit.remainingAmount - deduction === 0
-          ? { usedAt: new Date() }
-          : {}),
-      },
-    });
-
-    remaining -= deduction;
-  }
-
-  return amount - remaining; // Actual amount applied
-}
-```
-
-### Example
-
-User has 3 credits:
-
-| Credit | Amount | Remaining | Expires    |
-| ------ | ------ | --------- | ---------- |
-| A      | ₹200   | ₹200      | 2026-06-15 |
-| B      | ₹500   | ₹300      | 2026-08-01 |
-| C      | ₹100   | ₹100      | never      |
-
-User wants to apply ₹400 at checkout:
-
-1. Consume Credit A: ₹200 → remaining = ₹0, usedAt = now. ₹200 left to apply.
-2. Consume Credit B: ₹200 of ₹300 → remaining = ₹100. ₹0 left to apply.
-3. Credit C untouched.
-
-Result: ₹400 applied. Credit A fully consumed. Credit B partially used.
-
----
-
-## Expiry
-
-### Rules
-
-- Credits from referral rewards expire **6 months** after creation
-- `PROMOTION` credits may have custom expiry dates
-- `MANUAL` credits can be set to never expire (`expiresAt = null`)
-
-### Cron Job
+A `ReferralCredit` carries an explicit `state`. Only `VESTED` credits with a balance and an unexpired `expiresAt` are spendable.
 
 ```
-File: scripts/referrals/expire-credits.ts
-Schedule: Daily
-
-Action:
-  For all credits where:
-    - remainingAmount > 0
-    - expiresAt IS NOT NULL
-    - expiresAt < now()
-
-  Set remainingAmount = 0
+   capture of the friend's first paid booking
+              │
+              ▼
+        ┌─────────┐   vest sweep: delivered, held,    ┌────────┐   expiry passes,     ┌─────────┐
+        │ PENDING │ ────────────────────────────────► │ VESTED │ ──────────────────►  │ EXPIRED │
+        └─────────┘   no refund, caps and budget ok   └────────┘   breakage posted    └─────────┘
+              │                                           │
+              │ referral voided, or reopened               │ ops reversal
+              ▼                                           ▼
+          ┌──────┐                                    ┌──────┐
+          │ VOID │ ◄───────────────────────────────── │ VOID │
+          └──────┘                                    └──────┘
 ```
 
----
+A `PENDING` credit holds nothing in the ledger. A `VOID` credit that was never vested can be revived to `PENDING` when the same referral is reopened and later qualifies again. The revival only applies to a credit that never vested, was never reversed and was never used.
 
-## Refund Reversal
+Two database checks protect the balance. `referral_credit_balance_consistent` requires `remainingAmount = amount - usedAmount` with all three non-negative, and `referral_credit_usage_nonnegative` keeps every usage amount non-negative.
 
-When a payment that consumed referral credits is refunded, `reverseCreditsForPayment` restores the consumed amount to the originating credit so the balance is made whole again. As of #692 (REF-2), that restoration is skipped for any credit that has since expired. Putting `remainingAmount` back onto a lapsed credit would only create dead balance that the daily expiry cron immediately re-zeroes and that the available-balance query already filters out, so the buyer would gain nothing. When a refund touches an expired credit the reversal instead logs the skipped amount and leaves the usage record in place, so the credit reads as genuinely consumed rather than briefly resurrected. Reissuing fresh credit for a refund of an already-expired purchase is a deliberate product decision and is not done automatically.
+## 3. Redeeming a credit at checkout
 
----
+The buyer opts in by sending `useReferralCredits` with the order. `deriveCheckoutAmount` computes the price in one fixed order: the list price, then any discount code, then the welcome discount, then GST on the discounted amount, then credits against the tax-inclusive total.
 
-## Available Balance Calculation
+Credits are applied only when all of these hold.
 
-```sql
-SELECT SUM(remaining_amount)
-FROM referral_credits
-WHERE user_id = ?
-  AND remaining_amount > 0
-  AND (expires_at IS NULL OR expires_at > NOW())
-```
+- The tax-inclusive total is at least ₹500 (`MIN_CREDIT_REDEMPTION_PAISE`).
+- The buyer's balance of spendable credits is greater than 0.
+- The amount is the smallest of the balance, the tax-inclusive total, and the credit cap. The credit cap is `floor(list price × creditCapBps / 10 000)` minus the welcome discount already given. `creditCapBps` is the smaller of the configured redemption cap (20 % by default) and the order's take rate, so an own-link order at a 10 % take allows at most 10 %.
 
-This is what `GET /api/referrals/credits/available` returns.
+`applyCreditsToPayment` then draws from credits that expire soonest first. Each draw is a conditional update that requires the credit to still be `VESTED`, to hold at least the draw amount and to be unexpired. If a credit changed in the meantime, checkout fails with the typed 409 `CREDIT_SHORTFALL` and re-prices. Each draw writes a `ReferralCreditUsage` row, and one `REFERRAL_CREDIT` payment leg records the total, with `sourceRef` pointing at the first usage row. The leg is excluded from the funding-leg sum, because `Payment.amount` already excludes the credit.
 
----
+## 4. The ledger
 
-## Dashboard Display
+Every movement of a vested balance is a balanced two-line entry of kind `REFERRAL_CREDIT`, and each carries an idempotency key so a retry cannot post twice.
 
-### Credit History Table
+| Event                       | Debit                       | Credit                      | Idempotency key                               |
+| --------------------------- | --------------------------- | --------------------------- | --------------------------------------------- |
+| Vest                        | `PLATFORM_PROMO`            | `REFERRAL_CREDIT_LIABILITY` | `referral-vest:<creditId>`                    |
+| Redemption draw             | `REFERRAL_CREDIT_LIABILITY` | `PLATFORM_PROMO`            | `referral-redeem:<usageId>`                   |
+| Restore after a refund      | `PLATFORM_PROMO`            | `REFERRAL_CREDIT_LIABILITY` | `referral-restore:<usageId>:<restored total>` |
+| Breakage at expiry          | `REFERRAL_CREDIT_LIABILITY` | `PLATFORM_PROMO`            | `referral-breakage:<creditId>`                |
+| Ops reversal of a balance   | `REFERRAL_CREDIT_LIABILITY` | `PLATFORM_PROMO`            | `referral-reverse:<creditId>`                 |
+| Ops issuance (admin credit) | `PLATFORM_PROMO`            | `REFERRAL_CREDIT_LIABILITY` | `referral-issue:<creditId>`                   |
 
-Shown on both consultant and consultee referral dashboard pages:
+In plain words, the platform records the cost of a reward when the credit becomes spendable, and it owes the holder that amount until they use it. Using it pays down the debt, and an expired balance is released back as breakage. Draws, restores and breakage post only when the credit's `vestedAt` is set, which means the vest journal posted the liability.
 
-| Column    | Source                             |
-| --------- | ---------------------------------- |
-| Amount    | `amount` formatted as INR          |
-| Source    | `source` enum label                |
-| Remaining | `remainingAmount` formatted as INR |
-| Expires   | `expiresAt` formatted, or "Never"  |
-| Status    | Derived: Active / Used / Expired   |
+The welcome discount has no ledger line of its own. It is an invoice discount before tax, so it lowers revenue at the sale, and the order's take funds it.
 
-### Available Balance Card
+### The reconciler invariant
 
-Prominent stat card showing total available credits:
+The ledger reconciler step `stepReferralCreditLiability` in `scripts/reconcile/reconcile-ledgers.ts` asserts that the liability account's credits minus its debits equals the sum of `remainingAmount` over credits that are `VESTED` and have `vestedAt` set. A mismatch is reported as `REFERRAL_CREDIT_LIABILITY_DRIFT`. This check spans the credit table and the ledger, which no single Postgres constraint can, so the reconciler is the right place for it.
 
-```
-┌───────────────────────┐
-│  Credit Balance        │
-│  ₹700.00              │
-│  Available to use      │
-└───────────────────────┘
-```
+## 5. Refunds and restoring credits
 
----
+When a payment that used credits is refunded or cancelled, `reverseCreditsForPayment` returns the credit value through the `ReferralCreditUsage` rows. A full refund restores everything. A partial refund restores in proportion to the cumulative refunded amount, so rounding never drifts across several partial refunds. Credit-funded class seats, whose refund rows are for ₹0, use `restoreCreditsForPaymentUpTo`, which restores up to a stated amount and keeps the usage row at 0 so later returns have a stable basis.
 
-## Edge Cases
+The rules for what a restore is worth depend on who caused the refund.
 
-| Scenario                                 | Behavior                                    |
-| ---------------------------------------- | ------------------------------------------- |
-| Credits exceed order total               | Only apply up to order total                |
-| All credits expired                      | Toggle hidden, no credits applied           |
-| Credit expires mid-checkout              | Caught at payment time; partial application |
-| User has credits from multiple sources   | All treated equally in FIFO queue           |
-| Concurrent credit usage (race condition) | Transactional updates prevent double-spend  |
+- If the expert or the platform caused the refund, the restored credit is valid for at least 30 more days, even when its original expiry has passed in the meantime.
+- If the buyer cancelled, the credit keeps its original expiry. When that expiry has already passed, the credit is lost.
+
+These two rules are the owner's decision of 2026-10-05 and are being implemented in parallel. At the head of this branch the restore functions still skip a credit whose expiry has already passed and never extend an expiry, so the 30-day floor is not yet in the code.
+
+## 6. Expiry and breakage
+
+A credit expires `creditExpiryDays` after it vests (90 days by default). The expiry date matters in two places. Spending ignores credits past their date immediately. The monthly `expire-referral-credits` job later moves them to `EXPIRED` by a conditional update that checks the balance has not changed, and posts the breakage entry for the unused remainder. A credit with a zero balance expires without posting anything.
+
+## 7. What the user sees
+
+`GET /api/referrals/credits` returns the spendable total and the full history. `GET /api/referrals/credits/available` returns only the total. Spendable credits are those in `VESTED` with a positive balance, in INR, and not expired. The admin list in `GET /api/admin/referrals/credits` derives a filter status of `PENDING`, `ACTIVE`, `EXHAUSTED`, `EXPIRED` or `REVERSED` from the state and balance.
+
+## Deprecated & Superseded Approaches
+
+The first version gave a credit its full value at the moment of capture and had no `state` column. A credit was "active" when it had a balance and an unexpired date, expiry was only a filter at read time, and a nightly script that zeroed old balances was planned but later deleted. Nothing was posted to the ledger when a credit was issued, so cost appeared only at redemption through `PLATFORM_PROMO`, and there was no liability and no breakage.
+
+Residual artifacts to delete when found:
+
+- Any code that infers status from `remainingAmount` and `usedAt` instead of `state`.
+- A `usedOnPaymentId` field on credits. Usage is tracked by `ReferralCreditUsage`.
+- Any expectation that a refund deletes usage rows after a partial restore. Partial restores reduce the row and record `restoredAmount`.
+- The 6-month expiry, the ₹500 and ₹200 amounts, and the flat FIFO example from the earlier credit guide.
