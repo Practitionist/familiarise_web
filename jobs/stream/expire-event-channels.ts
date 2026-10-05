@@ -210,18 +210,55 @@ async function loadEndedEvents(): Promise<EventRow[]> {
   );
   const appointments = await prisma.appointment.findMany({
     where: {
+      deletedAt: null,
       OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
       occurrences: {
-        some: { endsAt: { lt: now, gte: lookbackFrom } },
+        some: { deletedAt: null, endsAt: { lt: now, gte: lookbackFrom } },
       },
     },
     take: MAX_EVENTS_PER_RUN,
     orderBy: { createdAt: "desc" },
     select: {
-      webinar: { select: { id: true, chatFrozenAt: true } },
-      class: { select: { id: true, chatFrozenAt: true } },
-      organization: { select: { streamRecordingRetentionDays: true } },
+      webinar: {
+        select: {
+          id: true,
+          chatFrozenAt: true,
+          webinarPlan: {
+            select: {
+              organization: {
+                select: {
+                  chatRetentionDays: true,
+                  streamRecordingRetentionDays: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      class: {
+        select: {
+          id: true,
+          chatFrozenAt: true,
+          classPlan: {
+            select: {
+              organization: {
+                select: {
+                  chatRetentionDays: true,
+                  streamRecordingRetentionDays: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      organization: {
+        select: {
+          chatRetentionDays: true,
+          streamRecordingRetentionDays: true,
+        },
+      },
       occurrences: {
+        where: { deletedAt: null },
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
         take: 1,
@@ -256,7 +293,14 @@ async function loadEndedEvents(): Promise<EventRow[]> {
       continue;
     }
 
+    const planOrg =
+      appointment.webinar?.webinarPlan?.organization ??
+      appointment.class?.classPlan?.organization ??
+      null;
     const retentionDays =
+      planOrg?.chatRetentionDays ??
+      appointment.organization?.chatRetentionDays ??
+      planOrg?.streamRecordingRetentionDays ??
       appointment.organization?.streamRecordingRetentionDays ??
       DEFAULT_RETENTION_DAYS;
 
@@ -276,7 +320,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
       existing.entity = entity;
     }
   }
-  return Array.from(byChannel.values());
+  return Array.from(byChannel.values()).filter((row) => row.endsAt < now);
 }
 
 /**

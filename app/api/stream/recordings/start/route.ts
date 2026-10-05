@@ -86,7 +86,10 @@ export async function POST(req: NextRequest) {
                         recordingEnabled: true,
                         // #1580 C-P1-4 — the accepted co-presenter may record too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -101,7 +104,10 @@ export async function POST(req: NextRequest) {
                         recordingEnabled: true,
                         // #1580 C-P1-4 — the accepted co-presenter may record too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },

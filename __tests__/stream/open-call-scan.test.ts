@@ -32,8 +32,8 @@ import {
   iterateOpenCalls,
   anyOpenCallMemberHolds,
   OpenCallScanTruncatedError,
-  MEMBER_ROLE,
 } from "../../scripts/stream/backfill-call-member-role";
+import { CALL_MEMBER_ROLE } from "../../lib/stream/call-cid";
 
 type Client = Parameters<typeof iterateOpenCalls>[0];
 
@@ -57,7 +57,7 @@ function page(n: number, next?: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockQueryMembers.mockResolvedValue({
-    members: [{ user_id: "u1", role: MEMBER_ROLE }],
+    members: [{ user_id: "u1", role: CALL_MEMBER_ROLE }],
     next: undefined,
   });
 });
@@ -106,7 +106,7 @@ describe("anyOpenCallMemberHolds", () => {
     mockQueryCalls.mockResolvedValue(page(2));
     mockQueryMembers
       .mockResolvedValueOnce({
-        members: [{ user_id: "u1", role: MEMBER_ROLE }],
+        members: [{ user_id: "u1", role: CALL_MEMBER_ROLE }],
         next: undefined,
       })
       .mockResolvedValueOnce({
@@ -114,7 +114,7 @@ describe("anyOpenCallMemberHolds", () => {
         next: undefined,
       });
 
-    const scan = await anyOpenCallMemberHolds(client, MEMBER_ROLE);
+    const scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE);
 
     // A PARTIAL roster is a refusal: the write makes this role the only thing
     // that admits anyone, so one uncovered member is one lockout.
@@ -127,7 +127,7 @@ describe("anyOpenCallMemberHolds", () => {
   it("passes only when EVERY member is covered", async () => {
     mockQueryCalls.mockResolvedValue(page(2));
 
-    const scan = await anyOpenCallMemberHolds(client, MEMBER_ROLE);
+    const scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE);
 
     expect(scan.found).toBe(true);
     expect(scan.membersMissingRole).toBe(0);

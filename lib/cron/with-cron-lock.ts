@@ -261,7 +261,20 @@ export async function withCronLock<T>(
 
   try {
     const result = await fn();
-    await recordJobFinish(jobName, delegate, executionId, acquiredAtMs);
+    const softFailed =
+      result !== null &&
+      typeof result === "object" &&
+      (("overallSuccess" in result &&
+        (result as { overallSuccess?: unknown }).overallSuccess === false) ||
+        ("success" in result &&
+          (result as { success?: unknown }).success === false));
+    await recordJobFinish(
+      jobName,
+      delegate,
+      executionId,
+      acquiredAtMs,
+      softFailed ? new Error("Job returned success=false") : undefined,
+    );
     return result;
   } catch (err) {
     await recordJobFinish(jobName, delegate, executionId, acquiredAtMs, err);

@@ -29,7 +29,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, RefundStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -150,22 +150,43 @@ async function alertOrphanedPaymentsUnlocked(
   // drains in arrival order. Side-charges carry appointmentId null by design,
   // so they are excluded from the critical cohort and counted separately;
   // replay sales and auto-refund markers are settled by their own rails.
-  const orphanedPayments = await prisma.payment.findMany({
+  const rawOrphanedPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
       appointmentId: null,
+      deletedAt: null,
       parentPaymentId: null,
       NOT: { paymentIntent: { startsWith: "overage:" } },
       AND: [notSettledElsewhereWhere],
       createdAt: { gte: sevenDaysAgo },
+      refunds: {
+        none: {
+          status: RefundStatus.PENDING,
+        },
+      },
     },
     include: {
       user: {
         select: { email: true, name: true },
       },
+      refunds: {
+        where: { status: RefundStatus.SUCCEEDED },
+        select: { amountPaise: true },
+      },
     },
     orderBy: { createdAt: "asc" },
     ...(opts.limit !== undefined ? { take: opts.limit } : {}),
+  });
+
+  const orphanedPayments = rawOrphanedPayments.filter((payment) => {
+    const refundedAmount = Array.isArray(payment.refunds)
+      ? payment.refunds.reduce(
+          (sum: number, r: { amountPaise?: number; amount?: number }) =>
+            sum + Number(r.amountPaise ?? r.amount ?? 0),
+          0,
+        )
+      : 0;
+    return refundedAmount < payment.amount;
   });
 
   const sideChargeCount = await prisma.payment.count({
@@ -245,31 +266,30 @@ async function alertOrphanedPaymentsUnlocked(
     console.log("Manual recovery is required for each case.");
     console.log("========================================\n");
 
-    // One report per RUN, not per payment: a large cohort would otherwise
-    // spend the month's error allowance on the same incident, which is exactly
-    // what the 2026-09-21 Upstash outage did. The message and fingerprint are
-    // FIXED so Sentry groups every occurrence into one issue — naming the
-    // payments in it would mint a new issue per cohort and bury it — and the
-    // detail rides in `extra`, capped at 25 ids so the event cannot grow
-    // without bound.
-    reportSentryMessage(
-      "Orphaned payments: customers charged with no booking",
-      {
-        subsystem: "payments",
-        op: "alert-orphaned-payments",
-        level: "error",
-        fingerprint: ["orphaned-payments"],
-        extra: {
-          totalOrphaned: orphanedPayments.length,
-          newlyRecorded,
-          totalAmount,
-          totalAmountPaise: totalAmount,
-          sideChargeCount,
-          sample: formattedOrphaned.slice(0, 10).map((p) => p.id),
-          paymentIds: orphanedPayments.slice(0, 25).map((p) => p.id),
+    // One report per RUN when newly seen orphaned payments arrive, not per
+    // payment and not on every 15-minute re-read of an already-recorded cohort:
+    // a large or already-known cohort would otherwise spend the month's error
+    // allowance on the same incident.
+    if (newlyRecorded > 0) {
+      reportSentryMessage(
+        "Orphaned payments: customers charged with no booking",
+        {
+          subsystem: "payments",
+          op: "alert-orphaned-payments",
+          level: "error",
+          fingerprint: ["orphaned-payments"],
+          extra: {
+            totalOrphaned: orphanedPayments.length,
+            newlyRecorded,
+            totalAmount,
+            totalAmountPaise: totalAmount,
+            sideChargeCount,
+            sample: formattedOrphaned.slice(0, 10).map((p) => p.id),
+            paymentIds: orphanedPayments.slice(0, 25).map((p) => p.id),
+          },
         },
-      },
-    );
+      );
+    }
   } else {
     console.log("No orphaned payments found - all payments have appointments.");
   }

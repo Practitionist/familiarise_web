@@ -144,9 +144,10 @@ function SessionClockPill({
 
 interface MeetingRoomProps {
   onRejoin: () => void;
+  role?: "host" | "participant" | null;
 }
 
-const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
+const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
@@ -173,7 +174,7 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
 
-  const info = useSessionInfo();
+  const info = useSessionInfo(role);
   const isHost = info.isHost;
   const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
   const isOneToMany = isOneToManyAppointmentType(info.appointmentType);

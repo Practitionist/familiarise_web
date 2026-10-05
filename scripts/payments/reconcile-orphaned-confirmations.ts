@@ -355,6 +355,23 @@ type OrphanPaymentRow = {
   createdAt: Date;
 };
 
+function hasUnrefundedBalance(payment: {
+  amount?: number;
+  refunds?: ReadonlyArray<{ amountPaise?: number; amount?: number }>;
+}): boolean {
+  if (!Array.isArray(payment.refunds) || payment.refunds.length === 0) {
+    return true;
+  }
+  if (typeof payment.amount !== "number") {
+    return false;
+  }
+  const refundedSum = payment.refunds.reduce(
+    (sum: number, r) => sum + Number(r.amountPaise ?? r.amount ?? 0),
+    0,
+  );
+  return refundedSum < payment.amount;
+}
+
 function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
   return {
     paymentStatus: PaymentStatus.SUCCEEDED,
@@ -364,7 +381,9 @@ function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
     NOT: { paymentIntent: { startsWith: "overage:" } },
     AND: [notSettledElsewhereWhere],
     createdAt: { gte: windowCutoff, lt: graceCutoff },
-    refunds: { none: { status: RefundStatus.PENDING } },
+    refunds: {
+      none: { status: RefundStatus.PENDING },
+    },
     disputes: {
       none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
     },
@@ -402,12 +421,23 @@ async function reconcileOrphanedPaymentsUnlocked(
     timestamp: new Date(now).toISOString(),
   };
 
-  const orphans = await prisma.payment.findMany({
+  const rawOrphans = await prisma.payment.findMany({
     where: orphanPaymentWhere(graceCutoff, windowCutoff),
     orderBy: { createdAt: "asc" },
     take: limit,
-    select: { id: true, paymentIntent: true, userId: true, createdAt: true },
+    select: {
+      id: true,
+      amount: true,
+      paymentIntent: true,
+      userId: true,
+      createdAt: true,
+      refunds: {
+        where: { status: RefundStatus.SUCCEEDED },
+        select: { amountPaise: true },
+      },
+    },
   });
+  const orphans = rawOrphans.filter(hasUnrefundedBalance);
   result.scanned = orphans.length;
 
   const failedIds: string[] = [];
@@ -421,7 +451,7 @@ async function reconcileOrphanedPaymentsUnlocked(
     }
   }
 
-  const stale = await prisma.payment.findMany({
+  const rawStale = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
       appointmentId: null,
@@ -430,15 +460,30 @@ async function reconcileOrphanedPaymentsUnlocked(
       NOT: { paymentIntent: { startsWith: "overage:" } },
       AND: [notSettledElsewhereWhere],
       createdAt: { lt: windowCutoff },
-      refunds: { none: { status: RefundStatus.PENDING } },
+      refunds: {
+        none: {
+          status: RefundStatus.PENDING,
+        },
+      },
       disputes: {
         none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
       },
     },
     orderBy: { createdAt: "asc" },
     take: limit,
-    select: { id: true, paymentIntent: true, userId: true, createdAt: true },
+    select: {
+      id: true,
+      amount: true,
+      paymentIntent: true,
+      userId: true,
+      createdAt: true,
+      refunds: {
+        where: { status: RefundStatus.SUCCEEDED },
+        select: { amountPaise: true },
+      },
+    },
   });
+  const stale = rawStale.filter(hasUnrefundedBalance);
   for (const payment of stale) {
     try {
       if (await escrowOneOrphan(payment)) result.escrowed += 1;

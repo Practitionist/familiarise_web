@@ -73,14 +73,14 @@ async function requireAuthenticatedStreamActor(
   }
   const role = session.user.role ?? null;
   const privileged = role === "ADMIN" || role === "STAFF";
-  if (
-    !privileged &&
-    role === "CONSULTEE" &&
-    !targetIds.includes(session.user.id)
-  ) {
+  if (!privileged && !targetIds.every((id) => id === session.user.id)) {
     throw new Error("Forbidden: cannot sync another user to Stream");
   }
-  return { trusted: privileged, userId: session.user.id, role };
+  return {
+    trusted: privileged,
+    userId: session.user.id,
+    role,
+  };
 }
 
 function stripStreamUserEmails<T>(payload: T, actor: StreamActorContext): T {
@@ -98,16 +98,6 @@ function stripStreamUserEmails<T>(payload: T, actor: StreamActorContext): T {
           delete rest.email;
           return [id, rest];
         }),
-    );
-  }
-  if (
-    "droppedIds" in next &&
-    Array.isArray(next.droppedIds) &&
-    !actor.trusted &&
-    actor.role === "CONSULTEE"
-  ) {
-    next.droppedIds = (next.droppedIds as string[]).filter(
-      (id) => id === actor.userId,
     );
   }
   return next as T;

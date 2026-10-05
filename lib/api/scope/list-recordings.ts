@@ -99,6 +99,8 @@ export interface ListRecordingsResult {
   perPage: number;
 }
 
+import { buildUserAppointmentAccessOr } from "./list-documents";
+
 function buildWhere(
   params: ListRecordingsParams,
 ): Prisma.RecordingWhereInput {
@@ -112,11 +114,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.userId } } },
-              { subscription: { requestedBy: { userId: params.userId } } },
-              { trial: { consulteeProfile: { userId: params.userId } } },
-            ],
+            OR: buildUserAppointmentAccessOr(params.userId),
           },
         },
       },
@@ -154,43 +152,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.scope.userId } } },
-              { subscription: { requestedBy: { userId: params.scope.userId } } },
-              {
-                trial: {
-                  consulteeProfile: { userId: params.scope.userId },
-                },
-              },
-              {
-                consultation: {
-                  consultationPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                subscription: {
-                  subscriptionPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                webinar: {
-                  webinarPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                class: {
-                  classPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-            ],
+            OR: buildUserAppointmentAccessOr(params.scope.userId),
           },
         },
       },

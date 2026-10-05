@@ -110,6 +110,7 @@ export async function assertCollaboratorsAvailableForWindows(
   const collaborators = await db.collaborator.findMany({
     where: {
       status: "ACCEPTED",
+      consultantProfile: { deletedAt: null },
       ...(planType === "WEBINAR"
         ? { webinarPlanId: planId }
         : { classPlanId: planId }),

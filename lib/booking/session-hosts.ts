@@ -11,7 +11,7 @@ const OWNER = {
 } satisfies Prisma.ConsultationPlanSelect;
 
 const ACCEPTED_COLLABORATORS = {
-  where: { status: "ACCEPTED" },
+  where: { status: "ACCEPTED", consultantProfile: { deletedAt: null } },
   select: { consultantProfile: { select: { userId: true } } },
 } satisfies Prisma.WebinarPlan$collaboratorsArgs;
 
