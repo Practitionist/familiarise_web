@@ -531,15 +531,17 @@ export default function ConsultationCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
-      welcomeDiscount: appliedDiscount
-        ? null
-        : referralPricing?.welcomeDiscount,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
     referralPricing,
+    selectedOrganizationId,
     eventData?.data?.price,
     appliedDiscount,
     useReferralCredits,

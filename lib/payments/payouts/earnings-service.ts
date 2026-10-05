@@ -1521,6 +1521,16 @@ export async function createEarningsFromPayment(
       ? EarningStatus.PENDING_TRUST
       : EarningStatus.PENDING;
 
+    const splitsFor = (pool: number): Promise<RevenueSplit[]> =>
+      planType && planId
+        ? calculateRevenueSplit(planType, planId, pool, tx, {
+            excludeBuyerUserId: payment.userId,
+          })
+        : Promise.resolve([]);
+    // A multi-party sale never takes a fee waiver, on either path; the split count is pool-independent.
+    const multiParty = hasPreplanned
+      ? preplanned.splits.length > 0
+      : (await splitsFor(0)).length > 0;
     const platformFeePaise = orgSplit
       ? orgSplit.platformFeePaise
       : await settleB2cPlatformFeePaise(
@@ -1528,21 +1538,15 @@ export async function createEarningsFromPayment(
           payment,
           consultantProfileId,
           grossAmount,
-          { allowWaiver: !hasPreplanned || preplanned.splits.length === 0 },
+          { allowWaiver: !multiParty },
         );
     const totalConsultantPool = orgSplit
       ? orgSplit.consultantSharePaise
       : grossAmount - platformFeePaise;
 
     let splits: RevenueSplit[] = hasPreplanned ? preplanned.splits : [];
-    if (!hasPreplanned && planType && planId) {
-      splits = await calculateRevenueSplit(
-        planType,
-        planId,
-        totalConsultantPool,
-        tx,
-        { excludeBuyerUserId: payment.userId },
-      );
+    if (!hasPreplanned && multiParty) {
+      splits = await splitsFor(totalConsultantPool);
     }
 
     const collabSettlements = hasPreplanned

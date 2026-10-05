@@ -56,11 +56,16 @@ export const PATCH = withOpsAction(
           after: configSnapshot(created),
         };
       }
+      // An edit must name the version the admin saw, or it could overwrite a concurrent one.
+      if (ctx.body.expectedVersion === undefined) {
+        throw new OpsRefusal(
+          "VERSION_REQUIRED",
+          "Send the expectedVersion you loaded.",
+          400,
+        );
+      }
       const moved = await tx.referralProgramConfig.updateMany({
-        where: {
-          id: REFERRAL_CONFIG_ID,
-          version: ctx.body.expectedVersion ?? before.version,
-        },
+        where: { id: REFERRAL_CONFIG_ID, version: ctx.body.expectedVersion },
         data: { ...patch, version: { increment: 1 } },
       });
       if (moved.count !== 1) {

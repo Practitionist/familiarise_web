@@ -150,10 +150,16 @@ export async function settleB2cPlatformFeePaise(
     : (payment.platformFeeBps ??
       feeBpsForSource(await readActiveFeeSchedule(tx), source));
   if (bps !== payment.platformFeeBps || !payment.attributionSource) {
-    await tx.payment.updateMany({
-      where: { id: payment.id },
+    // CAS on the bps read, so a concurrent settle cannot be silently restamped.
+    const stamped = await tx.payment.updateMany({
+      where: { id: payment.id, platformFeeBps: payment.platformFeeBps },
       data: { platformFeeBps: bps, attributionSource: source },
     });
+    if (stamped.count !== 1) {
+      throw new Error(
+        `PLATFORM_FEE_RACED: payment ${payment.id} fee stamp changed during settlement`,
+      );
+    }
   }
   return prorate(grossAmount, bps, 10_000);
 }

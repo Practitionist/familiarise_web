@@ -1297,22 +1297,28 @@ export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
 
 // --- referral-credit liability == Σ remaining of VESTED credits that posted a vest journal ---
 async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
-  const sums = await prisma.ledgerEntry.groupBy({
-    by: ["direction"],
-    where: {
-      accountId: ledgerAccountId({ kind: "REFERRAL_CREDIT_LIABILITY" }),
-    },
-    _sum: { amountPaise: true },
-  });
+  // One snapshot for both reads, so a vest committing between them is not drift.
+  const { sums, vested } = await prisma.$transaction(
+    async (tx) => ({
+      sums: await tx.ledgerEntry.groupBy({
+        by: ["direction"],
+        where: {
+          accountId: ledgerAccountId({ kind: "REFERRAL_CREDIT_LIABILITY" }),
+        },
+        _sum: { amountPaise: true },
+      }),
+      vested: await tx.referralCredit.aggregate({
+        where: { state: "VESTED", vestedAt: { not: null } },
+        _sum: { remainingAmount: true },
+      }),
+    }),
+    { isolationLevel: "RepeatableRead" },
+  );
   let ledgerOwed = 0;
   for (const row of sums) {
     const amt = sumPaise(row._sum.amountPaise);
     ledgerOwed += row.direction === "CREDIT" ? amt : -amt;
   }
-  const vested = await prisma.referralCredit.aggregate({
-    where: { state: "VESTED", vestedAt: { not: null } },
-    _sum: { remainingAmount: true },
-  });
   const expected = sumPaise(vested._sum.remainingAmount);
   if (expected !== ledgerOwed) {
     ctx.findings.push({

@@ -468,15 +468,17 @@ export default function SubscriptionCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
-      welcomeDiscount: appliedDiscount
-        ? null
-        : referralPricing?.welcomeDiscount,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
       creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
     referralPricing,
+    selectedOrganizationId,
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,

@@ -110,6 +110,7 @@ beforeEach(() => {
   tx.referral.count.mockResolvedValue(0);
   tx.referral.updateMany.mockResolvedValue({ count: 1 });
   tx.referralCode.updateMany.mockResolvedValue({ count: 1 });
+  tx.payment.updateMany.mockResolvedValue({ count: 1 });
   tx.payment.findFirst.mockResolvedValue(null);
   tx.platformFeeSchedule.findFirst.mockResolvedValue({
     id: "fs-1",
@@ -133,7 +134,7 @@ describe("take rate", () => {
     });
     expect(fee).toBe(15_000);
     expect(tx.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: "pay-1" },
+      where: { id: "pay-1", platformFeeBps: null },
       data: { platformFeeBps: 1000, attributionSource: "OWN_LINK" },
     });
   });
