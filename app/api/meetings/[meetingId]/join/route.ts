@@ -4,12 +4,17 @@ import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
+  isExpectedStreamError,
   StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  CO_PRESENTER_CALL_ROLE,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
@@ -21,8 +26,9 @@ const PUBLISH_PERMISSIONS = [
 
 /**
  * POST /api/meetings/[meetingId]/join
- * Verifies meeting access and DPDP consent, upserts the caller on Stream, and grants `call_member` membership.
- * Attendance and presence intervals are recorded exclusively by `call.session_participant_joined`/`left` webhooks.
+ * Verifies meeting access and DPDP consent, upserts the caller on Stream, and grants call membership
+ * (`co_presenter` for accepted presenter collaborators, else `call_member`). It never creates the call;
+ * provisioning is the only creator. Attendance is recorded by the session participant webhooks.
  */
 export async function POST(
   _req: NextRequest,
@@ -35,7 +41,7 @@ export async function POST(
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
 
-    const role = "call_member";
+    const role = access.coPresenter ? CO_PRESENTER_CALL_ROLE : "call_member";
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
 
     await withStreamCircuitBreaker(async () => {
@@ -45,8 +51,6 @@ export async function POST(
         STREAM_CALL_TYPE,
         resolvedCallId,
       );
-
-      await call.getOrCreate({ data: { created_by_id: userId } });
 
       await call.updateCallMembers({
         update_members: [{ user_id: userId, role }],
@@ -86,6 +90,19 @@ export async function POST(
       role: access.role,
     });
   } catch (error) {
+    if (isExpectedStreamError(error)) {
+      streamLogger.warn("Meeting join refused — Stream call missing", {
+        meetingId: meetingIdForLog,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "This session's video room is not available. Please contact support.",
+          code: "ROOM_NOT_PROVISIONED",
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof StreamUnavailableError) {
       streamLogger.warn("Meeting join unavailable — Stream circuit open", {
         meetingId: meetingIdForLog,

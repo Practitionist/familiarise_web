@@ -45,6 +45,8 @@ interface MeetingResolved {
   message: string;
   reason: "granted" | "unauthorized";
   code?: "CONSENT_REQUIRED";
+  /** An accepted presenter collaborator on a webinar or class plan, not the plan owner. */
+  coPresenter?: boolean;
   streamCallId: string;
   meetingId: string;
   appointment: MeetingAppointment;
@@ -249,6 +251,7 @@ export async function resolveMeetingAccess(
   const grant = async (
     role: Exclude<MeetingRole, null>,
     message: string,
+    coPresenter = false,
   ): Promise<MeetingAccess> => {
     const bookingStatus =
       appointment.consultation?.status ??
@@ -310,6 +313,7 @@ export async function resolveMeetingAccess(
       role,
       message,
       reason: "granted",
+      ...(coPresenter ? { coPresenter } : {}),
       streamCallId,
       meetingId,
       appointment,
@@ -340,7 +344,7 @@ export async function resolveMeetingAccess(
       });
       if (collab) {
         return isPresenterRole(collab.role)
-          ? grant("host", "Access granted as accepted co-presenter")
+          ? grant("host", "Access granted as accepted co-presenter", true)
           : grant("participant", "Access granted as accepted collaborator");
       }
     }

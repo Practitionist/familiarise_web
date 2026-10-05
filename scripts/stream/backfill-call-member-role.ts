@@ -41,12 +41,20 @@ import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
-import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import {
+  CO_PRESENTER_CALL_ROLE,
+  STREAM_CALL_TYPE,
+} from "../../lib/stream/call-cid";
 
 type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
 
 /** The role every participant must hold once `join-call` moves onto it. */
 export const MEMBER_ROLE = "call_member";
+
+/** `co_presenter` also holds `join-call`, so it is never downgraded or counted as locked out. */
+function holdsJoinRole(role: string | null, joinRole: string): boolean {
+  return role === joinRole || role === CO_PRESENTER_CALL_ROLE;
+}
 
 /**
  * Stream's documented maximum for `queryCalls`, and the only page size that
@@ -214,7 +222,9 @@ export async function anyOpenCallMemberHolds(
 
   for await (const call of iterateOpenCalls(client)) {
     callsScanned++;
-    const missing = call.members.filter((member) => member.role !== role);
+    const missing = call.members.filter(
+      (member) => !holdsJoinRole(member.role, role),
+    );
     membersWithRole += call.members.length - missing.length;
     if (missing.length > 0) {
       membersMissingRole += missing.length;
@@ -280,7 +290,9 @@ export async function backfillCallMemberRole(
       continue;
     }
 
-    const stale = call.members.filter((member) => member.role !== MEMBER_ROLE);
+    const stale = call.members.filter(
+      (member) => !holdsJoinRole(member.role, MEMBER_ROLE),
+    );
     if (stale.length === 0) continue;
 
     result.callsChanged++;

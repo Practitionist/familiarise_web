@@ -23,6 +23,9 @@
  */
 export const STREAM_CALL_TYPE = "default";
 
+/** Custom call role on `default` that adds mute, pin and backstage to the publish grants; never end or permission changes. */
+export const CO_PRESENTER_CALL_ROLE = "co_presenter";
+
 /** Bare call id → cid. Idempotent: an already-prefixed value is returned as-is. */
 export function toCallCid(
   callId: string,

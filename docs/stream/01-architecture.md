@@ -238,7 +238,7 @@ sequenceDiagram
     User->>MeetingPage: Navigate to /meetings/{streamCallId}
     MeetingPage->>JoinRoute: POST /api/meetings/{streamCallId}/join
     JoinRoute->>Database: resolveMeetingAccess + DPDP checkConsent
-    JoinRoute->>StreamCloud: upsertUsersToStream + call.getOrCreate + updateCallMembers(call_member)
+    JoinRoute->>StreamCloud: upsertUsersToStream + updateCallMembers(call_member or co_presenter)
     JoinRoute-->>MeetingPage: { callType: "default", callId, role }
     MeetingPage-->>User: Show MeetingSetup -> MeetingRoom
     StreamCloud-->>Database: Webhooks (participant_joined/left, call.ended) write attendance, presence & endedAt
