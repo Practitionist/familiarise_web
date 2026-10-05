@@ -1371,6 +1371,204 @@ function CreateProgramDialog({
 // Edit-program dialog & Amend/Supersede dialog
 // ---------------------------------------------------------------------------
 
+function useProgramCommercialFormState(
+  contracts: ContractListItem[],
+  sourceProgram:
+    | Pick<
+        ProgramListItem,
+        | "type"
+        | "contractId"
+        | "coveredPlanTypes"
+        | "allowedCategories"
+        | "licensedSeatConfig"
+        | "creditPoolConfig"
+      >
+    | undefined,
+) {
+  const savedSurchargeBps =
+    sourceProgram?.licensedSeatConfig?.overageSurchargeBps ??
+    sourceProgram?.creditPoolConfig?.overageSurchargeBps ??
+    null;
+
+  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(
+    (sourceProgram?.coveredPlanTypes as CoveredPlanType[]) ?? [],
+  );
+  const [allowedCategoriesInput, setAllowedCategoriesInput] = useState(
+    (sourceProgram?.allowedCategories ?? []).join(", "),
+  );
+  const [ratePerSeatRupees, setRatePerSeatRupees] = useState(
+    sourceProgram?.licensedSeatConfig
+      ? String(sourceProgram.licensedSeatConfig.ratePerSeatPaise / 100)
+      : "5000",
+  );
+  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState(
+    sourceProgram?.licensedSeatConfig?.coveredEngagementsPerCycle === null ||
+      sourceProgram?.licensedSeatConfig?.coveredEngagementsPerCycle ===
+        undefined
+      ? ""
+      : String(sourceProgram.licensedSeatConfig.coveredEngagementsPerCycle),
+  );
+  const [creditBudgetPerCycle, setCreditsPerCycle] = useState(
+    sourceProgram?.creditPoolConfig
+      ? String(sourceProgram.creditPoolConfig.creditBudgetPerCycle)
+      : "1000",
+  );
+  const [priceCapPerEngagementRupees, setPriceCapPerEngagementRupees] =
+    useState(() => {
+      const cap =
+        sourceProgram?.licensedSeatConfig?.priceCapPerEngagementPaise ??
+        sourceProgram?.creditPoolConfig?.priceCapPerEngagementPaise ??
+        null;
+      return cap ? String(cap / 100) : "";
+    });
+  const [overageBehavior, setOverageBehavior] = useState<OverageBehavior>(
+    sourceProgram?.licensedSeatConfig?.overageBehavior ??
+      sourceProgram?.creditPoolConfig?.overageBehavior ??
+      "BLOCK",
+  );
+  const [overageSurchargePct, setOverageSurchargePct] = useState(
+    savedSurchargeBps === null ? "" : String(savedSurchargeBps / 100),
+  );
+  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState(
+    () => {
+      const maxOv =
+        sourceProgram?.licensedSeatConfig?.maxOveragePerCyclePaise ??
+        sourceProgram?.creditPoolConfig?.maxOveragePerCyclePaise ??
+        null;
+      return maxOv ? String(maxOv / 100) : "";
+    },
+  );
+  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(false);
+
+  useEffect(() => {
+    if (!sourceProgram) return;
+    setCoveredPlanTypes(sourceProgram.coveredPlanTypes as CoveredPlanType[]);
+    setAllowedCategoriesInput(
+      (sourceProgram.allowedCategories ?? []).join(", "),
+    );
+    setOverageBehavior(
+      sourceProgram.licensedSeatConfig?.overageBehavior ??
+        sourceProgram.creditPoolConfig?.overageBehavior ??
+        "BLOCK",
+    );
+    setOverageSurchargePct(
+      savedSurchargeBps === null ? "" : String(savedSurchargeBps / 100),
+    );
+    const priceCap =
+      sourceProgram.licensedSeatConfig?.priceCapPerEngagementPaise ??
+      sourceProgram.creditPoolConfig?.priceCapPerEngagementPaise ??
+      null;
+    setPriceCapPerEngagementRupees(
+      priceCap === null || priceCap === undefined
+        ? ""
+        : String(priceCap / 100),
+    );
+    const maxOverage =
+      sourceProgram.licensedSeatConfig?.maxOveragePerCyclePaise ??
+      sourceProgram.creditPoolConfig?.maxOveragePerCyclePaise ??
+      null;
+    setMaxOveragePerCycleRupees(
+      maxOverage === null ? "" : String(maxOverage / 100),
+    );
+    if (sourceProgram.licensedSeatConfig) {
+      setRatePerSeatRupees(
+        String(sourceProgram.licensedSeatConfig.ratePerSeatPaise / 100),
+      );
+      setCoveredEngagementsPerCycle(
+        sourceProgram.licensedSeatConfig.coveredEngagementsPerCycle === null
+          ? ""
+          : String(sourceProgram.licensedSeatConfig.coveredEngagementsPerCycle),
+      );
+    }
+    if (sourceProgram.creditPoolConfig) {
+      setCreditsPerCycle(
+        String(sourceProgram.creditPoolConfig.creditBudgetPerCycle),
+      );
+    }
+    setAcknowledgedDiscouraged(false);
+  }, [sourceProgram, savedSurchargeBps]);
+
+  const contractFunding = useMemo<FundingSource | null>(() => {
+    if (!sourceProgram) return null;
+    const raw = contracts.find((c) => c.id === sourceProgram.contractId)
+      ?.billingAccount?.fundingSource;
+    return raw === "PERSONAL" ||
+      raw === "WALLET" ||
+      raw === "INVOICE" ||
+      raw === "LICENSE"
+      ? raw
+      : null;
+  }, [contracts, sourceProgram]);
+
+  const parsedSurchargeBps = useMemo<number | null>(() => {
+    if (overageBehavior === "BLOCK" || overageSurchargePct.trim() === "") {
+      return null;
+    }
+    const n = parseFloat(overageSurchargePct);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+  }, [overageBehavior, overageSurchargePct]);
+
+  const motivation = useMemo(
+    () =>
+      resolveProgramMotivation({
+        fundingSource: contractFunding,
+        programType: sourceProgram?.type ?? null,
+        overageBehavior,
+        overageSurchargeBps: parsedSurchargeBps,
+      }),
+    [contractFunding, sourceProgram?.type, overageBehavior, parsedSurchargeBps],
+  );
+
+  const validateFields = (programType: "LICENSED_SEAT" | "CREDIT_POOL") =>
+    validateProgramCommercialFields({
+      programType,
+      overageBehavior,
+      priceCapPerEngagementRupees,
+      maxOveragePerCycleRupees,
+      overageSurchargePct,
+      ratePerSeatRupees,
+      coveredEngagementsPerCycle,
+      creditBudgetPerCycle,
+    });
+
+  return {
+    savedSurchargeBps,
+    coveredPlanTypes,
+    allowedCategoriesInput,
+    overageBehavior,
+    acknowledgedDiscouraged,
+    setAcknowledgedDiscouraged,
+    motivation,
+    validateFields,
+    commercialSectionProps: {
+      coveredPlanTypes,
+      onCoveredPlanTypesChange: setCoveredPlanTypes,
+      allowedCategoriesInput,
+      onAllowedCategoriesChange: setAllowedCategoriesInput,
+      ratePerSeatRupees,
+      onRatePerSeatChange: setRatePerSeatRupees,
+      coveredEngagementsPerCycle,
+      onCoveredEngagementsChange: setCoveredEngagementsPerCycle,
+      creditBudgetPerCycle,
+      onCreditBudgetChange: setCreditsPerCycle,
+      priceCapPerEngagementRupees,
+      onPriceCapChange: setPriceCapPerEngagementRupees,
+      overageBehavior,
+      onOverageBehaviorChange: (v: OverageBehavior) => {
+        setOverageBehavior(v);
+        setAcknowledgedDiscouraged(false);
+      },
+      maxOveragePerCycleRupees,
+      onMaxOverageChange: setMaxOveragePerCycleRupees,
+      overageSurchargePct,
+      onOverageSurchargeChange: (v: string) => {
+        setOverageSurchargePct(v);
+        setAcknowledgedDiscouraged(false);
+      },
+    },
+  };
+}
+
 function EditProgramDialog({
   orgId,
   programId,
@@ -1394,103 +1592,16 @@ function EditProgramDialog({
   });
   const program = detail.data?.program;
   const locked = program?.locked ?? true;
-  const savedSurchargeBps =
-    program?.licensedSeatConfig?.overageSurchargeBps ??
-    program?.creditPoolConfig?.overageSurchargeBps ??
-    null;
 
   const [name, setName] = useState("");
-  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(
-    [],
-  );
-  const [allowedCategoriesInput, setAllowedCategoriesInput] = useState("");
-  const [ratePerSeatRupees, setRatePerSeatRupees] = useState("");
-  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] =
-    useState("");
-  const [creditBudgetPerCycle, setCreditsPerCycle] = useState("");
-  const [priceCapPerEngagementRupees, setPriceCapPerEngagementRupees] =
-    useState("");
-  const [overageBehavior, setOverageBehavior] =
-    useState<OverageBehavior>("BLOCK");
-  const [overageSurchargePct, setOverageSurchargePct] = useState("");
-  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState("");
-  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const form = useProgramCommercialFormState(contracts, program);
 
   useEffect(() => {
     if (!program) return;
     setName(program.name);
-    setCoveredPlanTypes(program.coveredPlanTypes as CoveredPlanType[]);
-    setAllowedCategoriesInput((program.allowedCategories ?? []).join(", "));
-    setOverageBehavior(
-      program.licensedSeatConfig?.overageBehavior ??
-        program.creditPoolConfig?.overageBehavior ??
-        "BLOCK",
-    );
-    setOverageSurchargePct(
-      savedSurchargeBps === null ? "" : String(savedSurchargeBps / 100),
-    );
-    const priceCap =
-      program.licensedSeatConfig?.priceCapPerEngagementPaise ??
-      program.creditPoolConfig?.priceCapPerEngagementPaise ??
-      null;
-    setPriceCapPerEngagementRupees(
-      priceCap === null || priceCap === undefined ? "" : String(priceCap / 100),
-    );
-    const maxOverage =
-      program.licensedSeatConfig?.maxOveragePerCyclePaise ??
-      program.creditPoolConfig?.maxOveragePerCyclePaise ??
-      null;
-    setMaxOveragePerCycleRupees(
-      maxOverage === null ? "" : String(maxOverage / 100),
-    );
-    if (program.licensedSeatConfig) {
-      setRatePerSeatRupees(
-        String(program.licensedSeatConfig.ratePerSeatPaise / 100),
-      );
-      setCoveredEngagementsPerCycle(
-        program.licensedSeatConfig.coveredEngagementsPerCycle === null
-          ? ""
-          : String(program.licensedSeatConfig.coveredEngagementsPerCycle),
-      );
-    }
-    if (program.creditPoolConfig) {
-      setCreditsPerCycle(String(program.creditPoolConfig.creditBudgetPerCycle));
-    }
-    setAcknowledgedDiscouraged(false);
     setError(null);
-  }, [program, savedSurchargeBps]);
-
-  const contractFunding = useMemo<FundingSource | null>(() => {
-    if (!program) return null;
-    const raw = contracts.find((c) => c.id === program.contractId)
-      ?.billingAccount?.fundingSource;
-    return raw === "PERSONAL" ||
-      raw === "WALLET" ||
-      raw === "INVOICE" ||
-      raw === "LICENSE"
-      ? raw
-      : null;
-  }, [contracts, program]);
-
-  const parsedSurchargeBps = useMemo<number | null>(() => {
-    if (overageBehavior === "BLOCK" || overageSurchargePct.trim() === "") {
-      return null;
-    }
-    const n = parseFloat(overageSurchargePct);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-  }, [overageBehavior, overageSurchargePct]);
-
-  const motivation = useMemo(
-    () =>
-      resolveProgramMotivation({
-        fundingSource: contractFunding,
-        programType: program?.type ?? null,
-        overageBehavior,
-        overageSurchargeBps: parsedSurchargeBps,
-      }),
-    [contractFunding, program?.type, overageBehavior, parsedSurchargeBps],
-  );
+  }, [program]);
 
   const patchMutation = useMutation({
     mutationFn: (body: PatchProgramBody) =>
@@ -1513,34 +1624,30 @@ function EditProgramDialog({
     }
     const body: PatchProgramBody = { name: name.trim() };
     if (!locked && program) {
-      if (coveredPlanTypes.length === 0) {
+      if (form.coveredPlanTypes.length === 0) {
         setError("Select at least one appointment type this program covers.");
         return;
       }
-      if (motivation.tier === "DISCOURAGED" && !acknowledgedDiscouraged) {
+      if (
+        form.motivation.tier === "DISCOURAGED" &&
+        !form.acknowledgedDiscouraged
+      ) {
         setError(
           "Please confirm the non-standard commercial configuration before saving.",
         );
         return;
       }
 
-      const validated = validateProgramCommercialFields({
-        programType: program.type,
-        overageBehavior,
-        priceCapPerEngagementRupees,
-        maxOveragePerCycleRupees,
-        overageSurchargePct,
-        ratePerSeatRupees,
-        coveredEngagementsPerCycle,
-        creditBudgetPerCycle,
-      });
+      const validated = form.validateFields(program.type);
       if (!validated.ok) {
         setError(validated.error);
         return;
       }
 
-      body.coveredPlanTypes = coveredPlanTypes;
-      body.allowedCategories = parseCategoriesInput(allowedCategoriesInput);
+      body.coveredPlanTypes = form.coveredPlanTypes;
+      body.allowedCategories = parseCategoriesInput(
+        form.allowedCategoriesInput,
+      );
       body.priceCapPerEngagementPaise =
         validated.value.priceCapPerEngagementPaise;
       body.maxOveragePerCyclePaise = validated.value.maxOveragePerCyclePaise;
@@ -1548,10 +1655,10 @@ function EditProgramDialog({
       const savedOverageBehavior =
         program.licensedSeatConfig?.overageBehavior ??
         program.creditPoolConfig?.overageBehavior;
-      if (overageBehavior !== savedOverageBehavior) {
-        body.overageBehavior = overageBehavior;
+      if (form.overageBehavior !== savedOverageBehavior) {
+        body.overageBehavior = form.overageBehavior;
       }
-      if (validated.value.overageSurchargeBps !== savedSurchargeBps) {
+      if (validated.value.overageSurchargeBps !== form.savedSurchargeBps) {
         body.overageSurchargeBps = validated.value.overageSurchargeBps;
       }
 
@@ -1605,10 +1712,10 @@ function EditProgramDialog({
             )}
 
             <MotivationBanner
-              tier={motivation.tier}
-              title={motivation.title}
-              message={motivation.message}
-              recommendation={motivation.recommendation}
+              tier={form.motivation.tier}
+              title={form.motivation.title}
+              message={form.motivation.message}
+              recommendation={form.motivation.recommendation}
               compact
             />
 
@@ -1633,38 +1740,15 @@ function EditProgramDialog({
               idPrefix="edit"
               programType={program.type}
               locked={locked}
-              coveredPlanTypes={coveredPlanTypes}
-              onCoveredPlanTypesChange={setCoveredPlanTypes}
-              allowedCategoriesInput={allowedCategoriesInput}
-              onAllowedCategoriesChange={setAllowedCategoriesInput}
-              ratePerSeatRupees={ratePerSeatRupees}
-              onRatePerSeatChange={setRatePerSeatRupees}
-              coveredEngagementsPerCycle={coveredEngagementsPerCycle}
-              onCoveredEngagementsChange={setCoveredEngagementsPerCycle}
-              creditBudgetPerCycle={creditBudgetPerCycle}
-              onCreditBudgetChange={setCreditsPerCycle}
-              priceCapPerEngagementRupees={priceCapPerEngagementRupees}
-              onPriceCapChange={setPriceCapPerEngagementRupees}
-              overageBehavior={overageBehavior}
-              onOverageBehaviorChange={(v) => {
-                setOverageBehavior(v);
-                setAcknowledgedDiscouraged(false);
-              }}
-              maxOveragePerCycleRupees={maxOveragePerCycleRupees}
-              onMaxOverageChange={setMaxOveragePerCycleRupees}
-              overageSurchargePct={overageSurchargePct}
-              onOverageSurchargeChange={(v) => {
-                setOverageSurchargePct(v);
-                setAcknowledgedDiscouraged(false);
-              }}
+              {...form.commercialSectionProps}
             />
 
-            {!locked && motivation.tier === "DISCOURAGED" && (
+            {!locked && form.motivation.tier === "DISCOURAGED" && (
               <AdvancedPermutationGate
-                motivation={motivation}
+                motivation={form.motivation}
                 defaultExpanded
-                acknowledged={acknowledgedDiscouraged}
-                onAcknowledgeChange={setAcknowledgedDiscouraged}
+                acknowledged={form.acknowledgedDiscouraged}
+                onAcknowledgeChange={form.setAcknowledgedDiscouraged}
               >
                 <p className="text-xs text-muted-foreground">
                   Confirm that you understand the operational overhead of this
@@ -1688,8 +1772,8 @@ function EditProgramDialog({
               detail.isLoading ||
               !program ||
               (!locked &&
-                motivation.tier === "DISCOURAGED" &&
-                !acknowledgedDiscouraged)
+                form.motivation.tier === "DISCOURAGED" &&
+                !form.acknowledgedDiscouraged)
             }
           >
             {patchMutation.isPending ? (
@@ -1720,92 +1804,10 @@ function SupersedeProgramDialog({
   contracts: ContractListItem[];
 }) {
   const queryClient = useQueryClient();
-  const savedSurchargeBps =
-    program.licensedSeatConfig?.overageSurchargeBps ??
-    program.creditPoolConfig?.overageSurchargeBps ??
-    null;
-
   const [name, setName] = useState(`${program.name} (Amended)`);
-  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(
-    program.coveredPlanTypes as CoveredPlanType[],
-  );
-  const [allowedCategoriesInput, setAllowedCategoriesInput] = useState(
-    (program.allowedCategories ?? []).join(", "),
-  );
-  const [ratePerSeatRupees, setRatePerSeatRupees] = useState(
-    program.licensedSeatConfig
-      ? String(program.licensedSeatConfig.ratePerSeatPaise / 100)
-      : "5000",
-  );
-  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState(
-    program.licensedSeatConfig?.coveredEngagementsPerCycle === null ||
-      program.licensedSeatConfig?.coveredEngagementsPerCycle === undefined
-      ? ""
-      : String(program.licensedSeatConfig.coveredEngagementsPerCycle),
-  );
-  const [creditBudgetPerCycle, setCreditsPerCycle] = useState(
-    program.creditPoolConfig
-      ? String(program.creditPoolConfig.creditBudgetPerCycle)
-      : "1000",
-  );
-  const [priceCapPerEngagementRupees, setPriceCapPerEngagementRupees] =
-    useState(() => {
-      const cap =
-        program.licensedSeatConfig?.priceCapPerEngagementPaise ??
-        program.creditPoolConfig?.priceCapPerEngagementPaise ??
-        null;
-      return cap ? String(cap / 100) : "";
-    });
-  const [overageBehavior, setOverageBehavior] = useState<OverageBehavior>(
-    program.licensedSeatConfig?.overageBehavior ??
-      program.creditPoolConfig?.overageBehavior ??
-      "BLOCK",
-  );
-  const [overageSurchargePct, setOverageSurchargePct] = useState(
-    savedSurchargeBps === null ? "" : String(savedSurchargeBps / 100),
-  );
-  const [maxOveragePerCycleRupees, setMaxOveragePerCycleRupees] = useState(
-    () => {
-      const maxOv =
-        program.licensedSeatConfig?.maxOveragePerCyclePaise ??
-        program.creditPoolConfig?.maxOveragePerCyclePaise ??
-        null;
-      return maxOv ? String(maxOv / 100) : "";
-    },
-  );
   const [migrateAssignments, setMigrateAssignments] = useState(true);
-  const [acknowledgedDiscouraged, setAcknowledgedDiscouraged] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const contractFunding = useMemo<FundingSource | null>(() => {
-    const raw = contracts.find((c) => c.id === program.contractId)
-      ?.billingAccount?.fundingSource;
-    return raw === "PERSONAL" ||
-      raw === "WALLET" ||
-      raw === "INVOICE" ||
-      raw === "LICENSE"
-      ? raw
-      : null;
-  }, [contracts, program.contractId]);
-
-  const parsedSurchargeBps = useMemo<number | null>(() => {
-    if (overageBehavior === "BLOCK" || overageSurchargePct.trim() === "") {
-      return null;
-    }
-    const n = parseFloat(overageSurchargePct);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-  }, [overageBehavior, overageSurchargePct]);
-
-  const motivation = useMemo(
-    () =>
-      resolveProgramMotivation({
-        fundingSource: contractFunding,
-        programType: program.type,
-        overageBehavior,
-        overageSurchargeBps: parsedSurchargeBps,
-      }),
-    [contractFunding, program.type, overageBehavior, parsedSurchargeBps],
-  );
+  const form = useProgramCommercialFormState(contracts, program);
 
   const supersedeMutation = useMutation({
     mutationFn: (body: SupersedeProgramBody) =>
@@ -1826,27 +1828,21 @@ function SupersedeProgramDialog({
       setError("Successor program name must be at least 2 characters.");
       return;
     }
-    if (coveredPlanTypes.length === 0) {
+    if (form.coveredPlanTypes.length === 0) {
       setError("Select at least one appointment type this program covers.");
       return;
     }
-    if (motivation.tier === "DISCOURAGED" && !acknowledgedDiscouraged) {
+    if (
+      form.motivation.tier === "DISCOURAGED" &&
+      !form.acknowledgedDiscouraged
+    ) {
       setError(
         "Please confirm the non-standard commercial configuration before superseding.",
       );
       return;
     }
 
-    const validated = validateProgramCommercialFields({
-      programType: program.type,
-      overageBehavior,
-      priceCapPerEngagementRupees,
-      maxOveragePerCycleRupees,
-      overageSurchargePct,
-      ratePerSeatRupees,
-      coveredEngagementsPerCycle,
-      creditBudgetPerCycle,
-    });
+    const validated = form.validateFields(program.type);
     if (!validated.ok) {
       setError(validated.error);
       return;
@@ -1854,9 +1850,9 @@ function SupersedeProgramDialog({
 
     const body: SupersedeProgramBody = {
       name: name.trim(),
-      coveredPlanTypes,
-      allowedCategories: parseCategoriesInput(allowedCategoriesInput),
-      overageBehavior,
+      coveredPlanTypes: form.coveredPlanTypes,
+      allowedCategories: parseCategoriesInput(form.allowedCategoriesInput),
+      overageBehavior: form.overageBehavior,
       overageSurchargeBps: validated.value.overageSurchargeBps,
       priceCapPerEngagementPaise: validated.value.priceCapPerEngagementPaise,
       maxOveragePerCyclePaise: validated.value.maxOveragePerCyclePaise,
@@ -1894,10 +1890,10 @@ function SupersedeProgramDialog({
           </p>
 
           <MotivationBanner
-            tier={motivation.tier}
-            title={motivation.title}
-            message={motivation.message}
-            recommendation={motivation.recommendation}
+            tier={form.motivation.tier}
+            title={form.motivation.title}
+            message={form.motivation.message}
+            recommendation={form.motivation.recommendation}
             compact
           />
 
@@ -1913,30 +1909,7 @@ function SupersedeProgramDialog({
           <ProgramCommercialFieldsSection
             idPrefix="supersede"
             programType={program.type}
-            coveredPlanTypes={coveredPlanTypes}
-            onCoveredPlanTypesChange={setCoveredPlanTypes}
-            allowedCategoriesInput={allowedCategoriesInput}
-            onAllowedCategoriesChange={setAllowedCategoriesInput}
-            ratePerSeatRupees={ratePerSeatRupees}
-            onRatePerSeatChange={setRatePerSeatRupees}
-            coveredEngagementsPerCycle={coveredEngagementsPerCycle}
-            onCoveredEngagementsChange={setCoveredEngagementsPerCycle}
-            creditBudgetPerCycle={creditBudgetPerCycle}
-            onCreditBudgetChange={setCreditsPerCycle}
-            priceCapPerEngagementRupees={priceCapPerEngagementRupees}
-            onPriceCapChange={setPriceCapPerEngagementRupees}
-            overageBehavior={overageBehavior}
-            onOverageBehaviorChange={(v) => {
-              setOverageBehavior(v);
-              setAcknowledgedDiscouraged(false);
-            }}
-            maxOveragePerCycleRupees={maxOveragePerCycleRupees}
-            onMaxOverageChange={setMaxOveragePerCycleRupees}
-            overageSurchargePct={overageSurchargePct}
-            onOverageSurchargeChange={(v) => {
-              setOverageSurchargePct(v);
-              setAcknowledgedDiscouraged(false);
-            }}
+            {...form.commercialSectionProps}
           />
 
           <label className="flex items-start gap-2.5 rounded-md border p-3 cursor-pointer hover:bg-zinc-50">
@@ -1956,12 +1929,12 @@ function SupersedeProgramDialog({
             </div>
           </label>
 
-          {motivation.tier === "DISCOURAGED" && (
+          {form.motivation.tier === "DISCOURAGED" && (
             <AdvancedPermutationGate
-              motivation={motivation}
+              motivation={form.motivation}
               defaultExpanded
-              acknowledged={acknowledgedDiscouraged}
-              onAcknowledgeChange={setAcknowledgedDiscouraged}
+              acknowledged={form.acknowledgedDiscouraged}
+              onAcknowledgeChange={form.setAcknowledgedDiscouraged}
             >
               <p className="text-xs text-muted-foreground">
                 Confirm this non-standard configuration before superseding.
@@ -1980,7 +1953,8 @@ function SupersedeProgramDialog({
             onClick={handleSubmit}
             disabled={
               supersedeMutation.isPending ||
-              (motivation.tier === "DISCOURAGED" && !acknowledgedDiscouraged)
+              (form.motivation.tier === "DISCOURAGED" &&
+                !form.acknowledgedDiscouraged)
             }
           >
             {supersedeMutation.isPending ? (

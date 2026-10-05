@@ -96,145 +96,127 @@ describe("REACHABLE_ORG_FUNDING_PATHS — full enterprise permutation matrix", (
   });
 
   describe("getPermutationGuidance", () => {
-    it("classifies standard enterprise pairings as RECOMMENDED", () => {
-      expect(
-        getPermutationGuidance({
-          fundingSource: "WALLET",
-          programType: "CREDIT_POOL",
-          overageBehavior: "BLOCK",
-        }),
-      ).toMatchObject({
-        tier: "RECOMMENDED",
-        code: "STANDARD_ENTERPRISE_PATH",
-        requiresConfirmation: false,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "INVOICE",
-          programType: "LICENSED_SEAT",
-          overageBehavior: "CHARGE_ORG",
-        }),
-      ).toMatchObject({
-        tier: "RECOMMENDED",
-        code: "STANDARD_ENTERPRISE_PATH",
-        requiresConfirmation: false,
-      });
-    });
-
-    it("classifies specialized pairings and CHARGE_MEMBER as ADVANCED", () => {
-      expect(
-        getPermutationGuidance({
-          fundingSource: "WALLET",
-          programType: "LICENSED_SEAT",
-          overageBehavior: "BLOCK",
-        }),
-      ).toMatchObject({
-        tier: "ADVANCED",
-        code: "WALLET_LICENSED_SEAT",
-        requiresConfirmation: false,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "INVOICE",
-          programType: "CREDIT_POOL",
-          overageBehavior: "BLOCK",
-        }),
-      ).toMatchObject({
-        tier: "ADVANCED",
-        code: "INVOICE_CREDIT_POOL",
-        requiresConfirmation: false,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "PERSONAL",
-          programType: "CREDIT_POOL",
-          overageBehavior: "BLOCK",
-        }),
-      ).toMatchObject({
-        tier: "ADVANCED",
-        code: "PERSONAL_PROGRAM_ALLOWANCE",
-        requiresConfirmation: false,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "WALLET",
-          programType: "CREDIT_POOL",
-          overageBehavior: "CHARGE_MEMBER",
-        }),
-      ).toMatchObject({
-        tier: "ADVANCED",
-        code: "SPLIT_TENDER_CHARGE_MEMBER",
-        requiresConfirmation: false,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "INVOICE",
-          programType: "LICENSED_SEAT",
-          overageBehavior: "CHARGE_ORG",
-          overageSurchargeBps: 1000,
-        }),
-      ).toMatchObject({
-        tier: "ADVANCED",
-        code: "CHARGE_ORG_WITH_SURCHARGE",
-        requiresConfirmation: false,
-      });
-    });
-
-    it("classifies high-complexity permutations as DISCOURAGED with requiresConfirmation=true", () => {
-      expect(
-        getPermutationGuidance({
-          fundingSource: "WALLET",
-          programType: "CREDIT_POOL",
-          overageBehavior: "CHARGE_ORG",
-          overageSurchargeBps: 1000,
-        }),
-      ).toMatchObject({
-        tier: "DISCOURAGED",
-        code: "WALLET_CHARGE_ORG_SURCHARGE",
-        requiresConfirmation: true,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "LICENSE",
-          programType: "LICENSED_SEAT",
-          overageBehavior: "CHARGE_ORG",
-        }),
-      ).toMatchObject({
-        tier: "DISCOURAGED",
-        code: "LICENSE_CHARGE_ORG",
-        requiresConfirmation: true,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "PERSONAL",
-          programType: "LICENSED_SEAT",
-          overageBehavior: "CHARGE_ORG",
-        }),
-      ).toMatchObject({
-        tier: "DISCOURAGED",
-        code: "PERSONAL_CHARGE_ORG",
-        requiresConfirmation: true,
-      });
-
-      expect(
-        getPermutationGuidance({
-          fundingSource: "LICENSE",
-          programType: "CREDIT_POOL",
-          overageBehavior: "BLOCK",
-        }),
-      ).toMatchObject({
-        tier: "DISCOURAGED",
-        code: "LICENSE_CREDIT_POOL",
-        requiresConfirmation: true,
-      });
-    });
+    it.each([
+      [
+        "WALLET",
+        "CREDIT_POOL",
+        "BLOCK",
+        null,
+        "RECOMMENDED",
+        "STANDARD_ENTERPRISE_PATH",
+        false,
+      ],
+      [
+        "INVOICE",
+        "LICENSED_SEAT",
+        "CHARGE_ORG",
+        null,
+        "RECOMMENDED",
+        "STANDARD_ENTERPRISE_PATH",
+        false,
+      ],
+      [
+        "WALLET",
+        "LICENSED_SEAT",
+        "BLOCK",
+        null,
+        "ADVANCED",
+        "WALLET_LICENSED_SEAT",
+        false,
+      ],
+      [
+        "INVOICE",
+        "CREDIT_POOL",
+        "BLOCK",
+        null,
+        "ADVANCED",
+        "INVOICE_CREDIT_POOL",
+        false,
+      ],
+      [
+        "PERSONAL",
+        "CREDIT_POOL",
+        "BLOCK",
+        null,
+        "ADVANCED",
+        "PERSONAL_PROGRAM_ALLOWANCE",
+        false,
+      ],
+      [
+        "WALLET",
+        "CREDIT_POOL",
+        "CHARGE_MEMBER",
+        null,
+        "ADVANCED",
+        "SPLIT_TENDER_CHARGE_MEMBER",
+        false,
+      ],
+      [
+        "INVOICE",
+        "LICENSED_SEAT",
+        "CHARGE_ORG",
+        1000,
+        "ADVANCED",
+        "CHARGE_ORG_WITH_SURCHARGE",
+        false,
+      ],
+      [
+        "WALLET",
+        "CREDIT_POOL",
+        "CHARGE_ORG",
+        1000,
+        "DISCOURAGED",
+        "WALLET_CHARGE_ORG_SURCHARGE",
+        true,
+      ],
+      [
+        "LICENSE",
+        "LICENSED_SEAT",
+        "CHARGE_ORG",
+        null,
+        "DISCOURAGED",
+        "LICENSE_CHARGE_ORG",
+        true,
+      ],
+      [
+        "PERSONAL",
+        "LICENSED_SEAT",
+        "CHARGE_ORG",
+        null,
+        "DISCOURAGED",
+        "PERSONAL_CHARGE_ORG",
+        true,
+      ],
+      [
+        "LICENSE",
+        "CREDIT_POOL",
+        "BLOCK",
+        null,
+        "DISCOURAGED",
+        "LICENSE_CREDIT_POOL",
+        true,
+      ],
+    ] as const)(
+      "classifies (%s, %s, %s, surcharge=%s) as %s (%s)",
+      (
+        fundingSource,
+        programType,
+        overageBehavior,
+        overageSurchargeBps,
+        tier,
+        code,
+        requiresConfirmation,
+      ) => {
+        expect(
+          getPermutationGuidance({
+            fundingSource,
+            programType,
+            overageBehavior,
+            ...(overageSurchargeBps !== null ? { overageSurchargeBps } : {}),
+          }),
+        ).toMatchObject({ tier, code, requiresConfirmation });
+      },
+    );
   });
 
   describe("capabilityOf", () => {
