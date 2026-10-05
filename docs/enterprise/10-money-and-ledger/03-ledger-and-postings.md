@@ -93,23 +93,25 @@ flowchart TD
 
 ## 3. The posting vocabulary (`kind`)
 
-`kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT · UNAPPLIED_RECEIPT`:
+`kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · INVOICE_REFUND · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT · REFERRAL_CREDIT · UNAPPLIED_RECEIPT`:
 
-| `kind`              | `idempotencyKey`                                          | Posted by                                                                                                                          |
-| ------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `TOPUP`             | `topup:<providerOrderId>`                                 | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                               |
-| `BOOKING`           | `booking:<paymentId>`                                     | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                         |
-| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                 | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                 |
-| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                        | refund webhook — `app/api/webhooks/utils.ts`                                                                                       |
-| `REFUND`            | `refund:<refundId>`                                       | refund cascade — `lib/payments/operations/refund.ts`                                                                               |
-| `PAYOUT`            | `payout:<payoutId>`                                       | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                       |
-| `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                    | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                     |
-| `OVERAGE_MEMBER`    | `overage:<sideChargePaymentId>`                           | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member))        |
-| `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>` | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts` |
+| `kind`              | `idempotencyKey`                                                                               | Posted by                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TOPUP`             | `topup:<providerOrderId>`                                                                      | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                                            |
+| `BOOKING`           | `booking:<paymentId>`                                                                          | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                                      |
+| `INVOICE_ISSUED`    | `invoice-issued:<invoiceId>`, `invoice-voided:<invoiceId>`, `overage-accrual:<childPaymentId>` | invoice issue and void — `lib/payments/billing/org-invoice-journal.ts`; CHARGE_ORG child accrual — `lib/payments/billing/overage-settlement.ts` |
+| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                                                      | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                              |
+| `INVOICE_REFUND`    | `invoice-refund:<refundId>`                                                                    | invoice refund webhook — `app/api/webhooks/utils.ts`                                                                                            |
+| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                                                             | refund webhook — `app/api/webhooks/utils.ts`                                                                                                    |
+| `REFUND`            | `refund:<refundId>`                                                                            | refund cascade — `lib/payments/operations/refund.ts`                                                                                            |
+| `PAYOUT`            | `payout:<payoutId>`                                                                            | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                                    |
+| `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                                                         | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                                  |
+| `OVERAGE_MEMBER`    | `overage:<sideChargePaymentId>`                                                                | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member))                     |
+| `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>`                                      | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts`              |
 
-**`INVOICE_ISSUED` and `GRANT` are declared but post no journal leg today.** Invoice _issuance_ posts nothing — the receivable was already accrued in the booking transaction (`ORG_RECEIVABLE` debit from the `INVOICE_ACCRUAL` leg), so issuance just rolls accrued bookings into an `OrganizationInvoice` and writes an `OrgAuditLog` row; **payment** is what clears the receivable.
+**`GRANT` is declared but posts no journal leg today.** `INVOICE_ISSUED` posts only for an invoice that bills a supply no booking journal has booked — a licence subscription fee or a manual programme or contract fee (§4.3a). An invoice that bills bookings (the accrual rollup, which stamps `billedPayments`) posts nothing at issue, because each booking already debited `ORG_RECEIVABLE` and credited `GST_PAYABLE` in its own transaction; **payment** is what clears the receivable in both cases.
 
-**There is no `OVERAGE` kind.** Overage money rides existing kinds (#778 §B): a **CHARGE_ORG** overage is billed through the normal invoice path (its marginal is an `OVERAGE_INVOICE_ACCRUAL` leg → `ORG_RECEIVABLE`, cleared by `INVOICE_PAID`), and a **CHARGE_MEMBER** overage settles as its own `BOOKING`-shaped side-charge — `OVERAGE_MEMBER` is the kind reserved for that member side-payment. See [booking → earnings](05-booking-to-earnings.md) for the overage flow.
+**There is no `OVERAGE` kind.** Overage money rides existing kinds (#778 §B): a **CHARGE_ORG** overage is billed through the normal invoice path (its marginal is an `OVERAGE_INVOICE_ACCRUAL` leg → `ORG_RECEIVABLE`, cleared by `INVOICE_PAID`), and a **CHARGE_MEMBER** overage settles as its own `BOOKING`-shaped side-charge — `OVERAGE_MEMBER` is the kind reserved for that member side-payment. Either way the overage's surcharge carries 18% GST by the payer's place of supply; the over-cap `basePaise` does not, because it is a slice of the parent's tax-inclusive price whose GST the parent booking journal already credited. See [booking → earnings](05-booking-to-earnings.md) for the overage flow.
 
 ---
 
@@ -154,6 +156,30 @@ The org settles its NET-NN invoice; the receivable accrued at booking clears.
 Dr CASH(platform)            invoice total
    Cr ORG_RECEIVABLE(org)    invoice total
 ```
+
+### 4.3a Invoice issued, voided and refunded — `INVOICE_ISSUED` / `INVOICE_REFUND`
+
+An invoice whose GST no booking has booked (subscription invoices from `generate-subscription-invoices`, and every manual invoice, since only the rollup stamps `billedPayments`) books the whole supply in the transaction that issues it, whether that is the cron, the manual `POST` with `issueImmediately`, or the `DRAFT → ISSUED` `PATCH`. The fee counts as income when invoiced; there is no deferral.
+
+```
+invoice-issued:<invoiceId>
+Dr ORG_RECEIVABLE(org)       invoice total
+   Cr PLATFORM_FEE           taxable value
+   Cr GST_PAYABLE            IGST + CGST + SGST (only if > 0)
+```
+
+Voiding an issued or overdue invoice (`ISSUED/OVERDUE → VOID`) posts the exact mirror of that transaction under `invoice-voided:<invoiceId>`, built from the issue journal's own entries, so the receivable, the fee and the GST all return to zero. An invoice that never posted an issue journal posts nothing on void.
+
+Paying the invoice posts §4.3, which nets the receivable to zero. A gateway refund of a paid, issue-journalled invoice posts `invoice-refund:<refundId>` with the GST share taken from the credit note minted for the same refund, so the reversal is proportional and agrees with the document. Past the CGST s.34(2) cutoff the credit note is commercial and carries no tax, so the GST stays with the government and the whole refund comes off the fee, the same treatment the booking cascade gives a late refund.
+
+```
+invoice-refund:<refundId>   (issue-journalled invoice)
+Dr PLATFORM_FEE              refund − credit-note tax
+Dr GST_PAYABLE               credit-note tax (0 past the cutoff)
+   Cr CASH | WALLET(org)     refund
+```
+
+A refund of an invoice that bills bookings keeps its original shape, `Dr ORG_RECEIVABLE / Cr CASH | WALLET`, because the bookings' own refunds reverse their fee and GST.
 
 ### 4.4 Consultant payout — `PAYOUT` (`payout:<payoutId>`)
 
@@ -208,8 +234,11 @@ A `CHARGE_MEMBER` program booked past its cap creates a parent-linked side-`Paym
 
 ```
 Dr CASH(platform)        side-charge amount   (the member's card)
-   Cr ORG_PAYABLE(org)   side-charge amount   (a credit the org realises in settlement)
+   Cr ORG_PAYABLE(org)   base + surcharge     (a credit the org realises in settlement)
+   Cr GST_PAYABLE        side-charge taxAmount (18% on the surcharge)
 ```
+
+The side-`Payment` is priced through the shared tax engine (`determineTax`) for the member's own place of supply: `amount` is base plus surcharge plus GST on the surcharge, `taxAmount` is that GST, and the event's `marginalPaise` equals the side-`Payment` amount. A refund of the side-payment reverses the GST through the normal cascade, and the capture mints the member's consumer tax invoice through the same best-effort path as a booking capture.
 
 The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id), and the same webhook flips the `OverageEvent` `PENDING → CHARGED`. There is **no separate overage debit on the parent** — checkout already carved the over-cap pass-through (`basePaise`) out of the parent's funding leg so the member isn't double-charged (#785); see [booking → earnings](05-booking-to-earnings.md). (How a buyer org nets this `ORG_PAYABLE` credit against its wallet/invoice is a tracked refinement, #775; the journal stays balanced regardless.)
 
@@ -254,6 +283,15 @@ a common row and never abort each other under Serializable isolation. The
 journal is the only balance; there is no snapshot to drift.
 
 ## Deprecated & Superseded Approaches
+
+- **The unjournaled manual and subscription invoice.** Issuance used to post
+  nothing for every invoice kind, on the assumption that a booking had always
+  accrued the receivable first. That held only for the rollup; a subscription
+  or manual invoice then drove `ORG_RECEIVABLE` negative when paid, and its
+  GST never reached `GST_PAYABLE`. Those invoices now post `invoice-issued:`.
+- **The untaxed overage.** Overage side-payments and `CHARGE_ORG` accruals
+  carried `taxAmount: 0`, so the surcharge was billed and collected without
+  GST. The surcharge now carries GST on every overage path.
 
 - **The maintained `LedgerAccountBalance` snapshot (#776).** `postLedgerTxn`
   used to fold every posting into a per-account balance row inside the posting

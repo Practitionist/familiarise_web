@@ -828,6 +828,27 @@ export async function DELETE(
                 })
               : [];
 
+            // #2006 — Restrict FKs on OrgAuditLog, OrganizationPayoutAccount,
+            // and RateCard protect settled history; on a money-untouched shell
+            // org, clear any onboarding/setup rows before the hard delete.
+            if (typeof tx.orgAuditLog?.deleteMany === "function") {
+              await tx.orgAuditLog.deleteMany({
+                where: { organizationId: orgId },
+              });
+            }
+            if (
+              typeof tx.organizationPayoutAccount?.deleteMany === "function"
+            ) {
+              await tx.organizationPayoutAccount.deleteMany({
+                where: { organizationId: orgId },
+              });
+            }
+            if (typeof tx.rateCard?.deleteMany === "function") {
+              await tx.rateCard.deleteMany({
+                where: { ownerOrgId: orgId },
+              });
+            }
+
             await tx.organization.delete({ where: { id: orgId } });
             return {
               kind: "hard" as const,

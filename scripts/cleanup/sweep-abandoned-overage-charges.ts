@@ -1,7 +1,7 @@
 /**
  * Abandoned CHARGE_MEMBER overage-charge sweeper (#785, task #25).
  *
- * cycleOverageSoFarPaise (overage-settlement.ts) sums marginalPaise over
+ * cycleOverageSoFarPaise (overage-settlement.ts) sums basePaise + surchargePaise over
  * chargeStatus NOT IN (REVERSED, BLOCKED, FAILED) — so a never-paid PENDING
  * CHARGE_MEMBER side-charge COUNTS toward maxOveragePerCyclePaise and can
  * hard-block (402 PROGRAM_CAP_EXHAUSTED) the next legitimate booking even though

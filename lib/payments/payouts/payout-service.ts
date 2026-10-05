@@ -2050,31 +2050,6 @@ export async function markConsultantPayoutReversed(
       data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
     });
 
-    if ((payout.tdsDeducted ?? 0) > 0) {
-      const remittedTds =
-        typeof tx.tDSRecord?.findFirst === "function"
-          ? await tx.tDSRecord.findFirst({
-              where: {
-                payoutId: payout.id,
-                isReversal: false,
-                OR: [
-                  { reportedInForm26Q: true },
-                  { challanNumber: { not: null } },
-                ],
-              },
-              select: { id: true },
-            })
-          : null;
-      if (!remittedTds) {
-        await recordTdsReversal(tx, {
-          payoutId: payout.id,
-          consultantProfileId: payout.consultantProfileId,
-          refundAmountPaise: payout.amount,
-          paymentAmountPaise: payout.amount,
-        });
-      }
-    }
-
     const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
     if (payout.amount - recoveredPaise > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
@@ -2096,9 +2071,6 @@ export async function markConsultantPayoutReversed(
     }
 
     if ((payout.tdsDeducted ?? 0) > 0 && tx.tDSRecord) {
-      const { recordTdsReversal } = await import(
-        "@/lib/payments/tax/tds-service"
-      );
       await recordTdsReversal(tx, {
         payoutId: payout.id,
         consultantProfileId: payout.consultantProfileId,

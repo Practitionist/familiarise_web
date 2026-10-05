@@ -28,7 +28,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    paymentLeg: { upsert: jest.fn() },
+    paymentLeg: { updateMany: jest.fn() },
     overageEvent: { findFirst: jest.fn() },
     organizationInvoice: {
       findUnique: jest.fn(),
@@ -43,6 +43,9 @@ jest.mock("../../lib/prisma", () => {
     },
   };
 });
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerInvoiceBestEffort: jest.fn().mockResolvedValue({}),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn(),
 }));
@@ -74,7 +77,7 @@ import { handleOverageMemberSuccess } from "../../lib/payments/webhooks/overage-
 
 type MockTx = {
   payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-  paymentLeg: { upsert: jest.Mock };
+  paymentLeg: { updateMany: jest.Mock };
   overageEvent: { findFirst: jest.Mock };
   organizationInvoice: { findUnique: jest.Mock; updateMany: jest.Mock };
 };
@@ -101,6 +104,7 @@ const REVERSAL_KEY = "overage-recarve-invoice:side1";
 const side = {
   id: "side1",
   amount: MARGINAL,
+  taxAmount: 0,
   organizationId: "org1",
   // The abandoned sweep FAILed it, so the recarve edge (FAILED→CHARGED) fires.
   paymentStatus: "FAILED",

@@ -73,20 +73,22 @@ function OverageWarning({
   }
 
   if (data.willExceedCap && data.marginalPaise > 0) {
+    // marginalPaise is the GST-inclusive total the payer will owe.
+    const total = `${inr(data.marginalPaise)} (incl. GST)`;
     if (data.chargeTo === "MEMBER") {
       return (
         <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <div className="space-y-1 text-amber-950">
             <p className="font-medium">
-              Co-Pay Split Checkout — {inr(data.marginalPaise)} Personal Overage
+              Co-Pay Split Checkout — {total} Personal Overage
             </p>
             <p className="text-xs text-amber-900 leading-relaxed">
               This booking exceeds your covered allocation under{" "}
               {data.programName ?? organizationName}. Your organization covers
-              your remaining entitlement, and you will pay the marginal{" "}
-              <strong>{inr(data.marginalPaise)}</strong> co-pay with your
-              personal card or UPI at checkout.
+              your remaining entitlement, and you&apos;ll be charged{" "}
+              <strong>{total}</strong> with your personal card or UPI at
+              checkout.
             </p>
           </div>
         </div>
@@ -96,8 +98,8 @@ function OverageWarning({
       <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
         <span className="text-amber-900">
-          This exceeds your covered allocation — {inr(data.marginalPaise)} will
-          be billed to {organizationName} as an overage charge.
+          This exceeds your covered allocation — {total} will be billed to{" "}
+          {organizationName} as an overage charge.
         </span>
       </div>
     );

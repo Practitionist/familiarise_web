@@ -4444,7 +4444,8 @@ export async function handleCheckout(
               data: {
                 amount,
                 originalAmount,
-                taxAmount,
+                // The licence invoice books the GST; a licensed booking books none.
+                taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
                 currency,
                 paymentMethod: isOrgWalletPayment
                   ? "WALLET"
@@ -4813,12 +4814,20 @@ export async function handleCheckout(
             // its write site. Reconciliation jobs + tests call the
             // hard-throwing `assertPaymentLegsSumToAmount` instead.
             if (!isMockPayment) {
-              const writtenLegs = await tx.paymentLeg.findMany({
-                where: { paymentId: payment.id },
-                select: { source: true, amountPaise: true },
-              });
+              const [writtenLegs, currentPayment] = await Promise.all([
+                tx.paymentLeg.findMany({
+                  where: { paymentId: payment.id },
+                  select: { source: true, amountPaise: true },
+                }),
+                typeof tx.payment?.findUnique === "function"
+                  ? tx.payment.findUnique({
+                      where: { id: payment.id },
+                      select: { amount: true },
+                    })
+                  : Promise.resolve(null),
+              ]);
               const legMismatch = checkPaymentLegsSumToAmount({
-                paymentAmountPaise: payment.amount,
+                paymentAmountPaise: currentPayment?.amount ?? payment.amount,
                 legs: writtenLegs,
               });
               if (legMismatch) {

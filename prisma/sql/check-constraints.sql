@@ -275,17 +275,15 @@ ALTER TABLE "ReferralCreditUsage" ADD CONSTRAINT "referral_credit_usage_nonnegat
   CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "restoredAmount" >= 0);
 
 -- SPLIT
--- #775 states the invariant in the schema doc-comment ("marginalPaise ==
--- basePaise + surchargePaise") but nothing enforced it. The member is charged
--- marginalPaise while the org's accrual is carved on basePaise, so a mismatch
--- means one side of a single booking is billed a different number.
+-- marginalPaise is what the payer is charged: base + surcharge + the surcharge's
+-- GST, which is never negative, so it can never fall below base + surcharge.
 ALTER TABLE "OverageEvent" DROP CONSTRAINT IF EXISTS "overage_marginal_is_base_plus_surcharge";
 -- SPLIT
 ALTER TABLE "OverageEvent" ADD CONSTRAINT "overage_marginal_is_base_plus_surcharge"
   CHECK (
     "basePaise" >= 0
     AND "surchargePaise" >= 0
-    AND "marginalPaise" = "basePaise" + "surchargePaise"
+    AND "marginalPaise" >= "basePaise" + "surchargePaise"
   );
 
 -- SPLIT

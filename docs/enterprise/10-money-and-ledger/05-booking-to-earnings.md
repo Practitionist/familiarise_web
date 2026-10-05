@@ -219,7 +219,9 @@ The marginal is the **over-cap portion of the real booking price** (consulting r
 
 - `basePaise` — the pass-through over-cap portion. **Invariant: `coveredPaise + basePaise == booking price`.**
 - `surchargePaise` — `floor(basePaise × overageSurchargeBps / 10000)`. The surcharge is what can push the marginal _above_ a single booking price (overage costs more, by design).
-- `marginalPaise` — the authoritative charged total, `basePaise + surchargePaise`.
+- `marginalPaise` — the authoritative charged total, `basePaise + surchargePaise` plus 18% GST on the surcharge.
+
+The surcharge is the only part of an overage that carries new GST. `basePaise` is a slice of the parent booking's tax-inclusive price, and the parent's `booking:` journal already credited its GST, so taxing it again would book the same tax twice. GST on the surcharge comes from the shared tax engine (`determineTax`) for the payer's place of supply: the member's own buyer country for `CHARGE_MEMBER`, the organisation's `dataResidencyRegion` for `CHARGE_ORG`. On `CHARGE_MEMBER` it is the side-`Payment`'s `taxAmount`; on `CHARGE_ORG` it rides the tax-inclusive `OVERAGE_INVOICE_ACCRUAL` leg and is added to the parent's `taxAmount`, so the booking journal credits `GST_PAYABLE` and the rollup bills it once. The pre-checkout preview below still quotes the pre-tax marginal.
 
 ### 6.2 Pre-checkout preview
 

@@ -436,6 +436,11 @@ export async function DELETE(
           { httpStatus: 409 },
         );
       }
+      if (typeof tx.rateCard?.deleteMany === "function") {
+        await tx.rateCard.deleteMany({
+          where: { ownerContractId: contractId },
+        });
+      }
       await tx.contract.delete({ where: { id: contractId } });
       await tx.orgAuditLog.create({
         data: {

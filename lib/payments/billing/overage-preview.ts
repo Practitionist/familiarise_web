@@ -13,8 +13,10 @@ import prisma from "@/lib/prisma";
 import type { CoveredPlanType, OverageBehavior } from "@prisma/client";
 import {
   computeOverageForBooking,
+  surchargeTaxPaise,
   type OverageContext,
 } from "@/lib/payments/billing/overage";
+import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface OveragePreviewParams {
@@ -35,7 +37,7 @@ export interface OveragePreviewResult {
   programName: string | null;
   overageBehavior: OverageBehavior | null;
   coveredPaise: number;
-  /** What the member (CHARGE_MEMBER) or org (CHARGE_ORG) will owe over the cap. */
+  /** What the member (CHARGE_MEMBER) or org (CHARGE_ORG) will owe over the cap, GST included. */
   marginalPaise: number;
   surchargePaise: number;
   willExceedCap: boolean;
@@ -67,6 +69,14 @@ export async function previewOverageForBooking(
     1,
     Math.floor(params.engagementsConsumed ?? 1),
   );
+
+  const billingAccount = await prisma.billingAccount.findUnique({
+    where: { ownerOrgId: organizationId },
+    select: {
+      fundingSource: true,
+      organization: { select: { dataResidencyRegion: true } },
+    },
+  });
 
   const now = new Date();
   const assignment = await prisma.programAssignment.findFirst({
@@ -129,15 +139,17 @@ export async function previewOverageForBooking(
       programAssignmentId: assignment.id,
       chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
     },
-    _sum: { marginalPaise: true },
+    _sum: { basePaise: true, surchargePaise: true },
   });
-  const cycleOverageSoFarPaise = sumPaise(soFarAgg._sum.marginalPaise);
+  const cycleOverageSoFarPaise =
+    sumPaise(soFarAgg._sum.basePaise) + sumPaise(soFarAgg._sum.surchargePaise);
 
   const isCredit = assignment.program.type === "CREDIT_POOL";
   const lsc = assignment.program.licensedSeatConfig;
   const cpc = assignment.program.creditPoolConfig;
   const cpcPriceCap =
-    cpc?.priceCapPerEngagementPaise != null
+    cpc?.priceCapPerEngagementPaise !== null &&
+    cpc?.priceCapPerEngagementPaise !== undefined
       ? Number(cpc.priceCapPerEngagementPaise)
       : null;
 
@@ -174,7 +186,15 @@ export async function previewOverageForBooking(
     programName: assignment.program.name,
     overageBehavior: ctx.overageBehavior,
     coveredPaise: result.coveredPaise,
-    marginalPaise: result.marginalPaise,
+    // Advisory: the surcharge's GST at the org's place of supply.
+    marginalPaise:
+      result.marginalPaise +
+      surchargeTaxPaise(
+        result.surchargePaise,
+        billingAccount?.organization
+          ? orgBuyerCountry(billingAccount.organization)
+          : "IN",
+      ),
     surchargePaise: result.surchargePaise,
     willExceedCap: result.marginalPaise > 0,
     willBlock: result.decision === "BLOCK",

@@ -22,6 +22,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import {
+  postInvoiceIssuedJournal,
+  postInvoiceVoidedJournal,
+} from "@/lib/payments/billing/org-invoice-journal";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
 
@@ -206,24 +210,26 @@ export async function PATCH(
           },
         });
 
-        if (
-          body.status === "ISSUED" &&
-          typeof tx.webhookEndpoint?.findMany === "function"
-        ) {
-          await dispatchWebhookEvent({
-            prisma: tx,
-            organizationId: orgId,
-            eventType: "invoice.issued",
-            payload: {
-              invoiceId,
-              invoiceNumber: current.invoiceNumber,
-              totalPaise: Number(current.totalPaise),
-              displayCurrency: current.displayCurrency,
-              dueDate: (body.dueDate ?? current.dueDate).toISOString(),
-              purchaseOrderId: current.purchaseOrderId,
-              contractId: current.contractId,
-            },
-          });
+        if (body.status === "ISSUED") {
+          await postInvoiceIssuedJournal(tx, invoiceId);
+          if (typeof tx.webhookEndpoint?.findMany === "function") {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "invoice.issued",
+              payload: {
+                invoiceId,
+                invoiceNumber: current.invoiceNumber,
+                totalPaise: Number(current.totalPaise),
+                displayCurrency: current.displayCurrency,
+                dueDate: (body.dueDate ?? current.dueDate).toISOString(),
+                purchaseOrderId: current.purchaseOrderId,
+                contractId: current.contractId,
+              },
+            });
+          }
+        } else if (body.status === "VOID") {
+          await postInvoiceVoidedJournal(tx, invoiceId);
         }
 
         // PO balance restoration on VOID / CANCELLED. The invoice POST

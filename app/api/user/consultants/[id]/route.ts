@@ -759,10 +759,15 @@ export async function DELETE(
       select: {
         userId: true,
         deletedAt: true,
-        // #781 §B — earnings/payouts/TDS Restrict this profile; a profile
-        // that ever moved money can only soft-delete.
+        // #781 §B / #2006 — earnings/organizationEarnings/payouts/TDS Restrict
+        // this profile; a profile that ever moved money can only soft-delete.
         _count: {
-          select: { earnings: true, payouts: true, tdsRecords: true },
+          select: {
+            earnings: true,
+            organizationEarnings: true,
+            payouts: true,
+            tdsRecords: true,
+          },
         },
       },
     });
@@ -788,6 +793,7 @@ export async function DELETE(
 
     const hasMoneyHistory =
       ownerCheck._count.earnings +
+        (ownerCheck._count.organizationEarnings ?? 0) +
         ownerCheck._count.payouts +
         ownerCheck._count.tdsRecords >
       0;
@@ -844,6 +850,11 @@ export async function DELETE(
       await tx.consultantReview.deleteMany({
         where: { consultantProfileId: id },
       });
+      if (typeof tx.payoutAccount?.deleteMany === "function") {
+        await tx.payoutAccount.deleteMany({
+          where: { consultantProfileId: id },
+        });
+      }
       await tx.consultantProfile.delete({ where: { id } });
       return removed;
     });

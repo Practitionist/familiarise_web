@@ -1698,7 +1698,7 @@ model LicensedSeatConfig {
   /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    BigInt?
@@ -2789,7 +2789,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// org invoice issued or voided (its GST not booked by a booking), and CHARGE_ORG overage accrual
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND
@@ -3072,6 +3072,8 @@ model ConsultantProfile {
   maxOpenRequests   Int?
 
   // India statutory (compliance stubs read these; PAN lives encrypted on ConsultantTaxInfo)
+  /// @deprecated Legacy plaintext PAN retained for pre-reset read compatibility (#2006); dropped in PR-6 reset batch.
+  panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
   // non-individuals are mis-withheld. This is the schema half of the deferred
@@ -7611,8 +7613,8 @@ model OverageEvent {
   /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
   /// portion of the real booking price (after `priceCapPerEngagementPaise`);
   /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
-  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
-  /// booking price. `marginalPaise` stays the authoritative charged total.
+  /// `marginalPaise == basePaise + surchargePaise + GST on the surcharge`, and
+  /// (covered) + basePaise == booking price. `marginalPaise` is the charged total.
   basePaise            BigInt              @default(0)
   surchargePaise       BigInt              @default(0)
   marginalPaise        BigInt
