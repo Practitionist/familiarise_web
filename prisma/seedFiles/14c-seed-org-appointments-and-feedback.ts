@@ -17,6 +17,154 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { postLedgerTxn } from "../../lib/payments/ledger/post";
+
+interface SeedCompletedOrgConsultationArgs {
+  planId: string;
+  consulteeProfileId: string;
+  learnerUserId: string;
+  learnerOrgId: string;
+  expertUserId: string;
+  consultantProfileId: string;
+  hostOrgId: string;
+  appointmentOrgId: string;
+  billingAccountId: string | null;
+  startsAt: Date;
+  endsAt: Date;
+  requestedAt: Date;
+  totalPricePaise: number;
+  paymentMethod: string;
+  seedTag: string;
+  legs: Array<{
+    source: PaymentLegSource;
+    amountPaise: number;
+    sourceRef: string;
+  }>;
+  platformFeePaise: number;
+  orgSharePaise: number;
+  consultantSharePaise: number;
+  rating: number;
+  comment: string;
+}
+
+async function seedCompletedOrgConsultation(
+  args: SeedCompletedOrgConsultationArgs,
+) {
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  const consultation = await prisma.consultation.create({
+    data: {
+      consultationPlanId: args.planId,
+      status: AppointmentStatus.COMPLETED,
+      requestedById: args.consulteeProfileId,
+      requestedAt: args.requestedAt,
+      bookingSource: BookingSource.DIRECT_CHECKOUT,
+    },
+  });
+
+  const appointment = await prisma.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.CONSULTATION,
+      consultationId: consultation.id,
+      organizationId: args.appointmentOrgId,
+      chatChannelEnsuredAt: args.startsAt,
+    },
+  });
+
+  const occurrence = await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: appointment.id,
+      consultantProfileId: args.consultantProfileId,
+      ordinal: 1,
+      startsAt: args.startsAt,
+      endsAt: args.endsAt,
+      isTentative: false,
+      completionStatus: OccurrenceCompletionStatus.COMPLETED,
+      completedAt: args.endsAt,
+      outcome: OccurrenceOutcome.HELD,
+      outcomeAt: args.endsAt,
+      deliveredMinutes: 60,
+      lostMinutes: 0,
+    },
+  });
+
+  const shortAppointmentId = appointment.id.slice(0, 8);
+  const payment = await prisma.payment.create({
+    data: {
+      amount: args.totalPricePaise,
+      originalAmount: args.totalPricePaise,
+      taxAmount: 0,
+      currency: Currency.INR,
+      paymentMethod: args.paymentMethod,
+      paymentIntent: `pi_seed_${args.seedTag}_${shortAppointmentId}`,
+      gatewayPaymentId: `pay_seed_${args.seedTag}_${shortAppointmentId}`,
+      clientIdempotencyKey: `idem_seed_${args.seedTag}_${shortAppointmentId}`,
+      paymentGateway: PaymentGateway.RAZORPAY,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      capturedAt: args.startsAt,
+      isMockPayment: true,
+      userId: args.learnerUserId,
+      appointmentId: appointment.id,
+      organizationId: args.appointmentOrgId,
+      hostOrganizationId: args.hostOrgId,
+      billingAccountId: args.billingAccountId,
+      legs: {
+        create: args.legs,
+      },
+    },
+  });
+
+  await prisma.appointmentParticipant.createMany({
+    data: [
+      {
+        appointmentId: appointment.id,
+        userId: args.learnerUserId,
+        role: ParticipantRole.CONSULTEE,
+        status: ParticipantStatus.ATTENDED,
+        paymentId: payment.id,
+        organizationId: args.learnerOrgId,
+        sessionsPurchased: 1,
+      },
+      {
+        appointmentId: appointment.id,
+        userId: args.expertUserId,
+        role: ParticipantRole.CONSULTANT,
+        status: ParticipantStatus.ATTENDED,
+        organizationId: args.hostOrgId,
+      },
+    ],
+  });
+
+  await prisma.organizationEarnings.create({
+    data: {
+      organizationId: args.hostOrgId,
+      paymentId: payment.id,
+      consultantProfileId: args.consultantProfileId,
+      role: EarningRole.OWNER,
+      grossAmountPaise: args.totalPricePaise,
+      platformFeePaise: args.platformFeePaise,
+      orgSharePaise: args.orgSharePaise,
+      consultantSharePaise: args.consultantSharePaise,
+      status: EarningStatus.READY,
+      holdUntil: new Date(args.endsAt.getTime() + dayMs),
+    },
+  });
+
+  await prisma.appointmentFeedback.create({
+    data: {
+      appointmentId: appointment.id,
+      appointmentOccurrenceId: occurrence.id,
+      consultantProfileId: args.consultantProfileId,
+      userId: args.learnerUserId,
+      organizationId: args.appointmentOrgId,
+      rating: args.rating,
+      comment: args.comment,
+      raterRole: AppointmentFeedbackRole.CONSULTEE,
+    },
+  });
+
+  return { appointment, occurrence, payment };
+}
 
 /**
  * Seeds organization-scoped Appointments, AppointmentOccurrences,
@@ -109,7 +257,8 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
     return;
   }
 
-  // Helper to ensure a consultant has at least one ConsultationPlan
+  // Helper to ensure a consultant has a matching ConsultationPlan for the
+  // target organization and price.
   async function ensureConsultationPlan(
     consultantProfileId: string,
     title: string,
@@ -117,7 +266,12 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
     organizationId?: string,
   ) {
     const existing = await prisma.consultationPlan.findFirst({
-      where: { consultantProfileId, archivedAt: null },
+      where: {
+        consultantProfileId,
+        organizationId: organizationId ?? null,
+        price: pricePaise,
+        archivedAt: null,
+      },
       select: { id: true, price: true },
     });
     if (existing) return existing;
@@ -185,106 +339,55 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
       now.getTime() - (135 - i * 2) * dayMs + 10 * hourMs,
     );
     const endsAt = new Date(startsAt.getTime() + hourMs);
+    const platformFeePaise = Math.round(totalPricePaise * 0.1);
+    const orgSharePaise = Math.round(totalPricePaise * 0.1);
+    const consultantSharePaise =
+      totalPricePaise - platformFeePaise - orgSharePaise;
 
-    const consultation = await prisma.consultation.create({
-      data: {
-        consultationPlanId: plan.id,
-        status: AppointmentStatus.COMPLETED,
-        requestedById: consulteeProfile.id,
-        requestedAt: new Date(startsAt.getTime() - 3 * dayMs),
-        bookingSource: BookingSource.DIRECT_CHECKOUT,
-      },
-    });
-
-    const appointment = await prisma.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.CONSULTATION,
-        consultationId: consultation.id,
-        organizationId: wipro.id,
-        chatChannelEnsuredAt: startsAt,
-      },
-    });
-
-    const occurrence = await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId: appointment.id,
-        consultantProfileId: consultantProfile.id,
-        ordinal: 1,
-        startsAt,
-        endsAt,
-        isTentative: false,
-        completionStatus: OccurrenceCompletionStatus.COMPLETED,
-        completedAt: endsAt,
-        outcome: OccurrenceOutcome.HELD,
-        outcomeAt: endsAt,
-        deliveredMinutes: 60,
-        lostMinutes: 0,
-      },
-    });
-
-    const payment = await prisma.payment.create({
-      data: {
-        amount: totalPricePaise,
-        originalAmount: totalPricePaise,
-        taxAmount: 0,
-        currency: Currency.INR,
-        paymentMethod: "INVOICE",
-        paymentIntent: `pi_seed_wipro_org_${i + 1}_${appointment.id.slice(0, 8)}`,
-        gatewayPaymentId: `pay_seed_wipro_org_${i + 1}_${appointment.id.slice(0, 8)}`,
-        clientIdempotencyKey: `idem_seed_wipro_org_${i + 1}_${appointment.id.slice(0, 8)}`,
-        paymentGateway: PaymentGateway.RAZORPAY,
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        capturedAt: startsAt,
-        isMockPayment: true,
-        userId: learnerMembership.userId,
-        appointmentId: appointment.id,
-        organizationId: wipro.id,
-        hostOrganizationId: learnPro.id,
-        billingAccountId: wipro.billingAccountId,
-        legs: {
-          create: isOverage
-            ? [
-                {
-                  source: PaymentLegSource.INVOICE_ACCRUAL,
-                  amountPaise: coveredAccrualPaise,
-                  sourceRef: assignment.id,
-                },
-                {
-                  source: PaymentLegSource.OVERAGE_INVOICE_ACCRUAL,
-                  amountPaise: overagePaise,
-                  sourceRef: assignment.id,
-                },
-              ]
-            : [
-                {
-                  source: PaymentLegSource.INVOICE_ACCRUAL,
-                  amountPaise: totalPricePaise,
-                  sourceRef: assignment.id,
-                },
-              ],
-        },
-      },
-    });
-
-    await prisma.appointmentParticipant.createMany({
-      data: [
-        {
-          appointmentId: appointment.id,
-          userId: learnerMembership.userId,
-          role: ParticipantRole.CONSULTEE,
-          status: ParticipantStatus.ATTENDED,
-          paymentId: payment.id,
-          organizationId: wipro.id,
-          sessionsPurchased: 1,
-        },
-        {
-          appointmentId: appointment.id,
-          userId: expertMembership.userId,
-          role: ParticipantRole.CONSULTANT,
-          status: ParticipantStatus.ATTENDED,
-          organizationId: learnPro.id,
-        },
-      ],
+    const { appointment, payment } = await seedCompletedOrgConsultation({
+      planId: plan.id,
+      consulteeProfileId: consulteeProfile.id,
+      learnerUserId: learnerMembership.userId,
+      learnerOrgId: wipro.id,
+      expertUserId: expertMembership.userId,
+      consultantProfileId: consultantProfile.id,
+      hostOrgId: learnPro.id,
+      appointmentOrgId: wipro.id,
+      billingAccountId: wipro.billingAccountId,
+      startsAt,
+      endsAt,
+      requestedAt: new Date(startsAt.getTime() - 3 * dayMs),
+      totalPricePaise,
+      paymentMethod: "INVOICE",
+      seedTag: `wipro_org_${i + 1}`,
+      legs: isOverage
+        ? [
+            {
+              source: PaymentLegSource.INVOICE_ACCRUAL,
+              amountPaise: coveredAccrualPaise,
+              sourceRef: assignment.id,
+            },
+            {
+              source: PaymentLegSource.OVERAGE_INVOICE_ACCRUAL,
+              amountPaise: overagePaise,
+              sourceRef: assignment.id,
+            },
+          ]
+        : [
+            {
+              source: PaymentLegSource.INVOICE_ACCRUAL,
+              amountPaise: totalPricePaise,
+              sourceRef: assignment.id,
+            },
+          ],
+      platformFeePaise,
+      orgSharePaise,
+      consultantSharePaise,
+      rating: 5 - i,
+      comment:
+        i === 0
+          ? "Actionable guidance on distributed systems leadership."
+          : "Deep-dive architecture review exceeded expectations.",
     });
 
     const utilization = await prisma.bookingUtilization.create({
@@ -337,43 +440,6 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
         },
       });
     }
-
-    // 10/10/80 split on LearnPro RateCard
-    const platformFeePaise = Math.round(totalPricePaise * 0.1);
-    const orgSharePaise = Math.round(totalPricePaise * 0.1);
-    const consultantSharePaise =
-      totalPricePaise - platformFeePaise - orgSharePaise;
-
-    await prisma.organizationEarnings.create({
-      data: {
-        organizationId: learnPro.id,
-        paymentId: payment.id,
-        consultantProfileId: consultantProfile.id,
-        role: EarningRole.OWNER,
-        grossAmountPaise: totalPricePaise,
-        platformFeePaise,
-        orgSharePaise,
-        consultantSharePaise,
-        status: EarningStatus.READY,
-        holdUntil: new Date(endsAt.getTime() + dayMs),
-      },
-    });
-
-    await prisma.appointmentFeedback.create({
-      data: {
-        appointmentId: appointment.id,
-        appointmentOccurrenceId: occurrence.id,
-        consultantProfileId: consultantProfile.id,
-        userId: learnerMembership.userId,
-        organizationId: wipro.id,
-        rating: 5 - i,
-        comment:
-          i === 0
-            ? "Actionable guidance on distributed systems leadership."
-            : "Deep-dive architecture review exceeded expectations.",
-        raterRole: AppointmentFeedbackRole.CONSULTEE,
-      },
-    });
   }
 
   // -------------------------------------------------------------------------
@@ -397,119 +463,34 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
     const startsAt = new Date(now.getTime() - 128 * dayMs + 14 * hourMs);
     const endsAt = new Date(startsAt.getTime() + hourMs);
 
-    const consultation = await prisma.consultation.create({
-      data: {
-        consultationPlanId: plan.id,
-        status: AppointmentStatus.COMPLETED,
-        requestedById: consulteeProfile.id,
-        requestedAt: new Date(startsAt.getTime() - 2 * dayMs),
-        bookingSource: BookingSource.DIRECT_CHECKOUT,
-      },
-    });
-
-    const appointment = await prisma.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.CONSULTATION,
-        consultationId: consultation.id,
-        organizationId: learnPro.id,
-        chatChannelEnsuredAt: startsAt,
-      },
-    });
-
-    const occurrence = await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId: appointment.id,
-        consultantProfileId: consultantProfile.id,
-        ordinal: 1,
-        startsAt,
-        endsAt,
-        isTentative: false,
-        completionStatus: OccurrenceCompletionStatus.COMPLETED,
-        completedAt: endsAt,
-        outcome: OccurrenceOutcome.HELD,
-        outcomeAt: endsAt,
-        deliveredMinutes: 60,
-        lostMinutes: 0,
-      },
-    });
-
-    const payment = await prisma.payment.create({
-      data: {
-        amount: pricePaise,
-        originalAmount: pricePaise,
-        taxAmount: 0,
-        currency: Currency.INR,
-        paymentMethod: "CARD",
-        paymentIntent: `pi_seed_learnpro_host_${appointment.id.slice(0, 8)}`,
-        gatewayPaymentId: `pay_seed_learnpro_host_${appointment.id.slice(0, 8)}`,
-        clientIdempotencyKey: `idem_seed_learnpro_host_${appointment.id.slice(0, 8)}`,
-        paymentGateway: PaymentGateway.RAZORPAY,
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        capturedAt: startsAt,
-        isMockPayment: true,
-        userId: learnerUser.id,
-        appointmentId: appointment.id,
-        organizationId: learnPro.id,
-        hostOrganizationId: learnPro.id,
-        legs: {
-          create: [
-            {
-              source: PaymentLegSource.CARD,
-              amountPaise: pricePaise,
-              sourceRef: `pay_seed_learnpro_host_${appointment.id.slice(0, 8)}`,
-            },
-          ],
-        },
-      },
-    });
-
-    await prisma.appointmentParticipant.createMany({
-      data: [
+    await seedCompletedOrgConsultation({
+      planId: plan.id,
+      consulteeProfileId: consulteeProfile.id,
+      learnerUserId: learnerUser.id,
+      learnerOrgId: learnPro.id,
+      expertUserId: hostExpert.userId,
+      consultantProfileId: consultantProfile.id,
+      hostOrgId: learnPro.id,
+      appointmentOrgId: learnPro.id,
+      billingAccountId: null,
+      startsAt,
+      endsAt,
+      requestedAt: new Date(startsAt.getTime() - 2 * dayMs),
+      totalPricePaise: pricePaise,
+      paymentMethod: "CARD",
+      seedTag: "learnpro_host",
+      legs: [
         {
-          appointmentId: appointment.id,
-          userId: learnerUser.id,
-          role: ParticipantRole.CONSULTEE,
-          status: ParticipantStatus.ATTENDED,
-          paymentId: payment.id,
-          organizationId: learnPro.id,
-          sessionsPurchased: 1,
-        },
-        {
-          appointmentId: appointment.id,
-          userId: hostExpert.userId,
-          role: ParticipantRole.CONSULTANT,
-          status: ParticipantStatus.ATTENDED,
-          organizationId: learnPro.id,
+          source: PaymentLegSource.CARD,
+          amountPaise: pricePaise,
+          sourceRef: "pay_seed_learnpro_host",
         },
       ],
-    });
-
-    await prisma.organizationEarnings.create({
-      data: {
-        organizationId: learnPro.id,
-        paymentId: payment.id,
-        consultantProfileId: consultantProfile.id,
-        role: EarningRole.OWNER,
-        grossAmountPaise: pricePaise,
-        platformFeePaise: Math.round(pricePaise * 0.1),
-        orgSharePaise: Math.round(pricePaise * 0.1),
-        consultantSharePaise: Math.round(pricePaise * 0.8),
-        status: EarningStatus.READY,
-        holdUntil: new Date(endsAt.getTime() + dayMs),
-      },
-    });
-
-    await prisma.appointmentFeedback.create({
-      data: {
-        appointmentId: appointment.id,
-        appointmentOccurrenceId: occurrence.id,
-        consultantProfileId: consultantProfile.id,
-        userId: learnerUser.id,
-        organizationId: learnPro.id,
-        rating: 5,
-        comment: "Clear, well-structured LearnPro coaching session.",
-        raterRole: AppointmentFeedbackRole.CONSULTEE,
-      },
+      platformFeePaise: Math.round(pricePaise * 0.1),
+      orgSharePaise: Math.round(pricePaise * 0.1),
+      consultantSharePaise: Math.round(pricePaise * 0.8),
+      rating: 5,
+      comment: "Clear, well-structured LearnPro coaching session.",
     });
   }
 
@@ -543,94 +524,75 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
 
     const startsAt = new Date(now.getTime() - 124 * dayMs + 11 * hourMs);
     const endsAt = new Date(startsAt.getTime() + hourMs);
+    const platformFeePaise = Math.round(pricePaise * 0.15);
+    const orgSharePaise = Math.round(pricePaise * 0.85);
 
-    const consultation = await prisma.consultation.create({
-      data: {
-        consultationPlanId: plan.id,
-        status: AppointmentStatus.COMPLETED,
-        requestedById: consulteeProfile.id,
-        requestedAt: new Date(startsAt.getTime() - 2 * dayMs),
-        bookingSource: BookingSource.DIRECT_CHECKOUT,
-      },
-    });
-
-    const appointment = await prisma.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.CONSULTATION,
-        consultationId: consultation.id,
-        organizationId: iitMadras.id,
-        chatChannelEnsuredAt: startsAt,
-      },
-    });
-
-    const occurrence = await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId: appointment.id,
-        consultantProfileId: profProfile.id,
-        ordinal: 1,
-        startsAt,
-        endsAt,
-        isTentative: false,
-        completionStatus: OccurrenceCompletionStatus.COMPLETED,
-        completedAt: endsAt,
-        outcome: OccurrenceOutcome.HELD,
-        outcomeAt: endsAt,
-        deliveredMinutes: 60,
-        lostMinutes: 0,
-      },
-    });
-
-    const payment = await prisma.payment.create({
-      data: {
-        amount: pricePaise,
-        originalAmount: pricePaise,
-        taxAmount: 0,
-        currency: Currency.INR,
-        paymentMethod: "WALLET",
-        paymentIntent: `pi_seed_iitm_hybrid_${appointment.id.slice(0, 8)}`,
-        gatewayPaymentId: `pay_seed_iitm_hybrid_${appointment.id.slice(0, 8)}`,
-        clientIdempotencyKey: `idem_seed_iitm_hybrid_${appointment.id.slice(0, 8)}`,
-        paymentGateway: PaymentGateway.RAZORPAY,
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        capturedAt: startsAt,
-        isMockPayment: true,
-        userId: studentMembership.userId,
-        appointmentId: appointment.id,
-        organizationId: iitMadras.id,
-        hostOrganizationId: iitMadras.id,
-        billingAccountId: iitMadras.billingAccountId,
-        legs: {
-          create: [
-            {
-              source: PaymentLegSource.WALLET,
-              amountPaise: pricePaise,
-              sourceRef: studentAssignment.id,
-            },
-          ],
-        },
-      },
-    });
-
-    await prisma.appointmentParticipant.createMany({
-      data: [
+    const { appointment, payment } = await seedCompletedOrgConsultation({
+      planId: plan.id,
+      consulteeProfileId: consulteeProfile.id,
+      learnerUserId: studentMembership.userId,
+      learnerOrgId: iitMadras.id,
+      expertUserId: profMembership.userId,
+      consultantProfileId: profProfile.id,
+      hostOrgId: iitMadras.id,
+      appointmentOrgId: iitMadras.id,
+      billingAccountId: iitMadras.billingAccountId,
+      startsAt,
+      endsAt,
+      requestedAt: new Date(startsAt.getTime() - 2 * dayMs),
+      totalPricePaise: pricePaise,
+      paymentMethod: "WALLET",
+      seedTag: "iitm_hybrid",
+      legs: [
         {
-          appointmentId: appointment.id,
-          userId: studentMembership.userId,
-          role: ParticipantRole.CONSULTEE,
-          status: ParticipantStatus.ATTENDED,
-          paymentId: payment.id,
-          organizationId: iitMadras.id,
-          sessionsPurchased: 1,
-        },
-        {
-          appointmentId: appointment.id,
-          userId: profMembership.userId,
-          role: ParticipantRole.CONSULTANT,
-          status: ParticipantStatus.ATTENDED,
-          organizationId: iitMadras.id,
+          source: PaymentLegSource.WALLET,
+          amountPaise: pricePaise,
+          sourceRef: studentAssignment.id,
         },
       ],
+      platformFeePaise,
+      orgSharePaise,
+      consultantSharePaise: 0,
+      rating: 5,
+      comment: "Invaluable faculty mentorship on our thesis methodology.",
     });
+
+    if (iitMadras.billingAccountId) {
+      await postLedgerTxn(prisma, {
+        idempotencyKey: `seed-iitm-booking:${payment.id}`,
+        kind: "BOOKING",
+        paymentId: payment.id,
+        postings: [
+          {
+            account: {
+              kind: "WALLET",
+              organizationId: iitMadras.id,
+              currency: "INR",
+            },
+            direction: "DEBIT",
+            amountPaise: pricePaise,
+          },
+          {
+            account: { kind: "PLATFORM_FEE", currency: "INR" },
+            direction: "CREDIT",
+            amountPaise: platformFeePaise,
+          },
+          {
+            account: {
+              kind: "ORG_PAYABLE",
+              organizationId: iitMadras.id,
+              currency: "INR",
+            },
+            direction: "CREDIT",
+            amountPaise: orgSharePaise,
+          },
+        ],
+      });
+      await prisma.billingAccount.update({
+        where: { id: iitMadras.billingAccountId },
+        data: { walletBalance: { decrement: pricePaise } },
+      });
+    }
 
     await prisma.bookingUtilization.create({
       data: {
@@ -664,34 +626,6 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
       data: {
         engagementsUsed: { increment: 1 },
         consumedPaise: { increment: pricePaise },
-      },
-    });
-
-    await prisma.organizationEarnings.create({
-      data: {
-        organizationId: iitMadras.id,
-        paymentId: payment.id,
-        consultantProfileId: profProfile.id,
-        role: EarningRole.OWNER,
-        grossAmountPaise: pricePaise,
-        platformFeePaise: Math.round(pricePaise * 0.15),
-        orgSharePaise: Math.round(pricePaise * 0.85),
-        consultantSharePaise: 0,
-        status: EarningStatus.READY,
-        holdUntil: new Date(endsAt.getTime() + dayMs),
-      },
-    });
-
-    await prisma.appointmentFeedback.create({
-      data: {
-        appointmentId: appointment.id,
-        appointmentOccurrenceId: occurrence.id,
-        consultantProfileId: profProfile.id,
-        userId: studentMembership.userId,
-        organizationId: iitMadras.id,
-        rating: 5,
-        comment: "Invaluable faculty mentorship on our thesis methodology.",
-        raterRole: AppointmentFeedbackRole.CONSULTEE,
       },
     });
   }

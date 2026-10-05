@@ -290,37 +290,27 @@ export async function PATCH(
         });
 
         if (body.status === "ACTIVE" && current.status !== "ACTIVE") {
-          if (
-            typeof tx.billingSubscription?.findUnique === "function" &&
-            typeof tx.billingSubscription?.update === "function"
-          ) {
-            const existingSub = await tx.billingSubscription.findUnique({
-              where: { contractId },
+          const existingSub = await tx.billingSubscription.findUnique({
+            where: { contractId },
+          });
+          if (existingSub) {
+            const effectiveFrom =
+              body.effectiveFrom ?? current.effectiveFrom ?? new Date();
+            const effectiveTo =
+              body.effectiveTo !== undefined
+                ? body.effectiveTo
+                : current.effectiveTo;
+            const cycleEnd = computeCycleEnd(effectiveFrom, existingSub.cycle);
+            await tx.billingSubscription.update({
+              where: { id: existingSub.id },
+              data: {
+                currentCycleStart: effectiveFrom,
+                currentCycleEnd: cycleEnd,
+                nextInvoiceDate: cycleEnd,
+                startsAt: effectiveFrom,
+                endsAt: effectiveTo ?? null,
+              },
             });
-            if (existingSub) {
-              const effectiveFrom =
-                body.effectiveFrom ??
-                current.effectiveFrom ??
-                new Date();
-              const effectiveTo =
-                body.effectiveTo !== undefined
-                  ? body.effectiveTo
-                  : current.effectiveTo;
-              const cycleEnd = computeCycleEnd(
-                effectiveFrom,
-                existingSub.cycle,
-              );
-              await tx.billingSubscription.update({
-                where: { id: existingSub.id },
-                data: {
-                  currentCycleStart: effectiveFrom,
-                  currentCycleEnd: cycleEnd,
-                  nextInvoiceDate: cycleEnd,
-                  startsAt: effectiveFrom,
-                  endsAt: effectiveTo ?? null,
-                },
-              });
-            }
           }
 
           if (typeof tx.webhookEndpoint?.findMany === "function") {

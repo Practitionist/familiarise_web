@@ -285,66 +285,63 @@ export async function getOrgAnalytics(
     // pending-overage / stuck-payout / credit cap-near) the home action-center
     // needs but the tiles above don't already carry.
     resolveActivationSignals(orgId),
-    typeof prisma.bookingUtilization?.findMany === "function"
-      ? prisma.bookingUtilization.findMany({
-          where: {
-            reversedAt: null,
-            deletedAt: null,
-            createdAt: { gte: sixMonthsStart },
-            programAssignment: {
-              program: { contract: { organizationId: orgId } },
-            },
-          },
+    prisma.bookingUtilization.findMany({
+      where: {
+        reversedAt: null,
+        deletedAt: null,
+        createdAt: { gte: sixMonthsStart },
+        programAssignment: {
+          program: { contract: { organizationId: orgId } },
+        },
+      },
+      select: {
+        createdAt: true,
+        engagementsConsumed: true,
+        priceAtBookingPaise: true,
+        wasOverage: true,
+        overageEvent: {
           select: {
-            createdAt: true,
-            engagementsConsumed: true,
-            priceAtBookingPaise: true,
-            wasOverage: true,
-            overageEvent: {
-              select: {
-                marginalPaise: true,
-                chargeStatus: true,
-                reversedAt: true,
-              },
-            },
-            programAssignment: {
-              select: {
-                membershipId: true,
-                programId: true,
-              },
-            },
+            marginalPaise: true,
+            chargeStatus: true,
+            reversedAt: true,
           },
-        })
-      : Promise.resolve([]),
-    typeof prisma.program?.findMany === "function"
-      ? prisma.program.findMany({
-          where: {
-            contract: { organizationId: orgId },
-            archivedAt: null,
-          },
+        },
+        programAssignment: {
           select: {
-            id: true,
-            name: true,
-            type: true,
-            assignments: {
+            membershipId: true,
+            programId: true,
+          },
+        },
+      },
+    }),
+    prisma.program.findMany({
+      where: {
+        contract: { organizationId: orgId },
+        archivedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        assignments: {
+          select: {
+            utilizations: {
+              where: {
+                reversedAt: null,
+                deletedAt: null,
+                createdAt: { gte: sixMonthsStart },
+              },
               select: {
-                engagementsUsed: true,
-                consumedPaise: true,
-                overageCount: true,
-                utilizations: {
-                  where: { reversedAt: null, deletedAt: null },
-                  select: {
-                    priceAtBookingPaise: true,
-                    engagementsConsumed: true,
-                    wasOverage: true,
-                  },
-                },
+                priceAtBookingPaise: true,
+                engagementsConsumed: true,
+                wasOverage: true,
               },
             },
           },
-          orderBy: { createdAt: "desc" },
-        })
-      : Promise.resolve([]),
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
   ]);
 
   const memberTotal = memberAggregate.reduce(
@@ -424,30 +421,13 @@ export async function getOrgAnalytics(
       let overageCount = 0;
 
       for (const a of p.assignments ?? []) {
-        const utilPaiseFromRows = (a.utilizations ?? []).reduce(
-          (sum, u) => sum + Number(u.priceAtBookingPaise ?? 0),
-          0,
-        );
-        const engagementsFromRows = (a.utilizations ?? []).reduce(
-          (sum, u) => sum + Number(u.engagementsConsumed ?? 0),
-          0,
-        );
-        const overagesFromRows = (a.utilizations ?? []).filter(
-          (u) => u.wasOverage,
-        ).length;
-
-        utilizedPaise += Math.max(
-          Number(a.consumedPaise ?? 0),
-          utilPaiseFromRows,
-        );
-        engagementsUsed += Math.max(
-          Number(a.engagementsUsed ?? 0),
-          engagementsFromRows,
-        );
-        overageCount += Math.max(
-          Number(a.overageCount ?? 0),
-          overagesFromRows,
-        );
+        for (const u of a.utilizations ?? []) {
+          utilizedPaise += Number(u.priceAtBookingPaise ?? 0);
+          engagementsUsed += Number(u.engagementsConsumed ?? 0);
+          if (u.wasOverage) {
+            overageCount += 1;
+          }
+        }
       }
 
       return {

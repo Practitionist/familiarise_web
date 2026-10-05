@@ -186,6 +186,7 @@ export function BillingPageClient({
                   orgId={orgId}
                   summary={summary}
                   canPay={can("billing.manage")}
+                  orgStatus={org?.status}
                   moneyMoveBlocked={invoicePaymentBlocked}
                   moneyMoveReason={invoicePaymentReason}
                 />

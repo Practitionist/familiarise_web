@@ -146,19 +146,6 @@ export function BrandingPanel({ orgId }: Readonly<{ orgId: string }>) {
     queryFn: () => fetchOrgDetails(orgId),
     staleTime: 60_000,
   });
-  const orgRecord = data?.organization as
-    | {
-        logo?: string | null;
-        bannerUrl?: string | null;
-        bannerImage?: string | null;
-        brandingProfile?: { bannerImage?: string | null } | null;
-      }
-    | undefined;
-  const currentBannerUrl =
-    orgRecord?.bannerUrl ??
-    orgRecord?.bannerImage ??
-    orgRecord?.brandingProfile?.bannerImage ??
-    null;
 
   return (
     <>
@@ -171,7 +158,7 @@ export function BrandingPanel({ orgId }: Readonly<{ orgId: string }>) {
       <AssetSection
         orgId={orgId}
         asset="banner"
-        currentUrl={currentBannerUrl}
+        currentUrl={data?.organization.bannerImage ?? null}
       />
     </>
   );

@@ -59,30 +59,10 @@ export async function lookupEnforcedOrg(
     },
   } as const;
 
-  const claim =
-    typeof prisma.orgDomainClaim.findFirst === "function"
-      ? await prisma.orgDomainClaim.findFirst({
-          where: { domain, verifiedAt: { not: null } },
-          select: selectShape,
-        })
-      : await (
-          prisma.orgDomainClaim as unknown as {
-            findUnique: (args: {
-              where: { domain: string };
-              select: typeof selectShape;
-            }) => Promise<{
-              organizationId: string;
-              verifiedAt: Date | null;
-              organization: {
-                status: string;
-                ssoSettings: { enforceSSO: boolean } | null;
-              } | null;
-            } | null>;
-          }
-        ).findUnique({
-          where: { domain },
-          select: selectShape,
-        });
+  const claim = await prisma.orgDomainClaim.findFirst({
+    where: { domain, verifiedAt: { not: null } },
+    select: selectShape,
+  });
 
   if (
     !claim ||
@@ -152,52 +132,40 @@ export async function shouldRejectSession(
  */
 export async function revokeEnforcedOrgMemberSessions(
   tx: {
-    orgDomainClaim?: {
-      findMany?: (args: {
+    orgDomainClaim: {
+      findMany: (args: {
         where: { organizationId: string; verifiedAt: { not: null } };
         select: { domain: true };
       }) => Promise<Array<{ domain: string }>>;
     };
-    membership?: {
-      findMany?: (args: {
+    membership: {
+      findMany: (args: {
         where: { organizationId: string; status: "ACTIVE" };
-        select: { userId: true; user?: { select: { email: true } } };
+        select: { userId: true; user: { select: { email: true } } };
       }) => Promise<
         Array<{ userId: string; user?: { email?: string | null } | null }>
       >;
     };
-    session?: {
-      deleteMany?: (args: {
+    session: {
+      deleteMany: (args: {
         where: { userId: { in: string[] } };
       }) => Promise<unknown>;
     };
   },
   organizationId: string,
 ): Promise<void> {
-  if (
-    typeof tx.membership?.findMany !== "function" ||
-    typeof tx.session?.deleteMany !== "function"
-  ) {
-    return;
-  }
+  const verifiedClaims = await tx.orgDomainClaim.findMany({
+    where: { organizationId, verifiedAt: { not: null } },
+    select: { domain: true },
+  });
 
-  const verifiedClaims =
-    typeof tx.orgDomainClaim?.findMany === "function"
-      ? await tx.orgDomainClaim.findMany({
-          where: { organizationId, verifiedAt: { not: null } },
-          select: { domain: true },
-        })
-      : null;
+  const verifiedDomains = new Set(
+    verifiedClaims
+      .map((c) => c.domain.trim().toLowerCase())
+      .filter((d) => d.length > 0),
+  );
 
-  const verifiedDomains = verifiedClaims
-    ? new Set(
-        verifiedClaims
-          .map((c) => c.domain.trim().toLowerCase())
-          .filter((d) => d.length > 0),
-      )
-    : null;
-
-  if (verifiedDomains && verifiedDomains.size === 0) {
+  if (verifiedDomains.size === 0) {
     return;
   }
 
@@ -205,15 +173,14 @@ export async function revokeEnforcedOrgMemberSessions(
     where: { organizationId, status: "ACTIVE" },
     select: {
       userId: true,
-      ...(verifiedDomains ? { user: { select: { email: true } } } : {}),
+      user: { select: { email: true } },
     },
   });
 
   const memberUserIds = activeMembers
     .filter((m) => {
-      if (!verifiedDomains) return true;
       const email = m.user?.email;
-      if (!email) return true;
+      if (!email) return false;
       const domain = email.toLowerCase().split("@")[1];
       return Boolean(domain && verifiedDomains.has(domain));
     })

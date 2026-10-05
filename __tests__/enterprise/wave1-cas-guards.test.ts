@@ -35,7 +35,19 @@ jest.mock("../../lib/prisma", () => ({
     contract: {
       findFirst: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => ({ id: where.id, ...data }),
+      ),
       updateMany: jest.fn(),
+    },
+    rateCard: {
+      findFirst: jest.fn(),
     },
     program: { updateMany: jest.fn() },
     // E2E-audit P0 — supersession carries the licence onto the successor

@@ -50,6 +50,10 @@ jest.mock("../../lib/prisma", () => ({
     purchaseOrder: { findUnique: jest.fn() },
     // #779 — outstanding-invoice terminate guard; default = no invoices owed.
     organizationInvoice: { count: jest.fn().mockResolvedValue(0) },
+    billingSubscription: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue({}),
+    },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn(),
     $disconnect: jest.fn(),
@@ -95,6 +99,7 @@ const mockedPrisma = prisma as unknown as {
   bookingUtilization: { findFirst: jest.Mock };
   purchaseOrder: { findUnique: jest.Mock };
   organizationInvoice: { count: jest.Mock };
+  billingSubscription: { findUnique: jest.Mock; update: jest.Mock };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -126,6 +131,7 @@ function wireTxShim() {
       bookingUtilization: mockedPrisma.bookingUtilization,
       purchaseOrder: mockedPrisma.purchaseOrder,
       organizationInvoice: mockedPrisma.organizationInvoice,
+      billingSubscription: mockedPrisma.billingSubscription,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
     return (fn as (tx: unknown) => unknown)(tx);

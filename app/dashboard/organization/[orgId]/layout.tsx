@@ -13,7 +13,9 @@ import { toPlain } from "@/lib/data/serialize";
 
 /**
  * Server shell that seeds the organization details query and enforces
- * server-side membership authorization before rendering the org tree.
+ * server-side session and membership authorization before rendering the org
+ * tree (falling back to client-side membership fetch only if the server seed
+ * throws for an already-authenticated user).
  */
 export default async function OrgDashboardLayout({
   children,
@@ -35,12 +37,12 @@ export default async function OrgDashboardLayout({
     return null;
   });
 
-  if (!details && !seedErrored) {
+  if (!details) {
     const session = await getSession(true);
     if (!session?.user?.id) {
       redirect("/auth/signin");
     }
-    if (session.user.role !== "ADMIN") {
+    if (!seedErrored && session.user.role !== "ADMIN") {
       redirect("/dashboard");
     }
   }

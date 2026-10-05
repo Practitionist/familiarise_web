@@ -13,13 +13,15 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
-import { overageConfigRefusals } from "@/lib/enterprise/reachable-paths";
+import { assertMergedOverageConfigValid } from "@/lib/enterprise/reachable-paths";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -51,7 +53,7 @@ const SupersedeProgramBodySchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     maxOveragePerCyclePaise: z.coerce
@@ -92,318 +94,301 @@ export async function POST(
   const body = parsed.data;
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const now = new Date();
-      const old = await tx.program.findFirst({
-        where: { id: programId, contract: { organizationId: orgId } },
-        include: {
-          licensedSeatConfig: true,
-          creditPoolConfig: true,
-          consultantAllowlist: true,
-          assignments: {
-            where: { status: "ACTIVE", periodEnd: { gte: now } },
-          },
-          contract: {
-            select: {
-              id: true,
-              status: true,
-              billingAccount: { select: { fundingSource: true } },
-            },
-          },
-        },
-      });
-
-      if (!old) {
-        throw Object.assign(new Error("Program not found"), {
-          httpStatus: 404,
-        });
-      }
-
-      if (old.status === "CANCELLED" || old.status === "EXPIRED") {
-        throw Object.assign(
-          new Error("Cannot supersede a cancelled or expired program"),
-          { httpStatus: 409, code: "PROGRAM_ALREADY_CLOSED" },
-        );
-      }
-
-      const cfg = old.licensedSeatConfig ?? old.creditPoolConfig;
-      const mergedOverage = {
-        overageBehavior:
-          body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
-        overageSurchargeBps:
-          body.overageSurchargeBps !== undefined
-            ? body.overageSurchargeBps
-            : (cfg?.overageSurchargeBps ?? null),
-        maxOveragePerCyclePaise:
-          body.maxOveragePerCyclePaise !== undefined
-            ? body.maxOveragePerCyclePaise
-            : cfg?.maxOveragePerCyclePaise !== null &&
-                cfg?.maxOveragePerCyclePaise !== undefined
-              ? Number(cfg.maxOveragePerCyclePaise)
-              : null,
-        coveredEngagementsPerCycle:
-          body.coveredEngagementsPerCycle !== undefined
-            ? body.coveredEngagementsPerCycle
-            : (old.licensedSeatConfig?.coveredEngagementsPerCycle ?? null),
-      };
-
-      const failOverage = (message: string) => {
-        throw Object.assign(new Error(message), {
-          httpStatus: 400,
-          code: "INVALID_OVERAGE_CONFIG",
-        });
-      };
-
-      if (
-        old.type === "LICENSED_SEAT" &&
-        (mergedOverage.coveredEngagementsPerCycle === null ||
-          mergedOverage.coveredEngagementsPerCycle === undefined) &&
-        (mergedOverage.overageBehavior !== "BLOCK" ||
-          (mergedOverage.overageSurchargeBps ?? 0) > 0 ||
-          (mergedOverage.maxOveragePerCyclePaise !== null &&
-            mergedOverage.maxOveragePerCyclePaise !== undefined))
-      ) {
-        failOverage(
-          "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
-        );
-      }
-
-      if (
-        mergedOverage.overageBehavior !== "BLOCK" &&
-        ((mergedOverage.coveredEngagementsPerCycle !== null &&
-          mergedOverage.coveredEngagementsPerCycle !== undefined) ||
-          old.type === "CREDIT_POOL") &&
-        (mergedOverage.maxOveragePerCyclePaise === null ||
-          mergedOverage.maxOveragePerCyclePaise === undefined ||
-          mergedOverage.maxOveragePerCyclePaise < 1)
-      ) {
-        failOverage(
-          `overageBehavior=${mergedOverage.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling.`,
-        );
-      }
-
-      if (
-        mergedOverage.overageBehavior === "BLOCK" &&
-        ((mergedOverage.overageSurchargeBps ?? 0) > 0 ||
-          (mergedOverage.maxOveragePerCyclePaise !== null &&
-            mergedOverage.maxOveragePerCyclePaise !== undefined))
-      ) {
-        failOverage(
-          "overageSurchargeBps and maxOveragePerCyclePaise have no effect when overageBehavior=BLOCK — clear them or choose CHARGE_MEMBER / CHARGE_ORG.",
-        );
-      }
-
-      const fundingSource = old.contract?.billingAccount?.fundingSource ?? null;
-      const [overageRefusal] = overageConfigRefusals(
-        fundingSource,
-        mergedOverage.overageBehavior,
-        mergedOverage.overageSurchargeBps,
-      );
-      if (overageRefusal) {
-        failOverage(overageRefusal.message);
-      }
-
-      const activeAssignments = Array.isArray(old.assignments)
-        ? old.assignments.filter((a) => !a.periodEnd || a.periodEnd >= now)
-        : typeof tx.programAssignment?.findMany === "function"
-          ? await tx.programAssignment.findMany({
-              where: {
-                programId: old.id,
-                status: "ACTIVE",
-                periodEnd: { gte: now },
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const now = new Date();
+          const old = await tx.program.findFirst({
+            where: { id: programId, contract: { organizationId: orgId } },
+            include: {
+              licensedSeatConfig: true,
+              creditPoolConfig: true,
+              consultantAllowlist: true,
+              assignments: {
+                where: { status: "ACTIVE", periodEnd: { gte: now } },
               },
-            })
-          : [];
+              contract: {
+                select: {
+                  id: true,
+                  status: true,
+                  billingAccount: { select: { fundingSource: true } },
+                },
+              },
+            },
+          });
 
-      const claimedOld = await tx.program.updateMany({
-        where: {
-          id: old.id,
-          status: { in: ["ACTIVE", "PAUSED"] },
-        },
-        data: {
-          status: "CANCELLED",
-          archivedAt: now,
-        },
-      });
-      if (claimedOld.count === 0) {
-        throw Object.assign(
-          new Error(
-            "Program already superseded or closed by a concurrent request",
-          ),
-          { httpStatus: 409, code: "PROGRAM_ALREADY_CLOSED" },
-        );
-      }
+          if (!old) {
+            throw Object.assign(new Error("Program not found"), {
+              httpStatus: 404,
+            });
+          }
 
-      const shouldMigrateAssignments = body.migrateAssignments !== false;
-      const migratedAssignmentCount = shouldMigrateAssignments
-        ? activeAssignments.length
-        : 0;
+          if (old.status === "CANCELLED" || old.status === "EXPIRED") {
+            throw Object.assign(
+              new Error("Cannot supersede a cancelled or expired program"),
+              { httpStatus: 409, code: "PROGRAM_ALREADY_CLOSED" },
+            );
+          }
 
-      const successor = await tx.program.create({
-        data: {
-          contractId: old.contractId,
-          type: old.type,
-          name: body.name ?? old.name,
-          status: "ACTIVE",
-          coveredPlanTypes: body.coveredPlanTypes ?? old.coveredPlanTypes,
-          allowedCategories: body.allowedCategories ?? old.allowedCategories,
-          configLockedAt: migratedAssignmentCount > 0 ? now : null,
-        },
-      });
-
-      const nextCycle =
-        body.cycle ??
-        old.licensedSeatConfig?.cycle ??
-        old.creditPoolConfig?.cycle ??
-        "MONTHLY";
-
-      if (old.type === "LICENSED_SEAT") {
-        const oldSeat = old.licensedSeatConfig;
-        await tx.licensedSeatConfig.create({
-          data: {
-            programId: successor.id,
-            cycle: nextCycle,
-            ratePerSeatPaise:
-              body.ratePerSeatPaise !== undefined
-                ? BigInt(body.ratePerSeatPaise)
-                : (oldSeat?.ratePerSeatPaise ?? BigInt(0)),
+          const cfg = old.licensedSeatConfig ?? old.creditPoolConfig;
+          const mergedOverage = {
+            overageBehavior:
+              body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
+            overageSurchargeBps:
+              body.overageSurchargeBps !== undefined
+                ? body.overageSurchargeBps
+                : (cfg?.overageSurchargeBps ?? null),
+            maxOveragePerCyclePaise:
+              body.maxOveragePerCyclePaise !== undefined
+                ? body.maxOveragePerCyclePaise
+                : cfg?.maxOveragePerCyclePaise !== null &&
+                    cfg?.maxOveragePerCyclePaise !== undefined
+                  ? Number(cfg.maxOveragePerCyclePaise)
+                  : null,
             coveredEngagementsPerCycle:
               body.coveredEngagementsPerCycle !== undefined
                 ? body.coveredEngagementsPerCycle
-                : (oldSeat?.coveredEngagementsPerCycle ?? null),
+                : (old.licensedSeatConfig?.coveredEngagementsPerCycle ?? null),
+          };
+
+          assertMergedOverageConfigValid({
+            programType: old.type,
+            fundingSource:
+              old.contract?.billingAccount?.fundingSource ?? null,
             overageBehavior: mergedOverage.overageBehavior,
             overageSurchargeBps: mergedOverage.overageSurchargeBps,
-            priceCapPerEngagementPaise:
-              body.priceCapPerEngagementPaise !== undefined
-                ? body.priceCapPerEngagementPaise !== null
-                  ? BigInt(body.priceCapPerEngagementPaise)
-                  : null
-                : (oldSeat?.priceCapPerEngagementPaise ?? null),
-            maxOveragePerCyclePaise:
-              mergedOverage.maxOveragePerCyclePaise !== null
-                ? BigInt(mergedOverage.maxOveragePerCyclePaise)
-                : null,
-            activeSeatCount: migratedAssignmentCount,
-          },
-        });
-        if (oldSeat && typeof tx.licensedSeatConfig?.update === "function") {
-          await tx.licensedSeatConfig.update({
-            where: { programId: old.id },
-            data: { activeSeatCount: 0 },
+            maxOveragePerCyclePaise: mergedOverage.maxOveragePerCyclePaise,
+            coveredEngagementsPerCycle:
+              mergedOverage.coveredEngagementsPerCycle,
+            disallowMaxOverageWhenBlocked: true,
           });
-        }
-      } else if (old.type === "CREDIT_POOL") {
-        const oldPool = old.creditPoolConfig;
-        await tx.creditPoolConfig.create({
-          data: {
-            programId: successor.id,
-            cycle: nextCycle,
-            creditBudgetPerCycle:
-              body.creditBudgetPerCycle ?? oldPool?.creditBudgetPerCycle ?? 1,
-            overageBehavior: mergedOverage.overageBehavior,
-            overageSurchargeBps: mergedOverage.overageSurchargeBps,
-            priceCapPerEngagementPaise:
-              body.priceCapPerEngagementPaise !== undefined
-                ? body.priceCapPerEngagementPaise !== null
-                  ? BigInt(body.priceCapPerEngagementPaise)
-                  : null
-                : (oldPool?.priceCapPerEngagementPaise ?? null),
-            maxOveragePerCyclePaise:
-              mergedOverage.maxOveragePerCyclePaise !== null
-                ? BigInt(mergedOverage.maxOveragePerCyclePaise)
-                : null,
-          },
-        });
-      }
 
-      const allowlistRows = Array.isArray(old.consultantAllowlist)
-        ? old.consultantAllowlist
-        : typeof tx.programConsultantAllowlist?.findMany === "function"
-          ? await tx.programConsultantAllowlist.findMany({
-              where: { programId: old.id },
-            })
-          : [];
-      if (
-        allowlistRows.length > 0 &&
-        typeof tx.programConsultantAllowlist?.createMany === "function"
-      ) {
-        await tx.programConsultantAllowlist.createMany({
-          data: allowlistRows.map((entry) => ({
-            programId: successor.id,
-            consultantProfileId: entry.consultantProfileId,
-          })),
-          skipDuplicates: true,
-        });
-      }
+          const activeAssignments = Array.isArray(old.assignments)
+            ? old.assignments.filter((a) => !a.periodEnd || a.periodEnd >= now)
+            : typeof tx.programAssignment?.findMany === "function"
+              ? await tx.programAssignment.findMany({
+                  where: {
+                    programId: old.id,
+                    status: "ACTIVE",
+                    periodEnd: { gte: now },
+                  },
+                })
+              : [];
 
-      let closedSeatCount = activeAssignments.length;
-      if (typeof tx.programAssignment?.updateMany === "function") {
-        const closed = await tx.programAssignment.updateMany({
-          where: { programId: old.id, status: { in: ["ACTIVE", "PAUSED"] } },
-          data: { status: "CANCELLED", periodEnd: now },
-        });
-        if (typeof closed?.count === "number") {
-          closedSeatCount = closed.count;
-        }
-      }
-
-      const netReleasedSeats = Math.max(
-        0,
-        closedSeatCount - migratedAssignmentCount,
-      );
-      if (
-        netReleasedSeats > 0 &&
-        typeof tx.program?.findUnique === "function"
-      ) {
-        await releaseSeatsForClosedAssignments(tx, old.id, netReleasedSeats);
-      }
-
-      if (
-        shouldMigrateAssignments &&
-        activeAssignments.length > 0 &&
-        typeof tx.programAssignment?.create === "function"
-      ) {
-        const defaultPeriodEnd = computeCycleEnd(now, nextCycle);
-        for (const assignment of activeAssignments) {
-          const carryOver =
-            body.carryOverCyclePeriod !== false &&
-            assignment.periodEnd > now;
-          await tx.programAssignment.create({
+          const claimedOld = await tx.program.updateMany({
+            where: {
+              id: old.id,
+              status: { in: ["ACTIVE", "PAUSED"] },
+            },
             data: {
-              programId: successor.id,
-              membershipId: assignment.membershipId,
-              status: "ACTIVE",
-              periodStart: carryOver ? assignment.periodStart : now,
-              periodEnd: carryOver ? assignment.periodEnd : defaultPeriodEnd,
-              engagementsUsed: carryOver
-                ? (assignment.engagementsUsed ?? 0)
-                : 0,
-              consumedPaise: carryOver
-                ? BigInt(assignment.consumedPaise ?? 0)
-                : BigInt(0),
-              rolledFromAssignment: { connect: { id: assignment.id } },
+              status: "CANCELLED",
+              archivedAt: now,
             },
           });
-        }
-      }
+          if (claimedOld.count === 0) {
+            throw Object.assign(
+              new Error(
+                "Program already superseded or closed by a concurrent request",
+              ),
+              { httpStatus: 409, code: "PROGRAM_ALREADY_CLOSED" },
+            );
+          }
 
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "PROGRAM",
-          action: AUDIT_ACTIONS.PROGRAM.PROGRAM_SUPERSEDED,
-          description: `Program ${old.id} superseded by ${successor.id}`,
-          details: {
-            programId: old.id,
-            successorProgramId: successor.id,
-            reassignedSeats: migratedAssignmentCount,
-          },
+          const shouldMigrateAssignments = body.migrateAssignments !== false;
+          const migratedAssignmentCount = shouldMigrateAssignments
+            ? activeAssignments.length
+            : 0;
+
+          const successor = await tx.program.create({
+            data: {
+              contractId: old.contractId,
+              type: old.type,
+              name: body.name ?? old.name,
+              status: "ACTIVE",
+              coveredPlanTypes: body.coveredPlanTypes ?? old.coveredPlanTypes,
+              allowedCategories:
+                body.allowedCategories ?? old.allowedCategories,
+              configLockedAt: migratedAssignmentCount > 0 ? now : null,
+            },
+          });
+
+          const nextCycle =
+            body.cycle ??
+            old.licensedSeatConfig?.cycle ??
+            old.creditPoolConfig?.cycle ??
+            "MONTHLY";
+
+          if (old.type === "LICENSED_SEAT") {
+            const oldSeat = old.licensedSeatConfig;
+            await tx.licensedSeatConfig.create({
+              data: {
+                programId: successor.id,
+                cycle: nextCycle,
+                ratePerSeatPaise:
+                  body.ratePerSeatPaise !== undefined
+                    ? BigInt(body.ratePerSeatPaise)
+                    : (oldSeat?.ratePerSeatPaise ?? BigInt(0)),
+                coveredEngagementsPerCycle:
+                  body.coveredEngagementsPerCycle !== undefined
+                    ? body.coveredEngagementsPerCycle
+                    : (oldSeat?.coveredEngagementsPerCycle ?? null),
+                overageBehavior: mergedOverage.overageBehavior,
+                overageSurchargeBps: mergedOverage.overageSurchargeBps,
+                priceCapPerEngagementPaise:
+                  body.priceCapPerEngagementPaise !== undefined
+                    ? body.priceCapPerEngagementPaise !== null
+                      ? BigInt(body.priceCapPerEngagementPaise)
+                      : null
+                    : (oldSeat?.priceCapPerEngagementPaise ?? null),
+                maxOveragePerCyclePaise:
+                  mergedOverage.maxOveragePerCyclePaise !== null
+                    ? BigInt(mergedOverage.maxOveragePerCyclePaise)
+                    : null,
+                activeSeatCount: migratedAssignmentCount,
+              },
+            });
+          } else if (old.type === "CREDIT_POOL") {
+            const oldPool = old.creditPoolConfig;
+            await tx.creditPoolConfig.create({
+              data: {
+                programId: successor.id,
+                cycle: nextCycle,
+                creditBudgetPerCycle:
+                  body.creditBudgetPerCycle ??
+                  oldPool?.creditBudgetPerCycle ??
+                  1,
+                overageBehavior: mergedOverage.overageBehavior,
+                overageSurchargeBps: mergedOverage.overageSurchargeBps,
+                priceCapPerEngagementPaise:
+                  body.priceCapPerEngagementPaise !== undefined
+                    ? body.priceCapPerEngagementPaise !== null
+                      ? BigInt(body.priceCapPerEngagementPaise)
+                      : null
+                    : (oldPool?.priceCapPerEngagementPaise ?? null),
+                maxOveragePerCyclePaise:
+                  mergedOverage.maxOveragePerCyclePaise !== null
+                    ? BigInt(mergedOverage.maxOveragePerCyclePaise)
+                    : null,
+              },
+            });
+          }
+
+          const allowlistRows = Array.isArray(old.consultantAllowlist)
+            ? old.consultantAllowlist
+            : typeof tx.programConsultantAllowlist?.findMany === "function"
+              ? await tx.programConsultantAllowlist.findMany({
+                  where: { programId: old.id },
+                })
+              : [];
+          if (
+            allowlistRows.length > 0 &&
+            typeof tx.programConsultantAllowlist?.createMany === "function"
+          ) {
+            await tx.programConsultantAllowlist.createMany({
+              data: allowlistRows.map((entry) => ({
+                programId: successor.id,
+                consultantProfileId: entry.consultantProfileId,
+              })),
+              skipDuplicates: true,
+            });
+          }
+
+          let closedSeatCount = activeAssignments.length;
+          if (typeof tx.programAssignment?.updateMany === "function") {
+            const closedActive = await tx.programAssignment.updateMany({
+              where: { programId: old.id, status: "ACTIVE" },
+              data: { status: "CANCELLED", periodEnd: now },
+            });
+            if (typeof closedActive?.count === "number") {
+              closedSeatCount = closedActive.count;
+            }
+            await tx.programAssignment.updateMany({
+              where: { programId: old.id, status: "PAUSED" },
+              data: { status: "CANCELLED", periodEnd: now },
+            });
+          }
+
+          const netReleasedSeats = Math.max(
+            0,
+            closedSeatCount - migratedAssignmentCount,
+          );
+          if (
+            netReleasedSeats > 0 &&
+            typeof tx.program?.findUnique === "function"
+          ) {
+            await releaseSeatsForClosedAssignments(
+              tx,
+              old.id,
+              netReleasedSeats,
+            );
+          }
+
+          if (
+            old.type === "LICENSED_SEAT" &&
+            old.licensedSeatConfig &&
+            typeof tx.licensedSeatConfig?.update === "function"
+          ) {
+            await tx.licensedSeatConfig.update({
+              where: { programId: old.id },
+              data: { activeSeatCount: 0 },
+            });
+          }
+
+          if (
+            shouldMigrateAssignments &&
+            activeAssignments.length > 0 &&
+            typeof tx.programAssignment?.create === "function"
+          ) {
+            const defaultPeriodEnd = computeCycleEnd(now, nextCycle);
+            for (const assignment of activeAssignments) {
+              const carryOver =
+                body.carryOverCyclePeriod !== false &&
+                assignment.periodEnd > now;
+              await tx.programAssignment.create({
+                data: {
+                  programId: successor.id,
+                  membershipId: assignment.membershipId,
+                  status: "ACTIVE",
+                  periodStart: carryOver ? assignment.periodStart : now,
+                  periodEnd: carryOver
+                    ? assignment.periodEnd
+                    : defaultPeriodEnd,
+                  engagementsUsed: carryOver
+                    ? (assignment.engagementsUsed ?? 0)
+                    : 0,
+                  consumedPaise: carryOver
+                    ? BigInt(assignment.consumedPaise ?? 0)
+                    : BigInt(0),
+                  rolledFromAssignment: { connect: { id: assignment.id } },
+                },
+              });
+            }
+          }
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: orgId,
+              actorMembershipId: access.member.id,
+              category: "PROGRAM",
+              action: AUDIT_ACTIONS.PROGRAM.PROGRAM_SUPERSEDED,
+              description: `Program ${old.id} superseded by ${successor.id}`,
+              details: {
+                programId: old.id,
+                successorProgramId: successor.id,
+                reassignedSeats: migratedAssignmentCount,
+              },
+            },
+          });
+
+          return successor;
         },
-      });
-
-      return successor;
-    });
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      ),
+    );
 
     return NextResponse.json(
       { program: result, supersededProgramId: programId },

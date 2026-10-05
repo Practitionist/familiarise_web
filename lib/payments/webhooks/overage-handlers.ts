@@ -212,9 +212,9 @@ export async function handleOverageMemberSuccess(
             where: {
               paymentId: side.parentPaymentId,
               status: "HELD",
-              preDisputeStatus: null,
+              OR: [{ preDisputeStatus: "PENDING" }, { preDisputeStatus: null }],
             },
-            data: { status: "PENDING" },
+            data: { status: "PENDING", preDisputeStatus: null },
           });
         }
         if (typeof tx.organizationEarnings?.updateMany === "function") {

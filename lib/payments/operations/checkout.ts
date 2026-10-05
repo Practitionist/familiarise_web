@@ -4670,12 +4670,14 @@ export async function handleCheckout(
               //     and the gateway webhook transitions it → CHARGED.
               //   - BLOCK behavior: never reaches here (helper already threw).
               //     The circuit-breaker veto is the only BLOCK decision here.
-              if (utilizationResult.wasOverage) {
+              if (utilizationResult.wasOverage && isOrgSponsoredPayment) {
                 // #778 elegance — extracted to recordOverageAtCheckout (resolves
                 // the behaviour via computeOverage, enforces the circuit breaker,
                 // persists the OverageEvent + CHARGE_MEMBER side-Payment /
                 // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
-                // the breaker veto.
+                // the breaker veto. PERSONAL-funded bookings already charge the
+                // member's gateway directly, so only org-sponsored payments run
+                // checkout overage settlement.
                 overageBell = await recordOverageAtCheckout({
                   tx,
                   programAssignmentId,

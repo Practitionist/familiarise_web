@@ -445,11 +445,12 @@ async function recordMemberOverageCharge(
   });
 
   // Hold any PENDING earnings on the parent payment until the member side-payment
-  // is captured (released in handleOverageMemberSuccess).
+  // is captured or fails/times out (released in handleOverageMemberSuccess or
+  // restoreOverageBaseCarve).
   if (typeof tx.consultantEarnings?.updateMany === "function") {
     await tx.consultantEarnings.updateMany({
       where: { paymentId, status: "PENDING" },
-      data: { status: "HELD" },
+      data: { status: "HELD", preDisputeStatus: "PENDING" },
     });
   }
   if (typeof tx.organizationEarnings?.updateMany === "function") {
@@ -737,27 +738,22 @@ async function recordWalletCollectedOrgOverage(
   },
 ): Promise<null> {
   if (args.surchargePaise > 0) {
-    const parentRow =
-      typeof tx.payment?.findUnique === "function"
-        ? await tx.payment.findUnique({
-            where: { id: args.paymentId },
-            select: { billingAccountId: true },
-          })
-        : null;
-    if (typeof tx.billingAccount?.updateMany === "function") {
-      if (!parentRow?.billingAccountId) {
-        throw new PaymentError(
-          "Wallet overage surcharge has no billing account on parent payment.",
-          "OVERAGE_UNSUPPORTED_FUNDING",
-        );
-      }
-      await walletDebit(tx, {
-        billingAccountId: parentRow.billingAccountId,
-        amountPaise: args.surchargePaise,
-        reason: "BOOKING",
-        paymentId: args.paymentId,
-      });
+    const parentRow = await tx.payment.findUnique({
+      where: { id: args.paymentId },
+      select: { billingAccountId: true },
+    });
+    if (!parentRow?.billingAccountId) {
+      throw new PaymentError(
+        "Wallet overage surcharge has no billing account on parent payment.",
+        "OVERAGE_UNSUPPORTED_FUNDING",
+      );
     }
+    await walletDebit(tx, {
+      billingAccountId: parentRow.billingAccountId,
+      amountPaise: args.surchargePaise,
+      reason: "BOOKING",
+      paymentId: args.paymentId,
+    });
     await tx.paymentLeg.update({
       where: {
         paymentId_source: { paymentId: args.paymentId, source: "WALLET" },

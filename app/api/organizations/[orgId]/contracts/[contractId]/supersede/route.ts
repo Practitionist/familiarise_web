@@ -196,21 +196,15 @@ export async function POST(
       }
 
       if (body.rateCardId !== undefined && body.rateCardId !== null) {
-        const rateCardClient =
-          typeof tx.rateCard?.findFirst === "function"
-            ? tx.rateCard
-            : prisma.rateCard;
-        if (typeof rateCardClient?.findFirst === "function") {
-          const validCard = await rateCardClient.findFirst({
-            where: { id: body.rateCardId, ownerOrgId: orgId },
-            select: { id: true },
-          });
-          if (!validCard) {
-            throw Object.assign(
-              new Error("RateCard does not belong to this organization"),
-              { httpStatus: 400, code: "INVALID_RATE_CARD" },
-            );
-          }
+        const validCard = await tx.rateCard.findFirst({
+          where: { id: body.rateCardId, ownerOrgId: orgId },
+          select: { id: true },
+        });
+        if (!validCard) {
+          throw Object.assign(
+            new Error("RateCard does not belong to this organization"),
+            { httpStatus: 400, code: "INVALID_RATE_CARD" },
+          );
         }
       }
 
@@ -304,13 +298,10 @@ export async function POST(
         );
       }
 
-      const successor =
-        typeof tx.contract.update === "function"
-          ? await tx.contract.update({
-              where: { id: draftSuccessor.id },
-              data: { status: "ACTIVE" },
-            })
-          : { ...draftSuccessor, status: "ACTIVE" as const };
+      const successor = await tx.contract.update({
+        where: { id: draftSuccessor.id },
+        data: { status: "ACTIVE" },
+      });
 
       // Re-point programs so entitlements continue under the new terms — and
       // so the cycle engine (which requires an ACTIVE contract) keeps rolling

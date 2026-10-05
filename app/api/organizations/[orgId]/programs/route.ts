@@ -94,7 +94,7 @@ const LicensedSeatConfigSchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     // #775 — bps markup on the pass-through overage marginal (null = no markup).
@@ -166,7 +166,7 @@ const CreditPoolConfigSchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),

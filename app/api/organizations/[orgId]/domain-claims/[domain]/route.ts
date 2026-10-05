@@ -13,7 +13,6 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
-import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -87,10 +86,9 @@ export async function DELETE(
       }
 
       await tx.orgDomainClaim.delete({
-        where:
-          "id" in claim && typeof claim.id === "string"
-            ? { organizationId_domain: { organizationId: orgId, domain } }
-            : ({ domain } as unknown as Prisma.OrgDomainClaimWhereUniqueInput),
+        where: {
+          organizationId_domain: { organizationId: orgId, domain },
+        },
       });
       if (unapproved.length > 0) {
         await tx.ssoProvider.updateMany({

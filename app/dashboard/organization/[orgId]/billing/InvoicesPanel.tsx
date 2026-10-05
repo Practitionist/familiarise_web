@@ -277,9 +277,7 @@ export function InvoicesPanel({
   const isOrgStatusBlocked =
     orgStatus !== undefined
       ? orgStatus === "PENDING_VERIFICATION" || orgStatus === "SUSPENDED"
-      : moneyMoveBlocked &&
-        !moneyMoveReason.toLowerCase().includes("overdue") &&
-        !moneyMoveReason.toLowerCase().includes("frozen");
+      : moneyMoveBlocked;
 
   // Pay is billing.manage (OWNER + BILLING_ADMIN) on the API.
   const renderInvoiceActions = (inv: OrgInvoice) =>

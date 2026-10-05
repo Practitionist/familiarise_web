@@ -119,6 +119,102 @@ export function overageConfigRefusals(
 }
 
 /**
+ * Validates the combined overage configuration when patching or superseding an
+ * existing program. Throws a 400 error (`code: "INVALID_OVERAGE_CONFIG"`) if
+ * the merged configuration contains dead knobs (e.g. overage settings on an
+ * unlimited seat cap or surcharge under BLOCK) or lacks a positive
+ * `maxOveragePerCyclePaise` circuit-breaker ceiling when charging overages.
+ */
+export function assertMergedOverageConfigValid(params: {
+  programType: ProgramType;
+  fundingSource: FundingSource | null;
+  overageBehavior: OverageBehavior;
+  overageSurchargeBps: number | null;
+  maxOveragePerCyclePaise: number | null;
+  coveredEngagementsPerCycle: number | null;
+  disallowMaxOverageWhenBlocked?: boolean;
+  touchedOverageFields?: Partial<
+    Record<"overageBehavior" | "overageSurchargeBps", boolean>
+  >;
+}): void {
+  const {
+    programType,
+    fundingSource,
+    overageBehavior,
+    overageSurchargeBps,
+    maxOveragePerCyclePaise,
+    coveredEngagementsPerCycle,
+    disallowMaxOverageWhenBlocked = false,
+    touchedOverageFields,
+  } = params;
+
+  const fail = (message: string): never => {
+    throw Object.assign(new Error(message), {
+      httpStatus: 400,
+      code: "INVALID_OVERAGE_CONFIG",
+    });
+  };
+
+  if (
+    programType === "LICENSED_SEAT" &&
+    (coveredEngagementsPerCycle === null ||
+      coveredEngagementsPerCycle === undefined) &&
+    (overageBehavior !== "BLOCK" ||
+      (overageSurchargeBps ?? 0) > 0 ||
+      (maxOveragePerCyclePaise !== null &&
+        maxOveragePerCyclePaise !== undefined))
+  ) {
+    fail(
+      "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
+    );
+  }
+
+  if (
+    overageBehavior !== "BLOCK" &&
+    ((coveredEngagementsPerCycle !== null &&
+      coveredEngagementsPerCycle !== undefined) ||
+      programType === "CREDIT_POOL") &&
+    (maxOveragePerCyclePaise === null ||
+      maxOveragePerCyclePaise === undefined ||
+      maxOveragePerCyclePaise < 1)
+  ) {
+    fail(
+      `overageBehavior=${overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling.`,
+    );
+  }
+
+  if (overageBehavior === "BLOCK") {
+    if (
+      disallowMaxOverageWhenBlocked &&
+      ((overageSurchargeBps ?? 0) > 0 ||
+        (maxOveragePerCyclePaise !== null &&
+          maxOveragePerCyclePaise !== undefined))
+    ) {
+      fail(
+        "overageSurchargeBps and maxOveragePerCyclePaise have no effect when overageBehavior=BLOCK — clear them or choose CHARGE_MEMBER / CHARGE_ORG.",
+      );
+    }
+    if ((overageSurchargeBps ?? 0) > 0) {
+      fail(
+        "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG.",
+      );
+    }
+  }
+
+  const refusals = overageConfigRefusals(
+    fundingSource,
+    overageBehavior,
+    overageSurchargeBps,
+  );
+  const refusal = touchedOverageFields
+    ? refusals.find((r) => touchedOverageFields[r.field])
+    : refusals[0];
+  if (refusal) {
+    fail(refusal.message);
+  }
+}
+
+/**
  * Classifies a `(fundingSource, programType, overageBehavior, overageSurchargeBps)`
  * permutation into a three-tier guidance model (`RECOMMENDED`, `ADVANCED`,
  * `DISCOURAGED`) with actionable recommendations for enterprise admins.

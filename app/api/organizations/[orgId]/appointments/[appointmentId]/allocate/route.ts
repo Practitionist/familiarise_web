@@ -27,6 +27,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isActForOrgBooking, isOrgFundedByOrg } from "@/lib/booking/org-actor";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
@@ -156,24 +157,50 @@ export async function POST(
       );
     }
 
-    await prisma.orgAuditLog.create({
-      data: {
+    try {
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.APPOINTMENT_ALLOCATED_FOR_ORG,
+          description:
+            "Allocated calendar slots for a booking on behalf of the organization",
+          details: {
+            appointmentId: appointment.id,
+            eventType,
+            eventId,
+            mode,
+            slots: body.slots ?? null,
+            overrideReason: body.overrideReason,
+          },
+        },
+      });
+    } catch (auditErr) {
+      Sentry.captureException(
+        auditErr instanceof Error ? auditErr : new Error(String(auditErr)),
+        {
+          tags: {
+            subsystem: "enterprise",
+            route: "org_appointment_allocate_audit",
+          },
+        },
+      );
+      await recordSystemErrorSafe({
         organizationId: orgId,
-        actorMembershipId: access.member.id,
         category: "MEMBER",
-        action: AUDIT_ACTIONS.MEMBER.APPOINTMENT_ALLOCATED_FOR_ORG,
-        description:
-          "Allocated calendar slots for a booking on behalf of the organization",
-        details: {
+        summary:
+          "Failed to persist OrgAuditLog after allocating slots for organization booking",
+        err: auditErr,
+        context: {
           appointmentId: appointment.id,
           eventType,
           eventId,
           mode,
-          slots: body.slots ?? null,
           overrideReason: body.overrideReason,
         },
-      },
-    });
+      });
+    }
 
     return NextResponse.json({
       data: result.appointments,
@@ -189,12 +216,7 @@ export async function POST(
       { tags: { subsystem: "enterprise", route: "org_appointment_allocate" } },
     );
     return NextResponse.json(
-      {
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to allocate slots for organization booking.",
-      },
+      { error: "Failed to allocate slots for organization booking." },
       { status: 500 },
     );
   }

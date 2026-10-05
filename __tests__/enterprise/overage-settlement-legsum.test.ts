@@ -26,6 +26,10 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/novu/org-workflows", () => ({
   notifyOrgProgramOverageDue: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock("../../lib/api/organizations/wallet", () => ({
+  walletDebit: jest.fn().mockResolvedValue(undefined),
+  walletCredit: jest.fn().mockResolvedValue(undefined),
+}));
 
 type Leg = { source: string; amountPaise: number };
 
@@ -106,10 +110,14 @@ function makeTx(opts: {
         findUnique: jest.fn<
           Promise<{
             amount: number;
+            billingAccountId?: string | null;
             billableToOrgInvoiceId?: string | null;
           } | null>,
           [unknown?]
-        >(async () => ({ amount: payment.amount })),
+        >(async () => ({
+          amount: payment.amount,
+          billingAccountId: "ba1",
+        })),
       },
     },
   };

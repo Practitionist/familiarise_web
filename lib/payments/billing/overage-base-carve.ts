@@ -28,6 +28,48 @@ export type CarveOutcome = "restored" | "recarved" | "none" | "invoiced";
 
 type CarveRef = { overageEventId: string } | { sidePaymentId: string };
 
+type RestoreCarveTx = Pick<Tx, "overageEvent" | "payment" | "paymentLeg"> &
+  Partial<Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">>;
+
+export async function releaseOverageHeldParentEarnings(
+  tx: Partial<
+    Pick<Tx, "dispute" | "consultantEarnings" | "organizationEarnings">
+  >,
+  parentPaymentId: string,
+): Promise<void> {
+  const openDisputes =
+    typeof tx.dispute?.count === "function"
+      ? await tx.dispute.count({
+          where: {
+            paymentId: parentPaymentId,
+            status: { notIn: ["WON", "LOST"] },
+          },
+        })
+      : 0;
+  if (openDisputes > 0) return;
+
+  if (typeof tx.consultantEarnings?.updateMany === "function") {
+    await tx.consultantEarnings.updateMany({
+      where: {
+        paymentId: parentPaymentId,
+        status: "HELD",
+        OR: [{ preDisputeStatus: "PENDING" }, { preDisputeStatus: null }],
+      },
+      data: { status: "PENDING", preDisputeStatus: null },
+    });
+  }
+  if (typeof tx.organizationEarnings?.updateMany === "function") {
+    await tx.organizationEarnings.updateMany({
+      where: {
+        paymentId: parentPaymentId,
+        status: "HELD",
+        preDisputeStatus: "PENDING",
+      },
+      data: { status: "PENDING", preDisputeStatus: null },
+    });
+  }
+}
+
 async function loadCarveContext(
   tx: Pick<Tx, "overageEvent" | "payment">,
   ref: CarveRef,
@@ -47,7 +89,6 @@ async function loadCarveContext(
   if (
     !event ||
     event.overageBehavior !== "CHARGE_MEMBER" ||
-    event.basePaise <= 0 ||
     !event.payment?.parentPaymentId
   ) {
     return null;
@@ -62,14 +103,19 @@ async function loadCarveContext(
 
 /**
  * FAILED edge: return the carved basePaise to the parent's INVOICE_ACCRUAL
- * leg + amount. Call ONLY after a successful PENDING→FAILED CAS, in the same tx.
+ * leg + amount and release any overage-held earnings on the parent payment.
+ * Call ONLY after a successful PENDING→FAILED CAS, in the same tx.
  */
 export async function restoreOverageBaseCarve(
-  tx: Pick<Tx, "overageEvent" | "payment" | "paymentLeg">,
+  tx: RestoreCarveTx,
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
   if (!ctx) return "none";
+
+  await releaseOverageHeldParentEarnings(tx, ctx.parent.id);
+
+  if (ctx.event.basePaise <= 0) return "none";
 
   // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE
   // (re-evaluated under the row lock), so a rollup stamping
@@ -242,7 +288,7 @@ export async function recarveOverageBase(
   ref: CarveRef,
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
-  if (!ctx) return "none";
+  if (!ctx || ctx.event.basePaise <= 0) return "none";
 
   // Guarded parent-first write — same TOCTOU shape as the restore above.
   const parentCut = await tx.payment.updateMany({

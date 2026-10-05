@@ -218,7 +218,10 @@ export async function PATCH(
               invoiceId,
               invoiceNumber: current.invoiceNumber,
               totalPaise: Number(current.totalPaise),
+              displayCurrency: current.displayCurrency,
               dueDate: (body.dueDate ?? current.dueDate).toISOString(),
+              purchaseOrderId: current.purchaseOrderId,
+              contractId: current.contractId,
             },
           });
         }

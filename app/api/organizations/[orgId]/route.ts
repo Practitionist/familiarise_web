@@ -511,11 +511,14 @@ export async function PATCH(
     (body.canSponsor !== undefined ||
       body.canHost !== undefined ||
       body.slug !== undefined ||
+      body.billingEmail !== undefined ||
       body.requiresPO !== undefined ||
       body.paymentTermsDays !== undefined ||
       body.defaultCancellationPolicy !== undefined ||
       body.defaultRefundPolicy !== undefined ||
-      body.isPublic !== undefined)
+      body.isPublic !== undefined ||
+      body.msmeStatus !== undefined ||
+      body.msmeWrittenAgreementOnFile !== undefined)
   ) {
     return NextResponse.json(
       {

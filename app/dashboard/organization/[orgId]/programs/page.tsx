@@ -515,6 +515,489 @@ function rupeesToPaise(rupees: string): number | null {
   return Math.round(n * 100);
 }
 
+interface ValidatedCommercialFields {
+  priceCapPerEngagementPaise: number | null;
+  maxOveragePerCyclePaise: number | null;
+  overageSurchargeBps: number | null;
+  ratePerSeatPaise?: number;
+  coveredEngagementsPerCycle?: number | null;
+  creditBudgetPerCycle?: number;
+}
+
+function validateProgramCommercialFields(params: {
+  programType: "LICENSED_SEAT" | "CREDIT_POOL";
+  overageBehavior: OverageBehavior;
+  priceCapPerEngagementRupees: string;
+  maxOveragePerCycleRupees: string;
+  overageSurchargePct: string;
+  ratePerSeatRupees: string;
+  coveredEngagementsPerCycle: string;
+  creditBudgetPerCycle: string;
+}): { ok: true; value: ValidatedCommercialFields } | { ok: false; error: string } {
+  let priceCapPerEngagementPaise: number | null = null;
+  if (params.priceCapPerEngagementRupees.trim() !== "") {
+    const parsedCap = rupeesToPaise(params.priceCapPerEngagementRupees);
+    if (parsedCap === null || parsedCap < 1) {
+      return {
+        ok: false,
+        error:
+          "Price cap per engagement must be blank or a positive rupee amount.",
+      };
+    }
+    priceCapPerEngagementPaise = parsedCap;
+  }
+
+  let maxOveragePerCyclePaise: number | null = null;
+  let overageSurchargeBps: number | null = null;
+  if (params.overageBehavior !== "BLOCK") {
+    if (
+      params.programType === "LICENSED_SEAT" &&
+      params.coveredEngagementsPerCycle.trim() === ""
+    ) {
+      return {
+        ok: false,
+        error:
+          "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
+      };
+    }
+    const parsed = rupeesToPaise(params.maxOveragePerCycleRupees);
+    if (parsed === null || parsed < 1) {
+      return {
+        ok: false,
+        error:
+          "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
+      };
+    }
+    maxOveragePerCyclePaise = parsed;
+
+    if (params.overageSurchargePct.trim() !== "") {
+      const pct = parseFloat(params.overageSurchargePct);
+      if (!Number.isFinite(pct) || pct < 0) {
+        return {
+          ok: false,
+          error:
+            "Overage surcharge must be blank or a non-negative percentage.",
+        };
+      }
+      overageSurchargeBps = Math.round(pct * 100);
+    }
+  }
+
+  if (params.programType === "LICENSED_SEAT") {
+    const ratePaise = rupeesToPaise(params.ratePerSeatRupees);
+    if (ratePaise === null) {
+      return {
+        ok: false,
+        error: "Rate per seat must be a non-negative number (in rupees).",
+      };
+    }
+    const cap =
+      params.coveredEngagementsPerCycle.trim() === ""
+        ? null
+        : parseInt(params.coveredEngagementsPerCycle, 10);
+    if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
+      return {
+        ok: false,
+        error:
+          "Covered engagements per cycle must be blank or a positive integer.",
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        priceCapPerEngagementPaise,
+        maxOveragePerCyclePaise,
+        overageSurchargeBps,
+        ratePerSeatPaise: ratePaise,
+        coveredEngagementsPerCycle: cap,
+      },
+    };
+  }
+
+  const credits = Number(params.creditBudgetPerCycle.trim());
+  if (
+    !Number.isFinite(credits) ||
+    credits < 1 ||
+    !Number.isInteger(credits)
+  ) {
+    return {
+      ok: false,
+      error: "Credits per cycle must be a positive integer.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      priceCapPerEngagementPaise,
+      maxOveragePerCyclePaise,
+      overageSurchargeBps,
+      creditBudgetPerCycle: credits,
+    },
+  };
+}
+
+function LockedHint() {
+  return (
+    <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600">
+      <Lock className="h-3 w-3" /> Locked — in use
+    </span>
+  );
+}
+
+interface ProgramCommercialFieldsProps {
+  idPrefix: string;
+  programType: "LICENSED_SEAT" | "CREDIT_POOL";
+  locked?: boolean;
+  showCycleSelect?: boolean;
+  cycle?: BillingCycle;
+  onCycleChange?: (cycle: BillingCycle) => void;
+  coveredPlanTypes: CoveredPlanType[];
+  onCoveredPlanTypesChange: (next: CoveredPlanType[]) => void;
+  allowedCategoriesInput: string;
+  onAllowedCategoriesChange: (next: string) => void;
+  ratePerSeatRupees: string;
+  onRatePerSeatChange: (next: string) => void;
+  coveredEngagementsPerCycle: string;
+  onCoveredEngagementsChange: (next: string) => void;
+  creditBudgetPerCycle: string;
+  onCreditBudgetChange: (next: string) => void;
+  priceCapPerEngagementRupees: string;
+  onPriceCapChange: (next: string) => void;
+  overageBehavior: OverageBehavior;
+  onOverageBehaviorChange: (next: OverageBehavior) => void;
+  maxOveragePerCycleRupees: string;
+  onMaxOverageChange: (next: string) => void;
+  overageSurchargePct: string;
+  onOverageSurchargeChange: (next: string) => void;
+}
+
+function ProgramCommercialFieldsSection({
+  idPrefix,
+  programType,
+  locked = false,
+  showCycleSelect = false,
+  cycle = "MONTHLY",
+  onCycleChange,
+  coveredPlanTypes,
+  onCoveredPlanTypesChange,
+  allowedCategoriesInput,
+  onAllowedCategoriesChange,
+  ratePerSeatRupees,
+  onRatePerSeatChange,
+  coveredEngagementsPerCycle,
+  onCoveredEngagementsChange,
+  creditBudgetPerCycle,
+  onCreditBudgetChange,
+  priceCapPerEngagementRupees,
+  onPriceCapChange,
+  overageBehavior,
+  onOverageBehaviorChange,
+  maxOveragePerCycleRupees,
+  onMaxOverageChange,
+  overageSurchargePct,
+  onOverageSurchargeChange,
+}: Readonly<ProgramCommercialFieldsProps>) {
+  const handleCycleSelect = (v: string) => {
+    if (
+      onCycleChange &&
+      (v === "MONTHLY" || v === "QUARTERLY" || v === "ANNUAL")
+    ) {
+      onCycleChange(v);
+    }
+  };
+
+  return (
+    <>
+      <div className="space-y-2">
+        <Label>
+          Covered appointment types
+          {locked && <LockedHint />}
+        </Label>
+        <div className="grid grid-cols-2 gap-2">
+          {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
+            const checked = coveredPlanTypes.includes(opt.value);
+            return (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-2 rounded-md border p-2.5 transition-colors ${
+                  locked ? "opacity-60" : "cursor-pointer hover:bg-zinc-50"
+                }`}
+              >
+                <Checkbox
+                  id={`${idPrefix}-plan-type-${opt.value}`}
+                  checked={checked}
+                  disabled={locked}
+                  onCheckedChange={(v) => {
+                    onCoveredPlanTypesChange(
+                      v
+                        ? [...coveredPlanTypes, opt.value]
+                        : coveredPlanTypes.filter((t) => t !== opt.value),
+                    );
+                  }}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span className="text-sm font-medium">{opt.label}</span>
+                  <p className="text-xs text-zinc-500">{opt.description}</p>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+        {showCycleSelect && (
+          <p className="text-xs text-zinc-500">
+            Only bookings matching a selected type will be covered by this
+            program. Select at least one.
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-allowed-categories`}>
+          Allowed categories (optional)
+          {locked && <LockedHint />}
+        </Label>
+        <Input
+          id={`${idPrefix}-allowed-categories`}
+          disabled={locked}
+          value={allowedCategoriesInput}
+          onChange={(e) => onAllowedCategoriesChange(e.target.value)}
+          placeholder="e.g. Leadership, Engineering, Product — leave blank for all"
+        />
+        {showCycleSelect && (
+          <p className="text-xs text-zinc-500">
+            Comma-separated domain categories this program covers. Leave blank
+            to cover all categories.
+          </p>
+        )}
+      </div>
+
+      {programType === "LICENSED_SEAT" ? (
+        <>
+          <div
+            className={
+              showCycleSelect ? "grid grid-cols-[1fr_180px] gap-3" : "space-y-2"
+            }
+          >
+            <div className="space-y-2">
+              <Label htmlFor={`${idPrefix}-rate-per-seat`}>
+                Rate per seat (₹)
+                {locked && <LockedHint />}
+              </Label>
+              <Input
+                id={`${idPrefix}-rate-per-seat`}
+                type="number"
+                min={0}
+                step={1}
+                disabled={locked}
+                value={ratePerSeatRupees}
+                onChange={(e) => onRatePerSeatChange(e.target.value)}
+              />
+            </div>
+            {showCycleSelect && (
+              <div className="space-y-2">
+                <Label>Cycle</Label>
+                <Select value={cycle} onValueChange={handleCycleSelect}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BILLING_CYCLES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-covered-engagements`}>
+              Engagements per cycle
+              {locked && <LockedHint />}
+            </Label>
+            <Input
+              id={`${idPrefix}-covered-engagements`}
+              type="number"
+              min={1}
+              disabled={locked}
+              value={coveredEngagementsPerCycle}
+              onChange={(e) => onCoveredEngagementsChange(e.target.value)}
+              placeholder="e.g. 12 — leave blank for unlimited"
+            />
+            {showCycleSelect && (
+              <p className="text-xs text-zinc-500">
+                An engagement is one calendar occurrence — a 1:1 call, a
+                webinar, or one class day. Leave blank for unlimited (flat
+                licence).
+              </p>
+            )}
+          </div>
+        </>
+      ) : (
+        <div
+          className={
+            showCycleSelect ? "grid grid-cols-[1fr_180px] gap-3" : "space-y-2"
+          }
+        >
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-credits-per-cycle`}>
+              Credits per cycle (1 credit = ₹1)
+              {locked && <LockedHint />}
+            </Label>
+            <Input
+              id={`${idPrefix}-credits-per-cycle`}
+              type="number"
+              min={1}
+              step={1}
+              disabled={locked}
+              value={creditBudgetPerCycle}
+              onChange={(e) => onCreditBudgetChange(e.target.value)}
+            />
+            {showCycleSelect && (
+              <p className="text-xs text-zinc-500">
+                Per-cycle credit budget (1 credit = ₹1).
+              </p>
+            )}
+          </div>
+          {showCycleSelect && (
+            <div className="space-y-2">
+              <Label>Cycle</Label>
+              <Select value={cycle} onValueChange={handleCycleSelect}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BILLING_CYCLES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-price-cap`}>
+          Price cap per engagement (₹, optional)
+          {locked && <LockedHint />}
+        </Label>
+        <Input
+          id={`${idPrefix}-price-cap`}
+          type="number"
+          min={1}
+          step={1}
+          disabled={locked}
+          value={priceCapPerEngagementRupees}
+          onChange={(e) => onPriceCapChange(e.target.value)}
+          placeholder="e.g. 15000 — leave blank for no per-booking price cap"
+        />
+        {showCycleSelect && (
+          <p className="text-xs text-zinc-500">
+            Maximum covered price for any single booking under this program.
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label>
+          Overage behaviour
+          {locked && <LockedHint />}
+        </Label>
+        <Select
+          value={overageBehavior}
+          disabled={locked}
+          onValueChange={(v) => {
+            if (
+              v === "BLOCK" ||
+              v === "CHARGE_MEMBER" ||
+              v === "CHARGE_ORG"
+            ) {
+              onOverageBehaviorChange(v);
+            }
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="BLOCK">
+              Block — reject booking once the cap is hit
+            </SelectItem>
+            <SelectItem value="CHARGE_ORG">
+              Charge org — billed to the organization (invoice or wallet)
+            </SelectItem>
+            <SelectItem value="CHARGE_MEMBER">
+              Charge member — learner pays the over-cap co-pay at checkout
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        {showCycleSelect && (
+          <p className="text-xs text-zinc-500">
+            Applies to new bookings from the moment you save. INVOICE programmes
+            default to Charge org; other funding rails default to Block.
+          </p>
+        )}
+      </div>
+
+      {overageBehavior !== "BLOCK" && (
+        <>
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-max-overage`}>
+              Max overage per cycle (₹)
+              {locked && <LockedHint />}
+            </Label>
+            <Input
+              id={`${idPrefix}-max-overage`}
+              type="number"
+              min={1}
+              step="1"
+              disabled={locked}
+              value={maxOveragePerCycleRupees}
+              onChange={(e) => onMaxOverageChange(e.target.value)}
+              placeholder="e.g. 100000 = ₹1,00,000 ceiling"
+            />
+            {showCycleSelect && (
+              <p className="text-xs text-zinc-500">
+                Hard cap on total over-cap spend this cycle (circuit breaker).
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-overage-surcharge`}>
+              Overage surcharge (%, optional)
+              {locked && <LockedHint />}
+            </Label>
+            <Input
+              id={`${idPrefix}-overage-surcharge`}
+              type="number"
+              min={0}
+              step="0.01"
+              disabled={locked}
+              value={overageSurchargePct}
+              onChange={(e) => onOverageSurchargeChange(e.target.value)}
+              placeholder="leave blank for 0% markup"
+            />
+            {showCycleSelect && (
+              <p className="text-xs text-zinc-500">
+                Optional handling markup applied to over-cap portions. Leave
+                blank for 0%.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function CreateProgramDialog({
   orgId,
   open,
@@ -564,8 +1047,6 @@ function CreateProgramDialog({
       : null;
   }, [contracts, contractId]);
 
-  // All program types are unlocked across funding rails once a contract is
-  // selected; non-standard combinations are guided via MotivationBanner.
   const reachableTypes = useMemo<Array<"LICENSED_SEAT" | "CREDIT_POOL">>(() => {
     if (!capability || !selectedFunding) return ["LICENSED_SEAT", "CREDIT_POOL"];
     return ["LICENSED_SEAT", "CREDIT_POOL"];
@@ -655,69 +1136,29 @@ function CreateProgramDialog({
       return;
     }
 
-    let priceCapPerEngagementPaise: number | null = null;
-    if (priceCapPerEngagementRupees.trim() !== "") {
-      const parsedCap = rupeesToPaise(priceCapPerEngagementRupees);
-      if (parsedCap === null || parsedCap < 1) {
-        setError(
-          "Price cap per engagement must be blank or a positive rupee amount.",
-        );
-        return;
-      }
-      priceCapPerEngagementPaise = parsedCap;
-    }
-
-    let maxOveragePerCyclePaise: number | null = null;
-    let overageSurchargeBps: number | null = null;
-    if (effectiveOverageBehavior !== "BLOCK") {
-      if (
-        programType === "LICENSED_SEAT" &&
-        coveredEngagementsPerCycle.trim() === ""
-      ) {
-        setError(
-          "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
-        );
-        return;
-      }
-      const parsed = rupeesToPaise(maxOveragePerCycleRupees);
-      if (parsed === null || parsed < 1) {
-        setError(
-          "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
-        );
-        return;
-      }
-      maxOveragePerCyclePaise = parsed;
-
-      if (overageSurchargePct.trim() !== "") {
-        const pct = parseFloat(overageSurchargePct);
-        if (!Number.isFinite(pct) || pct < 0) {
-          setError(
-            "Overage surcharge must be blank or a non-negative percentage.",
-          );
-          return;
-        }
-        overageSurchargeBps = Math.round(pct * 100);
-      }
+    const validated = validateProgramCommercialFields({
+      programType,
+      overageBehavior: effectiveOverageBehavior,
+      priceCapPerEngagementRupees,
+      maxOveragePerCycleRupees,
+      overageSurchargePct,
+      ratePerSeatRupees,
+      coveredEngagementsPerCycle,
+      creditBudgetPerCycle,
+    });
+    if (!validated.ok) {
+      setError(validated.error);
+      return;
     }
 
     const allowedCategories = parseCategoriesInput(allowedCategoriesInput);
+    const {
+      priceCapPerEngagementPaise,
+      maxOveragePerCyclePaise,
+      overageSurchargeBps,
+    } = validated.value;
 
     if (programType === "LICENSED_SEAT") {
-      const ratePaise = rupeesToPaise(ratePerSeatRupees);
-      if (ratePaise === null) {
-        setError("Rate per seat must be a non-negative number (in rupees).");
-        return;
-      }
-      const cap =
-        coveredEngagementsPerCycle.trim() === ""
-          ? null
-          : parseInt(coveredEngagementsPerCycle, 10);
-      if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
-        setError(
-          "Covered engagements per cycle must be blank or a positive integer.",
-        );
-        return;
-      }
       createMutation.mutate({
         type: "LICENSED_SEAT",
         contractId,
@@ -725,9 +1166,10 @@ function CreateProgramDialog({
         coveredPlanTypes,
         allowedCategories,
         licensedSeatConfig: {
-          ratePerSeatPaise: ratePaise,
+          ratePerSeatPaise: validated.value.ratePerSeatPaise!,
           cycle,
-          coveredEngagementsPerCycle: cap,
+          coveredEngagementsPerCycle:
+            validated.value.coveredEngagementsPerCycle ?? null,
           overageBehavior: effectiveOverageBehavior,
           overageSurchargeBps,
           priceCapPerEngagementPaise,
@@ -735,15 +1177,6 @@ function CreateProgramDialog({
         },
       });
     } else {
-      const credits = Number(creditBudgetPerCycle.trim());
-      if (
-        !Number.isFinite(credits) ||
-        credits < 1 ||
-        !Number.isInteger(credits)
-      ) {
-        setError("Credits per cycle must be a positive integer.");
-        return;
-      }
       createMutation.mutate({
         type: "CREDIT_POOL",
         contractId,
@@ -752,7 +1185,7 @@ function CreateProgramDialog({
         allowedCategories,
         creditPoolConfig: {
           cycle,
-          creditBudgetPerCycle: credits,
+          creditBudgetPerCycle: validated.value.creditBudgetPerCycle!,
           overageBehavior: effectiveOverageBehavior,
           overageSurchargeBps,
           priceCapPerEngagementPaise,
@@ -776,7 +1209,6 @@ function CreateProgramDialog({
         </ResponsiveModalHeader>
 
         <div className="space-y-5">
-          {/* Contract */}
           <div className="space-y-2">
             <Label>Contract</Label>
             <Select value={contractId} onValueChange={setContractId}>
@@ -803,7 +1235,6 @@ function CreateProgramDialog({
             </p>
           </div>
 
-          {/* Program type */}
           <div className="space-y-2">
             <Label>Program type</Label>
             <Select
@@ -848,7 +1279,6 @@ function CreateProgramDialog({
             />
           )}
 
-          {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="program-name">Name</Label>
             <Input
@@ -859,265 +1289,34 @@ function CreateProgramDialog({
             />
           </div>
 
-          {/* Covered plan types */}
-          <div className="space-y-2">
-            <Label>Covered appointment types</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
-                const checked = coveredPlanTypes.includes(opt.value);
-                return (
-                  <label
-                    key={opt.value}
-                    className="flex items-start gap-2 rounded-md border p-2.5 cursor-pointer hover:bg-zinc-50 transition-colors"
-                  >
-                    <Checkbox
-                      id={`plan-type-${opt.value}`}
-                      checked={checked}
-                      onCheckedChange={(v) => {
-                        setCoveredPlanTypes((prev) =>
-                          v
-                            ? [...prev, opt.value]
-                            : prev.filter((t) => t !== opt.value),
-                        );
-                      }}
-                      className="mt-0.5"
-                    />
-                    <div>
-                      <span className="text-sm font-medium">{opt.label}</span>
-                      <p className="text-xs text-zinc-500">{opt.description}</p>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-            <p className="text-xs text-zinc-500">
-              Only bookings matching a selected type will be covered by this
-              program. Select at least one.
-            </p>
-          </div>
-
-          {/* Allowed categories */}
-          <div className="space-y-2">
-            <Label htmlFor="allowed-categories">
-              Allowed categories (optional)
-            </Label>
-            <Input
-              id="allowed-categories"
-              value={allowedCategoriesInput}
-              onChange={(e) => setAllowedCategoriesInput(e.target.value)}
-              placeholder="e.g. Leadership, Engineering, Product — leave blank for all"
-            />
-            <p className="text-xs text-zinc-500">
-              Comma-separated domain categories this program covers. Leave blank
-              to cover all categories.
-            </p>
-          </div>
-
-          {programType === "LICENSED_SEAT" ? (
-            <>
-              <div className="grid grid-cols-[1fr_180px] gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="rate-per-seat">Rate per seat (₹)</Label>
-                  <Input
-                    id="rate-per-seat"
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={ratePerSeatRupees}
-                    onChange={(e) => setRatePerSeatRupees(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Cycle</Label>
-                  <Select
-                    value={cycle}
-                    onValueChange={(v) => {
-                      if (
-                        v === "MONTHLY" ||
-                        v === "QUARTERLY" ||
-                        v === "ANNUAL"
-                      ) {
-                        setCycle(v);
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {BILLING_CYCLES.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="covered-engagements">
-                  Engagements per cycle
-                </Label>
-                <Input
-                  id="covered-engagements"
-                  type="number"
-                  min={1}
-                  value={coveredEngagementsPerCycle}
-                  onChange={(e) =>
-                    setCoveredEngagementsPerCycle(e.target.value)
-                  }
-                  placeholder="e.g. 12 — leave blank for unlimited"
-                />
-                <p className="text-xs text-zinc-500">
-                  An engagement is one calendar occurrence — a 1:1 call, a
-                  webinar, or one class day. Leave blank for unlimited (flat
-                  licence).
-                </p>
-              </div>
-            </>
-          ) : (
-            <div className="grid grid-cols-[1fr_180px] gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="credits-per-cycle">
-                  Credits per cycle (1 credit = ₹1)
-                </Label>
-                <Input
-                  id="credits-per-cycle"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={creditBudgetPerCycle}
-                  onChange={(e) => setCreditsPerCycle(e.target.value)}
-                />
-                <p className="text-xs text-zinc-500">
-                  Per-cycle credit budget (1 credit = ₹1).
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>Cycle</Label>
-                <Select
-                  value={cycle}
-                  onValueChange={(v) => {
-                    if (
-                      v === "MONTHLY" ||
-                      v === "QUARTERLY" ||
-                      v === "ANNUAL"
-                    ) {
-                      setCycle(v);
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BILLING_CYCLES.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
-
-          {/* Per-engagement price cap */}
-          <div className="space-y-2">
-            <Label htmlFor="price-cap-per-engagement">
-              Price cap per engagement (₹, optional)
-            </Label>
-            <Input
-              id="price-cap-per-engagement"
-              type="number"
-              min={1}
-              step={1}
-              value={priceCapPerEngagementRupees}
-              onChange={(e) => setPriceCapPerEngagementRupees(e.target.value)}
-              placeholder="e.g. 15000 — leave blank for no per-booking price cap"
-            />
-            <p className="text-xs text-zinc-500">
-              Maximum covered price for any single booking under this program.
-            </p>
-          </div>
-
-          {/* Overage policy */}
-          <div className="space-y-2">
-            <Label>Overage behaviour</Label>
-            <Select
-              value={effectiveOverageBehavior}
-              onValueChange={(v) => {
-                if (
-                  v === "BLOCK" ||
-                  v === "CHARGE_MEMBER" ||
-                  v === "CHARGE_ORG"
-                ) {
-                  setOverageBehavior(v);
-                  setOverageTouched(true);
-                }
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="BLOCK">
-                  Block — reject booking once the cap is hit
-                </SelectItem>
-                <SelectItem value="CHARGE_ORG">
-                  Charge org — billed to the organization (invoice or wallet)
-                </SelectItem>
-                <SelectItem value="CHARGE_MEMBER">
-                  Charge member — learner pays the over-cap co-pay at checkout
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-zinc-500">
-              Applies to new bookings from the moment you save. INVOICE
-              programmes default to Charge org; other funding rails default to
-              Block.
-            </p>
-          </div>
-
-          {effectiveOverageBehavior !== "BLOCK" && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="max-overage">Max overage per cycle (₹)</Label>
-                <Input
-                  id="max-overage"
-                  type="number"
-                  min={1}
-                  step="1"
-                  value={maxOveragePerCycleRupees}
-                  onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
-                  placeholder="e.g. 100000 = ₹1,00,000 ceiling"
-                />
-                <p className="text-xs text-zinc-500">
-                  Hard cap on total over-cap spend this cycle (circuit breaker).
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="overage-surcharge">
-                  Overage surcharge (%, optional)
-                </Label>
-                <Input
-                  id="overage-surcharge"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={overageSurchargePct}
-                  onChange={(e) => setOverageSurchargePct(e.target.value)}
-                  placeholder="leave blank for 0% markup"
-                />
-                <p className="text-xs text-zinc-500">
-                  Optional handling markup applied to over-cap portions. Leave
-                  blank for 0%.
-                </p>
-              </div>
-            </>
-          )}
+          <ProgramCommercialFieldsSection
+            idPrefix="create"
+            programType={programType}
+            showCycleSelect
+            cycle={cycle}
+            onCycleChange={setCycle}
+            coveredPlanTypes={coveredPlanTypes}
+            onCoveredPlanTypesChange={setCoveredPlanTypes}
+            allowedCategoriesInput={allowedCategoriesInput}
+            onAllowedCategoriesChange={setAllowedCategoriesInput}
+            ratePerSeatRupees={ratePerSeatRupees}
+            onRatePerSeatChange={setRatePerSeatRupees}
+            coveredEngagementsPerCycle={coveredEngagementsPerCycle}
+            onCoveredEngagementsChange={setCoveredEngagementsPerCycle}
+            creditBudgetPerCycle={creditBudgetPerCycle}
+            onCreditBudgetChange={setCreditsPerCycle}
+            priceCapPerEngagementRupees={priceCapPerEngagementRupees}
+            onPriceCapChange={setPriceCapPerEngagementRupees}
+            overageBehavior={effectiveOverageBehavior}
+            onOverageBehaviorChange={(v) => {
+              setOverageBehavior(v);
+              setOverageTouched(true);
+            }}
+            maxOveragePerCycleRupees={maxOveragePerCycleRupees}
+            onMaxOverageChange={setMaxOveragePerCycleRupees}
+            overageSurchargePct={overageSurchargePct}
+            onOverageSurchargeChange={setOverageSurchargePct}
+          />
 
           {motivation.tier === "DISCOURAGED" && (
             <AdvancedPermutationGate
@@ -1171,14 +1370,6 @@ function CreateProgramDialog({
 // ---------------------------------------------------------------------------
 // Edit-program dialog & Amend/Supersede dialog
 // ---------------------------------------------------------------------------
-
-function LockedHint() {
-  return (
-    <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600">
-      <Lock className="h-3 w-3" /> Locked — in use
-    </span>
-  );
-}
 
 function EditProgramDialog({
   orgId,
@@ -1332,95 +1523,44 @@ function EditProgramDialog({
         );
         return;
       }
-      body.coveredPlanTypes = coveredPlanTypes;
-      body.allowedCategories = parseCategoriesInput(allowedCategoriesInput);
 
-      let priceCapPerEngagementPaise: number | null = null;
-      if (priceCapPerEngagementRupees.trim() !== "") {
-        const parsedCap = rupeesToPaise(priceCapPerEngagementRupees);
-        if (parsedCap === null || parsedCap < 1) {
-          setError(
-            "Price cap per engagement must be blank or a positive rupee amount.",
-          );
-          return;
-        }
-        priceCapPerEngagementPaise = parsedCap;
-      }
-      body.priceCapPerEngagementPaise = priceCapPerEngagementPaise;
-
-      const surchargeBps =
-        overageBehavior === "BLOCK" || overageSurchargePct.trim() === ""
-          ? null
-          : Math.round(parseFloat(overageSurchargePct) * 100);
-      if (
-        surchargeBps !== null &&
-        (!Number.isFinite(surchargeBps) || surchargeBps < 0)
-      ) {
-        setError(
-          "Overage surcharge must be blank or a non-negative percentage.",
-        );
+      const validated = validateProgramCommercialFields({
+        programType: program.type,
+        overageBehavior,
+        priceCapPerEngagementRupees,
+        maxOveragePerCycleRupees,
+        overageSurchargePct,
+        ratePerSeatRupees,
+        coveredEngagementsPerCycle,
+        creditBudgetPerCycle,
+      });
+      if (!validated.ok) {
+        setError(validated.error);
         return;
       }
+
+      body.coveredPlanTypes = coveredPlanTypes;
+      body.allowedCategories = parseCategoriesInput(allowedCategoriesInput);
+      body.priceCapPerEngagementPaise =
+        validated.value.priceCapPerEngagementPaise;
+      body.maxOveragePerCyclePaise = validated.value.maxOveragePerCyclePaise;
+
       const savedOverageBehavior =
         program.licensedSeatConfig?.overageBehavior ??
         program.creditPoolConfig?.overageBehavior;
       if (overageBehavior !== savedOverageBehavior) {
         body.overageBehavior = overageBehavior;
       }
-      if (surchargeBps !== savedSurchargeBps) {
-        body.overageSurchargeBps = surchargeBps;
+      if (validated.value.overageSurchargeBps !== savedSurchargeBps) {
+        body.overageSurchargeBps = validated.value.overageSurchargeBps;
       }
 
-      let maxOveragePerCyclePaise: number | null = null;
-      if (overageBehavior !== "BLOCK") {
-        if (
-          program.type === "LICENSED_SEAT" &&
-          coveredEngagementsPerCycle.trim() === ""
-        ) {
-          setError(
-            "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
-          );
-          return;
-        }
-        const parsed = rupeesToPaise(maxOveragePerCycleRupees);
-        if (parsed === null || parsed < 1) {
-          setError(
-            "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
-          );
-          return;
-        }
-        maxOveragePerCyclePaise = parsed;
-      }
-      body.maxOveragePerCyclePaise = maxOveragePerCyclePaise;
       if (program.type === "LICENSED_SEAT") {
-        const ratePaise = rupeesToPaise(ratePerSeatRupees);
-        if (ratePaise === null) {
-          setError("Rate per seat must be a non-negative number (in rupees).");
-          return;
-        }
-        const cap =
-          coveredEngagementsPerCycle.trim() === ""
-            ? null
-            : parseInt(coveredEngagementsPerCycle, 10);
-        if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
-          setError(
-            "Covered engagements per cycle must be blank or a positive integer.",
-          );
-          return;
-        }
-        body.ratePerSeatPaise = ratePaise;
-        body.coveredEngagementsPerCycle = cap;
+        body.ratePerSeatPaise = validated.value.ratePerSeatPaise;
+        body.coveredEngagementsPerCycle =
+          validated.value.coveredEngagementsPerCycle;
       } else {
-        const credits = Number(creditBudgetPerCycle.trim());
-        if (
-          !Number.isFinite(credits) ||
-          credits < 1 ||
-          !Number.isInteger(credits)
-        ) {
-          setError("Credits per cycle must be a positive integer.");
-          return;
-        }
-        body.creditBudgetPerCycle = credits;
+        body.creditBudgetPerCycle = validated.value.creditBudgetPerCycle;
       }
     }
     patchMutation.mutate(body);
@@ -1472,7 +1612,6 @@ function EditProgramDialog({
               compact
             />
 
-            {/* Name — always editable */}
             <div className="space-y-2">
               <Label htmlFor="edit-program-name">Name</Label>
               <Input
@@ -1490,213 +1629,35 @@ function EditProgramDialog({
               <p className="text-sm">{PROGRAM_TYPE_META[program.type].label}</p>
             </div>
 
-            {/* Covered plan types */}
-            <div className="space-y-2">
-              <Label>
-                Covered appointment types
-                {locked && <LockedHint />}
-              </Label>
-              <div className="grid grid-cols-2 gap-2">
-                {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
-                  const checked = coveredPlanTypes.includes(opt.value);
-                  return (
-                    <label
-                      key={opt.value}
-                      className={`flex items-start gap-2 rounded-md border p-2.5 transition-colors ${
-                        locked
-                          ? "opacity-60"
-                          : "cursor-pointer hover:bg-zinc-50"
-                      }`}
-                    >
-                      <Checkbox
-                        checked={checked}
-                        disabled={locked}
-                        onCheckedChange={(v) => {
-                          setCoveredPlanTypes((prev) =>
-                            v
-                              ? [...prev, opt.value]
-                              : prev.filter((t) => t !== opt.value),
-                          );
-                        }}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <span className="text-sm font-medium">{opt.label}</span>
-                        <p className="text-xs text-zinc-500">
-                          {opt.description}
-                        </p>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Allowed categories */}
-            <div className="space-y-2">
-              <Label htmlFor="edit-allowed-categories">
-                Allowed categories (optional)
-                {locked && <LockedHint />}
-              </Label>
-              <Input
-                id="edit-allowed-categories"
-                disabled={locked}
-                value={allowedCategoriesInput}
-                onChange={(e) => setAllowedCategoriesInput(e.target.value)}
-                placeholder="e.g. Leadership, Engineering — leave blank for all"
-              />
-            </div>
-
-            {program.type === "LICENSED_SEAT" ? (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-rate-per-seat">
-                    Rate per seat (₹)
-                    {locked && <LockedHint />}
-                  </Label>
-                  <Input
-                    id="edit-rate-per-seat"
-                    type="number"
-                    min={0}
-                    step={1}
-                    disabled={locked}
-                    value={ratePerSeatRupees}
-                    onChange={(e) => setRatePerSeatRupees(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-covered-engagements">
-                    Engagements per cycle
-                    {locked && <LockedHint />}
-                  </Label>
-                  <Input
-                    id="edit-covered-engagements"
-                    type="number"
-                    min={1}
-                    disabled={locked}
-                    value={coveredEngagementsPerCycle}
-                    onChange={(e) =>
-                      setCoveredEngagementsPerCycle(e.target.value)
-                    }
-                    placeholder="leave blank for unlimited"
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="space-y-2">
-                <Label htmlFor="edit-credits-per-cycle">
-                  Credits per cycle (1 credit = ₹1)
-                  {locked && <LockedHint />}
-                </Label>
-                <Input
-                  id="edit-credits-per-cycle"
-                  type="number"
-                  min={1}
-                  step={1}
-                  disabled={locked}
-                  value={creditBudgetPerCycle}
-                  onChange={(e) => setCreditsPerCycle(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Price cap per engagement */}
-            <div className="space-y-2">
-              <Label htmlFor="edit-price-cap">
-                Price cap per engagement (₹, optional)
-                {locked && <LockedHint />}
-              </Label>
-              <Input
-                id="edit-price-cap"
-                type="number"
-                min={1}
-                step={1}
-                disabled={locked}
-                value={priceCapPerEngagementRupees}
-                onChange={(e) =>
-                  setPriceCapPerEngagementRupees(e.target.value)
-                }
-                placeholder="leave blank for no per-booking price cap"
-              />
-            </div>
-
-            {/* Overage policy */}
-            <div className="space-y-2">
-              <Label>
-                Overage behaviour
-                {locked && <LockedHint />}
-              </Label>
-              <Select
-                value={overageBehavior}
-                disabled={locked}
-                onValueChange={(v) => {
-                  if (
-                    v === "BLOCK" ||
-                    v === "CHARGE_MEMBER" ||
-                    v === "CHARGE_ORG"
-                  ) {
-                    setOverageBehavior(v);
-                    setAcknowledgedDiscouraged(false);
-                  }
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="BLOCK">
-                    Block — reject booking once the cap is hit
-                  </SelectItem>
-                  <SelectItem value="CHARGE_ORG">
-                    Charge org — billed to the organization (invoice or wallet)
-                  </SelectItem>
-                  <SelectItem value="CHARGE_MEMBER">
-                    Charge member — learner pays the over-cap co-pay at checkout
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {overageBehavior !== "BLOCK" && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-max-overage">
-                    Max overage per cycle (₹)
-                    {locked && <LockedHint />}
-                  </Label>
-                  <Input
-                    id="edit-max-overage"
-                    type="number"
-                    min={1}
-                    step="1"
-                    disabled={locked}
-                    value={maxOveragePerCycleRupees}
-                    onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
-                    placeholder="e.g. 100000 = ₹1,00,000 ceiling"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="edit-overage-surcharge">
-                    Overage surcharge (%, optional)
-                    {locked && <LockedHint />}
-                  </Label>
-                  <Input
-                    id="edit-overage-surcharge"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    disabled={locked}
-                    value={overageSurchargePct}
-                    onChange={(e) => {
-                      setOverageSurchargePct(e.target.value);
-                      setAcknowledgedDiscouraged(false);
-                    }}
-                    placeholder="leave blank for 0% markup"
-                  />
-                </div>
-              </>
-            )}
+            <ProgramCommercialFieldsSection
+              idPrefix="edit"
+              programType={program.type}
+              locked={locked}
+              coveredPlanTypes={coveredPlanTypes}
+              onCoveredPlanTypesChange={setCoveredPlanTypes}
+              allowedCategoriesInput={allowedCategoriesInput}
+              onAllowedCategoriesChange={setAllowedCategoriesInput}
+              ratePerSeatRupees={ratePerSeatRupees}
+              onRatePerSeatChange={setRatePerSeatRupees}
+              coveredEngagementsPerCycle={coveredEngagementsPerCycle}
+              onCoveredEngagementsChange={setCoveredEngagementsPerCycle}
+              creditBudgetPerCycle={creditBudgetPerCycle}
+              onCreditBudgetChange={setCreditsPerCycle}
+              priceCapPerEngagementRupees={priceCapPerEngagementRupees}
+              onPriceCapChange={setPriceCapPerEngagementRupees}
+              overageBehavior={overageBehavior}
+              onOverageBehaviorChange={(v) => {
+                setOverageBehavior(v);
+                setAcknowledgedDiscouraged(false);
+              }}
+              maxOveragePerCycleRupees={maxOveragePerCycleRupees}
+              onMaxOverageChange={setMaxOveragePerCycleRupees}
+              overageSurchargePct={overageSurchargePct}
+              onOverageSurchargeChange={(v) => {
+                setOverageSurchargePct(v);
+                setAcknowledgedDiscouraged(false);
+              }}
+            />
 
             {!locked && motivation.tier === "DISCOURAGED" && (
               <AdvancedPermutationGate
@@ -1876,49 +1837,19 @@ function SupersedeProgramDialog({
       return;
     }
 
-    let priceCapPerEngagementPaise: number | null = null;
-    if (priceCapPerEngagementRupees.trim() !== "") {
-      const parsedCap = rupeesToPaise(priceCapPerEngagementRupees);
-      if (parsedCap === null || parsedCap < 1) {
-        setError(
-          "Price cap per engagement must be blank or a positive rupee amount.",
-        );
-        return;
-      }
-      priceCapPerEngagementPaise = parsedCap;
-    }
-
-    let maxOveragePerCyclePaise: number | null = null;
-    let overageSurchargeBps: number | null = null;
-    if (overageBehavior !== "BLOCK") {
-      if (
-        program.type === "LICENSED_SEAT" &&
-        coveredEngagementsPerCycle.trim() === ""
-      ) {
-        setError(
-          "Overage settings have no effect when sessions per cycle is unlimited. Either enter a positive cap or switch overage behaviour to Block.",
-        );
-        return;
-      }
-      const parsed = rupeesToPaise(maxOveragePerCycleRupees);
-      if (parsed === null || parsed < 1) {
-        setError(
-          "Max overage per cycle is required when overage charges the org/member — enter a positive rupee ceiling.",
-        );
-        return;
-      }
-      maxOveragePerCyclePaise = parsed;
-
-      if (overageSurchargePct.trim() !== "") {
-        const pct = parseFloat(overageSurchargePct);
-        if (!Number.isFinite(pct) || pct < 0) {
-          setError(
-            "Overage surcharge must be blank or a non-negative percentage.",
-          );
-          return;
-        }
-        overageSurchargeBps = Math.round(pct * 100);
-      }
+    const validated = validateProgramCommercialFields({
+      programType: program.type,
+      overageBehavior,
+      priceCapPerEngagementRupees,
+      maxOveragePerCycleRupees,
+      overageSurchargePct,
+      ratePerSeatRupees,
+      coveredEngagementsPerCycle,
+      creditBudgetPerCycle,
+    });
+    if (!validated.ok) {
+      setError(validated.error);
+      return;
     }
 
     const body: SupersedeProgramBody = {
@@ -1926,42 +1857,20 @@ function SupersedeProgramDialog({
       coveredPlanTypes,
       allowedCategories: parseCategoriesInput(allowedCategoriesInput),
       overageBehavior,
-      overageSurchargeBps,
-      priceCapPerEngagementPaise,
-      maxOveragePerCyclePaise,
+      overageSurchargeBps: validated.value.overageSurchargeBps,
+      priceCapPerEngagementPaise: validated.value.priceCapPerEngagementPaise,
+      maxOveragePerCyclePaise: validated.value.maxOveragePerCyclePaise,
       migrateAssignments,
+      ...(program.type === "LICENSED_SEAT"
+        ? {
+            ratePerSeatPaise: validated.value.ratePerSeatPaise,
+            coveredEngagementsPerCycle:
+              validated.value.coveredEngagementsPerCycle,
+          }
+        : {
+            creditBudgetPerCycle: validated.value.creditBudgetPerCycle,
+          }),
     };
-
-    if (program.type === "LICENSED_SEAT") {
-      const ratePaise = rupeesToPaise(ratePerSeatRupees);
-      if (ratePaise === null) {
-        setError("Rate per seat must be a non-negative number (in rupees).");
-        return;
-      }
-      const cap =
-        coveredEngagementsPerCycle.trim() === ""
-          ? null
-          : parseInt(coveredEngagementsPerCycle, 10);
-      if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
-        setError(
-          "Covered engagements per cycle must be blank or a positive integer.",
-        );
-        return;
-      }
-      body.ratePerSeatPaise = ratePaise;
-      body.coveredEngagementsPerCycle = cap;
-    } else {
-      const credits = Number(creditBudgetPerCycle.trim());
-      if (
-        !Number.isFinite(credits) ||
-        credits < 1 ||
-        !Number.isInteger(credits)
-      ) {
-        setError("Credits per cycle must be a positive integer.");
-        return;
-      }
-      body.creditBudgetPerCycle = credits;
-    }
 
     supersedeMutation.mutate(body);
   };
@@ -2001,175 +1910,34 @@ function SupersedeProgramDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>Covered appointment types</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
-                const checked = coveredPlanTypes.includes(opt.value);
-                return (
-                  <label
-                    key={opt.value}
-                    className="flex items-start gap-2 rounded-md border p-2.5 cursor-pointer hover:bg-zinc-50"
-                  >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(v) => {
-                        setCoveredPlanTypes((prev) =>
-                          v
-                            ? [...prev, opt.value]
-                            : prev.filter((t) => t !== opt.value),
-                        );
-                      }}
-                      className="mt-0.5"
-                    />
-                    <div>
-                      <span className="text-sm font-medium">{opt.label}</span>
-                      <p className="text-xs text-zinc-500">{opt.description}</p>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="supersede-categories">
-              Allowed categories (optional)
-            </Label>
-            <Input
-              id="supersede-categories"
-              value={allowedCategoriesInput}
-              onChange={(e) => setAllowedCategoriesInput(e.target.value)}
-              placeholder="leave blank for all categories"
-            />
-          </div>
-
-          {program.type === "LICENSED_SEAT" ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="supersede-rate">Rate per seat (₹)</Label>
-                <Input
-                  id="supersede-rate"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={ratePerSeatRupees}
-                  onChange={(e) => setRatePerSeatRupees(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="supersede-engagements">
-                  Engagements per cycle
-                </Label>
-                <Input
-                  id="supersede-engagements"
-                  type="number"
-                  min={1}
-                  value={coveredEngagementsPerCycle}
-                  onChange={(e) =>
-                    setCoveredEngagementsPerCycle(e.target.value)
-                  }
-                  placeholder="blank = unlimited"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Label htmlFor="supersede-credits">
-                Credits per cycle (1 credit = ₹1)
-              </Label>
-              <Input
-                id="supersede-credits"
-                type="number"
-                min={1}
-                step={1}
-                value={creditBudgetPerCycle}
-                onChange={(e) => setCreditsPerCycle(e.target.value)}
-              />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label htmlFor="supersede-price-cap">
-              Price cap per engagement (₹, optional)
-            </Label>
-            <Input
-              id="supersede-price-cap"
-              type="number"
-              min={1}
-              step={1}
-              value={priceCapPerEngagementRupees}
-              onChange={(e) => setPriceCapPerEngagementRupees(e.target.value)}
-              placeholder="leave blank for no per-booking price cap"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Overage behaviour</Label>
-            <Select
-              value={overageBehavior}
-              onValueChange={(v) => {
-                if (
-                  v === "BLOCK" ||
-                  v === "CHARGE_MEMBER" ||
-                  v === "CHARGE_ORG"
-                ) {
-                  setOverageBehavior(v);
-                  setAcknowledgedDiscouraged(false);
-                }
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="BLOCK">
-                  Block — reject booking once the cap is hit
-                </SelectItem>
-                <SelectItem value="CHARGE_ORG">
-                  Charge org — billed to the organization
-                </SelectItem>
-                <SelectItem value="CHARGE_MEMBER">
-                  Charge member — learner pays the over-cap co-pay
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {overageBehavior !== "BLOCK" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="supersede-max-overage">
-                  Max overage per cycle (₹)
-                </Label>
-                <Input
-                  id="supersede-max-overage"
-                  type="number"
-                  min={1}
-                  step="1"
-                  value={maxOveragePerCycleRupees}
-                  onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="supersede-surcharge">
-                  Overage surcharge (%)
-                </Label>
-                <Input
-                  id="supersede-surcharge"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={overageSurchargePct}
-                  onChange={(e) => {
-                    setOverageSurchargePct(e.target.value);
-                    setAcknowledgedDiscouraged(false);
-                  }}
-                  placeholder="0%"
-                />
-              </div>
-            </div>
-          )}
+          <ProgramCommercialFieldsSection
+            idPrefix="supersede"
+            programType={program.type}
+            coveredPlanTypes={coveredPlanTypes}
+            onCoveredPlanTypesChange={setCoveredPlanTypes}
+            allowedCategoriesInput={allowedCategoriesInput}
+            onAllowedCategoriesChange={setAllowedCategoriesInput}
+            ratePerSeatRupees={ratePerSeatRupees}
+            onRatePerSeatChange={setRatePerSeatRupees}
+            coveredEngagementsPerCycle={coveredEngagementsPerCycle}
+            onCoveredEngagementsChange={setCoveredEngagementsPerCycle}
+            creditBudgetPerCycle={creditBudgetPerCycle}
+            onCreditBudgetChange={setCreditsPerCycle}
+            priceCapPerEngagementRupees={priceCapPerEngagementRupees}
+            onPriceCapChange={setPriceCapPerEngagementRupees}
+            overageBehavior={overageBehavior}
+            onOverageBehaviorChange={(v) => {
+              setOverageBehavior(v);
+              setAcknowledgedDiscouraged(false);
+            }}
+            maxOveragePerCycleRupees={maxOveragePerCycleRupees}
+            onMaxOverageChange={setMaxOveragePerCycleRupees}
+            overageSurchargePct={overageSurchargePct}
+            onOverageSurchargeChange={(v) => {
+              setOverageSurchargePct(v);
+              setAcknowledgedDiscouraged(false);
+            }}
+          />
 
           <label className="flex items-start gap-2.5 rounded-md border p-3 cursor-pointer hover:bg-zinc-50">
             <Checkbox
@@ -2723,6 +2491,7 @@ export default function OrgProgramsPage({
   );
   const [supersedingProgram, setSupersedingProgram] =
     useState<ProgramListItem | null>(null);
+  const [rowStatusError, setRowStatusError] = useState<string | null>(null);
 
   const programs = useQuery({
     queryKey: ["org-programs", orgId],
@@ -2745,8 +2514,10 @@ export default function OrgProgramsPage({
       status: ProgramStatus;
     }) => patchProgram(orgId, programId, { status }),
     onSuccess: () => {
+      setRowStatusError(null);
       void queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
     },
+    onError: (err: Error) => setRowStatusError(err.message),
   });
 
   if (!allowed) return null;
@@ -2792,6 +2563,9 @@ export default function OrgProgramsPage({
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {rowStatusError && (
+              <p className="mb-3 text-sm text-red-600">{rowStatusError}</p>
+            )}
             {programs.isLoading ? (
               <div className="flex items-center gap-2 text-sm text-zinc-500">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -3019,7 +2793,10 @@ export default function OrgProgramsPage({
       {managingProgram && (
         <ManageProgramDialog
           orgId={orgId}
-          program={managingProgram}
+          program={
+            programList.find((p) => p.id === managingProgram.id) ??
+            managingProgram
+          }
           open={!!managingProgram}
           onOpenChange={(v) => {
             if (!v) setManagingProgram(null);
