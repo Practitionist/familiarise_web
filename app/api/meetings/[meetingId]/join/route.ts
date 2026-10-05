@@ -12,6 +12,13 @@ import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
+/** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
+const PUBLISH_PERMISSIONS = [
+  "send-audio",
+  "send-video",
+  "screenshare",
+] as const;
+
 /**
  * POST /api/meetings/[meetingId]/join
  * Verifies meeting access and DPDP consent, upserts the caller on Stream, and grants `call_member` membership.
@@ -57,31 +64,12 @@ export async function POST(
       if (isOneToMany && access.role === "host") {
         await call.updateUserPermissions?.({
           user_id: userId,
-          grant_permissions: [
-            "join-backstage",
-            "update-call-permissions",
-            "mute-users",
-            "pin-call-track",
-            "send-audio",
-            "send-video",
-            "screenshare",
-          ],
+          grant_permissions: [...PUBLISH_PERMISSIONS],
         });
       } else if (isOneToMany) {
         await call.updateUserPermissions?.({
           user_id: userId,
-          grant_permissions: ["join-backstage"],
-          revoke_permissions: [
-            "send-audio",
-            "send-video",
-            "screenshare",
-            "update-call-permissions",
-          ],
-        });
-      } else if (access.role !== "host") {
-        await call.updateUserPermissions?.({
-          user_id: userId,
-          revoke_permissions: ["update-call-permissions"],
+          revoke_permissions: [...PUBLISH_PERMISSIONS],
         });
       }
     });
