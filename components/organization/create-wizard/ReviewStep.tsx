@@ -38,6 +38,7 @@ import {
   ApiResponseError,
 } from "@/lib/fetch-helpers";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
+import { STATE_NUMERIC_TO_NAME } from "@/lib/compliance/state-codes";
 
 interface InviteResult {
   email: string;
@@ -170,6 +171,7 @@ export function ReviewStep({
               ? {
                   fundingSource: initialData.fundingSource ?? "PERSONAL",
                   paymentTermsDays: initialData.paymentTermsDays ?? 60,
+                  gstStateCode: initialData.gstStateCode,
                 }
               : {}),
           },
@@ -190,8 +192,8 @@ export function ReviewStep({
 
       // Step 2a — PATCH branding colors (org endpoint accepts these).
       const hasBranding =
-        initialData.primaryColor != null ||
-        initialData.secondaryColor != null;
+        (initialData.primaryColor ?? null) !== null ||
+        (initialData.secondaryColor ?? null) !== null;
       if (hasBranding) {
         const patchPayload = validateOutboundPayload(
           PatchOrganizationPayloadSchema,
@@ -216,9 +218,9 @@ export function ReviewStep({
       // by /api/organizations/[orgId]/rate-cards, not the org PATCH route.
       const hasRateCard =
         canHost &&
-        (initialData.platformBps != null ||
-          initialData.orgBps != null ||
-          initialData.consultantBps != null);
+        ((initialData.platformBps ?? null) !== null ||
+          (initialData.orgBps ?? null) !== null ||
+          (initialData.consultantBps ?? null) !== null);
       if (hasRateCard) {
         const rateCardPayload = validateOutboundPayload(
           CreateRateCardPayloadSchema,
@@ -399,6 +401,13 @@ export function ReviewStep({
             <p>
               <strong>Payment terms:</strong> NET-
               {initialData.paymentTermsDays ?? 60}
+            </p>
+          )}
+          {initialData.gstStateCode && (
+            <p>
+              <strong>GST state:</strong>{" "}
+              {STATE_NUMERIC_TO_NAME[initialData.gstStateCode] ??
+                initialData.gstStateCode}
             </p>
           )}
         </Section>

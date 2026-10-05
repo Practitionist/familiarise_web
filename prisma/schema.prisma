@@ -2056,8 +2056,8 @@ model OrganizationPayout {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   /// #1470 — POST-withholding: the sum the payout rail actually transfers to
-  /// the host org, i.e. `netPayoutPaise - tdsAmountPaise`. The ORG_PAYOUT
-  /// journal credits CASH at this figure.
+  /// the host org, i.e. `netPayoutPaise - tdsAmountPaise` less any clawback
+  /// recovered from this payout. The ORG_PAYOUT journal credits CASH at this figure.
   amountPaise    BigInt
   currency       Currency       @default(INR)
   status         PayoutStatus
@@ -2070,9 +2070,9 @@ model OrganizationPayout {
   platformFeePaise  BigInt
   refundsPaise      BigInt @default(0)
   /// #1470 — PRE-withholding: the host org's share net of platform fee and
-  /// refunds, which is also the base TDS is computed on. The ORG_PAYOUT
-  /// journal debits ORG_PAYABLE at this figure, so
-  /// `amountPaise + tdsAmountPaise` must always equal it.
+  /// refunds, which is also the base TDS is computed on. The recovery journal
+  /// and the ORG_PAYOUT journal together debit ORG_PAYABLE at this figure, so
+  /// `amountPaise + tdsAmountPaise + recovered clawback` must always equal it.
   netPayoutPaise    BigInt
 
   // India statutory (fields final; cron + derivation stubbed in v1)
@@ -2119,8 +2119,8 @@ model OrganizationPayout {
   gatewayResponseRaw Json?
 
   /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
-  /// rolled into this payout is later refunded. Manual recovery only
-  /// in v1; admin sees this in the payout-detail page.
+  /// rolled into this payout is later refunded. Netted from the org's next
+  /// payouts (clawback-recovery.ts); admin sees this in the payout-detail page.
   clawbackAmountPaise BigInt    @default(0)
   clawbackInitiatedAt DateTime? @db.Timestamptz
 
@@ -2460,9 +2460,11 @@ model ConsumerCreditNote {
   /// Exactly one trigger keys the note. Both are @unique, so a webhook
   /// redelivery or a cron retry re-reads the existing note instead of minting a
   /// second one and burning a gapless number.
-  refundId  String? @unique
-  disputeId String? @unique
-  reason    String?
+  refundId     String? @unique
+  disputeId    String? @unique
+  reason       String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial Boolean @default(false)
 
   taxableValuePaise BigInt
   cgstPaise         BigInt @default(0)
@@ -5962,12 +5964,11 @@ model ConsultantPayout {
   idempotencyKey String @unique
 
   // W1a — clawback counterpart of OrganizationPayout.clawbackAmountPaise.
-  // Raised when an earning already PAID here is later reversed (a lost
-  // dispute). There is no inbound bank-pull path on the consultant rail, so
-  // the amount is booked to CONSULTANT_RECEIVABLE and recovered by hand —
-  // but it is now VISIBLE and reconcilable rather than a lost page. Amount is
-  // NET of TDS: the transfer was net, `recordTdsReversal` owns the tax leg,
-  // and clawing back gross would take back tax the platform never disbursed.
+  // Raised when an earning already PAID here is later reversed (a refund or a
+  // lost dispute). The amount is booked to CONSULTANT_RECEIVABLE and netted
+  // from the consultant's next payouts (clawback-recovery.ts). Amount is NET
+  // of TDS: the transfer was net, `recordTdsReversal` owns the tax leg, and
+  // clawing back gross would take back tax the platform never disbursed.
   clawbackAmountPaise BigInt    @default(0)
   clawbackInitiatedAt DateTime? @db.Timestamptz
 
@@ -6196,6 +6197,8 @@ model CreditNote {
   // back. A statutory document must name its real trigger, not borrow refundId.
   overageEventId String?              @unique
   reason         String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial   Boolean              @default(false)
 
   // #778 §D — IRP reports credit/debit notes as their own document types for
   // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.

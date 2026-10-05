@@ -16,10 +16,11 @@ import {
 } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
-import { Prisma, RefundStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
+import { PAYOUT_CONSTANTS } from "./constants";
 import {
   getIndianFinancialYear,
   recordOrgTDSDeduction,
@@ -27,6 +28,12 @@ import {
 } from "@/lib/payments/tax/tds-service";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import {
+  clawbackRecoveredPaise,
+  recoverClawbackOnPayout,
+  recoverablePaise,
+  releaseClawbackRecovery,
+} from "./clawback-recovery";
 import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
@@ -45,6 +52,7 @@ import {
   computeResidentPayoutTds,
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
+  REFUND_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
@@ -92,17 +100,24 @@ export class OrgPayoutWithholdingMismatchError extends Error {
   }
 }
 
-function assertOrgPayoutWithholdingIdentity(payout: {
-  id: string;
-  organizationId: string;
-  netPayoutPaise: number;
-  amountPaise: number;
-  tdsAmountPaise: number | null;
-}): void {
+/** `amountPaise + tdsAmountPaise + recoveredPaise === netPayoutPaise`, recovery being the netted clawback. */
+function assertOrgPayoutWithholdingIdentity(
+  payout: {
+    id: string;
+    organizationId: string;
+    netPayoutPaise: number;
+    amountPaise: number;
+    tdsAmountPaise: number | null;
+  },
+  recoveredPaise: number,
+): void {
   const tds = payout.tdsAmountPaise ?? 0;
   const isNegative =
     payout.netPayoutPaise < 0 || payout.amountPaise < 0 || tds < 0;
-  if (isNegative || payout.amountPaise + tds !== payout.netPayoutPaise) {
+  if (
+    isNegative ||
+    payout.amountPaise + tds + recoveredPaise !== payout.netPayoutPaise
+  ) {
     throw new OrgPayoutWithholdingMismatchError(
       payout.id,
       payout.organizationId,
@@ -238,6 +253,12 @@ export async function createOrgPayoutBatch(
   if (periodEnd.getTime() <= periodStart.getTime()) {
     throw new PayoutValidationError("periodEnd must be after periodStart", 400);
   }
+  if (opts.paymentGateway && opts.paymentGateway !== "RAZORPAY") {
+    throw new PayoutValidationError(
+      `Organisation payouts disburse through RazorpayX only; ${opts.paymentGateway} cannot be used.`,
+      400,
+    );
+  }
 
   if (opts.idempotencyKey) {
     const existing = await prisma.organizationPayout.findUnique({
@@ -297,7 +318,7 @@ export async function createOrgPayoutBatch(
                 amountPaise: 0,
                 currency: "INR",
                 status: "PENDING",
-                paymentGateway: opts.paymentGateway ?? "RAZORPAY",
+                paymentGateway: "RAZORPAY",
                 periodStart,
                 periodEnd,
                 grossRevenuePaise: 0,
@@ -394,7 +415,17 @@ export async function createOrgPayoutBatch(
               orgForCompliance?.taxInfo?.panEncrypted,
               resolvedRate,
             );
-            const amountAfterTds = netPayout - tds.tdsAmountPaise;
+            const recoveredPaise = await recoverClawbackOnPayout(tx, {
+              payee: { rail: "ORG", organizationId: orgId },
+              payoutId: created.id,
+              recoverablePaise: recoverablePaise(
+                netPayout - tds.tdsAmountPaise,
+                PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+                true,
+              ),
+            });
+            const amountAfterTds =
+              netPayout - tds.tdsAmountPaise - recoveredPaise;
             const tdsRateBps = tds.rateAppliedBps;
             const mustPayByDate = resolvePayoutMsmeDeadline(
               orgForCompliance?.msmeInfo?.msmeStatus,
@@ -447,6 +478,7 @@ export async function createOrgPayoutBatch(
                   tdsRate: tds.tdsRate,
                   tdsRateBps,
                   tdsAmountPaise: tds.tdsAmountPaise,
+                  clawbackRecoveredPaise: recoveredPaise,
                   tdsFallback: tds.fallbackApplied,
                   tdsReason: tds.reason,
                   idempotencyKey: created.idempotencyKey,
@@ -618,28 +650,10 @@ async function checkOrgPayoutDisputeOrRefundBlock(
     return readOrgPayoutCurrentStatus(tx, payoutId);
   }
 
-  const uncascadedRefundEarning =
-    typeof tx.organizationEarnings?.findFirst === "function"
-      ? await tx.organizationEarnings.findFirst({
-          where: {
-            orgPayoutId: payoutId,
-            payment: {
-              refunds: {
-                some: {
-                  OR: [
-                    { status: RefundStatus.PENDING },
-                    {
-                      status: RefundStatus.SUCCEEDED,
-                      cascadedAt: null,
-                    },
-                  ],
-                },
-              },
-            },
-          },
-          select: { id: true },
-        })
-      : null;
+  const uncascadedRefundEarning = await tx.organizationEarnings.findFirst({
+    where: { orgPayoutId: payoutId, payment: REFUND_GATED_PAYMENT_WHERE },
+    select: { id: true },
+  });
   if (uncascadedRefundEarning) {
     console.warn(
       `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has an in-flight or uncascaded refund`,
@@ -688,6 +702,7 @@ async function checkOrgPayoutShortfallBeforeDisbursement(
     where: { orgPayoutId: payout.id, status: "BATCHED" },
     data: { status: "READY", orgPayoutId: null },
   });
+  await releaseClawbackRecovery(tx, payout.id);
   await tx.orgAuditLog.create({
     data: {
       organizationId: payout.organizationId,
@@ -860,10 +875,10 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
   });
 
   if (payout.paymentGateway !== "RAZORPAY") {
-    console.warn(
-      `[OrgPayoutService] payout ${payoutId} gateway=${payout.paymentGateway} not yet supported`,
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: gateway ${payout.paymentGateway} has no payout rail; only RazorpayX disburses`,
+      400,
     );
-    return;
   }
 
   const account = await prisma.organizationPayoutAccount.findUnique({
@@ -941,6 +956,7 @@ async function markPayoutFailedFromSubmission(
       where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "READY", orgPayoutId: null },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     await tx.orgAuditLog.create({
       data: {
@@ -1011,8 +1027,6 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
 
   for (const p of stale) {
     try {
-      if (p.paymentGateway !== "RAZORPAY") continue;
-
       if (!p.gatewayPayoutId) {
         await submitOrgPayoutToGateway(p.id);
         result.advanced++;
@@ -1308,8 +1322,9 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     });
 
     const orgTds = payout.tdsAmountPaise ?? 0;
-    assertOrgPayoutWithholdingIdentity(payout);
-    if (payout.netPayoutPaise > 0) {
+    const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
+    assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
+    if (payout.netPayoutPaise - recoveredPaise > 0) {
       await postLedgerTxn(tx, {
         idempotencyKey: `orgpayout:${payoutId}`,
         kind: "ORG_PAYOUT",
@@ -1319,7 +1334,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
           },
-          grossPayablePaise: payout.netPayoutPaise,
+          grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
           netCashPaise: payout.amountPaise,
           tdsPaise: orgTds,
         }),
@@ -1447,6 +1462,7 @@ async function markOrgPayoutFailedInternal(
     await tx.tDSRecord.deleteMany({
       where: { orgPayoutId: payoutId, isReversal: false },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
       where: { id: payoutId },
@@ -1570,8 +1586,9 @@ export async function markOrgPayoutReversed(
     });
 
     const orgTds = payout.tdsAmountPaise ?? 0;
-    assertOrgPayoutWithholdingIdentity(payout);
-    if (payout.netPayoutPaise > 0) {
+    const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
+    assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
+    if (payout.netPayoutPaise - recoveredPaise > 0) {
       await postLedgerTxn(tx, {
         idempotencyKey: `orgpayout-reversal:${payoutId}`,
         kind: "ORG_PAYOUT",
@@ -1581,7 +1598,7 @@ export async function markOrgPayoutReversed(
             kind: "ORG_PAYABLE",
             organizationId: payout.organizationId,
           },
-          grossPayablePaise: payout.netPayoutPaise,
+          grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
           netCashPaise: payout.amountPaise,
           tdsPaise: orgTds,
         }),
@@ -1593,6 +1610,7 @@ export async function markOrgPayoutReversed(
       organizationId: payout.organizationId,
       reversalBasis: { kind: "FULL" },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     await tx.orgAuditLog.create({
       data: {

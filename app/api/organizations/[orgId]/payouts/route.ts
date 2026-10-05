@@ -25,6 +25,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { createOrgPayoutBatch } from "@/lib/payments/payouts/org-payout-service";
+import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 import type { PayoutStatus } from "@prisma/client";
 
 const PayoutStatusSchema = z.enum([
@@ -148,13 +149,21 @@ export async function GET(
     ],
   );
 
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    payouts.map((p) => p.id),
+  );
+
   const counts = Object.fromEntries(
     statusCounts.map((s) => [s.status, s._count.id]),
   ) as Partial<Record<PayoutStatus, number>>;
   const totalCount = statusCounts.reduce((sum, s) => sum + s._count.id, 0);
 
   return NextResponse.json({
-    data: payouts,
+    data: payouts.map((p) => ({
+      ...p,
+      clawbackRecoveredPaise: recovered.get(p.id) ?? 0,
+    })),
     pagination: {
       total,
       limit: q.limit,

@@ -55,6 +55,8 @@ flowchart TD
 | `LEDGER_TXN_IMBALANCE`                 | per `LedgerTransaction` (**full scope only**)                                   | `Σdebit == Σcredit`                                                                                                                                                  | a manual SQL edit or a future writer bug broke a posting                                                                                                                                                           |
 | `REFUND_BOOKING_COHERENCE`             | per `BookingUtilization` (**full scope only**)                                  | fully-refunded payment ⇒ utilization reversed; reversed utilization ⇒ a `SUCCEEDED` refund backs it                                                                  | a cap leak (money back but the seat still consumed) or a seat released for free                                                                                                                                    |
 | `LEDGER_DUAL_WRITE_GAP`                | per `OrganizationPayout` with `clawbackAmountPaise > 0`                         | a `clawback:*` `LedgerTransaction` exists against that payout                                                                                                        | the payout claims recovered cash the journal never saw                                                                                                                                                             |
+| `ORG_INVOICE_GST_MISMATCH`             | per issued rollup `OrganizationInvoice`                                         | invoice output tax less its credit notes == net `GST_PAYABLE` its billed bookings posted (within a paisa per booking) | one side taxed something the other did not, typically an overage surcharge or a tax-inclusive accrual leg |
+| `CLAWBACK_RECEIVABLE_STALE`            | one finding per run, listing every payee                                        | no clawback receivable is older than 90 days | the payee has had no payout large enough to net the clawback, so ops must recover it another way |
 
 **Grouped by what each check protects:**
 
@@ -86,6 +88,8 @@ flowchart TD
   subgraph G4["④ tax / filing integrity"]
     ITM["INVOICE_TOTAL_MISMATCH"]
     NIN["LEDGER_ACCOUNT_NON_INR"]
+    IGM["ORG_INVOICE_GST_MISMATCH"]
+    CRS["CLAWBACK_RECEIVABLE_STALE"]
   end
   G1 & G2 & G3 & G4 --> RPT["LedgerReconciliationReport<br/>{ ok, summary, findings[] }"]
   RPT --> OK{"findings.length<br/>== 0?"}

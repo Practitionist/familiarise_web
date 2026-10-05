@@ -57,7 +57,10 @@ const findFirst = jest.fn(async ({ where }: { where: Where }) => {
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { consultantPayout: { findFirst: (arg: never) => findFirst(arg) } },
+  default: {
+    consultantPayout: { findFirst: (arg: never) => findFirst(arg) },
+    ledgerTransaction: { findMany: async () => [] },
+  },
 }));
 
 import { readConsultantPayoutDetail } from "@/lib/data/consultant-payout-detail";

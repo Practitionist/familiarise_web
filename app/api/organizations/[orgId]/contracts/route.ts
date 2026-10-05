@@ -28,9 +28,7 @@ const LicenseCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
 const CreateBodySchema = z
   .object({
     billingAccountId: z.string().min(1),
-    // PurchaseOrder is optional — India enterprise orgs have
-    // requiresPO=true, but we surface the UX constraint at the org
-    // level. Server-side we only enforce the FK shape.
+    // Required to sign (status ACTIVE) when the org has requiresPO=true.
     purchaseOrderId: z.string().min(1).nullable().optional(),
     // `effectiveFrom` defaults to now so a contract created via API
     // takes effect immediately unless the caller specifies otherwise.
@@ -204,6 +202,21 @@ export async function POST(
         code: "LICENSE_ECONOMICS_REQUIRED",
       },
       { status: 400 },
+    );
+  }
+
+  if (
+    access.org.requiresPO &&
+    body.status === "ACTIVE" &&
+    !body.purchaseOrderId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "This organisation needs a purchase order on every signed contract. Attach an active purchase order and try again.",
+        code: "PO_REQUIRED",
+      },
+      { status: 409 },
     );
   }
 

@@ -32,6 +32,7 @@ import {
   rolesWithOrgPermission,
 } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import {
   PAYOUT_ALLOWED_FROM,
   transitionOrgPayout,
@@ -275,6 +276,7 @@ export async function PATCH(
           where: { orgPayoutId: payoutId, status: "BATCHED" },
           data: { status: "READY", orgPayoutId: null },
         });
+        await releaseClawbackRecovery(tx, payoutId);
       }
 
       const next = await tx.organizationPayout.findUniqueOrThrow({

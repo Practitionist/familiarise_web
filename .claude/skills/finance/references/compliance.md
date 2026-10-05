@@ -6,7 +6,9 @@ This page collects the tax and filing facts the finance code assumes, so a chang
 
 The platform withholds under Section 194-O — now Section 393(1) Table Sl.8(v) of the Income-tax Act, 2025, payment code 1035 — as an e-commerce operator paying an e-commerce participant, at **0.10%** of the gross consideration. CBDT Circulars 17/2020 and 20/2021 are explicit that the operator's retained commission is not deductible from that base, and `lib/compliance/tds-194o.ts` computes the taxable base as the gross sale, never the platform's fee alone.
 
-The ₹5,00,000-per-financial-year exemption applies only when all three limbs hold at once: the participant is an individual or a HUF, gross financial-year receipts do not exceed the threshold, and PAN or Aadhaar has been furnished. Companies, partnerships, and LLPs are withheld from the first rupee with no threshold at all. A missing PAN triggers 194-O's own 5% no-PAN rate, distinct from the 20% fallback that applies to Sections 194J and 194C, so the code must not collapse the two rates into one constant.
+CBDT Circular 20/2023 adds that fees and commission stay inside that gross base, and that GST shown separately on the invoice stays out of it only when the tax is deducted at the time of credit; deducted at payment, the base includes the GST.
+
+The ₹5,00,000-per-financial-year exemption applies only when all three limbs hold at once: the participant is an individual or a HUF, gross financial-year receipts do not exceed the threshold, and PAN or Aadhaar has been furnished. Companies, partnerships, and LLPs are withheld from the first rupee with no threshold at all. A consultant whose `ConsultantTaxInfo.taxEntityType` is null is treated as ineligible, so the payout requirements model (`lib/payments/payouts/payout-requirements.ts`) asks for the entity type as a `TAX_ENTITY_TYPE` step wherever it asks for the PAN. A missing PAN triggers 194-O's own 5% no-PAN rate, distinct from the 20% fallback that applies to Sections 194J and 194C, so the code must not collapse the two rates into one constant.
 
 The `TDS_ENGINE` default is CA-gated: `lib/payments/tax/tds-service.ts` (the deprecated consultant path, still flat 10% under a 194J framing) has not yet been consolidated onto `lib/compliance/tds.ts` (the canonical, org-and-consultant path that already carries the correct 194-O rate, threshold, and no-PAN fallback), pending a chartered accountant's sign-off on 194-O precedence for every consultant payout shape.
 
@@ -22,11 +24,19 @@ Consulting is not a Section 9(5) notified service, so neither the principal nor 
 
 ## SAC classification
 
-The platform's outward supply defaults to SAC **999293** (commercial training and coaching, under group 9992), which is what the code currently emits for every consumer document. For an advisory consultation, **998311** (management consulting) or **998399** may be the more accurate classification (#1369). All of 998311, 999293, 999294, and 999299 carry the same 18% rate, so this is an input-tax-credit and audit-trail question, not a tax-amount error, and changing the default does not change what a buyer owes.
+The platform's outward supply defaults to SAC **999293** (commercial training and coaching, under group 9992), which is what the code currently emits for every consumer document. The other codes the code names are 999294 (other education and training services n.e.c.), 998311 (management consulting) and 998314 (IT design and development); `TAX_CONSTANTS` labels them that way, and none of the labels changes which code is emitted. For an advisory consultation, **998311** (management consulting) or **998399** may be the more accurate classification (#1369). All of 998311, 999293, 999294, and 999299 carry the same 18% rate, so this is an input-tax-credit and audit-trail question, not a tax-amount error, and changing the default does not change what a buyer owes.
 
 ## Consumer document numbering
 
 `ConsumerInvoice` and `ConsumerCreditNote` run on a platform-wide gapless series, not a per-buyer one, because the platform is the supplier of record. Invoices are numbered `FAM-<FY>-<SEQ5>` (for example `FAM-2026-00001`, ceiling 99,999 per fiscal year); credit notes are numbered `FAM-CN-<FY>-<SEQ4>` (for example `FAM-CN-2026-0001`, ceiling 9,999 per fiscal year) on a separate series because CGST Rule 53 requires it. Both series use `PLATFORM_INVOICE_PREFIX` (default `FAM`), capped to sixteen characters by `fitPrefixToRule46`, and both allocate their sequence number only after the idempotency probe on `paymentId` confirms no document already exists — allocating first and probing second would leave a permanent gap in a gapless series on a webhook redelivery.
+
+## Credit notes have a statutory deadline: CGST s.34(2)
+
+Under CGST Act s.34(2), as amended by the Finance Act 2022, a credit note can reduce output tax only if it is declared by 30 November following the end of the financial year in which the supply was made, or by the annual-return date if that is earlier. `lib/compliance/gst-credit-note-cutoff.ts` computes that cutoff in IST from the supply date (the annual-return date is not tracked, so the November date is the one the code enforces). Past the cutoff, `mintRefundCreditNote`, `mintInvoiceRefundCreditNote` and `mintConsumerCreditNote` issue a commercial credit note instead: it carries the base amount only, every tax head is zero, and its reason starts with "Commercial credit note". The refund cascade's GST step and the free-credit reversal stop debiting `GST_PAYABLE` for the same refund, so the GST portion lands on `PLATFORM_FEE` as a platform cost. The early refund branch for parked captures never posted GST and is untouched.
+
+## E-invoicing is B2B only
+
+The IRP uploader (`jobs/compliance/irp-uploader.ts`) submits only organisation invoices that carry the buyer's GSTIN, because B2C supplies are outside e-invoicing. It stays dormant until every `CLEARTAX_*` credential is configured. A zero-rated export invoice records the platform's LUT number from `PLATFORM_LUT_NUMBER` in `OrganizationInvoice.lutNumber`, because the LUT belongs to the supplier, not to the buyer.
 
 ## Period boundaries are IST
 
@@ -38,7 +48,7 @@ Every fiscal-year and monthly-period boundary in the compliance pipeline — `in
 
 ## The outward register, not an in-app GSTR builder
 
-`jobs/compliance/gst-outward-register-export.ts` produces a monthly CSV register of every consumer invoice, organisation invoice, and credit note issued in the period, on the third of the month for the previous IST calendar month, ahead of the eleventh-of-the-month GSTR-1 deadline. The chartered accountant files GSTR-1 and GSTR-3B from that export; the platform does not build an in-app GSTR-1 or GSTR-3B JSON generator, because the register is the one artifact both the platform's own reconciliation and the CA's filing tooling need, and a second, parallel builder would be a second place for the two to drift.
+`jobs/compliance/gst-outward-register-export.ts` produces a monthly CSV register of every consumer invoice, organisation invoice, and credit note issued in the period, with a trailing `supply_date` column (the consumer invoice's supply date, the organisation invoice's issue date, or the original invoice's date on a credit note), on the third of the month for the previous IST calendar month, ahead of the eleventh-of-the-month GSTR-1 deadline. The chartered accountant files GSTR-1 and GSTR-3B from that export; the platform does not build an in-app GSTR-1 or GSTR-3B JSON generator, because the register is the one artifact both the platform's own reconciliation and the CA's filing tooling need, and a second, parallel builder would be a second place for the two to drift.
 
 ## Open questions for the chartered accountant
 
@@ -46,4 +56,4 @@ The five questions ADR 26 records are unresolved by design, not by oversight, an
 
 ## Sources
 
-`docs/compliance/02-tds-overview.md`, `docs/compliance/03-gst-overview.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/payments/06-b2c-tax-invoice.md`, `lib/compliance/tds-194o.ts`.
+`lib/compliance/gst-credit-note-cutoff.ts`, `docs/compliance/02-tds-overview.md`, `docs/compliance/03-gst-overview.md`, `docs/enterprise/70-design-decisions/26-gst-principal-model.md`, `docs/payments/06-b2c-tax-invoice.md`, `lib/compliance/tds-194o.ts`.

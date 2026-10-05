@@ -481,6 +481,31 @@ export async function PATCH(
   const gstStateCode: string | null | undefined = body.gstin
     ? (numericStateCode(body.gstin, null) ?? body.gstStateCode)
     : body.gstStateCode;
+  // A sponsoring domestic org is invoiced B2B, so its GST state is mandatory.
+  const invoicedB2b =
+    (body.canSponsor ?? access.org.canSponsor) &&
+    access.org.dataResidencyRegion === "IN";
+  const startsSponsoring = body.canSponsor === true && !access.org.canSponsor;
+  const leavesNoGstState =
+    gstStateCode === null ||
+    (gstStateCode === undefined &&
+      startsSponsoring &&
+      !(
+        await prisma.organizationTaxInfo.findUnique({
+          where: { organizationId: orgId },
+          select: { gstStateCode: true },
+        })
+      )?.gstStateCode);
+  if (invoicedB2b && leavesNoGstState) {
+    return NextResponse.json(
+      {
+        error:
+          "A GST state is required for an organisation that is invoiced. Choose your state, or add your GSTIN.",
+        code: "GST_STATE_REQUIRED",
+      },
+      { status: 400 },
+    );
+  }
 
   // Field-level gate: settings.ownerFields passes everything; otherwise every
   // touched field must be inside the caller's remit. 403 names the offending

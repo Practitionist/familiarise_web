@@ -73,6 +73,7 @@ const payout = (status: Payout["status"]): Payout => ({
   amount: 80_000,
   tdsDeducted: 80,
   netAmount: 79_920,
+  recoveredPaise: 0,
   tdsRateAppliedBps: 10,
   tdsFinancialYear: "2026-27",
   processedAt: "2026-09-14T20:05:00Z",

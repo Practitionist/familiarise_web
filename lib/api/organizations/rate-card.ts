@@ -23,6 +23,8 @@ import type { Tx } from "@/lib/prisma";
  */
 
 import type { Prisma, CoveredPlanType, RateCard } from "@prisma/client";
+import { z } from "zod";
+import { reportSentryError } from "@/lib/observability/report";
 
 // #780 — reads come through the extended client (money as number); the raw
 // model type still says bigint.
@@ -53,7 +55,7 @@ export const DEFAULT_RATE_CARD: ResolvedRateCard = {
 /**
  * #1335 — is settlement allowed to forward the booking's contract/plan scope?
  *
- * Off unless the value is exactly `"on"`, because flipping it changes which
+ * Off unless the value is `"on"`, because flipping it changes which
  * card settles live money: contract- and plan-scoped cards have been creatable
  * since the resolver shipped and have never been selected, so any that already
  * exist would start paying a different split the moment they become reachable.
@@ -64,8 +66,28 @@ export const DEFAULT_RATE_CARD: ResolvedRateCard = {
  * module first. Same shape as `TDS_ENGINE` in
  * `lib/payments/payouts/payout-service.ts`.
  */
+const ScopedResolutionFlagSchema = z.enum(["on", "off"]);
+let invalidScopedFlagReported = false;
+
+/**
+ * Any value but "on"/"off" (including "true") reads as off and pages once per
+ * process; throwing here would strand a confirmed booking without earnings.
+ */
 export function isScopedRateCardResolutionEnabled(): boolean {
-  return process.env.RATE_CARD_SCOPED_RESOLUTION === "on";
+  const raw = process.env.RATE_CARD_SCOPED_RESOLUTION?.trim();
+  if (!raw) return false;
+  const parsed = ScopedResolutionFlagSchema.safeParse(raw);
+  if (parsed.success) return parsed.data === "on";
+  if (!invalidScopedFlagReported) {
+    invalidScopedFlagReported = true;
+    reportSentryError(
+      new Error(
+        `RATE_CARD_SCOPED_RESOLUTION must be "on" or "off" (got "${raw}"); settling on org-scoped cards.`,
+      ),
+      { subsystem: "payments", level: "fatal" },
+    );
+  }
+  return false;
 }
 
 function toResolved(card: RateCardRow): ResolvedRateCard {

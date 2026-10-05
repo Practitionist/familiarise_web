@@ -52,6 +52,10 @@ export const CreateOrganizationPayloadSchema = z.object({
   // PERSONAL is selected so operators see the gap.
   fundingSource: SelfServiceFundingSourceSchema.optional(),
   paymentTermsDays: z.number().int().min(0).max(180).optional(),
+  gstStateCode: z
+    .string()
+    .regex(/^\d{2}$/)
+    .optional(),
 });
 
 // PATCH /api/organizations/[orgId] — fields the dashboard surfaces.

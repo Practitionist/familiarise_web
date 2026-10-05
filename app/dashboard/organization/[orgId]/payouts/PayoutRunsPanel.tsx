@@ -39,6 +39,7 @@ interface PayoutItem {
   platformFeePaise: number;
   refundsPaise: number;
   tdsAmountPaise: number | null;
+  clawbackRecoveredPaise: number;
   currency: string;
   status: string;
   periodStart: string;
@@ -480,9 +481,21 @@ export function PayoutRunsPanel({
                                         </span>
                                       </div>
                                     )}
+                                    {payout.clawbackRecoveredPaise > 0 && (
+                                      <div className="flex justify-between gap-4">
+                                        <span>Clawback recovered</span>
+                                        <span>
+                                          −
+                                          {formatCurrencyAmount(
+                                            payout.clawbackRecoveredPaise,
+                                            payout.currency,
+                                          )}
+                                        </span>
+                                      </div>
+                                    )}
                                     <div className="pt-1 text-[11px]">
                                       Disbursed cash — net of platform fee,
-                                      refunds and TDS.
+                                      refunds, TDS and any clawback recovered.
                                     </div>
                                   </div>
                                 </TooltipContent>

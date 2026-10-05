@@ -55,6 +55,17 @@ export function paymentFunding(p: PaymentFundingLike): PaymentFunding {
 export const isSponsoredPayment = (p: PaymentFundingLike): boolean =>
   paymentFunding(p) === "ORG";
 
+/** Who paid, in plain words: the sponsoring organisation, or the attendee. */
+export function payerSentence(
+  funding: PaymentFunding,
+  organizationName: string | null,
+): string {
+  if (funding !== "ORG") return "Paid by you";
+  return organizationName
+    ? `Paid by ${organizationName}`
+    : "Paid by your organisation";
+}
+
 const GATEWAY_NAME: Record<string, string> = {
   RAZORPAY: "Razorpay",
   STRIPE: "Stripe",

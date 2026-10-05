@@ -5,11 +5,13 @@
  * Prisma: the statutory rules below are worth testing in isolation, and pulling
  * a database client into that test buys nothing.
  *
- * 194-O is now s.393(1) Table Sl. 8(v) of the Income-tax Act 2025. The base is
- * the GROSS amount of the sale or service — CBDT Circulars 17/2020 and 20/2021
- * are explicit that the operator's retained commission is not deductible from
- * it, and Note 3 to s.393 even deems direct customer-to-participant payments
- * into the gross.
+ * Income-tax Act 2025 mapping: s.194-O is s.393(1) Table Sl. 8(v), payment code 1035.
+ * The base is the GROSS amount of the sale or service — CBDT Circulars 17/2020
+ * and 20/2021 are explicit that the operator's retained commission is not
+ * deductible from it, and Note 3 to s.393 even deems direct
+ * customer-to-participant payments into the gross.
+ * CBDT Circular 20/2023 keeps fees and commission in that gross base; separately stated
+ * GST is excluded only when TDS is deducted at credit (at payment it stays in).
  */
 
 /**

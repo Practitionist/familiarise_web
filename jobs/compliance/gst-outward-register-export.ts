@@ -109,6 +109,7 @@ async function collectRows(
         select: {
           invoiceNumber: true,
           issuedAt: true,
+          supplyDate: true,
           placeOfSupply: true,
           taxableValuePaise: true,
           cgstPaise: true,
@@ -142,7 +143,10 @@ async function collectRows(
         orderBy: { issuedAt: "asc" },
       }),
       prisma.consumerCreditNote.findMany({
-        where: { issuedAt: { gte: periodStart, lt: periodEnd } },
+        where: {
+          issuedAt: { gte: periodStart, lt: periodEnd },
+          isCommercial: false,
+        },
         select: {
           creditNoteNumber: true,
           issuedAt: true,
@@ -154,6 +158,7 @@ async function collectRows(
           consumerInvoice: {
             select: {
               invoiceNumber: true,
+              supplyDate: true,
               placeOfSupply: true,
               sacCode: true,
               paymentId: true,
@@ -167,6 +172,7 @@ async function collectRows(
         where: {
           status: "ISSUED",
           issuedAt: { gte: periodStart, lt: periodEnd },
+          isCommercial: false,
         },
         select: {
           creditNoteNumber: true,
@@ -179,6 +185,7 @@ async function collectRows(
           invoice: {
             select: {
               invoiceNumber: true,
+              issuedAt: true,
               placeOfSupply: true,
               gstin: true,
               hsnCode: true,
@@ -197,6 +204,7 @@ async function collectRows(
       docType: "INVOICE",
       docNumber: inv.invoiceNumber,
       docDate: inv.issuedAt,
+      supplyDate: inv.supplyDate,
       buyerType: "B2C",
       buyerGstin: null,
       placeOfSupply: inv.placeOfSupply,
@@ -219,6 +227,7 @@ async function collectRows(
       // An issued invoice always carries `issuedAt`; the column is nullable
       // only because DRAFT rows exist, and those are filtered out above.
       docDate: inv.issuedAt ?? new Date(0),
+      supplyDate: inv.issuedAt,
       buyerType: "B2B",
       buyerGstin: inv.gstin,
       placeOfSupply: inv.placeOfSupply,
@@ -239,6 +248,7 @@ async function collectRows(
       docType: "CREDIT_NOTE",
       docNumber: note.creditNoteNumber,
       docDate: note.issuedAt,
+      supplyDate: note.consumerInvoice.supplyDate,
       buyerType: "B2C",
       buyerGstin: null,
       placeOfSupply: note.consumerInvoice.placeOfSupply,
@@ -259,6 +269,7 @@ async function collectRows(
       docType: "CREDIT_NOTE",
       docNumber: note.creditNoteNumber,
       docDate: note.issuedAt ?? new Date(0),
+      supplyDate: note.invoice?.issuedAt ?? null,
       buyerType: "B2B",
       buyerGstin: note.invoice?.gstin ?? null,
       placeOfSupply: note.invoice?.placeOfSupply ?? null,
@@ -331,6 +342,25 @@ export async function runGstOutwardRegisterExport(
       const rows = await collectRows(periodStart, periodEnd);
       const register = buildOutwardRegister(rows, periodStart, periodEnd);
 
+      // Commercial notes reverse no tax, so they are not GSTR-1 documents.
+      const periodIssued = { gte: periodStart, lt: periodEnd };
+      const commercialNotes =
+        (await prisma.consumerCreditNote.count({
+          where: { issuedAt: periodIssued, isCommercial: true },
+        })) +
+        (await prisma.creditNote.count({
+          where: {
+            status: "ISSUED",
+            issuedAt: periodIssued,
+            isCommercial: true,
+          },
+        }));
+      if (commercialNotes > 0) {
+        console.warn(
+          `[gst-register] WARN ${commercialNotes} commercial credit note(s) issued past the s.34(2) cutoff were left out of the register`,
+        );
+      }
+
       let outPath: string | null = null;
       if (writeCsv) {
         outPath =
@@ -371,13 +401,18 @@ export async function runGstOutwardRegisterExport(
           data: { gstr1ExportedAt: stampedAt },
         }),
         prisma.consumerCreditNote.updateMany({
-          where: { issuedAt: periodWindow, gstr1ExportedAt: null },
+          where: {
+            issuedAt: periodWindow,
+            isCommercial: false,
+            gstr1ExportedAt: null,
+          },
           data: { gstr1ExportedAt: stampedAt },
         }),
         prisma.creditNote.updateMany({
           where: {
             status: "ISSUED",
             issuedAt: periodWindow,
+            isCommercial: false,
             gstr1ExportedAt: null,
           },
           data: { gstr1ExportedAt: stampedAt },
@@ -393,6 +428,7 @@ export async function runGstOutwardRegisterExport(
           mintedByHealer: healed.minted,
           skippedByHealer: healed.skipped,
           ...register.totals,
+          commercialNotesExcluded: commercialNotes,
           warnings: register.warnings.length,
         }),
       );

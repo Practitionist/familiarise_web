@@ -12,14 +12,13 @@ import {
   recordSystemEvent,
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import {
   PayoutStatus,
   PayoutMethod,
   PayoutAccountType,
   PaymentGateway,
   EarningStatus,
-  RefundStatus,
   Prisma,
 } from "@prisma/client";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -40,6 +39,13 @@ import {
   isRazorpayPayoutsConfigured,
 } from "./razorpay-payouts";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import {
+  clawbackRecoveredPaise,
+  outstandingClawbackPaise,
+  recoverClawbackOnPayout,
+  recoverablePaise,
+  releaseClawbackRecovery,
+} from "./clawback-recovery";
 import { postConsultantPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { randomUUID } from "crypto";
 import {
@@ -73,6 +79,7 @@ import {
   computeResidentPayoutTds,
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
+  REFUND_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
   tdsRateToBps,
@@ -220,15 +227,6 @@ export async function checkPayoutEligibility(
 
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
-
-/**
- * Refund statuses that must NOT block a payout: FAILED and CANCELLED never
- * returned the money. Refund-side sibling of `DISPUTE_INACTIVE_FOR_GATING`.
- */
-const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
-  RefundStatus.FAILED,
-  RefundStatus.CANCELLED,
-];
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -427,6 +425,16 @@ async function mintConsultantPayout(
       },
     });
 
+    await recoverClawbackOnPayout(tx, {
+      payee: { rail: "CONSULTANT", consultantProfileId },
+      payoutId: payout.id,
+      recoverablePaise: recoverablePaise(
+        amount,
+        PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+        false,
+      ),
+    });
+
     // Claim earnings READY → BATCHED; PAID transition only occurs at COMPLETED webhook.
     const linkResult = await tx.consultantEarnings.updateMany({
       where: {
@@ -549,6 +557,7 @@ export async function rejectPayout(
         status: EarningStatus.READY,
       },
     });
+    await releaseClawbackRecovery(tx, payoutId);
   });
 
   try {
@@ -843,6 +852,8 @@ export async function processPayoutById(
 export interface InstantPayoutPreview {
   readyPaise: number;
   tdsEstimatePaise: number;
+  /** An earlier clawback this payout would net back; 0 when none is owed. */
+  recoveryPaise: number;
   netPaise: number;
   label: string;
   nextAllowedAt: Date | null;
@@ -872,10 +883,18 @@ export async function previewInstantPayout(
       ? computeResidentPayoutTds(readyPaise, taxInfo?.panEncrypted)
           .tdsAmountPaise
       : 0;
+  const recoveryPaise = Math.min(
+    await outstandingClawbackPaise(prisma, {
+      rail: "CONSULTANT",
+      consultantProfileId,
+    }),
+    recoverablePaise(readyPaise, PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT, false),
+  );
   return {
     readyPaise,
     tdsEstimatePaise,
-    netPaise: readyPaise - tdsEstimatePaise,
+    recoveryPaise,
+    netPaise: readyPaise - tdsEstimatePaise - recoveryPaise,
     label: "Free · once a day",
     nextAllowedAt: usedToday ? nextIstMidnight(now) : null,
     reason: eligibility.reason,
@@ -958,7 +977,7 @@ type ClaimGateOutcome =
   | { kind: "claimed" };
 
 async function runConsultantPayoutClaimGate(
-  db: Pick<typeof prisma, "consultantEarnings" | "consultantPayout">,
+  db: PrismaLike,
   payoutId: string,
   amount: number,
 ): Promise<ClaimGateOutcome> {
@@ -974,17 +993,7 @@ async function runConsultantPayoutClaimGate(
   }
 
   const refundPendingEarning = await db.consultantEarnings.findFirst({
-    where: {
-      payoutId,
-      payment: {
-        refunds: {
-          some: {
-            status: { notIn: REFUND_INACTIVE_FOR_GATING },
-            OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
-          },
-        },
-      },
-    },
+    where: { payoutId, payment: REFUND_GATED_PAYMENT_WHERE },
     select: { id: true },
   });
   if (refundPendingEarning) {
@@ -1016,6 +1025,7 @@ async function runConsultantPayoutClaimGate(
         where: { payoutId, status: EarningStatus.BATCHED },
         data: { payoutId: null, status: EarningStatus.READY },
       });
+      await releaseClawbackRecovery(db, payoutId);
     }
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
@@ -1141,69 +1151,60 @@ async function computeConsultantPayoutTaxableBase(
       refundedShareAmount: true,
     },
   });
-  const rawGrossThisPayout = sumPaise(grossAgg?._sum?.grossAmount);
+  const rawGrossThisPayout = sumPaise(grossAgg._sum.grossAmount);
   const grossThisPayoutPaise =
     rawGrossThisPayout > 0
       ? subtractProportionalGrossRefund(
           rawGrossThisPayout,
-          sumPaise(grossAgg?._sum?.consultantSharePaise),
-          sumPaise(grossAgg?._sum?.refundedShareAmount),
+          sumPaise(grossAgg._sum.consultantSharePaise),
+          sumPaise(grossAgg._sum.refundedShareAmount),
         )
       : payout.amount;
 
   // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
-  const fyRange =
-    typeof getFYDateRange === "function"
-      ? getFYDateRange(financialYear)
-      : undefined;
-  let grossBeforePaise = cumulativeBeforePayout;
-  if (fyRange?.start && fyRange?.end) {
-    const priorGrossAgg = await prisma.consultantEarnings.aggregate({
-      where: {
-        consultantProfileId: payout.consultantProfileId,
-        payoutId: { not: payout.id },
-        OR: [
-          {
-            status: EarningStatus.PAID,
-            paidAt: { gte: fyRange.start, lt: fyRange.end },
-          },
-          {
-            status: EarningStatus.BATCHED,
-            payout: {
-              createdAt: { gte: fyRange.start, lt: fyRange.end },
-              status: {
-                notIn: [
-                  PayoutStatus.FAILED,
-                  PayoutStatus.CANCELLED,
-                  PayoutStatus.REVERSED,
-                ],
-              },
+  const fyRange = getFYDateRange(financialYear);
+  const priorGrossAgg = await prisma.consultantEarnings.aggregate({
+    where: {
+      consultantProfileId: payout.consultantProfileId,
+      payoutId: { not: payout.id },
+      OR: [
+        {
+          status: EarningStatus.PAID,
+          paidAt: { gte: fyRange.start, lt: fyRange.end },
+        },
+        {
+          status: EarningStatus.BATCHED,
+          payout: {
+            createdAt: { gte: fyRange.start, lt: fyRange.end },
+            status: {
+              notIn: [
+                PayoutStatus.FAILED,
+                PayoutStatus.CANCELLED,
+                PayoutStatus.REVERSED,
+              ],
             },
           },
-        ],
-      },
-      _sum: {
-        grossAmount: true,
-        consultantSharePaise: true,
-        refundedShareAmount: true,
-      },
-    });
-    grossBeforePaise = subtractProportionalGrossRefund(
-      sumPaise(priorGrossAgg?._sum?.grossAmount),
-      sumPaise(priorGrossAgg?._sum?.consultantSharePaise),
-      sumPaise(priorGrossAgg?._sum?.refundedShareAmount),
-    );
-  }
+        },
+      ],
+    },
+    _sum: {
+      grossAmount: true,
+      consultantSharePaise: true,
+      refundedShareAmount: true,
+    },
+  });
+  const grossBeforePaise = subtractProportionalGrossRefund(
+    sumPaise(priorGrossAgg._sum.grossAmount),
+    sumPaise(priorGrossAgg._sum.consultantSharePaise),
+    sumPaise(priorGrossAgg._sum.refundedShareAmount),
+  );
 
-  const resolved =
-    typeof resolve194OTaxablePaise === "function"
-      ? resolve194OTaxablePaise({
-          grossBeforePaise,
-          grossThisPayoutPaise,
-          entityType: consultantTaxInfo?.taxEntityType ?? null,
-          panOnFile: !!consultantTaxInfo?.panEncrypted,
-        })
-      : { taxablePaise: payout.amount, reason: null };
+  const resolved = resolve194OTaxablePaise({
+    grossBeforePaise,
+    grossThisPayoutPaise,
+    entityType: consultantTaxInfo?.taxEntityType ?? null,
+    panOnFile: !!consultantTaxInfo?.panEncrypted,
+  });
 
   if (gross194OEnabled) {
     return {
@@ -1333,6 +1334,7 @@ async function handleProcessSinglePayoutError(
       where: { payoutId, status: EarningStatus.BATCHED },
       data: { payoutId: null, status: EarningStatus.READY },
     });
+    await releaseClawbackRecovery(tx, payoutId);
   });
 
   return {
@@ -1446,7 +1448,14 @@ async function processSinglePayout(
               `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
           };
 
-    const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
+    const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
+    const payoutAmountAfterTDS =
+      payout.amount - tds.tdsAmountPaise - recoveredPaise;
+    if (payoutAmountAfterTDS <= 0) {
+      throw new Error(
+        `Payout ${payout.id} nets to ${payoutAmountAfterTDS} paise after TDS and clawback recovery`,
+      );
+    }
     const tdsRateAppliedBps = resolveTdsRateAppliedBps(tds);
 
     if (tds.tdsAmountPaise > 0) {
@@ -1735,9 +1744,11 @@ async function completeConsultantPayoutInTx(
     }
   }
 
-  if (matched.amount > 0) {
+  // The recovered slice already left the payable when the payout was built.
+  const recoveredPaise = await clawbackRecoveredPaise(tx, matched.id);
+  if (matched.amount - recoveredPaise > 0) {
     const tdsPaise = matched.tdsDeducted ?? 0;
-    const cashPaise = matched.amount - tdsPaise;
+    const cashPaise = matched.amount - tdsPaise - recoveredPaise;
     await postLedgerTxn(tx, {
       idempotencyKey: `payout:${matched.id}`,
       kind: "PAYOUT",
@@ -1747,7 +1758,7 @@ async function completeConsultantPayoutInTx(
           kind: "CONSULTANT_PAYABLE",
           consultantProfileId: matched.consultantProfileId,
         },
-        grossPayablePaise: matched.amount,
+        grossPayablePaise: matched.amount - recoveredPaise,
         netCashPaise: cashPaise,
         tdsPaise,
       }),
@@ -1798,6 +1809,8 @@ async function failOrCancelConsultantPayoutInTx(
       tdsFinancialYear: null,
     },
   });
+
+  await releaseClawbackRecovery(tx, payoutId);
 }
 
 async function notifyConsultantPayoutWebhookOutcome(
@@ -1806,6 +1819,7 @@ async function notifyConsultantPayoutWebhookOutcome(
     id: string;
     consultantProfileId: string;
     amount: number;
+    netAmount: number | null;
     currency: string;
   },
 ): Promise<void> {
@@ -1815,8 +1829,9 @@ async function notifyConsultantPayoutWebhookOutcome(
       select: { userId: true },
     });
     if (profile?.userId) {
+      // The bank receives the staged net: after TDS and any clawback recovery.
       await notifyPayoutProcessed(profile.userId, {
-        amount: Number(matched.amount),
+        amount: matched.netAmount ?? matched.amount,
         currency: matched.currency,
         payoutId: matched.id,
         dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
@@ -2034,9 +2049,10 @@ export async function markConsultantPayoutReversed(
       data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
     });
 
-    if (payout.amount > 0) {
+    const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
+    if (payout.amount - recoveredPaise > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
-      const cashPaise = payout.amount - tdsPaise;
+      const cashPaise = payout.amount - tdsPaise - recoveredPaise;
       await postLedgerTxn(tx, {
         idempotencyKey: `payout-reversal:${payout.id}`,
         kind: "PAYOUT",
@@ -2046,12 +2062,14 @@ export async function markConsultantPayoutReversed(
             kind: "CONSULTANT_PAYABLE",
             consultantProfileId: payout.consultantProfileId,
           },
-          grossPayablePaise: payout.amount,
+          grossPayablePaise: payout.amount - recoveredPaise,
           netCashPaise: cashPaise,
           tdsPaise,
         }),
       });
     }
+
+    await releaseClawbackRecovery(tx, payout.id);
 
     console.log(
       `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,

@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 jest.mock("../../lib/feature-flags", () => ({
@@ -58,9 +59,14 @@ jest.mock("../../lib/redis", () => ({
 }));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   getCurrentFYCumulativePayments: jest.fn().mockResolvedValue(0),
-  getFYDateRange: jest.fn(),
+  getFYDateRange: jest.fn().mockReturnValue({
+    start: new Date("2026-04-01T00:00:00+05:30"),
+    end: new Date("2027-04-01T00:00:00+05:30"),
+  }),
   getIndianFinancialYear: jest.fn().mockReturnValue("2026-27"),
   recordTDSDeduction: jest.fn(),
+  resolve194OTaxablePaise: jest.requireActual("../../lib/compliance/tds-194o")
+    .resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
 jest.mock("../../lib/novu/service", () => ({
@@ -119,10 +125,15 @@ const APPROVED = {
   },
 };
 
-type RefundRow = { status: RefundStatus; cascadedAt: Date | null };
+type RefundRow = {
+  status: RefundStatus;
+  cascadedAt: Date | null;
+  /** Defaults to a cash refund; a credit restoration is 0. */
+  amountPaise?: number;
+};
 
 /** The filter keys refundRowBlocks knows how to interpret. */
-const SUPPORTED_KEYS = new Set(["status", "cascadedAt", "OR"]);
+const SUPPORTED_KEYS = new Set(["status", "cascadedAt", "OR", "amountPaise"]);
 
 /**
  * Applies the guard's own Prisma refund filter to one fixture row, so the
@@ -154,6 +165,11 @@ function refundRowBlocks(
   }
 
   if (filter.cascadedAt !== undefined && filter.cascadedAt !== row.cascadedAt) {
+    return false;
+  }
+
+  const amount = filter.amountPaise as { gt?: number } | undefined;
+  if (amount?.gt !== undefined && !((row.amountPaise ?? 100) > amount.gt)) {
     return false;
   }
 
@@ -272,6 +288,17 @@ describe("consultant rail — uncascaded-refund disbursement block", () => {
     // The share is already deducted from the earning, so paying it is correct.
     stubEarnings([
       { status: RefundStatus.SUCCEEDED, cascadedAt: new Date("2026-09-01") },
+    ]);
+
+    await processApprovedPayouts();
+
+    expect(mocks.consultantPayout.updateMany).toHaveBeenCalled();
+    expect(gatewayFetch).toHaveBeenCalled();
+  });
+
+  it("a credit-restoration row (SUCCEEDED, never cascaded) does NOT block", async () => {
+    stubEarnings([
+      { status: RefundStatus.SUCCEEDED, cascadedAt: null, amountPaise: 0 },
     ]);
 
     await processApprovedPayouts();

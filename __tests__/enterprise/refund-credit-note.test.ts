@@ -31,6 +31,7 @@ function mockTx(opts: {
     amount: number;
     organizationId: string | null;
     billableToOrgInvoiceId: string | null;
+    createdAt?: Date;
     legs: Array<{ source: string; amountPaise: number }>;
   } | null;
   existingCreditNote?: { id: string } | null;
@@ -80,12 +81,15 @@ function mockTx(opts: {
   };
 }
 
+// Tax-inclusive, as the leg-sum trigger forces: ₹10 base + ₹1.80 GST.
 const INVOICED_PAYMENT = {
   id: "p1",
-  amount: 1000,
+  amount: 1180,
+  taxAmount: 180,
   organizationId: "org1",
   billableToOrgInvoiceId: "inv1",
-  legs: [{ source: "INVOICE_ACCRUAL", amountPaise: 1000 }],
+  createdAt: new Date(),
+  legs: [{ source: "INVOICE_ACCRUAL", amountPaise: 1180 }],
 };
 
 describe("mintRefundCreditNote", () => {
@@ -94,7 +98,7 @@ describe("mintRefundCreditNote", () => {
     const res = await mintRefundCreditNote(tx as never, {
       paymentId: "p1",
       refundId: "ref1",
-      amountPaise: 1000,
+      amountPaise: 1180,
       reason: "test",
     });
     expect(res.creditNoteId).toBe("cn-new");
@@ -102,9 +106,7 @@ describe("mintRefundCreditNote", () => {
     const data = tx._creditNoteCreate.mock.calls[0][0].data;
     expect(data.refundId).toBe("ref1");
     expect(data.invoiceId).toBe("inv1");
-    // #812 — a full refund of a ₹1180 invoice (₹1000 + 18% GST) must mint a
-    // ₹1180 credit note: the reversed accrual legs are tax-EXCLUSIVE, so GST
-    // is grossed up on top (CGST Sec 34 reverses output tax proportionally).
+    // A full refund of a ₹11.80 booking reverses its own ₹1.80 GST, never more.
     expect(data.subtotalPaise).toBe(1000);
     expect(data.cgstPaise).toBe(90);
     expect(data.sgstPaise).toBe(90);

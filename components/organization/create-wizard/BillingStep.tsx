@@ -5,6 +5,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { STATE_NUMERIC_TO_NAME } from "@/lib/compliance/state-codes";
 import { billingSchema, type BillingFormData } from "./schemas";
 import type { StepProps } from "./types";
 import {
@@ -31,6 +39,7 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
       // reject on submit with a confusing error.
       fundingSource: narrowFundingSource(initialData.fundingSource),
       paymentTermsDays: initialData.paymentTermsDays ?? 60,
+      gstStateCode: initialData.gstStateCode ?? "",
     },
   });
 
@@ -105,6 +114,34 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
           </p>
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label>GST state</Label>
+        <Select
+          value={watch("gstStateCode")}
+          onValueChange={(v) =>
+            setValue("gstStateCode", v, { shouldValidate: true })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select your state" />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(STATE_NUMERIC_TO_NAME).map(([code, name]) => (
+              <SelectItem key={code} value={code}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {errors.gstStateCode && (
+          <p className="text-sm text-red-500">{errors.gstStateCode.message}</p>
+        )}
+        <p className="text-xs text-zinc-500">
+          The state your organisation is registered in for GST; it sets the tax
+          on your invoices.
+        </p>
+      </div>
 
       <div className="flex justify-between pt-4">
         <Button type="button" variant="outline" onClick={onBack}>

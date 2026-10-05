@@ -162,6 +162,7 @@ describe("rejectPayout CAS", () => {
       consultantEarnings: {
         updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       },
+      ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
     };
     cp.$transaction.mockImplementationOnce(
       async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),

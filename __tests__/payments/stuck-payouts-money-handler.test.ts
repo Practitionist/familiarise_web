@@ -82,6 +82,7 @@ type PrismaStub = {
   };
   consultantEarnings: { updateMany: jest.Mock };
   tDSRecord: { deleteMany: jest.Mock };
+  ledgerTransaction: { findMany: jest.Mock };
   consultantProfile: { findUnique: jest.Mock };
   $transaction: (fn: (tx: unknown) => unknown) => unknown;
 };
@@ -104,6 +105,7 @@ jest.mock("../../lib/prisma", () => {
     },
     consultantEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
     tDSRecord: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+    ledgerTransaction: { findMany: jest.fn(async () => []) },
     consultantProfile: {
       findUnique: jest.fn(async () => ({ userId: "user_1" })),
     },

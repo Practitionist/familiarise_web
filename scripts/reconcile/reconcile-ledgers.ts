@@ -20,6 +20,10 @@ import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import {
+  orgInvoiceGstFindings,
+  staleClawbackFindings,
+} from "./tax-and-clawback-steps";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -53,7 +57,11 @@ export type Finding = {
     // The referral-credit liability disagrees with the vested, unredeemed credit balance.
     | "REFERRAL_CREDIT_LIABILITY_DRIFT"
     // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
-    | "UNAPPLIED_RECEIPTS_RESIDUE";
+    | "UNAPPLIED_RECEIPTS_RESIDUE"
+    // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
+    | "ORG_INVOICE_GST_MISMATCH"
+    // One per run: clawbacks still unrecovered after the 90-day window.
+    | "CLAWBACK_RECEIVABLE_STALE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -1481,6 +1489,10 @@ async function executeSteps(opts: ReconcileScope): Promise<{
     await stepReferralCreditLiability(ctx);
     await stepUnappliedReceipts(ctx);
   }
+  ctx.findings.push(...(await orgInvoiceGstFindings(opts.organizationId)));
+  ctx.findings.push(
+    ...(await staleClawbackFindings(ctx.now, opts.organizationId)),
+  );
 
   return { ctx, durationMs: Date.now() - startedAt };
 }

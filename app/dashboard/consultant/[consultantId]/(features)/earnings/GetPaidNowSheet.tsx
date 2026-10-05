@@ -27,6 +27,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 interface InstantPreview {
   readyPaise: number;
   tdsEstimatePaise: number;
+  recoveryPaise: number;
   netPaise: number;
   label: string;
   nextAllowedAt: string | null;
@@ -124,6 +125,16 @@ export function GetPaidNowSheet({
                 −{inr(data.tdsEstimatePaise)}
               </dd>
             </div>
+            {data.recoveryPaise > 0 && (
+              <div className="flex items-center justify-between">
+                <dt className="text-muted-foreground">
+                  Owed back from an earlier refund
+                </dt>
+                <dd className="font-medium text-foreground">
+                  −{inr(data.recoveryPaise)}
+                </dd>
+              </div>
+            )}
             <div className="flex items-center justify-between border-t border-border pt-3">
               <dt className="font-medium text-foreground">To your bank</dt>
               <dd className="text-base font-semibold text-foreground">

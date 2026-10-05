@@ -118,8 +118,14 @@ function makeTx(opts: {
   bookingEntries: Entry[] | null;
   priorRefundSum?: bigint | null;
   chargebackExists?: boolean;
+  supplyDate?: Date;
 }) {
   return {
+    payment: {
+      findUnique: jest.fn(async () => ({
+        createdAt: opts.supplyDate ?? new Date(),
+      })),
+    },
     ledgerTransaction: {
       findUnique: jest.fn(
         async ({ where }: { where: { idempotencyKey: string } }) => {
@@ -280,6 +286,31 @@ describe("#677 — applyB2cChargebackReversal (B2C lost-chargeback ledger leg)",
     });
 
     expect(postLedgerTxn).not.toHaveBeenCalled();
+  });
+
+  it("leaves GST_PAYABLE alone past the s.34(2) cutoff; PLATFORM_FEE absorbs it", async () => {
+    const tx = makeTx({
+      bookingEntries: [
+        dr("CASH", 11800),
+        cr("CONSULTANT_PAYABLE", 9000, { consultantProfileId: "c1" }),
+        cr("PLATFORM_FEE", 1000),
+        cr("GST_PAYABLE", 1800),
+      ],
+      supplyDate: new Date("2024-05-01T00:00:00Z"),
+    });
+
+    await applyB2cChargebackReversal(tx as never, {
+      paymentId: "pay_old",
+      disputeId: "disp_old",
+      amountPaise: 11800,
+      paymentAmountPaise: 11800,
+    });
+
+    const arg = postLedgerTxn.mock.calls[0][1] as PostArg;
+    expect(sumBy(arg, "GST_PAYABLE", "DEBIT")).toBe(0);
+    expect(sumBy(arg, "PLATFORM_FEE", "DEBIT")).toBe(2800);
+    const { d, c } = balanced(arg);
+    expect(d).toBe(c);
   });
 
   it("is idempotent when the chargeback txn already exists", async () => {

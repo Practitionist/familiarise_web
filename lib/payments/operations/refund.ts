@@ -81,6 +81,10 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
+  COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
+  isPastGstCreditNoteCutoff,
+} from "@/lib/compliance/gst-credit-note-cutoff";
+import {
   recordSystemEventSafe,
   recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
@@ -1709,7 +1713,12 @@ export async function applyRefundCascade(
       // make gstRev NaN → the platform plug NaN → the posting silently lose a leg
       // and (now that the ledger blocks) roll the whole refund back. taxAmount
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
-      const gstRev = proportion(payment.taxAmount ?? 0);
+      // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
+      const taxPaise = payment.taxAmount ?? 0;
+      const gstRev =
+        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt)
+          ? 0
+          : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
       // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
       // pull that relief credit BACK from the org — not bill the platform.
@@ -1897,14 +1906,28 @@ export type OrgCreditNoteMintResult = {
  */
 async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
-  invoice: { id: string; totalPaise: number },
+  invoice: { id: string; totalPaise: number; subtotalPaise: number },
 ): Promise<number> {
   await tx.$executeRaw`SELECT id FROM "OrganizationInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
-  const issued = await tx.creditNote.aggregate({
-    where: { invoiceId: invoice.id },
+  const taxNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: false },
     _sum: { totalPaise: true },
   });
-  return invoice.totalPaise - sumPaise(issued._sum.totalPaise);
+  const commercialNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: true },
+    _sum: { subtotalPaise: true },
+  });
+  // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
+  const commercialGross =
+    invoice.subtotalPaise > 0
+      ? Math.round(
+          (sumPaise(commercialNotes._sum.subtotalPaise) * invoice.totalPaise) /
+            invoice.subtotalPaise,
+        )
+      : 0;
+  return (
+    invoice.totalPaise - sumPaise(taxNotes._sum.totalPaise) - commercialGross
+  );
 }
 
 /** Records the refused over-credit for ops; no money moved, so it is expected. */
@@ -1981,6 +2004,8 @@ export async function mintRefundCreditNote(
     select: {
       id: true,
       amount: true,
+      taxAmount: true,
+      createdAt: true,
       organizationId: true,
       billableToOrgInvoiceId: true,
       legs: { select: { source: true, amountPaise: true } },
@@ -2047,21 +2072,13 @@ export async function mintRefundCreditNote(
     return { creditNoteId: null };
   }
 
-  // #812 — `invoicedReverse` is the TAX-EXCLUSIVE leg amount being reversed (the
-  // INVOICE_ACCRUAL legs are the invoice's pre-tax subtotal; invoices are built
-  // tax-exclusive: total = subtotal + GST). So the GST rate is the invoice's tax
-  // over its SUBTOTAL, not over its total, and the reversed amount is the credit
-  // note's subtotal with tax added on top — mirroring the invoice's own
-  // structure. Computing the fraction over totalPaise (tax-inclusive) under-
-  // credited the full GST (CGST Sec 34 reverses output tax proportionally). The
-  // sibling mintInvoiceRefundCreditNote takes a tax-INCLUSIVE payment refund, so
-  // it keeps the over-total fraction — do not change it.
-  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.subtotalPaise > 0 ? invoiceTax / invoice.subtotalPaise : 0;
-  let cnSubtotal = invoicedReverse;
-  let cnTax = Math.round(invoicedReverse * taxFraction);
-  let cnTotal = cnSubtotal + cnTax;
+  // The accrual legs are tax-inclusive (they sum to Payment.amount), so the
+  // reversed slice carries the payment's own tax share.
+  const taxShare = (paise: number): number =>
+    Math.round((paise * (payment.taxAmount ?? 0)) / payment.amount);
+  let cnTotal = invoicedReverse;
+  let cnTax = taxShare(cnTotal);
+  let cnSubtotal = cnTotal - cnTax;
 
   // #1582 C-P0-01 — the cap is cumulative across every note on this invoice,
   // not per note, mirroring the consumer minter: two partial refunds plus a
@@ -2079,8 +2096,14 @@ export async function mintRefundCreditNote(
   }
   if (cnTotal > remaining) {
     cnTotal = remaining;
-    cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+    cnTax = taxShare(cnTotal);
     cnSubtotal = cnTotal - cnTax;
+  }
+  // The cutoff runs from the booking's supply, not the later rollup invoice.
+  const commercial = isPastGstCreditNoteCutoff(payment.createdAt);
+  if (commercial) {
+    cnTax = 0;
+    cnTotal = cnSubtotal;
   }
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
@@ -2100,7 +2123,10 @@ export async function mintRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       refundId: params.refundId,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,
@@ -2218,6 +2244,7 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: true,
       status: true,
       issuedAt: true,
+      billingCycleStart: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2261,7 +2288,19 @@ export async function mintInvoiceRefundCreditNote(
     params.exactSubtotalPaise,
   );
   if (!amounts) return { creditNoteId: null };
-  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = amounts;
+  // A cycle invoice's earliest supply is its cycle start, so the cutoff runs from there.
+  const commercial = isPastGstCreditNoteCutoff(
+    invoice.billingCycleStart ?? invoice.issuedAt,
+  );
+  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = commercial
+    ? {
+        ...amounts,
+        cnIgst: 0,
+        cnCgst: 0,
+        cnSgst: 0,
+        cnTotal: amounts.cnSubtotal,
+      }
+    : amounts;
 
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
@@ -2277,7 +2316,10 @@ export async function mintInvoiceRefundCreditNote(
       invoiceId: invoice.id,
       refundId: params.refundId ?? null,
       overageEventId: params.overageEventId ?? null,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,

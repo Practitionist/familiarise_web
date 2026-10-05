@@ -174,7 +174,11 @@ await applyTaxAdjustments({
 - The cron in [doc 02](./03-gst-overview.md) (GSTR-8 batcher) needs to include `GstTcsAdjustment` rows as **negative lines** in the next GSTR-8.
 - The GSTR-1 export (not yet built) needs to read `CreditNote WHERE reportedInGstr1 = false` and include them in the credit-notes section.
 
-### E. Cross-FY edge case
+### E. The CGST s.34(2) credit-note deadline
+
+Under CGST Act s.34(2), as amended by the Finance Act 2022, a credit note can reduce output tax only if it is declared by 30 November following the end of the financial year of the supply, or by the annual-return date if that is earlier. `lib/compliance/gst-credit-note-cutoff.ts` computes the November cutoff in IST from the supply date; the annual-return date is not tracked. After the cutoff, all three minters (`mintRefundCreditNote`, `mintInvoiceRefundCreditNote`, `mintConsumerCreditNote`) issue a commercial credit note that carries the base amount only with every tax head at zero, and its reason starts with "Commercial credit note". The refund cascade's GST step and the free-credit reversal then post no `GST_PAYABLE` debit, so the GST portion of the refund is a platform cost booked on `PLATFORM_FEE`. A refund of a parked capture never booked GST and is unaffected. A lost chargeback still inverts the booking journal, including its `GST_PAYABLE` credit, regardless of the cutoff.
+
+### F. Cross-FY edge case
 
 When the refund happens in a different FY than the original payment, **we cannot rewrite the previous FY's 26Q/27Q** — that return is closed. The proposed `TdsAdjustment` flow below was to skip the record entirely; the now-shipped `TDSRecord` reversal (#813) instead follows the **adjust-against-future-liability** convention — if the original record is already reported in Form 26Q, the reversal is stamped into the current IST-reckoned FY and quarter rather than the closed one. The two are not in conflict: the future FVU export must still treat a cross-FY reversal as a current-quarter negative line and surface the manual-correction path below; this policy is provisional pending CA sign-off.
 

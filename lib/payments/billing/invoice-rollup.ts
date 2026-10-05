@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
+import { lutNumberForSupply } from "@/lib/compliance/lut";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
@@ -27,6 +28,7 @@ import { getAppUrl } from "@/lib/url";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
 import { supplierStateCode } from "./consumer-invoice";
 import { transitionOverage } from "./overage-transitions";
+import { drawCoveringPurchaseOrder } from "./purchase-order-draw";
 
 export interface RollupResult {
   invoiceId: string | null;
@@ -34,6 +36,10 @@ export interface RollupResult {
   billedPaymentCount: number;
   subtotalPaise: number;
   totalPaise: number;
+  /** Set when the invoice issued without a covering PO on an org that requires one. */
+  unbackedPo?: boolean;
+  /** Set when a domestic org has no GST state, so nothing was billed. */
+  skippedNoGstState?: boolean;
 }
 
 const EMPTY: RollupResult = {
@@ -43,6 +49,22 @@ const EMPTY: RollupResult = {
   subtotalPaise: 0,
   totalPaise: 0,
 };
+
+/**
+ * The tax a booking's net accrual carries: the payment's own `taxAmount`, scaled
+ * down only when reversal legs have netted the accrual below its gross.
+ */
+function accruedTaxPaise(
+  taxAmountPaise: number,
+  legs: { amountPaise: number }[],
+): number {
+  const gross = legs.reduce((s, l) => s + Math.max(l.amountPaise, 0), 0);
+  const net = legs.reduce((s, l) => s + l.amountPaise, 0);
+  if (gross <= 0 || net <= 0) return 0;
+  return net === gross
+    ? taxAmountPaise
+    : Math.round((taxAmountPaise * net) / gross);
+}
 
 /**
  * Roll an org's unbilled INVOICE_ACCRUAL bookings into one OrganizationInvoice.
@@ -68,6 +90,7 @@ export async function rollupOrgInvoiceAccruals(params: {
       billingAccountId: true,
       dataResidencyRegion: true,
       paymentTermsDays: true,
+      requiresPO: true,
       taxInfo: {
         select: { gstStateCode: true, gstin: true, hsnDefault: true },
       },
@@ -80,6 +103,14 @@ export async function rollupOrgInvoiceAccruals(params: {
 
   // #1447 — GSTIN-first supplier state; a mismatch throws before any tx opens.
   const supplierState = supplierStateCode();
+
+  // A domestic B2B invoice needs the buyer's state to pick its tax head.
+  const buyerStateCode =
+    org.taxInfo?.gstStateCode ?? numericStateCode(org.taxInfo?.gstin, null);
+  const domestic = org.dataResidencyRegion === "IN";
+  if (domestic && !buyerStateCode) {
+    return { ...EMPTY, skippedNoGstState: true };
+  }
 
   // #1357 7.4 — orphaned overage events are collected in the tx and written
   // AFTER it commits. `recordSystemError` goes through the global client, so a
@@ -128,6 +159,7 @@ export async function rollupOrgInvoiceAccruals(params: {
           },
           select: {
             id: true,
+            taxAmount: true,
             // Bill the base accrual AND any CHARGE_ORG overage (#715) on the
             // booking, NET of refund reversal legs (#786 — refunds append
             // negative *_REVERSAL siblings instead of mutating the original).
@@ -148,46 +180,52 @@ export async function rollupOrgInvoiceAccruals(params: {
         });
         if (accrued.length === 0) return { result: EMPTY, notifyStaged: [] };
 
+        // The legs are tax-inclusive (they sum to Payment.amount), so each line
+        // carries the tax its booking already posted to GST_PAYABLE.
         const lines = accrued
-          .map((p, i) => ({
-            position: i,
-            paymentId: p.id,
-            description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
-            quantity: 1,
-            unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
-          }))
+          .map((p) => {
+            const legsPaise = p.legs.reduce((s, l) => s + l.amountPaise, 0);
+            const taxPaise = accruedTaxPaise(p.taxAmount, p.legs);
+            return {
+              paymentId: p.id,
+              description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
+              quantity: 1,
+              legsPaise,
+              taxPaise,
+              unitPricePaise: legsPaise - taxPaise,
+            };
+          })
           // A fully-refunded-before-billing booking nets to ≤0 — keep it out of
           // the issued document; the payment is still stamped below so it never
           // re-enters a future rollup.
-          .filter((l) => l.unitPricePaise > 0)
+          .filter((l) => l.legsPaise > 0)
           .map((l, i) => ({ ...l, position: i }));
         const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
-        if (subtotal <= 0) return { result: EMPTY, notifyStaged: [] };
+        const legsTotal = lines.reduce((s, l) => s + l.legsPaise, 0);
+        if (legsTotal <= 0) return { result: EMPTY, notifyStaged: [] };
 
         // #1744 row 3 — the buyer GSTIN's first two digits are the place of
         // supply; an org that never filled its state still gets the right head.
         const gst = deriveGstBreakdown({
           subtotalPaise: subtotal,
+          taxPaise: lines.reduce((s, l) => s + l.taxPaise, 0),
           supplierStateCode: supplierState,
-          buyerStateCode:
-            org.taxInfo?.gstStateCode ??
-            numericStateCode(org.taxInfo?.gstin, null),
+          buyerStateCode,
           buyerGstin: org.taxInfo?.gstin ?? null,
-          buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
+          buyerCountry: domestic ? "IN" : "US",
           hsnCode: org.taxInfo?.hsnDefault,
         });
 
-        // #776 — defensive invariant at issue time: the subtotal must equal the
-        // line-item sum and the GST breakdown must net exactly (total == subtotal +
-        // CGST + SGST + IGST). A mis-totaled GST invoice is a filing defect, so hard-throw
-        // here rather than persist it (catches any future rounding regression upstream).
+        // The invoice must equal the ORG_RECEIVABLE its bookings accrued, and
+        // its heads must net exactly; a mis-totaled GST invoice is a filing defect.
         const taxParts = gst.igstPaise + gst.cgstPaise + gst.sgstPaise;
         if (
           gst.subtotalPaise !== subtotal ||
-          gst.totalPaise !== gst.subtotalPaise + taxParts
+          gst.totalPaise !== gst.subtotalPaise + taxParts ||
+          gst.totalPaise !== legsTotal
         ) {
           throw new Error(
-            `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise}`,
+            `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise} accrued=${legsTotal}`,
           );
         }
 
@@ -206,10 +244,18 @@ export async function rollupOrgInvoiceAccruals(params: {
           issuedAt,
         );
 
+        const purchaseOrderId = await drawCoveringPurchaseOrder(tx, {
+          organizationId,
+          currency: "INR",
+          amountPaise: gst.totalPaise,
+          now: issuedAt,
+        });
+
         const invoice = await tx.organizationInvoice.create({
           data: {
             billingAccountId: org.billingAccountId!,
             organizationId,
+            purchaseOrderId,
             invoiceNumber,
             fiscalYear,
             status: issueImmediately ? "ISSUED" : "DRAFT",
@@ -226,6 +272,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             placeOfSupply: gst.placeOfSupply,
             reverseCharge: gst.reverseCharge,
             gstin: org.taxInfo?.gstin ?? null,
+            lutNumber: lutNumberForSupply(gst.reason),
             irpStatus: "PENDING",
             autoGenerated: true,
             issuedAt: issueImmediately ? issuedAt : null,
@@ -354,7 +401,7 @@ export async function rollupOrgInvoiceAccruals(params: {
               totalPaise: gst.totalPaise,
               displayCurrency: "INR",
               dueDate: dueDate.toISOString(),
-              purchaseOrderId: null,
+              purchaseOrderId,
               contractId: null,
             },
           });
@@ -367,6 +414,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             billedPaymentCount: accrued.length,
             subtotalPaise: gst.subtotalPaise,
             totalPaise: gst.totalPaise,
+            unbackedPo: org.requiresPO && !purchaseOrderId,
           },
           notifyStaged,
         };

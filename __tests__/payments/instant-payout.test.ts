@@ -55,6 +55,8 @@ function makeTx() {
         return { count: hits.length };
       },
     },
+    ledgerTransaction: { findMany: async () => [] },
+    ledgerEntry: { groupBy: async () => [] },
     consultantPayout: {
       create: async ({ data }: { data: Payout }) => {
         const keys = [...store.payouts, ...created].map(
@@ -106,6 +108,7 @@ jest.mock("../../lib/prisma", () => ({
       }),
     },
     consultantTaxInfo: { findUnique: async () => null },
+    ledgerTransaction: { findMany: async () => [] },
     consultantProfile: { findUnique: async () => null },
     consultantPayout: { findFirst: async () => null },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
