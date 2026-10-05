@@ -90,6 +90,10 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  hasUnappliedReceipt,
+  postUnappliedRefund,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -843,46 +847,54 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   );
 
-  // #715/#716 — the parent booking was fully refunded and carried a CHARGED
-  // CHARGE_MEMBER overage on a SEPARATE side-payment. Refund it now that the
-  // parent settled: outside the tx (its own gateway call + Serializable
-  // cascade), and best-effort so a hiccup never rolls back the parent refund.
-  if (settled.memberOverageRefundDue) {
-    const sidePaymentId = settled.memberOverageRefundDue.overagePaymentId;
-    try {
-      await refundPayment({
-        paymentId: sidePaymentId,
-        reason: `overage credit-back — parent booking ${input.paymentId} refunded`,
-        initiatedByUserId: input.initiatedByUserId ?? null,
-      });
-    } catch (err) {
-      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
-      // re-drives — the nested refundPayment call already reported them
-      // (expected:true) at their origin above; anything else here is a real
-      // gap between the parent refund and the member's credit-back — page
-      // ops rather than fail the settled parent.
-      if (
-        !(err instanceof RefundValidationError) ||
-        (err.code !== "ALREADY_FULLY_REFUNDED" &&
-          err.code !== "PAYMENT_NOT_SUCCEEDED")
-      ) {
-        reportSentryError(err, {
-          subsystem: "payments",
-          tags: { feature: "overage-credit-back" },
-          extra: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
-          err,
-          context: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-      }
-    }
-  }
+  await refundMemberOverageSidePayment({
+    parentPaymentId: input.paymentId,
+    due: settled.memberOverageRefundDue,
+    initiatedByUserId: input.initiatedByUserId ?? null,
+  });
 
   return settled;
+}
+
+/**
+ * Refunds a fully-refunded booking's CHARGE_MEMBER overage side-payment once the
+ * parent's cascade has committed; best effort, so it never undoes the parent.
+ */
+export async function refundMemberOverageSidePayment(input: {
+  parentPaymentId: string;
+  due: ApplyRefundCascadeResult["memberOverageRefundDue"];
+  initiatedByUserId: string | null;
+}): Promise<void> {
+  if (!input.due) return;
+  const sidePaymentId = input.due.overagePaymentId;
+  try {
+    await refundPayment({
+      paymentId: sidePaymentId,
+      reason: `overage credit-back — parent booking ${input.parentPaymentId} refunded`,
+      initiatedByUserId: input.initiatedByUserId,
+    });
+  } catch (err) {
+    // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign re-drives the
+    // nested call already reported; anything else is a real credit-back gap.
+    if (
+      !(err instanceof RefundValidationError) ||
+      (err.code !== "ALREADY_FULLY_REFUNDED" &&
+        err.code !== "PAYMENT_NOT_SUCCEEDED")
+    ) {
+      reportSentryError(err, {
+        subsystem: "payments",
+        tags: { feature: "overage-credit-back" },
+        extra: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+      await recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
+        err,
+        context: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+    }
+  }
 }
 
 // ============================================================================
@@ -1040,6 +1052,33 @@ export async function applyRefundCascade(
     // `reversal < 0` trigger and the journal rejects a 0 entry, which would
     // fail the tx at COMMIT and leave the refund re-cascading forever.
     // Still reverse the booking utilization so the seat returns.
+    if (payment.bookingUtilization) {
+      await reverseBookingUtilization(tx, {
+        paymentId: payment.id,
+        reason: input.reason,
+      });
+    }
+    return {
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+    };
+  }
+
+  // A parked capture never booked revenue, GST, earnings or an invoice, so its
+  // refund only returns the cash from UNAPPLIED_RECEIPTS.
+  if (
+    payment.earnings.length === 0 &&
+    payment.organizationEarnings.length === 0 &&
+    (await hasUnappliedReceipt(tx, payment.id))
+  ) {
+    await postUnappliedRefund(tx, {
+      paymentId: payment.id,
+      refundId: input.refundId,
+      amountPaise: input.amountPaise,
+    });
     if (payment.bookingUtilization) {
       await reverseBookingUtilization(tx, {
         paymentId: payment.id,

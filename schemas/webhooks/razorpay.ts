@@ -4,7 +4,7 @@ import { z } from "zod";
 const razorpayPaymentEntitySchema = z.object({
   id: z.string(),
   entity: z.literal("payment"),
-  amount: z.number(),
+  amount: z.number().int().positive(),
   currency: z.string(),
   status: z.string(),
   order_id: z.string(),

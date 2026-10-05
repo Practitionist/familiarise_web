@@ -93,18 +93,19 @@ flowchart TD
 
 ## 3. The posting vocabulary (`kind`)
 
-`kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT`:
+`kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT · UNAPPLIED_RECEIPT`:
 
-| `kind`           | `idempotencyKey`                   | Posted by                                                                                                                   |
-| ---------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `TOPUP`          | `topup:<providerOrderId>`          | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                        |
-| `BOOKING`        | `booking:<paymentId>`              | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                  |
-| `INVOICE_PAID`   | `invoicepaid:<invoiceId>`          | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                          |
-| `TOPUP_REFUND`   | `topup-refund:<providerPaymentId>` | refund webhook — `app/api/webhooks/utils.ts`                                                                                |
-| `REFUND`         | `refund:<refundId>`                | refund cascade — `lib/payments/operations/refund.ts`                                                                        |
-| `PAYOUT`         | `payout:<payoutId>`                | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                |
-| `ORG_PAYOUT`     | `orgpayout:<payoutId>`             | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                              |
-| `OVERAGE_MEMBER` | `overage:<sideChargePaymentId>`    | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member)) |
+| `kind`              | `idempotencyKey`                                          | Posted by                                                                                                                          |
+| ------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `TOPUP`             | `topup:<providerOrderId>`                                 | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                               |
+| `BOOKING`           | `booking:<paymentId>`                                     | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                         |
+| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                 | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                 |
+| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                        | refund webhook — `app/api/webhooks/utils.ts`                                                                                       |
+| `REFUND`            | `refund:<refundId>`                                       | refund cascade — `lib/payments/operations/refund.ts`                                                                               |
+| `PAYOUT`            | `payout:<payoutId>`                                       | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                       |
+| `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                    | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                     |
+| `OVERAGE_MEMBER`    | `overage:<sideChargePaymentId>`                           | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member))        |
+| `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>` | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts` |
 
 **`INVOICE_ISSUED` and `GRANT` are declared but post no journal leg today.** Invoice _issuance_ posts nothing — the receivable was already accrued in the booking transaction (`ORG_RECEIVABLE` debit from the `INVOICE_ACCRUAL` leg), so issuance just rolls accrued bookings into an `OrganizationInvoice` and writes an `OrgAuditLog` row; **payment** is what clears the receivable.
 

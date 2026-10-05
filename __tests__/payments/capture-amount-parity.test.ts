@@ -74,6 +74,10 @@ const txStub = {
 const prismaPaymentUpdate = jest.fn(
   async (_args: { where: unknown; data: { description?: string } }) => ({}),
 );
+const postUnappliedReceipt = jest.fn();
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: (...a: unknown[]) => postUnappliedReceipt(...a),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -184,6 +188,11 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
     const update = paymentUpdateMany.mock.calls[0][0];
     expect(update.where.paymentStatus).toBe("PENDING");
     expect(update.data.description).toMatch(/^Auto-refund pending:/);
+    // The captured cash is parked, not booked, in the same transaction.
+    expect(postUnappliedReceipt).toHaveBeenCalledWith(expect.anything(), {
+      paymentId: "pay1",
+      capturedPaise: 9999,
+    });
 
     // #990 — Phase 2 auto-refunded the wrong-amount capture for this payment.
     expect(refundPayment).toHaveBeenCalledTimes(1);

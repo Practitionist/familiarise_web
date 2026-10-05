@@ -2720,6 +2720,7 @@ enum LedgerAccountKind {
   CONSULTANT_RECEIVABLE // clawback owed BY a consultant (no inbound recovery path)
   TDS_PAYABLE // TDS withheld, owed to the government
   GST_PAYABLE // GST collected, owed to the government
+  UNAPPLIED_RECEIPTS // a capture staged for auto-refund, owed back to the payer
 }
 
 enum LedgerDirection {
@@ -2782,6 +2783,7 @@ enum LedgerTransactionKind {
   OVERAGE_MEMBER
   /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
+  UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
 }
 
 model LedgerTransaction {
@@ -5688,10 +5690,8 @@ model Refund {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
-  // #776 — idempotency stamp for applyRefundCascade. Set once the canonical
-  // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
-  // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
-  // cron selects SUCCEEDED refunds where this is null.
+  // Idempotency stamp for applyRefundCascade, claimed once by whichever path runs it.
+  // reconcile-pending-refunds re-drives SUCCEEDED rows still null after 10 minutes.
   cascadedAt DateTime? @db.Timestamptz
 
   /// #779 §A — gateway-failure capture for FAILED refunds. `reason` above is the
