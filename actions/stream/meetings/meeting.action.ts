@@ -28,7 +28,8 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { liveParticipant } from "@/lib/booking/participants";
 
@@ -78,7 +79,10 @@ export type OccurrenceRow = {
 };
 
 const collaboratorsSelect = {
-  where: { status: "ACCEPTED" as const },
+  where: {
+    status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
+  },
   select: { role: true, consultantProfile: ownerProfileSelect },
 } as const;
 
@@ -202,8 +206,6 @@ const slotSchema = z.object({
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
 });
-
-const CALL_MEMBER_ROLE = "call_member";
 
 export type SessionCallMember = { user_id: string; role: string };
 
@@ -498,14 +500,16 @@ async function findDbMeetingBySlot(slotId: string): Promise<Meeting | null> {
   }
 }
 
+async function refuseDuringMaintenance(): Promise<string | null> {
+  const maintenanceState = await getMaintenanceState();
+  return maintenanceState.phase === "OFF"
+    ? null
+    : "New calls cannot be created during maintenance.";
+}
+
 async function refuseMeetingCreation(
   slot: MeetingSlot,
 ): Promise<string | null> {
-  const maintenanceState = await getMaintenanceState();
-  if (maintenanceState.phase !== "OFF") {
-    return "New calls cannot be created during maintenance.";
-  }
-
   const parsedSlot = slotSchema.safeParse({
     id: slot.id,
     startsAt: slot.startsAt,
@@ -590,9 +594,13 @@ const TERMINAL_APPOINTMENT_STATUSES = new Set([
 
 async function getMeetingCreationRefusal(
   slot: MeetingSlot,
+  existingRoom: boolean,
 ): Promise<string | null> {
   try {
-    const refusal = await refuseMeetingCreation(slot);
+    // Maintenance blocks new rooms only, so a session in progress keeps its room.
+    const refusal =
+      (existingRoom ? null : await refuseDuringMaintenance()) ??
+      (await refuseMeetingCreation(slot));
     if (refusal) {
       streamLogger.warn("Refused a meeting before creating the call", {
         slotId: slot.id,
@@ -694,14 +702,15 @@ async function readAppointmentOrganizationId(
 }
 
 /** Persists the Meeting row for an occurrence after verifying caller entitlement and booking state. */
-export async function createDbMeeting(
+async function createDbMeeting(
   slot: MeetingSlot,
   streamCallId: string,
 ): Promise<Meeting> {
   try {
     const authorized = await requireEntitledCaller(slot.id);
 
-    const refusal = await refuseMeetingCreation(slot);
+    const refusal =
+      (await refuseDuringMaintenance()) ?? (await refuseMeetingCreation(slot));
     if (refusal) throw new MeetingRefusal(refusal);
 
     const validatedStreamCallId = streamCallIdSchema.parse(streamCallId);
@@ -874,16 +883,15 @@ export async function provisionAppointmentMeeting(
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
   const rebuildEndedEarly = existingMeeting?.endedReason === ENDED_EARLY_REASON;
-  if (existingMeeting && !rebuildEndedEarly) {
-    return { ok: true, streamCallId: existingMeeting.streamCallId };
-  }
+  // An existing row re-asserts its call below, so a row whose call is missing heals here.
+  const reuseExisting = !!existingMeeting && !rebuildEndedEarly;
 
   const authorized = await readSlotForCaller(anchorSlot.id);
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
   }
 
-  const refusal = await getMeetingCreationRefusal(anchorSlot);
+  const refusal = await getMeetingCreationRefusal(anchorSlot, reuseExisting);
   if (refusal) return { ok: false, refusal };
 
   if (!isStreamConfigured()) {
@@ -893,9 +901,12 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  const streamCallId = rebuildEndedEarly
-    ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
-    : `occurrence-${anchorSlot.id}`;
+  let streamCallId = `occurrence-${anchorSlot.id}`;
+  if (reuseExisting && existingMeeting) {
+    streamCallId = existingMeeting.streamCallId;
+  } else if (rebuildEndedEarly) {
+    streamCallId = `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`;
+  }
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
   const startsAt =
@@ -936,7 +947,7 @@ export async function provisionAppointmentMeeting(
         STREAM_CALL_TYPE,
         streamCallId,
       );
-      await call.getOrCreate({
+      const getOrCreatePayload = {
         data: {
           created_by_id: authorUserId,
           starts_at: startsAt,
@@ -952,7 +963,9 @@ export async function provisionAppointmentMeeting(
             ? { members: callProfile.members }
             : {}),
         },
-      });
+      };
+      assertValidGetOrCreateCall(getOrCreatePayload);
+      await call.getOrCreate(getOrCreatePayload);
     });
   } catch (error) {
     Sentry.captureException(
@@ -969,6 +982,8 @@ export async function provisionAppointmentMeeting(
         })
       : new Error("Failed to create meeting session.", { cause: error });
   }
+
+  if (reuseExisting) return { ok: true, streamCallId };
 
   if (rebuildEndedEarly && existingMeeting) {
     const rebound = await prisma.meeting.updateMany({

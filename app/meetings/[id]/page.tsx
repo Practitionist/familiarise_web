@@ -29,6 +29,7 @@ const MeetingPage = () => {
     error,
     access,
     consentRequired,
+    roomNotProvisioned,
     rejoin,
     retryJoin,
   } = useGetCallById(id as string);
@@ -186,6 +187,7 @@ const MeetingPage = () => {
       <Alert
         title="Meeting Error"
         description={`Failed to load meeting: ${error.message}`}
+        onRetry={roomNotProvisioned ? retryJoin : undefined}
       />
     );
   }
@@ -207,9 +209,10 @@ const MeetingPage = () => {
             <MeetingSetup
               setIsSetupComplete={setIsSetupComplete}
               meetingId={id as string}
+              role={access?.role ?? null}
             />
           ) : (
-            <MeetingRoom onRejoin={rejoin} />
+            <MeetingRoom onRejoin={rejoin} role={access?.role ?? null} />
           )}
         </StreamTheme>
       </StreamCall>

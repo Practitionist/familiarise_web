@@ -32,6 +32,10 @@ import {
 } from "@/lib/stream-utils";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
 import {
+  DM_ELIGIBLE_STATUSES,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
+import {
   addRemainingMembers,
   createMemberChunk,
   forEachChunk,
@@ -315,6 +319,16 @@ async function loadEventChannelData(
         },
       });
       if (!webinar) throw new Error(`Webinar not found: ${eventId}`);
+      if (
+        webinar.status &&
+        !OPENABLE_EVENT_STATUSES.includes(
+          webinar.status as (typeof OPENABLE_EVENT_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Webinar is not in an active state for channel creation: ${eventId}`,
+        );
+      }
 
       const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
       if (!consultantId) {
@@ -362,6 +376,16 @@ async function loadEventChannelData(
         },
       });
       if (!classData) throw new Error(`Class not found: ${eventId}`);
+      if (
+        classData.status &&
+        !OPENABLE_EVENT_STATUSES.includes(
+          classData.status as (typeof OPENABLE_EVENT_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Class is not in an active state for channel creation: ${eventId}`,
+        );
+      }
 
       const consultantId = classData.classPlan.consultantProfile?.user?.id;
       if (!consultantId) {
@@ -402,6 +426,16 @@ async function loadEventChannelData(
         },
       });
       if (!consultation) throw new Error(`Consultation not found: ${eventId}`);
+      if (
+        consultation.status &&
+        !DM_ELIGIBLE_STATUSES.includes(
+          consultation.status as (typeof DM_ELIGIBLE_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Consultation is not in a DM-eligible state: ${eventId}`,
+        );
+      }
 
       const consultantId =
         consultation.consultationPlan.consultantProfile?.user?.id;
@@ -437,6 +471,16 @@ async function loadEventChannelData(
         },
       });
       if (!subscription) throw new Error(`Subscription not found: ${eventId}`);
+      if (
+        subscription.status &&
+        !DM_ELIGIBLE_STATUSES.includes(
+          subscription.status as (typeof DM_ELIGIBLE_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Subscription is not in a DM-eligible state: ${eventId}`,
+        );
+      }
 
       const consultantId =
         subscription.subscriptionPlan.consultantProfile?.user?.id;
@@ -625,6 +669,7 @@ export async function createCollaboratorChannel(
 
   const collaboratorWhere = {
     status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
   };
 
   const collaboratorInclude = {

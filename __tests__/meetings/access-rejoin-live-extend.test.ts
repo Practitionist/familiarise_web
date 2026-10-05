@@ -347,15 +347,11 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
   const params = Promise.resolve({ meetingId: "occurrence-slot-1" });
   const req = {} as never;
 
-  it("upserts user before getOrCreate and leaves attendance writes to Stream webhooks on join", async () => {
+  it("upserts user before membership and leaves attendance writes to Stream webhooks on join", async () => {
     const res = await joinPOST(req, { params });
 
     expect(res.status).toBe(200);
-    expect(sequence).toEqual([
-      "upsertUsersToStream",
-      "getOrCreate",
-      "updateCallMembers",
-    ]);
+    expect(sequence).toEqual(["upsertUsersToStream", "updateCallMembers"]);
     expect(mockAttendanceUpsert).not.toHaveBeenCalled();
     expect(mockPresenceCreate).not.toHaveBeenCalled();
     expect(mockParticipantUpdateMany).not.toHaveBeenCalled();

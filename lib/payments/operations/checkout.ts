@@ -5016,6 +5016,23 @@ export async function handleCheckout(
         await mintConsumerInvoiceBestEffort({
           paymentIntent: paymentResponse!.id,
         });
+
+        const appointmentIdForChannels = result.appointmentId;
+        if (appointmentIdForChannels) {
+          scheduleAfter(async () => {
+            try {
+              const { ensureChannelsForAppointment } = await import(
+                "@/lib/payments/webhooks/ensure-channels"
+              );
+              await ensureChannelsForAppointment(appointmentIdForChannels);
+            } catch (channelErr) {
+              console.error(
+                "[checkout.ensure-channels] failed:",
+                channelErr,
+              );
+            }
+          }, "checkout.ensure-channels");
+        }
       }
 
       let message =

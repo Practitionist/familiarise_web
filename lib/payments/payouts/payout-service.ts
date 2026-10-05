@@ -2069,6 +2069,18 @@ export async function markConsultantPayoutReversed(
       });
     }
 
+    if ((payout.tdsDeducted ?? 0) > 0 && tx.tDSRecord) {
+      const { recordTdsReversal } = await import(
+        "@/lib/payments/tax/tds-service"
+      );
+      await recordTdsReversal(tx, {
+        payoutId: payout.id,
+        consultantProfileId: payout.consultantProfileId,
+        refundAmountPaise: payout.amount,
+        paymentAmountPaise: payout.amount,
+      });
+    }
+
     await releaseClawbackRecovery(tx, payout.id);
 
     console.log(

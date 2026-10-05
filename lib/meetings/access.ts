@@ -45,9 +45,12 @@ interface MeetingResolved {
   message: string;
   reason: "granted" | "unauthorized";
   code?: "CONSENT_REQUIRED";
+  /** An accepted presenter collaborator on a webinar or class plan, not the plan owner. */
+  coPresenter?: boolean;
   streamCallId: string;
   meetingId: string;
   appointment: MeetingAppointment;
+  occurrence?: ResolvedMeeting["occurrence"];
 }
 
 export type MeetingAccess = MeetingNotFound | MeetingResolved;
@@ -64,8 +67,11 @@ const MEETING_SESSION_INCLUDE = {
             include: {
               consultationPlan: {
                 select: {
+                  title: true,
+                  organizationId: true,
                   consultantProfileId: true,
                   recordingEnabled: true,
+                  consultantProfile: { select: { userId: true } },
                 },
               },
             },
@@ -74,8 +80,11 @@ const MEETING_SESSION_INCLUDE = {
             include: {
               subscriptionPlan: {
                 select: {
+                  title: true,
+                  organizationId: true,
                   consultantProfileId: true,
                   recordingEnabled: true,
+                  consultantProfile: { select: { userId: true } },
                 },
               },
             },
@@ -85,8 +94,11 @@ const MEETING_SESSION_INCLUDE = {
               webinarPlan: {
                 select: {
                   id: true,
+                  title: true,
+                  organizationId: true,
                   consultantProfileId: true,
                   recordingEnabled: true,
+                  consultantProfile: { select: { userId: true } },
                 },
               },
             },
@@ -96,14 +108,29 @@ const MEETING_SESSION_INCLUDE = {
               classPlan: {
                 select: {
                   id: true,
+                  title: true,
+                  organizationId: true,
                   consultantProfileId: true,
                   recordingEnabled: true,
+                  consultantProfile: { select: { userId: true } },
                 },
               },
             },
           },
           trial: {
-            select: { consultantProfileId: true, status: true },
+            select: {
+              consultantProfileId: true,
+              status: true,
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  organizationId: true,
+                  consultantProfileId: true,
+                  recordingEnabled: true,
+                  consultantProfile: { select: { userId: true } },
+                },
+              },
+            },
           },
         },
       },
@@ -249,6 +276,7 @@ export async function resolveMeetingAccess(
   const grant = async (
     role: Exclude<MeetingRole, null>,
     message: string,
+    coPresenter = false,
   ): Promise<MeetingAccess> => {
     const bookingStatus =
       appointment.consultation?.status ??
@@ -267,6 +295,7 @@ export async function resolveMeetingAccess(
         streamCallId,
         meetingId,
         appointment,
+        occurrence: meeting.occurrence,
       };
     }
     if (!(await hasStreamConsent(userId))) {
@@ -280,6 +309,7 @@ export async function resolveMeetingAccess(
         streamCallId,
         meetingId,
         appointment,
+        occurrence: meeting.occurrence,
       };
     }
     const refusal = await meetingPolicyRefusal({
@@ -303,6 +333,7 @@ export async function resolveMeetingAccess(
         streamCallId,
         meetingId,
         appointment,
+        occurrence: meeting.occurrence,
       };
     }
     return {
@@ -310,9 +341,11 @@ export async function resolveMeetingAccess(
       role,
       message,
       reason: "granted",
+      ...(coPresenter ? { coPresenter } : {}),
       streamCallId,
       meetingId,
       appointment,
+      occurrence: meeting.occurrence,
     };
   };
 
@@ -334,13 +367,14 @@ export async function resolveMeetingAccess(
         where: {
           consultantProfileId: userProfile.consultantProfileId,
           status: "ACCEPTED",
+          consultantProfile: { deletedAt: null },
           ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
         },
         select: { id: true, role: true },
       });
       if (collab) {
         return isPresenterRole(collab.role)
-          ? grant("host", "Access granted as accepted co-presenter")
+          ? grant("host", "Access granted as accepted co-presenter", true)
           : grant("participant", "Access granted as accepted collaborator");
       }
     }
@@ -358,5 +392,6 @@ export async function resolveMeetingAccess(
     streamCallId,
     meetingId,
     appointment,
+    occurrence: meeting.occurrence,
   };
 }

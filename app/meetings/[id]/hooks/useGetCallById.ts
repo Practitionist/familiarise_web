@@ -59,6 +59,7 @@ export const useGetCallById = (callId: string) => {
   const [error, setError] = useState<Error | null>(null);
   const [access, setAccess] = useState<MeetingAccessResult | null>(null);
   const [consentRequired, setConsentRequired] = useState(false);
+  const [roomNotProvisioned, setRoomNotProvisioned] = useState(false);
   const [rejoinKey, setRejoinKey] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const client = useStreamVideoClient();
@@ -151,6 +152,7 @@ export const useGetCallById = (callId: string) => {
       setIsCallLoading(true);
       setError(null);
       setConsentRequired(false);
+      setRoomNotProvisioned(false);
 
       const isRejoin = rejoinKey > 0;
 
@@ -199,6 +201,7 @@ export const useGetCallById = (callId: string) => {
             return;
           }
 
+          setRoomNotProvisioned(body?.code === "ROOM_NOT_PROVISIONED");
           // A failure, not a verdict. Surfacing it as an error gets the retry
           // affordance instead of a dead-end "access denied" screen. The catch
           // below clears `previousCall`, so it is not repeated here.
@@ -269,6 +272,7 @@ export const useGetCallById = (callId: string) => {
     error,
     access,
     consentRequired,
+    roomNotProvisioned,
     rejoin,
     retryJoin,
   };

@@ -95,8 +95,8 @@ graph TB
 ### Call Creation and Ownership
 
 The Stream call for a booking is created on the server and only on the server.
-`provisionAppointmentMeeting` (alongside `createDbMeeting`) in `actions/stream/meetings/meeting.action.ts`
-handles provisioning (`findDbMeetingBySlot` is an internal module helper), and `lib/meeting.ts` is a thin
+`provisionAppointmentMeeting` in `actions/stream/meetings/meeting.action.ts` handles provisioning
+(`findDbMeetingBySlot` and the `createDbMeeting` row writer are module-private helpers), and `lib/meeting.ts` is a thin
 client-side wrapper that calls `provisionAppointmentMeeting(slot)`, turns `result.refusal`
 back into a user-facing error for the toast, and hands the call id to
 `router.push("/meetings/<id>")`. Nothing in the browser constructs a `Call` in
@@ -105,13 +105,15 @@ order to create one.
 The order the action works in is load-bearing:
 
 1. Evaluate the target `MeetingSlot` (`AppointmentOccurrence`).
-2. Return early if a `Meeting` row already exists (unless `endedReason === "ended_early"`,
-   in which case the call is re-provisioned with a fresh `streamCallId`).
-3. Run every refusal that can block a join — maintenance, a tentative or
+2. Check entitlement (`readSlotForCaller`) before any Stream write, and again
+   first inside `createDbMeeting` as defense-in-depth.
+3. If a `Meeting` row already exists, re-run the same idempotent `getOrCreate` on its
+   `streamCallId` so a row whose call is missing (a seed row, a deleted call) is healed, then
+   return it. An `endedReason === "ended_early"` row is instead re-provisioned with a fresh
+   `streamCallId`.
+4. For a new room, run every refusal that can block a join — maintenance, a tentative or
    cancelled occurrence, a booking whose parent row is in a terminal state — before
    anything is minted.
-4. Check entitlement (`requireEntitledCaller`) before the Stream write and again
-   first inside `createDbMeeting` as defense-in-depth.
 5. Create the call with the server client (`buildCallSettingsOverride`), naming the
    appointment's host as `created_by_id`, every entitled user (excluding unconsented
    participants returned in `droppedIds`) as `call_member`, and setting `settings_override.limits.max_duration_seconds`
@@ -130,8 +132,8 @@ Every session is provisioned with an elastic duration envelope (`lib/meetings/du
 - **Dashboard & API Rejoin Grace (`REJOIN_GRACE_MS = 30 * 60 * 1000`)**:
   - `getOccurrenceVMJoinState` (`lib/appointments/occurrences.ts`) and `resolveMeetingAccess` (`lib/meetings/access.ts`) allow joining and rejoining until `endsAt + 30m` unless the session was deliberately ended (`endedReason === "call_ended"` or `"maintenance"`).
 - **1-to-Many Stage Controls (`StageControls.tsx` & `isAwaitingHostGoLive`)**:
-  - `buildCallSettingsOverride` configures `limits.max_duration_seconds` on `default` calls. When backstage mode is enabled on a 1-to-Many call (`isBackstageEnabled: true`), attendees wait in the backstage lobby while `isAwaitingHostGoLive` is true until a host clicks **Go Live** (`POST /api/meetings/[meetingId]/live`).
-  - Attendees can raise their hand to request audio/video permissions; hosts approve or decline via `StageControls.tsx`.
+  - `buildCallSettingsOverride` configures `limits.max_duration_seconds` on `default` calls. When backstage mode is enabled on a 1-to-Many call (`isBackstageEnabled: true`), attendees wait in the backstage lobby while `isAwaitingHostGoLive` is true until a host or co-presenter clicks **Go Live** (`POST /api/meetings/[meetingId]/live`).
+  - Attendees can raise their hand to request audio/video permissions; hosts and co-presenters approve or decline via `StageControls.tsx` (co-presenters route stage grant/revoke actions through `POST /api/meetings/[meetingId]/stage`, validated by `lib/stream/video-contracts.ts`).
 - **In-Call Overrun Banner & Free +15m Extension**:
   - `OverrunBanner.tsx` surfaces a countdown inside the room when entering the final 5 minutes of the booked window, transitions to an amber grace-buffer countdown after `endsAt` (reading `session.timer_ends_at` or falling back to `MIN_CALL_DURATION_MS` + `CALL_DURATION_GRACE_MS`), and provides hosts with a one-click **Extend +15m (Free)** button (`POST /api/meetings/[meetingId]/extend`).
 - **In-Call Ephemeral Chat**:
@@ -139,13 +141,36 @@ Every session is provisioned with an elastic duration envelope (`lib/meetings/du
 
 #### Call roles, and the order the scripts have to run in
 
-Every member of a call is named `call_member`, at creation and again on each
-join. `scripts/stream/ensure.ts` (and `scripts/stream/ensure-call-type-grants.ts`)
-locks the `default` call type down so `user` and `guest` lose `join-call`,
-`join-ended-call`, `update-call-permissions`, `end-call`, and all 18 billable
-permissions, while `call_member` retains `join-call`, `join-ended-call` (for
-`ended_early` and `REJOIN_GRACE_MS` rejoin), and `update-call-permissions` (for
-host stage moderation) and loses `end-call` and all 18 billable permissions.
+Every member of a call is named `call_member` at creation. On each join, the
+admit route sets the member role again: an accepted presenter collaborator
+(`CO_HOST` or `CO_INSTRUCTOR`) on a webinar or class plan gets `co_presenter`,
+and everyone else gets `call_member`. The plan owner is the call's `created_by`,
+so the owner also holds the `-owner` permission variants.
+
+`scripts/stream/ensure.ts` (and `scripts/stream/ensure-call-type-grants.ts`)
+locks the `default` call type down. The `user` and `guest` roles lose
+`join-call`, `join-ended-call`, `end-call`, and all 18 billable permissions.
+The `call_member` role keeps `join-call` and `join-ended-call` (for the
+`ended_early` and `REJOIN_GRACE_MS` rejoin paths), and it loses `end-call` and
+all 18 billable permissions. The `call_member` role does not hold
+`update-call-permissions`, `mute-users` or `pin-call-track`. It holds only the
+`-owner` variants of those permissions, which take effect for the call's
+creator alone.
+
+Stream accepts only `send-audio`, `send-video` and `screenshare` as per-user
+grants (`updateUserPermissions`). A single other name fails the whole request.
+Every other power, such as muting, pinning or joining backstage, has to come
+from a role's grants on the call type. The custom `co_presenter` role on
+`default` holds `join-call`, `join-ended-call`, `join-backstage`, `read-call`,
+`send-audio`, `send-video`, `screenshare`, `mute-users`, `pin-call-track`,
+`send-event`, `send-closed-captions`, `create-call-reaction`, `list-recordings`
+and `list-transcriptions`. It never holds `end-call`, `update-call-permissions`,
+`update-call-member` or any recording control. Step 5 of `scripts/stream/ensure.ts`
+(`ensureCoPresenterRole`) creates the role and writes exactly this grant list
+idempotently, and the other grants scripts leave the role untouched. If the role is
+missing, the admit route falls back to `call_member` and reports once to Sentry.
+Removing a collaborator downgrades their membership on the plan's open calls to
+`call_member`, or removes them when they hold no seat of their own.
 
 ```bash
 npx tsx scripts/stream/ensure.ts                                      # dry run, inspects app settings + call types
@@ -635,8 +660,7 @@ const handleEndCall = async () => {
 The button used to call `call.endCall()` directly. Routing through the server
 allows `scripts/stream/ensure-call-type-grants.ts` to strip `end-call` and all
 18 billable permissions from `call_member` (while retaining `join-ended-call`
-and `update-call-permissions` on `call_member` and revoking them from `user`
-and `guest`).
+on `call_member` and revoking it from `user` and `guest`).
 
 `POST /api/meetings/[meetingId]/end` calls `call.end()` on Stream, and the
 resulting `call.ended` webhook is the single writer for `Meeting.endedAt`,
@@ -835,7 +859,8 @@ useEffect(() => {
 - **Exported `findDbMeetingBySlot`**: Now an internal helper inside `actions/stream/meetings/meeting.action.ts`. External callers use `provisionAppointmentMeeting(slot)`.
 - **`slotOfAppointmentId` on `Meeting`**: Replaced by `occurrenceId` referencing `AppointmentOccurrence`.
 - **Client-side `call.endCall()` and `call.goLive()`**: Replaced by server-enforced `POST /api/meetings/[meetingId]/end` and `POST /api/meetings/[meetingId]/live`.
-- **`end-call` and billable permissions on `call_member`, `user`, and `guest`**: Revoked by `scripts/stream/ensure-call-type-grants.ts` while retaining `join-ended-call` and `update-call-permissions` on `call_member`.
+- **`end-call` and billable permissions on `call_member`, `user`, and `guest`**: Revoked by `scripts/stream/ensure-call-type-grants.ts` while retaining `join-ended-call` on `call_member`.
+- **Per-user host grants in the admit route (`join-backstage`, `update-call-permissions`, `mute-users`, `pin-call-track`)**: Stream rejects every per-user grant except `send-audio`, `send-video` and `screenshare`. Co-presenter powers now come from the `co_presenter` call-type role.
 
 ---
 

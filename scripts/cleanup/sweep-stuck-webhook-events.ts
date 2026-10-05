@@ -230,7 +230,12 @@ async function sweepStuckWebhookEventsUnlocked(
           // processRazorpayWebhookEvent catches handler errors and marks the row
           // processed (stamping error on failure) in its finally — so this both
           // re-runs the side-effects AND clears the stuck flag.
-          await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
+          await processRazorpayWebhookEvent(
+            envelope,
+            ev.eventType,
+            ev.eventId,
+            claim,
+          );
         }
         const after = await prisma.webhookEvent.findUnique({
           where: { eventId: ev.eventId },

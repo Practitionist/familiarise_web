@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import type { SeverityLevel } from "@sentry/nextjs";
+import { isExpectedError } from "@/lib/observability/expected";
 import {
   isDeadlock,
   isExclusionViolation,
@@ -195,6 +196,33 @@ function extractPgErrorTags(error: unknown): Record<string, string> {
   return out;
 }
 
+function safeJsonStringify(payload: Record<string, unknown>): string {
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(payload, (_key, value: unknown) => {
+      if (typeof value === "bigint") return value.toString();
+      if (value && typeof value === "object") {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    });
+  } catch {
+    return JSON.stringify({
+      event: payload.event ?? "observability.fault",
+      kind: payload.kind ?? "unknown",
+      subsystem: payload.subsystem ?? null,
+      op: payload.op ?? null,
+      level: payload.level ?? "error",
+      message:
+        typeof payload.message === "string"
+          ? payload.message
+          : "Unserializable fault payload",
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
 /**
  * Report a caught fault or modelled outcome. Normalises non-Error throws and
  * returns the Sentry event ID (empty string if mocked/suppressed) so API
@@ -208,6 +236,22 @@ export function reportSentryError(error: unknown, opts: ReportOpts): string {
     Object.keys(pgTags).length > 0
       ? { ...pgTags, ...context.tags }
       : context.tags;
+  if (!opts.expected && !isExpectedError(error) && opts.level !== "info") {
+    console.error(
+      safeJsonStringify({
+        event: "observability.fault",
+        kind: "exception",
+        subsystem: opts.subsystem,
+        op: opts.op ?? null,
+        level: context.level,
+        message: normalised.message,
+        name: normalised.name,
+        tags,
+        extra: opts.extra ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
   const eventId = Sentry.captureException(normalised, {
     ...context,
     tags,
@@ -218,9 +262,22 @@ export function reportSentryError(error: unknown, opts: ReportOpts): string {
 
 /** Sibling of `reportSentryError` for sites with no exception object to attach — idempotency short-circuits, race-losses, malformed-input rejections. */
 export function reportSentryMessage(message: string, opts: ReportOpts): string {
-  const eventId = Sentry.captureMessage(
-    message,
-    buildSentryCaptureContext(opts),
-  );
+  const context = buildSentryCaptureContext(opts);
+  if (!opts.expected && (opts.level === "error" || opts.level === "fatal")) {
+    console.error(
+      safeJsonStringify({
+        event: "observability.fault",
+        kind: "message",
+        subsystem: opts.subsystem,
+        op: opts.op ?? null,
+        level: context.level,
+        message,
+        tags: context.tags,
+        extra: opts.extra ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const eventId = Sentry.captureMessage(message, context);
   return typeof eventId === "string" ? eventId : "";
 }

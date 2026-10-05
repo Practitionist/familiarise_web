@@ -48,8 +48,10 @@ function resolveExtensionsUsed(raw: unknown, extendedSeconds: number): number {
   return extendedSeconds > 0 ? 1 : 0;
 }
 
-/** Derives the current viewer's session role and metadata from Stream call custom data. */
-export function useSessionInfo(): SessionInfo {
+/** Derives the current viewer's session role and metadata from Stream call custom data and server admission role. */
+export function useSessionInfo(
+  serverRole?: "host" | "participant" | null,
+): SessionInfo {
   const { useCallCustomData } = useCallStateHooks();
   const custom = useCallCustomData();
   const { data: session } = useSession();
@@ -61,7 +63,9 @@ export function useSessionInfo(): SessionInfo {
 
   const me = session?.user?.id;
   let isHost: boolean;
-  if (hostUserIds.length > 0) {
+  if (serverRole === "host" || serverRole === "participant") {
+    isHost = serverRole === "host";
+  } else if (hostUserIds.length > 0) {
     isHost = Boolean(me) && hostUserIds.includes(me as string);
   } else if (consultantUserId) {
     isHost = me === consultantUserId;

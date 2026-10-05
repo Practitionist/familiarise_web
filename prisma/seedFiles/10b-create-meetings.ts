@@ -2,15 +2,6 @@ import { faker } from "@faker-js/faker";
 import { Platform } from "@prisma/client";
 import prisma from "../../lib/prisma";
 
-// Platform distribution: 80% STREAM, 10% ZOOM, 5% GOOGLE_MEET, 5% others
-const PLATFORM_WEIGHTS: { platform: Platform; weight: number }[] = [
-  { platform: "STREAM", weight: 80 },
-  { platform: "ZOOM", weight: 10 },
-  { platform: "GOOGLE_MEET", weight: 5 },
-  { platform: "MICROSOFT_TEAMS", weight: 3 },
-  { platform: "CUSTOM", weight: 2 },
-];
-
 // Recording title templates
 const RECORDING_TITLES = [
   "Consultation Session Recording",
@@ -24,31 +15,6 @@ const RECORDING_TITLES = [
   "Progress Review Session",
   "Goal Setting Discussion",
 ];
-
-function getWeightedPlatform(): Platform {
-  const totalWeight = PLATFORM_WEIGHTS.reduce(
-    (sum, item) => sum + item.weight,
-    0,
-  );
-  let random = faker.number.int({ min: 1, max: totalWeight });
-
-  for (const item of PLATFORM_WEIGHTS) {
-    random -= item.weight;
-    if (random <= 0) {
-      return item.platform;
-    }
-  }
-  return "STREAM";
-}
-
-/**
- * Generate Stream-compatible call ID
- * Format: call_{uuid} to match Stream's expected format
- */
-function generateStreamCallId(): string {
-  const uuid = faker.string.uuid();
-  return `call_${uuid}`;
-}
 
 /**
  * Generate passcode for meetings
@@ -80,10 +46,14 @@ export async function createMeetings(): Promise<void> {
     `Creating ${NUM_MEETING_SESSIONS} meeting sessions and ${NUM_RECORDINGS} recordings...`,
   );
 
-  // Get slots of appointments that can have meeting sessions
+  const now = new Date();
+  // Seed Meeting rows only for past occurrences so upcoming SCHEDULED occurrences
+  // start with meeting: null and exercise provisionAppointmentMeeting on first join.
   const occurrences = await prisma.appointmentOccurrence.findMany({
     where: {
-      meeting: null, // Only slots without existing meeting sessions
+      meeting: null,
+      endsAt: { lt: now },
+      deletedAt: null,
     },
     include: {
       appointment: {
@@ -120,10 +90,9 @@ export async function createMeetings(): Promise<void> {
     }
 
     try {
-      const platform = getWeightedPlatform();
-
-      // Generate Stream-compatible call ID as per user preference
-      const streamCallId = generateStreamCallId();
+      const platform: Platform = "STREAM";
+      const streamCallId = `occurrence-${slot.id}`;
+      const slotEndsAt = new Date(slot.endsAt);
 
       // Add passcode for some meetings
       const hasPasscode = faker.datatype.boolean({ probability: 0.6 });
@@ -139,6 +108,8 @@ export async function createMeetings(): Promise<void> {
           passcode,
           hostKeys,
           appointmentOccurrenceId: slot.id,
+          endedAt: slotEndsAt,
+          endedReason: "call_ended",
         },
       });
 
@@ -146,8 +117,7 @@ export async function createMeetings(): Promise<void> {
       sessionsCreated++;
 
       // Create recordings for completed/past meetings (about 50% of sessions)
-      const slotEndsAt = new Date(slot.endsAt);
-      const isPast = slotEndsAt < new Date();
+      const isPast = slotEndsAt < now;
 
       if (
         isPast &&

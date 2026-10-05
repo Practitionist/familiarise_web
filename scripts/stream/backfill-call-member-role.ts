@@ -41,12 +41,21 @@ import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
-import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import {
+  CALL_MEMBER_ROLE,
+  CO_PRESENTER_CALL_ROLE,
+  STREAM_CALL_TYPE,
+} from "../../lib/stream/call-cid";
 
 type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
 
-/** The role every participant must hold once `join-call` moves onto it. */
-export const MEMBER_ROLE = "call_member";
+/** `co_presenter` also holds `join-call`, so it counts as covered only when the join role is `call_member`. */
+function holdsJoinRole(role: string | null, joinRole: string): boolean {
+  return (
+    role === joinRole ||
+    (joinRole === CALL_MEMBER_ROLE && role === CO_PRESENTER_CALL_ROLE)
+  );
+}
 
 /**
  * Stream's documented maximum for `queryCalls`, and the only page size that
@@ -199,7 +208,7 @@ async function readAllMembers(
  */
 export async function anyOpenCallMemberHolds(
   client: StreamVideoClient,
-  role: string = MEMBER_ROLE,
+  role: string = CALL_MEMBER_ROLE,
 ): Promise<{
   found: boolean;
   callsScanned: number;
@@ -214,7 +223,9 @@ export async function anyOpenCallMemberHolds(
 
   for await (const call of iterateOpenCalls(client)) {
     callsScanned++;
-    const missing = call.members.filter((member) => member.role !== role);
+    const missing = call.members.filter(
+      (member) => !holdsJoinRole(member.role, role),
+    );
     membersWithRole += call.members.length - missing.length;
     if (missing.length > 0) {
       membersMissingRole += missing.length;
@@ -280,7 +291,9 @@ export async function backfillCallMemberRole(
       continue;
     }
 
-    const stale = call.members.filter((member) => member.role !== MEMBER_ROLE);
+    const stale = call.members.filter(
+      (member) => !holdsJoinRole(member.role, CALL_MEMBER_ROLE),
+    );
     if (stale.length === 0) continue;
 
     result.callsChanged++;
@@ -289,7 +302,10 @@ export async function backfillCallMemberRole(
     console.log(
       `${call.type}:${call.id}\n` +
         stale
-          .map((m) => `    ${m.userId}: ${m.role ?? "(none)"} → ${MEMBER_ROLE}`)
+          .map(
+            (m) =>
+              `    ${m.userId}: ${m.role ?? "(none)"} → ${CALL_MEMBER_ROLE}`,
+          )
           .join("\n"),
     );
 
@@ -298,7 +314,7 @@ export async function backfillCallMemberRole(
     await client.video.call(call.type, call.id).updateCallMembers({
       update_members: stale.map((member) => ({
         user_id: member.userId,
-        role: MEMBER_ROLE,
+        role: CALL_MEMBER_ROLE,
       })),
     });
   }
@@ -337,7 +353,7 @@ function report(result: BackfillResult, opts: Options): void {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   console.log(
-    `Backfilling the ${MEMBER_ROLE} role (${opts.apply ? "LIVE" : "DRY RUN"})...`,
+    `Backfilling the ${CALL_MEMBER_ROLE} role (${opts.apply ? "LIVE" : "DRY RUN"})...`,
   );
   const result = await backfillCallMemberRole(opts);
   report(result, opts);
