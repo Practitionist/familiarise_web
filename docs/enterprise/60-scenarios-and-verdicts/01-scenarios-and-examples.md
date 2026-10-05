@@ -335,34 +335,36 @@ sequenceDiagram
 
 ### 5.12 Overage with surcharge + circuit breaker (v2)
 
-New programmes can no longer add a surcharge (`OVERAGE_SURCHARGE_UNSUPPORTED`, because no invoice charges GST on it yet), so this walkthrough describes how a programme saved with one still settles.
+New programmes can no longer add a surcharge (`OVERAGE_SURCHARGE_UNSUPPORTED`), so this walkthrough describes how a programme saved with one still settles. The surcharge is taxed at checkout: 18% GST on it rides the marginal.
 
 **Seed-grounded shape (Wipro), hypothetical numbers.** Wipro's seed config: `coveredEngagementsPerCycle = 12`, `overageBehavior = CHARGE_ORG`, `priceCapPerEngagementPaise = ₹10,000`. The seed does **not** set `overageSurchargeBps` or `maxOveragePerCyclePaise` (both null = no markup, no ceiling); set them to walk this scenario. Say `overageSurchargeBps = 1500` (15%) and `maxOveragePerCyclePaise = ₹20,000`.
 
 Alice is at the cap (`engagementsUsed = 12`) and books a **₹12,000** session (13th engagement).
 
-**Step 1 — the marginal (base + surcharge).** The price cap polices the per-engagement price the seat absorbs: the over-cap pass-through is the *capped* price, ₹10,000, not ₹12,000.
+**Step 1 — the marginal (base + surcharge + GST on the surcharge).** The price cap polices the per-engagement price the seat absorbs: the over-cap pass-through is the *capped* price, ₹10,000, not ₹12,000.
 ```
 basePaise      = min(₹12,000, priceCap ₹10,000) carved over-cap   = 1000000
 surchargePaise = floor(basePaise × overageSurchargeBps / 10000)   =  150000   (15% of ₹10,000)
-marginalPaise  = basePaise + surchargePaise                       = 1150000   (₹11,500)
+surcharge GST  = 18% of surchargePaise (domestic payer)          =   27000
+marginalPaise  = basePaise + surchargePaise + surcharge GST       = 1177000   (₹11,770)
 ```
 Invariant on the `OverageEvent`: `coveredPaise + basePaise == booking price` and `marginalPaise == basePaise + surchargePaise + GST on the surcharge` ([booking-to-earnings §6.1](../10-money-and-ledger/05-booking-to-earnings.md)).
 
-**Step 2 — pre-checkout preview (advisory).** Before Alice confirms, `GET /api/organizations/[orgId]/checkout/overage-preview` runs the **same** `computeOverageForBooking` mapper over her *current* usage and returns `willExceedCap = true`, `marginalPaise = 1150000`, `chargeTo = ORG`. The UI warns "this exceeds the cap; ₹11,500 will bill to Wipro." No money has moved — preview is read-only.
+**Step 2 — pre-checkout preview (advisory).** Before Alice confirms, `GET /api/organizations/[orgId]/checkout/overage-preview` runs the **same** `computeOverageForBooking` mapper over her *current* usage and returns `willExceedCap = true`, `marginalPaise = 1177000`, `chargeTo = ORG`. The UI warns "this exceeds the cap; ₹11,770 (incl. GST) will bill to Wipro." No money has moved — preview is read-only.
 
-**Step 3a — CHARGE_ORG accrual (within the breaker).** Cycle overage-so-far is ₹0, so `₹0 + ₹11,500 ≤ ₹20,000` — the breaker is clear. `recordOverageAtCheckout` (inside the booking's Serializable tx) carves `basePaise` out of the base `INVOICE_ACCRUAL` leg and writes the marginal as a distinct `OVERAGE_INVOICE_ACCRUAL` leg (distinct `source` dodges the `@@unique([paymentId, source])` clash), and persists `OverageEvent(PENDING)`:
+**Step 3a — CHARGE_ORG accrual (within the breaker).** Cycle overage-so-far is ₹0, so `₹0 + ₹11,500 ≤ ₹20,000` — the breaker is clear (it compares the tax-exclusive base + surcharge with the ceiling). `recordOverageAtCheckout` (inside the booking's Serializable tx) carves `basePaise` out of the base `INVOICE_ACCRUAL` leg and writes the marginal as a distinct `OVERAGE_INVOICE_ACCRUAL` leg (distinct `source` dodges the `@@unique([paymentId, source])` clash), and persists `OverageEvent(PENDING)`:
 ```
 BOOKING  booking:<paymentId>
-  Dr ORG_RECEIVABLE(wipro)        1150000   (OVERAGE_INVOICE_ACCRUAL leg)
+  Dr ORG_RECEIVABLE(wipro)        1177000   (OVERAGE_INVOICE_ACCRUAL leg)
      Cr PLATFORM_FEE              115000    (10%)
      Cr CONSULTANT_PAYABLE(expert) 1035000  (90%, expert settles SELF)
+     Cr GST_PAYABLE                 27000   (GST on the surcharge)
 ```
 At cycle close, `settle-invoice-accruals` rolls this into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED` (stamping `settledAt` + `invoiceLineItemId`); the terminal `CHARGED` lands only when the invoice is **paid** (`INVOICE_PAID` handler flips `ACCRUED → CHARGED`). See [invoicing §9](../10-money-and-ledger/08-invoicing.md).
 
 **Step 3b — the breaker veto (BLOCKED).** Now say Alice already accrued ₹15,000 of overage this cycle and books another ₹12,000 session (marginal ₹11,500). `₹15,000 + ₹11,500 = ₹26,500 > ₹20,000` ceiling. The mapper returns `decision: BLOCK, chargeTo: null` **regardless of `CHARGE_ORG`**; `recordOverageAtCheckout` throws **`PROGRAM_CAP_EXHAUSTED` (402)** (distinct from the per-allocation `ProgramAssignmentLimitError`), and the `OverageEvent` is recorded `BLOCKED`. Nothing books, no money moves. The dashboard can say "cycle ceiling reached" vs "per-member allocation."
 
-**Step 3c — CHARGE_MEMBER + 14-day timeout (FAILED).** If Wipro's program were `CHARGE_MEMBER` instead: checkout mints a parent-linked **PENDING side-`Payment`** for the ₹11,500 marginal (gateway order minted lazily when Alice opens resume-checkout), an `OverageEvent(PENDING)`, and carves `basePaise` out of the org-funded parent's accrual leg so she isn't double-charged (#785). If she settles it, the webhook posts the `OVERAGE_MEMBER` org-relief leg (`Dr CASH / Cr ORG_PAYABLE(wipro)`, [ledger-and-postings §4.8](../10-money-and-ledger/03-ledger-and-postings.md)) and flips the event → `CHARGED`. If she abandons it, the **`timeout-member-overages`** cron (23:00 UTC, hard **14-day** wall) stamps `chargeTimedOutAt`, flips the event → `FAILED`, frees the breaker ceiling, and **notifies** her. (A separate 7-day sweep, #785, silently FAILs charges she never even *started* so they stop counting toward the ceiling — read both before touching either, [booking-to-earnings §6.4](../10-money-and-ledger/05-booking-to-earnings.md).)
+**Step 3c — CHARGE_MEMBER + 14-day timeout (FAILED).** If Wipro's program were `CHARGE_MEMBER` instead: checkout mints a parent-linked **PENDING side-`Payment`** for the ₹11,770 marginal (GST at Alice's own place of supply) (gateway order minted lazily when Alice opens resume-checkout), an `OverageEvent(PENDING)`, and carves `basePaise` out of the org-funded parent's accrual leg so she isn't double-charged (#785). If she settles it, the webhook posts the `OVERAGE_MEMBER` org-relief leg (`Dr CASH / Cr ORG_PAYABLE(wipro)`, [ledger-and-postings §4.8](../10-money-and-ledger/03-ledger-and-postings.md)) and flips the event → `CHARGED`. If she abandons it, the **`timeout-member-overages`** cron (23:00 UTC, hard **14-day** wall) stamps `chargeTimedOutAt`, flips the event → `FAILED`, frees the breaker ceiling, and **notifies** her. (A separate 7-day sweep, #785, silently FAILs charges she never even *started* so they stop counting toward the ceiling — read both before touching either, [booking-to-earnings §6.4](../10-money-and-ledger/05-booking-to-earnings.md).)
 
 ### 5.13 Dunning — chasing an overdue invoice (v2)
 
