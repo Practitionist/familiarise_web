@@ -131,6 +131,10 @@ export async function checkEventChannelExists(
   eventType: EventType,
   eventId: string,
 ): Promise<boolean> {
+  const session = await getSession(true);
+  if (!session?.user?.id || session.user.banned) {
+    return false;
+  }
   return checkEventChannelExistsInternal(eventType, eventId);
 }
 

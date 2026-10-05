@@ -868,6 +868,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             id: true,
             subscriptionPlanId: true,
             requestedById: true,
+            status: true,
           },
         });
 
@@ -894,6 +895,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             {
               error:
                 "Subscription must belong to the same consultee as the trial",
+            },
+            { status: 400 },
+          );
+        }
+
+        if (
+          subscription.status &&
+          !["APPROVED", "SCHEDULED", "COMPLETED"].includes(subscription.status)
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Subscription must be approved or active before converting a trial",
             },
             { status: 400 },
           );
@@ -927,7 +941,29 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // whole PATCH rolls back instead of clobbering it. The app-level
     // validTransitions check above is only the friendly error text.
     const { status: nextStatus, ...restUpdate } = updateData;
+    let subscriptionBecameInactive = false;
     const updatedTrial = await prisma.$transaction(async (tx) => {
+      if (
+        nextStatus === TrialStatus.CONVERTED &&
+        subscriptionId &&
+        typeof tx.subscription?.findUnique === "function"
+      ) {
+        const currentSub = await tx.subscription.findUnique({
+          where: { id: subscriptionId },
+          select: { status: true, deletedAt: true },
+        });
+        if (
+          !currentSub ||
+          currentSub.deletedAt ||
+          (currentSub.status &&
+            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(
+              currentSub.status,
+            ))
+        ) {
+          subscriptionBecameInactive = true;
+          return null;
+        }
+      }
       if (nextStatus !== undefined) {
         await transitionTrial(tx, {
           where: { id: trialId },
@@ -995,6 +1031,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         },
       });
     });
+    if (subscriptionBecameInactive || !updatedTrial) {
+      return NextResponse.json(
+        {
+          error:
+            "Subscription must be approved or active before converting a trial",
+        },
+        { status: 400 },
+      );
+    }
     // #1654 — awaited: an un-awaited trigger is dropped when the instance
     // freezes after the response; each effect still fails on its own.
     for (const effect of afterCommit) {

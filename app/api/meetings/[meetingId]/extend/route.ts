@@ -6,6 +6,7 @@ import {
   MAX_CALL_DURATION_MS,
   resolveMaxCallDurationSeconds,
 } from "@/lib/meetings/duration-cap";
+import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -226,11 +227,28 @@ export async function POST(
         MAX_CALL_DURATION_SECONDS,
       );
       const nextExtensionsUsed = extensionsUsed + 1;
+      const appointmentType =
+        appt?.appointmentType ??
+        (appt?.webinar
+          ? "WEBINAR"
+          : appt?.class
+            ? "CLASS"
+            : appt?.consultation
+              ? "CONSULTATION"
+              : appt?.subscription
+                ? "SUBSCRIPTION"
+                : appt?.trial
+                  ? "TRIAL"
+                  : null);
+      const settingsOverride = buildCallSettingsOverride(
+        appointmentType,
+        updatedCapSeconds,
+      ) ?? {
+        limits: { max_duration_seconds: updatedCapSeconds },
+      };
 
       await call.update({
-        settings_override: {
-          limits: { max_duration_seconds: updatedCapSeconds },
-        },
+        settings_override: settingsOverride,
         custom: {
           ...existingCustom,
           extendedSeconds: prevExtended + EXTENSION_SECONDS,

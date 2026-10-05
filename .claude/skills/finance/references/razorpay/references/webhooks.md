@@ -1,134 +1,141 @@
-# Webhooks
+# Razorpay Webhooks — Verification, Dedup, Dispatch & Durability
 
-The handler already exists and is load-bearing. Read this before changing it —
-several of its odder-looking decisions are deliberate and were paid for.
+Official citations:
+- [Webhooks Overview & Setup](https://razorpay.com/docs/webhooks/setup-edit-payments/)
+- [Validate & Test Webhooks](https://razorpay.com/docs/webhooks/validate-test/)
+- [Webhook Best Practices](https://razorpay.com/docs/webhooks/best-practices/)
+- [Webhooks FAQs (Timeout, Retries, Auto-Disable, Support Replay)](https://razorpay.com/docs/webhooks/faqs/)
 
-- Route: `app/api/webhooks/razorpay/route.ts`
-- Dispatch switch: `app/api/webhooks/razorpay-dispatch.ts`
-- Handlers: `app/api/webhooks/utils.ts`
-- Envelope schemas: `schemas/webhooks/razorpay.ts`
-- Sweeper: `scripts/cleanup/sweep-stuck-webhook-events.ts`
+## Where It Lives in This Repo
 
-## Rules that are not negotiable
-
-1. **Verify the signature before anything else**, over the **raw** body. Parsing and
-   re-serialising changes key order and the HMAC will not match.
-2. **Return 2xx for events you do not handle.** A non-2xx makes Razorpay retry with
-   exponential backoff for 24 hours, after which it **disables the webhook** and emails
-   the Alert Email Address. Reserve 5xx for genuinely transient failures you want retried.
-3. **Idempotency is mandatory.** Delivery is at-least-once; the same event will arrive
-   more than once.
-4. **Never trust ordering.** Events for the same entity can arrive out of order or
-   milliseconds apart.
-
-## Signature verification
-
-`verifyWebhookSignature` in `app/api/webhooks/utils.ts`: HMAC-SHA256 of the raw body
-keyed with `RAZORPAY_WEBHOOK_SECRET`, compared with `timingSafeEqual` after a 64-character
-length pre-check. The length check is not decoration — `timingSafeEqual` **throws** on a
-length mismatch, so without it an attacker-controlled header turns a rejected signature
-into a 500.
-
-The webhook secret is a different value from the API key secret. Mixing them up is the
-single most common cause of "signature invalid" (see `debugging.md`).
-
-### The dual-secret fallback
-
-RazorpayX payout events are signed with `RAZORPAYX_WEBHOOK_SECRET` but arrive at the same
-endpoint. So the route verifies against the main secret first, and only if that fails
-**and** the parsed event name starts with `payout.` does it re-verify against the X
-secret. That ordering is the whole safety property: a non-payout event can never be
-accepted by the X secret, so the fallback cannot widen the trust boundary. Repeated HMAC
-failures are recorded via `recordSystemEvent({ category: "WEBHOOK", severity: "WARN" })` —
-they are a tamper or misconfiguration signal.
-
-## Dedup: `WebhookEvent`, and a synthesized event id
-
-Razorpay sends `x-razorpay-event-id`, unique per event and stable across retries, which
-makes it the natural dedup key. **This repo does not use it.** It synthesizes its own:
-
-```
-eventId = `${eventType}:${entityId}`
-```
-
-where `entityId` is the first non-null of the payment / order / refund / dispute / payout
-entity id, then `account_id`, then `body_<sha256(rawBody)[0:16]}`. This dedups on the
-*business fact* rather than the delivery, so two distinct deliveries describing the same
-state transition collapse to one. If you change this, understand that you are changing
-what "already processed" means.
-
-`logWebhookEvent()` is a three-state machine over `processed` + `error`:
-
-| Row state | Decision |
+| File | Responsibility |
 |---|---|
-| `processed = true`, `error = null` | skip — genuinely done |
-| `error != null` | reset and allow a retry |
-| `processed = false`, `error = null` | in progress, skip — **unless** `receivedAt` is older than the 5-minute stale threshold, then allow a retry |
+| [`app/api/webhooks/razorpay/route.ts`](../../../../../app/api/webhooks/razorpay/route.ts) | `POST /api/webhooks/razorpay` (`export const runtime = "nodejs"`). Body size cap, HMAC verification, DB health check (`503`), envelope parse, tamper-proof `eventId` synthesis, `logWebhookEvent`, immediate `200 OK`, and `after()` dispatch. |
+| [`app/api/webhooks/razorpay/signature.ts`](../../../../../app/api/webhooks/razorpay/signature.ts) | `verifyRazorpaySignature`, `resolveRazorpayPaymentSecrets` (`RAZORPAY_WEBHOOK_SECRET` + `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`), `matchRazorpayWebhookSecret`, `isPayoutEventName`. |
+| [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) | `processRazorpayWebhookEvent` and `routeCapturedPayment` — shared by the webhook route's `after()` callback and `scripts/cleanup/sweep-stuck-webhook-events.ts`. |
+| [`app/api/webhooks/utils.ts`](../../../../../app/api/webhooks/utils.ts) | `logWebhookEvent`, `markWebhookEventProcessed`, `DeferSignal`, org payment/refund/dispute/payout handlers. |
+| [`schemas/webhooks/razorpay.ts`](../../../../../schemas/webhooks/razorpay.ts) | Zod schemas for `payment.captured`, `order.paid`, `payment.failed`, and the outer `razorpayWebhookEnvelopeSchema`. |
 
-That stale window is what stops a process that died mid-handler from wedging the event
-forever. A P2002 unique-violation race resolves to `{ isNew: false }`.
+---
 
-Handlers may also raise `DeferSignal`, meaning "the event is valid but the row it needs
-isn't written yet". The dispatcher then skips `markWebhookEventProcessed`, leaving the
-sweeper to re-drive it.
+## 1. Verified Official Razorpay Webhook Delivery Rules
 
-## Timing: return first, work after
+1. **5-Second Timeout**:
+   - Razorpay requires a `2XX` response within **5 seconds** (`https://razorpay.com/docs/webhooks/best-practices/`). Any non-2xx status or >5s response is marked as a delivery failure.
+   - Our route completes signature check + `logWebhookEvent` synchronously and schedules `processRazorpayWebhookEvent` inside Next.js `after()` before returning `200 OK`.
+2. **Exponential Backoff for 24 Hours & Auto-Disable**:
+   - Failed deliveries are retried with exponential backoff for **24 hours** from `created_at`.
+   - If the endpoint still fails after 24 hours, **Razorpay disables the webhook automatically** and emails the Alert Email Address configured on the webhook (or the Dashboard Account & Settings email).
+3. **No Self-Serve Dashboard Replay (Support Ticket Only, ≤ 15 Days)**:
+   - Missed webhooks **cannot** be replayed from the Razorpay Dashboard UI.
+   - Replay requires filing a Razorpay Technical Support ticket, subject to 4 strict rules (`https://razorpay.com/docs/webhooks/faqs/`):
+     1. The webhook must have been enabled on the Dashboard when the event occurred.
+     2. The event must **not be older than 15 days**.
+     3. Signature verification must accept the secret that was active when the event originally fired.
+     4. Bulk replay is not supported.
+   - Because missed webhooks cannot be replayed self-serve, our scheduled reconcilers (`reconcile-payment-status.ts`, `reconcile-pending-refunds.ts`, `reconcile-disputes.ts`, `reconcile-payout-status.ts`) poll Razorpay's REST APIs directly as a backstop.
 
-Razorpay waits **5 seconds** for a 2xx. The route therefore verifies, health-checks,
-logs the event and returns 200 synchronously, then does the actual work in Next.js
-`after()`. If the database is unreachable it returns **503** instead — deliberately
-inviting a retry rather than acknowledging an event it cannot record.
+---
 
-## Events handled
+## 2. Signature Verification & Zero-Downtime Secret Rotation (`signature.ts`)
 
-| Event | What happens |
-|---|---|
-| `payment.captured`, `order.paid` | routed on `notes.type`: `credit_purchase`/`invoice_payment` → org payment success; `overage_member` → overage success; otherwise B2C `handlePaymentSuccess` |
-| `payment.failed` | the same three-way routing, failure side |
-| `refund.created`, `refund.processed` | `handleRefundCreated` |
-| `refund.failed` | `handleRefundCreated(..., "failed", ...)` |
-| `refund.speed_changed` | logged only — this repo never requests `optimum` |
-| `payment.dispute.*` (all six) | `handleDisputeCreated` / `handleDisputeUpdated` — see `disputes.md` |
-| `payout.*` (7 events) | `handleRazorpayPayoutWebhook` — see `payouts-razorpayx.md` |
-| anything else | logged and marked processed, 200 |
+Razorpay signs the **raw request body** with HMAC-SHA256 and sends the 64-character hex digest in `x-razorpay-signature`.
 
-Deliberately **not** handled: `payment.authorized`, `subscription.*`, `invoice.*`,
-`settlement.*`, `virtual_account.*`, `payment_link.*`, `transfer.*`, `refund.arn_updated`.
-Adding one means adding a handler *and* an envelope schema.
+```ts
+// app/api/webhooks/razorpay/signature.ts
+const HMAC_SHA256_HEX_LENGTH = 64;
 
-Two naming traps: refund events are top-level `refund.*` (there is no `payment.refund.*`
-family), and the subscription period field is `current_end` — `current_period_end` is
-Stripe terminology and does not exist in Razorpay payloads.
+export function verifyRazorpaySignature(
+  rawBody: string,
+  signature: string,
+  secret: string,
+): boolean {
+  if (signature.length !== HMAC_SHA256_HEX_LENGTH) {
+    return false;
+  }
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("hex");
+  const signatureBuffer = Buffer.from(signature, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  if (signatureBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
+}
+```
 
-## Payload handling
+### Multi-Secret Resolution Order (`route.ts` + `signature.ts`)
 
-The envelope schema is intentionally loose — everything `.passthrough()` and optional —
-because it only exists to extract ids. Strict schemas
-(`razorpayPaymentCapturedEventSchema`, `razorpayOrderPaidEventSchema`,
-`razorpayPaymentFailedEventSchema`) guard the handlers that actually read fields.
+1. **`RAZORPAY_WEBHOOK_SECRET` (`role: "current"`)**: Tried first for all events.
+2. **`RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (`role: "previous"`)**: Tried second if configured (#1377). Official Razorpay docs note that when you rotate a webhook secret in the Dashboard, events triggered before the rotation that are still retrying continue to be signed with the **old** secret. When a delivery matches `"previous"`, `route.ts` logs a `WARN` `SystemEvent` so operators know when the grace window has drained.
+3. **`RAZORPAYX_WEBHOOK_SECRET` (Payouts fallback)**: Tried **only** when `isPayoutEventName(body)` is `true` (`event.startsWith("payout.")`). A non-payout event (`payment.captured`, `refund.processed`, etc.) is **never** accepted under the RazorpayX secret.
 
-Payloads are scrubbed by `scrubWebhookPayload()` from `lib/logging/webhook-scrub.ts`
-before anything is logged. Do not log a raw payload.
+---
 
-## Recovering missed events
+## 3. Why We Synthesize `eventId` From the Signed Body (Not `x-razorpay-event-id`)
 
-**There is no self-serve replay button.** Razorpay replays an event only through a support
-ticket: Dashboard → Help → Have a query? → Technical Support → "Issue regarding
-Webhooks/API". The webhook must have been **enabled when the event fired** — otherwise the
-event is gone for good — the event must be **≤15 days old**, and there is no bulk replay.
+Razorpay sends an `x-razorpay-event-id` header that stays constant across retries of the same delivery. However, **`app/api/webhooks/razorpay/route.ts` deliberately does NOT use `x-razorpay-event-id` as the deduplication key**:
 
-So recovery is owned by code here. `scripts/cleanup/sweep-stuck-webhook-events.ts`
-re-drives rows still at `processed = false` through the same dispatcher — which is exactly
-why the switch lives in the Next-agnostic `razorpay-dispatch.ts` rather than in the route.
-For events that never arrived at all there is no row to sweep, so reconcile against the
-API (`orders.fetch` / `payments.fetch`), as `app/api/checkout/verify/route.ts` already
-does for the checkout path.
+1. **`x-razorpay-signature` covers the HTTP body only — HTTP headers are unsigned.** If we keyed `WebhookEvent.eventId` on `x-razorpay-event-id`, an attacker who captured a single valid `(body, x-razorpay-signature)` pair could replay it $N$ times with $N$ invented `x-razorpay-event-id` headers.
+2. **Entity-specificity (`#1132`)**: Refund webhooks carry `contains: ["refund", "payment"]` (both `payload.refund.entity` and `payload.payment.entity`), and dispute webhooks carry `contains: ["payment", "dispute"]`. Probing `payment.entity.id` first would key every partial refund or dispute on the same payment to the same `payment_id` and drop the second partial refund as a duplicate!
 
-Sources: <https://razorpay.com/docs/webhooks/best-practices/> ·
-<https://razorpay.com/docs/webhooks/faqs/>
+Therefore, `route.ts` derives `entityId` **most-specific entity first** from signature-covered body fields:
 
-## Testing
+```ts
+// app/api/webhooks/razorpay/route.ts
+const entityId =
+  event.payload?.refund?.entity?.id ||
+  event.payload?.dispute?.entity?.id ||
+  event.payload?.payout?.entity?.id ||
+  event.payload?.payment?.entity?.id ||
+  event.payload?.order?.entity?.id ||
+  event.account_id ||
+  `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
+const eventId = `${eventType}:${entityId}`;
+```
 
-`app/api/dev/mock-webhook/route.ts` is a dev-only simulator. For a real signed request,
-see the recipe in `local-testing.md` — the signature is HMAC-SHA256 of the exact bytes you
-send, so generate it from the same string you POST.
+---
+
+## 4. All Handled Webhook Events (`app/api/webhooks/razorpay-dispatch.ts`)
+
+| Category | Event Name | Payload Entities (`contains`) | Handler in `razorpay-dispatch.ts` |
+|---|---|---|---|
+| **Payments & Orders** | `payment.captured` | `["payment"]` | `routeCapturedPayment` (routes by `notes.type`) |
+| | `order.paid` | `["payment", "order"]` | `routeCapturedPayment` (uses `payload.payment?.entity` for `pay_*` ID and captured amount) |
+| | `payment.failed` | `["payment"]` | `handleOrgPaymentFailure` / `handleOverageMemberFailure` / `handleRecordingPurchaseFailure` / `handlePaymentFailure` |
+| **Refunds** | `refund.created` | `["refund", "payment"]` | Resolves `payment_id` → `order_id` via `Payment.gatewayPaymentId` index (fallback: `payments.fetch`), then calls `handleRefundCreated` |
+| | `refund.processed` | `["refund", "payment"]` | Same as `refund.created` → `handleRefundCreated` |
+| | `refund.failed` | `["refund", "payment"]` | Same resolution → `handleRefundCreated(..., "failed", ...)` |
+| | `refund.speed_changed` | `["refund", "payment"]` | Informational log (e.g., `"optimum"` instant refund fell back to `"normal"`) |
+| **Disputes** | `payment.dispute.created` | `["payment", "dispute"]` | `handleDisputeCreated` (freezes earning/payout, records `respond_by` deadline and `deduct_at_onset`) |
+| | `payment.dispute.under_review` | `["payment", "dispute"]` | `handleDisputeUpdated(id, status, null)` → `UNDER_REVIEW` |
+| | `payment.dispute.action_required` | `["payment", "dispute"]` | `handleDisputeUpdated(id, status, null)` → `NEEDS_RESPONSE` |
+| | `payment.dispute.won` | `["payment", "dispute"]` | `handleDisputeUpdated(id, "won", null)` → releases held earnings |
+| | `payment.dispute.lost` | `["payment", "dispute"]` | `handleDisputeUpdated(id, "lost", null)` → `settleLostDispute` (ledger reversal + clawback) |
+| | `payment.dispute.closed` | `["payment", "dispute"]` | `handleDisputeUpdated(id, status, null)` |
+| **RazorpayX Payouts** | `payout.processed` | `["payout"]` | `handleRazorpayPayoutWebhook` → persists `utr`, marks org/consultant payout `COMPLETED` |
+| | `payout.failed` | `["payout"]` | `handleRazorpayPayoutWebhook` → extracts `failure_reason ?? status_details.description`, marks `FAILED`, un-batches earnings to `READY` |
+| | `payout.rejected` | `["payout"]` | `handleRazorpayPayoutWebhook` → marks `FAILED`, un-batches earnings |
+| | `payout.reversed` | `["payout"]` | `handleRazorpayPayoutWebhook` → `markOrgPayoutReversed` / `markConsultantPayoutReversed` (posts inverse ledger journal if already `COMPLETED`) |
+| | `payout.initiated` | `["payout"]` | `handleRazorpayPayoutWebhook` (fired when payout enters `processing` state; backfills `providerPayoutId` via `reference_id` if submit reply was lost) |
+| | `payout.updated` | `["payout"]` | `handleRazorpayPayoutWebhook` (fired when `utr` or `status_details` updates) |
+| | `payout.queued`, `payout.pending`, `payout.cancelled` | `["payout"]` | `handleRazorpayPayoutWebhook` |
+
+> **Falsified event names to avoid:**
+> - There is **no** `order.created` webhook event (`order.paid` is the only Order event).
+> - There is **no** `refund.arn_updated` webhook event in Razorpay (`refund.created`, `refund.processed`, `refund.failed`, and `refund.speed_changed` are the only 4 Refund events).
+> - There is **no** `payout.processing` webhook event name — RazorpayX names that event **`payout.initiated`** (with `payload.payout.entity.status === "processing"`).
+
+---
+
+## 5. Durability: `DeferSignal`, `permanent:` Errors & Stuck-Event Sweeper
+
+1. **`DeferSignal` (Out-of-Order Delivery Race, `#812`/`#813`)**:
+   - If `refund.created` or `refund.processed` arrives before `payment.captured` has finished writing the `Payment` row, `handleRefundCreated` returns a `DeferSignal` instead of throwing or dropping the event.
+   - `processRazorpayWebhookEvent` increments `WebhookEvent.deferCount` and leaves `processed = false, error = null` so `scripts/cleanup/sweep-stuck-webhook-events.ts` re-drives it on the next tick.
+2. **Schema Mismatch (`permanent:` Prefix, `FAMILIARISE_WEB-3W`)**:
+   - If a webhook payload fails Zod validation (`ZodError`), retrying it will never succeed. `processRazorpayWebhookEvent` marks the `WebhookEvent.error` with `permanent: schema mismatch: ...` so the stuck-event sweeper does not re-drive it for 168 hours.
+3. **Database Unreachable (`503 Service Unavailable`)**:
+   - Before logging the event, `route.ts` checks `isDbHealthy()`. If Postgres is unreachable, it returns HTTP `503` before claiming the event so Razorpay's exponential backoff retries the delivery.

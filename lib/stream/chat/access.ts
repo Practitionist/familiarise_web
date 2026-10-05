@@ -1,5 +1,9 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import {
+  dmEligibleStatusFilter,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
 
 export type StreamEventType =
   | "webinar"
@@ -21,6 +25,7 @@ export async function verifyEventAccess(
       const webinar = await prisma.webinar.findFirst({
         where: {
           id: eventId,
+          status: { in: [...OPENABLE_EVENT_STATUSES] },
           OR: [
             { webinarPlan: { consultantProfile: { userId } } },
             {
@@ -49,6 +54,7 @@ export async function verifyEventAccess(
       const classRow = await prisma.class.findFirst({
         where: {
           id: eventId,
+          status: { in: [...OPENABLE_EVENT_STATUSES] },
           OR: [
             { classPlan: { consultantProfile: { userId } } },
             {
@@ -77,6 +83,7 @@ export async function verifyEventAccess(
       const consultation = await prisma.consultation.findFirst({
         where: {
           id: eventId,
+          status: dmEligibleStatusFilter(),
           OR: [
             { consultationPlan: { consultantProfile: { userId } } },
             { requestedBy: { userId } },
@@ -90,6 +97,7 @@ export async function verifyEventAccess(
       const subscription = await prisma.subscription.findFirst({
         where: {
           id: eventId,
+          status: dmEligibleStatusFilter(),
           OR: [
             { subscriptionPlan: { consultantProfile: { userId } } },
             { requestedBy: { userId } },

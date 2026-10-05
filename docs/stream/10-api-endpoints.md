@@ -129,7 +129,7 @@ All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate 
 
 ### POST /api/meetings/[meetingId]/join
 
-Admits an entitled participant to a Stream call (`call_member`) and upserts the caller on Stream before `call.getOrCreate`. Attendance and presence intervals (`MeetingAttendance`, `MeetingPresence`, and `ATTENDED` participant status) are recorded exclusively by Stream participant webhooks (`call.session_participant_joined`/`left`).
+Admits an entitled participant to an existing Stream call and upserts the caller on Stream first. Accepted presenter collaborators on a webinar or class get the `co_presenter` member role, and everyone else gets `call_member`. The route never creates a call, because `provisionAppointmentMeeting` is the only creator. If the call is missing (Stream answers HTTP 404 with error code 16), the route reports the event to Sentry and returns HTTP 409 with `code: "ROOM_NOT_PROVISIONED"`, and the meeting page offers a Retry. Attendance and presence intervals (`MeetingAttendance`, `MeetingPresence`, and `ATTENDED` participant status) are recorded exclusively by Stream participant webhooks (`call.session_participant_joined`/`left`).
 
 **Location:** `/app/api/meetings/[meetingId]/join/route.ts`
 

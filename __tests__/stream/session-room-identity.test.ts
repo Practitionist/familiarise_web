@@ -31,6 +31,9 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: (_type: string, id: string) => ({
         getOrCreate: async (payload: unknown) => {
+          const { assertValidGetOrCreateCall } =
+            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          assertValidGetOrCreateCall(payload);
           mockStreamCallsCreated.push(id);
           mockCallPayloads.push(payload as CallData);
           return {};
@@ -81,7 +84,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import { createDbMeeting } from "@/actions/stream/meetings/meeting.action";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 
 const db = prisma as unknown as {
   appointmentOccurrence: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -340,7 +343,7 @@ describe("room identity for a session longer than 30 minutes", () => {
 
     expect(consultantRoom).toBe("occurrence-A");
     expect(consulteeRoom).toBe("occurrence-A");
-    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
+    expect(mockStreamCallsCreated).toEqual(["occurrence-A", "occurrence-A"]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].slotId).toBe("A");
   });
@@ -372,7 +375,8 @@ describe("room identity for a session longer than 30 minutes", () => {
       "occurrence-A",
       "occurrence-A",
     ]);
-    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
+    expect(new Set(mockStreamCallsCreated)).toEqual(new Set(["occurrence-A"]));
+    expect(sessions).toHaveLength(1);
   });
 
   it("reuses the stored call id rather than re-deriving it", async () => {
@@ -386,7 +390,7 @@ describe("room identity for a session longer than 30 minutes", () => {
     });
 
     expect(await join(a)).toBe("legacy-uuid");
-    expect(mockStreamCallsCreated).toEqual([]);
+    expect(mockStreamCallsCreated).toEqual(["legacy-uuid"]);
   });
 });
 
@@ -436,7 +440,7 @@ describe("a room closed before the start is rebuilt on the next join", () => {
     });
 
     expect(await join(rowA())).toBe("occurrence-A");
-    expect(mockStreamCallsCreated).toEqual([]);
+    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
     expect(db.meeting.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -498,6 +502,10 @@ describe("the call describes the session it belongs to", () => {
     await join(a);
 
     expect(mockCallPayloads[0].data?.created_by_id).toBe("user-consultant");
+    // A consultee session may only sync itself unless the server vouches.
+    expect(upsertUsersToStream).toHaveBeenCalledWith(["user-consultant"], {
+      serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+    });
   });
 
   it("resolves a webinar's hosts through plan ownership, not the joiner", async () => {
@@ -779,7 +787,9 @@ describe("a refused join creates nothing on Stream", () => {
     mockedMaintenance.mockResolvedValue({ phase: "OFFLINE" });
 
     expect(await join(rows[0])).toBe("occurrence-A");
-    expect(mockStreamCallsCreated).toEqual([]);
+    // The idempotent re-assert targets the same room and writes no new row.
+    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
+    expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("does not mint a call for a slot that is not one", async () => {
@@ -829,28 +839,16 @@ describe("a refused join creates nothing on Stream", () => {
   });
 });
 
-/**
- * The writer, not just the readers.
- *
- * `readSlotForCaller` was added to gate the two RESOLVERS, and the exported
- * writer in the same `"use server"` module was left open. Any client can call
- * a server action with arguments of its choosing, so an unrelated caller could
- * write the `Meeting` row for someone else's slot with a
- * `streamCallId` of their choosing — and because that row is unique per slot,
- * never updated, and reused by every later join, both legitimate parties would
- * then be routed into a Stream call the attacker controls.
- */
+/** The Meeting-row writer is module-private, so the only path to a row is provisioning's gate. */
 describe("only a participant may create a session", () => {
   const stranger: Caller = { id: "user-stranger" };
 
   it("refuses to write a session for a booking the caller is not in", async () => {
     seed([slotRow("A", "10:00", "11:00")], consultationAppointment, stranger);
 
-    await expect(
-      createDbMeeting(meetingSlot(rows[0]), "slot-attacker-controlled"),
-    ).rejects.toThrow("You are not a participant in this session.");
-
-    // The assertion that matters: no row exists to be reused by anyone.
+    await expect(join(rows[0])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
     expect(db.meeting.create).not.toHaveBeenCalled();
     expect(sessions).toEqual([]);
   });
@@ -858,18 +856,17 @@ describe("only a participant may create a session", () => {
   it("refuses a signed-out caller too", async () => {
     seed([slotRow("A", "10:00", "11:00")], consultationAppointment, null);
 
-    await expect(
-      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
-    ).rejects.toThrow("You are not a participant in this session.");
+    await expect(join(rows[0])).rejects.toThrow(
+      "You are not a participant in this session.",
+    );
     expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("still lets a participant create their own session", async () => {
     seed([slotRow("A", "10:00", "11:00")]);
 
-    await expect(
-      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
-    ).resolves.toMatchObject({ streamCallId: "occurrence-A" });
+    expect(await join(rows[0])).toBe("occurrence-A");
+    expect(sessions).toMatchObject([{ streamCallId: "occurrence-A" }]);
   });
 });
 
@@ -915,7 +912,7 @@ describe("organization scoping on Stream Call custom and DB Meeting row", () => 
     );
   });
 
-  it("resolves organizationId via bookingOrgId from the authorized appointment and authorized.slot.appointmentId in createDbMeeting", async () => {
+  it("resolves organizationId via bookingOrgId from the authorized appointment and authorized.slot.appointmentId on the Meeting row", async () => {
     const row = slotRow("A", "10:00", "11:00");
     seed([row]);
     db.appointment.findUnique.mockResolvedValueOnce({
@@ -923,10 +920,7 @@ describe("organization scoping on Stream Call custom and DB Meeting row", () => 
       consultation: { consultationPlan: { organizationId: "org-from-plan" } },
     });
 
-    await createDbMeeting(
-      { id: row.id, startsAt: row.startsAt, endsAt: row.endsAt },
-      "occurrence-A",
-    );
+    await join(row);
 
     expect(db.meeting.create).toHaveBeenLastCalledWith(
       expect.objectContaining({

@@ -347,22 +347,18 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
   const params = Promise.resolve({ meetingId: "occurrence-slot-1" });
   const req = {} as never;
 
-  it("upserts user before getOrCreate and leaves attendance writes to Stream webhooks on join", async () => {
+  it("upserts user before membership and leaves attendance writes to Stream webhooks on join", async () => {
     const res = await joinPOST(req, { params });
 
     expect(res.status).toBe(200);
-    expect(sequence).toEqual([
-      "upsertUsersToStream",
-      "getOrCreate",
-      "updateCallMembers",
-    ]);
+    expect(sequence).toEqual(["upsertUsersToStream", "updateCallMembers"]);
     expect(mockAttendanceUpsert).not.toHaveBeenCalled();
     expect(mockPresenceCreate).not.toHaveBeenCalled();
     expect(mockParticipantUpdateMany).not.toHaveBeenCalled();
     expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
   });
 
-  it("grants backstage, stage-moderation, and publish permissions to WEBINAR and CLASS hosts on join", async () => {
+  it("grants publish permissions to WEBINAR and CLASS hosts on join", async () => {
     for (const appointmentType of ["WEBINAR", "CLASS"] as const) {
       mockUpdateUserPermissions.mockClear();
       mockMeetingFindUnique.mockResolvedValue(
@@ -373,20 +369,12 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       expect(res.status).toBe(200);
       expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
         user_id: "user-host",
-        grant_permissions: [
-          "join-backstage",
-          "update-call-permissions",
-          "mute-users",
-          "pin-call-track",
-          "send-audio",
-          "send-video",
-          "screenshare",
-        ],
+        grant_permissions: ["send-audio", "send-video", "screenshare"],
       });
     }
   });
 
-  it("grants join-backstage while revoking publish and permission-granting capabilities from WEBINAR and CLASS attendees on join", async () => {
+  it("revokes publish permissions from WEBINAR and CLASS attendees on join", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "user-attendee", banned: false },
     });
@@ -402,18 +390,12 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       expect(res.status).toBe(200);
       expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
         user_id: "user-attendee",
-        grant_permissions: ["join-backstage"],
-        revoke_permissions: [
-          "send-audio",
-          "send-video",
-          "screenshare",
-          "update-call-permissions",
-        ],
+        revoke_permissions: ["send-audio", "send-video", "screenshare"],
       });
     }
   });
 
-  it("revokes only update-call-permissions from 1:1 consultees while keeping audio/video/screenshare intact", async () => {
+  it("leaves 1:1 consultee permissions untouched, since Stream rejects any name outside publish permissions", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "user-consultee", banned: false },
     });
@@ -424,10 +406,7 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
 
     const res = await joinPOST(req, { params });
     expect(res.status).toBe(200);
-    expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
-      user_id: "user-consultee",
-      revoke_permissions: ["update-call-permissions"],
-    });
+    expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
   });
 
   it("ends the Stream call for the host and leaves Meeting.endedAt to the call.ended webhook", async () => {
