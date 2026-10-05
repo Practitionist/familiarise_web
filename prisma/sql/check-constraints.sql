@@ -934,3 +934,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Payment_live_welcome_discount_user_key"
     AND "referralReleasedAt" IS NULL
     AND "paymentStatus" IN ('PENDING', 'SUCCEEDED')
     AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- Multiple organizations may register an unverified claim for the same domain,
+-- but at most one organization can hold a verified claim on a domain at a time.
+DROP INDEX IF EXISTS "org_domain_claims_verified_domain_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "org_domain_claims_verified_domain_key"
+  ON "org_domain_claims" ("domain")
+  WHERE "verifiedAt" IS NOT NULL;
+
+-- SPLIT
+-- At most one ACTIVE contract per BillingAccount so active billing-term lookups
+-- never face ambiguous active contracts.
+DROP INDEX IF EXISTS "contract_one_active_per_billing_account_idx";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "contract_one_active_per_billing_account_idx"
+  ON "Contract" ("billingAccountId")
+  WHERE "status" = 'ACTIVE';
+
+-- SPLIT
+-- One OrganizationEarnings split row per (payment, organization, consultant,
+-- role, subscription cycle tranche). NULLS NOT DISTINCT ensures single-session
+-- and legacy rows with NULL consultantProfileId or cycleOrdinal still collide.
+DROP INDEX IF EXISTS "organization_earnings_split_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "organization_earnings_split_key"
+  ON "OrganizationEarnings" ("paymentId", "organizationId", "consultantProfileId", "role", "cycleOrdinal")
+  NULLS NOT DISTINCT;
+
+-- SPLIT
+-- CreditPoolConfig pricing and budget bounds (parity with licensed_seat_config_pricing_sane).
+ALTER TABLE "CreditPoolConfig" DROP CONSTRAINT IF EXISTS "credit_pool_config_pricing_sane";
+-- SPLIT
+ALTER TABLE "CreditPoolConfig" ADD CONSTRAINT "credit_pool_config_pricing_sane"
+  CHECK (
+    "creditBudgetPerCycle" > 0
+    AND ("overageSurchargeBps" IS NULL OR ("overageSurchargeBps" >= 0 AND "overageSurchargeBps" <= 10000))
+    AND ("maxOveragePerCyclePaise" IS NULL OR "maxOveragePerCyclePaise" > 0)
+    AND ("priceCapPerEngagementPaise" IS NULL OR "priceCapPerEngagementPaise" > 0)
+  );
+

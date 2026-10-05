@@ -63,6 +63,7 @@ import { createCollaborators } from "./seedFiles/13b-create-collaborators";
 // Phase 14: Enterprise Organizations
 import { createOrganizations } from "./seedFiles/14a-create-organizations";
 import { createOrgCatalog } from "./seedFiles/14b-create-org-catalog";
+import { createOrgAppointmentsAndFeedback } from "./seedFiles/14c-seed-org-appointments-and-feedback";
 
 // Phase 15: Statutory lookups
 import { createTdsRates } from "./seedFiles/15a-create-tds-rates";
@@ -241,6 +242,11 @@ async function seed() {
     // and needs their ACTIVE EXPERT memberships to name a deliverer.
     console.log("Creating org-owned catalog plans...");
     await createOrgCatalog();
+
+    console.log(
+      "Creating org-scoped appointments, utilization, earnings, and feedback...",
+    );
+    await createOrgAppointmentsAndFeedback();
 
     // Phase 15: Statutory lookups
     console.log("\n[Phase 15] Seeding statutory TDS rates...");

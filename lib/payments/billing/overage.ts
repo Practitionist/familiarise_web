@@ -119,6 +119,7 @@ export function computeOverageForBooking(
           programType: "CREDIT_POOL",
           creditBudgetPaise: ctx.creditBudgetPaise ?? null,
           consumedPaise: ctx.consumedPaise ?? 0,
+          priceCapPerEngagementPaise: ctx.priceCapPerEngagementPaise ?? null,
         }
       : {
           ...base,
@@ -142,7 +143,13 @@ export function computeOverage(input: OverageInput): OverageResult {
     const budget = input.creditBudgetPaise ?? 0;
     const consumed = input.consumedPaise ?? 0;
     const remaining = Math.max(0, budget - consumed);
-    coveredPaise = Math.min(price, remaining);
+    const engagements = Number.isFinite(input.engagementsConsumed)
+      ? Math.max(1, Math.floor(input.engagementsConsumed))
+      : 1;
+    const perCap = input.priceCapPerEngagementPaise;
+    const maxCoveredByPool =
+      perCap != null ? Math.min(remaining, engagements * perCap) : remaining;
+    coveredPaise = Math.min(price, maxCoveredByPool);
     marginalPaise = price - coveredPaise;
   } else {
     // LICENSED_SEAT

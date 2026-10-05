@@ -366,7 +366,7 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
     expect(independentRows).toHaveLength(0);
   });
 
-  it("does NOT create a second row when collaborator shares the primary expert's org (P2002 collision → skip + log)", async () => {
+  it("creates separate OrganizationEarnings rows when collaborator shares the primary expert's org (keyed by consultantProfileId + role)", async () => {
     setMembershipMap({
       [PRIMARY_PROFILE]: { orgId: ORG_LEARNPRO },
       [COLLAB_SAME_ORG_PROFILE]: { orgId: ORG_LEARNPRO }, // same org as primary
@@ -381,53 +381,26 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
       },
     ]);
 
-    // Pre-arm the P2002 trap on (PAYMENT_ID, ORG_LEARNPRO) to fire on
-    // the SECOND insert — first call (primary) succeeds, second call
-    // (same-org collab) collides.
-    let learnproInsertCount = 0;
-    mockedTx.organizationEarnings.create.mockImplementation(
-      async ({ data }: { data: CapturedCreate }) => {
-        if (data.organizationId === ORG_LEARNPRO) {
-          learnproInsertCount += 1;
-          if (learnproInsertCount > 1) {
-            const { Prisma } = jest.requireActual("@prisma/client");
-            const err = new Error("Unique constraint failed") as Error & {
-              code: string;
-              clientVersion: string;
-              meta: Record<string, unknown>;
-            };
-            err.code = "P2002";
-            err.clientVersion = "test";
-            err.meta = { target: ["paymentId", "organizationId"] };
-            Object.setPrototypeOf(
-              err,
-              Prisma.PrismaClientKnownRequestError.prototype,
-            );
-            throw err;
-          }
-        }
-        capturedOrgEarnings.push(data);
-        return { id: "org-earn", ...data };
-      },
-    );
-
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
-
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
     });
 
-    // Only the primary expert's row survives the same-org collision.
-    expect(capturedOrgEarnings).toHaveLength(1);
-    expect(capturedOrgEarnings[0].organizationId).toBe(ORG_LEARNPRO);
-
-    // The skip path log-warns rather than throwing.
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Skipping collaborator org earnings"),
-    );
-
-    warnSpy.mockRestore();
+    // Both the primary expert and the same-org collaborator receive distinct
+    // OrganizationEarnings rows keyed by (paymentId, organizationId, consultantProfileId, role).
+    expect(capturedOrgEarnings).toHaveLength(2);
+    expect(capturedOrgEarnings[0]).toMatchObject({
+      organizationId: ORG_LEARNPRO,
+      consultantProfileId: PRIMARY_PROFILE,
+      role: "OWNER",
+      grossAmountPaise: 100_000,
+    });
+    expect(capturedOrgEarnings[1]).toMatchObject({
+      organizationId: ORG_LEARNPRO,
+      consultantProfileId: COLLAB_SAME_ORG_PROFILE,
+      role: "COLLABORATOR",
+      grossAmountPaise: 25_000,
+    });
   });
 
   it("creates an OrgEarnings row when the primary expert is independent but a collaborator IS at a HOST org", async () => {

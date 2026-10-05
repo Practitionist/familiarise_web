@@ -146,6 +146,20 @@ export function BrandingPanel({ orgId }: Readonly<{ orgId: string }>) {
     queryFn: () => fetchOrgDetails(orgId),
     staleTime: 60_000,
   });
+  const orgRecord = data?.organization as
+    | {
+        logo?: string | null;
+        bannerUrl?: string | null;
+        bannerImage?: string | null;
+        brandingProfile?: { bannerImage?: string | null } | null;
+      }
+    | undefined;
+  const currentBannerUrl =
+    orgRecord?.bannerUrl ??
+    orgRecord?.bannerImage ??
+    orgRecord?.brandingProfile?.bannerImage ??
+    null;
+
   return (
     <>
       <PanelHeader description="How your organization looks to members and on your public page." />
@@ -154,8 +168,11 @@ export function BrandingPanel({ orgId }: Readonly<{ orgId: string }>) {
         asset="logo"
         currentUrl={data?.organization.logo ?? null}
       />
-      {/* The org details read carries no banner URL; upload replaces it. */}
-      <AssetSection orgId={orgId} asset="banner" currentUrl={null} />
+      <AssetSection
+        orgId={orgId}
+        asset="banner"
+        currentUrl={currentBannerUrl}
+      />
     </>
   );
 }

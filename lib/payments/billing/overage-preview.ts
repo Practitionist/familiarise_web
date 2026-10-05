@@ -68,13 +68,6 @@ export async function previewOverageForBooking(
     Math.floor(params.engagementsConsumed ?? 1),
   );
 
-  // PERSONAL funding never meters against a program → no overage concept.
-  const billingAccount = await prisma.billingAccount.findUnique({
-    where: { ownerOrgId: organizationId },
-    select: { fundingSource: true },
-  });
-  if (billingAccount?.fundingSource === "PERSONAL") return NOT_APPLICABLE;
-
   const now = new Date();
   const assignment = await prisma.programAssignment.findFirst({
     where: {
@@ -119,6 +112,7 @@ export async function previewOverageForBooking(
               overageSurchargeBps: true,
               maxOveragePerCyclePaise: true,
               creditBudgetPerCycle: true,
+              priceCapPerEngagementPaise: true,
             },
           },
         },
@@ -142,6 +136,10 @@ export async function previewOverageForBooking(
   const isCredit = assignment.program.type === "CREDIT_POOL";
   const lsc = assignment.program.licensedSeatConfig;
   const cpc = assignment.program.creditPoolConfig;
+  const cpcPriceCap =
+    cpc?.priceCapPerEngagementPaise != null
+      ? Number(cpc.priceCapPerEngagementPaise)
+      : null;
 
   const ctx: OverageContext = isCredit
     ? {
@@ -153,6 +151,7 @@ export async function previewOverageForBooking(
         // 1 credit = ₹1 = 100 paise (same as recordBookingUtilization).
         creditBudgetPaise: (cpc?.creditBudgetPerCycle ?? 0) * 100,
         consumedPaise: assignment.consumedPaise,
+        priceCapPerEngagementPaise: cpcPriceCap,
       }
     : {
         programType: "LICENSED_SEAT",

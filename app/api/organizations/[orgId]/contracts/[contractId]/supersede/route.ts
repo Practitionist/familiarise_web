@@ -20,6 +20,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 
 const BodySchema = z
   .object({
@@ -171,6 +173,16 @@ export async function POST(
   const body = parsed.data;
 
   try {
+    if (
+      body.reason === "AMENDMENT" &&
+      typeof prisma.organization?.findUnique === "function"
+    ) {
+      await rollupOrgInvoiceAccruals({
+        organizationId: orgId,
+        issueImmediately: true,
+      });
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const old = await tx.contract.findFirst({
         where: { id: contractId, organizationId: orgId },
@@ -191,6 +203,25 @@ export async function POST(
           httpStatus: 409,
           code: "CONTRACT_ALREADY_SUPERSEDED",
         });
+      }
+
+      if (body.rateCardId !== undefined && body.rateCardId !== null) {
+        const rateCardClient =
+          typeof tx.rateCard?.findFirst === "function"
+            ? tx.rateCard
+            : prisma.rateCard;
+        if (typeof rateCardClient?.findFirst === "function") {
+          const validCard = await rateCardClient.findFirst({
+            where: { id: body.rateCardId, ownerOrgId: orgId },
+            select: { id: true },
+          });
+          if (!validCard) {
+            throw Object.assign(
+              new Error("RateCard does not belong to this organization"),
+              { httpStatus: 400, code: "INVALID_RATE_CARD" },
+            );
+          }
+        }
       }
 
       const now = new Date();
@@ -331,6 +362,23 @@ export async function POST(
           },
         },
       });
+
+      if (typeof tx.webhookEndpoint?.findMany === "function") {
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: orgId,
+          eventType: "contract.signed",
+          payload: {
+            contractId: successor.id,
+            supersededContractId: old.id,
+            reason: body.reason,
+            status: "ACTIVE",
+            signedAt: now.toISOString(),
+            effectiveFrom: effectiveFrom.toISOString(),
+            effectiveTo: effectiveTo?.toISOString() ?? null,
+          },
+        });
+      }
 
       return successor;
     });

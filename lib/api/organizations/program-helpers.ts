@@ -278,6 +278,7 @@ export async function recordBookingUtilization(
           creditPoolConfig: {
             select: {
               creditBudgetPerCycle: true,
+              priceCapPerEngagementPaise: true,
               overageBehavior: true,
             },
           },
@@ -326,7 +327,7 @@ export async function recordBookingUtilization(
     };
   }
 
-  // #775/#753 — LICENSED_SEAT meters by engagement COUNT against
+  // LICENSED_SEAT meters by engagement COUNT against
   // `coveredEngagementsPerCycle`; CREDIT_POOL meters by PAISE against
   // `creditBudgetPerCycle × 100` (1 credit = ₹1). Pick the unit + behavior source.
   const programType: ProgramType = assignment.program.type ?? "LICENSED_SEAT";
@@ -352,7 +353,7 @@ export async function recordBookingUtilization(
   //   - Cap with CHARGE_*: unconditional increment (post value from `update`),
   //     flag overage when it crossed the cap; bump overageCount only then.
   let wasOverage = false;
-  // #768 #22 — post-increment count so the caller can compute the cap-near
+  // Post-increment count so the caller can compute the cap-near
   // transition. BLOCK / unlimited derive it as preCount + delta; CHARGE_* read
   // the authoritative post value from the `update` return.
   const preCount = assignment.engagementsUsed ?? 0;
@@ -364,7 +365,19 @@ export async function recordBookingUtilization(
 
   if (isCredit) {
     const budget = creditBudgetPaise ?? 0;
+    const rawCreditPriceCap =
+      assignment.program.creditPoolConfig?.priceCapPerEngagementPaise ?? null;
+    const creditPriceCap =
+      rawCreditPriceCap !== null ? Number(rawCreditPriceCap) : null;
+    const exceedsEngagementCap =
+      creditPriceCap !== null && pricePaise > actualDelta * creditPriceCap;
     if (behavior === "BLOCK") {
+      if (exceedsEngagementCap) {
+        throw new ProgramAssignmentLimitError(
+          assignment.programId,
+          assignment.membershipId,
+        );
+      }
       const res = await tx.programAssignment.updateMany({
         where: {
           id: params.programAssignmentId,
@@ -392,7 +405,7 @@ export async function recordBookingUtilization(
       });
       engagementsUsedAfter = updated.engagementsUsed;
       consumedPaiseAfter = updated.consumedPaise;
-      wasOverage = consumedPaiseAfter > budget;
+      wasOverage = consumedPaiseAfter > budget || exceedsEngagementCap;
       if (wasOverage) {
         await tx.programAssignment.update({
           where: { id: params.programAssignmentId },

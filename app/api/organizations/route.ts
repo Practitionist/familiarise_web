@@ -30,7 +30,7 @@ import { isValidGstin } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 
@@ -227,7 +227,7 @@ export async function POST(req: NextRequest) {
       // be created but its earnings flow would silently no-op. We
       // reject at the API boundary instead so an OWNER receives a
       // typed 400 rather than a half-functional org.
-      if (body.canHost && !ENABLE_HOST_ORGS) {
+      if (body.canHost && !isHostOrgsEnabled()) {
         throw Object.assign(
           new Error(
             "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",

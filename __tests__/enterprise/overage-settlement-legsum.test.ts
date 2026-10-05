@@ -85,6 +85,8 @@ function makeTx(opts: {
           const leg = legs.find((l) => l.source === src)!;
           if (data.amountPaise?.decrement != null)
             leg.amountPaise -= data.amountPaise.decrement;
+          if (data.amountPaise?.increment != null)
+            leg.amountPaise += data.amountPaise.increment;
         }),
         create: jest.fn(async ({ data }: any) => {
           legs.push({ source: data.source, amountPaise: data.amountPaise });
@@ -206,8 +208,8 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
   });
 });
 
-describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", () => {
-  it("leaves the payment at the wallet debit, adds no leg, and records the overage as collected", async () => {
+describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET and LICENSE rails", () => {
+  it("leaves the payment at the wallet debit when surcharge is 0, adds no leg, and records the overage as collected", async () => {
     const walletDebit = 258_326;
     const { state, tx } = makeTx({
       price: walletDebit,
@@ -220,15 +222,10 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
       ...callArgs(walletDebit),
     });
 
-    // The wallet already took the whole price at commit, so the marginal is
-    // collected: no OVERAGE_INVOICE_ACCRUAL leg, no amount bump.
     expect(state.legs).toEqual([
       { source: "WALLET", amountPaise: walletDebit },
     ]);
     expect(state.payment.amount).toBe(walletDebit);
-    // The cancellation quote is a percentage of Payment.amount and the refund
-    // cascade splits it across the legs, so one WALLET leg equal to amount is
-    // what makes a 100% refund return exactly the debit and not a paisa more.
     expect(sum(state.legs)).toBe(state.payment.amount);
     expect(tx.paymentLeg.create).not.toHaveBeenCalled();
     expect(tx.payment.update).not.toHaveBeenCalled();
@@ -245,28 +242,67 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
     );
   });
 
-  // A licence is a flat fee settled at contract time, so its leg is ₹0 while
-  // Payment.amount stays at the full price. Adding an overage leg re-arms the
-  // leg-sum comparison the licence carve had suppressed, and the booking used
-  // to die at COMMIT on assert_payment_legs_ok instead of saying why.
-  it("LICENSE + CHARGE_ORG is refused rather than made additive", async () => {
+  it("WALLET + CHARGE_ORG with surcharge: increments WALLET leg and payment amount by surcharge, preserving leg-sum", async () => {
     const { state, tx } = makeTx({
       price: 100_000,
       cap: 5,
       used: 5,
+      surchargeBps: 2500,
+      baseSource: "WALLET",
+    });
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+    });
+
+    expect(state.legs).toEqual([
+      { source: "WALLET", amountPaise: 125_000 },
+    ]);
+    expect(state.payment.amount).toBe(125_000);
+    expect(sum(state.legs)).toBe(state.payment.amount);
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "CHARGED",
+          surchargePaise: 25_000,
+          marginalPaise: 125_000,
+          paymentId: "pay1",
+        }),
+      }),
+    );
+  });
+
+  it("LICENSE + CHARGE_ORG mints a standalone child accrual payment without mutating the 0-paise LICENSE parent", async () => {
+    const { state, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      surchargeBps: 2500,
       baseSource: "LICENSE",
     });
 
-    await expect(
-      recordOverageAtCheckout({
-        tx: tx as unknown as Tx,
-        ...callArgs(100_000),
-      }),
-    ).rejects.toMatchObject({ code: "OVERAGE_UNSUPPORTED_FUNDING" });
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+    });
 
     expect(tx.paymentLeg.create).not.toHaveBeenCalled();
     expect(tx.payment.update).not.toHaveBeenCalled();
     expect(state.legs).toEqual([{ source: "LICENSE", amountPaise: 0 }]);
+    expect(state.children).toEqual([{ amount: 125_000 }]);
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "PENDING",
+          basePaise: 100_000,
+          surchargePaise: 25_000,
+          marginalPaise: 125_000,
+          paymentId: "child1",
+        }),
+      }),
+    );
   });
 });
 

@@ -196,6 +196,21 @@ export async function handleOverageMemberSuccess(
       return;
     }
 
+    if (side.parentPaymentId) {
+      if (typeof tx.consultantEarnings?.updateMany === "function") {
+        await tx.consultantEarnings.updateMany({
+          where: { paymentId: side.parentPaymentId, status: "HELD" },
+          data: { status: "PENDING" },
+        });
+      }
+      if (typeof tx.organizationEarnings?.updateMany === "function") {
+        await tx.organizationEarnings.updateMany({
+          where: { paymentId: side.parentPaymentId, status: "HELD" },
+          data: { status: "PENDING", preDisputeStatus: null },
+        });
+      }
+    }
+
     if (side.amount > 0 && side.organizationId) {
       const postings: Posting[] = [
         {

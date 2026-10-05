@@ -400,9 +400,11 @@ export default async function MyProgramPage({
                       const matchedAssignment = assignments.find(
                         (a) => a.id === u.programAssignmentId,
                       );
-                      const isPoolUtilization = matchedAssignment
-                        ? matchedAssignment.program.type === "CREDIT_POOL"
-                        : hasCreditPool && !hasLicensedSeat;
+                      const isPoolUtilization = u.programSubType
+                        ? u.programSubType === "CREDIT_POOL"
+                        : matchedAssignment
+                          ? matchedAssignment.program.type === "CREDIT_POOL"
+                          : hasCreditPool && !hasLicensedSeat;
                       return (
                       <tr key={u.id} className="border-t">
                         <td className="px-4 py-2 whitespace-nowrap">

@@ -321,13 +321,24 @@ async function applyProgramPatch(
     // status, not after it.
     let assignmentsCancelled = 0;
     if (body.status === "CANCELLED") {
+      // Only ACTIVE assignments currently occupy a billed seat — PAUSED
+      // assignments already released their seat when paused.
+      const activeSeatsToRelease =
+        typeof tx.programAssignment?.count === "function"
+          ? await tx.programAssignment.count({
+              where: { programId, status: "ACTIVE" },
+            })
+          : undefined;
       const cascaded = await tx.programAssignment.updateMany({
         where: { programId, status: { in: ["ACTIVE", "PAUSED"] } },
         data: { status: "CANCELLED", periodEnd: new Date() },
       });
       assignmentsCancelled = cascaded.count;
-      // #1744 row 3 — each cancelled assignment gives its billed seat back.
-      await releaseSeatsForClosedAssignments(tx, programId, cascaded.count);
+      await releaseSeatsForClosedAssignments(
+        tx,
+        programId,
+        activeSeatsToRelease ?? cascaded.count,
+      );
     }
 
     await tx.orgAuditLog.create({
@@ -404,6 +415,9 @@ async function applyProgramPatch(
       }),
       ...(body.overageSurchargeBps !== undefined && {
         overageSurchargeBps: body.overageSurchargeBps,
+      }),
+      ...(body.priceCapPerEngagementPaise !== undefined && {
+        priceCapPerEngagementPaise: body.priceCapPerEngagementPaise,
       }),
       ...(body.maxOveragePerCyclePaise !== undefined && {
         maxOveragePerCyclePaise: body.maxOveragePerCyclePaise,

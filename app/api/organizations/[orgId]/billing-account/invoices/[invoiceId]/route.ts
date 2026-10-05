@@ -21,6 +21,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
 
@@ -204,6 +205,23 @@ export async function PATCH(
             },
           },
         });
+
+        if (
+          body.status === "ISSUED" &&
+          typeof tx.webhookEndpoint?.findMany === "function"
+        ) {
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: orgId,
+            eventType: "invoice.issued",
+            payload: {
+              invoiceId,
+              invoiceNumber: current.invoiceNumber,
+              totalPaise: Number(current.totalPaise),
+              dueDate: (body.dueDate ?? current.dueDate).toISOString(),
+            },
+          });
+        }
 
         // PO balance restoration on VOID / CANCELLED. The invoice POST
         // route atomically decremented `PurchaseOrder.remainingAmountPaise`

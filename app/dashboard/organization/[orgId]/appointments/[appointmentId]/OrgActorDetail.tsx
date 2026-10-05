@@ -19,6 +19,7 @@ import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { appointmentStatusBadge } from "@/lib/labels/session-labels";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
 
 export interface OrgActorDetailProps {
   orgId: string;
@@ -34,6 +35,7 @@ export interface OrgActorDetailProps {
   };
   canCancel: boolean;
   canReschedule: boolean;
+  canAllocate?: boolean;
   isSubscription: boolean;
 }
 
@@ -54,7 +56,6 @@ async function postJson(url: string, body: unknown) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => null);
-  // Thrown messages surface inside the ConfirmDialog.
   if (!res.ok)
     throw new Error(errorMessageFromBody(json, "That didn't go through."));
   return json;
@@ -109,10 +110,9 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
 }
 
 /**
- * The operator view of one org appointment (#1527 §7.3, Q11): ADR 20
- * metadata for `operations.read`, and for the funding org's OWNER/MAINTAINER
- * an "Acting for <Org>" cancel and reschedule request. The server authorizes
- * both through `isOrgAdminOfAppointment` and records the human actor.
+ * The operator view of one org appointment: metadata for `operations.read`,
+ * and for the funding org's authorized operators an "Acting for <Org>"
+ * slot allocation, reschedule request, and cancellation.
  */
 export function OrgActorDetail({
   orgId,
@@ -121,12 +121,18 @@ export function OrgActorDetail({
   meta,
   canCancel,
   canReschedule,
+  canAllocate = false,
   isSubscription,
 }: Readonly<OrgActorDetailProps>) {
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
-  const acting = canCancel || canReschedule;
+  const showAllocate =
+    canAllocate ||
+    (meta.status === "PENDING" &&
+      (meta.kind === "CONSULTATION" || meta.kind === "SUBSCRIPTION") &&
+      (canCancel || canReschedule));
+  const acting = canCancel || canReschedule || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
 
   const cancel = async () => {
@@ -197,6 +203,15 @@ export function OrgActorDetail({
 
         {acting && (
           <div className="flex flex-wrap gap-2">
+            {showAllocate && (
+              <AllocateOrgBookingDialog
+                orgId={orgId}
+                appointmentId={appointmentId}
+                planTitle={meta.title}
+                expertName={meta.expertName}
+                learnerName={meta.learnerName}
+              />
+            )}
             {canReschedule && (
               <ConfirmDialog
                 title="Ask to reschedule?"

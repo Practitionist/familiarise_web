@@ -17,6 +17,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionContract } from "@/lib/enterprise/transitions";
 import { getContractLockState } from "@/lib/enterprise/config-lock";
+import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
@@ -25,6 +27,8 @@ const TERM_FIELDS = [
   "effectiveFrom",
   "effectiveTo",
   "paymentTermsDays",
+  "terms",
+  "purchaseOrderId",
 ] as const;
 
 const ContractStatusSchema = z.enum([
@@ -223,8 +227,19 @@ export async function PATCH(
         }
       }
 
+      const defaultSignedAt =
+        body.status === "ACTIVE" &&
+        current.status !== "ACTIVE" &&
+        body.signedAt === undefined
+          ? (current.signedAt ?? new Date())
+          : undefined;
+
       const scalarData = {
-        ...(body.signedAt !== undefined && { signedAt: body.signedAt }),
+        ...(body.signedAt !== undefined
+          ? { signedAt: body.signedAt }
+          : defaultSignedAt !== undefined
+            ? { signedAt: defaultSignedAt }
+            : {}),
         ...(body.effectiveFrom !== undefined && {
           effectiveFrom: body.effectiveFrom,
         }),
@@ -274,6 +289,59 @@ export async function PATCH(
           },
         });
 
+        if (body.status === "ACTIVE" && current.status !== "ACTIVE") {
+          if (
+            typeof tx.billingSubscription?.findUnique === "function" &&
+            typeof tx.billingSubscription?.update === "function"
+          ) {
+            const existingSub = await tx.billingSubscription.findUnique({
+              where: { contractId },
+            });
+            if (existingSub) {
+              const effectiveFrom =
+                body.effectiveFrom ??
+                current.effectiveFrom ??
+                new Date();
+              const effectiveTo =
+                body.effectiveTo !== undefined
+                  ? body.effectiveTo
+                  : current.effectiveTo;
+              const cycleEnd = computeCycleEnd(
+                effectiveFrom,
+                existingSub.cycle,
+              );
+              await tx.billingSubscription.update({
+                where: { id: existingSub.id },
+                data: {
+                  currentCycleStart: effectiveFrom,
+                  currentCycleEnd: cycleEnd,
+                  nextInvoiceDate: cycleEnd,
+                  startsAt: effectiveFrom,
+                  endsAt: effectiveTo ?? null,
+                },
+              });
+            }
+          }
+
+          if (typeof tx.webhookEndpoint?.findMany === "function") {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "contract.signed",
+              payload: {
+                contractId,
+                status: "ACTIVE",
+                signedAt: (
+                  body.signedAt ??
+                  defaultSignedAt ??
+                  current.signedAt ??
+                  new Date()
+                ).toISOString(),
+              },
+            });
+          }
+        }
+
         // #779 §A / #1846 SM-C14 — a dead contract takes its programs and
         // their live seats down with it in this same tx, through the same
         // helper the nightly expiry job uses: ACTIVE and PAUSED seats close,
@@ -282,13 +350,20 @@ export async function PATCH(
         // against in-period seats, so for it this only tidies seats whose
         // period already ended.
         if (body.status === "TERMINATED" || body.status === "EXPIRED") {
+          const closedAt = new Date();
           await closeContractSeats(tx, {
             contractId,
             organizationId: orgId,
             actorMembershipId: access.member.id,
             contractStatus: body.status,
-            now: new Date(),
+            now: closedAt,
           });
+          if (typeof tx.billingSubscription?.updateMany === "function") {
+            await tx.billingSubscription.updateMany({
+              where: { contractId },
+              data: { endsAt: closedAt, activeSeatCount: 0 },
+            });
+          }
         }
       } else if (Object.keys(scalarData).length > 0) {
         await tx.contract.update({

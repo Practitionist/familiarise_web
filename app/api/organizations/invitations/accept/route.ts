@@ -31,6 +31,7 @@ import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -204,7 +205,13 @@ export async function POST(req: NextRequest) {
       // mid-flight between the email click and the POST.
       const org = await tx.organization.findUnique({
         where: { id: inv.organizationId },
-        select: { id: true, name: true, status: true },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          canSponsor: true,
+          canHost: true,
+        },
       });
       if (!org) {
         throw Object.assign(new Error("Organization no longer exists"), {
@@ -216,6 +223,18 @@ export async function POST(req: NextRequest) {
           new Error(
             `Organization is ${org.status.toLowerCase()}; cannot accept new members`,
           ),
+          { httpStatus: 403 },
+        );
+      }
+      if (normalizedRole === "EXPERT" && org.canHost === false) {
+        throw Object.assign(
+          new Error("Organization cannot host experts (canHost is false)"),
+          { httpStatus: 403 },
+        );
+      }
+      if (normalizedRole === "LEARNER" && org.canSponsor === false) {
+        throw Object.assign(
+          new Error("Organization cannot sponsor learners (canSponsor is false)"),
           { httpStatus: 403 },
         );
       }
@@ -301,6 +320,19 @@ export async function POST(req: NextRequest) {
         ? await rejoin(tx, existing.id, roleData)
         : await createMembership(tx, roleData);
 
+      // #1867 — Accepting an organization invitation as a learner or operator
+      // satisfies consumer onboarding so the user isn't redirected to /form
+      // after joining their organization.
+      if (
+        normalizedRole !== "EXPERT" &&
+        typeof tx.user?.update === "function"
+      ) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { onboardingCompleted: true },
+        });
+      }
+
       await tx.orgAuditLog.create({
         data: {
           organizationId: inv.organizationId,
@@ -316,6 +348,21 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+
+      if (typeof tx.webhookEndpoint?.findMany === "function") {
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: inv.organizationId,
+          eventType: "member.added",
+          payload: {
+            membershipId: created.id,
+            userId,
+            role: normalizedRole,
+            source: "INVITATION",
+            invitationId: inv.id,
+          },
+        });
+      }
 
       // Staged HERE so the roster bell and the joiner's welcome commit with
       // the membership or roll back with it (review round 2 on #1700); the

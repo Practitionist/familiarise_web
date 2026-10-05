@@ -48,19 +48,41 @@ export async function lookupEnforcedOrg(
   prisma: PrismaLike, // #780 extended client
   domain: string,
 ): Promise<EnforcedOrgInfo | null> {
-  const claim = await prisma.orgDomainClaim.findUnique({
-    where: { domain },
-    select: {
-      organizationId: true,
-      verifiedAt: true,
-      organization: {
-        select: {
-          status: true,
-          ssoSettings: { select: { enforceSSO: true } },
-        },
+  const selectShape = {
+    organizationId: true,
+    verifiedAt: true,
+    organization: {
+      select: {
+        status: true,
+        ssoSettings: { select: { enforceSSO: true } },
       },
     },
-  });
+  } as const;
+
+  const claim =
+    typeof prisma.orgDomainClaim.findFirst === "function"
+      ? await prisma.orgDomainClaim.findFirst({
+          where: { domain, verifiedAt: { not: null } },
+          select: selectShape,
+        })
+      : await (
+          prisma.orgDomainClaim as unknown as {
+            findUnique: (args: {
+              where: { domain: string };
+              select: typeof selectShape;
+            }) => Promise<{
+              organizationId: string;
+              verifiedAt: Date | null;
+              organization: {
+                status: string;
+                ssoSettings: { enforceSSO: boolean } | null;
+              } | null;
+            } | null>;
+          }
+        ).findUnique({
+          where: { domain },
+          select: selectShape,
+        });
 
   if (
     !claim ||

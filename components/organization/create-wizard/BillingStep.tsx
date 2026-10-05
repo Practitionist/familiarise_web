@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { STATE_NUMERIC_TO_NAME } from "@/lib/compliance/state-codes";
+import {
+  MotivationBanner,
+  resolveFundingRailMotivation,
+} from "@/components/organization/MotivationBanner";
+import { AdvancedPermutationGate } from "@/components/organization/AdvancedPermutationGate";
 import { billingSchema, type BillingFormData } from "./schemas";
 import type { StepProps } from "./types";
 import {
@@ -21,8 +27,6 @@ import {
   SELF_SERVICE_FUNDING_SOURCES,
   narrowFundingSource,
 } from "@/lib/labels/org-labels";
-// WIP banner import removed — never rendered in this step, and
-// per PR #655 reviewer feedback WIP banners are not production gates.
 
 export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   const {
@@ -34,9 +38,6 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   } = useForm<BillingFormData>({
     resolver: zodResolver(billingSchema),
     defaultValues: {
-      // Parse through the Zod enum so a prior-session hydration can't
-      // seed the wizard with a PROJECT value the zod resolver would then
-      // reject on submit with a confusing error.
       fundingSource: narrowFundingSource(initialData.fundingSource),
       paymentTermsDays: initialData.paymentTermsDays ?? 60,
       gstStateCode: initialData.gstStateCode ?? "",
@@ -44,6 +45,13 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   });
 
   const fundingSource = watch("fundingSource");
+  const [personalAcknowledged, setPersonalAcknowledged] = useState(
+    initialData.fundingSource === "PERSONAL",
+  );
+  const motivation = resolveFundingRailMotivation(fundingSource);
+  const goldenRails = SELF_SERVICE_FUNDING_SOURCES.filter(
+    (fs) => fs !== "PERSONAL",
+  );
 
   const onSubmit = (data: BillingFormData) => onNext(data);
 
@@ -55,7 +63,7 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
           How your organization pays when a member books a session.
         </p>
         <div className="space-y-2">
-          {SELF_SERVICE_FUNDING_SOURCES.map((fs) => (
+          {goldenRails.map((fs) => (
             <button
               key={fs}
               type="button"
@@ -86,12 +94,72 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
             </button>
           ))}
         </div>
-      </div>
 
-      {/* C4 (shipped): the reimbursement-report dashboard now lives at
-          /dashboard/organization/[orgId]/reimbursements. Members pay with
-          their own card; the org sees a per-member reimbursement total
-          + CSV export. No banner needed — the surface is real now. */}
+        <AdvancedPermutationGate
+          isActivePermutation={fundingSource === "PERSONAL"}
+          isDiscouraged={fundingSource === "PERSONAL"}
+          acknowledged={personalAcknowledged}
+          onAcknowledgeChange={setPersonalAcknowledged}
+          discouragedConfirmationText="I understand that Personal reimbursement mode requires employees to pay out of pocket with personal cards at checkout and does not produce B2B GST invoices for Input Tax Credit."
+          onSelectRecommended={() => {
+            setValue("fundingSource", "WALLET");
+            setPersonalAcknowledged(false);
+          }}
+          recommendedActionLabel="Switch to Prepaid Wallet (Recommended)"
+          toggleLabel="Show Non-Standard Reimbursement Mode (Personal Card)"
+        >
+          <button
+            type="button"
+            onClick={() => setValue("fundingSource", "PERSONAL")}
+            className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
+              fundingSource === "PERSONAL"
+                ? "border-rose-700 bg-rose-50/50 ring-1 ring-rose-700"
+                : "border-zinc-200 bg-white hover:border-zinc-300"
+            }`}
+          >
+            <div
+              className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                fundingSource === "PERSONAL"
+                  ? "border-rose-700"
+                  : "border-zinc-300"
+              }`}
+            >
+              {fundingSource === "PERSONAL" && (
+                <div className="w-2 h-2 rounded-full bg-rose-700" />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-zinc-900">
+                {FUNDING_SOURCE_LABEL.PERSONAL}
+              </p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                {FUNDING_SOURCE_TAGLINE.PERSONAL}
+              </p>
+            </div>
+          </button>
+        </AdvancedPermutationGate>
+
+        <MotivationBanner
+          tier={motivation.tier}
+          title={motivation.title}
+          message={motivation.message}
+          recommendation={motivation.recommendation}
+          actionLabel={
+            motivation.recommendedFallback
+              ? "Switch to Prepaid Wallet"
+              : undefined
+          }
+          onAction={
+            motivation.recommendedFallback
+              ? () => {
+                  setValue("fundingSource", motivation.recommendedFallback!);
+                  setPersonalAcknowledged(false);
+                }
+              : undefined
+          }
+          compact
+        />
+      </div>
 
       {fundingSource === "INVOICE" && (
         <div className="space-y-2">
@@ -147,7 +215,12 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
         <Button type="button" variant="outline" onClick={onBack}>
           Back
         </Button>
-        <Button type="submit">Next</Button>
+        <Button
+          type="submit"
+          disabled={fundingSource === "PERSONAL" && !personalAcknowledged}
+        >
+          Next
+        </Button>
       </div>
     </form>
   );

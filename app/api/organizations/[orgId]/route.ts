@@ -27,7 +27,10 @@ import { transitionOrganization } from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
+import { isValidGstin } from "@/lib/compliance/gst";
+import { isValidPan } from "@/lib/compliance/tds";
 import { numericStateCode } from "@/lib/compliance/state-codes";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
@@ -77,8 +80,22 @@ const PatchBodySchema = z
     canHost: z.boolean().optional(),
     requiresPO: z.boolean().optional(),
     paymentTermsDays: z.coerce.number().int().min(0).max(180).optional(),
-    gstin: z.string().length(15).nullable().optional(),
-    pan: z.string().length(10).nullable().optional(),
+    gstin: z
+      .string()
+      .length(15)
+      .nullable()
+      .optional()
+      .refine((v) => v === null || v === undefined || isValidGstin(v), {
+        message: "INVALID_GSTIN_FORMAT",
+      }),
+    pan: z
+      .string()
+      .length(10)
+      .nullable()
+      .optional()
+      .refine((v) => v === null || v === undefined || isValidPan(v), {
+        message: "INVALID_PAN_FORMAT",
+      }),
     gstRegStatus: GstRegStatusSchema.optional(),
     gstStateCode: z.string().length(2).nullable().optional(),
     // MSME (MSMED Act) declaration — #1230. The payout deadline engine reads
@@ -464,8 +481,20 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { requireActive: true });
+  const access = await requireOrgAccess(orgId, {
+    // Pre-verification orgs update branding/tax details here before resubmitting (requireActive: true omitted; SUSPENDED rejected below).
+  });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Organization settings cannot be modified while suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -476,6 +505,16 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+  if (body.canHost && !isHostOrgsEnabled()) {
+    return NextResponse.json(
+      {
+        error:
+          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+        code: "HOST_ORGS_GATED",
+      },
+      { status: 400 },
+    );
+  }
   // #1744 row 3 — a supplied GSTIN's prefix is the buyer's GST state and wins
   // over a hand-typed code; without a GSTIN the typed code (or null) stands.
   const gstStateCode: string | null | undefined = body.gstin

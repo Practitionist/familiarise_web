@@ -66,6 +66,7 @@ import {
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
+  recordTdsReversal,
   resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
@@ -2048,6 +2049,18 @@ export async function markConsultantPayoutReversed(
       where: { payoutId: payout.id, status: EarningStatus.PAID },
       data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
     });
+
+    if (
+      (payout.tdsDeducted ?? 0) > 0 &&
+      typeof tx.tDSRecord?.findFirst === "function"
+    ) {
+      await recordTdsReversal(tx, {
+        payoutId: payout.id,
+        consultantProfileId: payout.consultantProfileId,
+        refundAmountPaise: payout.amount,
+        paymentAmountPaise: payout.amount,
+      });
+    }
 
     const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
     if (payout.amount - recoveredPaise > 0) {

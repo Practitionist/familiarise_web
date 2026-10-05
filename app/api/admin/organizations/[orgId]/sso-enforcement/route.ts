@@ -58,6 +58,24 @@ export const POST = withOpsAction(
         select: { id: true },
       });
 
+      if (body.enforce && !(before?.enforceSSO ?? false)) {
+        if (
+          typeof tx.membership?.findMany === "function" &&
+          typeof tx.session?.deleteMany === "function"
+        ) {
+          const activeMembers = await tx.membership.findMany({
+            where: { organizationId: params.orgId, status: "ACTIVE" },
+            select: { userId: true },
+          });
+          const memberUserIds = activeMembers.map((m) => m.userId);
+          if (memberUserIds.length > 0) {
+            await tx.session.deleteMany({
+              where: { userId: { in: memberUserIds } },
+            });
+          }
+        }
+      }
+
       return {
         target: { kind: "OrganizationSSOSettings", id: settings.id },
         before: { enforceSSO: before?.enforceSSO ?? false },

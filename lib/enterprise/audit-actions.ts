@@ -75,6 +75,7 @@ export const AUDIT_ACTIONS = {
     // #1846 SM-C14 — one row per seat a terminated or expired contract closed.
     ASSIGNMENT_CLOSED_BY_CONTRACT: "ASSIGNMENT_CLOSED_BY_CONTRACT",
     RATE_CARD_BUMPED: "RATE_CARD_BUMPED",
+    PROGRAM_SUPERSEDED: "PROGRAM_SUPERSEDED",
   },
   WALLET: {
     WALLET_TOPUP: "WALLET_TOPUP",

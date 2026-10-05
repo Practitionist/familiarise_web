@@ -145,9 +145,8 @@ function CreditLimitLine({ summary }: Readonly<{ summary: BillingSummary }>) {
 }
 
 /**
- * Billing › Invoices: the summary figures, the invoice register with Pay, and
- * the invoice detail sheet (#1836). Creating an invoice is a platform act now
- * (Q8); orgs use "Request an invoice" in the page header.
+ * Billing › Invoices: summary figures, invoice register with Pay action, and
+ * invoice detail sheet. Orgs request new invoices via the page header action.
  */
 export function InvoicesPanel({
   orgId,
@@ -155,6 +154,7 @@ export function InvoicesPanel({
   canPay,
   moneyMoveBlocked,
   moneyMoveReason,
+  orgStatus,
 }: Readonly<{
   orgId: string;
   summary: {
@@ -166,6 +166,7 @@ export function InvoicesPanel({
   canPay: boolean;
   moneyMoveBlocked: boolean;
   moneyMoveReason: string;
+  orgStatus?: string;
 }>) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
@@ -270,6 +271,16 @@ export function InvoicesPanel({
     },
   });
 
+  // Settling an ISSUED or OVERDUE invoice must remain available even when
+  // dunning is suspended or the wallet is frozen; only an unverified or
+  // platform-suspended organization blocks invoice settlement.
+  const isOrgStatusBlocked =
+    orgStatus !== undefined
+      ? orgStatus === "PENDING_VERIFICATION" || orgStatus === "SUSPENDED"
+      : moneyMoveBlocked &&
+        !moneyMoveReason.toLowerCase().includes("overdue") &&
+        !moneyMoveReason.toLowerCase().includes("frozen");
+
   // Pay is billing.manage (OWNER + BILLING_ADMIN) on the API.
   const renderInvoiceActions = (inv: OrgInvoice) =>
     (inv.status === "ISSUED" || inv.status === "OVERDUE") && canPay ? (
@@ -280,9 +291,8 @@ export function InvoicesPanel({
           e.stopPropagation();
           payMutation.mutate(inv.id);
         }}
-        // #779 §B: the server rejects anyway; this kills the dead click.
-        disabled={payMutation.isPending || moneyMoveBlocked}
-        title={moneyMoveBlocked ? moneyMoveReason : undefined}
+        disabled={payMutation.isPending || isOrgStatusBlocked}
+        title={isOrgStatusBlocked ? moneyMoveReason : undefined}
       >
         Pay now
       </Button>

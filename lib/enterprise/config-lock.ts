@@ -41,7 +41,11 @@ export const LOCKED_CONTRACT_FIELDS = [
   "effectiveTo",
   "paymentTermsDays",
   "rateCardId",
+  "terms",
+  "purchaseOrderId",
 ] as const;
+
+export const CONTRACT_MONEY_FIELDS = LOCKED_CONTRACT_FIELDS;
 
 export interface ProgramLockSignals {
   assignmentCount: number;

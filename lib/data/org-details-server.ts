@@ -34,7 +34,7 @@ export async function getOrgDetailsForSeed(
   });
   if (!org) return null;
 
-  return flattenOrgDetails({
+  const flattened = flattenOrgDetails({
     organization: org,
     membership: {
       role: access.member.role,
@@ -42,4 +42,13 @@ export async function getOrgDetailsForSeed(
       consultantProfileId: access.member.consultantProfileId,
     },
   });
+  const bannerImage = org.brandingProfile?.bannerImage ?? null;
+  return {
+    ...flattened,
+    organization: {
+      ...flattened.organization,
+      bannerImage,
+      bannerUrl: bannerImage,
+    },
+  } as OrgDetailsResponse;
 }

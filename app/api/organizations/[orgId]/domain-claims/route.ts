@@ -76,9 +76,19 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
-    requireActive: true,
+    // Unverified orgs claim domains to unlock >5 seats (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Domain claims cannot be modified while the organization is suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   const raw = await req.json().catch(() => null);
   const parsed = CreateBodySchema.safeParse(raw);
@@ -92,17 +102,33 @@ export async function POST(
 
   try {
     const created = await prisma.$transaction(async (tx) => {
-      const existing = await tx.orgDomainClaim.findUnique({
-        where: { domain: body.domain },
-        include: { organization: { select: { id: true, name: true } } },
-      });
-      if (existing) {
-        const mine = existing.organizationId === orgId;
+      const [verifiedOwner, existingMine] = await Promise.all([
+        tx.orgDomainClaim.findFirst({
+          where: { domain: body.domain, verifiedAt: { not: null } },
+          select: { organizationId: true },
+        }),
+        tx.orgDomainClaim.findUnique({
+          where: {
+            organizationId_domain: {
+              organizationId: orgId,
+              domain: body.domain,
+            },
+          },
+          select: { id: true, organizationId: true },
+        }),
+      ]);
+      if (existingMine) {
         throw Object.assign(
           new Error(
-            mine
-              ? `Domain '${body.domain}' is already claimed by this organization`
-              : `Domain '${body.domain}' is already claimed by another organization`,
+            `Domain '${body.domain}' is already claimed by this organization`,
+          ),
+          { httpStatus: 409 },
+        );
+      }
+      if (verifiedOwner && verifiedOwner.organizationId !== orgId) {
+        throw Object.assign(
+          new Error(
+            `Domain '${body.domain}' is already claimed by another organization`,
           ),
           { httpStatus: 409 },
         );

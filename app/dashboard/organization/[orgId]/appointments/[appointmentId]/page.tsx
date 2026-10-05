@@ -155,17 +155,19 @@ export default async function OrgAppointmentDetailPage({
   const role = access.member.role;
   const mayCancel = canActForOrg(role, "cancel");
   const mayReschedule = canActForOrg(role, "reschedule");
+  const mayAllocate =
+    hasOrgPermission(role, "appointments.allocate.calendarRead") ||
+    role === "MANAGER";
   if (
     !mayCancel &&
     !mayReschedule &&
+    !mayAllocate &&
     !hasOrgPermission(role, "operations.read")
   ) {
     notFound();
   }
 
   const booking = appointment.consultation ?? appointment.subscription;
-  // Q11 covers the org's own 1:1 bookings; a group event's cancel is the
-  // host's call and refunds every seat, so it is never offered here.
   const status = booking?.status ?? null;
 
   return (
@@ -180,6 +182,7 @@ export default async function OrgAppointmentDetailPage({
       canReschedule={
         mayReschedule && status !== null && RESCHEDULABLE_FROM.includes(status)
       }
+      canAllocate={mayAllocate && booking !== null && status === "PENDING"}
       isSubscription={appointment.subscription !== null}
     />
   );

@@ -3,27 +3,21 @@
  */
 
 /**
- * #768 lockdown #17 — pin the 10 reachable funding-program paths.
- * #1676 S4 — HYBRID enumerates the 4 sponsor pairs; the `any/any` wildcard
- * is gone, so refused intersections stay refused for dual-capability orgs.
- *
- * Any drift to the (capability x fundingSource x programType) matrix
- * (e.g., re-introducing Programs v2 or adding a new fundingSource) must
- * update both the constant AND this test.
+ * Pin the 20 reachable funding-program paths and three-tier permutation guidance.
  */
 
 import {
   REACHABLE_ORG_FUNDING_PATHS,
   defaultOverageBehaviorForFunding,
+  getPermutationGuidance,
   isReachableOrgFundingPath,
   overageConfigRefusals,
-  CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
   capabilityOf,
 } from "@/lib/enterprise/reachable-paths";
 
-describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
-  it("contains exactly 10 reachable shapes (4 SPONSOR + 4 HYBRID + 2 program-less)", () => {
-    expect(REACHABLE_ORG_FUNDING_PATHS).toHaveLength(10);
+describe("REACHABLE_ORG_FUNDING_PATHS — full enterprise permutation matrix", () => {
+  it("contains 20 reachable shapes (8 SPONSOR + 8 HYBRID + 4 program-less)", () => {
+    expect(REACHABLE_ORG_FUNDING_PATHS).toHaveLength(20);
   });
 
   it("contains no wildcard rows", () => {
@@ -35,127 +29,211 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
     }
   });
 
-  it("rejects Programs v2 fundingSource values", () => {
-    // Reachable paths must not reference PROJECT/RETAINER/AOR/EOR.
+  it("restricts fundingSource and programType to supported enum values", () => {
     for (const path of REACHABLE_ORG_FUNDING_PATHS) {
-      expect([
-        "PERSONAL",
-        "WALLET",
-        "INVOICE",
-        "LICENSE",
-        null,
-        "any",
-      ]).toContain(path.fundingSource as unknown);
-      expect(["LICENSED_SEAT", "CREDIT_POOL", null, "any"]).toContain(
+      expect(["PERSONAL", "WALLET", "INVOICE", "LICENSE", null]).toContain(
+        path.fundingSource as unknown,
+      );
+      expect(["LICENSED_SEAT", "CREDIT_POOL", null]).toContain(
         path.programType as unknown,
       );
     }
   });
 
   describe("isReachableOrgFundingPath", () => {
-    it("accepts SPONSOR + WALLET + CREDIT_POOL", () => {
-      expect(
-        isReachableOrgFundingPath("SPONSOR", "WALLET", "CREDIT_POOL"),
-      ).toBe(true);
+    const allFundingSources = [
+      "WALLET",
+      "INVOICE",
+      "LICENSE",
+      "PERSONAL",
+    ] as const;
+    const allProgramTypes = ["CREDIT_POOL", "LICENSED_SEAT"] as const;
+
+    it.each(
+      allFundingSources.flatMap((f) =>
+        allProgramTypes.map((p) => [f, p] as const),
+      ),
+    )("accepts SPONSOR and HYBRID with %s + %s", (funding, program) => {
+      expect(isReachableOrgFundingPath("SPONSOR", funding, program)).toBe(true);
+      expect(isReachableOrgFundingPath("HYBRID", funding, program)).toBe(true);
     });
 
-    it("accepts SPONSOR + LICENSE + LICENSED_SEAT", () => {
-      expect(
-        isReachableOrgFundingPath("SPONSOR", "LICENSE", "LICENSED_SEAT"),
-      ).toBe(true);
-    });
-
-    it("rejects SPONSOR + LICENSE + CREDIT_POOL (bogus combo)", () => {
-      // A flat-fee LICENSE pays for unmetered usage; a per-cycle credit
-      // pool on top is internal-accounting noise. See LicensedSeatConfig
-      // docstring + the route's BOGUS_LICENSE_CREDIT_POOL gate.
-      expect(
-        isReachableOrgFundingPath("SPONSOR", "LICENSE", "CREDIT_POOL"),
-      ).toBe(false);
-    });
-
-    it("accepts HOST with null funding (consultant-earnings flow)", () => {
+    it("accepts null funding and program for all capabilities", () => {
+      expect(isReachableOrgFundingPath("PERSONAL_TAG", null, null)).toBe(true);
       expect(isReachableOrgFundingPath("HOST", null, null)).toBe(true);
+      expect(isReachableOrgFundingPath("SPONSOR", null, null)).toBe(true);
+      expect(isReachableOrgFundingPath("HYBRID", null, null)).toBe(true);
     });
 
-    it("accepts HYBRID with any reachable pair", () => {
-      expect(isReachableOrgFundingPath("HYBRID", "WALLET", "CREDIT_POOL")).toBe(
-        true,
+    it("rejects half-null pairs and HOST with non-null funding/program", () => {
+      expect(isReachableOrgFundingPath("SPONSOR", "INVOICE", null)).toBe(false);
+      expect(isReachableOrgFundingPath("HYBRID", "WALLET", null)).toBe(false);
+      expect(isReachableOrgFundingPath("HOST", "WALLET", "CREDIT_POOL")).toBe(
+        false,
       );
-      expect(
-        isReachableOrgFundingPath("HYBRID", "LICENSE", "LICENSED_SEAT"),
-      ).toBe(true);
-      expect(
-        isReachableOrgFundingPath("HYBRID", "INVOICE", "CREDIT_POOL"),
-      ).toBe(true);
-      expect(
-        isReachableOrgFundingPath("HYBRID", "INVOICE", "LICENSED_SEAT"),
-      ).toBe(true);
-    });
-
-    // #1676 S4 — the old `any/any` wildcard accepted every pair for HYBRID,
-    // silently re-opening the refused intersections. Enumeration keeps the
-    // refusals refused for dual-capability orgs too.
-    it("rejects refused pairs for HYBRID exactly as for SPONSOR", () => {
-      const refused: Array<
-        [
-          Parameters<typeof isReachableOrgFundingPath>[1],
-          Parameters<typeof isReachableOrgFundingPath>[2],
-        ]
-      > = [
-        ["WALLET", "LICENSED_SEAT"],
-        ["LICENSE", "CREDIT_POOL"],
-        ["INVOICE", null],
-        ["WALLET", null],
-      ];
-      for (const [funding, program] of refused) {
-        expect(isReachableOrgFundingPath("SPONSOR", funding, program)).toBe(
-          false,
-        );
-        expect(isReachableOrgFundingPath("HYBRID", funding, program)).toBe(
-          false,
-        );
-      }
-      // Program-less HYBRID is not a program-funding question: HOST-side
-      // earnings with no program never consult this matrix.
-      expect(isReachableOrgFundingPath("HYBRID", null, null)).toBe(false);
     });
   });
 
-  // Only INVOICE+CHARGE_ORG and BLOCK are sellable; every other overage shape
-  // is refused at configuration time with a typed code.
   describe("overageConfigRefusals", () => {
-    const codes = (...args: Parameters<typeof overageConfigRefusals>) =>
-      overageConfigRefusals(...args).map((r) => r.code);
-
-    it("refuses CHARGE_MEMBER on every rail with the earnings-hold reason", () => {
-      for (const rail of ["WALLET", "INVOICE", "LICENSE", null] as const) {
-        const [first] = overageConfigRefusals(rail, "CHARGE_MEMBER");
-        expect(first.message).toBe(CHARGE_MEMBER_NEEDS_EARNINGS_HOLD);
+    it("returns no hard backend refusals across all funding rails and overage behaviors", () => {
+      for (const rail of [
+        "WALLET",
+        "INVOICE",
+        "LICENSE",
+        "PERSONAL",
+        null,
+      ] as const) {
+        for (const behavior of [
+          "BLOCK",
+          "CHARGE_ORG",
+          "CHARGE_MEMBER",
+        ] as const) {
+          expect(overageConfigRefusals(rail, behavior, null)).toEqual([]);
+          expect(overageConfigRefusals(rail, behavior, 1500)).toEqual([]);
+        }
       }
     });
+  });
 
-    it("retires WALLET+CHARGE_ORG and refuses any charging on LICENSE", () => {
-      expect(codes("WALLET", "CHARGE_ORG")).toEqual([
-        "WALLET_CHARGE_ORG_RETIRED",
-      ]);
-      expect(codes("LICENSE", "CHARGE_ORG")).toEqual([
-        "LICENSE_OVERAGE_UNSUPPORTED",
-      ]);
-      expect(codes("WALLET", "BLOCK")).toEqual([]);
-      expect(codes("LICENSE", "BLOCK")).toEqual([]);
-      expect(codes("INVOICE", "CHARGE_ORG")).toEqual([]);
+  describe("getPermutationGuidance", () => {
+    it("classifies standard enterprise pairings as RECOMMENDED", () => {
+      expect(
+        getPermutationGuidance({
+          fundingSource: "WALLET",
+          programType: "CREDIT_POOL",
+          overageBehavior: "BLOCK",
+        }),
+      ).toMatchObject({
+        tier: "RECOMMENDED",
+        code: "STANDARD_ENTERPRISE_PATH",
+        requiresConfirmation: false,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "INVOICE",
+          programType: "LICENSED_SEAT",
+          overageBehavior: "CHARGE_ORG",
+        }),
+      ).toMatchObject({
+        tier: "RECOMMENDED",
+        code: "STANDARD_ENTERPRISE_PATH",
+        requiresConfirmation: false,
+      });
     });
 
-    it("refuses any surcharge, on the surcharge field, alongside the rail refusal", () => {
-      expect(codes("INVOICE", "CHARGE_ORG", 1000)).toEqual([
-        "OVERAGE_SURCHARGE_UNSUPPORTED",
-      ]);
-      expect(overageConfigRefusals("WALLET", "CHARGE_ORG", 1000)).toEqual([
-        expect.objectContaining({ field: "overageBehavior" }),
-        expect.objectContaining({ field: "overageSurchargeBps" }),
-      ]);
-      expect(codes("INVOICE", "CHARGE_ORG", 0)).toEqual([]);
+    it("classifies specialized pairings and CHARGE_MEMBER as ADVANCED", () => {
+      expect(
+        getPermutationGuidance({
+          fundingSource: "WALLET",
+          programType: "LICENSED_SEAT",
+          overageBehavior: "BLOCK",
+        }),
+      ).toMatchObject({
+        tier: "ADVANCED",
+        code: "WALLET_LICENSED_SEAT",
+        requiresConfirmation: false,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "INVOICE",
+          programType: "CREDIT_POOL",
+          overageBehavior: "BLOCK",
+        }),
+      ).toMatchObject({
+        tier: "ADVANCED",
+        code: "INVOICE_CREDIT_POOL",
+        requiresConfirmation: false,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "PERSONAL",
+          programType: "CREDIT_POOL",
+          overageBehavior: "BLOCK",
+        }),
+      ).toMatchObject({
+        tier: "ADVANCED",
+        code: "PERSONAL_PROGRAM_ALLOWANCE",
+        requiresConfirmation: false,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "WALLET",
+          programType: "CREDIT_POOL",
+          overageBehavior: "CHARGE_MEMBER",
+        }),
+      ).toMatchObject({
+        tier: "ADVANCED",
+        code: "SPLIT_TENDER_CHARGE_MEMBER",
+        requiresConfirmation: false,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "INVOICE",
+          programType: "LICENSED_SEAT",
+          overageBehavior: "CHARGE_ORG",
+          overageSurchargeBps: 1000,
+        }),
+      ).toMatchObject({
+        tier: "ADVANCED",
+        code: "CHARGE_ORG_WITH_SURCHARGE",
+        requiresConfirmation: false,
+      });
+    });
+
+    it("classifies high-complexity permutations as DISCOURAGED with requiresConfirmation=true", () => {
+      expect(
+        getPermutationGuidance({
+          fundingSource: "WALLET",
+          programType: "CREDIT_POOL",
+          overageBehavior: "CHARGE_ORG",
+          overageSurchargeBps: 1000,
+        }),
+      ).toMatchObject({
+        tier: "DISCOURAGED",
+        code: "WALLET_CHARGE_ORG_SURCHARGE",
+        requiresConfirmation: true,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "LICENSE",
+          programType: "LICENSED_SEAT",
+          overageBehavior: "CHARGE_ORG",
+        }),
+      ).toMatchObject({
+        tier: "DISCOURAGED",
+        code: "LICENSE_CHARGE_ORG",
+        requiresConfirmation: true,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "PERSONAL",
+          programType: "LICENSED_SEAT",
+          overageBehavior: "CHARGE_ORG",
+        }),
+      ).toMatchObject({
+        tier: "DISCOURAGED",
+        code: "PERSONAL_CHARGE_ORG",
+        requiresConfirmation: true,
+      });
+
+      expect(
+        getPermutationGuidance({
+          fundingSource: "LICENSE",
+          programType: "CREDIT_POOL",
+          overageBehavior: "BLOCK",
+        }),
+      ).toMatchObject({
+        tier: "DISCOURAGED",
+        code: "LICENSE_CREDIT_POOL",
+        requiresConfirmation: true,
+      });
     });
   });
 
@@ -170,8 +248,6 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
     });
   });
 
-  // Money-positive default: INVOICE programmes charge the org (expansion
-  // revenue with no refused booking); every other rail blocks.
   describe("defaultOverageBehaviorForFunding", () => {
     it("defaults INVOICE programmes to CHARGE_ORG", () => {
       expect(defaultOverageBehaviorForFunding("INVOICE")).toBe("CHARGE_ORG");
@@ -185,3 +261,4 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
     );
   });
 });
+
