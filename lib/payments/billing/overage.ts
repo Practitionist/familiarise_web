@@ -19,6 +19,21 @@
  * settle instantly via a parent-linked side-Payment.
  */
 import type { OverageBehavior, ProgramType } from "@prisma/client";
+import { determineTax } from "@/lib/payments/tax/tax-engine";
+
+/**
+ * GST on the surcharge, by the payer's place of supply. The surcharge is the one
+ * part of an overage no taxed booking price already holds: `basePaise` is a
+ * slice of the parent's tax-inclusive price, whose GST the parent journal posts.
+ */
+export function surchargeTaxPaise(
+  surchargePaise: number,
+  buyerCountry: string,
+): number {
+  if (surchargePaise <= 0) return 0;
+  return determineTax({ baseAmountPaise: surchargePaise, buyerCountry })
+    .taxAmount;
+}
 
 export interface OverageInput {
   programType: ProgramType; // LICENSED_SEAT | CREDIT_POOL
@@ -28,7 +43,7 @@ export interface OverageInput {
   overageBehavior: OverageBehavior;
   /** Per-cycle overage ceiling (circuit breaker); null = no ceiling. */
   maxOveragePerCyclePaise: number | null;
-  /** Cumulative overage already charged this cycle (paise). */
+  /** Cumulative tax-exclusive overage (base + surcharge) already charged this cycle (paise). */
   cycleOverageSoFarPaise: number;
   /**
    * #775 — bps markup applied to the pass-through marginal, AFTER the
@@ -119,6 +134,7 @@ export function computeOverageForBooking(
           programType: "CREDIT_POOL",
           creditBudgetPaise: ctx.creditBudgetPaise ?? null,
           consumedPaise: ctx.consumedPaise ?? 0,
+          priceCapPerEngagementPaise: ctx.priceCapPerEngagementPaise ?? null,
         }
       : {
           ...base,
@@ -142,7 +158,13 @@ export function computeOverage(input: OverageInput): OverageResult {
     const budget = input.creditBudgetPaise ?? 0;
     const consumed = input.consumedPaise ?? 0;
     const remaining = Math.max(0, budget - consumed);
-    coveredPaise = Math.min(price, remaining);
+    const engagements = Number.isFinite(input.engagementsConsumed)
+      ? Math.max(1, Math.floor(input.engagementsConsumed))
+      : 1;
+    const perCap = input.priceCapPerEngagementPaise;
+    const maxCoveredByPool =
+      perCap != null ? Math.min(remaining, engagements * perCap) : remaining;
+    coveredPaise = Math.min(price, maxCoveredByPool);
     marginalPaise = price - coveredPaise;
   } else {
     // LICENSED_SEAT
@@ -173,7 +195,7 @@ export function computeOverage(input: OverageInput): OverageResult {
         const perCap = input.priceCapPerEngagementPaise;
         // priceCap caps the marginal per overage engagement (an absorbed discount).
         const capped =
-          perCap != null
+          perCap !== null && perCap !== undefined
             ? Math.min(rawMarginal, overageEngagements * perCap)
             : rawMarginal;
         marginalPaise = Math.min(price, capped);
@@ -207,7 +229,7 @@ export function computeOverage(input: OverageInput): OverageResult {
 
   // --- Step 2: per-cycle circuit breaker → hard BLOCK regardless of behavior
   if (
-    input.maxOveragePerCyclePaise != null &&
+    input.maxOveragePerCyclePaise !== null &&
     input.cycleOverageSoFarPaise + marginalPaise > input.maxOveragePerCyclePaise
   ) {
     return {

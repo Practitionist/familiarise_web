@@ -19,16 +19,18 @@ import type { BillingCycle } from "@prisma/client";
  */
 export function nextPeriodEnd(start: Date, cycle: BillingCycle): Date {
   const next = new Date(start);
-  const day = next.getDate();
-  if (cycle === "MONTHLY") next.setMonth(next.getMonth() + 1);
-  else if (cycle === "QUARTERLY") next.setMonth(next.getMonth() + 3);
-  else next.setFullYear(next.getFullYear() + 1); // ANNUAL
+  const day = next.getUTCDate();
+  if (cycle === "MONTHLY") next.setUTCMonth(next.getUTCMonth() + 1);
+  else if (cycle === "QUARTERLY") next.setUTCMonth(next.getUTCMonth() + 3);
+  else next.setUTCFullYear(next.getUTCFullYear() + 1); // ANNUAL
 
   // Month overflow guard: if the day-of-month rolled (e.g. 31 → Mar-03 because
   // Feb is short), pin to the last day of the intended month instead.
-  if (next.getDate() !== day) next.setDate(0);
+  if (next.getUTCDate() !== day) next.setUTCDate(0);
   return next;
 }
+
+export const computeCycleEnd = nextPeriodEnd;
 
 export interface CycleDecisionInput {
   /** Successor period bounds the engine would mint (periodStart=old periodEnd). */

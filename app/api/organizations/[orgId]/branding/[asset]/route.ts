@@ -64,9 +64,21 @@ async function authorizeBrandingMutation(
 
   const access = await requireOrgAccess(orgId, {
     permission: options.permission,
-    requireActive: true,
+    // Pre-verification orgs upload logo/banner during onboarding (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return { error: access.error };
+  if (access.org?.status === "SUSPENDED") {
+    return {
+      error: NextResponse.json(
+        {
+          error: "ORG_NOT_ACTIVE",
+          message: "Organization branding cannot be modified while suspended.",
+          status: access.org.status,
+        },
+        { status: 409 },
+      ),
+    };
+  }
 
   return {
     error: null,

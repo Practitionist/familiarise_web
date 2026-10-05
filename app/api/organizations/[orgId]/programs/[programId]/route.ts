@@ -17,7 +17,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
-import { overageConfigRefusals } from "@/lib/enterprise/reachable-paths";
+import { assertMergedOverageConfigValid } from "@/lib/enterprise/reachable-paths";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -61,7 +61,7 @@ const PatchBodySchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     maxOveragePerCyclePaise: z.coerce
@@ -200,71 +200,30 @@ async function applyProgramPatch(
   // current + patch and re-check the combined state.
   if (touchesMoney) {
     const cfg = current.licensedSeatConfig ?? current.creditPoolConfig;
-    const merged = {
-      overageBehavior: body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
+    const rawMaxOverage =
+      body.maxOveragePerCyclePaise !== undefined
+        ? body.maxOveragePerCyclePaise
+        : (cfg?.maxOveragePerCyclePaise ?? null);
+    assertMergedOverageConfigValid({
+      programType: current.type,
+      fundingSource: current.contract.billingAccount?.fundingSource ?? null,
+      overageBehavior:
+        body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
       overageSurchargeBps:
         body.overageSurchargeBps !== undefined
           ? body.overageSurchargeBps
           : (cfg?.overageSurchargeBps ?? null),
       maxOveragePerCyclePaise:
-        body.maxOveragePerCyclePaise !== undefined
-          ? body.maxOveragePerCyclePaise
-          : (cfg?.maxOveragePerCyclePaise ?? null),
+        rawMaxOverage !== null ? Number(rawMaxOverage) : null,
       coveredEngagementsPerCycle:
         body.coveredEngagementsPerCycle !== undefined
           ? body.coveredEngagementsPerCycle
           : (current.licensedSeatConfig?.coveredEngagementsPerCycle ?? null),
-    };
-    const fail = (message: string) => {
-      throw Object.assign(new Error(message), {
-        httpStatus: 400,
-        code: "INVALID_OVERAGE_CONFIG",
-      });
-    };
-    if (
-      current.type === "LICENSED_SEAT" &&
-      (merged.coveredEngagementsPerCycle === null ||
-        merged.coveredEngagementsPerCycle === undefined) &&
-      (merged.overageBehavior !== "BLOCK" ||
-        (merged.overageSurchargeBps ?? 0) > 0 ||
-        (merged.maxOveragePerCyclePaise !== null &&
-          merged.maxOveragePerCyclePaise !== undefined))
-    ) {
-      fail(
-        "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
-      );
-    }
-    if (
-      merged.overageBehavior !== "BLOCK" &&
-      ((merged.coveredEngagementsPerCycle !== null &&
-        merged.coveredEngagementsPerCycle !== undefined) ||
-        current.type === "CREDIT_POOL") &&
-      (merged.maxOveragePerCyclePaise === null ||
-        merged.maxOveragePerCyclePaise === undefined ||
-        merged.maxOveragePerCyclePaise < 1)
-    ) {
-      fail(
-        `overageBehavior=${merged.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling.`,
-      );
-    }
-    if (
-      merged.overageBehavior === "BLOCK" &&
-      (merged.overageSurchargeBps ?? 0) > 0
-    ) {
-      fail(
-        "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG.",
-      );
-    }
-    // Re-checked on the merged config so a patch cannot assemble a refused
-    // combination; a legacy value the patch leaves untouched stays editable.
-    const refusal = overageConfigRefusals(
-      current.contract.billingAccount?.fundingSource ?? null,
-      merged.overageBehavior,
-      merged.overageSurchargeBps,
-    ).find((r) => body[r.field] !== undefined);
-    if (refusal) {
-      fail(refusal.message);
-    }
+      touchedOverageFields: {
+        overageBehavior: body.overageBehavior !== undefined,
+        overageSurchargeBps: body.overageSurchargeBps !== undefined,
+      },
+    });
   }
 
   // #777 §B — archiving guard: an archived program is skipped by the cycle
@@ -321,13 +280,24 @@ async function applyProgramPatch(
     // status, not after it.
     let assignmentsCancelled = 0;
     if (body.status === "CANCELLED") {
+      // Only ACTIVE assignments currently occupy a billed seat — PAUSED
+      // assignments already released their seat when paused.
+      const activeSeatsToRelease =
+        typeof tx.programAssignment?.count === "function"
+          ? await tx.programAssignment.count({
+              where: { programId, status: "ACTIVE" },
+            })
+          : undefined;
       const cascaded = await tx.programAssignment.updateMany({
         where: { programId, status: { in: ["ACTIVE", "PAUSED"] } },
         data: { status: "CANCELLED", periodEnd: new Date() },
       });
       assignmentsCancelled = cascaded.count;
-      // #1744 row 3 — each cancelled assignment gives its billed seat back.
-      await releaseSeatsForClosedAssignments(tx, programId, cascaded.count);
+      await releaseSeatsForClosedAssignments(
+        tx,
+        programId,
+        activeSeatsToRelease ?? cascaded.count,
+      );
     }
 
     await tx.orgAuditLog.create({
@@ -404,6 +374,9 @@ async function applyProgramPatch(
       }),
       ...(body.overageSurchargeBps !== undefined && {
         overageSurchargeBps: body.overageSurchargeBps,
+      }),
+      ...(body.priceCapPerEngagementPaise !== undefined && {
+        priceCapPerEngagementPaise: body.priceCapPerEngagementPaise,
       }),
       ...(body.maxOveragePerCyclePaise !== undefined && {
         maxOveragePerCyclePaise: body.maxOveragePerCyclePaise,

@@ -20,6 +20,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 
 const BodySchema = z
   .object({
@@ -193,6 +195,19 @@ export async function POST(
         });
       }
 
+      if (body.rateCardId !== undefined && body.rateCardId !== null) {
+        const validCard = await tx.rateCard.findFirst({
+          where: { id: body.rateCardId, ownerOrgId: orgId },
+          select: { id: true },
+        });
+        if (!validCard) {
+          throw Object.assign(
+            new Error("RateCard does not belong to this organization"),
+            { httpStatus: 400, code: "INVALID_RATE_CARD" },
+          );
+        }
+      }
+
       const now = new Date();
       // Supersede signs the successor, so it needs the same live PO a signing does.
       if (access.org.requiresPO) {
@@ -240,12 +255,14 @@ export async function POST(
         );
       }
 
-      const successor = await tx.contract.create({
+      // Insert successor as DRAFT first so `contract_one_active_per_billing_account_idx`
+      // (`WHERE status = 'ACTIVE'`) is never violated while `old` is still ACTIVE.
+      const draftSuccessor = await tx.contract.create({
         data: {
           organizationId: old.organizationId,
           billingAccountId: old.billingAccountId,
           purchaseOrderId: old.purchaseOrderId,
-          status: "ACTIVE",
+          status: "DRAFT",
           // The supersede action is the signing event for the new terms.
           signedAt: now,
           effectiveFrom,
@@ -258,11 +275,7 @@ export async function POST(
       });
 
       // #1132 follow-up — claim the old contract via CAS BEFORE re-pointing
-      // programs. Two concurrent supersedes both passed the read-checks above
-      // (READ COMMITTED) and minted duplicate ACTIVE successors with a
-      // last-writer-wins supersession chain. Only one claim can win; the
-      // loser throws and its transaction rolls back the successor it created
-      // moments earlier.
+      // programs and before promoting the successor to ACTIVE.
       const claimedOld = await tx.contract.updateMany({
         where: {
           id: old.id,
@@ -273,7 +286,7 @@ export async function POST(
           // AMENDMENT replaces a live term → TERMINATED; RENEWAL closes a
           // completed term → EXPIRED.
           status: body.reason === "AMENDMENT" ? "TERMINATED" : "EXPIRED",
-          supersededByContractId: successor.id,
+          supersededByContractId: draftSuccessor.id,
           supersededAt: now,
           supersessionReason: body.reason,
         },
@@ -284,6 +297,11 @@ export async function POST(
           { httpStatus: 409, code: "CONTRACT_ALREADY_SUPERSEDED" },
         );
       }
+
+      const successor = await tx.contract.update({
+        where: { id: draftSuccessor.id },
+        data: { status: "ACTIVE" },
+      });
 
       // Re-point programs so entitlements continue under the new terms — and
       // so the cycle engine (which requires an ACTIVE contract) keeps rolling
@@ -332,8 +350,49 @@ export async function POST(
         },
       });
 
+      if (typeof tx.webhookEndpoint?.findMany === "function") {
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: orgId,
+          eventType: "contract.signed",
+          payload: {
+            contractId: successor.id,
+            supersededContractId: old.id,
+            reason: body.reason,
+            status: "ACTIVE",
+            signedAt: now.toISOString(),
+            effectiveFrom: effectiveFrom.toISOString(),
+            effectiveTo: effectiveTo?.toISOString() ?? null,
+          },
+        });
+      }
+
       return successor;
     });
+
+    if (
+      body.reason === "AMENDMENT" &&
+      typeof prisma.organization?.findUnique === "function"
+    ) {
+      try {
+        await rollupOrgInvoiceAccruals({
+          organizationId: orgId,
+          issueImmediately: true,
+        });
+      } catch (rollupErr) {
+        Sentry.captureException(
+          rollupErr instanceof Error
+            ? rollupErr
+            : new Error(String(rollupErr)),
+          {
+            tags: {
+              subsystem: "enterprise",
+              step: "amendment_invoice_rollup",
+            },
+          },
+        );
+      }
+    }
 
     return NextResponse.json(
       { contract: result, supersededContractId: contractId },

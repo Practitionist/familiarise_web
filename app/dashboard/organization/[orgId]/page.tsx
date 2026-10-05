@@ -44,29 +44,28 @@ export default async function OrgRoot({
       },
     });
 
-    if (member?.status === "ACTIVE") {
-      const base = `/dashboard/organization/${orgId}`;
-      // Those pages need the capability; without it they'd bounce to home.
-      if (member.role === "LEARNER") {
-        redirect(
-          member.organization.canSponsor
-            ? `${base}/my-program`
-            : `${base}/appointments`,
-        );
-      }
-      if (member.role === "EXPERT") {
-        redirect(
-          member.organization.canHost
-            ? `${base}/compensation`
-            : `${base}/appointments`,
-        );
-      }
-      // MANAGER+, SUPPORT, OWNER, MAINTAINER fall through to /home
-    } else if (!member) {
-      // No membership — bounce out entirely. resolvePersonalDashboardHref
-      // may return null if the user has no personal profile yet.
+    if (!member || member.status !== "ACTIVE") {
+      // No active membership — bounce out to the user's personal dashboard.
       redirect(resolvePersonalDashboardHref(session.user) ?? "/dashboard");
     }
+
+    const base = `/dashboard/organization/${orgId}`;
+    // Those pages need the capability; without it they'd bounce to home.
+    if (member.role === "LEARNER") {
+      redirect(
+        member.organization.canSponsor
+          ? `${base}/my-program`
+          : `${base}/appointments`,
+      );
+    }
+    if (member.role === "EXPERT") {
+      redirect(
+        member.organization.canHost
+          ? `${base}/compensation`
+          : `${base}/appointments`,
+      );
+    }
+    // MANAGER+, SUPPORT, OWNER, MAINTAINER fall through to /home
   }
 
   redirect(`/dashboard/organization/${orgId}/home`);

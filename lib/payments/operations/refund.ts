@@ -1741,11 +1741,25 @@ export async function applyRefundCascade(
       const debits: Posting[] = [];
       if (platformPlug > 0) {
         if (overageCapture && orgId) {
-          debits.push({
-            account: { kind: "ORG_PAYABLE", organizationId: orgId },
-            direction: "DEBIT",
-            amountPaise: platformPlug,
-          });
+          // The org was credited net of GST; GST kept past the cutoff is the platform's to bear.
+          const absorbedGst = Math.min(
+            platformPlug,
+            proportion(taxPaise) - gstRev,
+          );
+          if (platformPlug - absorbedGst > 0) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: orgId },
+              direction: "DEBIT",
+              amountPaise: platformPlug - absorbedGst,
+            });
+          }
+          if (absorbedGst > 0) {
+            debits.push({
+              account: { kind: "PLATFORM_FEE" },
+              direction: "DEBIT",
+              amountPaise: absorbedGst,
+            });
+          }
         } else {
           // Funding returned exceeds the reversed shares → platform gives back
           // its fee portion.

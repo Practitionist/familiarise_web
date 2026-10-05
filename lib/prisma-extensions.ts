@@ -53,6 +53,7 @@ export const moneyResultExtensions = {
     maxOveragePerCyclePaise: fn("maxOveragePerCyclePaise"),
   },
   creditPoolConfig: {
+    priceCapPerEngagementPaise: fn("priceCapPerEngagementPaise"),
     maxOveragePerCyclePaise: fn("maxOveragePerCyclePaise"),
   },
   programAssignment: { consumedPaise: f("consumedPaise") },

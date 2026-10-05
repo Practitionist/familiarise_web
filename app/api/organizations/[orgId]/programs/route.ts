@@ -94,7 +94,7 @@ const LicensedSeatConfigSchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     // #775 — bps markup on the pass-through overage marginal (null = no markup).
@@ -163,6 +163,12 @@ const CreditPoolConfigSchema = z
     // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
     // Omitted → funding-aware default resolved by the route (see above).
     overageBehavior: OverageBehaviorSchema.optional(),
+    priceCapPerEngagementPaise: z.coerce
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional(),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
     maxOveragePerCyclePaise: z.coerce
       .number()
@@ -474,6 +480,11 @@ export async function POST(
               cycle: body.creditPoolConfig.cycle,
               creditBudgetPerCycle: body.creditPoolConfig.creditBudgetPerCycle,
               overageBehavior: effectiveOverageBehavior,
+              ...(body.creditPoolConfig.priceCapPerEngagementPaise !==
+                undefined && {
+                priceCapPerEngagementPaise:
+                  body.creditPoolConfig.priceCapPerEngagementPaise,
+              }),
               overageSurchargeBps:
                 body.creditPoolConfig.overageSurchargeBps ?? null,
               maxOveragePerCyclePaise:

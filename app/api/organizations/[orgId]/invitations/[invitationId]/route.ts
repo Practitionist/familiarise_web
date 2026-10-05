@@ -13,6 +13,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { canCallerAssignRole } from "@/lib/enterprise/invitations";
+import {
+  assertActorMayManage,
+  MembershipGuardError,
+} from "@/lib/enterprise/membership-guards";
 
 export async function GET(
   _req: NextRequest,
@@ -51,42 +56,85 @@ export async function DELETE(
   const { orgId, invitationId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
-    requireActive: true,
+    // Unverified orgs may revoke founding-team invitations (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
-
-  // Conditional update: only pending invitations are revocable. An
-  // already-accepted or already-canceled row is left untouched so the
-  // audit log doesn't double-emit REVOKE on retry.
-  const result = await prisma.$transaction(async (tx) => {
-    const updated = await tx.invitation.updateMany({
-      where: {
-        id: invitationId,
-        organizationId: orgId,
-        status: "PENDING",
-      },
-      data: { status: "CANCELED" },
-    });
-    if (updated.count === 0) return { revoked: false };
-
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "MEMBER",
-        action: AUDIT_ACTIONS.MEMBER.INVITE_REVOKED,
-        description: `Revoked invitation ${invitationId}`,
-        details: { invitationId },
-      },
-    });
-    return { revoked: true };
-  });
-
-  if (!result.revoked) {
+  if (access.org?.status === "SUSPENDED") {
     return NextResponse.json(
-      { error: "Invitation not pending (may already be accepted or canceled)" },
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Invitations cannot be modified while the organization is suspended.",
+        status: access.org.status,
+      },
       { status: 409 },
     );
   }
-  return new NextResponse(null, { status: 204 });
+
+  try {
+    // Conditional update: only pending invitations are revocable. An
+    // already-accepted or already-canceled row is left untouched so the
+    // audit log doesn't double-emit REVOKE on retry.
+    const result = await prisma.$transaction(async (tx) => {
+      if (typeof tx.invitation.findFirst === "function") {
+        const existing = await tx.invitation.findFirst({
+          where: {
+            id: invitationId,
+            organizationId: orgId,
+            status: "PENDING",
+          },
+          select: { id: true, role: true },
+        });
+        if (existing) {
+          if (!canCallerAssignRole(access.member.role, existing.role)) {
+            assertActorMayManage(
+              {
+                kind: "member",
+                membershipId: access.member.id,
+                role: access.member.role,
+              },
+              existing.role,
+            );
+          }
+        }
+      }
+
+      const updated = await tx.invitation.updateMany({
+        where: {
+          id: invitationId,
+          organizationId: orgId,
+          status: "PENDING",
+        },
+        data: { status: "CANCELED" },
+      });
+      if (updated.count === 0) return { revoked: false };
+
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.INVITE_REVOKED,
+          description: `Revoked invitation ${invitationId}`,
+          details: { invitationId },
+        },
+      });
+      return { revoked: true };
+    });
+
+    if (!result.revoked) {
+      return NextResponse.json(
+        { error: "Invitation not pending (may already be accepted or canceled)" },
+        { status: 409 },
+      );
+    }
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    if (err instanceof MembershipGuardError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.httpStatus },
+      );
+    }
+    throw err;
+  }
 }

@@ -174,19 +174,18 @@ describe("/dashboard/organization/[orgId] entry-point routing", () => {
     expect(path).toBe("/dashboard");
   });
 
-  it("treats non-ACTIVE memberships as missing and redirects to /home (defensive)", async () => {
+  it("treats non-ACTIVE memberships as missing and redirects to personal dashboard fallback", async () => {
     mockedGetSession.mockResolvedValueOnce({
       user: { id: "u-removed", role: "USER" },
     });
-    // A SUSPENDED or REMOVED membership shouldn't grant any role-based
-    // routing. The current handler falls through to /home where the
-    // page-level requireOrgAccess will reject with an error.
+    // A SUSPENDED or REMOVED membership shouldn't grant any org dashboard
+    // routing; OrgRoot bounces the user out to their personal dashboard.
     mockedPrisma.membership.findUnique.mockResolvedValueOnce({
       role: "LEARNER",
       status: "REMOVED",
     });
 
     const path = await expectRedirect(() => OrgRoot(makeParams("org-1")));
-    expect(path).toBe("/dashboard/organization/org-1/home");
+    expect(path).toBe("/dashboard/consultee/c-1/home");
   });
 });

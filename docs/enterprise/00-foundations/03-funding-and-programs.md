@@ -38,12 +38,12 @@ Labels and taglines come from `FUNDING_SOURCE_LABEL` and
 The table below maps each retired `OrgBillingMode` value in the left column to the
 `FundingSource` that replaced it, with a note on what changed in the move.
 
-| Old `OrgBillingMode`    | New `FundingSource` | Notes |
-|-------------------------|---------------------|-------|
-| `TAG_ONLY`              | `PERSONAL`          | Members pay at checkout; the org is attribution-only. |
-| `SEAT_PACK`             | `WALLET`            | Credits live as paise on `BillingAccount.walletBalance`. |
-| `INVOICED_MONTHLY`      | `INVOICE`           | Roll-up invoice at month-end; `PaymentLeg.source=INVOICE_ACCRUAL`. |
-| `PREPAID_UNLIMITED`     | `LICENSE`           | Flat fee contract; `coveredEngagementsPerCycle=null` on the LICENSED_SEAT Program. |
+| Old `OrgBillingMode` | New `FundingSource` | Notes                                                                              |
+| -------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| `TAG_ONLY`           | `PERSONAL`          | Members pay at checkout; the org is attribution-only.                              |
+| `SEAT_PACK`          | `WALLET`            | Credits live as paise on `BillingAccount.walletBalance`.                           |
+| `INVOICED_MONTHLY`   | `INVOICE`           | Roll-up invoice at month-end; `PaymentLeg.source=INVOICE_ACCRUAL`.                 |
+| `PREPAID_UNLIMITED`  | `LICENSE`           | Flat fee contract; `coveredEngagementsPerCycle=null` on the LICENSED_SEAT Program. |
 
 ## Funding-source matrix
 
@@ -51,12 +51,12 @@ The table below reads one funding source per row and shows, across the columns,
 which `BillingAccount` money columns it uses, which `PaymentLeg.source` a single
 booking writes under it, and whether any invoice cron runs on its behalf.
 
-| FundingSource | Wallet column | Credit limit column | Per-booking leg (`PaymentLeg.source`) | Invoice rhythm |
-|---------------|---------------|---------------------|---------------------------------------|----------------|
-| `PERSONAL`    | `null`        | `null`              | `CARD` (on the learner's card)        | None |
-| `WALLET`      | `Int` paise (balance) | `null`      | `WALLET` (debit from balance)         | None |
-| `INVOICE`     | `null`        | `Int` paise (optional, `null` = unlimited) | `INVOICE_ACCRUAL` (rolled up) | Cron rolls `Payment`s into one `OrganizationInvoice` at month-end |
-| `LICENSE`     | `null`        | `null`              | `LICENSE` (no money moves; Program absorbs it) | None (flat fee already paid) |
+| FundingSource | Wallet column         | Credit limit column                        | Per-booking leg (`PaymentLeg.source`)          | Invoice rhythm                                                    |
+| ------------- | --------------------- | ------------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------- |
+| `PERSONAL`    | `null`                | `null`                                     | `CARD` (on the learner's card)                 | None                                                              |
+| `WALLET`      | `Int` paise (balance) | `null`                                     | `WALLET` (debit from balance)                  | None                                                              |
+| `INVOICE`     | `null`                | `Int` paise (optional, `null` = unlimited) | `INVOICE_ACCRUAL` (rolled up)                  | Cron rolls `Payment`s into one `OrganizationInvoice` at month-end |
+| `LICENSE`     | `null`                | `null`                                     | `LICENSE` (no money moves; Program absorbs it) | None (flat fee already paid)                                      |
 
 Pre-launch verified: the "unmetered" experience of a LICENSE org is not
 a separate funding model — it's a `LICENSED_SEAT` Program with
@@ -84,7 +84,7 @@ LICENSE case is hypothetical (no LICENSE org is seeded — it's a
   paise; the single leg is `CARD` (`sourceRef` = gateway `pay_…`); the org,
   if tagged at all, is attribution-only. Booking posts `Dr CASH`. No wallet,
   no invoice, no cron. (Arjun, the seeded solo consultant, sells into exactly
-  this flow on the *host* side — his learners pay PERSONAL.)
+  this flow on the _host_ side — his learners pay PERSONAL.)
 - **`WALLET` — IIT Madras pre-funds a credit pool.** The seed tops up
   3 × ₹5,00,000 = ₹15,00,000 (`WalletTopUp` CONFIRMED, each posting
   `Dr CASH / Cr WALLET`) and debits 5 × ₹5,000 against it
@@ -114,13 +114,13 @@ LICENSE case is hypothetical (no LICENSE org is seeded — it's a
 (`PERSONAL` is excluded — it's the no-sponsorship default, zero org
 operational load.)
 
-| | `LICENSE` | `WALLET` | `INVOICE` |
-|---|---|---|---|
-| Buyer picks it when | usage is high + predictable; wants one flat number, no per-seat metering | wants prepaid control + a hard spend ceiling (pool can't be overdrawn) | wants to book freely now and reconcile later on NET terms (classic AP) |
-| Money timing | paid up front, sunk at signing | prepaid, drawn down per booking | postpaid, settled after the invoice |
-| Per-booking leg | `LICENSE` (₹0) | `WALLET` (`Dr WALLET`) | `INVOICE_ACCRUAL` (`Dr ORG_RECEIVABLE`) |
-| What it costs us operationally | least: no per-booking money movement; risk is *us* over-delivering against a flat fee | top-up reconciliation + the `walletBalance` cache must stay ==`balance(WALLET)`; auto-top-up mandate to manage | most: AR carrying risk, the month-end roll-up cron, dunning when a NET-60 invoice goes `OVERDUE`, and IRN/GST e-invoice obligations |
-| Failure mode that bites | margin erosion if usage spikes (cap it with a `LICENSED_SEAT` engagement ceiling instead of `null`) | a *captured-but-uncredited* top-up stranding money — the bug #785 fixed (`ca6e9073`) | silent stuck money: a stuck `CHARGE_MEMBER` or an unpaid invoice — the dunning + timeout work #779 §D added (`59482e83`) |
+|                                | `LICENSE`                                                                                           | `WALLET`                                                                                                       | `INVOICE`                                                                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Buyer picks it when            | usage is high + predictable; wants one flat number, no per-seat metering                            | wants prepaid control + a hard spend ceiling (pool can't be overdrawn)                                         | wants to book freely now and reconcile later on NET terms (classic AP)                                                              |
+| Money timing                   | paid up front, sunk at signing                                                                      | prepaid, drawn down per booking                                                                                | postpaid, settled after the invoice                                                                                                 |
+| Per-booking leg                | `LICENSE` (₹0)                                                                                      | `WALLET` (`Dr WALLET`)                                                                                         | `INVOICE_ACCRUAL` (`Dr ORG_RECEIVABLE`)                                                                                             |
+| What it costs us operationally | least: no per-booking money movement; risk is _us_ over-delivering against a flat fee               | top-up reconciliation + the `walletBalance` cache must stay ==`balance(WALLET)`; auto-top-up mandate to manage | most: AR carrying risk, the month-end roll-up cron, dunning when a NET-60 invoice goes `OVERDUE`, and IRN/GST e-invoice obligations |
+| Failure mode that bites        | margin erosion if usage spikes (cap it with a `LICENSED_SEAT` engagement ceiling instead of `null`) | a _captured-but-uncredited_ top-up stranding money — the bug #785 fixed (`ca6e9073`)                           | silent stuck money: a stuck `CHARGE_MEMBER` or an unpaid invoice — the dunning + timeout work #779 §D added (`59482e83`)            |
 
 Operational claims here are grounded in the money-band docs:
 [wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md) (cache vs
@@ -186,76 +186,90 @@ finance, audit, and reconciliation all read in rupees end-to-end with
 no translation layer. Per-tier rate adjustments live on a Program
 rate-card override rather than as JSON escape hatches.
 
-## Config lock & archive
+## Config lock, archive & 1-click Amend & Supersede
 
-A Program's money config is editable only while nothing rides on it.
+A Program's money config is editable in place only while nothing rides on it.
 `Program.configLockedAt` is stamped in the same transaction that creates
 the **first** `ProgramAssignment` (not at program-create, so a typo on a
 brand-new program is still fixable). Once non-null, the
 `LOCKED_PROGRAM_FIELDS` set in `lib/enterprise/config-lock.ts` —
-`type`, `coveredPlanTypes`, `ratePerSeatPaise`,
+`type` (`subType`), `coveredPlanTypes`, `ratePerSeatPaise`,
 `coveredEngagementsPerCycle`, `creditBudgetPerCycle`, `overageBehavior`,
 `overageSurchargeBps`, `priceCapPerEngagementPaise`,
-`maxOveragePerCyclePaise` — is read-only. A retroactive money edit would
-rewrite bookings already settled at the old terms, so the rule is: locked
-is locked. Changing money terms means **archive this program + create a
-new one** (the same immutable pattern as a RateCard bump or contract
-supersession). A bounded count check (assignments / bookings / overage
-events) stays as a belt-and-braces fallback so a legacy row with a null
-column still reads locked.
+`maxOveragePerCyclePaise` — is read-only on that row. A retroactive money edit
+would rewrite bookings already settled at the old terms, so locked rows are
+never mutated in place.
 
+Instead of forcing admins to manually archive and re-enroll every learner,
+operators use **1-click Program Amend & Supersede** (`POST /api/organizations/[orgId]/programs/[programId]/supersede`): in a single `Serializable`
+transaction, the server archives the locked program (`archivedAt = now()`,
+`status = CANCELLED`), creates the replacement `Program` with the amended
+`LicensedSeatConfig` or `CreditPoolConfig`, and migrates all active
+`ProgramAssignment`s to the new program (carrying over current-cycle
+`engagementsUsed` / `consumedPaise` and linking via `rolledToAssignmentId`).
 `Program.archivedAt` is the soft-delete: once `configLockedAt` is set the
-program is never hard-deleted (financial history rides on it), so
-archiving hides it from active lists while preserving the trail. Contract
-terms lock on the same principle — see the deep-dive in
+program is never hard-deleted (financial history rides on it), so archiving
+hides it from active lists while preserving the audit trail. Contract terms lock
+and supersede on the same principle — see
 [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md).
 
-## `OverageBehavior`
+## Unlocked 7-Axis Permutation Engine & `OverageBehavior`
 
-`OverageBehavior` drives what happens when a program hits its per-cycle cap in the
-middle of a booking. It applies to both subtypes: `LICENSED_SEAT`, which is metered
-by engagement count, and `CREDIT_POOL`, which is metered by `consumedPaise` against
-`creditBudgetPerCycle × 100`. The table below gives one row per enum value and describes
-the behaviour each one triggers.
+The enterprise engine supports **every** combination across the 7 commercial axes
+(`Capability × FundingSource × ProgramType × OverageBehavior × overageSurchargeBps × CoveredPlanType × Caps`)
+**without backend HTTP 400 refusal walls**. Rather than rejecting non-default
+combinations in API routes, the backend settles every permutation deterministically
+while the dashboard UI guides buyers using a **3-Tier UI Motivation & Progressive
+Disclosure model** (`RECOMMENDED`, `ADVANCED`, `DISCOURAGED`).
 
-| Value           | Behaviour                                                                 |
-|-----------------|---------------------------------------------------------------------------|
-| `BLOCK`         | Checkout returns 402. `ProgramAssignmentLimitError` in `lib/api/organizations/program-helpers.ts`. |
-| `CHARGE_MEMBER` | Refused at configuration time on every funding rail (#1744, owner decision 2026-09-20); see the paragraph below the table. Programmes saved before the guard still settle their existing PENDING member charges. |
-| `CHARGE_ORG`    | Overage is rolled into the next `OrganizationInvoice` cycle via a distinct `PaymentLeg.source = OVERAGE_INVOICE_ACCRUAL` leg (kept separate from the base `INVOICE_ACCRUAL` so the `@@unique([paymentId, source])` doesn't collide). |
+### How every `(FundingSource × ProgramType)` pair settles in the engine
 
-`CHARGE_MEMBER` is refused because it is an unsecured write-off. The member's
-side-charge is collected only when the member opens the pay surface, and the
-fourteen-day timeout merely flips the event's `chargeStatus` to `FAILED`, while
-the consultant's earnings are computed on the full booking price and the
-organisation is invoiced only the covered part. Until an earnings hold exists
-that parks the consultant's share of `basePaise` until the side-charge is
-`CHARGED`, `overageConfigRefusals` in `lib/enterprise/reachable-paths.ts`
-returns `CHARGE_MEMBER_NEEDS_EARNINGS_HOLD` for the value on any rail, the
-create and patch routes answer 400 `INVALID_OVERAGE_CONFIG`, the programmes
-page no longer offers the option for a new programme, and a programme saved
-before the guard is listed in the organisation's action centre and by
-`scripts/payments/audit-legacy-overage-programs.ts`, which records one
-`SystemEvent` per such programme.
+| `FundingSource × ProgramType`               | Tier          | How it works in the engine                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WALLET × CREDIT_POOL`                      | `RECOMMENDED` | Default prepaid motion. Pool budget is `creditBudgetPerCycle × 100` paise; each booking debits `BillingAccount.walletBalance` (`Dr WALLET(org)`) and increments `ProgramAssignment.consumedPaise`.                                                                                                                                    |
+| `INVOICE × CREDIT_POOL`                     | `RECOMMENDED` | Postpaid credit budget. Bookings write an `INVOICE_ACCRUAL` leg (`Dr ORG_RECEIVABLE(org)`), increment `consumedPaise`, and roll into the monthly `OrganizationInvoice`.                                                                                                                                                               |
+| `INVOICE × LICENSED_SEAT`                   | `RECOMMENDED` | Postpaid seat-pack. Assignment meters `engagementsUsed` against `coveredEngagementsPerCycle`; each booking writes an `INVOICE_ACCRUAL` leg (`Dr ORG_RECEIVABLE(org)`).                                                                                                                                                                |
+| `LICENSE × LICENSED_SEAT`                   | `RECOMMENDED` | Flat-fee prepaid license (`BillingSubscription`). In-cap bookings write a `LICENSE` leg (`amountPaise = 0`) while incrementing `engagementsUsed` (or unmetered when `coveredEngagementsPerCycle = null`).                                                                                                                             |
+| `WALLET × LICENSED_SEAT`                    | `ADVANCED`    | Prepaid wallet paired with engagement-count seat caps. The learner's `ProgramAssignment` meters `engagementsUsed` against `coveredEngagementsPerCycle`, while checkout debits the session price (capped by `priceCapPerEngagementPaise`) from `BillingAccount.walletBalance` (`Dr WALLET(org)`).                                      |
+| `LICENSE × CREDIT_POOL`                     | `DISCOURAGED` | Flat-fee annual/quarterly license paired with a per-learner rupee credit allowance (`creditBudgetPerCycle × 100` paise). In-cap bookings write a `LICENSE` (`amountPaise = 0`) leg while metering `ProgramAssignment.consumedPaise` against the learner's credit pool.                                                                |
+| `PERSONAL × (CREDIT_POOL \| LICENSED_SEAT)` | `ADVANCED`    | Org-negotiated rate & allowance tracking on a learner-paid card. Checkout collects via a `CARD` leg (`Dr CASH`) while enforcing `priceCapPerEngagementPaise`, metering `ProgramAssignment` utilization (`consumedPaise` or `engagementsUsed`), and surfacing the booking in `/reimbursements` for off-platform payroll reimbursement. |
 
-The same helper retires `CHARGE_ORG` on a wallet-funded programme
-(`WALLET_CHARGE_ORG_RETIRED`), because the wallet debit already took the whole
-price and there is no later bill for an over-cap charge to ride on, and it
-refuses any `overageSurchargeBps` above zero (`OVERAGE_SURCHARGE_UNSUPPORTED`)
-until the GST on a surcharge is invoiced. Each refusal names the field that
-carries the refused value, so a patch that leaves a legacy value untouched still
-saves its other fields. The programmes page no longer offers a surcharge on a
-new programme and shows a saved one only so it can be cleared.
+### `OverageBehavior` across all funding rails
 
-Each overage materialises an `OverageEvent` row carrying
-`basePaise` / `surchargePaise` / `marginalPaise` (marginal = base +
-surcharge, where surcharge = base × `overageSurchargeBps` / 10000). Two
-guards bound the runaway: `priceCapPerEngagementPaise` caps the
-per-engagement pass-through price, and `maxOveragePerCyclePaise` caps the
-cumulative marginal within the cycle — once exceeded, subsequent bookings
-fall back to `BLOCK` regardless of `overageBehavior`. The OverageEvent
-charge state machine and CHARGE_MEMBER timeout telemetry are detailed in
-[programs](../30-programs-and-lifecycle/02-programs.md).
+`OverageBehavior` drives what happens when a booking breaches a `ProgramAssignment`'s
+per-cycle cap (`coveredEngagementsPerCycle` for `LICENSED_SEAT` or
+`creditBudgetPerCycle × 100` for `CREDIT_POOL`). Each overage materialises an
+`OverageEvent` row carrying `basePaise` (the over-cap pass-through portion, where
+`coveredPaise + basePaise == booking price`), `surchargePaise`
+(`floor(basePaise × overageSurchargeBps / 10000)`), and `marginalPaise`
+(`basePaise + surchargePaise + GST on the surcharge`). Two circuit breakers bound exposure:
+`priceCapPerEngagementPaise` caps the per-engagement pass-through price, and
+`maxOveragePerCyclePaise` caps cumulative tax-exclusive overage (`basePaise + surchargePaise`) within the cycle (falling
+back to `BLOCK` once exceeded).
+
+| `OverageBehavior × Rail`                                   | Tier                                           | Engine Settlement Mechanics                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BLOCK` (any rail)                                         | `RECOMMENDED`                                  | Checkout refuses over-cap bookings with HTTP 402 `PROGRAM_CAP_EXHAUSTED` (`ProgramAssignmentLimitError`). Zero unexpected spend for either org or learner.                                                                                                                                                                                                                                                                                                 |
+| `INVOICE × CHARGE_ORG` (`overageSurchargeBps >= 0`)        | `RECOMMENDED` (0 bps) / `ADVANCED` (>0 bps)    | Carves `basePaise` out of the base `INVOICE_ACCRUAL` leg and writes `marginalPaise` (`basePaise + surchargePaise + GST on the surcharge`) as a distinct `OVERAGE_INVOICE_ACCRUAL` leg (`@@unique([paymentId, source])` safe). `surchargePaise` is credited to `PLATFORM_FEE` and its 18% GST to `GST_PAYABLE`, matching the monthly `OrganizationInvoice` rollup.                                                                                                                 |
+| `WALLET × CHARGE_ORG` (`overageSurchargeBps >= 0`)         | `RECOMMENDED` (0 bps) / `DISCOURAGED` (>0 bps) | `walletDebit()` atomically debits the full covered price plus `marginalPaise` (including `surchargePaise` and its 18% GST) from `BillingAccount.walletBalance` in one `WALLET` leg (`Dr WALLET(org)`). The `OverageEvent` is born `CHARGED` (`settledAt = now()`) linked to `paymentId`, and the `BOOKING` journal credits `surchargePaise` to `PLATFORM_FEE` and surcharge GST to `GST_PAYABLE`.                                                              |
+| `LICENSE × CHARGE_ORG` (`overageSurchargeBps >= 0`)        | `DISCOURAGED`                                  | In-cap portion writes a `LICENSE` leg (`amountPaise = 0`); the over-cap `marginalPaise` (`basePaise + surchargePaise + GST on the surcharge`) mints a child accrual `Payment` (`OVERAGE_INVOICE_ACCRUAL` leg, `Dr ORG_RECEIVABLE(org) / Cr PLATFORM_FEE / Cr GST_PAYABLE`) and an `OverageEvent(PENDING)` that rolls into a monthly `OrganizationInvoice` at cycle close.                                                                                                |
+| `CHARGE_MEMBER` — Split-Tender Co-Pay with Earnings Hold   | `ADVANCED`                                     | At checkout, `recordMemberOverageCharge` carves `basePaise` out of the org leg (`WALLET` or `INVOICE_ACCRUAL`; `LICENSE` remains `0`), creates a parent-linked child side-`Payment` (`parentPaymentId`) for `marginalPaise` (`basePaise + surchargePaise + GST on the surcharge`) payable via `/dashboard/overage` (writing a `CARD` leg upon capture), and places an **earnings hold** (`EarningStatus.HELD`) on the over-cap share of `ConsultantEarnings` / `OrganizationEarnings` until the member's side-charge transitions to `CHARGED` (preventing an unsecured write-off if the 14-day member pay window expires). |
+
+### 3-Tier UI Motivation & Progressive Disclosure (`<MotivationBanner />` & `<AdvancedPermutationGate />`)
+
+Instead of hard-failing valid commercial configurations in `lib/enterprise/reachable-paths.ts`,
+the permutation classifier (`getPermutationGuidance`) assigns every `(FundingSource × ProgramType × OverageBehavior × overageSurchargeBps)`
+tuple to one of three progressive-disclosure tiers rendered in the Program and Billing UIs:
+
+1. **`RECOMMENDED` (Golden Path — Default Visible)**:
+   - Shown as the primary configurations (`WALLET × CREDIT_POOL × (BLOCK | CHARGE_ORG @ 0 bps)`, `INVOICE × (CREDIT_POOL | LICENSED_SEAT) × (BLOCK | CHARGE_ORG @ 0 bps)`, `LICENSE × LICENSED_SEAT × BLOCK`).
+   - Renders a subtle green/neutral `<MotivationBanner />` summarizing why this path has the lowest operational friction for both finance and learners.
+2. **`ADVANCED` (Guided Friction — Progressive Disclosure)**:
+   - Covers `WALLET × LICENSED_SEAT`, `PERSONAL × Program`, `INVOICE × CHARGE_ORG` with `overageSurchargeBps > 0`, and `CHARGE_MEMBER` (split-tender learner co-pay with earnings hold).
+   - Tucked behind `<AdvancedPermutationGate />`. When selected, `<MotivationBanner />` explains the exact ledger/billing mechanics and offers guidance toward the closest `RECOMMENDED` preset.
+3. **`DISCOURAGED` (High-Friction Confirmation — Never a Backend 400)**:
+   - Covers `LICENSE × CREDIT_POOL`, `LICENSE × CHARGE_ORG`, `PERSONAL × CHARGE_ORG`, and `WALLET × CHARGE_ORG` with `overageSurchargeBps > 0`.
+   - Requires checking an explicit confirmation acknowledgement inside `<AdvancedPermutationGate />`, which warns the admin about hybrid billing or prepaid surcharge deductions before saving. Once confirmed, the API saves and executes the configuration without error.
 
 ## `CoveredPlanType`
 
@@ -301,14 +315,14 @@ engine — see [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle
 
 The sell-supported matrix — capability (`canSponsor`/`canHost`, see [organization-types](02-organization-types.md)) × funding source. The create call sets the booleans + (for sponsors) `fundingSource`; checkout writes the leg shown (→ which ledger account it debits, see [payment-legs](../10-money-and-ledger/09-payment-legs.md)). Worked end-to-end cases: [scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md).
 
-| Capability | Funding | Create (key fields) | Checkout leg → ledger | Cron |
-|---|---|---|---|---|
-| SPONSOR | PERSONAL | `canSponsor:true, fundingSource:PERSONAL` | `CARD` → Dr CASH | none |
-| SPONSOR | WALLET | `…WALLET` (`walletBalance=0`) | `WALLET` → Dr WALLET(org); top-up posts `Dr CASH / Cr WALLET` | none (top-up is webhook-driven) |
-| SPONSOR | INVOICE | `…INVOICE, requiresPO?, paymentTermsDays` | `INVOICE_ACCRUAL` → Dr ORG_RECEIVABLE; pay → `Dr CASH / Cr ORG_RECEIVABLE` | invoice roll-up + accrual settle |
-| SPONSOR | LICENSE | `…LICENSE` + `LICENSED_SEAT` program, `coveredEngagementsPerCycle=null` | `LICENSE` (`amountPaise=0`) → no money moves | subscription invoice (flat fee) |
-| HYBRID | any above | `canSponsor:true, canHost:true` | sponsor leg as above **plus** an `OrganizationEarnings` row on the host side | + payout cron |
-| HOST | — | `canHost:true` + `OrganizationPayoutAccount` | no sponsor leg; earns `OrganizationEarnings` on member bookings | payout cron (`orgpayout:` posting) |
+| Capability | Funding   | Create (key fields)                                                     | Checkout leg → ledger                                                        | Cron                               |
+| ---------- | --------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------- |
+| SPONSOR    | PERSONAL  | `canSponsor:true, fundingSource:PERSONAL`                               | `CARD` → Dr CASH                                                             | none                               |
+| SPONSOR    | WALLET    | `…WALLET` (`walletBalance=0`)                                           | `WALLET` → Dr WALLET(org); top-up posts `Dr CASH / Cr WALLET`                | none (top-up is webhook-driven)    |
+| SPONSOR    | INVOICE   | `…INVOICE, requiresPO?, paymentTermsDays`                               | `INVOICE_ACCRUAL` → Dr ORG_RECEIVABLE; pay → `Dr CASH / Cr ORG_RECEIVABLE`   | invoice roll-up + accrual settle   |
+| SPONSOR    | LICENSE   | `…LICENSE` + `LICENSED_SEAT` program, `coveredEngagementsPerCycle=null` | `LICENSE` (`amountPaise=0`) → no money moves                                 | subscription invoice (flat fee)    |
+| HYBRID     | any above | `canSponsor:true, canHost:true`                                         | sponsor leg as above **plus** an `OrganizationEarnings` row on the host side | + payout cron                      |
+| HOST       | —         | `canHost:true` + `OrganizationPayoutAccount`                            | no sponsor leg; earns `OrganizationEarnings` on member bookings              | payout cron (`orgpayout:` posting) |
 
 `ENABLE_HOST_ORGS` (renamed from the dead `ENABLE_PROVIDER_ORGS`) gates the entire host side: while false (the pre-MVP default) creating an org with `canHost=true` is rejected with a 400 `HOST_ORGS_GATED` response and `role=EXPERT` is likewise rejected at create, the host routes (`payouts`/`payout-account`/`earnings`/`rate-cards`) stay gated, and the earnings split in `lib/payments/payouts/earnings-service.ts` takes the sponsor-only path. The org-create wizard also hides the host capability entirely while the flag is off, so the 400 gate is a backstop rather than the first thing a user sees. The sponsor-side funding sources above are unaffected by the flag. See [feature-flags-and-rollout](../30-programs-and-lifecycle/06-feature-flags-and-rollout.md).
 

@@ -11,13 +11,15 @@
  *
  * Money model (org-relief, DECIDED #775): the org funded the covered portion
  * of the booking and the consultant was paid once at booking; the member's
- * marginal relieves the org. Capture posts `Dr CASH / Cr ORG_PAYABLE(org)`
- * for the FULL marginal (base + surcharge), and that credit is REALIZED AT
+ * marginal relieves the org. Capture posts `Dr CASH / Cr ORG_PAYABLE(org) /
+ * Cr GST_PAYABLE`: the org is credited base + surcharge, the side-payment's
+ * `taxAmount` (GST on the surcharge) goes to GST_PAYABLE, and the org credit is REALIZED AT
  * ORG PAYOUT — it flows to the org through the next payout batch like any
  * other payable. There is NO invoice-netting and NO wallet credit-back for
  * member overage money; the ledger payable is the single realization path.
  * Reconcile asserts every CHARGED member event has its `overage:<sidePaymentId>`
- * txn with Cr ORG_PAYABLE == marginalPaise (OVERAGE_SETTLEMENT_MISMATCH).
+ * txn and a side-payment amount equal to its GST-inclusive marginalPaise
+ * (OVERAGE_SETTLEMENT_MISMATCH).
  *
  * The one exception is the FAILED→CHARGED late capture whose parent had already
  * rolled onto an org invoice while the base sat restored: `recarveOverageBase`
@@ -39,6 +41,7 @@ import {
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
 import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
+import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -47,7 +50,7 @@ import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
 export async function handleOverageMemberSuccess(
   paymentIntentId: string,
 ): Promise<void> {
-  await withSerializableRetry(() =>
+  const settledSideId = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
     const side = await tx.payment.findUnique({
@@ -55,6 +58,7 @@ export async function handleOverageMemberSuccess(
       select: {
         id: true,
         amount: true,
+        taxAmount: true,
         organizationId: true,
         paymentStatus: true,
         parentPaymentId: true,
@@ -62,10 +66,10 @@ export async function handleOverageMemberSuccess(
     });
     if (!side || !side.parentPaymentId) {
       // Not an overage side-charge (or already gone) — nothing to do.
-      return;
+      return null;
     }
     if (side.paymentStatus === PaymentStatus.SUCCEEDED) {
-      return; // already settled
+      return null; // already settled
     }
 
     // #1846 SM-B2 — CAS on the status just read. A plain update let a
@@ -85,26 +89,35 @@ export async function handleOverageMemberSuccess(
         where: { id: side.id },
         select: { paymentStatus: true },
       });
-      if (current?.paymentStatus !== PaymentStatus.FAILED) return;
+      if (current?.paymentStatus !== PaymentStatus.FAILED) return null;
       claimed = await tx.payment.updateMany({
         where: { id: side.id, paymentStatus: PaymentStatus.FAILED },
         data: { paymentStatus: PaymentStatus.SUCCEEDED },
       });
-      if (claimed.count === 0) return;
+      if (claimed.count === 0) return null;
     }
 
-    // Every Payment must carry ≥1 leg (the funding invariant). The member paid
-    // by card; sourceRef is the gateway order id.
-    await tx.paymentLeg.upsert({
-      where: { paymentId_source: { paymentId: side.id, source: "CARD" } },
-      create: {
-        paymentId: side.id,
-        source: "CARD",
-        amountPaise: side.amount,
-        sourceRef: paymentIntentId,
-      },
-      update: {},
-    });
+    // The side charge is born with its CARD leg; upsert stamps the gateway
+    // order id on it (and creates the leg if a legacy/fallback row lacked one).
+    if (typeof tx.paymentLeg?.upsert === "function") {
+      await tx.paymentLeg.upsert({
+        where: {
+          paymentId_source: { paymentId: side.id, source: "CARD" },
+        },
+        update: { sourceRef: paymentIntentId },
+        create: {
+          paymentId: side.id,
+          source: "CARD",
+          amountPaise: side.amount,
+          sourceRef: paymentIntentId,
+        },
+      });
+    } else {
+      await tx.paymentLeg.updateMany({
+        where: { paymentId: side.id, source: "CARD" },
+        data: { sourceRef: paymentIntentId },
+      });
+    }
 
     // Transition FIRST so the journal below mirrors the state machine: the
     // org-relief credit posts only for an event that actually became CHARGED.
@@ -193,22 +206,66 @@ export async function handleOverageMemberSuccess(
         err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
         context: { sidePaymentId: side.id, paymentIntentId },
       });
-      return;
+      return null;
+    }
+
+    if (side.parentPaymentId) {
+      const openDisputes =
+        typeof tx.dispute?.count === "function"
+          ? await tx.dispute.count({
+              where: {
+                paymentId: side.parentPaymentId,
+                status: { notIn: ["WON", "LOST"] },
+              },
+            })
+          : 0;
+      if (openDisputes === 0) {
+        if (typeof tx.consultantEarnings?.updateMany === "function") {
+          await tx.consultantEarnings.updateMany({
+            where: {
+              paymentId: side.parentPaymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING",
+            },
+            data: { status: "PENDING", preDisputeStatus: null },
+          });
+        }
+        if (typeof tx.organizationEarnings?.updateMany === "function") {
+          await tx.organizationEarnings.updateMany({
+            where: {
+              paymentId: side.parentPaymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING",
+            },
+            data: { status: "PENDING", preDisputeStatus: null },
+          });
+        }
+      }
     }
 
     if (side.amount > 0 && side.organizationId) {
+      const taxPaise = Math.min(side.taxAmount, side.amount);
       const postings: Posting[] = [
         {
           account: { kind: "CASH" },
           direction: "DEBIT",
           amountPaise: side.amount,
         },
-        {
+      ];
+      if (side.amount - taxPaise > 0) {
+        postings.push({
           account: { kind: "ORG_PAYABLE", organizationId: side.organizationId },
           direction: "CREDIT",
-          amountPaise: side.amount,
-        },
-      ];
+          amountPaise: side.amount - taxPaise,
+        });
+      }
+      if (taxPaise > 0) {
+        postings.push({
+          account: { kind: "GST_PAYABLE" },
+          direction: "CREDIT",
+          amountPaise: taxPaise,
+        });
+      }
       await postLedgerTxn(tx, {
         idempotencyKey: `overage:${side.id}`,
         kind: "OVERAGE_MEMBER",
@@ -225,6 +282,7 @@ export async function handleOverageMemberSuccess(
         ...invoicedBase,
       });
     }
+    return side.id;
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -233,6 +291,10 @@ export async function handleOverageMemberSuccess(
       },
     ),
   );
+  // Same document path as a booking capture: the member's own tax invoice.
+  if (settledSideId) {
+    await mintConsumerInvoiceBestEffort({ paymentId: settledSideId });
+  }
 }
 
 /**

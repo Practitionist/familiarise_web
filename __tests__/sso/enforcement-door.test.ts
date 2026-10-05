@@ -22,6 +22,9 @@ const tx = {
     findUnique: jest.fn(),
     upsert: jest.fn(async () => ({ id: "settings_1" })),
   },
+  orgDomainClaim: { findMany: jest.fn(async () => []) },
+  membership: { findMany: jest.fn(async () => []) },
+  session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   opsActionLog: { create: jest.fn(async () => ({ id: "row" })) },
 };
 jest.mock("../../lib/prisma", () => ({

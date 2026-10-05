@@ -66,6 +66,7 @@ import {
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
+  recordTdsReversal,
   resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
@@ -2070,9 +2071,6 @@ export async function markConsultantPayoutReversed(
     }
 
     if ((payout.tdsDeducted ?? 0) > 0 && tx.tDSRecord) {
-      const { recordTdsReversal } = await import(
-        "@/lib/payments/tax/tds-service"
-      );
       await recordTdsReversal(tx, {
         payoutId: payout.id,
         consultantProfileId: payout.consultantProfileId,

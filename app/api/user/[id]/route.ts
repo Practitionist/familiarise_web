@@ -256,6 +256,8 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     paymentCount,
     referralCreditCount,
     seatCount,
+    programAssignmentCount,
+    erasureRequestCount,
     profile,
     consulteeProfile,
   ] = await Promise.all([
@@ -263,12 +265,25 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     prisma.payment.count({ where: { userId: id } }),
     prisma.referralCredit.count({ where: { userId: id } }),
     prisma.appointmentParticipant.count({ where: { userId: id } }),
+    typeof prisma.programAssignment?.count === "function"
+      ? prisma.programAssignment.count({
+          where: { membership: { userId: id } },
+        })
+      : Promise.resolve(0),
+    typeof prisma.erasureRequest?.count === "function"
+      ? prisma.erasureRequest.count({ where: { userId: id } })
+      : Promise.resolve(0),
     prisma.consultantProfile.findFirst({
       where: { userId: id },
       select: {
         id: true,
         _count: {
-          select: { earnings: true, payouts: true, tdsRecords: true },
+          select: {
+            earnings: true,
+            organizationEarnings: true,
+            payouts: true,
+            tdsRecords: true,
+          },
         },
       },
     }),
@@ -321,13 +336,20 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
 
   const consultantMoneyCount = profile
     ? profile._count.earnings +
+      (profile._count.organizationEarnings ?? 0) +
       profile._count.payouts +
       profile._count.tdsRecords
     : 0;
   return {
     blockerResponse: null,
     hasRetainedHistory:
-      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0,
+      paymentCount +
+        referralCreditCount +
+        seatCount +
+        programAssignmentCount +
+        erasureRequestCount +
+        consultantMoneyCount >
+      0,
   };
 }
 

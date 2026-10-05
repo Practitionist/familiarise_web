@@ -1,34 +1,57 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { ResponsiveTable } from "@/components/ui/responsive-table";
 import type { OrgPendingRequest } from "@/lib/data/org-pending-requests";
+import { useOrgRole } from "../useOrgRole";
+import { AllocateOrgBookingDialog } from "./AllocateOrgBookingDialog";
 
 /**
- * The payer's read-only view of unallocated org-funded requests (#1166 B2B
- * gap 8) — Appointments › Unscheduled since #1527 Q7.
- *
- * Deliberately has no allocate control. Choosing a session's times is the
- * delivering expert's act, and giving an OWNER a button that books someone
- * else's calendar would be worse than the blind spot this replaces. What the
- * payer needs is the fact itself: this org paid for a session and nobody has
- * scheduled it yet.
+ * The payer's view of unallocated org-funded requests — Appointments ›
+ * Unscheduled. Authorized operators (OWNER, MAINTAINER, MANAGER) can also
+ * allocate slots on behalf of the organization with an explicit audit reason.
  */
 export function PayerRequestsView({
+  orgId: orgIdProp,
   requests,
-}: Readonly<{ requests: OrgPendingRequest[] }>) {
+  canAllocate: canAllocateProp,
+}: Readonly<{
+  orgId?: string;
+  requests: OrgPendingRequest[];
+  canAllocate?: boolean;
+}>) {
+  const params = useParams<{ orgId?: string }>();
+  const orgId = orgIdProp ?? params?.orgId ?? "";
+  const { can } = useOrgRole(orgId);
+  const canAllocate =
+    canAllocateProp ??
+    (Boolean(orgId) && can("appointments.allocate.calendarRead"));
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        These sessions are funded by your organization and are waiting for the
-        assigned expert to propose times. Allocation is theirs to do — this view
-        is here so an unscheduled booking is never invisible to the people
-        paying for it.
+        These sessions are funded by your organization and are waiting for
+        calendar times. Authorized operators can allocate available slots on
+        behalf of the organization with an audit justification.
       </p>
       <ResponsiveTable<OrgPendingRequest>
         rows={requests}
         getRowId={(row) => `${row.kind}:${row.id}`}
         empty="Nothing is waiting to be scheduled."
+        rowActions={
+          canAllocate && orgId
+            ? (row) => (
+                <AllocateOrgBookingDialog
+                  orgId={orgId}
+                  appointmentId={row.appointmentId ?? row.id}
+                  planTitle={row.planTitle}
+                  expertName={row.expertName}
+                  learnerName={row.learnerName}
+                />
+              )
+            : undefined
+        }
         columns={[
           {
             key: "plan",

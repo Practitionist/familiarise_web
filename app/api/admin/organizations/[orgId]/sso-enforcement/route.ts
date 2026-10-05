@@ -14,6 +14,7 @@
 import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
 
 export const POST = withOpsAction(
   "organizations.manage",
@@ -57,6 +58,10 @@ export const POST = withOpsAction(
         update: { enforceSSO: body.enforce, version: { increment: 1 } },
         select: { id: true },
       });
+
+      if (body.enforce && !(before?.enforceSSO ?? false)) {
+        await revokeEnforcedOrgMemberSessions(tx, params.orgId);
+      }
 
       return {
         target: { kind: "OrganizationSSOSettings", id: settings.id },

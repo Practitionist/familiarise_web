@@ -29,14 +29,29 @@ export async function DELETE(
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
-    requireActive: true,
+    // Unverified orgs may release a domain claim before verification (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Domain claims cannot be modified while the organization is suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
       const claim = await tx.orgDomainClaim.findUnique({
-        where: { domain },
+        where: {
+          organizationId_domain: {
+            organizationId: orgId,
+            domain,
+          },
+        },
       });
       if (!claim || claim.organizationId !== orgId) {
         throw Object.assign(new Error("Domain claim not found"), {
@@ -70,7 +85,11 @@ export async function DELETE(
         }
       }
 
-      await tx.orgDomainClaim.delete({ where: { domain } });
+      await tx.orgDomainClaim.delete({
+        where: {
+          organizationId_domain: { organizationId: orgId, domain },
+        },
+      });
       if (unapproved.length > 0) {
         await tx.ssoProvider.updateMany({
           where: { organizationId: orgId, domain },

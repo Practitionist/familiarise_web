@@ -144,7 +144,9 @@ describe("DELETE domain claim (D21)", () => {
 
     expect(res.status).toBe(204);
     expect(tx.orgDomainClaim.delete).toHaveBeenCalledWith({
-      where: { domain: "acme.com" },
+      where: {
+        organizationId_domain: { organizationId: "org_1", domain: "acme.com" },
+      },
     });
     expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
       where: { organizationId: "org_1", domain: "acme.com" },
