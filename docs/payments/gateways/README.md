@@ -2,13 +2,13 @@
 
 > Overview of Familiarise's payment gateway integrations, selection logic, and configuration.
 
-**Last Updated**: 2026-03-19
+**Last Updated**: 2026-10-05
 
 ---
 
 ## Overview
 
-Familiarise uses **Razorpay as the sole payment gateway** for both domestic and international payments:
+Familiarise uses **Razorpay as the primary payment gateway** for both domestic and international payments:
 
 | Gateway      | Region                    | Currency | Payouts Product   |
 | ------------ | ------------------------- | -------- | ----------------- |
@@ -27,82 +27,73 @@ survive in the `PaymentGateway`, `PayoutMethod` and `PayoutAccountType` enums
 only until the pre-MVP reset, because existing seed rows still hold them; any
 money path that meets one refuses it as a gateway with no implementation.
 
-### Future Consideration
+### Planned Multi-Gateway Roadmap (2026 Evaluation)
 
-| Gateway | When | Why |
-|---------|------|-----|
-| **Dodo Payments** | Post-MVP, no timeline | Sanctioned second gateway. **Schema-only today** — see below. |
-| Cashfree | Month 3-6 | Cheaper fees (1.6–1.95% vs 2%), better split fees (0.1% vs 0.25%) |
-| Wise Business | International payouts | Best FX rates for paying international consultants |
+Based on the October 2026 regulatory and technical audit ([`gateway-evaluation-2026.md`](./gateway-evaluation-2026.md)), Familiarise's planned multi-gateway architecture is:
 
-### Dodo Payments — schema-only, deliberately
+| Gateway | Role | Target Use Case & Why |
+|---------|------|-----------------------|
+| **Razorpay International + MoneySaver** | Immediate International Layer | Enable **Apple Pay**, **PayPal**, **3DS 2.0**, and **MoneySaver Export Account** (virtual USD ACH / EUR SEPA / GBP FPS accounts at `1% + GST`) on our existing Indian entity (`<= ₹25,00,000` per unit under RBI PA-CB with automated e-FIRA/FIRS). See [`razorpay/06-international-payments-and-moneysaver.md`](./razorpay/06-international-payments-and-moneysaver.md). |
+| **Cashfree (`CASHFREE`)** | #1 Full-Stack Backup (Pay-ins + Payouts v2 + Verification + Split) | Direct 1:1 drop-in backup to **both** Razorpay PG and RazorpayX Payouts. Holds full **RBI PA + PA-CB** licenses. Lower domestic card fees (`1.60%–1.95%` vs `2%`), `0%` UPI, **Cashfree Payouts v2** (`IMPS`/`UPI`/`NEFT`/`RTGS`), **Secure ID** Penny Drop & Reverse Penny Drop, and **Easy Split**. See [`cashfree/README.md`](./cashfree/README.md). |
+| **Tazapay (`TAZAPAY`)** | #1 Global Pay-in + Foreign Consultant Payout Engine | Explicitly supports **EdTech, 1:1 consulting, coaching, and service marketplaces**. Collects in **173+ countries** (cards + **80+ local bank rails** like US ACH, EU SEPA, UK Faster Payments, Pix, PayNow) and holds **multi-currency USD/EUR/GBP balances** to pay **foreign (non-Indian) consultants in 70+ countries** in their local currency without double-FX conversion (`USD -> INR -> USD`) or per-payout Indian Section 195 / Form 15CA/15CB wire friction. See [`tazapay/README.md`](./tazapay/README.md). |
+| **Xflow (`XFLOW`)** | High-Ticket ($500+) International & B2B Export Rail | Built on **Stripe + JPMorgan Chase N.A.** rails for Indian service exporters. `0.4%–0.6%` tiered fee (`$12` min on Starter) with **0% FX markup** over the live mid-market Google rate and **24-hour automated e-FIRA**. Ideal for `>= $500` international mentorship cohorts and B2B `OrganizationInvoice` collections (`< $300` B2C sessions stay on Razorpay/Cashfree/Tazapay due to the `$12` minimum fee floor). See [`xflow/README.md`](./xflow/README.md). |
+| **Dodo Payments (`DODO_PAYMENTS`) & Polar (`Polar.sh`)** | **Disqualified for 1:1 Consulting & Marketplaces** (MoR Reference Only) | Both are **Merchants of Record (MoRs)** whose Acceptable Use Policies explicitly prohibit human 1:1 consulting, coaching, and two-sided marketplaces (see below and [`mor-guardrails/README.md`](./mor-guardrails/README.md)). Restricted strictly to hypothetical 100% automated first-party SaaS or self-paced digital downloads. |
 
-`DODO_PAYMENTS` exists as a `PaymentGateway` enum value and nothing else. There
-is no client, no checkout path, no webhook handler and no payout submitter, and
-there is no date attached to building any of them.
+### `DODO_PAYMENTS` — schema-only, and disqualified for 1:1 consulting & marketplaces
 
-It is present so the enum does not have to change later — Postgres has no
-`ALTER TYPE … DROP VALUE`, so adding a value costs nothing while removing one
-costs a type recreation and swap. Keeping the value reserved is cheaper than
-adding it under time pressure.
+`DODO_PAYMENTS` exists as a `PaymentGateway` enum value in Prisma and nothing else. There
+is no client, no checkout path, no webhook handler and no payout submitter.
 
-Because a schema value with no implementation is exactly the kind of thing that
-gets picked up by a `default:` branch and silently used, it fails loudly
-instead. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` names it, and
-`lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError`
-if it ever reaches gateway routing, a refund, or a payout submitter. The payout
-service also skips a stub-gateway account at *selection* time rather than at
-disbursement, so a consultant's earnings stay `READY` for the next batch
-instead of being claimed into `BATCHED` against a gateway that will never
-exist.
+In our October 2026 audit ([`mor-guardrails/README.md`](./mor-guardrails/README.md)), we verified against official Acceptable Use Policies that **Dodo Payments (`dodopayments.com`), Polar (`polar.sh`), Lemon Squeezy, and Paddle cannot be used as a backup gateway for Familiarise's core marketplace**:
+1. **Dodo Payments AUP Disqualification**: Explicitly prohibits *"Any product or service where significant human intervention is needed to deliver the good/service"* (Clause #2), *"Consulting Services"* (Clause #14), *"Coaching or anything similar"* (Clause #30), *"Services: Freelance, design, development, marketing, consulting, or agency services"* (Clause #31), and *"Marketplaces: Platforms connecting buyers and sellers"* (Clause #10), backed by a **$425,000 fine** clause for non-compliant card-network transactions and a strict **0.5% dispute/refund threshold**.
+2. **Polar.sh AUP Disqualification**: Explicitly prohibits *"Human services"* (Item #2: *"Live courses, synchronous tutoring, or real-time instruction; Consulting, coaching, or mentoring sessions; Custom development, design, or freelance work; Any service requiring scheduled human time or personalized human delivery"*) and *"Marketplaces and platforms"* (Item #4).
+3. **MoR Structural Incompatibility**: A Merchant of Record legally acts as the Principal Seller of software on the buyer's card statement and remits a single net bulk payout to the platform; it cannot split funds or pay third-party consultants directly.
+
+Why `DODO_PAYMENTS` remains in the Postgres enum:
+- Postgres has no `ALTER TYPE … DROP VALUE`, so keeping the reserved enum value avoids a type recreation and swap before the pre-MVP schema reset.
+- Because a schema value with no implementation is exactly the kind of thing that gets picked up by a `default:` branch and silently used, it fails loudly instead. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` names it, and `lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError` if it ever reaches gateway routing, a refund, or a payout submitter. The payout service also skips a stub-gateway account at *selection* time rather than at disbursement, so a consultant's earnings stay `READY` for the next batch instead of being claimed into `BATCHED` against an unimplemented gateway.
 
 **For a finance or CA review:** treat Dodo as not existing. No money has ever
 moved through it, no fees are payable on it, and it appears in no reconciliation
-or filing. The only live rail is Razorpay (INR settlement).
+or filing. The only live rail today is Razorpay (INR settlement), and our planned
+full-stack backup gateways are **Cashfree (`CASHFREE`)** and **Tazapay (`TAZAPAY`)**.
 
 ### Who can transact, and from where
 
 A decision, not merely an observation of the current code — confirmed
-2026-07-29.
+2026-07-29 and updated 2026-10-05.
 
 **Consultees: worldwide, and deliberately so.** International cards are
-accepted, `routeGateway()` sends a non-IN buyer to Razorpay IBT, settlement is
-INR, and the FIRC is generated automatically. This earns money today and should
+accepted, `routeGateway()` sends a non-IN buyer to Razorpay International / IBT, settlement is
+INR, and the FIRS / e-FIRA is generated automatically via Razorpay's PA-CB license. This earns money today and should
 not be restricted. The open item is evidentiary rather than functional: a
 zero-rated export needs a billing address, an LUT, receipt in convertible
-foreign exchange and a FIRC reference on file, and none of that is captured yet
+foreign exchange and a FIRC/e-FIRA reference on file, and none of that is captured yet
 (`lib/payments/tax/tax-engine.ts` carries the TODO). Buyer-country detection now
 defaults to `IN` unless a country was explicitly asserted, so the error
 direction is over-collection, which is recoverable.
 
-**Consultants: India only, until Section 195 is built.** TDS is withheld under
-Section 194-O, which applies to residents by definition. A non-resident
-consultant needs Section 195 withholding, DTAA relief against a tax residency
-certificate and Form 10F, and a Form 15CA/15CB filing per remittance — and
+**Consultants: India only on RazorpayX today; foreign consultants planned via Tazapay multi-currency treasury.**
+On our domestic INR rail (RazorpayX), TDS is withheld under
+Section 194-O, which applies to Indian residents by definition. Remitting INR from an Indian current account to a non-resident
+consultant requires Section 195 withholding, DTAA relief against a Tax Residency
+Certificate (TRC) and Form 10F, and an AD-bank Form 15CA/15CB filing per remittance — and
 RazorpayX cannot pay a foreign bank account regardless. `processSinglePayout`
 throws for a non-resident rather than half-paying, `lib/compliance/tds.ts` has
 the DTAA engine written but unreachable (both callers hardcode
 `residencyStatus: "RESIDENT"`), and `lib/compliance/form15.ts` is an
 uncalled stub.
 
-That throw is the correct behaviour and should not be "fixed" without building
-the withholding path behind it. Removing it would produce a statutory
-withholding failure rather than a feature. The constraint is surfaced to
-consultants in the product by
+That throw is the correct behaviour on the INR domestic rail and should not be "fixed" without either:
+1. Building the full Section 195 + AD-bank Form 15CA/15CB outbound wire path, OR
+2. Onboarding **Tazapay (`TAZAPAY`)** as our international collection + multi-currency treasury rail ([`tazapay/README.md`](./tazapay/README.md)), where foreign buyer funds stay in a USD/EUR/GBP Tazapay treasury balance to pay non-Indian consultants directly in 70+ countries (`POST /v3/payout`, `purpose: "PYR003"`) and only Familiarise's net platform commission is repatriated to India in INR with an automated `e-FIRA`.
+
+The current constraint is surfaced to consultants in the product by
 `components/payouts/IndiaOnlyPayoutNotice.tsx`, shown during consultant
 onboarding and again on the earnings page, so nobody discovers it only after
 earning money they cannot withdraw.
 
-### Not under consideration
-
-Lemon Squeezy and XFlow were evaluated in March 2026 and rejected — Lemon
-Squeezy prohibits services in its ToS and charges ~6.5%, and XFlow is
-cross-border B2B settlement infrastructure rather than a gateway. Both were
-removed from the codebase in #984. The dated analysis is preserved in
-[gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) so the
-decision is not re-litigated; neither is a current option.
-
-> See [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) for the full analysis.
+> See [`gateway-evaluation-2026.md`](./gateway-evaluation-2026.md) for the complete 2026 architecture and regulatory evaluation across Razorpay International, US LLC + Stripe US (FEMA ODI analysis), Cashfree, Tazapay, Xflow, Dodo Payments, and Polar.sh.
 
 ---
 
@@ -211,17 +202,25 @@ The payment and payout subsystem shares a common orchestration layer:
 
 ## Documentation
 
-### Gateway Evaluation
+### Gateway Evaluation & Regulatory Guardrails
 
-- [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) — the dated March 2026 comparison that produced the current choice. Historical: the gateways it rejected have since been removed from the codebase.
+- [gateway-evaluation-2026.md](./gateway-evaluation-2026.md) — October 2026 comprehensive evaluation across Razorpay International, US LLC + Stripe US (FEMA ODI rules), Cashfree, Tazapay, Xflow, Dodo Payments, and Polar.sh
+- [mor-guardrails/README.md](./mor-guardrails/README.md) — Why Merchant of Record (MoR) platforms (Dodo Payments, Polar.sh, Lemon Squeezy, Paddle) are disqualified for 1:1 consulting and marketplaces under official AUPs, plus US LLC FEMA ODI compliance guardrails
 
-### Razorpay
+### Razorpay (Primary Gateway)
 
 - [01-setup.md](./razorpay/01-setup.md) — Account setup, env vars, dashboard config, official test cards & UPI IDs
 - [02-architecture-and-flow.md](./razorpay/02-architecture-and-flow.md) — Payment flow, saved cards, revenue split, webhook events, REST disputes API
 - [03-payout-flow.md](./razorpay/03-payout-flow.md) — RazorpayX Payouts: Contacts, Fund Accounts, Penny Drop / Reverse Penny Drop, payout lifecycle
 - [04-kyc-and-onboarding.md](./razorpay/04-kyc-and-onboarding.md) — KYC requirements and onboarding checklist
 - [05-go-live-checklist.md](./razorpay/05-go-live-checklist.md) — Live-mode cutover, PM-10 boot guards, and webhook secret rotation
+- [06-international-payments-and-moneysaver.md](./razorpay/06-international-payments-and-moneysaver.md) — International cards, Apple Pay, PayPal, MoneySaver Export Account (Virtual USD/EUR/GBP), RBI PA-CB limits, and automated e-FIRA/FIRS
+
+### Planned Backup & Specialized Gateways
+
+- [cashfree/README.md](./cashfree/README.md) — Cashfree Payments PG v5 (`x-api-version: 2025-01-01`), Cashfree Payouts v2, Secure ID Penny Drop / Reverse Penny Drop, and Easy Split (#1 full-stack domestic + PA-CB backup)
+- [tazapay/README.md](./tazapay/README.md) — Tazapay v3 Checkout (80+ local rails in 173+ countries) & Multi-Currency USD/EUR/GBP Treasury for paying foreign non-Indian consultants in 70+ countries without double-FX or Section 195 / Form 15CB friction
+- [xflow/README.md](./xflow/README.md) — Xflow v1 High-Ticket ($500+) International & B2B `OrganizationInvoice` export collection on Stripe + JPMorgan rails (0.4%–0.6% fee, 0% FX markup, 24h automated e-FIRA)
 
 ---
 
