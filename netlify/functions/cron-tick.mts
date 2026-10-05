@@ -145,6 +145,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "alert-orphaned-payments": 10,
   // Healer makes one gateway round trip per orphan; same bite fits 20 s.
   "reconcile-orphaned-payments": 10,
+  // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
+  "reconcile-refunds": 10,
 };
 
 /**
@@ -260,6 +262,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "settle-cancelled-sessions": 20_000,
   "retry-auto-refunds": 20_000,
   "vest-referral-credits": 20_000,
+  "reconcile-refunds": 20_000,
   // One Stream call-report round trip per judged session or candidate.
   "auto-complete-appointments": 20_000,
   "detect-consultant-no-shows": 20_000,

@@ -17,6 +17,9 @@ const mockRefund = jest.fn();
 const mockCreateEarnings = jest.fn();
 const mockMintInvoice = jest.fn();
 
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

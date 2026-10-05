@@ -37,6 +37,8 @@ import {
   applyRefundCascade,
   mintInvoiceRefundCreditNote,
   mintRefundCreditNote,
+  refundMemberOverageSidePayment,
+  type ApplyRefundCascadeResult,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -609,10 +611,14 @@ export async function handleRefundCreated(
   // #1653 — the refund receipt email rides the same outbox: staged through
   // `tx`, attempted after commit. A retry re-runs the callback, so reset.
   let stagedEmails: StagedRecipientEmail[] = [];
+  // A side-payment the cascade owes back; refunded only after this tx commits.
+  let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] = null;
+  let overagePaymentId = "";
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         stagedEmails = [];
+        overageDue = null;
         // A retried attempt must not inherit a bell staged by the aborted one.
         stagedNotification = null;
         // Find the payment (B2C appointment path).
@@ -993,13 +999,15 @@ export async function handleRefundCreated(
           // gateway refunds (a divergence from the app/cron paths). The cascade allows
           // PAID→REFUNDED, so the legacy `forceRefund` override is no longer needed.
           try {
-            await applyRefundCascade(tx, {
+            const cascade = await applyRefundCascade(tx, {
               paymentId,
               refundId: refundRowId,
               amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
               reason: "Gateway refund",
               initiatedByUserId: null,
             });
+            overageDue = cascade.memberOverageRefundDue;
+            overagePaymentId = paymentId;
             console.log(`💰 Refund cascade applied for payment ${paymentId}`);
           } catch (cascadeError) {
             // #776 / PR#785 review — do NOT swallow. The cascade is idempotent
@@ -1154,6 +1162,11 @@ export async function handleRefundCreated(
       },
     ),
   );
+  await refundMemberOverageSidePayment({
+    parentPaymentId: overagePaymentId,
+    due: overageDue,
+    initiatedByUserId: null,
+  });
   await attemptStaged(stagedNotification);
   await attemptStagedEmails(
     stagedEmails,

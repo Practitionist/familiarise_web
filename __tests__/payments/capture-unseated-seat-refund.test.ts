@@ -78,6 +78,9 @@ const txStub = {
   bookingStatusHistory: { create: historyCreate },
 };
 
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

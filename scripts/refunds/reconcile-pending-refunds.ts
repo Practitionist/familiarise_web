@@ -41,7 +41,11 @@ import { getAppUrl } from "../../lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import {
+  applyRefundCascade,
+  refundMemberOverageSidePayment,
+  type ApplyRefundCascadeResult,
+} from "../../lib/payments/operations/refund";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Threshold: Only reconcile refunds older than 1 hour
@@ -67,6 +71,12 @@ export interface RefundReconciliationResult {
    * for the row's gateway (no implementation) and it was over 24 h old.
    */
   failedGatewayDisabled: number;
+  /** SUCCEEDED refunds whose cascade the backstop pass re-drove. */
+  redrivenCount: number;
+  /** Backstop re-drives that failed this run; they rotate and retry up to the cap. */
+  redriveFailedCount: number;
+  /** Rows that reached the re-drive cap this run and left the cohort for an operator. */
+  redriveDeadLettered: number;
   errors: string[];
   timestamp: string;
 }
@@ -397,9 +407,12 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
+        let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] =
+          null;
         const claimed = await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
+              overageDue = null;
               // Claim by status: a re-entrant run or a webhook that settled the
               // row first matches zero rows and stages nothing.
               const claim = await tx.refund.updateMany({
@@ -407,13 +420,14 @@ async function reconcilePendingRefundsUnlocked(
                 data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
               });
               if (claim.count !== 1) return false;
-              await applyRefundCascade(tx, {
+              const cascade = await applyRefundCascade(tx, {
                 paymentId: refund.payment.id,
                 refundId: refund.id,
                 amountPaise: refund.amountPaise,
                 reason: refund.reason ?? "Gateway refund reconciled",
                 initiatedByUserId: null,
               });
+              overageDue = cascade.memberOverageRefundDue;
               await reverseCreditsForPayment(
                 refund.payment.id,
                 tx,
@@ -451,9 +465,14 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
+        await refundMemberOverageSidePayment({
+          parentPaymentId: refund.payment.id,
+          due: overageDue,
+          initiatedByUserId: null,
+        });
         await attemptRefundNotice(bell, emails);
         console.log(
-          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway; backstop cascade will complete it`,
+          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway and cascaded`,
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
@@ -517,6 +536,10 @@ async function reconcilePendingRefundsUnlocked(
     }
   }
 
+  // A poison row is a per-row failure in the summary, never a failed run.
+  const backstop = await redriveStrandedRefunds(opts.limit);
+  totalProcessed += backstop.scanned;
+
   // One expected warning per run listing the ids, never one per row per tick.
   if (retiredNoClient.length > 0) {
     reportSentryMessage(
@@ -555,6 +578,9 @@ async function reconcilePendingRefundsUnlocked(
     skippedCount,
     failedUnknownId,
     failedGatewayDisabled,
+    redrivenCount: backstop.redriven,
+    redriveFailedCount: backstop.failed,
+    redriveDeadLettered: backstop.deadLettered.length,
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -589,7 +615,7 @@ async function bindGatewayRefundToPlaceholder(
   } as Prisma.InputJsonValue;
 
   try {
-    await withSerializableRetry(() =>
+    const overageDue = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
           await tx.refund.update({
@@ -600,26 +626,31 @@ async function bindGatewayRefundToPlaceholder(
               metadata: mergedMetadata,
             },
           });
-          if (nextStatus === RefundStatus.SUCCEEDED) {
-            await applyRefundCascade(tx, {
-              paymentId: cascade.paymentId,
-              refundId: placeholderRowId,
-              amountPaise: cascade.amountPaise,
-              reason: cascade.reason,
-              initiatedByUserId: null,
-            });
-            await reverseCreditsForPayment(
-              cascade.paymentId,
-              tx,
-              cascade.amountPaise,
-              cascade.paymentAmountPaise,
-              placeholderRowId,
-            );
-          }
+          if (nextStatus !== RefundStatus.SUCCEEDED) return null;
+          const result = await applyRefundCascade(tx, {
+            paymentId: cascade.paymentId,
+            refundId: placeholderRowId,
+            amountPaise: cascade.amountPaise,
+            reason: cascade.reason,
+            initiatedByUserId: null,
+          });
+          await reverseCreditsForPayment(
+            cascade.paymentId,
+            tx,
+            cascade.amountPaise,
+            cascade.paymentAmountPaise,
+            placeholderRowId,
+          );
+          return result.memberOverageRefundDue;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
+    await refundMemberOverageSidePayment({
+      parentPaymentId: cascade.paymentId,
+      due: overageDue,
+      initiatedByUserId: null,
+    });
     return "bound";
   } catch (error) {
     if (
@@ -661,6 +692,167 @@ async function attemptRefundNotice(
     MONEY_EMAIL_TYPES.REFUND_PROCESSED,
     EMAIL_BUDGET_MS.JOB,
   );
+}
+
+// A SUCCEEDED refund still uncascaded this long after its last write is stranded.
+const STRANDED_AFTER_MS = 10 * 60 * 1000;
+const STRANDED_BATCH = 10;
+/** Stops starting new re-drives once the pass has run this long. */
+const STRANDED_BUDGET_MS = 8_000;
+/** Failed re-drives after which a row leaves the cohort for an operator (as retry-auto-refunds). */
+const MAX_CASCADE_REDRIVE_ATTEMPTS = 3;
+/** The metadata key the cohort query below reads by its literal name. */
+const REDRIVE_ATTEMPTS_KEY = "cascadeRedriveAttempts";
+
+type StrandedPass = {
+  scanned: number;
+  redriven: number;
+  failed: number;
+  deadLettered: string[];
+};
+
+/**
+ * Backstop pass: re-drives the cascade of SUCCEEDED refunds whose cascade never
+ * committed. The cascadedAt claim inside applyRefundCascade keeps it idempotent.
+ */
+async function redriveStrandedRefunds(
+  limit: number | undefined,
+): Promise<StrandedPass> {
+  const startedAt = Date.now();
+  // Raw because a missing JSON key must count as zero attempts; credit
+  // restorations (amountPaise 0) settle in place and never cascade.
+  const due = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Refund"
+    WHERE status = 'SUCCEEDED'
+      AND "cascadedAt" IS NULL
+      AND "deletedAt" IS NULL
+      AND "amountPaise" > 0
+      AND "updatedAt" < ${new Date(startedAt - STRANDED_AFTER_MS)}
+      AND COALESCE(
+        CASE jsonb_typeof(metadata -> 'cascadeRedriveAttempts')
+          WHEN 'number' THEN (metadata ->> 'cascadeRedriveAttempts')::numeric
+        END, 0) < ${MAX_CASCADE_REDRIVE_ATTEMPTS}
+    ORDER BY "updatedAt" ASC, id ASC
+    LIMIT ${Math.min(limit ?? STRANDED_BATCH, STRANDED_BATCH)}`;
+  const pass: StrandedPass = {
+    scanned: 0,
+    redriven: 0,
+    failed: 0,
+    deadLettered: [],
+  };
+  if (due.length === 0) return pass;
+
+  const stranded = await prisma.refund.findMany({
+    where: { id: { in: due.map((r) => r.id) } },
+    select: {
+      id: true,
+      paymentId: true,
+      amountPaise: true,
+      reason: true,
+      metadata: true,
+      payment: { select: { amount: true } },
+    },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+  });
+
+  for (const refund of stranded) {
+    if (Date.now() - startedAt > STRANDED_BUDGET_MS) break;
+    pass.scanned++;
+    try {
+      const cascade = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const result = await applyRefundCascade(tx, {
+              paymentId: refund.paymentId,
+              refundId: refund.id,
+              amountPaise: refund.amountPaise,
+              reason: refund.reason ?? "Stranded refund re-driven",
+              initiatedByUserId: null,
+            });
+            await reverseCreditsForPayment(
+              refund.paymentId,
+              tx,
+              refund.amountPaise,
+              refund.payment.amount,
+              refund.id,
+            );
+            return result;
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        ),
+      );
+      pass.redriven++;
+      await refundMemberOverageSidePayment({
+        parentPaymentId: refund.paymentId,
+        due: cascade.memberOverageRefundDue,
+        initiatedByUserId: null,
+      });
+    } catch (error) {
+      pass.failed++;
+      console.error(
+        `Error re-driving refund ${refund.id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      if (await recordRedriveFailure(refund)) {
+        pass.deadLettered.push(refund.id);
+      }
+    }
+  }
+
+  if (pass.deadLettered.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: ${pass.deadLettered.length} SUCCEEDED refund(s) dead-lettered after ${MAX_CASCADE_REDRIVE_ATTEMPTS} failed cascade re-drives`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.cascade-dead-letter",
+        level: "error",
+        extra: { refundIds: pass.deadLettered },
+      },
+    );
+  }
+  return pass;
+}
+
+/**
+ * Bumps the attempt counter and updatedAt so a failing row rotates behind the
+ * rest of the cohort; returns whether this failure reached the cap.
+ */
+async function recordRedriveFailure(refund: {
+  id: string;
+  metadata: Prisma.JsonValue;
+}): Promise<boolean> {
+  const metadata: Prisma.JsonObject =
+    refund.metadata !== null &&
+    typeof refund.metadata === "object" &&
+    !Array.isArray(refund.metadata)
+      ? refund.metadata
+      : {};
+  const prior = metadata[REDRIVE_ATTEMPTS_KEY];
+  const attempts = (typeof prior === "number" ? prior : 0) + 1;
+  try {
+    const touched = await prisma.refund.updateMany({
+      where: {
+        id: refund.id,
+        status: RefundStatus.SUCCEEDED,
+        cascadedAt: null,
+      },
+      data: {
+        metadata: { ...metadata, [REDRIVE_ATTEMPTS_KEY]: attempts },
+        updatedAt: new Date(),
+      },
+    });
+    return touched.count === 1 && attempts >= MAX_CASCADE_REDRIVE_ATTEMPTS;
+  } catch (error) {
+    console.error(
+      `Error recording re-drive failure for refund ${refund.id}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
 }
 
 function prismaMetadataObject(metadata: unknown): Record<string, unknown> {
