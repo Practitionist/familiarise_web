@@ -31,6 +31,8 @@ const webinarInclude = {
         select: { userId: true },
       },
       occurrences: {
+        where: { deletedAt: null },
+        orderBy: { startsAt: "asc" as const },
         include: {
           // #1061 — without this the planner cannot tell that the host has
           // already ended the call, so its Join gate could only ever expire on
@@ -88,11 +90,13 @@ const classInclude = (now: Date) =>
         // same reason `webinarInclude` selects it.
         occurrences: {
           where: {
+            deletedAt: null,
             startsAt: {
               gte: new Date(now.getTime() - PLANNER_CLASS_SLOT_WINDOW_MS),
               lte: new Date(now.getTime() + PLANNER_CLASS_SLOT_WINDOW_MS),
             },
           },
+          orderBy: { startsAt: "asc" as const },
           select: {
             id: true,
             startsAt: true,

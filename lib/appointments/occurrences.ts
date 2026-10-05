@@ -284,11 +284,18 @@ export function allowsUnschedule(
 }
 
 export function upcomingOccurrences<
-  T extends { startsAt: Date | string; endsAt: Date | string },
+  T extends {
+    startsAt: Date | string;
+    endsAt: Date | string;
+    completionStatus?: string | null;
+    deletedAt?: Date | string | null;
+  },
 >(occurrences: T[], now: Date = new Date()): T[] {
   const cutoff = now.getTime();
   return occurrences
-    .filter((row) => toDate(row.endsAt).getTime() >= cutoff)
+    .filter(
+      (row) => !isDeadOccurrence(row) && toDate(row.endsAt).getTime() >= cutoff,
+    )
     .sort(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
     );
@@ -331,7 +338,8 @@ export function getOccurrenceJoinState(
   if (isDeliberateEnd(occurrence.meeting)) return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
-  const rejoinGraceMs = opts?.rejoinGraceMs ?? 0;
+  const rejoinGraceMs =
+    opts?.rejoinGraceMs ?? (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0);
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 

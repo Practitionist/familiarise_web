@@ -7,6 +7,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
+import { useNowTick } from "@/hooks/use-now-tick";
 import { useSession } from "@/lib/auth-client";
 // #248: the shared hook reads the connected client singleton at click time and
 // lazy-imports lib/meeting, so the Stream SDK stays off this bundle.
@@ -296,6 +297,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const now = useNowTick();
 
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
@@ -356,6 +358,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
     const joinable = getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now,
     });
     if (joinable && isConfirmedStatus(vm.status) && vm.raw.appointment) {
       return {

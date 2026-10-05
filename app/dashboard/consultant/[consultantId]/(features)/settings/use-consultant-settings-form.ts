@@ -286,7 +286,11 @@ export function useConsultantSettingsForm(
         // Both boundaries move by the same delta, so the duration they typed is
         // preserved exactly.
         const editedSlot = normaliseSlotToSchedulingGrid(
-          { ...currentSlots[day][index], [field]: value },
+          {
+            ...currentSlots[day][index],
+            [field]: value,
+            isOvernightUTC: undefined,
+          },
           timezone || "UTC",
         );
         const validationResult = validateTimeSlot(

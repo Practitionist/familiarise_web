@@ -27,6 +27,7 @@ import {
 } from "@/lib/payments/tax/tds-service";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
 import {
@@ -1117,6 +1118,12 @@ async function detectAndAccrueOrgPayoutCompletionShortfall(
       },
     });
   }
+  await postPayoutClawback(tx, {
+    refundId: `shortfall:${payout.id}`,
+    payoutId: payout.id,
+    amountPaise: shortfallPaise,
+    organizationId: payout.organizationId,
+  });
   return {
     organizationId: payout.organizationId,
     shortfallPaise,
@@ -1135,6 +1142,7 @@ async function recordOrgPayoutCompletionTdsInTx(
   },
   orgTds: number,
   orgTdsRateBps: number,
+  shortfallPaise = 0,
 ): Promise<void> {
   await tx.tDSRecord.deleteMany({
     where: { orgPayoutId: payout.id, isReversal: false },
@@ -1150,8 +1158,12 @@ async function recordOrgPayoutCompletionTdsInTx(
     },
     _sum: { netPayoutPaise: true },
   });
-  const cumulativeAmountCredited =
-    sumPaise(priorCompleted._sum.netPayoutPaise) + payout.netPayoutPaise;
+  const cumulativeAmountCredited = Math.max(
+    0,
+    sumPaise(priorCompleted._sum.netPayoutPaise) +
+      payout.netPayoutPaise -
+      shortfallPaise,
+  );
 
   await recordOrgTDSDeduction({
     organizationId: payout.organizationId,

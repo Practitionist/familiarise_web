@@ -1014,7 +1014,7 @@ export async function GET(
           appointmentOccurrenceId: "",
           localStartTime: loc.timeP(start),
           localEndTime: loc.timeP(end),
-          type: "CUSTOM",
+          type: consultant.scheduleType === "WEEKLY" ? "WEEKLY" : "CUSTOM",
           isAllocated: true,
           bookingStatus: "fully-booked",
           ...(includeAppointmentDetails

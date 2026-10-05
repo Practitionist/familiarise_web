@@ -23,6 +23,7 @@ import {
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
@@ -121,6 +122,7 @@ export function useConsultantAppointmentsAdapter(
 ): AppointmentActionAdapter {
   const router = useRouter();
   const joinMeeting = useLazyJoinMeeting();
+  const now = useNowTick();
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
@@ -147,7 +149,11 @@ export function useConsultantAppointmentsAdapter(
     rawOccurrences,
     title: activeVm?.title ?? "",
     type: typeLabel as
-      "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial",
+      | "Consultation"
+      | "Subscription"
+      | "Webinar"
+      | "Class"
+      | "Trial",
   });
 
   const openDialog = (vm: AppointmentVM, kind: DialogKind) => {
@@ -156,32 +162,54 @@ export function useConsultantAppointmentsAdapter(
   };
   const closeDialog = () => setDialog(null);
 
+  const trialSlotsOf = (vm: AppointmentVM) => {
+    const trial = vm.raw.source as ConsultantTrialLike | undefined;
+    return (
+      trial?.appointment?.occurrences ?? vm.raw.appointment?.occurrences ?? []
+    );
+  };
+
   const joinableSlotOf = (vm: AppointmentVM) =>
-    getJoinableOccurrence(vm.raw.appointment?.occurrences ?? [], {
-      joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-    });
+    getJoinableOccurrence(
+      vm.kind === "TRIAL"
+        ? trialSlotsOf(vm)
+        : (vm.raw.appointment?.occurrences ?? []),
+      {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+        now,
+      },
+    );
 
   const joinVm = async (vm: AppointmentVM, force = false) => {
     setJoiningId(vm.id);
     let navigating = false;
     if (vm.kind === "TRIAL") {
-      const trial = vm.raw.source as ConsultantTrialLike;
-      const slot = trial.appointment?.occurrences?.[0];
-      if (trial.appointment && slot) {
+      const trial = vm.raw.source as ConsultantTrialLike | undefined;
+      const apptId = trial?.appointment?.id ?? vm.raw.appointment?.id;
+      const slots = trialSlotsOf(vm);
+      const slot = force ? slots[0] : (joinableSlotOf(vm) ?? slots[0]);
+      if (apptId && slot) {
         navigating = await joinMeeting(
           {
-            id: trial.appointment.id,
+            id: apptId,
             appointmentType: "TRIAL",
             occurrences: [
               {
                 id: slot.id,
                 startsAt: slot.startsAt,
                 endsAt: slot.endsAt,
-                appointmentId: trial.appointment.id,
+                isTentative: slot.isTentative,
+                appointmentId: apptId,
               },
             ],
           },
-          undefined,
+          {
+            id: slot.id,
+            startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
+            isTentative: slot.isTentative,
+            appointmentId: apptId,
+          },
         );
       }
     } else if (vm.raw.appointment) {
@@ -221,13 +249,11 @@ export function useConsultantAppointmentsAdapter(
 
   const trialJoinable = (vm: AppointmentVM) => {
     if (vm.kind !== "TRIAL") return false;
-    const trial = vm.raw.source as ConsultantTrialLike;
-    const slots = trial.appointment?.occurrences ?? [];
     return (
-      getJoinableOccurrence(
-        slots.map((s) => ({ ...s, isTentative: false })),
-        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
-      ) !== null
+      getJoinableOccurrence(trialSlotsOf(vm), {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+        now,
+      }) !== null
     );
   };
 
@@ -253,8 +279,7 @@ export function useConsultantAppointmentsAdapter(
   /** Slot rows exist to key a room to, joinable or not — the dev arm's target. */
   const hasSlotRows = (vm: AppointmentVM): boolean => {
     if (vm.kind === "TRIAL") {
-      const trial = vm.raw.source as ConsultantTrialLike | undefined;
-      return (trial?.appointment?.occurrences?.length ?? 0) > 0;
+      return trialSlotsOf(vm).length > 0;
     }
     return (vm.raw.appointment?.occurrences?.length ?? 0) > 0;
   };

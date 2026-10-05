@@ -181,6 +181,67 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (
+      typeof consultationPlan.durationInHours === "number" &&
+      consultationPlan.durationInHours > 0
+    ) {
+      const expectedDurationMs = Math.round(
+        consultationPlan.durationInHours * 60 * 60 * 1000,
+      );
+      if (endTime.getTime() - startTime.getTime() !== expectedDurationMs) {
+        return NextResponse.json(
+          {
+            error: `Requested slot duration must match the plan duration (${consultationPlan.durationInHours} hour(s)).`,
+            code: "INVALID_SLOT_DURATION",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (availabilityWindowWeeklyId && availabilityWindowCustomId) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide either availabilityWindowWeeklyId or availabilityWindowCustomId, not both.",
+          code: "AMBIGUOUS_AVAILABILITY_WINDOW",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (availabilityWindowWeeklyId && prisma.availabilityWindowWeekly?.findFirst) {
+      const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
+        where: { id: availabilityWindowWeeklyId, consultantProfileId },
+        select: { id: true },
+      });
+      if (!weeklyWindow) {
+        return NextResponse.json(
+          {
+            error: "Availability window not found for this consultant",
+            code: "INVALID_AVAILABILITY_WINDOW",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (availabilityWindowCustomId && prisma.availabilityWindowCustom?.findFirst) {
+      const customWindow = await prisma.availabilityWindowCustom.findFirst({
+        where: { id: availabilityWindowCustomId, consultantProfileId },
+        select: { id: true },
+      });
+      if (!customWindow) {
+        return NextResponse.json(
+          {
+            error: "Availability window not found for this consultant",
+            code: "INVALID_AVAILABILITY_WINDOW",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +

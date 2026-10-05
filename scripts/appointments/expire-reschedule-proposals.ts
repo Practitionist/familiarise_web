@@ -33,11 +33,13 @@ import {
 } from "@/lib/booking/transitions";
 import {
   isRestoreMiss,
+  parkParentForUnrestoredEnding,
   reportPartialRestore,
   restoreRescheduledBooking,
   type RestorableRequest,
 } from "@/lib/booking/reschedule-restore";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryError } from "@/lib/observability/report";
 import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
@@ -164,15 +166,48 @@ async function expireOneProposal(
         if (!isRestoreMiss(error)) throw error;
         // The consultant's original time was booked while the proposal was
         // open, or the request moved off PENDING under it. The restore's
-        // transaction rolled back whole, so expire alone: the slots stay
-        // released and the booking waits in the allocate queue, which is the
-        // pre-#1846 behaviour. Without this the row would be skipped on every
-        // tick and never expire.
-        // Recorded first so the miss survives a failing fallback, and
-        // reported once per run by the caller rather than once per row.
+        // transaction rolled back whole, so expire and park the parent booking
+        // in PENDING for manual allocation (matching decline/route.ts), and
+        // emit a RESCHEDULE system error so ops/support can intervene.
         misses.firstError ??= error;
         misses.ids.push(row.id);
-        await prisma.$transaction((tx) => expireProposal(tx, row.id, now));
+        let parkedStatus: string | null = null;
+        await prisma.$transaction(async (tx) => {
+          await expireProposal(tx, row.id, now);
+          try {
+            parkedStatus = await parkParentForUnrestoredEnding(tx, row, {
+              actorUserId: null,
+              reason: `${EXPIRY_REASON}; original time no longer available`,
+              op: "reschedule-expiry-park",
+            });
+          } catch (parkError) {
+            if (!isRestoreMiss(parkError)) throw parkError;
+            reportSentryError(parkError, {
+              subsystem: "jobs",
+              op: "reschedule-expiry-park-miss",
+              expected: true,
+              extra: {
+                rescheduleRequestId: row.id,
+                appointmentId: row.appointmentId,
+              },
+            });
+          }
+        });
+        await recordSystemErrorSafe({
+          organizationId: null,
+          category: "RESCHEDULE",
+          summary:
+            "Expired reschedule proposal left sessions needing new times; the booking is parked and a person must place them",
+          err: error,
+          context: {
+            rescheduleRequestId: row.id,
+            appointmentId: row.appointmentId,
+            consultationId: row.appointment?.consultationId ?? null,
+            subscriptionId: row.appointment?.subscriptionId ?? null,
+            releasedOccurrenceIds: row.releasedOccurrenceIds,
+            parkedStatus,
+          },
+        });
         return "unrestored";
       }
     });

@@ -125,7 +125,10 @@ export async function GET(
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        occurrences: true,
+        occurrences: {
+          where: { deletedAt: null },
+          orderBy: { startsAt: "asc" },
+        },
         // #1554 — the roster lives on the appointment, not on each occurrence.
         participants: {
           where: liveParticipant(ownSeatUserId),

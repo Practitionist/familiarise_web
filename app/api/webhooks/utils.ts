@@ -1338,7 +1338,72 @@ export async function handleDisputeCreated(
           where: { paymentId: payment.id, status: "PENDING" },
           data: { status: "HELD", preDisputeStatus: "PENDING" },
         });
-        const heldResult = { count: heldReady.count + heldPending.count };
+        const heldPendingTrust = await tx.consultantEarnings.updateMany({
+          where: { paymentId: payment.id, status: "PENDING_TRUST" },
+          data: { status: "HELD", preDisputeStatus: "PENDING_TRUST" },
+        });
+
+        let heldBatchedCount = 0;
+        if (typeof tx.consultantEarnings.findMany === "function") {
+          const preflightBatched = await tx.consultantEarnings.findMany({
+            where: {
+              paymentId: payment.id,
+              status: "BATCHED",
+              payout: { status: { in: ["PENDING", "APPROVED"] } },
+            },
+            select: { id: true, payoutId: true },
+          });
+          if (preflightBatched.length > 0) {
+            const batchedPayoutIds = [
+              ...new Set(
+                preflightBatched
+                  .map((r) => r.payoutId)
+                  .filter((id): id is string => Boolean(id)),
+              ),
+            ];
+            const heldBatched = await tx.consultantEarnings.updateMany({
+              where: {
+                id: { in: preflightBatched.map((r) => r.id) },
+                status: "BATCHED",
+              },
+              data: {
+                status: "HELD",
+                preDisputeStatus: "READY",
+                payoutId: null,
+              },
+            });
+            heldBatchedCount = heldBatched.count;
+            if (batchedPayoutIds.length > 0) {
+              await tx.consultantEarnings.updateMany({
+                where: {
+                  payoutId: { in: batchedPayoutIds },
+                  status: "BATCHED",
+                },
+                data: { status: "READY", payoutId: null },
+              });
+              if (typeof tx.consultantPayout?.updateMany === "function") {
+                await tx.consultantPayout.updateMany({
+                  where: {
+                    id: { in: batchedPayoutIds },
+                    status: { in: ["PENDING", "APPROVED"] },
+                  },
+                  data: {
+                    status: "CANCELLED",
+                    failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
+                  },
+                });
+              }
+            }
+          }
+        }
+
+        const heldResult = {
+          count:
+            heldReady.count +
+            heldPending.count +
+            heldPendingTrust.count +
+            heldBatchedCount,
+        };
         if (heldResult.count > 0) {
           console.log(
             `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
@@ -1346,8 +1411,6 @@ export async function handleDisputeCreated(
         }
 
         // #1008 — hold the HOST org's earnings too (mirrors the consultant hold).
-        // PENDING_TRUST is left alone — it's already un-releasable. Single CAS per
-        // group, so it's race-safe against payout batching without upgrading isolation.
         const orgHeldReady = await tx.organizationEarnings.updateMany({
           where: { paymentId: payment.id, status: "READY" },
           data: { status: "HELD", preDisputeStatus: "READY" },
@@ -1356,7 +1419,72 @@ export async function handleDisputeCreated(
           where: { paymentId: payment.id, status: "PENDING" },
           data: { status: "HELD", preDisputeStatus: "PENDING" },
         });
-        const orgHeld = { count: orgHeldReady.count + orgHeldPending.count };
+        const orgHeldPendingTrust = await tx.organizationEarnings.updateMany({
+          where: { paymentId: payment.id, status: "PENDING_TRUST" },
+          data: { status: "HELD", preDisputeStatus: "PENDING_TRUST" },
+        });
+
+        let orgHeldBatchedCount = 0;
+        if (typeof tx.organizationEarnings.findMany === "function") {
+          const preflightOrgBatched = await tx.organizationEarnings.findMany({
+            where: {
+              paymentId: payment.id,
+              status: "BATCHED",
+              orgPayout: { status: { in: ["PENDING", "APPROVED"] } },
+            },
+            select: { id: true, orgPayoutId: true },
+          });
+          if (preflightOrgBatched.length > 0) {
+            const batchedOrgPayoutIds = [
+              ...new Set(
+                preflightOrgBatched
+                  .map((r) => r.orgPayoutId)
+                  .filter((id): id is string => Boolean(id)),
+              ),
+            ];
+            const orgHeldBatched = await tx.organizationEarnings.updateMany({
+              where: {
+                id: { in: preflightOrgBatched.map((r) => r.id) },
+                status: "BATCHED",
+              },
+              data: {
+                status: "HELD",
+                preDisputeStatus: "READY",
+                orgPayoutId: null,
+              },
+            });
+            orgHeldBatchedCount = orgHeldBatched.count;
+            if (batchedOrgPayoutIds.length > 0) {
+              await tx.organizationEarnings.updateMany({
+                where: {
+                  orgPayoutId: { in: batchedOrgPayoutIds },
+                  status: "BATCHED",
+                },
+                data: { status: "READY", orgPayoutId: null },
+              });
+              if (typeof tx.organizationPayout?.updateMany === "function") {
+                await tx.organizationPayout.updateMany({
+                  where: {
+                    id: { in: batchedOrgPayoutIds },
+                    status: { in: ["PENDING", "APPROVED"] },
+                  },
+                  data: {
+                    status: "CANCELLED",
+                    failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
+                  },
+                });
+              }
+            }
+          }
+        }
+
+        const orgHeld = {
+          count:
+            orgHeldReady.count +
+            orgHeldPending.count +
+            orgHeldPendingTrust.count +
+            orgHeldBatchedCount,
+        };
         if (orgHeld.count > 0) {
           console.log(
             `🔒 ${orgHeld.count} org earnings held due to dispute ${disputeId}`,
@@ -1457,7 +1585,7 @@ export async function settleLostDispute(
   const lostConsultantEarnings = await tx.consultantEarnings.findMany({
     where: {
       paymentId: dispute.paymentId,
-      status: { in: ["HELD", "PAID"] },
+      status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
     },
     select: {
       id: true,
@@ -1504,7 +1632,7 @@ export async function settleLostDispute(
       await tx.consultantEarnings.updateMany({
         where: {
           id: earning.id,
-          status: { in: ["HELD", "PAID"] },
+          status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
           refundedShareAmount: alreadyRefunded,
         },
         data: {
@@ -1616,7 +1744,7 @@ export async function settleLostDispute(
   const lostOrgEarnings = await tx.organizationEarnings.findMany({
     where: {
       paymentId: dispute.paymentId,
-      status: { in: ["HELD", "PAID"] },
+      status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
     },
     select: {
       id: true,
@@ -1646,7 +1774,10 @@ export async function settleLostDispute(
     // status predicate makes exactly one writer win.
     if (requested > 0) {
       await tx.organizationEarnings.updateMany({
-        where: { id: oe.id, status: { in: ["HELD", "PAID"] } },
+        where: {
+          id: oe.id,
+          status: { in: ["HELD", "BATCHED", "PENDING_TRUST", "PAID"] },
+        },
         data: { status: "REFUNDED", preDisputeStatus: null },
       });
     }
@@ -1882,13 +2013,24 @@ export async function handleDisputeUpdated(
             },
             data: { status: "PENDING", preDisputeStatus: null },
           });
+          const orgRelTrust = await tx.organizationEarnings.updateMany({
+            where: {
+              paymentId: dispute.paymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING_TRUST",
+            },
+            data: { status: "PENDING_TRUST", preDisputeStatus: null },
+          });
           const orgReleased = await tx.organizationEarnings.updateMany({
             where: { paymentId: dispute.paymentId, status: "HELD" },
             data: { status: "READY", preDisputeStatus: null },
           });
-          if (orgReleased.count + orgRelPending.count > 0) {
+          if (
+            orgReleased.count + orgRelPending.count + orgRelTrust.count >
+            0
+          ) {
             console.log(
-              `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING) — dispute ${disputeId} won`,
+              `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
             );
           }
         } else if (

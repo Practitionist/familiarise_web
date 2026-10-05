@@ -707,6 +707,7 @@ export function useCalendarData(
         for (const appointment of activeData) {
           for (const slot of (appointment.occurrences ||
             []) as AppointmentSlotRaw[]) {
+            if (slot.deletedAt) continue;
             const start = new Date(slot.startsAt);
             const end = new Date(slot.endsAt);
             const durationMinutes =

@@ -1555,6 +1555,13 @@ export async function createEarningsFromPayment(
           payment.id,
         );
 
+    const tranches = await resolveEffectiveTranches(
+      tx,
+      appointmentType,
+      payment.appointmentId,
+      preplanned,
+    );
+
     let ownerId: string | null = null;
     if (splits.length > 0) {
       ownerId = await createMultiPartyConsultantEarnings(tx, {
@@ -1570,12 +1577,6 @@ export async function createEarningsFromPayment(
         orgSplit,
       });
     } else {
-      const tranches = await resolveEffectiveTranches(
-        tx,
-        appointmentType,
-        payment.appointmentId,
-        preplanned,
-      );
       ownerId = await createSingleOwnerConsultantEarnings(tx, {
         consultantProfileId,
         paymentId: payment.id,
@@ -1595,7 +1596,7 @@ export async function createEarningsFromPayment(
       paymentId: payment.id,
       grossAmount,
       initialEarningStatus,
-      holdUntil,
+      holdUntil: tranches ? null : holdUntil,
     });
 
     await postBookingLedgerJournal(tx, {

@@ -34,6 +34,10 @@ import {
   fundingRailForIntent,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+} from "@/lib/payments/payouts/earnings-hold";
 
 export type TrialRefundOutcome = {
   refundPct: number;
@@ -99,7 +103,56 @@ export async function softCancelTrialAppointmentInTx(
   });
   // #1319 A9 — seat released with the tombstone.
   await transitionParticipant(tx, { appointmentId }, "CANCELLED");
+
   return released;
+}
+
+/**
+ * Stamp `holdUntil` on any unstamped trial earnings once the trial refund has
+ * settled (or when a 0% policy tier owes no refund), so retained earnings on
+ * a late cancel do not stay parked with `holdUntil: null` forever while
+ * ensuring a failed or pending refund never releases earnings prematurely.
+ */
+export async function stampTrialEarningsOnCancel(
+  tx: {
+    consultantEarnings?: Pick<Tx["consultantEarnings"], "updateMany">;
+    organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
+  },
+  args: { paymentId?: string; appointmentId?: string | null; now?: Date },
+): Promise<number> {
+  const now = args.now ?? new Date();
+  let whereScope:
+    | { paymentId: string }
+    | { payment: { appointmentId: string } }
+    | null = null;
+  if (args.paymentId) {
+    whereScope = { paymentId: args.paymentId };
+  } else if (args.appointmentId) {
+    whereScope = { payment: { appointmentId: args.appointmentId } };
+  }
+  if (!whereScope) return 0;
+  const holdUntil = computeHoldUntil({
+    capturedAt: now,
+    lastOccurrenceEndsAt: null,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  const res = await tx.consultantEarnings?.updateMany?.({
+    where: {
+      ...whereScope,
+      holdUntil: null,
+      status: { in: ["PENDING", "PENDING_TRUST"] },
+    },
+    data: { holdUntil },
+  });
+  await tx.organizationEarnings?.updateMany?.({
+    where: {
+      ...whereScope,
+      holdUntil: null,
+      status: { in: ["PENDING", "PENDING_TRUST"] },
+    },
+    data: { holdUntil },
+  });
+  return res?.count ?? 0;
 }
 
 /**
@@ -336,6 +389,7 @@ export async function refundCancelledTrial(args: {
         }-initiated)`,
         initiatedByUserId,
       });
+      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
       return {
         refundPct,
         // The Refund row is ₹0 by construction; the value that came back is the
@@ -344,8 +398,10 @@ export async function refundCancelledTrial(args: {
         rail: restored.rail,
       };
     }
-    if (amountPaise <= 0)
+    if (amountPaise <= 0) {
+      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
       return { refundPct, amountRefundedPaise: 0, rail: null };
+    }
 
     const result = await refundBookingPayment({
       paymentId: quote.paymentId,
@@ -355,6 +411,9 @@ export async function refundCancelledTrial(args: {
       }-initiated)`,
       initiatedByUserId,
     });
+    if (result.status !== "PENDING") {
+      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
+    }
     return {
       refundPct,
       amountRefundedPaise: result.amountRefundedPaise,

@@ -19,6 +19,7 @@ import { deriveBucket } from "./bucket";
 import {
   REJOIN_GRACE_MS,
   getAnchorTime,
+  isDeadOccurrence,
   isDeliberateEnd,
   isOccurrenceOver,
   liveOccurrences,
@@ -70,6 +71,7 @@ function collaborators(
 function actionableSlots(slots: OccurrenceLike[], now: Date): OccurrenceLike[] {
   return slots
     .filter((slot) => {
+      if (isDeadOccurrence(slot)) return false;
       if (isDeliberateEnd(slot.meeting)) return false;
       const end = slot.endsAt ? toDate(slot.endsAt) : toDate(slot.startsAt);
       const graceMs = slot.endsAt ? REJOIN_GRACE_MS : 0;
@@ -233,8 +235,16 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
       t.subscriptionPlan.trialDurationMinutes,
     ),
     organizationId: t.appointment?.organizationId ?? null,
-    // Paid trials carry a live pay-link while AWAITING_PAYMENT.
-    pendingPaymentUrl: t.pendingPaymentUrl ?? null,
+    // Paid trials carry a live pay-link while AWAITING_PAYMENT; fall back to
+    // the branded trial checkout route when no hosted URL was stored.
+    pendingPaymentUrl:
+      t.pendingPaymentUrl ??
+      (status === "AWAITING_PAYMENT" ? `/checkout/plans/trial/${t.id}` : null),
+    pendingPaymentId: payablePaymentId(
+      (t.appointment as { payment?: unknown } | null)?.payment as Parameters<
+        typeof payablePaymentId
+      >[0],
+    ),
     collaborators: [],
     collaboratorRole: null,
     raw: {

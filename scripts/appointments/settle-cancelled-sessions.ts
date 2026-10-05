@@ -45,6 +45,10 @@ import { reportSentryError } from "@/lib/observability/report";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+} from "@/lib/payments/payouts/earnings-hold";
 
 export interface SettleCancelledSessionsResult {
   success: boolean;
@@ -541,7 +545,40 @@ async function settleSubscriptionVoid(
     if (refunded === null) pending += 1;
     else if (refunded) result.refunded += 1;
   }
+  const owedVoids = voids.slice(Math.max(0, voids.length - unused));
+  const othersUnsettled = owedVoids.some(
+    (o) => o.id !== session.id && !o.seatsSettledAt,
+  );
+  if (pending === 0 && !othersUnsettled && payments.length > 0) {
+    await stampSubscriptionVoidEarningsHold(payments.map((p) => p.id));
+  }
   return pending === 0;
+}
+
+async function stampSubscriptionVoidEarningsHold(
+  paymentIds: string[],
+): Promise<void> {
+  const holdUntil = computeHoldUntil({
+    capturedAt: new Date(),
+    lastOccurrenceEndsAt: null,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  await prisma.consultantEarnings?.updateMany?.({
+    where: {
+      paymentId: { in: paymentIds },
+      holdUntil: null,
+      status: { in: ["PENDING", "PENDING_TRUST"] },
+    },
+    data: { holdUntil },
+  });
+  await prisma.organizationEarnings?.updateMany?.({
+    where: {
+      paymentId: { in: paymentIds },
+      holdUntil: null,
+      status: { in: ["PENDING", "PENDING_TRUST"] },
+    },
+    data: { holdUntil },
+  });
 }
 
 /** The keyed refund plus its bell; null when the gateway must be retried. */
