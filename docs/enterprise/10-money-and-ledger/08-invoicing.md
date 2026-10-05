@@ -59,13 +59,12 @@ On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) post
 
 Whether issuance posts anything depends only on whether a booking journal already booked the supply's GST. `postInvoiceIssuedJournal` (`lib/payments/billing/org-invoice-journal.ts`) decides this from the invoice itself, inside the issuing transaction, so the cron, the manual `POST` and the `DRAFT → ISSUED` `PATCH` all share one rule.
 
-| Invoice kind                           | Created by                                        | GST already booked elsewhere?                                         | At issue          |
-| -------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- | ----------------- |
-| Accrual rollup                         | `rollupOrgInvoiceAccruals`                        | Yes — each billed booking's `booking:` journal credited `GST_PAYABLE` | Nothing           |
-| Manual invoice with a `paymentId` line | `POST …/invoices`                                 | Yes — it re-bills a booking                                           | Nothing           |
-| Licence subscription fee               | `generate-subscription-invoices`                  | No — the fee is billed once, here                                     | `invoice-issued:` |
-| Manual programme or contract fee       | `POST …/invoices` (no `paymentId` lines)          | No                                                                    | `invoice-issued:` |
-| Wallet top-up                          | Not an invoice (`WalletTopUp` + `topup:` journal) | The later wallet-funded bookings book their own GST                   | Not applicable    |
+| Invoice kind                     | Created by                                        | GST already booked elsewhere?                                         | At issue          |
+| -------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- | ----------------- |
+| Accrual rollup                   | `rollupOrgInvoiceAccruals`                        | Yes — each billed booking's `booking:` journal credited `GST_PAYABLE` | Nothing           |
+| Licence subscription fee         | `generate-subscription-invoices`                  | No — licensed bookings book no GST, so the fee is taxed once, here    | `invoice-issued:` |
+| Manual programme or contract fee | `POST …/invoices` (lines never carry a booking)   | No                                                                    | `invoice-issued:` |
+| Wallet top-up                    | Not an invoice (`WalletTopUp` + `topup:` journal) | The later wallet-funded bookings book their own GST                   | Not applicable    |
 
 The table reads as one sentence: a supply whose GST is already in the journal is never booked again, and a supply billed only on this document is booked here. A wallet top-up is an advance against future bookings, not a supply, so it mints no invoice and its cash sits in `WALLET` until a booking spends it. The posting shapes for issue, void and refund are in [ledger & postings §4.3a](03-ledger-and-postings.md).
 

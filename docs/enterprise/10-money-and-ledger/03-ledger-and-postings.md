@@ -109,7 +109,7 @@ flowchart TD
 | `OVERAGE_MEMBER`    | `overage:<sideChargePaymentId>`                                                                | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member))                     |
 | `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>`                                      | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts`              |
 
-**`GRANT` is declared but posts no journal leg today.** `INVOICE_ISSUED` posts only for an invoice that bills a supply no booking journal has booked — a licence subscription fee or a manual programme or contract fee (§4.3a). An invoice that bills bookings (the accrual rollup, or a manual invoice whose lines carry a `paymentId`) posts nothing at issue, because each booking already debited `ORG_RECEIVABLE` and credited `GST_PAYABLE` in its own transaction; **payment** is what clears the receivable in both cases.
+**`GRANT` is declared but posts no journal leg today.** `INVOICE_ISSUED` posts only for an invoice that bills a supply no booking journal has booked — a licence subscription fee or a manual programme or contract fee (§4.3a). An invoice that bills bookings (the accrual rollup, which stamps `billedPayments`) posts nothing at issue, because each booking already debited `ORG_RECEIVABLE` and credited `GST_PAYABLE` in its own transaction; **payment** is what clears the receivable in both cases.
 
 **There is no `OVERAGE` kind.** Overage money rides existing kinds (#778 §B): a **CHARGE_ORG** overage is billed through the normal invoice path (its marginal is an `OVERAGE_INVOICE_ACCRUAL` leg → `ORG_RECEIVABLE`, cleared by `INVOICE_PAID`), and a **CHARGE_MEMBER** overage settles as its own `BOOKING`-shaped side-charge — `OVERAGE_MEMBER` is the kind reserved for that member side-payment. Either way the overage's surcharge carries 18% GST by the payer's place of supply; the over-cap `basePaise` does not, because it is a slice of the parent's tax-inclusive price whose GST the parent booking journal already credited. See [booking → earnings](05-booking-to-earnings.md) for the overage flow.
 
@@ -159,7 +159,7 @@ Dr CASH(platform)            invoice total
 
 ### 4.3a Invoice issued, voided and refunded — `INVOICE_ISSUED` / `INVOICE_REFUND`
 
-An invoice whose GST no booking has booked (subscription invoices from `generate-subscription-invoices`, and manual invoices with no `paymentId` line) books the whole supply in the transaction that issues it, whether that is the cron, the manual `POST` with `issueImmediately`, or the `DRAFT → ISSUED` `PATCH`. The fee counts as income when invoiced; there is no deferral.
+An invoice whose GST no booking has booked (subscription invoices from `generate-subscription-invoices`, and every manual invoice, since only the rollup stamps `billedPayments`) books the whole supply in the transaction that issues it, whether that is the cron, the manual `POST` with `issueImmediately`, or the `DRAFT → ISSUED` `PATCH`. The fee counts as income when invoiced; there is no deferral.
 
 ```
 invoice-issued:<invoiceId>
