@@ -132,75 +132,80 @@ All payments route through **Razorpay**. Currency is always **INR** — Razorpay
 
 | Feature | Details |
 | ------- | ------- |
-| **Checkout** | Order → Modal (client-side SDK) |
-| **Refunds** | Full API (create, get, list). Original PG fee NOT reversed. |
-| **Disputes** | Webhook-only (no API management). ~Rs 500/chargeback. |
-| **Payouts** | RazorpayX: Contacts + Fund Accounts + Payouts API, auto-TDS |
-| **KYC** | Platform collects data, creates accounts via API |
-| **Payment methods** | Cards, UPI (0%), Net Banking, Wallets, EMI, BNPL, RuPay |
-| **Domestic fee** | UPI: 0% / Cards: 2% + 18% GST (~2.36%) |
-| **International fee** | Cards: 3% + GST / IBT: 1% + GST |
-| **Settlement** | T+2 business days (instant available for ~1% extra) |
-| **Marketplace** | Route: linked accounts, auto-splits, escrow-like hold/release |
-| **Subscriptions** | UPI Autopay, e-Mandate, card recurring (RBI-compliant) |
-| **RBI Licenses** | PA-O + PA-P + PA-CB (full house) |
+| **Checkout** | Order (`POST /v1/orders`) → Standard Checkout Modal (`checkout.js`) |
+| **Saved Cards** | Customers API (`POST /v1/customers` with `fail_existing: 0`) + RBI Card-on-File Tokenization (CoFT) |
+| **Refunds** | Full API (`POST /v1/payments/:id/refund` with `X-Refund-Idempotency`). Original PG fee is NOT reversed. |
+| **Disputes** | Full REST API (`GET /v1/disputes/:id`, `POST /v1/documents`, `PATCH /v1/disputes/:id/contest`) + all 6 `payment.dispute.*` webhooks (`lib/payments/core/razorpay-disputes.ts`) |
+| **Payouts** | RazorpayX: Contacts + Fund Accounts + Penny Drop / Reverse Penny Drop (`POST /v1/fund_accounts/validations`) + Payouts API (`X-Payout-Idempotency`), Section 194-O TDS |
+| **KYC & Bank Verification** | Platform collects payee details, creates Contact + Fund Account via API, verifies via Penny Drop (`₹1` IMPS) or Reverse Penny Drop (UPI Intent) |
+| **Payment methods** | Cards (Visa, Mastercard, RuPay, Amex, Diners), UPI (0%), Net Banking, Wallets, EMI, PayLater |
+| **Domestic fee** | UPI: 0% / Cards & Netbanking: ~2% + 18% GST (~2.36%) |
+| **International fee** | Cards: ~3% + GST / International Bank Transfer (IBT): 1% + GST |
+| **Settlement** | T+2 working days domestic, T+7 working days international (PA-CB & automatic FIRS/FIRC) |
+| **Architecture Choices** | Uses **RazorpayX Payouts** (not Razorpay Route) and **in-house `BillingSubscription` + per-cycle Orders** (not `/v1/subscriptions`) |
+| **RBI Licenses** | PA-O + PA-P + PA-CB |
 
 ---
 
 ## Revenue Split
 
-A **flat 20% platform fee** applies to all consultants regardless of appointment type or pricing.
+For B2C bookings, the platform fee is calculated on `grossAmount` (`payment.originalAmount`, the pre-GST base price) via `PlatformFeeSchedule` (`marketplaceBps` / `ownLinkBps`, defaulting to `PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE = 20%`, or `0%` when an active `ConsultantFeeWaiver` applies). For HOST/HYBRID organizations, the 3-way split (`platformBps + orgBps + consultantBps`) is governed by the active `RateCard`.
 
 ```
-Customer pays amount
+Customer pays grossAmount (+ 18% GST for domestic IN buyers)
     |
-    v
-Razorpay deducts PG fee (~2.36% domestic / ~3.54% intl cards / ~1.18% IBT)
+    +---> Platform fee: 20% of grossAmount (default B2C marketplace rate; platform absorbs Razorpay PG fee)
     |
-    v
-Net amount to platform
-    |
-    +---> Platform keeps 20% of net
-    |
-    +---> Consultant receives 80% of net (minus TDS if over ₹50K/yr)
+    +---> Consultant earnings: 80% of grossAmount
+              |
+              +---> At payout: Section 194-O TDS withheld (0.1% for Resident Individual/HUF with PAN once
+                    FY gross earnings exceed ₹5,00,000/yr; 0.1% from ₹1 for Company/Firm; 5% without PAN)
 ```
 
-**Source**: `lib/payments/payouts/constants.ts` (`PLATFORM_FEE_PERCENTAGE: 20`)
+**Sources**: `lib/payments/payouts/constants.ts`, `lib/payments/pricing/platform-fee.ts`, `lib/payments/payouts/earnings-service.ts`, `lib/payments/tax/tds-service.ts`
 
 ---
 
 ## Environment Variables
 
-### Razorpay (Payments)
+### Razorpay (Payments & Webhooks)
 
-| Variable                      | Purpose                     |
-| ----------------------------- | --------------------------- |
-| `RAZORPAY_KEY_ID`             | Server-side API key ID      |
-| `RAZORPAY_SECRET`             | Server-side API key secret  |
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Client-side publishable key |
+| Variable                            | Purpose                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `RAZORPAY_KEY_ID`                   | Server-side API key ID (`rzp_test_...` or `rzp_live_...`)               |
+| `RAZORPAY_SECRET`                   | Server-side API key secret (named `RAZORPAY_SECRET` in this repo)       |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID`       | Client-side publishable key (must match `RAZORPAY_KEY_ID`)              |
+| `RAZORPAY_WEBHOOK_SECRET`           | Webhook HMAC-SHA256 verification secret                                 |
+| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`  | Optional previous webhook secret during zero-downtime secret rotation   |
 
-### RazorpayX (Payouts)
+### RazorpayX (Payouts & Fund Account Validation)
 
-| Variable                   | Purpose                                                |
-| -------------------------- | ------------------------------------------------------ |
-| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID`)    |
-| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET`) |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number for payouts                   |
-| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook signature verification               |
+| Variable                   | Purpose                                                              |
+| -------------------------- | -------------------------------------------------------------------- |
+| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID` in non-prod)      |
+| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET` in non-prod)   |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX virtual/current account number debited for payouts & FAV   |
+| `RAZORPAYX_WEBHOOK_SECRET` | Optional separate RazorpayX webhook signature verification secret    |
+| `ENABLE_LIVE_PAYOUTS`      | Must be `"true"` in production to disburse live payouts              |
+| `RAZORPAY_RPD_VPA`         | Optional platform UPI VPA for Reverse Penny Drop fallback            |
 
 ---
 
 ## Shared Infrastructure
 
-Both gateways share a common abstraction layer:
+The payment and payout subsystem shares a common orchestration layer:
 
-| File                                       | Purpose                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lib/payments/index.ts`                    | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the correct gateway                               |
-| `lib/payments/core/types.ts`               | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`) and the error classes (`PaymentError`, `RefundError`, `DisputeError`) |
-| `lib/payments/payouts/payout-service.ts`   | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                    |
-| `lib/payments/payouts/earnings-service.ts` | Earnings calculation with flat 20% platform fee                                                                                                        |
-| `lib/payments/payouts/constants.ts`        | Hold periods, minimum amounts, fee percentages, payout mode limits                                                                                     |
+| File                                           | Purpose                                                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lib/payments/index.ts`                        | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the active gateway                                |
+| `lib/payments/core/razorpay.ts`                | Razorpay SDK singleton, checkout & webhook HMAC verification, `ensureRazorpayCustomer()`, PM-10 live-key guard                                         |
+| `lib/payments/core/types.ts`                   | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`) and error classes (`PaymentError`, `RefundError`, `DisputeError`)                      |
+| `lib/payments/core/razorpay-disputes.ts`       | Razorpay REST Disputes & Documents API client (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`, `isRazorpayUnknownDisputeIdError`)      |
+| `lib/payments/payouts/razorpay-payouts.ts`     | RazorpayX Contacts, Fund Accounts, and Payouts REST client (`X-Payout-Idempotency`, `boundPayoutIdempotencyKey`)                                       |
+| `lib/payments/payouts/reverse-penny-drop.ts`   | Bank & UPI verification via Penny Drop (`POST /v1/fund_accounts/validations`) and Reverse Penny Drop (UPI Intent)                                      |
+| `lib/payments/payouts/payout-service.ts`       | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                    |
+| `lib/payments/payouts/earnings-service.ts`     | Earnings calculation (`PlatformFeeSchedule`, `RateCard`, subscription tranches, collaborator splits)                                                   |
+| `lib/payments/payouts/constants.ts`            | Hold periods, minimum amounts, fee percentages, SAC codes (`999293`), payout mode limits                                                               |
 
 ---
 
@@ -212,10 +217,11 @@ Both gateways share a common abstraction layer:
 
 ### Razorpay
 
-- [01-setup.md](./razorpay/01-setup.md) — Account setup, env vars, dashboard config, testing
-- [02-architecture-and-flow.md](./razorpay/02-architecture-and-flow.md) — Payment flow, revenue split, webhook events
-- [03-payout-flow.md](./razorpay/03-payout-flow.md) — RazorpayX Payouts: Contacts, Fund Accounts, payout lifecycle
+- [01-setup.md](./razorpay/01-setup.md) — Account setup, env vars, dashboard config, official test cards & UPI IDs
+- [02-architecture-and-flow.md](./razorpay/02-architecture-and-flow.md) — Payment flow, saved cards, revenue split, webhook events, REST disputes API
+- [03-payout-flow.md](./razorpay/03-payout-flow.md) — RazorpayX Payouts: Contacts, Fund Accounts, Penny Drop / Reverse Penny Drop, payout lifecycle
 - [04-kyc-and-onboarding.md](./razorpay/04-kyc-and-onboarding.md) — KYC requirements and onboarding checklist
+- [05-go-live-checklist.md](./razorpay/05-go-live-checklist.md) — Live-mode cutover, PM-10 boot guards, and webhook secret rotation
 
 ---
 

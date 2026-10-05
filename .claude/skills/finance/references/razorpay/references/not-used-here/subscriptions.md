@@ -309,11 +309,11 @@ const subscription = await razorpay.subscriptions.create({
 });
 ```
 
-Offers can discount the first N cycles or all cycles. Offer CREATION is Dashboard-only, but linking and unlinking an offer to an existing subscription IS API-supported: `POST /v1/subscriptions/:id/offers` to attach, `DELETE /v1/subscriptions/:id/offers/:offer_id` to remove.
+Offers can discount the first N cycles or all cycles. Offer CREATION is Dashboard-only, but linking and unlinking an offer to an existing subscription IS API-supported: pass `offer_id` on `PATCH /v1/subscriptions/:id` to attach, or call `DELETE /v1/subscriptions/:sub_id/:offer_id` (note the flat path — there is no `/offers/` segment) to remove.
 
 ## Monthly ↔ Yearly Switching
 
-Switching plans is an in-place update of the existing subscription via the Update Subscription API — change `plan_id` and choose when it applies. You do NOT create a second subscription. See the `plan-change` skill for the full route.
+Switching plans is an in-place update of the existing subscription via the Update Subscription API — change `plan_id` and choose when it applies. You do NOT create a second subscription. Note that Razorpay does **not** allow `PATCH /v1/subscriptions/:id` on subscriptions authorized via **UPI** or **Emandate** (`payment_method: "upi" | "emandate"`). See `plan-change.md` for the full route.
 
 - **`schedule_change_at: "now"`** prorates: Razorpay charges or refunds the difference for the remainder of the current cycle (minimum adjustable difference ₹0.50).
 - **`schedule_change_at: "cycle_end"`** applies the new plan at the next renewal with no mid-cycle adjustment.
@@ -326,7 +326,7 @@ await razorpay.subscriptions.update(subscriptionId, {
 });
 ```
 
-**Recommendation**: Upgrades feel best with `"now"` (the user gets the new tier immediately and pays the prorated difference); downgrades feel best with `"cycle_end"` (the user keeps what they paid for until renewal). Updates are only allowed in `authenticated` / `active` states.
+**Recommendation**: Upgrades feel best with `"now"` (the user gets the new tier immediately and pays the prorated difference); downgrades feel best with `"cycle_end"` (the user keeps what they paid for until renewal). Updates are only allowed in `authenticated` / `active` states (and only on card subscriptions, not UPI/Emandate).
 
 ## Gotchas
 
@@ -335,7 +335,7 @@ await razorpay.subscriptions.update(subscriptionId, {
 3. **No `customer_id` on create**: It is not a create param. Razorpay auto-creates the customer at the authentication transaction and returns `customer_id` on the subscription.
 4. **`total_count`**: Monthly = 60 (5 years max), Yearly = 5 (5 years max). This is max renewals, not billing cycles.
 5. **Customer without phone**: If you do pre-create a customer (optional), omit the `contact` field entirely — don't pass null or empty string.
-6. **Proration via Update API**: Use `subscriptions.update(id, { plan_id, schedule_change_at: "now" })` to prorate mid-cycle plan changes. `"cycle_end"` applies the change at the boundary with no adjustment. See the `plan-change` skill.
+6. **Proration via Update API**: Use `subscriptions.update(id, { plan_id, schedule_change_at: "now" })` to prorate mid-cycle plan changes. `"cycle_end"` applies the change at the boundary with no adjustment. Cannot be used on UPI or Emandate subscriptions.
 7. **Trials via `start_at`**: `start_at` (future Unix seconds) is Razorpay's official trial mechanism. The authentication transaction charges a token amount that is auto-refunded.
 8. **Offers**: Offer creation is Dashboard-only, but linking and unlinking are API-supported. Link at creation via `offer_id` on `POST /v1/subscriptions`, or onto a live subscription via `offer_id` on `PATCH /v1/subscriptions/:id`. Unlink with `DELETE /v1/subscriptions/:sub_id/:offer_id` — note the flat path, there is no `/offers/` segment.
 
@@ -354,10 +354,11 @@ const expected = crypto
   .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
   .digest("hex");
 
-const isValid = crypto.timingSafeEqual(
-  Buffer.from(expected, "hex"),
-  Buffer.from(razorpay_signature, "hex")
-);
+const expectedBuf = Buffer.from(expected, "hex");
+const receivedBuf = Buffer.from(razorpay_signature, "hex");
+const isValid =
+  expectedBuf.length === receivedBuf.length &&
+  crypto.timingSafeEqual(expectedBuf, receivedBuf);
 ```
 
 **Foot-gun**: One-time orders sign `order_id + "|" + payment_id`, but subscriptions sign `payment_id + "|" + subscription_id` — payment_id comes FIRST for subscriptions. Swapping the order silently fails verification.

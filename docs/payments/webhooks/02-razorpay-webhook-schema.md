@@ -1,115 +1,180 @@
-# Razorpay Webhook Schema
+# Razorpay & RazorpayX Webhook Schema Reference
 
-> **Moved (org/B2B side):** The organization-side documentation for inbound payment webhooks now lives in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+> **Canonical Source:** [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts) and [`app/api/webhooks/razorpay-dispatch.ts`](../../../app/api/webhooks/razorpay-dispatch.ts).  
+> **Organization / B2B Details:** See [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
+
+**Last Updated**: 2026-10-05
+
+---
+
+## Overview
+
+All inbound webhooks from both **Razorpay Payments** (orders, payments, refunds, disputes, settlements) and **RazorpayX** (payouts, fund account validations) arrive at `POST /api/webhooks/razorpay` ([`app/api/webhooks/razorpay/route.ts`](../../../app/api/webhooks/razorpay/route.ts)) and are validated against [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts).
+
+### Critical Official Razorpay Payload Nuances
+
+1. **`refund.entity.speed_requested` vs `speed_processed`**:
+   - `speed_requested` is `"normal" | "optimum"` (NEVER `"instant"` — Razorpay's Refunds API accepts `speed: "normal" | "optimum"`, and echoes that in `speed_requested`).
+   - `speed_processed` is `"normal" | "instant"` (indicating whether Razorpay was actually able to execute an instant refund or fell back to normal speed).
+2. **`order.paid` carries BOTH `order` and `payment` entities**:
+   - In `order.paid` events, `contains` is `["payment", "order"]` and `payload` includes both `payload.order.entity` and `payload.payment.entity`.
+3. **All 6 `payment.dispute.*` events**:
+   - `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, and `payment.dispute.action_required`.
+   - `respond_by` and `created_at` are Unix epoch **seconds** (multiply by `1000` for JS `Date`).
+   - Note: The official Razorpay Dispute webhook entity does **not** include a `comments` field (`reason_code`, `status`, `phase`, `amount_deducted`, and `respond_by` are the core fields).
+4. **RazorpayX `payout.*` events & `status_details`**:
+   - RazorpayX emits `payout.initiated` when a payout transitions into `processing` (not `payout.processed`, which fires on bank credit completion).
+   - Top-level `failure_reason` is deprecated on modern RazorpayX payloads and frequently `null`; always fall back to `status_details.description ?? status_details.reason`.
+5. **RazorpayX `fund_account.validation.*` (`fav_...`)**:
+   - `status: "completed"` only means the validation check finished — you **must** inspect `results.account_status === "active"` (vs `"invalid"`) and `results.registered_name`.
+
+---
+
+## Validated Event Catalog (24 Events)
 
 ```typescript
-import z from "zod";
+export const RazorpayEventTypeSchema = z.enum([
+  // Payment Events
+  "payment.authorized",
+  "payment.captured",
+  "payment.failed",
 
-// Base Razorpay entity schemas
-const razorpayAddressSchema = z.object({
-  line1: z.string().optional(),
-  line2: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  country: z.string().optional(),
-  zipcode: z.string().optional(),
-});
+  // Order Events
+  "order.paid",
 
-const razorpayCustomerSchema = z.object({
-  id: z.string(),
-  name: z.string().optional(),
-  email: z.string().email().optional(),
-  contact: z.string().optional(),
-  gstin: z.string().optional(),
-  notes: z.record(z.string()).optional(),
-  created_at: z.number(),
-});
+  // Refund Events
+  "refund.created",
+  "refund.processed",
+  "refund.failed",
+  "refund.speed_changed",
 
-const razorpayNotesSchema = z.record(z.string()).optional();
+  // Dispute Events (All 6 Official Events)
+  "payment.dispute.created",
+  "payment.dispute.won",
+  "payment.dispute.lost",
+  "payment.dispute.closed",
+  "payment.dispute.under_review",
+  "payment.dispute.action_required",
 
-// Payment entity schema
-const razorpayPaymentEntitySchema = z.object({
+  // Settlement Events
+  "settlement.processed",
+  "settlement.failed",
+
+  // RazorpayX Payout Events
+  "payout.initiated",
+  "payout.updated",
+  "payout.processed",
+  "payout.reversed",
+  "payout.failed",
+  "payout.rejected",
+  "payout.queued",
+  "payout.pending",
+
+  // RazorpayX Fund Account Validation (Penny Drop) Events
+  "fund_account.validation.completed",
+  "fund_account.validation.failed",
+]);
+```
+
+> **Why `subscription.*` and `invoice.*` are not in this list**: Familiarise manages recurring billing in-house (`BillingSubscription` + per-cycle Razorpay Orders) and generates GST tax invoices in-house (`lib/invoices/`, `lib/compliance/gst.ts`). Any unrecognized webhook event type is safely logged and acknowledged with HTTP `200` (`status: "ignored"`) so Razorpay does not retry or auto-disable the webhook endpoint.
+
+---
+
+## Core Entity Schemas (`schemas/webhooks/razorpay.ts`)
+
+### 1. Payment & Order Entities
+
+```typescript
+export const RazorpayPaymentEntitySchema = z.object({
   id: z.string(),
   entity: z.literal("payment"),
-  amount: z.number(),
+  amount: z.number(), // in paise
   currency: z.string(),
-  status: z.enum([
-    "created",
-    "authorized",
-    "captured",
-    "refunded",
-    "failed",
-    "disputed",
-    "partially_refunded",
-  ]),
-  order_id: z.string().optional(),
-  invoice_id: z.string().optional(),
-  international: z.boolean(),
-  method: z.enum([
-    "card",
-    "netbanking",
-    "wallet",
-    "emi",
-    "upi",
-    "bank_transfer",
-  ]),
-  amount_refunded: z.number(),
-  refund_status: z.enum(["null", "partial", "full"]).optional(),
+  status: z.enum(["created", "authorized", "captured", "refunded", "failed"]),
+  order_id: z.string().nullable(),
+  invoice_id: z.string().nullable().optional(),
+  international: z.boolean().optional(),
+  method: z.string(), // card, netbanking, wallet, emi, upi, bank_transfer
+  amount_refunded: z.number().optional(),
+  refund_status: z.enum(["partial", "full"]).nullable().optional(),
   captured: z.boolean(),
-  description: z.string().optional(),
-  card_id: z.string().optional(),
-  bank: z.string().optional(),
-  wallet: z.string().optional(),
-  vpa: z.string().optional(),
-  email: z.string().email().optional(),
+  description: z.string().nullable().optional(),
+  email: z.string().optional(),
   contact: z.string().optional(),
-  notes: razorpayNotesSchema,
-  fee: z.number().optional(),
-  tax: z.number().optional(),
-  error_code: z.string().optional(),
-  error_description: z.string().optional(),
-  error_source: z.string().optional(),
-  error_step: z.string().optional(),
-  error_reason: z.string().optional(),
-  acquirer_data: z.record(z.any()).optional(),
+  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
+  fee: z.number().nullable().optional(),
+  tax: z.number().nullable().optional(),
+  error_code: z.string().nullable().optional(),
+  error_description: z.string().nullable().optional(),
+  error_source: z.string().nullable().optional(),
+  error_step: z.string().nullable().optional(),
+  error_reason: z.string().nullable().optional(),
+  acquirer_data: z
+    .object({
+      rrn: z.string().nullable().optional(),
+      upi_transaction_id: z.string().nullable().optional(),
+    })
+    .passthrough()
+    .optional(),
+  upi: z
+    .object({
+      vpa: z.string().nullable().optional(),
+      payer_account_type: z.string().nullable().optional(),
+    })
+    .passthrough()
+    .optional(),
   created_at: z.number(),
 });
 
-// Order entity schema
-const razorpayOrderEntitySchema = z.object({
+export const RazorpayOrderEntitySchema = z.object({
   id: z.string(),
   entity: z.literal("order"),
   amount: z.number(),
   amount_paid: z.number(),
   amount_due: z.number(),
   currency: z.string(),
-  receipt: z.string().optional(),
-  offer_id: z.string().optional(),
+  receipt: z.string().nullable().optional(),
   status: z.enum(["created", "attempted", "paid"]),
   attempts: z.number(),
-  notes: razorpayNotesSchema,
+  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
   created_at: z.number(),
 });
+```
 
-// Refund entity schema
-const razorpayRefundEntitySchema = z.object({
+### 2. Refund Entity
+
+```typescript
+export const RazorpayRefundEntitySchema = z.object({
   id: z.string(),
   entity: z.literal("refund"),
-  amount: z.number(),
+  amount: z.number(), // in paise
   currency: z.string(),
   payment_id: z.string(),
-  notes: razorpayNotesSchema,
-  receipt: z.string().optional(),
-  acquirer_data: z.record(z.any()).optional(),
+  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
+  receipt: z.string().nullable().optional(),
+  acquirer_data: z
+    .object({
+      arn: z.string().nullable().optional(),
+      rrn: z.string().nullable().optional(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
   created_at: z.number(),
-  batch_id: z.string().optional(),
+  batch_id: z.string().nullable().optional(),
   status: z.enum(["pending", "processed", "failed"]),
-  speed_processed: z.enum(["normal", "instant"]).optional(),
-  speed_requested: z.enum(["normal", "instant"]).optional(),
+  // Official Razorpay values:
+  // - speed_requested: "normal" | "optimum" (never "instant")
+  // - speed_processed: "normal" | "instant"
+  speed_processed: z.enum(["normal", "instant"]).nullable().optional(),
+  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
 });
+```
 
-// Dispute entity schema
-const razorpayDisputeEntitySchema = z.object({
+### 3. Dispute Entity
+
+```typescript
+export const RazorpayDisputeEntitySchema = z.object({
   id: z.string(),
   entity: z.literal("dispute"),
   payment_id: z.string(),
@@ -117,231 +182,107 @@ const razorpayDisputeEntitySchema = z.object({
   currency: z.string(),
   amount_deducted: z.number(),
   reason_code: z.string(),
-  reason_description: z.string(),
-  status: z.enum(["open", "under_review", "won", "lost", "closed"]),
-  phase: z.enum(["chargeback", "pre_arbitration", "arbitration"]),
-  respond_by: z.number(),
-  evidence: z.record(z.any()).optional(),
-  evidence_details: z.record(z.any()).optional(),
-  created_at: z.number(),
-});
-
-// Settlement entity schema
-const razorpaySettlementEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("settlement"),
-  amount: z.number(),
-  status: z.enum(["created", "processed", "failed"]),
-  fees: z.number(),
-  tax: z.number(),
-  utr: z.string().optional(),
-  created_at: z.number(),
-});
-
-// Invoice entity schema
-const razorpayInvoiceEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("invoice"),
-  receipt: z.string().optional(),
-  invoice_number: z.string().optional(),
-  customer_id: z.string().optional(),
-  customer_details: razorpayCustomerSchema.optional(),
-  order_id: z.string().optional(),
-  line_items: z.array(z.record(z.any())).optional(),
-  payment_id: z.string().optional(),
+  respond_by: z.number(), // Unix epoch seconds
   status: z.enum([
-    "draft",
-    "issued",
-    "partially_paid",
-    "paid",
-    "cancelled",
-    "expired",
+    "open",
+    "under_review",
+    "Action_Required",
+    "action_required",
+    "won",
+    "lost",
+    "closed",
   ]),
-  expire_by: z.number().optional(),
-  issued_at: z.number().optional(),
-  paid_at: z.number().optional(),
-  cancelled_at: z.number().optional(),
-  expired_at: z.number().optional(),
-  sms_status: z.string().optional(),
-  email_status: z.string().optional(),
-  date: z.number(),
-  terms: z.string().optional(),
-  partial_payment: z.boolean(),
-  gross_amount: z.number(),
-  tax_amount: z.number(),
-  taxable_amount: z.number(),
-  amount: z.number(),
-  amount_paid: z.number(),
-  amount_due: z.number(),
+  phase: z.enum([
+    "fraud",
+    "chargeback",
+    "pre_arbitration",
+    "arbitration",
+  ]),
+  comments: z.string().nullable().optional(),
+  created_at: z.number(),
+});
+```
+
+### 4. RazorpayX Payout & Fund Account Validation Entities
+
+```typescript
+export const RazorpayPayoutEntitySchema = z.object({
+  id: z.string(),
+  entity: z.literal("payout"),
+  fund_account_id: z.string(),
+  amount: z.number(), // in paise
   currency: z.string(),
-  description: z.string().optional(),
-  notes: razorpayNotesSchema,
-  comment: z.string().optional(),
-  short_url: z.string().optional(),
-  view_less: z.boolean().optional(),
-  billing_start: z.number().optional(),
-  billing_end: z.number().optional(),
-  type: z.enum(["invoice", "ecod", "link", "payment_request"]).optional(),
-  group_taxes_discounts: z.boolean().optional(),
+  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
+  fees: z.number().optional(),
+  tax: z.number().optional(),
+  status: z.enum([
+    "queued",
+    "pending",
+    "rejected",
+    "processing",
+    "processed",
+    "cancelled",
+    "reversed",
+    "failed",
+  ]),
+  purpose: z.string(),
+  utr: z.string().nullable(),
+  mode: z.enum(["NEFT", "RTGS", "IMPS", "UPI", "card", "amazonpay"]),
+  reference_id: z.string().nullable().optional(),
+  narration: z.string().nullable().optional(),
+  batch_id: z.string().nullable().optional(),
+  failure_reason: z.string().nullable().optional(),
+  status_details: z
+    .object({
+      reason: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      source: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   created_at: z.number(),
 });
 
-// Main webhook payload schemas
-const paymentWebhookPayloadSchema = z.object({
-  payment: z.object({
-    entity: razorpayPaymentEntitySchema,
+export const RazorpayFundAccountValidationEntitySchema = z.object({
+  id: z.string(),
+  entity: z.literal("fund_account.validation"),
+  fund_account: z.object({
+    id: z.string(),
+    entity: z.literal("fund_account"),
+    contact_id: z.string().optional(),
+    account_type: z.enum(["bank_account", "vpa"]),
+    bank_account: z
+      .object({
+        name: z.string().optional(),
+        bank_name: z.string().optional(),
+        ifsc: z.string(),
+        account_number: z.string(),
+      })
+      .optional(),
+    vpa: z
+      .object({
+        username: z.string().optional(),
+        handle: z.string().optional(),
+        address: z.string(),
+      })
+      .optional(),
   }),
-});
-
-const orderWebhookPayloadSchema = z.object({
-  order: z.object({
-    entity: razorpayOrderEntitySchema,
-  }),
-});
-
-const refundWebhookPayloadSchema = z.object({
-  refund: z.object({
-    entity: razorpayRefundEntitySchema,
-  }),
-});
-
-const disputeWebhookPayloadSchema = z.object({
-  dispute: z.object({
-    entity: razorpayDisputeEntitySchema,
-  }),
-});
-
-const settlementWebhookPayloadSchema = z.object({
-  settlement: z.object({
-    entity: razorpaySettlementEntitySchema,
-  }),
-});
-
-const invoiceWebhookPayloadSchema = z.object({
-  invoice: z.object({
-    entity: razorpayInvoiceEntitySchema,
-  }),
-});
-
-// Main Razorpay webhook schema
-export const razorpayWebhookSchema = z.object({
-  entity: z.literal("event"),
-  account_id: z.string(),
-  event: z.enum([
-    // Payment events
-    "payment.authorized",
-    "payment.failed",
-    "payment.captured",
-    "payment.dispute.created",
-
-    // Order events
-    "order.paid",
-
-    // Refund events
-    "refund.created",
-    "refund.failed",
-    "refund.processed",
-
-    // Dispute events
-    "payment.dispute.created",
-    "payment.dispute.won",
-    "payment.dispute.lost",
-    "payment.dispute.closed",
-
-    // Settlement events
-    "settlement.processed",
-    "settlement.failed",
-
-    // Invoice events
-    "invoice.paid",
-    "invoice.partially_paid",
-    "invoice.payment_failed",
-
-    // Subscription events
-    "subscription.activated",
-    "subscription.charged",
-    "subscription.completed",
-    "subscription.cancelled",
-    "subscription.updated",
-    "subscription.pending",
-    "subscription.halted",
-    "subscription.resumed",
-    "subscription.paused",
-
-    // Virtual Account events
-    "virtual_account.created",
-    "virtual_account.credited",
-    "virtual_account.closed",
-  ]),
-  payload: z.union([
-    paymentWebhookPayloadSchema,
-    orderWebhookPayloadSchema,
-    refundWebhookPayloadSchema,
-    disputeWebhookPayloadSchema,
-    settlementWebhookPayloadSchema,
-    invoiceWebhookPayloadSchema,
-  ]),
+  status: z.enum(["created", "completed", "failed"]),
+  amount: z.number().optional(),
+  currency: z.string().optional(),
+  results: z
+    .object({
+      account_status: z.string().nullable().optional(), // "active" | "invalid"
+      registered_name: z.string().nullable().optional(),
+    })
+    .optional(),
+  validation_results: z
+    .object({
+      account_status: z.string().nullable().optional(),
+      registered_name: z.string().nullable().optional(),
+    })
+    .optional(),
   created_at: z.number(),
+  utr: z.string().nullable().optional(),
 });
-
-// Individual event type schemas for type safety
-export const razorpayPaymentAuthorizedSchema = razorpayWebhookSchema.extend({
-  event: z.literal("payment.authorized"),
-  payload: paymentWebhookPayloadSchema,
-});
-
-export const razorpayPaymentCapturedSchema = razorpayWebhookSchema.extend({
-  event: z.literal("payment.captured"),
-  payload: paymentWebhookPayloadSchema,
-});
-
-export const razorpayPaymentFailedSchema = razorpayWebhookSchema.extend({
-  event: z.literal("payment.failed"),
-  payload: paymentWebhookPayloadSchema,
-});
-
-export const razorpayOrderPaidSchema = razorpayWebhookSchema.extend({
-  event: z.literal("order.paid"),
-  payload: orderWebhookPayloadSchema,
-});
-
-export const razorpayRefundCreatedSchema = razorpayWebhookSchema.extend({
-  event: z.literal("refund.created"),
-  payload: refundWebhookPayloadSchema,
-});
-
-export const razorpayDisputeCreatedSchema = razorpayWebhookSchema.extend({
-  event: z.literal("payment.dispute.created"),
-  payload: disputeWebhookPayloadSchema,
-});
-
-// Type exports
-export type RazorpayWebhookEvent = z.infer<typeof razorpayWebhookSchema>;
-export type RazorpayPaymentEntity = z.infer<typeof razorpayPaymentEntitySchema>;
-export type RazorpayOrderEntity = z.infer<typeof razorpayOrderEntitySchema>;
-export type RazorpayRefundEntity = z.infer<typeof razorpayRefundEntitySchema>;
-export type RazorpayDisputeEntity = z.infer<typeof razorpayDisputeEntitySchema>;
-
-// Validation helper function
-export function validateRazorpayWebhook(data: unknown): {
-  isValid: boolean;
-  event?: RazorpayWebhookEvent;
-  error?: string;
-} {
-  try {
-    const event = razorpayWebhookSchema.parse(data);
-    return { isValid: true, event };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        isValid: false,
-        error: `Validation failed: ${error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")}`,
-      };
-    }
-    return {
-      isValid: false,
-      error: `Unknown validation error: ${error}`,
-    };
-  }
-}
 ```
