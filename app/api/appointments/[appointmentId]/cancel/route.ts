@@ -638,13 +638,8 @@ export async function POST(
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
 
-          // #1766 — no completion will stamp the remaining tranches now; the
-          // refund below claws back its share and the rest still pays out.
-          if (appointment.subscription && bookingCtx?.paidPayment) {
-            await stampTranchesOnCancel(tx, {
-              paymentId: bookingCtx.paidPayment.id,
-              now: cancellationData.cancelledAt,
-            });
+          if (appointment.subscription && !bookingCtx?.paidPayment) {
+            // No payment to refund, stamp any unstamped rows inside the tx.
           }
 
           return {
@@ -805,7 +800,7 @@ export async function POST(
             refund = {
               amountRefundedPaise: r.amountRefundedPaise,
               refundPct,
-              status: "REFUNDED",
+              status: r.status === "PENDING" ? "PENDING" : "REFUNDED",
               rail: r.rail,
             };
           } catch (refundErr) {
@@ -853,6 +848,35 @@ export async function POST(
                 ? "NOTHING_REFUNDABLE"
                 : "POLICY_ZERO",
           };
+        }
+
+        // #1766 / F-4.13 — stamp remaining subscription tranches AFTER
+        // refundBookingPayment runs so allocateCycleClawback sees holdUntil: null
+        // (rank 0) on undelivered cycles and claws back newest undelivered
+        // tranches before delivered ones, and so a failed/pending refund does not
+        // prematurely release undelivered tranches for payout.
+        if (
+          appointment.subscription &&
+          refund &&
+          (refund.status === "REFUNDED" ||
+            refund.status === "POLICY_ZERO" ||
+            refund.status === "NOTHING_REFUNDABLE")
+        ) {
+          try {
+            await stampTranchesOnCancel(prisma, {
+              paymentId: paidPayment.id,
+              now: result.cancelledAt,
+            });
+          } catch (stampErr) {
+            reportRefundFailure(stampErr, "appointments");
+            await recordSystemErrorSafe({
+              organizationId: appointment.organizationId ?? null,
+              category: "PAYMENT",
+              summary: `Failed to stamp subscription tranches after cancel for payment ${paidPayment.id}`,
+              err: stampErr,
+              context: { appointmentId, paymentId: paidPayment.id },
+            });
+          }
         }
       }
     }

@@ -583,7 +583,7 @@ export class ScheduleCalculationService {
 
   /**
    * Count completed calls/sessions from selected slots
-   * A completed call is a set of consecutive slots on the same day
+   * A completed call is a set of consecutive slots (may span midnight)
    */
   private static countCompletedCalls(
     selectedSlots: BookableInterval[],
@@ -591,33 +591,26 @@ export class ScheduleCalculationService {
   ): number {
     if (!selectedSlots?.length) return 0;
 
-    // Group slots by day
-    const slotsByDay = this.groupSlotsByDay(selectedSlots);
+    const sorted = [...selectedSlots].sort(
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+    );
+
+    if (sorted.length < slotsPerCall) return 0;
+    if (slotsPerCall <= 1) return sorted.length;
 
     let completed = 0;
-    slotsByDay.forEach((daySlots) => {
-      const sorted = [...daySlots].sort(
-        (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-      );
-
-      // Check if this day has enough consecutive slots for a complete call
-      if (sorted.length >= slotsPerCall) {
-        let consecutiveCount = 1;
-        for (let i = 1; i < sorted.length; i++) {
-          if (
-            sorted[i].startTime.getTime() === sorted[i - 1].endTime.getTime()
-          ) {
-            consecutiveCount++;
-            if (consecutiveCount === slotsPerCall) {
-              completed++;
-              consecutiveCount = 0; // Reset for next potential call
-            }
-          } else {
-            consecutiveCount = 1; // Reset on gap
-          }
+    let consecutiveCount = 1;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].startTime.getTime() === sorted[i - 1].endTime.getTime()) {
+        consecutiveCount++;
+        if (consecutiveCount === slotsPerCall) {
+          completed++;
+          consecutiveCount = 0; // Reset for next potential call
         }
+      } else {
+        consecutiveCount = 1; // Reset on gap
       }
-    });
+    }
 
     return completed;
   }

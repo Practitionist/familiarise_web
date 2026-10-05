@@ -6,13 +6,6 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { addMonths } from "date-fns";
-import {
-  notifySubscriptionStarted,
-  notifySubscriptionCancelled,
-} from "@/lib/novu";
-import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
-import { goHref } from "@/lib/dashboard/go";
 import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 import {
   requireApiAuth,
@@ -23,7 +16,8 @@ import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
 import {
   parseRequestListQueryOrRespond,
-  refuseApprovalOnListRoute,
+  releaseDeclinedRequestHold,
+  validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -322,43 +316,24 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // #1704 — approval lives on the [id] route only, for everyone.
-    const approvalRefusal = refuseApprovalOnListRoute(status);
-    if (approvalRefusal) return approvalRefusal;
-
-    // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
-    // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee
-    // could reject their own PAID booking and ride the consultant-initiated
-    // 100% refund tier on demand. Mirrors the consultations list PATCH.
-    if (
-      status === AppointmentStatus.REJECTED &&
-      !isConsultant &&
-      !isPrivileged(session.user.role)
-    ) {
-      return forbiddenResponse(
-        "Only the consultant can decline a request. Cancel it instead.",
-      );
-    }
-
-    const startDate = new Date();
-    const endDate = addMonths(
-      startDate,
-      existingSubscription.subscriptionPlan.durationInMonths,
+    const patchError = validateListRequestStatusPatch(
+      status,
+      isConsultant,
+      isPrivileged(session.user.role),
     );
+    if (patchError) return patchError;
 
     try {
       // #836 — allowed-from guard rides the WHERE; updateMany returns no
       // row, so re-read for the heavy include.
-      await prisma.$transaction((tx) =>
-        transitionSubscriptionRequest(tx, {
+      await prisma.$transaction(async (tx) => {
+        await transitionSubscriptionRequest(tx, {
           where: { id },
           to: status,
-          data: {
-            schedulingPeriodStartsAt: startDate,
-            schedulingPeriodEndsAt: endDate,
-          },
-        }),
-      );
+          data: { pendingPaymentUrl: null },
+        });
+        await releaseDeclinedRequestHold(tx, { subscriptionId: id }, session.user.id);
+      });
 
       // #1004 — rejection refund through the front door, after commit.
       const rejectionRefund =
@@ -421,64 +396,6 @@ export async function PATCH(request: NextRequest) {
           },
         },
       });
-
-      // If approved, notify consultee
-      // Note: Appointment slots are created through SchedulingService during checkout,
-      // not here. This handler only manages status transitions and notifications.
-      if (status === AppointmentStatus.APPROVED) {
-        // Fire-and-forget: notify consultee that subscription started
-        const consulteeUserId = subscription.requestedBy?.user?.id;
-        if (consulteeUserId) {
-          await notifySubscriptionStarted(consulteeUserId, {
-            subscriptionId: subscription.id,
-            planTitle: subscription.subscriptionPlan?.title || "Subscription",
-            consultantName:
-              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
-              "Consultant",
-            consulteeName: subscription.requestedBy?.user?.name || undefined,
-            // #1527 — single known recipient, the consultee.
-            dashboardUrl: goHref("client", "appointments"),
-          });
-        }
-      }
-
-      // Fire-and-forget: notify both parties on cancellation
-      if (status === AppointmentStatus.CANCELLED) {
-        const consultantUserId =
-          subscription.subscriptionPlan?.consultantProfile?.user?.id;
-        const consulteeUserId = subscription.requestedBy?.user?.id;
-        const userIds = [consultantUserId, consulteeUserId].filter(
-          (id): id is string => !!id,
-        );
-        if (userIds.length > 0) {
-          await notifySubscriptionCancelled(userIds, {
-            subscriptionId: subscription.id,
-            planTitle: subscription.subscriptionPlan?.title || "Subscription",
-            consultantName:
-              subscription.subscriptionPlan?.consultantProfile?.user?.name ||
-              "Consultant",
-            consulteeName: subscription.requestedBy?.user?.name || undefined,
-            // #1527 — both consultant and consultee are recipients here.
-            dashboardUrl: goHref("auto", "appointments"),
-          });
-        }
-
-        // Log cancellation activity (awaited — DB write should not be dropped in serverless)
-        const cpId = subscription.subscriptionPlan?.consultantProfileId;
-        if (cpId) {
-          await logSubscriptionCancelled(
-            cpId,
-            subscription.id,
-            {
-              id: session.user.id,
-              name: session.user.name || "User",
-              image: session.user.image,
-            },
-            subscription.subscriptionPlan?.title || "Subscription",
-            session.user.id === consultantUserId ? "consultant" : "consultee",
-          );
-        }
-      }
 
       return NextResponse.json({ data: subscription, rejectionRefund });
     } catch (error) {

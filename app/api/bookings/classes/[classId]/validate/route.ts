@@ -20,6 +20,12 @@ import {
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
+import {
+  categorizeValidationErrors,
+  conflictDetailsBySlot,
+  findTentativeOccurrenceIdsForEvent,
+} from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 interface ValidationResult extends SlotConflictResult {
@@ -54,6 +60,9 @@ export async function POST(
     if (authResult.error) return authResult.error;
 
     const { classId } = await params;
+
+    const malformed = refuseMalformedEventId(classId);
+    if (malformed) return malformed;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
@@ -100,6 +109,12 @@ export async function POST(
       // Convert slots to Date objects
       const slotDates = body.slots.map((slot) => new Date(slot));
 
+      // Exclude this class's own tentative occurrences during re-allocation
+      const excludeOccurrenceIds = await findTentativeOccurrenceIdsForEvent(
+        prisma,
+        { classId },
+      );
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, weekly distribution, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -123,8 +138,20 @@ export async function POST(
             classEntity.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt:
             classEntity.schedulingPeriodEndsAt ?? undefined,
+          schedulingTimezone: classEntity.schedulingTimezone,
+        },
+        [],
+        {
+          excludeOccurrenceIds,
+          consultantProfileId: classPlan.consultantProfileId ?? undefined,
         },
       );
+      const viewer = {
+        userId: authResult.session.user.id,
+        isEventConsultant:
+          authResult.session.user.id === consultantProfile.user.id,
+      };
+      const conflictDetails = conflictDetailsBySlot(validationResult.conflicts);
 
       // If validation passed, all slots are valid
       if (validationResult.isValid) {
@@ -138,67 +165,17 @@ export async function POST(
         });
       }
 
-      // Categorize errors by prefix instead of brittle regex
-      const result: ValidationResult = {
-        conflicts: [],
-        outsideAvailability: [],
-        validSlots: [],
-        weeklyDistributionErrors: [],
-      };
-
-      for (const error of validationResult.errors) {
-        if (error.startsWith("[CONFLICT]")) {
-          const message = error.replace("[CONFLICT] ", "");
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            const slot = slotMatch[1];
-            result.conflicts.push({
-              slot,
-              existingAppointment: {
-                type: message.includes("subscription")
-                  ? "Subscription"
-                  : message.includes("class")
-                    ? "Class"
-                    : "Consultation",
-                with: "Another user",
-                time: new Date(slot).toLocaleString(),
-              },
-            });
-          }
-        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
-          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
-          const slotMatch = message.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.outsideAvailability.push({ slot: slotMatch[1] });
-          }
-        } else if (error.startsWith("[WEEKLY_LIMIT]")) {
-          const message = error.replace("[WEEKLY_LIMIT] ", "");
-          // Extract week and session count from structured message
-          const sessionsMatch = message.match(
-            /has (\d+) sessions but max is (\d+)/,
-          );
-          const weekMatch = message.match(/Week of (.+?) has/);
-          if (sessionsMatch && weekMatch) {
-            result.weeklyDistributionErrors.push({
-              week: weekMatch[1],
-              slotsCount: parseInt(sessionsMatch[1]),
-              maxAllowed: parseInt(sessionsMatch[2]),
-            });
-          }
-        }
-        // [VALIDATION] errors don't need slot-level parsing
-      }
-
-      // Valid slots are those not in conflicts or outside availability
-      result.validSlots = body.slots.filter((slot) => {
-        return (
-          !result.conflicts.some((c) => c.slot === slot) &&
-          !result.outsideAvailability.some((o) => o.slot === slot)
-        );
+      const result: ValidationResult = categorizeValidationErrors({
+        errors: validationResult.errors,
+        slots: body.slots,
+        conflictDetails,
+        viewer,
+        resolveFallbackType: (message) =>
+          message.includes("subscription")
+            ? "Subscription"
+            : message.includes("class")
+              ? "Class"
+              : "Consultation",
       });
 
       // If there are weekly distribution errors, no slots are valid

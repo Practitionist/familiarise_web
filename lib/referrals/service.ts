@@ -574,10 +574,11 @@ export async function reverseCreditsForPayment(
 ): Promise<number> {
   // Find all usage records for this payment from the ledger. Carry the credit's
   // expiry so we don't restore onto a credit that has since lapsed (REF-2).
-  const usageRecords = await tx.referralCreditUsage.findMany({
-    where: { paymentId },
-    include: { credit: { select: { expiresAt: true } } },
-  });
+  const usageRecords =
+    (await tx.referralCreditUsage?.findMany?.({
+      where: { paymentId },
+      include: { credit: { select: { expiresAt: true } } },
+    })) ?? [];
 
   if (usageRecords.length === 0) return 0;
 

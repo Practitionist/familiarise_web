@@ -89,6 +89,7 @@ export function imminentSessionItem(
     // and drifting apart; a third copy here would be the same mistake.
     const state = getOccurrenceJoinState(run, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      rejoinGraceMs: 0,
       now,
     });
     if (state === "ended" || state === "disabled") continue;
@@ -102,7 +103,11 @@ export function imminentSessionItem(
     // it this way rather than comparing times again keeps one definition of
     // when a session is under way.
     const inProgress =
-      getOccurrenceJoinState(run, { joinWindowMs: 0, now }) === "joinable";
+      getOccurrenceJoinState(run, {
+        joinWindowMs: 0,
+        rejoinGraceMs: 0,
+        now,
+      }) === "joinable";
 
     // Rounded for display only — the window itself is decided above, on the
     // exact instant, because a session 10m29s out rounds to 10.
@@ -148,6 +153,7 @@ export interface ConsultantActionInput {
   payoutSetupNeeded?: boolean;
   /** Words the row: before launch the account is collected ahead of the flag. */
   livePayoutsEnabled?: boolean;
+  now?: Date;
 }
 
 export function deriveConsultantActionItems({
@@ -159,12 +165,14 @@ export function deriveConsultantActionItems({
   basePath,
   payoutSetupNeeded = false,
   livePayoutsEnabled = true,
+  now,
 }: ConsultantActionInput): ActionItem[] {
   const items: ActionItem[] = [];
 
   const imminent = imminentSessionItem(
     upcomingSessions,
     `${basePath}/appointments`,
+    now,
   );
   if (imminent) items.push(imminent);
 
@@ -259,6 +267,7 @@ export interface ConsulteeActionInput {
   documentsToRevise?: { id: string; name: string; appointmentId: string }[];
   /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
   failedRefunds?: { paymentId: string; amountText: string }[];
+  now?: Date;
 }
 
 /**
@@ -276,12 +285,14 @@ export function deriveConsulteeActionItems({
   sessionsToRate = [],
   documentsToRevise = [],
   failedRefunds = [],
+  now,
 }: ConsulteeActionInput): ActionItem[] {
   const items: ActionItem[] = [];
 
   const imminent = imminentSessionItem(
     upcomingSessions,
     `${basePath}/appointments`,
+    now,
   );
   if (imminent) items.push(imminent);
 

@@ -238,6 +238,15 @@ export function hasTimeOverlap(
  * happens downstream in `splitSlotsByDay` and `groupSlotsByDate`, which is why
  * the timezone argument is gone.
  */
+function isValidWeeklySlotRow(slot: WeeklySlot | null | undefined): boolean {
+  return Boolean(
+    slot?.id &&
+      slot.startDay &&
+      typeof slot.startTimeUtc === "number" &&
+      typeof slot.endTimeUtc === "number",
+  );
+}
+
 export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
@@ -245,7 +254,6 @@ export function processWeeklySlots(
 ): AvailabilityInterval[] {
   const processedSlots: AvailabilityInterval[] = [];
 
-  // Defensive: Validate input parameters
   if (!Array.isArray(weeklySlots)) {
     console.warn("⚠️ processWeeklySlots: weeklySlots is not an array");
     return processedSlots;
@@ -267,14 +275,7 @@ export function processWeeklySlots(
   }
 
   for (const slot of weeklySlots) {
-    // Defensive: Skip slots with invalid data
-    if (
-      !slot ||
-      !slot.id ||
-      !slot.startDay ||
-      typeof slot.startTimeUtc !== "number" ||
-      typeof slot.endTimeUtc !== "number"
-    ) {
+    if (!isValidWeeklySlotRow(slot)) {
       console.warn(
         `⚠️ processWeeklySlots: skipping slot with missing required fields`,
       );
@@ -286,12 +287,20 @@ export function processWeeklySlots(
       startDate,
       endDate,
     )) {
-      processedSlots.push({
-        start: occurrence.start,
-        end: occurrence.end,
-        availabilityId: slot.id,
-        type: "WEEKLY",
-      });
+      const clippedStart = new Date(
+        Math.max(occurrence.start.getTime(), startDate.getTime()),
+      );
+      const clippedEnd = new Date(
+        Math.min(occurrence.end.getTime(), endDate.getTime()),
+      );
+      if (clippedStart < clippedEnd) {
+        processedSlots.push({
+          start: clippedStart,
+          end: clippedEnd,
+          availabilityId: slot.id,
+          type: "WEEKLY",
+        });
+      }
     }
   }
 
@@ -358,12 +367,16 @@ export function processCustomSlots(
       // Only include slots that overlap with our date range
       return hasTimeOverlap(slot.startsAt, slot.endsAt, startDate, endDate);
     })
-    .map((slot) => ({
-      start: slot.startsAt,
-      end: slot.endsAt,
-      availabilityId: slot.id,
-      type: "CUSTOM",
-    }));
+    .map((slot) => {
+      const start = new Date(slot.startsAt);
+      const end = new Date(slot.endsAt);
+      return {
+        start: start < startDate ? startDate : start,
+        end: end > endDate ? endDate : end,
+        availabilityId: slot.id,
+        type: "CUSTOM",
+      };
+    });
 }
 
 /**
@@ -643,7 +656,10 @@ export function mergeConsecutiveSlots(
     // the grid promised.
     const isConsecutive = currentMergedEnd === nextSlotStart;
     const bothAvailable =
-      !currentMerged.isAllocated && !currentSlot.isAllocated;
+      !currentMerged.isAllocated &&
+      !currentSlot.isAllocated &&
+      (currentMerged.bookingStatus ?? "available") === "available" &&
+      (currentSlot.bookingStatus ?? "available") === "available";
     // #1320 — merge ACROSS availability rows. #788 forbade this because
     // checkout validated the whole window against the one row id the merged
     // slot carried; checkout now validates against the union of the

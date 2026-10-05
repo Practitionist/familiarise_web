@@ -8,9 +8,11 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   DEFAULT_MEETING_DURATION_MS,
   getOccurrenceVMJoinState,
+  isDeadOccurrence,
   isOccurrenceOver,
   meetingClosedAt,
 } from "@/lib/appointments/occurrences";
+import { useNowTick } from "@/hooks/use-now-tick";
 import type { OccurrenceVM } from "@/lib/appointments/view-model";
 import { TRIAL_STATUS_BADGE } from "@/lib/labels/session-labels";
 import { CountdownBadge } from "./CountdownBadge";
@@ -95,8 +97,9 @@ interface SessionGroup {
 export function slotStatus(
   slot: OccurrenceVM,
   joinWindowMs: number = CONSULTEE_JOIN_WINDOW_MS,
+  now?: Date,
 ): SessionStatus {
-  const state = getOccurrenceVMJoinState(slot, { joinWindowMs });
+  const state = getOccurrenceVMJoinState(slot, { joinWindowMs, now });
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
 
@@ -122,14 +125,15 @@ export function slotStatus(
   // `disabled` on a session whose time has not arrived is a dead row
   // (cancelled, or released for reschedule) — "no record" would be a lie
   // about the future, so it keeps reading as upcoming.
-  return isOccurrenceOver(slot) ? "noRecord" : "upcoming";
+  return isOccurrenceOver(slot, now) ? "noRecord" : "upcoming";
 }
 
 function sessionStatusOf(
   group: SessionGroup,
   joinWindowMs: number,
+  now?: Date,
 ): SessionStatus {
-  const statuses = group.slots.map((s) => slotStatus(s, joinWindowMs));
+  const statuses = group.slots.map((s) => slotStatus(s, joinWindowMs, now));
   if (statuses.includes("joinable")) return "joinable";
   if (statuses.includes("upcoming")) return "upcoming";
   if (statuses.every((s) => s === "completed")) return "completed";
@@ -206,13 +210,14 @@ export function SessionTimeline({
   heldRowLabel,
 }: SessionTimelineProps) {
   const format = useZonedFormat();
+  const now = useNowTick();
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
     setExpanded(defaultExpanded);
   }, [defaultExpanded]);
 
   const nonTentative = useMemo(
-    () => occurrences.filter((s) => !s.isTentative),
+    () => occurrences.filter((s) => !s.isTentative && !isDeadOccurrence(s)),
     [occurrences],
   );
   // #1428 — tentative sessions used to be dropped outright here, so a
@@ -220,7 +225,10 @@ export function SessionTimeline({
   // nothing at all. Kept as its own list (never mixed into `groups`) so the
   // held row's countdown/CTA styling doesn't leak into the confirmed rules.
   const tentative = useMemo(
-    () => (showHeld ? occurrences.filter((s) => s.isTentative) : []),
+    () =>
+      showHeld
+        ? occurrences.filter((s) => s.isTentative && !isDeadOccurrence(s))
+        : [],
     [occurrences, showHeld],
   );
   const groups = useMemo(() => toSessionGroups(nonTentative), [nonTentative]);
@@ -230,9 +238,11 @@ export function SessionTimeline({
   const groupStatuses = useMemo(
     () =>
       new Map(
-        groups.map((g) => [g.key, sessionStatusOf(g, joinWindowMs)] as const),
+        groups.map(
+          (g) => [g.key, sessionStatusOf(g, joinWindowMs, now)] as const,
+        ),
       ),
-    [groups, joinWindowMs],
+    [groups, joinWindowMs, now],
   );
 
   // First strictly-upcoming session gets the relative countdown badge;
@@ -338,12 +348,12 @@ export function SessionTimeline({
         const joinable =
           status === "joinable" && onJoinSession
             ? group.slots.find(
-                (s) => slotStatus(s, joinWindowMs) === "joinable",
+                (s) => slotStatus(s, joinWindowMs, now) === "joinable",
               )
             : undefined;
         const isRejoinAfterStart =
           joinable !== undefined &&
-          Date.now() > new Date(joinable.startsAt).getTime();
+          now.getTime() > new Date(joinable.startsAt).getTime();
 
         return (
           <div

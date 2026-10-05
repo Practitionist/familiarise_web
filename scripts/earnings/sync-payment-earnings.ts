@@ -425,6 +425,7 @@ async function syncPaymentEarningsUnlocked(
   const skippedRefunded = await prisma.payment.count({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: { not: null },
       earnings: { none: {} },
       ...REFUNDED_OR_DISPUTED,
     },

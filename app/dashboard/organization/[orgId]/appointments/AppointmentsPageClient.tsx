@@ -43,6 +43,7 @@ import {
   ScopedListTable,
   type Column,
 } from "@/components/dashboard/ScopedListTable";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
@@ -52,6 +53,7 @@ interface AppointmentSlot {
   endsAt: string | null;
   isTentative: boolean;
   completionStatus: string | null;
+  deletedAt?: string | null;
 }
 
 interface AppointmentRow {
@@ -149,11 +151,13 @@ function getMember(row: AppointmentRow): string {
   return `${names[0]} +${names.length - 1}`;
 }
 
-/** Earliest slot that hasn't ended yet, else the latest. Mirrors the member view. */
+/** Earliest live slot that hasn't ended yet, else the latest live slot (or latest dead slot if all dead). */
 function displaySlot(slots: AppointmentSlot[]): AppointmentSlot | null {
   if (!slots || slots.length === 0) return null;
   const now = Date.now();
-  const sorted = [...slots].sort(
+  const live = slots.filter((s) => !isDeadOccurrence(s));
+  const candidates = live.length > 0 ? live : slots;
+  const sorted = [...candidates].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
   const upcoming = sorted.find((s) => {

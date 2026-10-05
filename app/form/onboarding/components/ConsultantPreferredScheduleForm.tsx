@@ -392,7 +392,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   };
 
   const renderSlotsForDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const [year, month, day] = dateString.split("-").map(Number);
+    const date =
+      year && month && day
+        ? new Date(year, month - 1, day)
+        : new Date(dateString);
     return (
       <div
         key={`date-${dateString}`}

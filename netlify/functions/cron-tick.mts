@@ -316,11 +316,45 @@ function jsonResponse(body: unknown, status: number): Response {
  * failure or an aborted request reports as status `0`, which the caller sorts
  * into `failed` the same as any other non-2xx/409 outcome.
  */
+async function readResponseText(res: Response): Promise<string> {
+  return typeof res.text === "function"
+    ? await res.text().catch(() => "")
+    : "";
+}
+
+async function parse503Response(
+  res: Response,
+): Promise<{ maintenance: boolean; errorBody?: string }> {
+  const rawText = await readResponseText(res);
+  let body: { phase?: unknown } | null = null;
+  if (rawText) {
+    try {
+      body = JSON.parse(rawText) as { phase?: unknown };
+    } catch {
+      body = null;
+    }
+  } else if (typeof res.json === "function") {
+    body = (await res.json().catch(() => null)) as {
+      phase?: unknown;
+    } | null;
+  }
+  const maintenance = typeof body?.phase === "string";
+  return {
+    maintenance,
+    ...(!maintenance && rawText ? { errorBody: rawText.slice(0, 500) } : {}),
+  };
+}
+
 async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
-): Promise<{ name: string; status: number; maintenance?: boolean }> {
+): Promise<{
+  name: string;
+  status: number;
+  maintenance?: boolean;
+  errorBody?: string;
+}> {
   const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -333,13 +367,31 @@ async function hitTarget(
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
+    let errorBody: string | undefined;
     if (res.status === 503) {
-      const body = (await res.json().catch(() => null)) as {
-        phase?: unknown;
-      } | null;
-      maintenance = typeof body?.phase === "string";
+      const parsed = await parse503Response(res);
+      maintenance = parsed.maintenance;
+      errorBody = parsed.errorBody;
+    } else if (bucketFor(res.status, false) === "failed") {
+      const rawText = await readResponseText(res);
+      if (rawText) errorBody = rawText.slice(0, 500);
     }
-    return { name, status: res.status, maintenance };
+    if (bucketFor(res.status, maintenance) === "failed" && errorBody) {
+      console.error(
+        JSON.stringify({
+          event: "cron-tick-target-failed",
+          target: name,
+          status: res.status,
+          errorBody,
+        }),
+      );
+    }
+    return {
+      name,
+      status: res.status,
+      maintenance,
+      ...(errorBody ? { errorBody } : {}),
+    };
   } catch {
     return { name, status: 0, maintenance: false };
   } finally {
@@ -408,6 +460,7 @@ async function alertMissingSecret(error: string): Promise<void> {
 export function buildFailedTargetEvent(failed: {
   name: string;
   status: number;
+  errorBody?: string;
 }) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
@@ -420,6 +473,7 @@ export function buildFailedTargetEvent(failed: {
         // 0 is this module's "never got an answer" value, not an HTTP status.
         status: failed.status,
         outcome: failed.status === 0 ? ("network" as const) : ("http" as const),
+        ...(failed.errorBody ? { errorBody: failed.errorBody } : {}),
       },
     },
   };
@@ -445,7 +499,7 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
  * a total outage is bounded by the shared 30/hour breaker.
  */
 async function alertFailedTargets(
-  failed: { name: string; status: number }[],
+  failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
 ): Promise<void> {
   // Judge against the tick's start: targets can run 20 s past a minute boundary.
@@ -586,6 +640,8 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const ok: string[] = [];
   const lockHeld: string[] = [];
   const failed: { name: string; status: number }[] = [];
+  const failedForAlert: { name: string; status: number; errorBody?: string }[] =
+    [];
 
   settled.forEach((result, i) => {
     const name = targets[i];
@@ -594,10 +650,19 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const status = result.status === "fulfilled" ? result.value.status : 0;
     const maintenance =
       result.status === "fulfilled" && result.value.maintenance === true;
+    const errorBody =
+      result.status === "fulfilled" ? result.value.errorBody : undefined;
     const bucket = bucketFor(status, maintenance);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
-    else failed.push({ name, status });
+    else {
+      failed.push({ name, status });
+      failedForAlert.push({
+        name,
+        status,
+        ...(errorBody ? { errorBody } : {}),
+      });
+    }
   });
 
   const durationMs = Date.now() - started;
@@ -623,7 +688,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // canary is still visible in the tick's own output and in the job-execution
   // history — only the Sentry report is suppressed.
   await alertFailedTargets(
-    failed.filter((f) => reportableToSentry(f.name)),
+    failedForAlert.filter((f) => reportableToSentry(f.name)),
     new Date(started),
   );
 

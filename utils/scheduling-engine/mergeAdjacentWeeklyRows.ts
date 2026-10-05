@@ -1,7 +1,10 @@
 import type { DayOfWeek, Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { MAX_DURATION_MINUTES } from "@/utils/scheduling-engine/interval-validation";
-import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
+import {
+  utcStartDayIndex,
+  weeklyRowLocalColumns,
+} from "@/utils/schedule/weekly-projection";
 
 /**
  * #1320 — availability is one row per contiguous published window.
@@ -54,9 +57,16 @@ export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
     "FRIDAY",
     "SATURDAY",
   ];
+  const rowUtcDay = (r: WeeklyRowShape): number =>
+    utcStartDayIndex({
+      startDay: r.startDay,
+      startTimeUtc: r.startTimeUtc,
+      utcOffsetMinutes: r.utcOffsetMinutes ?? 0,
+    });
   const sorted = [...rows].sort(
     (a, b) =>
       dayOrder.indexOf(a.startDay) - dayOrder.indexOf(b.startDay) ||
+      rowUtcDay(a) - rowUtcDay(b) ||
       a.startTimeUtc - b.startTimeUtc,
   );
   const out: T[] = [];
@@ -68,6 +78,7 @@ export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
       sameDay &&
       prev.startDay === prev.endDay &&
       prev.startDay === row.startDay &&
+      rowUtcDay(prev) === rowUtcDay(row) &&
       !isOvernight(prev) &&
       !isOvernight(row) &&
       (prev.utcOffsetMinutes ?? 0) === (row.utcOffsetMinutes ?? 0) &&

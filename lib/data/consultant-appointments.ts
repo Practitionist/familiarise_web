@@ -131,6 +131,7 @@ export async function getConsultantAppointments(
       {
         occurrences: {
           some: {
+            deletedAt: null,
             AND: [
               { startsAt: { lt: new Date(endDate) } },
               { endsAt: { gt: new Date(startDate) } },
@@ -138,10 +139,10 @@ export async function getConsultantAppointments(
           },
         },
       },
-      // OR appointments with no slots at all
+      // OR appointments with no live slots at all
       {
         occurrences: {
-          none: {},
+          none: { deletedAt: null },
         },
       },
     ];
@@ -297,6 +298,7 @@ export async function getConsultantAppointments(
     where: whereClause,
     include: {
       occurrences: {
+        where: { deletedAt: null },
         orderBy: { startsAt: "asc" },
         include: {
           meeting: {

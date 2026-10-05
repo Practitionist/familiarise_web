@@ -773,6 +773,19 @@ export async function DELETE(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    const active = await checkActiveAppointments(id);
+    if (active.hasActive) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete consultant profile while active or upcoming appointments exist.",
+          code: "ACTIVE_APPOINTMENTS_BLOCK_DELETE",
+          details: active.details,
+        },
+        { status: 400 },
+      );
+    }
+
     const hasMoneyHistory =
       ownerCheck._count.earnings +
         ownerCheck._count.payouts +

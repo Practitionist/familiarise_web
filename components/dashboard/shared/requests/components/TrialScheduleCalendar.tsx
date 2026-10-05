@@ -83,14 +83,16 @@ export function TrialScheduleCalendar({
       try {
         const startDateInUtc = new Date(selectedDate);
         startDateInUtc.setHours(0, 0, 0, 0);
+        startDateInUtc.setTime(startDateInUtc.getTime() - 24 * 60 * 60 * 1000);
         const endDateInUtc = new Date(selectedDate);
         endDateInUtc.setHours(23, 59, 59, 999);
+        endDateInUtc.setTime(endDateInUtc.getTime() + 24 * 60 * 60 * 1000);
 
         const response = await fetch(
           `/api/scheduling/availability-with-allocation/${consultantId}?` +
             `startDateInUtc=${startDateInUtc.toISOString()}&` +
             `endDateInUtc=${endDateInUtc.toISOString()}&` +
-            `timezone=${timezone}`,
+            `timezone=${encodeURIComponent(timezone)}`,
         );
 
         if (!response.ok) {

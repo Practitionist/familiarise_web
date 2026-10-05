@@ -24,8 +24,9 @@ import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import {
+  categorizeValidationErrors,
   conflictDetailsBySlot,
-  describeConflict,
+  findTentativeOccurrenceIdsForEvent,
 } from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -133,6 +134,15 @@ export async function POST(
       // Convert slots to Date objects
       const slotDates = body.slots.map((slot) => new Date(slot));
 
+      // Exclude this subscription's own tentative occurrences (initial request
+      // holds or released reschedule occurrences) so they are not reported as
+      // conflicts or double-counted against weekly/total limits.
+      const excludeOccurrenceIds = await findTentativeOccurrenceIdsForEvent(
+        prisma,
+        { subscriptionId },
+      );
+      const consulteeUserId = subscription.requestedBy?.user?.id;
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -154,6 +164,13 @@ export async function POST(
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
           schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+          schedulingTimezone: subscription.schedulingTimezone,
+        },
+        [],
+        {
+          consulteeUserId,
+          excludeOccurrenceIds,
+          consultantProfileId: subscriptionPlan.consultantProfileId,
         },
       );
       const viewer = {
@@ -171,63 +188,35 @@ export async function POST(
         await subscriptionValidationService.validateSubscriptionSlots(
           subscriptionId,
           body.slots,
+          [],
+          excludeOccurrenceIds,
         );
 
-      // Build response
+      const categorized = validationResult.isValid
+        ? {
+            conflicts: [],
+            outsideAvailability: [],
+            validSlots: body.slots,
+          }
+        : categorizeValidationErrors({
+            errors: validationResult.errors,
+            slots: body.slots,
+            conflictDetails,
+            viewer,
+            resolveFallbackType: (message) =>
+              message.includes("subscription")
+                ? "Subscription"
+                : "Consultation",
+          });
+
       const result: ValidationResult = {
-        conflicts: [],
-        outsideAvailability: [],
-        validSlots: validationResult.isValid ? body.slots : [],
+        conflicts: categorized.conflicts,
+        outsideAvailability: categorized.outsideAvailability,
+        validSlots: subscriptionValidation.isValid
+          ? categorized.validSlots
+          : [],
         subscriptionValidation,
       };
-
-      // Categorize errors by prefix instead of brittle regex
-      if (!validationResult.isValid) {
-        for (const error of validationResult.errors) {
-          if (error.startsWith("[CONFLICT]")) {
-            const message = error.replace("[CONFLICT] ", "");
-            const slotMatch = message.match(
-              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-            );
-            if (slotMatch) {
-              // #1721 — the event's consultant gets the booking id
-              // and the other party by name; everyone else keeps "Another user".
-              result.conflicts.push(
-                describeConflict(
-                  slotMatch[1],
-                  conflictDetails.get(slotMatch[1]),
-                  viewer,
-                  message.includes("subscription")
-                    ? "Subscription"
-                    : "Consultation",
-                ),
-              );
-            }
-          } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
-            const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
-            const slotMatch = message.match(
-              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-            );
-            if (slotMatch) {
-              result.outsideAvailability.push({ slot: slotMatch[1] });
-            }
-          }
-          // [VALIDATION] errors don't need slot-level parsing
-        }
-
-        // Filter valid slots
-        result.validSlots = body.slots.filter((slot) => {
-          return (
-            !result.conflicts.some((c) => c.slot === slot) &&
-            !result.outsideAvailability.some((o) => o.slot === slot)
-          );
-        });
-      }
-
-      // If subscription validation fails, no slots are valid
-      if (!subscriptionValidation.isValid) {
-        result.validSlots = [];
-      }
 
       return NextResponse.json({ data: result });
     } catch (validationError) {
