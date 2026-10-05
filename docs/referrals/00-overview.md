@@ -34,7 +34,7 @@ The rules below are enforced in code and, where marked, in Postgres. The reasoni
 - A buyer may hold only one live welcome-discounted order at a time. A partial unique index in `prisma/sql/check-constraints.sql` enforces this.
 - Promotional credit is never combined with an expert fee waiver, because the waiver removes the take that would have paid for the promotion.
 - Sellers who belong to a host organisation never receive promotions on their sales.
-- A monthly budget bounds the total cost. The welcome discount is counted against it at capture, and each reward is counted against it at vest. New referees pause at 90 % of the budget.
+- A monthly budget bounds the total cost. The welcome discount is counted against it at capture, and each reward is counted against it at vest. New referees pause at 90 % of the budget, while a referee who already signed up keeps the welcome discount as long as the programme is live.
 - Per-code, weekly, yearly and expert-yearly caps bound how much any one person can earn.
 
 ## Background jobs

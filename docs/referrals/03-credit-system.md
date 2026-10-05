@@ -80,7 +80,7 @@ The rules for what a restore is worth depend on who caused the refund.
 - If the expert or the platform caused the refund, the restored credit is valid for at least 30 more days, even when its original expiry has passed in the meantime.
 - If the buyer cancelled, the credit keeps its original expiry. When that expiry has already passed, the credit is lost.
 
-These two rules are the owner's decision of 2026-10-05 and are being implemented in parallel. At the head of this branch the restore functions still skip a credit whose expiry has already passed and never extend an expiry, so the 30-day floor is not yet in the code.
+The cause comes from the refund row's `metadata.initiatedByUserId`, read through `refundInitiatedByBuyer`, the same rule vesting uses; the buyer's own id or an unreadable value counts as a buyer cancel. A credit that is still live has its `expiresAt` extended in place by a conditional update. An `EXPIRED` credit is never revived: its row shrinks by the restored amount, and a new `VESTED` credit carries the value with a 30-day expiry, its link in `idempotencyKey` and `reason`, and the vest journal when the original was vested. A failed checkout's restore follows the buyer rule.
 
 ## 6. Expiry and breakage
 
