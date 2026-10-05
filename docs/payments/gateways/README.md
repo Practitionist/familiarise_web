@@ -77,7 +77,7 @@ direction is over-collection, which is recoverable.
 On our domestic INR rail (RazorpayX), TDS is withheld under
 **Section 393 (`§393(1) Table Sl.8(v)`, payment code `1035`; pre-April 1, 2026: Section 194-O)** of the Income-tax Act, 2025, which applies to Indian residents by definition. Remitting INR from an Indian current account to a non-resident
 consultant on or after April 1, 2026 requires **Section 393 (`§393(2) Table Sl.17`, payment code `1057`; pre-April 1, 2026: Section 195)** withholding, DTAA relief against a Tax Residency
-Certificate (TRC) and Form 10F, and an AD-bank **Form 145 / Form 146** (pre-April 1, 2026: **Form 15CA / Form 15CB**) filing per remittance — and
+Certificate (TRC) and Form 10F, and an AD-bank **Form 145** filing (plus CA-certified **Form 146** when filing under **Form 145 Part C** for taxable remittances exceeding `₹5,00,000` in a FY; pre-April 1, 2026: **Form 15CA** and Part C **Form 15CB**) per remittance — and
 RazorpayX cannot pay a foreign bank account regardless. `processSinglePayout`
 throws for a non-resident rather than half-paying, `lib/compliance/tds.ts` has
 the DTAA engine written but unreachable (both callers hardcode
@@ -85,7 +85,7 @@ the DTAA engine written but unreachable (both callers hardcode
 uncalled stub.
 
 That throw is the correct behaviour on the INR domestic rail and should not be "fixed" without either:
-1. Building the full Section 393 (`§393(2) Table Sl.17`) + AD-bank Form 145/146 (pre-cutover Section 195 + Form 15CA/15CB) outbound wire path, OR
+1. Building the full Section 393 (`§393(2) Table Sl.17`) + AD-bank Form 145 (and Part C Form 146; pre-cutover Section 195 + Form 15CA and Part C Form 15CB) outbound wire path, OR
 2. Onboarding **Tazapay (`TAZAPAY`)** as our international collection + multi-currency treasury rail ([`tazapay/README.md`](./tazapay/README.md)), where foreign buyer funds stay in a USD/EUR/GBP Tazapay treasury balance to pay non-Indian consultants directly in 70+ countries (`POST /v3/payout`, `purpose: "PYR003"`) and only Familiarise's net platform commission is repatriated to India in INR with an automated `e-FIRA`.
 
 The current constraint is surfaced to consultants in the product by

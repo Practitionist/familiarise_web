@@ -83,7 +83,7 @@ Every cross-border inflow into India under FEMA requires an underlying export in
 
 ## 3. Webhook Verification (`Webhook-Id`, `Webhook-Timestamp`, `Webhook-Signature`) & Event Mapping
 
-Xflow sends three webhook headers — `Webhook-Id`, `Webhook-Timestamp`, and `Webhook-Signature` — with a Base64-encoded HMAC-SHA256 signature computed over `${webhookId}.${webhookTimestamp}.${rawBody}`.
+Xflow sends three webhook headers — `Webhook-Id`, `Webhook-Timestamp`, and a space-delimited, versioned `Webhook-Signature` header (`v1,<base64_digest> ...`) — with each `v1` Base64-encoded HMAC-SHA256 digest computed over `${webhookId}.${webhookTimestamp}.${rawBody}`.
 
 ```typescript
 import crypto from "crypto";
@@ -92,11 +92,11 @@ export function verifyXflowWebhookSignature(
   rawBody: string,
   webhookId: string,
   webhookTimestamp: string,
-  webhookSignature: string,
+  webhookSignatureHeader: string,
   webhookSecret: string,
   toleranceSeconds = 300
 ): boolean {
-  if (!rawBody || !webhookId || !webhookTimestamp || !webhookSignature || !webhookSecret) {
+  if (!rawBody || !webhookId || !webhookTimestamp || !webhookSignatureHeader || !webhookSecret) {
     return false;
   }
 
@@ -108,12 +108,27 @@ export function verifyXflowWebhookSignature(
     .createHmac("sha256", webhookSecret)
     .update(signedPayload, "utf8")
     .digest("base64");
-
   const expectedBuf = Buffer.from(expectedBase64, "utf8");
-  const receivedBuf = Buffer.from(webhookSignature, "utf8");
-  if (expectedBuf.length !== receivedBuf.length) return false;
 
-  return crypto.timingSafeEqual(expectedBuf, receivedBuf);
+  // Webhook-Signature is space-delimited versioned entries (e.g., "v1,base64sig1 v1,base64sig2")
+  const candidates = webhookSignatureHeader
+    .trim()
+    .split(/\s+/)
+    .map((entry) => {
+      const [version, digest] = entry.split(",", 2);
+      return { version, digest };
+    })
+    .filter((item): item is { version: string; digest: string } =>
+      item.version === "v1" && Boolean(item.digest)
+    );
+
+  return candidates.some(({ digest }) => {
+    const receivedBuf = Buffer.from(digest, "utf8");
+    return (
+      expectedBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, receivedBuf)
+    );
+  });
 }
 ```
 

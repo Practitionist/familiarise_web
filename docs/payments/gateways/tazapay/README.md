@@ -15,7 +15,7 @@
 Currently, Familiarise can accept international consultee payments via Razorpay (settling in INR), but **cannot onboard or pay non-Indian consultants** (US, UK, EU, Singapore, Australia, Canada, UAE) because:
 1. **RazorpayX is strictly INR-only** (it cannot wire USD/EUR/GBP to foreign bank accounts).
 2. **Stripe Connect Cross-Border Payouts does NOT support India (`IN`)** as a recipient country and requires a non-Indian platform entity.
-3. **Remitting outbound from an Indian bank account** triggers a **4%–6% double-FX loss** (`USD → INR → USD`), **$15–$30 SWIFT fees**, **20% Indian Section 393 (`§393(2) Table Sl.17`, payment code `1057`; pre-April 1, 2026: Section 195) withholding** (unless the foreign mentor obtains a Tax Residency Certificate + files digital **Form 10F** on the Indian income tax portal), and per-remittance **Form 145 / CA-certified Form 146** (pre-April 1, 2026: **Form 15CA / Form 15CB**) filings.
+3. **Remitting outbound from an Indian bank account** triggers a **4%–6% double-FX loss** (`USD → INR → USD`), **$15–$30 SWIFT fees**, **20% Indian Section 393 (`§393(2) Table Sl.17`, payment code `1057`; pre-April 1, 2026: Section 195) withholding** (unless the foreign mentor obtains a Tax Residency Certificate + files digital **Form 10F** on the Indian income tax portal), and per-remittance **Form 145** filings (plus CA-certified **Form 146** when filing under **Form 145 Part C** for taxable remittances exceeding `₹5,00,000` in a FY; pre-April 1, 2026: **Form 15CA** and Part C **Form 15CB**).
 
 **Tazapay solves both sides of the cross-border marketplace**:
 - **Licensed & Consulting/Marketplace-Friendly**: Regulated by the Monetary Authority of Singapore (MAS Major Payment Institution), FinCEN (US MSB), FINTRAC (Canada), and partnered with Cashfree (RBI PA-CB) for India settlements. Explicitly supports **1:1 consulting, edtech, live tutoring, and two-sided marketplaces**.
@@ -36,7 +36,7 @@ flowchart TD
 
     Confirm -->|"4. Check Consultant Residency"| Route{"Consultant Residency"}
     Route -->|"🇮🇳 Resident Indian Consultant"| INR_Settle["Settle to Indian Bank Account in INR + Auto 1-Day e-FIRA"]
-    INR_Settle -->|"Withhold Sec 194-O TDS (0.1%)"| RZP_X["RazorpayX / Cashfree Payouts (IMPS/UPI)"]
+    INR_Settle -->|"Withhold Sec 393 (pre-cutover 194-O) TDS (0.1%)"| RZP_X["RazorpayX / Cashfree Payouts (IMPS/UPI)"]
 
     Route -->|"🌎 Foreign Consultant (US / UK / EU / SG / AU / CA)"| FX_Hold["Hold in Tazapay Multi-Currency Balance (USD / EUR / GBP)"]
     FX_Hold -->|"POST /v3/beneficiary + POST /v3/payout (Local ACH / SEPA / FPS, $2-$5 fee)"| Foreign_Bank["Foreign Consultant Local Bank Account (Zero Double-FX)"]
