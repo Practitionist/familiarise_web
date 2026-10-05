@@ -60,61 +60,67 @@ The consultant never needs a Razorpay account or dashboard access. We handle eve
 2. **Bank details**: Account number, IFSC code, account holder name
 3. **OR UPI ID**: For UPI-based payouts
 
-### Onboarding Flow
+### Onboarding & Verification Flow
 
 ```
-Consultant provides bank/UPI details
+Consultant provides bank account or initiates UPI verification
         |
         v
 Create Contact in RazorpayX
-(POST /contacts)
+(POST /v1/contacts)
         |
         v
 Create Fund Account
-(POST /fund_accounts)
+(POST /v1/fund_accounts)
   - bank_account: name, IFSC, account number
   - OR vpa: UPI address
         |
         v
-Optional: Penny Testing Validation
-(POST /fund_accounts/validations)
-  - Sends Rs. 1, immediately reversed
-  - Verifies bank account is valid
+Verify Account Ownership (`lib/payments/payouts/reverse-penny-drop.ts`):
+  - Penny Drop (`POST /v1/fund_accounts/validations`):
+    Transfers Rs. 1.00 (100 paise) to the beneficiary account (not reversed)
+    and returns `results.account_status` ("active" | "invalid") + `results.registered_name`.
+    (Note: Not available in RazorpayX test mode.)
+  - OR Reverse Penny Drop (`POST /v1/fund_accounts/validations` with `validation_type: "upi_intent"`):
+    Consultant pays Rs. 1.00 via UPI Intent (`startReversePennyDrop`); RazorpayX refunds the Rs. 1.00
+    and returns the underlying bank account (`validation_results.bank_account`), which `settleReversePennyDrop`
+    uses to create the Contact + `bank_account` Fund Account and persist a verified `PayoutAccount`.
         |
         v
-Consultant ready for payouts
+Consultant ready for payouts (`PayoutAccount.isVerified = true`)
 ```
 
 ### What We Store
 
-| We Store                                 | RazorpayX Stores           |
-| ---------------------------------------- | -------------------------- |
-| Contact ID                               | Full personal details      |
-| Fund Account ID                          | Bank account numbers, IFSC |
-| Masked display (e.g., HDFC \*\*\*\*4521) | Beneficiary name           |
-| KYC status                               | Verification status        |
-| Payout history                           | Transaction records        |
+| We Store (`PayoutAccount` / `OrganizationPayoutAccount`) | RazorpayX Stores |
+| -------------------------------------------------------- | -------------------------- |
+| Contact ID (`razorpayContactId`, `cont_...`)             | Full personal details      |
+| Fund Account ID (`razorpayFundAccId`, `fa_...`)          | Full bank account number   |
+| Account holder name (`accountHolderName`) & `bankName`   | Bank registered name       |
+| Masked display (`accountNumberLast4`, `ifscCode`)        | Full bank account & IFSC   |
+| Verified UPI VPA (`upiId` if VPA mode)                   | VPA fund account record    |
+| Payout history (`ConsultantPayout` / `OrganizationPayout` `pout_...`) | Transaction & UTR records |
 
-We **never** store full bank account numbers. Only RazorpayX IDs and masked display values.
+We **never** store full bank account numbers in plaintext — only RazorpayX IDs (`razorpayContactId`, `razorpayFundAccId`), `accountNumberLast4`, `ifscCode`, `bankName`, `accountHolderName`, and `upiId`.
 
 ---
 
 ## Payout Modes
 
-RazorpayX supports multiple transfer modes, automatically selected based on amount and account type:
+RazorpayX supports four transfer modes, automatically selected by `determinePayoutMode()` in `lib/payments/payouts/razorpay-payouts.ts` based on amount and fund account type:
 
-| Mode     | Speed            | Limit                              | When Used                       |
-| -------- | ---------------- | ---------------------------------- | ------------------------------- |
-| **UPI**  | Instant          | Per-bank limits                    | Fund Account is VPA (UPI ID)    |
-| **IMPS** | Instant          | Up to Rs. 5,00,000 per transaction | Bank account, amount ≤ Rs. 5L   |
-| **NEFT** | Batched (hourly) | No limit                           | Bank account, amount > Rs. 5L   |
-| **RTGS** | Real-time        | Rs. 2,00,000 minimum               | Available but not auto-selected |
+| Mode     | Speed                                                             | Official RazorpayX Limit                     | When Used                                   |
+| -------- | ----------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| **UPI**  | Instant (24x7)                                                    | Up to **Rs. 1,00,000** per transaction       | Fund Account is VPA (UPI ID), amount ≤ ₹1L  |
+| **IMPS** | Instant (24x7)                                                    | Up to **Rs. 5,00,000** per transaction       | Bank account, amount ≤ Rs. 5L               |
+| **NEFT** | Settled within 2h during bank NEFT hours (24x7 on RBL & Yes Bank) | No upper limit (**> Rs. 1**)                 | Bank account, amount > Rs. 5L               |
+| **RTGS** | Real-time (within 30m–2h during bank RTGS hours)                  | **> Rs. 2,00,000 minimum**, no upper limit   | Available when explicitly requested > Rs. 2L|
 
-**Auto-selection logic**:
+**Auto-selection logic (`determinePayoutMode`)**:
 
-- VPA fund account → **UPI**
-- Bank account, amount ≤ Rs. 5L → **IMPS**
-- Bank account, amount > Rs. 5L → **NEFT**
+- VPA fund account → **UPI** (max Rs. 1,00,000)
+- Bank account, amount ≤ Rs. 5,00,000 → **IMPS**
+- Bank account, amount > Rs. 5,00,000 → **NEFT**
 
 ---
 
@@ -144,7 +150,7 @@ Payment captured (webhook)
          | Weekly payout job runs
          v
 +-------------------+
-| Earnings: PROCESSING |  Included in payout batch
+| Earnings: BATCHED |  Included in payout batch
 +--------+----------+
          |
          | RazorpayX webhook confirms
@@ -155,7 +161,7 @@ Payment captured (webhook)
 
 Special states:
   REFUNDED  — Payment was refunded, earnings cancelled
-  DISPUTED  — Customer raised dispute, earnings frozen
+  HELD      — Customer raised dispute, earnings frozen
 ```
 
 ### Payout Batch Cycle
@@ -167,7 +173,7 @@ Weekly payout job runs (cron)
 Find all consultants with:
   - Earnings status = READY
   - Total >= Rs. 500 (minimum payout)
-  - Active fund account
+  - Active & verified fund account
         |
         v
 Create Payout records (one per consultant)
@@ -179,8 +185,9 @@ Admin approves pending payouts (if needed)
         |
         v
 Process approved payouts:
-  - Call RazorpayX Payouts API
-  - Include idempotency key (required since March 2025)
+  - Withhold Section 194-O TDS if applicable (lib/payments/tax/tds-service.ts)
+  - Call RazorpayX Payouts API (POST /v1/payouts)
+  - Include X-Payout-Idempotency header (4–36 chars, mandatory since 15 March 2025)
   - Auto-select payout mode (IMPS/NEFT/UPI)
         |
         v
@@ -212,10 +219,10 @@ RazorpayX has three intermediate payout states and five terminal ones, and every
 
 | RazorpayX Status | Internal Status | Description                                               |
 | ---------------- | --------------- | --------------------------------------------------------- |
-| `queued`         | PENDING         | Queued due to low balance                                 |
+| `queued`         | PENDING         | Queued due to low balance (`PROCESSING` when polled)      |
 | `pending`        | PENDING         | Awaiting approval in the RazorpayX approval workflow      |
-| `processing`     | PROCESSING      | Being processed by RazorpayX                              |
-| `processed`      | COMPLETED       | Funds transferred to bank                                 |
+| `processing`     | PROCESSING      | Being processed by RazorpayX (emits `payout.initiated`)   |
+| `processed`      | COMPLETED       | Funds transferred to bank (`utr` populated)               |
 | `reversed`       | FAILED          | Bank returned the funds; RazorpayX credited us back       |
 | `rejected`       | FAILED          | Approval was refused or lapsed                            |
 | `failed`         | FAILED          | The transfer failed at RazorpayX, the bank, or in transit |
@@ -227,17 +234,21 @@ An unrecognised status deliberately maps to PENDING rather than to a terminal st
 
 ## Webhook Events
 
-| Event              | When It Fires                  | What We Do                                    |
-| ------------------ | ------------------------------ | --------------------------------------------- |
-| `payout.processed` | Funds transferred successfully | Mark payout COMPLETED, earnings as PAID       |
-| `payout.reversed`  | Bank returned funds            | Mark payout FAILED, restore available balance |
-| `payout.rejected`  | RazorpayX rejected payout      | Mark payout FAILED, alert admin               |
-| `payout.failed`    | Transfer failed at the bank    | Mark payout FAILED, return earnings to READY  |
-| `payout.queued`    | Insufficient balance, queued   | Update payout status to PENDING               |
-| `payout.pending`   | Payout pending processing      | Update payout status                          |
-| `payout.cancelled` | Payout cancelled               | Mark payout CANCELLED                         |
+| Event                               | When It Fires                                       | What We Do                                                                                 |
+| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `payout.initiated`                  | Payout transitions into `processing`                | Mark payout `PROCESSING`                                                                   |
+| `payout.updated`                    | Payout status or UTR updated                        | Sync payout status and UTR                                                                 |
+| `payout.processed`                  | Funds transferred successfully                      | Mark payout `COMPLETED`, earnings as `PAID`                                                |
+| `payout.reversed`                   | Bank returned funds                                 | Mark payout `FAILED`, reverse TDS/ledger, restore earnings to `READY`                      |
+| `payout.rejected`                   | RazorpayX approval rejected payout                  | Mark payout `FAILED`, alert admin                                                          |
+| `payout.failed`                     | Transfer failed at the bank                         | Mark payout `FAILED` (extracting `status_details.description`), return earnings to `READY` |
+| `payout.queued`                     | Insufficient balance, queued                        | Keep payout status `PENDING`                                                               |
+| `payout.pending`                    | Payout awaiting approval workflow                   | Keep payout status `PENDING`                                                               |
+| `payout.cancelled`                  | Queued payout cancelled                             | Mark payout `CANCELLED`, restore earnings to `READY`                                       |
+| `fund_account.validation.completed` | Penny Drop (`fav_...`) finished                     | Check `results.account_status === "active"` and update `PayoutAccount`                     |
+| `fund_account.validation.failed`    | Penny Drop (`fav_...`) failed                       | Mark validation failed on `PayoutAccount`                                                  |
 
-**Source**: `app/api/webhooks/razorpay/route.ts` (payout event handling section)
+**Sources**: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `app/api/webhooks/utils.ts`, `lib/payments/payouts/payout-service.ts`
 
 ---
 

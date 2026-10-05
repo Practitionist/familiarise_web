@@ -190,6 +190,11 @@ export async function POST(req: NextRequest) {
   // refund then matched as a duplicate and never reached handleRefundCreated —
   // no Refund row, no earnings reversal, no credit note, no ledger posting,
   // while the money had already left. Most-specific entity wins.
+  const bodyDigest = crypto
+    .createHash("sha256")
+    .update(body)
+    .digest("hex")
+    .slice(0, 16);
   const entityId =
     event.payload?.refund?.entity?.id ||
     event.payload?.dispute?.entity?.id ||
@@ -197,8 +202,15 @@ export async function POST(req: NextRequest) {
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
     event.account_id ||
-    `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
-  const eventId = `${eventType}:${entityId}`;
+    `body_${bodyDigest}`;
+  // RazorpayX can emit multiple distinct `payout.updated` events for the same
+  // payout (e.g. status_details change followed by UTR assignment). Keying on
+  // the signed-body digest alongside entityId lets distinct updates through
+  // while still deduplicating retries of the same signed delivery.
+  const eventId =
+    eventType === "payout.updated"
+      ? `${eventType}:${entityId}:${bodyDigest}`
+      : `${eventType}:${entityId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
   const { isNew, claim } = await logWebhookEvent(

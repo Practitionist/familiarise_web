@@ -86,11 +86,18 @@ export interface CreatePayoutRequest {
   amount: number; // in paise
   currency: string;
   mode: "NEFT" | "RTGS" | "IMPS" | "UPI";
+  /**
+   * Default system purposes in RazorpayX (`https://razorpay.com/docs/api/x/payouts/create/bank-account/`).
+   * Note: RazorpayX's built-in system purposes use SPACES (`"utility bill"`, `"vendor bill"`),
+   * whereas `"utility_bill"` / `"vendor_bill"` require a custom purpose created in the RazorpayX Dashboard.
+   */
   purpose:
     | "refund"
     | "cashback"
     | "payout"
     | "salary"
+    | "utility bill"
+    | "vendor bill"
     | "utility_bill"
     | "vendor_bill";
   queueIfLowBalance?: boolean;
@@ -115,7 +122,13 @@ export interface RazorpayPayout {
   referenceId?: string;
   narration?: string;
   batchId?: string;
+  /** @deprecated RazorpayX marks top-level `failure_reason` deprecated in favor of `status_details`. */
   failureReason?: string;
+  status_details?: {
+    description?: string | null;
+    source?: string | null;
+    reason?: string | null;
+  } | null;
   createdAt: number;
 }
 

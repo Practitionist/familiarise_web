@@ -201,6 +201,17 @@ export const razorpayWebhookEnvelopeSchema = z
                 id: z.string().optional(),
                 status: z.string().optional(),
                 failure_reason: z.string().nullable().optional(),
+                utr: z.string().nullable().optional(),
+                reference_id: z.string().nullable().optional(),
+                status_details: z
+                  .object({
+                    description: z.string().nullable().optional(),
+                    source: z.string().nullable().optional(),
+                    reason: z.string().nullable().optional(),
+                  })
+                  .passthrough()
+                  .nullable()
+                  .optional(),
               })
               .passthrough()
               .optional(),
