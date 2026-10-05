@@ -72,20 +72,26 @@ describe("REF-2 — reverseCreditsForPayment skips expired credits", () => {
         delete: jest.fn().mockResolvedValue({}),
         update: jest.fn().mockResolvedValue({}),
       },
-      referralCredit: { update: jest.fn().mockResolvedValue({}) },
+      referralCredit: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
 
     // Full refund (no refundAmount) → restore everything still live.
     const restored = await reverseCreditsForPayment("pay-1", tx as never);
 
     expect(restored).toBe(300); // only the live credit
-    expect(tx.referralCredit.update).toHaveBeenCalledTimes(1);
-    expect(tx.referralCredit.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "credit-live" } }),
+    expect(tx.referralCredit.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.referralCredit.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "credit-live" }),
+      }),
     );
     // The expired credit must never be incremented back to life.
-    expect(tx.referralCredit.update).not.toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "credit-expired" } }),
+    expect(tx.referralCredit.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "credit-expired" }),
+      }),
     );
     expect(tx.referralCreditUsage.delete).toHaveBeenCalledWith({
       where: { id: "use-live" },
@@ -108,12 +114,14 @@ describe("REF-2 — reverseCreditsForPayment skips expired credits", () => {
         delete: jest.fn().mockResolvedValue({}),
         update: jest.fn().mockResolvedValue({}),
       },
-      referralCredit: { update: jest.fn().mockResolvedValue({}) },
+      referralCredit: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
 
     const restored = await reverseCreditsForPayment("pay-2", tx as never);
     expect(restored).toBe(200);
-    expect(tx.referralCredit.update).toHaveBeenCalledTimes(1);
+    expect(tx.referralCredit.updateMany).toHaveBeenCalledTimes(1);
   });
 });
 

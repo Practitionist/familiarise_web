@@ -3,9 +3,11 @@
  */
 
 /**
- * Referral pins: a waived order carries no promo, a second live welcome-discounted order is a
- * typed 409, a forged or stale own-link token is unattributed, a refunded referee order voids
- * or reopens by who cancelled, and the sole-admin fee-schedule self-approval waits 24 hours.
+ * Referral pins: a waived order carries no promo, a referee signed up before the 90% budget
+ * pause keeps the welcome discount, a second live welcome-discounted order is a typed 409, a
+ * forged or stale own-link token is unattributed, a refunded referee order voids or reopens by
+ * who cancelled, an expert-cancel refund re-mints an expired credit for 30 days while a buyer
+ * cancel restores none, and the sole-admin fee-schedule self-approval waits 24 hours.
  */
 
 jest.mock("../../lib/payments/ledger/post", () => ({
@@ -24,7 +26,9 @@ const db = {
     findUnique: jest.fn(),
     updateMany: jest.fn(),
   },
-  referralCredit: { updateMany: jest.fn() },
+  referralCredit: { updateMany: jest.fn(), create: jest.fn() },
+  referralCreditUsage: { findMany: jest.fn(), delete: jest.fn() },
+  refund: { findUnique: jest.fn() },
   payment: { count: jest.fn(), updateMany: jest.fn() },
   consultantFeeWaiver: { findFirst: jest.fn() },
   appointmentOccurrence: { findFirst: jest.fn() },
@@ -38,15 +42,21 @@ import { Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { classifyError } from "@/lib/errors/classification/payment-error-classification";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { feeScheduleApprovalRefusal } from "@/lib/payments/pricing/platform-fee";
 import {
   asWelcomeDiscountConflict,
   resolveCheckoutAttribution,
 } from "@/lib/referrals/attribution";
 import {
+  acceptsNewReferees,
+  readReferralProgramConfig,
+} from "@/lib/referrals/program-config";
+import {
   expertShareHref,
   verifyExpertVia,
 } from "@/lib/referrals/attribution-token";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { settleQualifyingReferral } from "@/lib/referrals/vesting";
 
 const NOW = new Date("2026-10-05T12:00:00Z");
@@ -93,6 +103,31 @@ it("gives a waived order no welcome discount and no credit room", async () => {
     now: NOW,
   });
   expect(a).toMatchObject({ welcomeDiscount: null, creditCapBps: 0 });
+});
+
+it("pauses new referees at 90% of budget but keeps an in-flight referee's welcome discount", async () => {
+  const cfg = await db.referralProgramConfig.findUnique();
+  db.referralProgramConfig.findUnique.mockResolvedValue({
+    ...cfg,
+    currentMonthSpentPaise: 95_000,
+  });
+  db.consultantFeeWaiver.findFirst.mockResolvedValue(null);
+  expect(
+    acceptsNewReferees(await readReferralProgramConfig(db as never), NOW),
+  ).toBe(false);
+  const a = await resolveCheckoutAttribution(await typedTx(), {
+    buyerUserId: "buyer",
+    consultantProfileId: "cp-1",
+    consultantUserId: "expert",
+    viaToken: null,
+    orgFunded: false,
+    hasDiscountCode: false,
+    now: NOW,
+  });
+  expect(a).toMatchObject({
+    referralId: "ref-1",
+    welcomeDiscount: { bps: 2000 },
+  });
 });
 
 it("answers a second live welcome-discounted order with a typed 409", () => {
@@ -158,6 +193,67 @@ describe("a refunded referee order", () => {
       data: { state: "VOID", voidedAt: NOW },
     });
   });
+});
+
+it("re-mints an expired credit for 30 days on an expert cancel and restores none on a buyer cancel", async () => {
+  db.referralCreditUsage.findMany.mockResolvedValue([
+    {
+      id: "use-1",
+      creditId: "cr-1",
+      amount: 5_000,
+      originalAmount: 5_000,
+      restoredAmount: 0,
+      credit: {
+        expiresAt: new Date(Date.now() - DAY),
+        state: "EXPIRED",
+        vestedAt: NOW,
+        userId: "buyer",
+        currency: "INR",
+        source: "REFERRAL_BONUS",
+        configVersion: 1,
+      },
+    },
+  ]);
+  db.referralCredit.updateMany.mockResolvedValue({ count: 1 });
+  db.referralCredit.create.mockResolvedValue({ id: "cr-2" });
+  const refundBy = async (initiatedByUserId: string | null) => {
+    db.refund.findUnique.mockResolvedValue({
+      metadata: { initiatedByUserId },
+      payment: { userId: "buyer" },
+    });
+    return reverseCreditsForPayment(
+      "pay-1",
+      await typedTx(),
+      undefined,
+      undefined,
+      "rf-1",
+    );
+  };
+
+  expect(await refundBy("buyer")).toBe(0);
+  expect(db.referralCredit.create).not.toHaveBeenCalled();
+
+  const floor = Date.now() + 30 * DAY;
+  expect(await refundBy(null)).toBe(5_000);
+  expect(db.referralCredit.updateMany.mock.calls[0][0]).toMatchObject({
+    where: { id: "cr-1", state: "EXPIRED" },
+    data: { amount: { decrement: 5_000 }, usedAmount: { decrement: 5_000 } },
+  });
+  const minted = db.referralCredit.create.mock.calls[0][0].data;
+  expect(minted).toMatchObject({ amount: 5_000, state: "VESTED" });
+  expect(minted.expiresAt.getTime()).toBeGreaterThanOrEqual(floor);
+  expect(postLedgerTxn).toHaveBeenCalledWith(
+    db,
+    expect.objectContaining({
+      postings: expect.arrayContaining([
+        {
+          account: { kind: "REFERRAL_CREDIT_LIABILITY" },
+          direction: "CREDIT",
+          amountPaise: 5_000,
+        },
+      ]),
+    }),
+  );
 });
 
 it("lets a sole admin approve their own fee schedule only after 24 hours", () => {

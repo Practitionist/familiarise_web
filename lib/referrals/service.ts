@@ -8,6 +8,7 @@ import {
   acceptsNewReferees,
   readReferralProgramConfig,
 } from "./program-config";
+import { refundInitiatedByBuyer } from "./refund-cause";
 
 // #780 — bare model types still say bigint; the extended client returns number
 export type ReferralCodeRow = Omit<
@@ -318,7 +319,7 @@ export async function applyCreditsToPayment(
   userId: string,
   paymentAmount: number,
   tx: Tx,
-  paymentId?: string,
+  paymentId: string,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
   const now = new Date();
   const { credits } = await getUserCredits(userId, tx);
@@ -355,24 +356,22 @@ export async function applyCreditsToPayment(
     }
 
     // Create ledger entry for accurate per-payment tracking and reversal
-    if (paymentId) {
-      const usage = await tx.referralCreditUsage.create({
-        data: {
-          creditId: credit.id,
-          paymentId,
-          amount: useAmount,
-          originalAmount: useAmount,
-        },
+    const usage = await tx.referralCreditUsage.create({
+      data: {
+        creditId: credit.id,
+        paymentId,
+        amount: useAmount,
+        originalAmount: useAmount,
+      },
+    });
+    firstUsageId ??= usage.id;
+    if (credit.vestedAt) {
+      await postReferralLiabilityMove(tx, {
+        key: `referral-redeem:${usage.id}`,
+        direction: "DRAW",
+        amountPaise: useAmount,
+        description: `Referral credit ${credit.id} redeemed on payment ${paymentId}`,
       });
-      firstUsageId ??= usage.id;
-      if (credit.vestedAt) {
-        await postReferralLiabilityMove(tx, {
-          key: `referral-redeem:${usage.id}`,
-          direction: "DRAW",
-          amountPaise: useAmount,
-          description: `Referral credit ${credit.id} redeemed on payment ${paymentId}`,
-        });
-      }
     }
 
     creditsUsed += useAmount;
@@ -381,7 +380,7 @@ export async function applyCreditsToPayment(
 
   // One REFERRAL_CREDIT leg per payment (@@unique([paymentId, source])); the
   // usage rows above keep the per-credit trail.
-  if (paymentId && firstUsageId && creditsUsed > 0) {
+  if (firstUsageId && creditsUsed > 0) {
     await tx.paymentLeg.create({
       data: {
         paymentId,
@@ -395,6 +394,147 @@ export async function applyCreditsToPayment(
   return { creditsUsed, remainingToPay };
 }
 
+/** The least time a seller-caused refund leaves restored credit spendable. */
+const SELLER_REFUND_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
+
+const restorableCredit = {
+  select: {
+    expiresAt: true,
+    state: true,
+    vestedAt: true,
+    userId: true,
+    currency: true,
+    source: true,
+    configVersion: true,
+  },
+} as const;
+
+type RestorableCredit = Pick<
+  ReferralCredit,
+  | "expiresAt"
+  | "state"
+  | "vestedAt"
+  | "userId"
+  | "currency"
+  | "source"
+  | "configVersion"
+>;
+
+/** True when the expert or the platform raised the refund row, not the buyer. */
+async function sellerCausedRefund(
+  tx: Tx,
+  refundRowId: string | undefined,
+): Promise<boolean> {
+  if (!refundRowId) return false;
+  const refund = await tx.refund.findUnique({
+    where: { id: refundRowId },
+    select: { metadata: true, payment: { select: { userId: true } } },
+  });
+  return (
+    !!refund && !refundInitiatedByBuyer(refund.metadata, refund.payment.userId)
+  );
+}
+
+function restoreRaced(creditId: string): Error {
+  return Object.assign(
+    new Error(
+      `CREDIT_RESTORE_RACED: credit ${creditId} changed while it was being restored`,
+    ),
+    { code: "CREDIT_RESTORE_RACED" },
+  );
+}
+
+/**
+ * Gives `give` paise of one usage back. A seller-caused refund keeps the value valid until at
+ * least now + 30 days; an EXPIRED credit stays terminal, so the value moves to a new credit.
+ */
+async function restoreUsageToCredit(
+  tx: Tx,
+  input: {
+    paymentId: string;
+    usageId: string;
+    creditId: string;
+    credit: RestorableCredit;
+    restoredBefore: number;
+    give: number;
+    fullyRestored: boolean;
+    sellerCaused: boolean;
+    now: Date;
+  },
+): Promise<void> {
+  const { credit, creditId, give, now } = input;
+  const key = `referral-restore:${input.usageId}:${input.restoredBefore + give}`;
+  const floor = new Date(now.getTime() + SELLER_REFUND_VALIDITY_MS);
+
+  if (credit.state === "EXPIRED") {
+    // The old row keeps its breakage and usage trail; amount and usedAmount shrink by what moved.
+    const shrunk = await tx.referralCredit.updateMany({
+      where: { id: creditId, state: "EXPIRED", usedAmount: { gte: give } },
+      data: { amount: { decrement: give }, usedAmount: { decrement: give } },
+    });
+    if (shrunk.count !== 1) throw restoreRaced(creditId);
+    const fresh = await tx.referralCredit.create({
+      data: {
+        userId: credit.userId,
+        amount: give,
+        usedAmount: 0,
+        remainingAmount: give,
+        currency: credit.currency,
+        source: credit.source,
+        state: "VESTED",
+        vestedAt: credit.vestedAt ? now : null,
+        expiresAt: floor,
+        configVersion: credit.configVersion,
+        idempotencyKey: key,
+        reason: `Restored from expired credit ${creditId} on refunded payment ${input.paymentId}`,
+      },
+      select: { id: true },
+    });
+    if (credit.vestedAt) {
+      await postReferralLiabilityMove(tx, {
+        key,
+        direction: "RESTORE",
+        amountPaise: give,
+        description: `Referral credit ${fresh.id} restored from expired credit ${creditId} on payment ${input.paymentId}`,
+      });
+    }
+    return;
+  }
+
+  const extend =
+    input.sellerCaused && credit.expiresAt !== null && credit.expiresAt < floor;
+  const moved = await tx.referralCredit.updateMany({
+    where: { id: creditId, state: credit.state, expiresAt: credit.expiresAt },
+    data: {
+      usedAmount: { decrement: give },
+      remainingAmount: { increment: give },
+      ...(input.fullyRestored && { usedAt: null }),
+      ...(extend && { expiresAt: floor }),
+    },
+  });
+  if (moved.count !== 1) throw restoreRaced(creditId);
+  if (credit.vestedAt && credit.state === "VESTED") {
+    await postReferralLiabilityMove(tx, {
+      key,
+      direction: "RESTORE",
+      amountPaise: give,
+      description: `Referral credit ${creditId} restored from payment ${input.paymentId}`,
+    });
+  }
+}
+
+/** A lapsed credit is restored only when the expert or the platform caused the refund. */
+function restorable(
+  credit: RestorableCredit,
+  sellerCaused: boolean,
+  now: Date,
+): boolean {
+  const lapsed =
+    credit.state === "EXPIRED" ||
+    (credit.expiresAt !== null && credit.expiresAt < now);
+  return sellerCaused || !lapsed;
+}
+
 /**
  * Reverses referral credits that were consumed for a specific payment.
  * Uses the ReferralCreditUsage ledger for accurate per-payment reversal.
@@ -406,20 +546,18 @@ export async function applyCreditsToPayment(
  * ratio, then restores (cumulativeTarget - alreadyRestored) per usage record.
  * On the final refund (cumulative = original), this guarantees exact restoration.
  * For full refunds: restores all usage and deletes the usage records.
+ * `refundRowId` classifies the refund's cause; payment-failure restores omit it.
  */
 export async function reverseCreditsForPayment(
   paymentId: string,
   tx: Tx,
   refundAmount?: number,
   originalPaymentAmount?: number,
+  refundRowId?: string,
 ): Promise<number> {
-  // Find all usage records for this payment from the ledger. Carry the credit's
-  // expiry so we don't restore onto a credit that has since lapsed (REF-2).
   const usageRecords = await tx.referralCreditUsage.findMany({
     where: { paymentId },
-    include: {
-      credit: { select: { expiresAt: true, state: true, vestedAt: true } },
-    },
+    include: { credit: restorableCredit },
   });
 
   if (usageRecords.length === 0) return 0;
@@ -450,6 +588,7 @@ export async function reverseCreditsForPayment(
         : sumPaise(refundedSum);
   }
 
+  const sellerCaused = await sellerCausedRefund(tx, refundRowId);
   let totalRestored = 0;
   let skippedExpired = 0;
   const now = new Date();
@@ -457,15 +596,8 @@ export async function reverseCreditsForPayment(
   for (const usage of usageRecords) {
     if (usage.amount <= 0) continue;
 
-    // REF-2 (#692) — never resurrect an expired credit. If the credit lapsed
-    // after it was applied, restoring remainingAmount onto it just leaves dead
-    // balance (getUserCredits filters expiry; the expiry cron re-zeroes it).
-    // Skip + log; the usage row stays so the credit reads as still consumed.
-    // (Issuing fresh credit on refund-of-expired is a product decision, not done here.)
-    // `credit` is a required FK relation that the findMany above always includes,
-    // so it is never null here — no optional chain needed.
-    const creditExpiresAt = usage.credit.expiresAt;
-    if (creditExpiresAt && creditExpiresAt.getTime() < now.getTime()) {
+    // A lapsed credit stays consumed on a buyer cancel; the usage row is kept.
+    if (!restorable(usage.credit, sellerCaused, now)) {
       skippedExpired += usage.amount;
       continue;
     }
@@ -490,24 +622,17 @@ export async function reverseCreditsForPayment(
 
     if (restoreAmount <= 0) continue;
 
-    // Restore the appropriate amount to the credit
-    await tx.referralCredit.update({
-      where: { id: usage.creditId },
-      data: {
-        usedAmount: { decrement: restoreAmount },
-        remainingAmount: { increment: restoreAmount },
-        ...(restoreAmount >= usage.amount && { usedAt: null }),
-      },
+    await restoreUsageToCredit(tx, {
+      paymentId,
+      usageId: usage.id,
+      creditId: usage.creditId,
+      credit: usage.credit,
+      restoredBefore: usage.restoredAmount,
+      give: restoreAmount,
+      fullyRestored: restoreAmount >= usage.amount,
+      sellerCaused,
+      now,
     });
-
-    if (usage.credit.vestedAt && usage.credit.state === "VESTED") {
-      await postReferralLiabilityMove(tx, {
-        key: `referral-restore:${usage.id}:${usage.restoredAmount + restoreAmount}`,
-        direction: "RESTORE",
-        amountPaise: restoreAmount,
-        description: `Referral credit ${usage.creditId} restored from payment ${paymentId}`,
-      });
-    }
 
     if (restoreAmount >= usage.amount) {
       // Full restore — remove the usage record
@@ -534,8 +659,6 @@ export async function reverseCreditsForPayment(
     );
   }
   if (skippedExpired > 0) {
-    // REF-2 — visibility: credit value (in paise) not returned because the
-    // underlying credit had already expired.
     console.log(
       `⏭️  Skipped restoring ${skippedExpired} paise of expired referral credit for refunded payment ${paymentId}`,
     );
@@ -545,47 +668,41 @@ export async function reverseCreditsForPayment(
 }
 
 /**
- * #1771 K-5 — give back at most `amountPaise` of the credit a payment used,
- * oldest usage first, skipping lapsed credits (REF-2). The partial twin of
- * `reverseCreditsForPayment` for a credit-funded class seat, whose Refund rows
+ * Gives back at most `amountPaise` of the credit a payment used, oldest usage first. The
+ * partial twin of `reverseCreditsForPayment` for a credit-funded class seat, whose Refund rows
  * are ₹0 and so cannot drive the cumulative-refund ratio above.
  */
 export async function restoreCreditsForPaymentUpTo(
   paymentId: string,
   tx: Tx,
   amountPaise: number,
+  refundRowId: string,
 ): Promise<number> {
   const usages = await tx.referralCreditUsage.findMany({
     where: { paymentId },
     orderBy: { createdAt: "asc" },
-    include: {
-      credit: { select: { expiresAt: true, state: true, vestedAt: true } },
-    },
+    include: { credit: restorableCredit },
   });
-  const now = Date.now();
+  const sellerCaused = await sellerCausedRefund(tx, refundRowId);
+  const now = new Date();
   let left = amountPaise;
   let restored = 0;
   for (const usage of usages) {
     if (left <= 0) break;
-    const expired =
-      usage.credit.expiresAt && usage.credit.expiresAt.getTime() < now;
-    if (usage.amount <= 0 || expired) continue;
-    const give = Math.min(left, usage.amount);
-    if (usage.credit.vestedAt && usage.credit.state === "VESTED") {
-      await postReferralLiabilityMove(tx, {
-        key: `referral-restore:${usage.id}:${usage.restoredAmount + give}`,
-        direction: "RESTORE",
-        amountPaise: give,
-        description: `Referral credit ${usage.creditId} restored from payment ${paymentId}`,
-      });
+    if (usage.amount <= 0 || !restorable(usage.credit, sellerCaused, now)) {
+      continue;
     }
-    await tx.referralCredit.update({
-      where: { id: usage.creditId },
-      data: {
-        usedAmount: { decrement: give },
-        remainingAmount: { increment: give },
-        ...(give >= usage.amount && { usedAt: null }),
-      },
+    const give = Math.min(left, usage.amount);
+    await restoreUsageToCredit(tx, {
+      paymentId,
+      usageId: usage.id,
+      creditId: usage.creditId,
+      credit: usage.credit,
+      restoredBefore: usage.restoredAmount,
+      give,
+      fullyRestored: give >= usage.amount,
+      sellerCaused,
+      now,
     });
     // Kept at amount 0, never deleted: Σ originalAmount is the seat's value
     // for every later partial return, so it must not shrink.

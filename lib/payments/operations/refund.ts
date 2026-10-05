@@ -820,6 +820,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           tx,
           requested,
           payment.amount,
+          boundRefundRowId,
         );
         if (restoredCredits > 0) {
           console.log(

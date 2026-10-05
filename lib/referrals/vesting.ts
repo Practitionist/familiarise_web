@@ -1,5 +1,4 @@
 import type { AppointmentsType, Prisma } from "@prisma/client";
-import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -18,6 +17,7 @@ import {
   rollBudgetPeriod,
   type ReferralProgramConfigRow,
 } from "./program-config";
+import { refundInitiatedByBuyer } from "./refund-cause";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -142,21 +142,16 @@ async function voidReferral(
   return "VOIDED";
 }
 
-/** Who asked for a refund, as the refund paths record it; null is an automated sweep. */
-const refundInitiatorSchema = z.object({
-  initiatedByUserId: z.string().nullable(),
-});
-
 /** A succeeded refund the buyer asked for, or one whose initiator was never recorded. */
 function buyerCancelled(
   refunds: { status: string; metadata: Prisma.JsonValue }[],
   buyerUserId: string,
 ): boolean {
-  return refunds.some((x) => {
-    if (x.status !== "SUCCEEDED") return false;
-    const meta = refundInitiatorSchema.safeParse(x.metadata);
-    return !meta.success || meta.data.initiatedByUserId === buyerUserId;
-  });
+  return refunds.some(
+    (x) =>
+      x.status === "SUCCEEDED" &&
+      refundInitiatedByBuyer(x.metadata, buyerUserId),
+  );
 }
 
 /**
@@ -618,24 +613,26 @@ export async function vestQualifyingReferrals(opts: {
   for (const { id } of rows) {
     if (Date.now() - started > RUN_DEADLINE_MS) break;
     result.scanned++;
+    let rotate = true;
     try {
       const outcome = await settleQualifyingReferral(id, now);
       if (outcome === "VESTED") result.vested++;
       else if (outcome === "VOIDED" || outcome === "REOPENED") result.voided++;
-      else if (outcome === "DEFERRED" || outcome === "BUDGET_EXHAUSTED") {
-        if (outcome === "DEFERRED") result.deferred++;
-        else result.budgetExhausted++;
-        // Rotate it behind rows not yet examined so waiting referrals never starve ready ones.
-        await prisma.referral.updateMany({
-          where: { id, status: "QUALIFYING" },
-          data: { updatedAt: now },
-        });
-      }
+      else if (outcome === "DEFERRED") result.deferred++;
+      else if (outcome === "BUDGET_EXHAUSTED") result.budgetExhausted++;
+      rotate = outcome === "DEFERRED" || outcome === "BUDGET_EXHAUSTED";
     } catch (err) {
       result.failed++;
       result.failures.push({
         referralId: id,
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    // Waiting and failing rows move behind unexamined ones so they never starve ready referrals.
+    if (rotate) {
+      await prisma.referral.updateMany({
+        where: { id, status: "QUALIFYING" },
+        data: { updatedAt: now },
       });
     }
   }

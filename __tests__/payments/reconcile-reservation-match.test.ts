@@ -28,6 +28,8 @@ jest.mock("../../lib/prisma", () => {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     delete: jest.fn().mockResolvedValue({}),
   };
+  // No credit was spent on these payments, so credit restoration finds nothing.
+  const referralCreditUsage = { findMany: jest.fn().mockResolvedValue([]) };
   return {
     __esModule: true,
     default: {
@@ -35,7 +37,7 @@ jest.mock("../../lib/prisma", () => {
       // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
       // payer's notice; the tx sees the same refund table.
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({ refund }),
+        fn({ refund, referralCreditUsage }),
       ),
     },
   };

@@ -10,11 +10,7 @@ import {
 } from "@/lib/payments/pricing/platform-fee";
 import { verifyExpertVia } from "./attribution-token";
 import type { WelcomeDiscount } from "./promo-math";
-import {
-  acceptsNewReferees,
-  isProgramLive,
-  readReferralProgramConfig,
-} from "./program-config";
+import { isProgramLive, readReferralProgramConfig } from "./program-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -146,10 +142,11 @@ export async function resolveCheckoutAttribution(
   const now = input.now ?? new Date();
   const schedule = await readActiveFeeSchedule(db, now);
   const cfg = await readReferralProgramConfig(db);
+  // The 90% pause stops new sign-ups only; a referee already SIGNED_UP keeps the discount.
   const { source, referralId } = await resolveSource(
     db,
     input,
-    acceptsNewReferees(cfg, now) ? cfg.qualifyWindowDays : null,
+    isProgramLive(cfg) ? cfg.qualifyWindowDays : null,
     now,
   );
   const platformFeeBps = feeBpsForSource(schedule, source);
