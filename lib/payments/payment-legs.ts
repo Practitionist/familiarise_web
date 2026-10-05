@@ -221,7 +221,7 @@ export function checkPaymentLegsSumToAmount(args: {
   // #1347 — the credit is platform-funded and already netted out of
   // Payment.amount; counting it here would demand it twice over.
   const legSum = originals
-    .filter((l) => l.source !== "REFERRAL_CREDIT" && l.source !== "LICENSE")
+    .filter((l) => l.source !== "REFERRAL_CREDIT")
     .reduce((acc, leg) => acc + leg.amountPaise, 0);
   if (!licenseOnly && legSum !== args.paymentAmountPaise) {
     return {
