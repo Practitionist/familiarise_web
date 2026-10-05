@@ -15,7 +15,7 @@ jest.mock("../../lib/payments/billing/credit-note-numbering", () => ({
     }),
 }));
 
-import type { Tx } from "@/lib/prisma";
+import { txDouble } from "../fixtures/tx-double";
 import { gstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 
@@ -32,7 +32,7 @@ it("ends the window on 30 November IST after the supply's financial year", () =>
 
 it("mints a zero-tax commercial credit note for a supply past the cutoff", async () => {
   const create = jest.fn().mockResolvedValue({ id: "ccn_1" });
-  const tx = {
+  const tx = txDouble({
     consumerCreditNote: {
       findUnique: jest.fn().mockResolvedValue(null),
       aggregate: jest.fn().mockResolvedValue({ _sum: { totalPaise: null } }),
@@ -42,6 +42,7 @@ it("mints a zero-tax commercial credit note for a supply past the cutoff", async
       findUnique: jest.fn().mockResolvedValue({
         id: "ci_1",
         supplyDate: new Date("2024-05-01T00:00:00Z"),
+        taxableValuePaise: 100_000,
         cgstPaise: 9_000,
         sgstPaise: 9_000,
         igstPaise: 0,
@@ -49,7 +50,7 @@ it("mints a zero-tax commercial credit note for a supply past the cutoff", async
       }),
     },
     $executeRaw: jest.fn().mockResolvedValue(1),
-  } as unknown as Tx;
+  });
 
   await mintConsumerCreditNote(tx, {
     paymentId: "pay_1",
@@ -66,6 +67,7 @@ it("mints a zero-tax commercial credit note for a supply past the cutoff", async
         sgstPaise: 0,
         igstPaise: 0,
         totalPaise: 100_000,
+        isCommercial: true,
         reason: expect.stringContaining("Commercial credit note"),
       }),
     }),

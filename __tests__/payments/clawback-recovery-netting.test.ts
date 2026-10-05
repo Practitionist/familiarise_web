@@ -7,7 +7,7 @@
  */
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
-import type { Tx } from "@/lib/prisma";
+import { txDouble } from "../fixtures/tx-double";
 import {
   clawbackRecoveredPaise,
   outstandingClawbackPaise,
@@ -34,7 +34,7 @@ function fakeLedger(seed: Txn[]) {
     payoutId: t.payoutId,
     entries: t.entries.filter((e) => !direction || e.direction === direction),
   });
-  const db = {
+  return txDouble({
     ledgerAccount: { upsert: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: {
       findUnique: jest.fn(
@@ -95,8 +95,7 @@ function fakeLedger(seed: Txn[]) {
       }),
     },
     consultantPayout: { findMany: jest.fn().mockResolvedValue([]) },
-  };
-  return db as unknown as Tx;
+  });
 }
 
 const CP = "cp_1";

@@ -36,6 +36,10 @@ export interface RollupResult {
   billedPaymentCount: number;
   subtotalPaise: number;
   totalPaise: number;
+  /** Set when the invoice issued without a covering PO on an org that requires one. */
+  unbackedPo?: boolean;
+  /** Set when a domestic org has no GST state, so nothing was billed. */
+  skippedNoGstState?: boolean;
 }
 
 const EMPTY: RollupResult = {
@@ -45,6 +49,22 @@ const EMPTY: RollupResult = {
   subtotalPaise: 0,
   totalPaise: 0,
 };
+
+/**
+ * The tax a booking's net accrual carries: the payment's own `taxAmount`, scaled
+ * down only when reversal legs have netted the accrual below its gross.
+ */
+function accruedTaxPaise(
+  taxAmountPaise: number,
+  legs: { amountPaise: number }[],
+): number {
+  const gross = legs.reduce((s, l) => s + Math.max(l.amountPaise, 0), 0);
+  const net = legs.reduce((s, l) => s + l.amountPaise, 0);
+  if (gross <= 0 || net <= 0) return 0;
+  return net === gross
+    ? taxAmountPaise
+    : Math.round((taxAmountPaise * net) / gross);
+}
 
 /**
  * Roll an org's unbilled INVOICE_ACCRUAL bookings into one OrganizationInvoice.
@@ -84,13 +104,20 @@ export async function rollupOrgInvoiceAccruals(params: {
   // #1447 — GSTIN-first supplier state; a mismatch throws before any tx opens.
   const supplierState = supplierStateCode();
 
+  // A domestic B2B invoice needs the buyer's state to pick its tax head.
+  const buyerStateCode =
+    org.taxInfo?.gstStateCode ?? numericStateCode(org.taxInfo?.gstin, null);
+  const domestic = org.dataResidencyRegion === "IN";
+  if (domestic && !buyerStateCode) {
+    return { ...EMPTY, skippedNoGstState: true };
+  }
+
   // #1357 7.4 — orphaned overage events are collected in the tx and written
   // AFTER it commits. `recordSystemError` goes through the global client, so a
   // call fired from inside the Serializable block races its own transaction:
   // a P2034 abort (routine here — retried below) would
   // leave a SystemEvent naming an invoice that was rolled back, and the cron's
   // `prisma.$disconnect()` can cut an un-awaited insert off mid-flight.
-  const unbackedPoInvoices: { invoiceId: string; invoiceNumber: string }[] = [];
   const orphanedOverages: Array<{
     overageEventId: string;
     invoiceId: string;
@@ -116,7 +143,6 @@ export async function rollupOrgInvoiceAccruals(params: {
       async (tx) => {
         // A retried attempt must not inherit the discarded one's orphans.
         orphanedOverages.length = 0;
-        unbackedPoInvoices.length = 0;
 
         // Unbilled accrued bookings: org-tagged, succeeded payments carrying an
         // INVOICE_ACCRUAL leg not yet attached to an invoice.
@@ -133,6 +159,7 @@ export async function rollupOrgInvoiceAccruals(params: {
           },
           select: {
             id: true,
+            taxAmount: true,
             // Bill the base accrual AND any CHARGE_ORG overage (#715) on the
             // booking, NET of refund reversal legs (#786 — refunds append
             // negative *_REVERSAL siblings instead of mutating the original).
@@ -153,46 +180,52 @@ export async function rollupOrgInvoiceAccruals(params: {
         });
         if (accrued.length === 0) return { result: EMPTY, notifyStaged: [] };
 
+        // The legs are tax-inclusive (they sum to Payment.amount), so each line
+        // carries the tax its booking already posted to GST_PAYABLE.
         const lines = accrued
-          .map((p, i) => ({
-            position: i,
-            paymentId: p.id,
-            description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
-            quantity: 1,
-            unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
-          }))
+          .map((p) => {
+            const legsPaise = p.legs.reduce((s, l) => s + l.amountPaise, 0);
+            const taxPaise = accruedTaxPaise(p.taxAmount, p.legs);
+            return {
+              paymentId: p.id,
+              description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
+              quantity: 1,
+              legsPaise,
+              taxPaise,
+              unitPricePaise: legsPaise - taxPaise,
+            };
+          })
           // A fully-refunded-before-billing booking nets to ≤0 — keep it out of
           // the issued document; the payment is still stamped below so it never
           // re-enters a future rollup.
-          .filter((l) => l.unitPricePaise > 0)
+          .filter((l) => l.legsPaise > 0)
           .map((l, i) => ({ ...l, position: i }));
         const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
-        if (subtotal <= 0) return { result: EMPTY, notifyStaged: [] };
+        const legsTotal = lines.reduce((s, l) => s + l.legsPaise, 0);
+        if (legsTotal <= 0) return { result: EMPTY, notifyStaged: [] };
 
         // #1744 row 3 — the buyer GSTIN's first two digits are the place of
         // supply; an org that never filled its state still gets the right head.
         const gst = deriveGstBreakdown({
           subtotalPaise: subtotal,
+          taxPaise: lines.reduce((s, l) => s + l.taxPaise, 0),
           supplierStateCode: supplierState,
-          buyerStateCode:
-            org.taxInfo?.gstStateCode ??
-            numericStateCode(org.taxInfo?.gstin, null),
+          buyerStateCode,
           buyerGstin: org.taxInfo?.gstin ?? null,
-          buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
+          buyerCountry: domestic ? "IN" : "US",
           hsnCode: org.taxInfo?.hsnDefault,
         });
 
-        // #776 — defensive invariant at issue time: the subtotal must equal the
-        // line-item sum and the GST breakdown must net exactly (total == subtotal +
-        // CGST + SGST + IGST). A mis-totaled GST invoice is a filing defect, so hard-throw
-        // here rather than persist it (catches any future rounding regression upstream).
+        // The invoice must equal the ORG_RECEIVABLE its bookings accrued, and
+        // its heads must net exactly; a mis-totaled GST invoice is a filing defect.
         const taxParts = gst.igstPaise + gst.cgstPaise + gst.sgstPaise;
         if (
           gst.subtotalPaise !== subtotal ||
-          gst.totalPaise !== gst.subtotalPaise + taxParts
+          gst.totalPaise !== gst.subtotalPaise + taxParts ||
+          gst.totalPaise !== legsTotal
         ) {
           throw new Error(
-            `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise}`,
+            `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise} accrued=${legsTotal}`,
           );
         }
 
@@ -258,10 +291,6 @@ export async function rollupOrgInvoiceAccruals(params: {
             },
           },
         });
-
-        if (org.requiresPO && !purchaseOrderId) {
-          unbackedPoInvoices.push({ invoiceId: invoice.id, invoiceNumber });
-        }
 
         // Stamp the accrued payments. The `billableToOrgInvoiceId: null` guard is the
         // secondary defence; #813 Serializable above is what stops two runs both
@@ -385,6 +414,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             billedPaymentCount: accrued.length,
             subtotalPaise: gst.subtotalPaise,
             totalPaise: gst.totalPaise,
+            unbackedPo: org.requiresPO && !purchaseOrderId,
           },
           notifyStaged,
         };
@@ -401,18 +431,6 @@ export async function rollupOrgInvoiceAccruals(params: {
   } catch (e) {
     reportSentryError(e, { subsystem: "payments" });
     console.error("[invoice-rollup] invoice-issued notify attempt failed:", e);
-  }
-
-  // The invoice stands either way: an org that requires a PO is billed, and
-  // ops attaches one, rather than the cycle going unbilled.
-  for (const unbacked of unbackedPoInvoices) {
-    await recordSystemError({
-      organizationId,
-      category: "INVOICE",
-      summary: `Invoice ${unbacked.invoiceNumber} was issued without a purchase order: no active PO covers its total`,
-      err: new Error("ROLLUP_PO_NOT_COVERED"),
-      context: unbacked,
-    });
   }
 
   // Awaited, not voided: the caller is a cron that disconnects Prisma as soon

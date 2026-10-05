@@ -17,39 +17,10 @@ import {
   payerSentence,
   refundRailLine,
 } from "@/lib/appointments/payment-display";
-
-/** What `GET /api/appointments/[id]/cancel/preview` answers. */
-interface CancelRefundPreview {
-  refundPct: number;
-  estimatedRefundPaise: number;
-  currency: string;
-  /**
-   * Null when the booking has no live session at all, and on the whole-event
-   * rail, which never consults the clock.
-   */
-  hoursUntilNextSession: number | null;
-  prorated: boolean;
-  /**
-   * Which rail the money comes back on. Null on the whole-event rail, where a
-   * roster funds through several at once and no single sentence is true.
-   */
-  fundingRail: "GATEWAY" | "INTERNAL" | "CREDITS" | null;
-  /** The sponsoring organisation, set only on the INTERNAL rail. */
-  payerOrganizationName?: string | null;
-  /**
-   * Cancelling a class or webinar refunds the entire roster in full, not the
-   * viewer's own seat — `estimatedRefundPaise` is then the sum across
-   * `attendeeCount` paid attendees.
-   */
-  wholeEvent?: boolean;
-  attendeeCount?: number | null;
-  /**
-   * #1846 — the trial preview says `paid: false` when there is nothing to
-   * refund, and carries the paid amount for the breakdown line when there is.
-   */
-  paid?: boolean;
-  grossPaise?: number;
-}
+import {
+  CancelRefundPreviewSchema,
+  type CancelRefundPreview,
+} from "@/schemas/appointments";
 
 /** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
 type SeatLeavePreview =
@@ -136,7 +107,9 @@ export function CancelConfirmationDialog({
         { signal: AbortSignal.timeout(8_000) },
       );
       if (!response.ok) throw new Error("Could not estimate the refund");
-      return response.json();
+      const parsed = CancelRefundPreviewSchema.safeParse(await response.json());
+      if (!parsed.success) throw new Error("Could not estimate the refund");
+      return parsed.data;
     },
     enabled: previewEnabled,
     // Money owed moves with the clock (the notice tiers), so this is never
@@ -236,6 +209,13 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (preview.paid === false) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Nothing was paid for this, so there is nothing to refund.
+        </p>
+      );
+    }
     // Cancelling a class or webinar is not a quote about the viewer's own seat.
     // The POST route hands the whole event to `refundWholeEventPayments`, which
     // refunds every attendee in full — so an organiser, who owns no seat, was
@@ -265,13 +245,6 @@ export function CancelConfirmationDialog({
             )}
           </strong>{" "}
           in total.
-        </p>
-      );
-    }
-    if (preview.paid === false) {
-      return (
-        <p className="text-muted-foreground text-sm">
-          Nothing was paid for this, so there is nothing to refund.
         </p>
       );
     }

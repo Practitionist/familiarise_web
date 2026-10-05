@@ -41,6 +41,8 @@ import {
   type ApplyRefundCascadeResult,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
+import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
 import {
   applyReversal,
@@ -1406,6 +1408,13 @@ export async function handleDisputeCreated(
                     failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
                   },
                 });
+                const cancelled = await tx.consultantPayout.findMany({
+                  where: { id: { in: batchedPayoutIds }, status: "CANCELLED" },
+                  select: { id: true },
+                });
+                for (const { id } of cancelled) {
+                  await releaseClawbackRecovery(tx, id);
+                }
               }
             }
           }
@@ -1487,6 +1496,16 @@ export async function handleDisputeCreated(
                     failureReason: `Cancelled: linked payment entered dispute ${disputeId}`,
                   },
                 });
+                const cancelled = await tx.organizationPayout.findMany({
+                  where: {
+                    id: { in: batchedOrgPayoutIds },
+                    status: "CANCELLED",
+                  },
+                  select: { id: true },
+                });
+                for (const { id } of cancelled) {
+                  await releaseClawbackRecovery(tx, id);
+                }
               }
             }
           }
@@ -2320,9 +2339,17 @@ export async function applyB2cChargebackReversal(
     return;
   }
 
+  // Past the s.34(2) cutoff the GST stays with the government; PLATFORM_FEE absorbs it below.
+  const supply = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: { createdAt: true },
+  });
+  const gstStays = !!supply && isPastGstCreditNoteCutoff(supply.createdAt);
+
   // Proportional inverse: flip each leg's direction and floor-scale by the
   // settled fraction (== the whole booking for a full chargeback, no prior refund).
   const postings: Posting[] = booking.entries
+    .filter((e) => !(gstStays && e.account.kind === "GST_PAYABLE"))
     .map((e): Posting => ({
       account: {
         kind: e.account.kind,

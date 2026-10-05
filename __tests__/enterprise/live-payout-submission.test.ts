@@ -49,6 +49,7 @@ jest.mock("../../lib/prisma", () => ({
     orgAuditLog: {
       create: jest.fn().mockResolvedValue({}),
     },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
   },
 }));

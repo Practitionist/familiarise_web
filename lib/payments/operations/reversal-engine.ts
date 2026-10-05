@@ -47,6 +47,7 @@ import {
 } from "@prisma/client";
 import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { ORG_CLAWBACK_KEY_PREFIX } from "@/lib/payments/payouts/clawback-recovery";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -428,7 +429,7 @@ export async function postPayoutClawback(
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `clawback:${refundId}:${payoutId}`,
+      idempotencyKey: `${ORG_CLAWBACK_KEY_PREFIX}${refundId}:${payoutId}`,
       kind: "ORG_PAYOUT",
       payoutId,
       postings: [

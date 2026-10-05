@@ -2460,9 +2460,11 @@ model ConsumerCreditNote {
   /// Exactly one trigger keys the note. Both are @unique, so a webhook
   /// redelivery or a cron retry re-reads the existing note instead of minting a
   /// second one and burning a gapless number.
-  refundId  String? @unique
-  disputeId String? @unique
-  reason    String?
+  refundId     String? @unique
+  disputeId    String? @unique
+  reason       String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial Boolean @default(false)
 
   taxableValuePaise BigInt
   cgstPaise         BigInt @default(0)
@@ -6195,6 +6197,8 @@ model CreditNote {
   // back. A statutory document must name its real trigger, not borrow refundId.
   overageEventId String?              @unique
   reason         String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial   Boolean              @default(false)
 
   // #778 §D — IRP reports credit/debit notes as their own document types for
   // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.

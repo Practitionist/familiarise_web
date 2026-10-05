@@ -22,6 +22,8 @@ export const billingSchema = z.object({
   // We accept it in all cases so the form can retain the value if the
   // user flips back and forth across funding sources.
   paymentTermsDays: z.coerce.number().int().min(1).max(120),
+  // The org is invoiced B2B, so its GST state picks the tax head.
+  gstStateCode: z.string().regex(/^\d{2}$/, "Choose your GST state"),
 });
 
 export const brandingSchema = z.object({

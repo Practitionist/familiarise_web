@@ -22,6 +22,6 @@ export function isPastGstCreditNoteCutoff(
   return now.getTime() > gstCreditNoteCutoff(supplyDate).getTime();
 }
 
-/** Prefixed to a commercial credit note's reason so the register reader can tell it apart. */
+/** Prefixed to a commercial credit note's reason so the document states why it carries no tax. */
 export const COMMERCIAL_CREDIT_NOTE_REASON_PREFIX =
   "Commercial credit note (past the CGST s.34(2) time limit): ";

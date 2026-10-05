@@ -5,12 +5,15 @@
  * stay under ₹5,00,000 in the financial year has nothing withheld, even above
  * the ₹50,000 194J threshold (₹80,000 payout, ₹1,00,000 gross each way).
  */
+const mockPayoutFindMany = jest.fn();
+const mockPayoutUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultantPayout: {
-      findMany: jest.fn(),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: (...a: unknown[]) => mockPayoutFindMany(...a),
+      updateMany: (...a: unknown[]) => mockPayoutUpdateMany(...a),
       update: jest.fn(),
     },
     consultantEarnings: {
@@ -64,12 +67,7 @@ jest.mock("../../lib/novu/service", () => ({
   notifyPayoutProcessed: jest.fn(),
 }));
 
-import prisma from "../../lib/prisma";
 import { processApprovedPayouts } from "../../lib/payments/payouts/payout-service";
-
-const mocks = prisma as unknown as {
-  consultantPayout: { findMany: jest.Mock; updateMany: jest.Mock };
-};
 
 it("withholds nothing for a PAN-bearing individual below ₹5L in the FY", async () => {
   process.env.RAZORPAY_KEY_ID = "k";
@@ -83,7 +81,7 @@ it("withholds nothing for a PAN-bearing individual below ₹5L in the FY", async
     configurable: true,
     writable: true,
   });
-  mocks.consultantPayout.findMany.mockResolvedValue([
+  mockPayoutFindMany.mockResolvedValue([
     {
       id: "po_1",
       consultantProfileId: "cprof_1",
@@ -104,7 +102,7 @@ it("withholds nothing for a PAN-bearing individual below ₹5L in the FY", async
 
   await processApprovedPayouts();
 
-  expect(mocks.consultantPayout.updateMany).toHaveBeenCalledWith({
+  expect(mockPayoutUpdateMany).toHaveBeenCalledWith({
     where: { id: "po_1", status: "PROCESSING" },
     data: expect.objectContaining({ tdsDeducted: 0, netAmount: 8_000_000 }),
   });

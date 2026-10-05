@@ -50,6 +50,7 @@ export default async function PayoutDetailPage({
     amount: payout.amountPaise,
     tdsDeducted: payout.tdsPaise,
     netAmount: payout.netPaise,
+    recoveredPaise: payout.recoveredPaise,
     tdsRateAppliedBps: payout.tdsRateBps,
     processedAt: payout.processedAt,
     gatewayUtr: payout.utr,

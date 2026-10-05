@@ -19,6 +19,8 @@
  * checkout and invoicing cannot drift apart on the same supply.
  */
 
+import type { GstReason } from "./gst";
+
 export const PLATFORM_LUT_NUMBER_ENV = "PLATFORM_LUT_NUMBER";
 export const PLATFORM_LUT_VALID_TILL_ENV = "PLATFORM_LUT_VALID_TILL";
 
@@ -68,7 +70,7 @@ export function hasValidPlatformLut(now: Date = new Date()): boolean {
 
 /** The LUT a zero-rated export invoice must quote (Rule 96A); null for a taxed supply or a lapsed LUT. */
 export function lutNumberForSupply(
-  gstReason: string,
+  gstReason: GstReason,
   now: Date = new Date(),
 ): string | null {
   if (gstReason !== "ZERO_RATED_EXPORT") return null;

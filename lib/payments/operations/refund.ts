@@ -1906,14 +1906,28 @@ export type OrgCreditNoteMintResult = {
  */
 async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
-  invoice: { id: string; totalPaise: number },
+  invoice: { id: string; totalPaise: number; subtotalPaise: number },
 ): Promise<number> {
   await tx.$executeRaw`SELECT id FROM "OrganizationInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
-  const issued = await tx.creditNote.aggregate({
-    where: { invoiceId: invoice.id },
+  const taxNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: false },
     _sum: { totalPaise: true },
   });
-  return invoice.totalPaise - sumPaise(issued._sum.totalPaise);
+  const commercialNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: true },
+    _sum: { subtotalPaise: true },
+  });
+  // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
+  const commercialGross =
+    invoice.subtotalPaise > 0
+      ? Math.round(
+          (sumPaise(commercialNotes._sum.subtotalPaise) * invoice.totalPaise) /
+            invoice.subtotalPaise,
+        )
+      : 0;
+  return (
+    invoice.totalPaise - sumPaise(taxNotes._sum.totalPaise) - commercialGross
+  );
 }
 
 /** Records the refused over-credit for ops; no money moved, so it is expected. */
@@ -1990,6 +2004,7 @@ export async function mintRefundCreditNote(
     select: {
       id: true,
       amount: true,
+      taxAmount: true,
       createdAt: true,
       organizationId: true,
       billableToOrgInvoiceId: true,
@@ -2057,21 +2072,13 @@ export async function mintRefundCreditNote(
     return { creditNoteId: null };
   }
 
-  // #812 — `invoicedReverse` is the TAX-EXCLUSIVE leg amount being reversed (the
-  // INVOICE_ACCRUAL legs are the invoice's pre-tax subtotal; invoices are built
-  // tax-exclusive: total = subtotal + GST). So the GST rate is the invoice's tax
-  // over its SUBTOTAL, not over its total, and the reversed amount is the credit
-  // note's subtotal with tax added on top — mirroring the invoice's own
-  // structure. Computing the fraction over totalPaise (tax-inclusive) under-
-  // credited the full GST (CGST Sec 34 reverses output tax proportionally). The
-  // sibling mintInvoiceRefundCreditNote takes a tax-INCLUSIVE payment refund, so
-  // it keeps the over-total fraction — do not change it.
-  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.subtotalPaise > 0 ? invoiceTax / invoice.subtotalPaise : 0;
-  let cnSubtotal = invoicedReverse;
-  let cnTax = Math.round(invoicedReverse * taxFraction);
-  let cnTotal = cnSubtotal + cnTax;
+  // The accrual legs are tax-inclusive (they sum to Payment.amount), so the
+  // reversed slice carries the payment's own tax share.
+  const taxShare = (paise: number): number =>
+    Math.round((paise * (payment.taxAmount ?? 0)) / payment.amount);
+  let cnTotal = invoicedReverse;
+  let cnTax = taxShare(cnTotal);
+  let cnSubtotal = cnTotal - cnTax;
 
   // #1582 C-P0-01 — the cap is cumulative across every note on this invoice,
   // not per note, mirroring the consumer minter: two partial refunds plus a
@@ -2089,7 +2096,7 @@ export async function mintRefundCreditNote(
   }
   if (cnTotal > remaining) {
     cnTotal = remaining;
-    cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+    cnTax = taxShare(cnTotal);
     cnSubtotal = cnTotal - cnTax;
   }
   // The cutoff runs from the booking's supply, not the later rollup invoice.
@@ -2119,6 +2126,7 @@ export async function mintRefundCreditNote(
       reason: commercial
         ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
         : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,
@@ -2311,6 +2319,7 @@ export async function mintInvoiceRefundCreditNote(
       reason: commercial
         ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
         : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,

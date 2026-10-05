@@ -108,7 +108,8 @@ describe("#812 invariant — every ledger transaction balances", () => {
 });
 
 describe("#812 invariant — refund credit note fully reverses proportional GST", () => {
-  function mockTx(subtotal: number, reverse: number) {
+  // The booking is tax-inclusive: its accrual leg is the base plus its GST.
+  function mockTx(subtotal: number) {
     const created: Record<string, unknown>[] = [];
     const tax = Math.round(subtotal * 0.18);
     const cgst = Math.floor(tax / 2);
@@ -117,11 +118,12 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
       payment: {
         findUnique: jest.fn().mockResolvedValue({
           id: "p",
-          amount: reverse,
+          amount: subtotal + tax,
+          taxAmount: tax,
           organizationId: "org",
           billableToOrgInvoiceId: "inv",
           createdAt: new Date(),
-          legs: [{ source: "INVOICE_ACCRUAL", amountPaise: reverse }],
+          legs: [{ source: "INVOICE_ACCRUAL", amountPaise: subtotal + tax }],
         }),
       },
       creditNote: {
@@ -163,14 +165,15 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
     };
   }
 
-  it("cnTotal = cnSubtotal + cnTax, and cnTax is the proportional GST of the reversed pre-tax amount", async () => {
+  it("cnTotal = cnSubtotal + cnTax, and cnTax is the booking's own GST share of the reversed amount", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.integer({ min: 1, max: 10_000_000 }),
         fc.double({ min: 0.01, max: 1, noNaN: true }),
         async (subtotal, frac) => {
-          const reverse = Math.max(1, Math.floor(subtotal * frac));
-          const tx = mockTx(subtotal, reverse);
+          const tax = Math.round(subtotal * 0.18);
+          const reverse = Math.max(1, Math.floor((subtotal + tax) * frac));
+          const tx = mockTx(subtotal);
           await mintRefundCreditNote(tx as never, {
             paymentId: "p",
             refundId: "r",
@@ -185,13 +188,10 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
             totalPaise: number;
           };
           const cnTax = cn.cgstPaise + cn.sgstPaise + cn.igstPaise;
-          // Pre-tax reversed amount is the CN subtotal; total adds tax on top.
-          expect(cn.subtotalPaise).toBe(reverse);
+          // The reversed slice of the tax-inclusive leg is the note's total.
+          expect(cn.totalPaise).toBe(reverse);
           expect(cn.totalPaise).toBe(cn.subtotalPaise + cnTax);
-          // Tax is the invoice's 18% applied to the reversed pre-tax base.
-          expect(cnTax).toBe(
-            Math.round((reverse * Math.round(subtotal * 0.18)) / subtotal),
-          );
+          expect(cnTax).toBe(Math.round((reverse * tax) / (subtotal + tax)));
         },
       ),
     );

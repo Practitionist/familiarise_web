@@ -3,6 +3,7 @@
  * (`payout-service.ts`) and the organization rail (`org-payout-service.ts`).
  */
 
+import { Prisma, RefundStatus } from "@prisma/client";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
@@ -23,6 +24,21 @@ export const DISPUTE_GATED_PAYMENT_WHERE = {
     some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
   },
 };
+
+/**
+ * Payment-level refund filter shared by both payout rails: a cash refund still
+ * in flight or not yet cascaded blocks the payout. Zero-amount credit
+ * restorations settle in-ledger and are never cascaded, so they never gate.
+ */
+export const REFUND_GATED_PAYMENT_WHERE = {
+  refunds: {
+    some: {
+      amountPaise: { gt: 0 },
+      status: { notIn: [RefundStatus.FAILED, RefundStatus.CANCELLED] },
+      OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+    },
+  },
+} satisfies Prisma.PaymentWhereInput;
 
 export type PayableLedgerAccount =
   | { kind: "CONSULTANT_PAYABLE"; consultantProfileId: string }

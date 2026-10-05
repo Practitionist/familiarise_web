@@ -16,7 +16,7 @@ import {
 } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
-import { Prisma, RefundStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
@@ -32,6 +32,7 @@ import {
   clawbackRecoveredPaise,
   recoverClawbackOnPayout,
   recoverablePaise,
+  releaseClawbackRecovery,
 } from "./clawback-recovery";
 import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -51,6 +52,7 @@ import {
   computeResidentPayoutTds,
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
+  REFUND_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
@@ -648,28 +650,10 @@ async function checkOrgPayoutDisputeOrRefundBlock(
     return readOrgPayoutCurrentStatus(tx, payoutId);
   }
 
-  const uncascadedRefundEarning =
-    typeof tx.organizationEarnings?.findFirst === "function"
-      ? await tx.organizationEarnings.findFirst({
-          where: {
-            orgPayoutId: payoutId,
-            payment: {
-              refunds: {
-                some: {
-                  OR: [
-                    { status: RefundStatus.PENDING },
-                    {
-                      status: RefundStatus.SUCCEEDED,
-                      cascadedAt: null,
-                    },
-                  ],
-                },
-              },
-            },
-          },
-          select: { id: true },
-        })
-      : null;
+  const uncascadedRefundEarning = await tx.organizationEarnings.findFirst({
+    where: { orgPayoutId: payoutId, payment: REFUND_GATED_PAYMENT_WHERE },
+    select: { id: true },
+  });
   if (uncascadedRefundEarning) {
     console.warn(
       `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has an in-flight or uncascaded refund`,
@@ -718,6 +702,7 @@ async function checkOrgPayoutShortfallBeforeDisbursement(
     where: { orgPayoutId: payout.id, status: "BATCHED" },
     data: { status: "READY", orgPayoutId: null },
   });
+  await releaseClawbackRecovery(tx, payout.id);
   await tx.orgAuditLog.create({
     data: {
       organizationId: payout.organizationId,
@@ -971,6 +956,7 @@ async function markPayoutFailedFromSubmission(
       where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "READY", orgPayoutId: null },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     await tx.orgAuditLog.create({
       data: {
@@ -1476,6 +1462,7 @@ async function markOrgPayoutFailedInternal(
     await tx.tDSRecord.deleteMany({
       where: { orgPayoutId: payoutId, isReversal: false },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
       where: { id: payoutId },
@@ -1623,6 +1610,7 @@ export async function markOrgPayoutReversed(
       organizationId: payout.organizationId,
       reversalBasis: { kind: "FULL" },
     });
+    await releaseClawbackRecovery(tx, payoutId);
 
     await tx.orgAuditLog.create({
       data: {

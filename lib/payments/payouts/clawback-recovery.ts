@@ -11,7 +11,7 @@
  * ledger, under one key per payout.
  *
  * A recovery attached to a payout that later fails, is cancelled or is
- * reversed is released (re-opened) when the payee's next payout is built.
+ * reversed is released (re-opened) in the transaction that makes that move.
  */
 
 import { PayoutStatus } from "@prisma/client";
@@ -26,6 +26,8 @@ import {
 } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 
+/** The org clawback journal `clawback:<driver>:<payoutId>` written by the reversal engine. */
+export const ORG_CLAWBACK_KEY_PREFIX = "clawback:";
 export const CLAWBACK_RECOVERY_KEY_PREFIX = "clawback-recovery:";
 export const CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX =
   "clawback-recovery-release:";
@@ -68,14 +70,14 @@ function receivableAccount(payee: ClawbackPayee): AccountRef {
     : { kind: "CASH" };
 }
 
-/** The payee-scoped account every recovery and release touches. */
-function payeeLedgerAccountId(payee: ClawbackPayee): string {
-  return ledgerAccountId(
-    payee.rail === "CONSULTANT"
-      ? receivableAccount(payee)
-      : payableAccount(payee),
-  );
-}
+/** Journals that move the org rail's clawback balance on ORG_PAYABLE. */
+export const ORG_CLAWBACK_KEY_FILTER = {
+  OR: [
+    ORG_CLAWBACK_KEY_PREFIX,
+    CLAWBACK_RECOVERY_KEY_PREFIX,
+    CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
+  ].map((prefix) => ({ idempotencyKey: { startsWith: prefix } })),
+};
 
 /** Paise the payee still owes back, read from the ledger; never negative. */
 export async function outstandingClawbackPaise(
@@ -89,7 +91,7 @@ export async function outstandingClawbackPaise(
     by: ["direction"],
     where: {
       accountId: ledgerAccountId(payableAccount(payee)),
-      transaction: { idempotencyKey: { startsWith: "clawback" } },
+      transaction: ORG_CLAWBACK_KEY_FILTER,
     },
     _sum: { amountPaise: true },
   });
@@ -117,12 +119,61 @@ export function recoverablePaise(
   return Math.max(0, payablePaise - minimumPayoutPaise - withholdingRoom);
 }
 
+/** Amount recovered on each payout, net of any release; absent ids recovered nothing. */
+export async function clawbackRecoveredByPayout(
+  db: PrismaLike,
+  payoutIds: string[],
+): Promise<Map<string, number>> {
+  const recovered = new Map<string, number>();
+  if (payoutIds.length === 0) return recovered;
+  const txns = await db.ledgerTransaction.findMany({
+    where: {
+      idempotencyKey: {
+        in: payoutIds.flatMap((id) => [
+          clawbackRecoveryKey(id),
+          clawbackRecoveryReleaseKey(id),
+        ]),
+      },
+    },
+    select: {
+      idempotencyKey: true,
+      payoutId: true,
+      entries: { where: { direction: "DEBIT" }, select: { amountPaise: true } },
+    },
+  });
+  for (const t of txns) {
+    if (!t.payoutId) continue;
+    const paise = t.entries.reduce((s, e) => s + sumPaise(e.amountPaise), 0);
+    const signed = t.idempotencyKey.startsWith(
+      CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
+    )
+      ? -paise
+      : paise;
+    recovered.set(t.payoutId, (recovered.get(t.payoutId) ?? 0) + signed);
+  }
+  for (const [id, paise] of recovered) recovered.set(id, Math.max(0, paise));
+  return recovered;
+}
+
 /** Amount recovered on one payout, net of any release; 0 when none. */
 export async function clawbackRecoveredPaise(
   db: PrismaLike,
   payoutId: string,
 ): Promise<number> {
-  const txns = await db.ledgerTransaction.findMany({
+  return (await clawbackRecoveredByPayout(db, [payoutId])).get(payoutId) ?? 0;
+}
+
+/**
+ * Re-opens the clawback recovered on a payout that did not complete, by
+ * mirroring its recovery journal. Idempotent; a no-op when nothing was
+ * recovered. Call in the transaction that moves the payout to FAILED,
+ * CANCELLED or REVERSED, after any reversal journal that reads the recovery.
+ */
+export async function releaseClawbackRecovery(
+  tx: PrismaLike,
+  payoutId: string,
+): Promise<void> {
+  const txns = await tx.ledgerTransaction.findMany({
     where: {
       idempotencyKey: {
         in: [
@@ -133,95 +184,40 @@ export async function clawbackRecoveredPaise(
     },
     select: {
       idempotencyKey: true,
-      entries: { where: { direction: "DEBIT" }, select: { amountPaise: true } },
-    },
-  });
-  let recovered = 0;
-  for (const t of txns) {
-    const paise = t.entries.reduce((s, e) => s + sumPaise(e.amountPaise), 0);
-    recovered +=
-      t.idempotencyKey === clawbackRecoveryKey(payoutId) ? paise : -paise;
-  }
-  return Math.max(0, recovered);
-}
-
-async function postRecovery(
-  tx: Tx,
-  payee: ClawbackPayee,
-  payoutId: string,
-  amountPaise: number,
-  release: boolean,
-): Promise<void> {
-  const payable: Posting = {
-    account: payableAccount(payee),
-    direction: release ? "CREDIT" : "DEBIT",
-    amountPaise,
-  };
-  const receivable: Posting = {
-    account: receivableAccount(payee),
-    direction: release ? "DEBIT" : "CREDIT",
-    amountPaise,
-  };
-  await postLedgerTxn(tx, {
-    idempotencyKey: release
-      ? clawbackRecoveryReleaseKey(payoutId)
-      : clawbackRecoveryKey(payoutId),
-    kind: payee.rail === "CONSULTANT" ? "PAYOUT" : "ORG_PAYOUT",
-    payoutId,
-    description: release
-      ? `Clawback recovery released: payout ${payoutId} did not complete`
-      : `Clawback recovered from payout ${payoutId}`,
-    postings: [payable, receivable],
-  });
-}
-
-/** Re-opens the recoveries of this payee's payouts that failed, were cancelled or were reversed. */
-async function releaseLapsedRecoveries(
-  tx: Tx,
-  payee: ClawbackPayee,
-): Promise<void> {
-  const recoveries = await tx.ledgerTransaction.findMany({
-    where: {
-      idempotencyKey: { startsWith: CLAWBACK_RECOVERY_KEY_PREFIX },
-      entries: { some: { accountId: payeeLedgerAccountId(payee) } },
-    },
-    select: {
-      payoutId: true,
-      entries: { where: { direction: "DEBIT" }, select: { amountPaise: true } },
-    },
-  });
-  const byPayout = new Map<string, number>();
-  for (const r of recoveries) {
-    if (!r.payoutId) continue;
-    byPayout.set(
-      r.payoutId,
-      r.entries.reduce((s, e) => s + sumPaise(e.amountPaise), 0),
-    );
-  }
-  if (byPayout.size === 0) return;
-
-  const released = await tx.ledgerTransaction.findMany({
-    where: {
-      idempotencyKey: {
-        in: [...byPayout.keys()].map(clawbackRecoveryReleaseKey),
+      kind: true,
+      entries: {
+        select: {
+          direction: true,
+          amountPaise: true,
+          account: {
+            select: {
+              kind: true,
+              organizationId: true,
+              consultantProfileId: true,
+            },
+          },
+        },
       },
     },
-    select: { payoutId: true },
   });
-  for (const r of released) if (r.payoutId) byPayout.delete(r.payoutId);
-  if (byPayout.size === 0) return;
-
-  const where = {
-    id: { in: [...byPayout.keys()] },
-    status: { in: RECOVERY_RELEASING_STATUSES },
-  };
-  const lapsed =
-    payee.rail === "CONSULTANT"
-      ? await tx.consultantPayout.findMany({ where, select: { id: true } })
-      : await tx.organizationPayout.findMany({ where, select: { id: true } });
-  for (const { id } of lapsed) {
-    await postRecovery(tx, payee, id, byPayout.get(id) ?? 0, true);
-  }
+  if (txns.length !== 1) return;
+  const [recovery] = txns;
+  if (recovery.idempotencyKey !== clawbackRecoveryKey(payoutId)) return;
+  await postLedgerTxn(tx, {
+    idempotencyKey: clawbackRecoveryReleaseKey(payoutId),
+    kind: recovery.kind,
+    payoutId,
+    description: `Clawback recovery released: payout ${payoutId} did not complete`,
+    postings: recovery.entries.map((e): Posting => ({
+      account: {
+        kind: e.account.kind,
+        organizationId: e.account.organizationId,
+        consultantProfileId: e.account.consultantProfileId,
+      },
+      direction: e.direction === "DEBIT" ? "CREDIT" : "DEBIT",
+      amountPaise: sumPaise(e.amountPaise),
+    })),
+  });
 }
 
 /**
@@ -232,11 +228,27 @@ export async function recoverClawbackOnPayout(
   tx: Tx,
   input: { payee: ClawbackPayee; payoutId: string; recoverablePaise: number },
 ): Promise<number> {
-  await releaseLapsedRecoveries(tx, input.payee);
   if (input.recoverablePaise <= 0) return 0;
   const outstanding = await outstandingClawbackPaise(tx, input.payee);
   const recovered = Math.min(outstanding, input.recoverablePaise);
   if (recovered <= 0) return 0;
-  await postRecovery(tx, input.payee, input.payoutId, recovered, false);
+  await postLedgerTxn(tx, {
+    idempotencyKey: clawbackRecoveryKey(input.payoutId),
+    kind: input.payee.rail === "CONSULTANT" ? "PAYOUT" : "ORG_PAYOUT",
+    payoutId: input.payoutId,
+    description: `Clawback recovered from payout ${input.payoutId}`,
+    postings: [
+      {
+        account: payableAccount(input.payee),
+        direction: "DEBIT",
+        amountPaise: recovered,
+      },
+      {
+        account: receivableAccount(input.payee),
+        direction: "CREDIT",
+        amountPaise: recovered,
+      },
+    ],
+  });
   return recovered;
 }

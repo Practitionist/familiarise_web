@@ -6,10 +6,13 @@
 
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
+import type { LedgerDirection } from "@prisma/client";
 import {
   CLAWBACK_RECOVERY_KEY_PREFIX,
   CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX,
+  ORG_CLAWBACK_KEY_FILTER,
   RECOVERY_RELEASING_STATUSES,
+  type ClawbackPayee,
 } from "@/lib/payments/payouts/clawback-recovery";
 import type { Finding } from "./reconcile-ledgers";
 
@@ -25,28 +28,33 @@ export const CLAWBACK_RECOVERY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 export async function orgInvoiceGstFindings(
   organizationId?: string,
 ): Promise<Finding[]> {
-  const invoices = await prisma.organizationInvoice.findMany({
-    where: {
-      status: { in: ["ISSUED", "PAID", "OVERDUE"] },
-      billedPayments: { some: {} },
-      ...(organizationId ? { organizationId } : {}),
-    },
-    select: {
-      id: true,
-      organizationId: true,
-      igstPaise: true,
-      cgstPaise: true,
-      sgstPaise: true,
-      billedPayments: { select: { id: true } },
-      creditNotes: {
-        where: { status: "ISSUED" },
-        select: { igstPaise: true, cgstPaise: true, sgstPaise: true },
-      },
-    },
-  });
   const findings: Finding[] = [];
-  for (let i = 0; i < invoices.length; i += CHUNK) {
-    const slice = invoices.slice(i, i + CHUNK);
+  let cursor: string | undefined;
+  for (;;) {
+    const slice = await prisma.organizationInvoice.findMany({
+      where: {
+        status: { in: ["ISSUED", "PAID", "OVERDUE"] },
+        billedPayments: { some: {} },
+        ...(organizationId ? { organizationId } : {}),
+      },
+      orderBy: { id: "asc" },
+      take: CHUNK,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      select: {
+        id: true,
+        organizationId: true,
+        igstPaise: true,
+        cgstPaise: true,
+        sgstPaise: true,
+        billedPayments: { select: { id: true } },
+        creditNotes: {
+          where: { status: "ISSUED" },
+          select: { igstPaise: true, cgstPaise: true, sgstPaise: true },
+        },
+      },
+    });
+    if (slice.length === 0) break;
+    cursor = slice[slice.length - 1].id;
     const entries = await prisma.ledgerEntry.findMany({
       where: {
         account: { kind: "GST_PAYABLE" },
@@ -96,6 +104,7 @@ export async function orgInvoiceGstFindings(
         },
       });
     }
+    if (slice.length < CHUNK) break;
   }
   return findings;
 }
@@ -133,7 +142,7 @@ export function oldestUnrecoveredAt(events: ReceivableEvent[]): Date | null {
 /** A recovery on a payout that has since failed, been cancelled or reversed no longer stands. */
 async function dropLapsedRecoveries(
   events: ReceivableEvent[],
-  rail: "CONSULTANT" | "ORG",
+  rail: ClawbackPayee["rail"],
 ): Promise<ReceivableEvent[]> {
   const released = new Set(
     events.filter((e) => e.kind === "RELEASED").map((e) => e.payoutId),
@@ -166,8 +175,8 @@ async function dropLapsedRecoveries(
 
 function classify(
   key: string,
-  direction: "DEBIT" | "CREDIT",
-  rail: "CONSULTANT" | "ORG",
+  direction: LedgerDirection,
+  rail: ClawbackPayee["rail"],
 ): ReceivableEvent["kind"] {
   if (key.startsWith(CLAWBACK_RECOVERY_RELEASE_KEY_PREFIX)) return "RELEASED";
   if (key.startsWith(CLAWBACK_RECOVERY_KEY_PREFIX)) return "RECOVERED";
@@ -178,7 +187,7 @@ function classify(
 }
 
 async function staleForRail(
-  rail: "CONSULTANT" | "ORG",
+  rail: ClawbackPayee["rail"],
   now: Date,
   organizationId?: string,
 ): Promise<{ payeeId: string; outstandingPaise: number; since: Date }[]> {
@@ -191,7 +200,7 @@ async function staleForRail(
               kind: "ORG_PAYABLE",
               ...(organizationId ? { organizationId } : {}),
             },
-            transaction: { idempotencyKey: { startsWith: "clawback" } },
+            transaction: ORG_CLAWBACK_KEY_FILTER,
           },
     select: {
       direction: true,

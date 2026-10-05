@@ -50,6 +50,13 @@
 import { numericStateCode } from "./state-codes";
 import { hasValidPlatformLut } from "./lut";
 
+export type GstReason =
+  | "EXPORT_NO_LUT_IGST"
+  | "ZERO_RATED_EXPORT"
+  | "INTRA_STATE_CGST_SGST"
+  | "INTER_STATE_IGST"
+  | "IGST_STATE_UNKNOWN";
+
 export interface GstBreakdown {
   subtotalPaise: number;
   igstPaise: number;
@@ -59,7 +66,7 @@ export interface GstBreakdown {
   hsnCode: string;
   placeOfSupply: string | null;
   reverseCharge: boolean;
-  reason: string;
+  reason: GstReason;
 }
 
 const GST_RATE = 0.18; // 18% standard rate for SAC 999293, 998311 and 998399
@@ -75,6 +82,8 @@ const GST_RATE = 0.18; // 18% standard rate for SAC 999293, 998311 and 998399
  */
 export function deriveGstBreakdown(params: {
   subtotalPaise: number;
+  /** Tax already charged on the supply; split into heads instead of levied again. */
+  taxPaise?: number;
   supplierStateCode: string | null;
   buyerStateCode: string | null;
   buyerCountry: string;
@@ -117,7 +126,8 @@ export function deriveGstBreakdown(params: {
   // 18% with interest, retroactively. Fail closed to IGST instead.
   if (params.buyerCountry !== "IN") {
     if (!hasValidPlatformLut()) {
-      const taxPaise = Math.round(params.subtotalPaise * GST_RATE);
+      const taxPaise =
+        params.taxPaise ?? Math.round(params.subtotalPaise * GST_RATE);
       return {
         subtotalPaise: params.subtotalPaise,
         igstPaise: taxPaise,
@@ -148,7 +158,8 @@ export function deriveGstBreakdown(params: {
   // under-collect output tax; nearest-rounding matches invoice practice
   // (Sec 170 rounds to the rupee at the document level). The CGST/SGST halves
   // below still floor+remainder so the parts sum exactly.
-  const taxPaise = Math.round(params.subtotalPaise * GST_RATE);
+  const taxPaise =
+    params.taxPaise ?? Math.round(params.subtotalPaise * GST_RATE);
 
   // Intra-state: CGST + SGST split 50/50. An unresolvable state on either side
   // stays null and falls through to IGST — never treat unknown as a match.
@@ -182,7 +193,7 @@ export function deriveGstBreakdown(params: {
   // #1132 — this covers BOTH sides. An unresolvable SUPPLIER state also lands
   // here (the intra-state branch requires both), and reporting that as
   // INTER_STATE_IGST recorded an unverified classification as a confirmed one.
-  const igstReason =
+  const igstReason: GstReason =
     !buyerState || !supplierState ? "IGST_STATE_UNKNOWN" : "INTER_STATE_IGST";
   return {
     subtotalPaise: params.subtotalPaise,

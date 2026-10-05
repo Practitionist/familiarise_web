@@ -30,8 +30,7 @@ const CoveredPlanTypeSchema = z.enum([
 ]);
 
 const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
-// The enum still parses CHARGE_MEMBER so the refusal below can name it;
-// #1744 — `overageConfigRefusals` refuses it on every rail.
+// CHARGE_MEMBER parses so `overageConfigRefusals` can refuse it by name on every rail.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
 // #768 #14/#15 — overage-combo guards shared by both config schemas:

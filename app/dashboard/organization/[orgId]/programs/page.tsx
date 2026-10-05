@@ -1404,7 +1404,7 @@ function EditProgramDialog({
               </Select>
             </div>
 
-            {/* Surcharges are no longer offered; a saved one shows so it can be cleared. */}
+            {/* A saved surcharge shows only so it can be cleared. */}
             {overageBehavior !== "BLOCK" && savedSurchargeBps !== null && (
               <div className="space-y-2">
                 <Label htmlFor="edit-overage-surcharge">
