@@ -2,7 +2,8 @@
  * @jest-environment node
  *
  * Section 194-O at payout time: a PAN-bearing INDIVIDUAL whose gross receipts
- * stay under ₹5,00,000 in the financial year has nothing withheld.
+ * stay under ₹5,00,000 in the financial year has nothing withheld, even above
+ * the ₹50,000 194J threshold (₹80,000 payout, ₹1,00,000 gross each way).
  */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -17,8 +18,8 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: jest.fn().mockResolvedValue(null),
       aggregate: jest.fn().mockResolvedValue({
         _sum: {
-          consultantSharePaise: 500_000,
-          grossAmount: 625_000,
+          consultantSharePaise: 8_000_000,
+          grossAmount: 10_000_000,
           refundedShareAmount: null,
         },
       }),
@@ -86,7 +87,7 @@ it("withholds nothing for a PAN-bearing individual below ₹5L in the FY", async
     {
       id: "po_1",
       consultantProfileId: "cprof_1",
-      amount: 500_000,
+      amount: 8_000_000,
       currency: "INR",
       provider: "RAZORPAY",
       method: "BANK_TRANSFER",
@@ -105,6 +106,6 @@ it("withholds nothing for a PAN-bearing individual below ₹5L in the FY", async
 
   expect(mocks.consultantPayout.updateMany).toHaveBeenCalledWith({
     where: { id: "po_1", status: "PROCESSING" },
-    data: expect.objectContaining({ tdsDeducted: 0, netAmount: 500_000 }),
+    data: expect.objectContaining({ tdsDeducted: 0, netAmount: 8_000_000 }),
   });
 });

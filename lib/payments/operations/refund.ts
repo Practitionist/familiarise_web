@@ -1990,6 +1990,7 @@ export async function mintRefundCreditNote(
     select: {
       id: true,
       amount: true,
+      createdAt: true,
       organizationId: true,
       billableToOrgInvoiceId: true,
       legs: { select: { source: true, amountPaise: true } },
@@ -2091,7 +2092,8 @@ export async function mintRefundCreditNote(
     cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
     cnSubtotal = cnTotal - cnTax;
   }
-  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt);
+  // The cutoff runs from the booking's supply, not the later rollup invoice.
+  const commercial = isPastGstCreditNoteCutoff(payment.createdAt);
   if (commercial) {
     cnTax = 0;
     cnTotal = cnSubtotal;
@@ -2234,6 +2236,7 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: true,
       status: true,
       issuedAt: true,
+      billingCycleStart: true,
       subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
@@ -2277,7 +2280,10 @@ export async function mintInvoiceRefundCreditNote(
     params.exactSubtotalPaise,
   );
   if (!amounts) return { creditNoteId: null };
-  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt);
+  // A cycle invoice's earliest supply is its cycle start, so the cutoff runs from there.
+  const commercial = isPastGstCreditNoteCutoff(
+    invoice.billingCycleStart ?? invoice.issuedAt,
+  );
   const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = commercial
     ? {
         ...amounts,

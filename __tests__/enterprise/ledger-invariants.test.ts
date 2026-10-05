@@ -120,6 +120,7 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
           amount: reverse,
           organizationId: "org",
           billableToOrgInvoiceId: "inv",
+          createdAt: new Date(),
           legs: [{ source: "INVOICE_ACCRUAL", amountPaise: reverse }],
         }),
       },

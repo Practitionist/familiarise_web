@@ -265,7 +265,7 @@ async function collectRows(
       docType: "CREDIT_NOTE",
       docNumber: note.creditNoteNumber,
       docDate: note.issuedAt ?? new Date(0),
-      supplyDate: note.invoice?.issuedAt ?? note.issuedAt ?? new Date(0),
+      supplyDate: note.invoice?.issuedAt ?? null,
       buyerType: "B2B",
       buyerGstin: note.invoice?.gstin ?? null,
       placeOfSupply: note.invoice?.placeOfSupply ?? null,

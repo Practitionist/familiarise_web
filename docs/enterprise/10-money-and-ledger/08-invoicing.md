@@ -229,7 +229,7 @@ A refund without a GST credit note is a filing mismatch, so a refund against an 
 - Splits the proportional tax the same way the invoice did: **IGST** (inter-state) or **CGST+SGST** (intra-state, CGST takes the odd-paise remainder), mirroring `OrganizationInvoice`'s breakout so the CN nets cleanly.
 - Allocates a **gapless per-org credit-note number** `<PREFIX>-CN-<FY>-<SEQ>` from `OrgCreditNoteCounter` (`lib/payments/billing/credit-note-numbering.ts`), atomic `UPSERT…RETURNING` — a **separate series from the invoice counter**, as Rule 53 requires.
 - Idempotency is `CreditNote.refundId @unique`: it probes first and returns the existing CN on replay, so a webhook redelivery / cron retry never mints a duplicate or burns a sequence number.
-- Past the CGST s.34(2) cutoff (30 November after the invoice's financial year, `lib/compliance/gst-credit-note-cutoff.ts`) the note is commercial: base amount only, every tax head zero, and a reason that starts with "Commercial credit note". The refund cascade then posts no `GST_PAYABLE` debit, so the GST portion is a platform cost.
+- Past the CGST s.34(2) cutoff (30 November after the financial year of the supply — the booking date, or a cycle invoice's cycle start — `lib/compliance/gst-credit-note-cutoff.ts`) the note is commercial: base amount only, every tax head zero, and a reason that starts with "Commercial credit note". The refund cascade then posts no `GST_PAYABLE` debit, so the GST portion is a platform cost.
 
 A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency.
 

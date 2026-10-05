@@ -10,7 +10,8 @@
  * and 20/2021 are explicit that the operator's retained commission is not
  * deductible from it, and Note 3 to s.393 even deems direct
  * customer-to-participant payments into the gross.
- * CBDT Circular 20/2023 confirms fees and commission stay in that gross base, GST excluded.
+ * CBDT Circular 20/2023 keeps fees and commission in that gross base; separately stated
+ * GST is excluded only when TDS is deducted at credit (at payment it stays in).
  */
 
 /**

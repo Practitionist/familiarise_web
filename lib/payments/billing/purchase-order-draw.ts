@@ -1,7 +1,7 @@
 /**
  * The one purchase-order draw-down: a CAS decrement of `remainingAmountPaise`
- * that holds only while the PO is ACTIVE, in the invoice's currency, and still
- * covers the invoice total. Shared by the manual invoice route and the rollup.
+ * that holds only while the PO is ACTIVE, unexpired, in the invoice's currency,
+ * and still covers the invoice total. Shared by the manual invoice route and the rollup.
  * Restoration on VOID / CANCELLED lives in the invoice PATCH route.
  */
 
@@ -15,6 +15,7 @@ export async function drawPurchaseOrder(
     organizationId: string;
     currency: Currency;
     amountPaise: number;
+    now: Date;
   },
 ): Promise<boolean> {
   const claim = await tx.purchaseOrder.updateMany({
@@ -24,6 +25,7 @@ export async function drawPurchaseOrder(
       status: "ACTIVE",
       currency: input.currency,
       remainingAmountPaise: { gte: input.amountPaise },
+      OR: [{ validUntil: null }, { validUntil: { gte: input.now } }],
     },
     data: { remainingAmountPaise: { decrement: input.amountPaise } },
   });

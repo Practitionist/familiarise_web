@@ -20,8 +20,8 @@ export interface OutwardRegisterRow {
   docType: "INVOICE" | "CREDIT_NOTE";
   docNumber: string;
   docDate: Date;
-  /** When the supply was made: payment date (B2C), issue date (B2B), the original invoice's on a credit note. */
-  supplyDate: Date;
+  /** When the supply was made: payment date (B2C), issue date (B2B), the original invoice's on a credit note; null when unknown. */
+  supplyDate: Date | null;
   buyerType: "B2B" | "B2C";
   /** The buyer's GSTIN for a B2B supply; always null for B2C. */
   buyerGstin: string | null;
@@ -174,7 +174,7 @@ export function buildOutwardRegisterCsv(rows: OutwardRegisterRow[]): string {
         row.sacCode,
         row.originalInvoiceNumber,
         row.paymentId,
-        istDateLabel(row.supplyDate),
+        row.supplyDate ? istDateLabel(row.supplyDate) : null,
       ]
         .map(escapeCsvField)
         .join(","),

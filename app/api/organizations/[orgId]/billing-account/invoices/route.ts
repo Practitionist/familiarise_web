@@ -296,6 +296,7 @@ export async function POST(
           organizationId: orgId,
           currency: body.displayCurrency,
           amountPaise: gst.totalPaise,
+          now: issuedAt,
         });
         if (!drawn) {
           const err = new Error(

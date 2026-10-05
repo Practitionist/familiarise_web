@@ -554,9 +554,12 @@ function CreateProgramDialog({
 
   // Effective overage behaviour: the operator's explicit pick once touched,
   // else the funding-aware default (INVOICE → CHARGE_ORG, else BLOCK).
-  const effectiveOverageBehavior: OverageBehavior = overageTouched
-    ? overageBehavior
-    : defaultOverageBehaviorForFunding(selectedFunding);
+  // CHARGE_ORG is sold on invoice funding only; another contract falls back to the default.
+  const chargeOrgAllowed = selectedFunding === "INVOICE";
+  const effectiveOverageBehavior: OverageBehavior =
+    overageTouched && (overageBehavior !== "CHARGE_ORG" || chargeOrgAllowed)
+      ? overageBehavior
+      : defaultOverageBehaviorForFunding(selectedFunding);
 
   // Auto-correct an unreachable selection when the funding context changes
   // (e.g. user switches from an INVOICE to a LICENSE contract while
@@ -947,9 +950,11 @@ function CreateProgramDialog({
                 </SelectItem>
                 {/* #1744 — CHARGE_MEMBER is refused by the server until an
                     earnings hold exists; a new programme never offers it. */}
-                <SelectItem value="CHARGE_ORG">
-                  Charge org — added to the next invoice
-                </SelectItem>
+                {chargeOrgAllowed && (
+                  <SelectItem value="CHARGE_ORG">
+                    Charge org — added to the next invoice
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
             <p className="text-xs text-zinc-500">

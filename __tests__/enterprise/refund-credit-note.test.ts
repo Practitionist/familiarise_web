@@ -31,6 +31,7 @@ function mockTx(opts: {
     amount: number;
     organizationId: string | null;
     billableToOrgInvoiceId: string | null;
+    createdAt?: Date;
     legs: Array<{ source: string; amountPaise: number }>;
   } | null;
   existingCreditNote?: { id: string } | null;
@@ -85,6 +86,7 @@ const INVOICED_PAYMENT = {
   amount: 1000,
   organizationId: "org1",
   billableToOrgInvoiceId: "inv1",
+  createdAt: new Date(),
   legs: [{ source: "INVOICE_ACCRUAL", amountPaise: 1000 }],
 };
 

@@ -6,7 +6,7 @@ This page collects the tax and filing facts the finance code assumes, so a chang
 
 The platform withholds under Section 194-O — now Section 393(1) Table Sl.8(v) of the Income-tax Act, 2025, payment code 1035 — as an e-commerce operator paying an e-commerce participant, at **0.10%** of the gross consideration. CBDT Circulars 17/2020 and 20/2021 are explicit that the operator's retained commission is not deductible from that base, and `lib/compliance/tds-194o.ts` computes the taxable base as the gross sale, never the platform's fee alone.
 
-CBDT Circular 20/2023 adds that fees and commission stay inside that gross base while GST shown separately on the invoice stays out of it.
+CBDT Circular 20/2023 adds that fees and commission stay inside that gross base, and that GST shown separately on the invoice stays out of it only when the tax is deducted at the time of credit; deducted at payment, the base includes the GST.
 
 The ₹5,00,000-per-financial-year exemption applies only when all three limbs hold at once: the participant is an individual or a HUF, gross financial-year receipts do not exceed the threshold, and PAN or Aadhaar has been furnished. Companies, partnerships, and LLPs are withheld from the first rupee with no threshold at all. A consultant whose `ConsultantTaxInfo.taxEntityType` is null is treated as ineligible, so the payout requirements model (`lib/payments/payouts/payout-requirements.ts`) asks for the entity type as a `TAX_ENTITY_TYPE` step wherever it asks for the PAN. A missing PAN triggers 194-O's own 5% no-PAN rate, distinct from the 20% fallback that applies to Sections 194J and 194C, so the code must not collapse the two rates into one constant.
 

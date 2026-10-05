@@ -239,15 +239,19 @@ export function OrgPayerSelector({
         );
       })}
 
-      <p className="text-xs text-muted-foreground">
-        {payerSentence(
-          selectedMembership && selectedMembership.fundingSource !== "PERSONAL"
-            ? "ORG"
-            : "SELF",
-          selectedMembership?.organizationName ?? null,
-        )}
-        .
-      </p>
+      {/* An org with no billing account cannot pay, so no payer is named. */}
+      {(!selectedMembership || selectedMembership.fundingSource !== null) && (
+        <p className="text-xs text-muted-foreground">
+          {payerSentence(
+            selectedMembership &&
+              selectedMembership.fundingSource !== "PERSONAL"
+              ? "ORG"
+              : "SELF",
+            selectedMembership?.organizationName ?? null,
+          )}
+          .
+        </p>
+      )}
 
       {/* #777 §C — pre-checkout overage warning for the selected org. */}
       {selectedOrganizationId && selectedMembership && planType && planId && (

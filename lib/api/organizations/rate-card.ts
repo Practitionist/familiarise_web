@@ -24,6 +24,7 @@ import type { Tx } from "@/lib/prisma";
 
 import type { Prisma, CoveredPlanType, RateCard } from "@prisma/client";
 import { z } from "zod";
+import { reportSentryError } from "@/lib/observability/report";
 
 // #780 — reads come through the extended client (money as number); the raw
 // model type still says bigint.
@@ -66,18 +67,27 @@ export const DEFAULT_RATE_CARD: ResolvedRateCard = {
  * `lib/payments/payouts/payout-service.ts`.
  */
 const ScopedResolutionFlagSchema = z.enum(["on", "off"]);
+let invalidScopedFlagReported = false;
 
-/** Any other value (including "true") throws, so a mistyped flip is never silently off. */
+/**
+ * Any value but "on"/"off" (including "true") reads as off and pages once per
+ * process; throwing here would strand a confirmed booking without earnings.
+ */
 export function isScopedRateCardResolutionEnabled(): boolean {
   const raw = process.env.RATE_CARD_SCOPED_RESOLUTION?.trim();
   if (!raw) return false;
   const parsed = ScopedResolutionFlagSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error(
-      `RATE_CARD_SCOPED_RESOLUTION must be "on" or "off" (got "${raw}").`,
+  if (parsed.success) return parsed.data === "on";
+  if (!invalidScopedFlagReported) {
+    invalidScopedFlagReported = true;
+    reportSentryError(
+      new Error(
+        `RATE_CARD_SCOPED_RESOLUTION must be "on" or "off" (got "${raw}"); settling on org-scoped cards.`,
+      ),
+      { subsystem: "payments", level: "fatal" },
     );
   }
-  return parsed.data === "on";
+  return false;
 }
 
 function toResolved(card: RateCardRow): ResolvedRateCard {

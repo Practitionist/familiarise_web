@@ -259,6 +259,7 @@ describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balanc
         status: "ACTIVE",
         currency: "INR",
         remainingAmountPaise: { gte: 5000 },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
       },
       data: { remainingAmountPaise: { decrement: 5000 } },
     });
