@@ -754,7 +754,7 @@ async function resolvePlannedWalletAndOverage(
   }
 
   let orgOverageSurchargePaise = 0;
-  const nominalTotal = payment.originalAmount + (payment.taxAmount ?? 0);
+  const nominalTotal = (payment.originalAmount ?? 0) + (payment.taxAmount ?? 0);
   if (
     typeof db.overageEvent?.findFirst === "function" &&
     (overageAccrualPaise > 0 || wallet > nominalTotal)
