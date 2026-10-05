@@ -92,27 +92,34 @@ export function ConsultantAvailability({
     };
 
     if (consultantDetails.scheduleType === "WEEKLY") {
-      Object.entries(availabilityData).forEach(([_dateStr, slots]) => {
-        slots
-          .filter((slot) => slot.type === "WEEKLY")
-          .forEach((slot) => {
-            slotsByDay[slot.dayOfWeek].push({
-              id: slot.slotId,
-              localStartTime: slot.localStartTime,
-              localEndTime: slot.localEndTime,
-              originalSlot: {
-                id: slot.availabilityWindowId,
+      const seenByDay: Record<string, Set<string>> = {};
+      Object.entries(availabilityData)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .forEach(([_dateStr, slots]) => {
+          slots
+            .filter((slot) => slot.type === "WEEKLY")
+            .forEach((slot) => {
+              const seen = (seenByDay[slot.dayOfWeek] ||= new Set<string>());
+              const timeKey = `${slot.localStartTime}-${slot.localEndTime}`;
+              if (seen.has(timeKey)) return;
+              seen.add(timeKey);
+              slotsByDay[slot.dayOfWeek].push({
+                id: slot.slotId,
+                localStartTime: slot.localStartTime,
+                localEndTime: slot.localEndTime,
+                originalSlot: {
+                  id: slot.availabilityWindowId,
+                  startsAt: slot.startsAt,
+                  endsAt: slot.endsAt,
+                },
+                isAllocated: slot.isAllocated,
+                bookingStatus: slot.bookingStatus || "available",
                 startsAt: slot.startsAt,
                 endsAt: slot.endsAt,
-              },
-              isAllocated: slot.isAllocated,
-              bookingStatus: slot.bookingStatus || "available",
-              startsAt: slot.startsAt,
-              endsAt: slot.endsAt,
-              type: "WEEKLY",
-            } as PickerInterval);
-          });
-      });
+                type: "WEEKLY",
+              } as PickerInterval);
+            });
+        });
     }
 
     return slotsByDay;

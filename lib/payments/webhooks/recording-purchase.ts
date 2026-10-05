@@ -18,6 +18,7 @@ import {
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
 import {
   AUTO_REFUND_PENDING_PREFIX,
   AUTO_REFUND_STUCK_PREFIX,
@@ -226,12 +227,16 @@ async function stageCaptureRefund(
   const marker = `${AUTO_REFUND_PENDING_PREFIX} ${input.reason}. Replay NOT granted.`;
   const existing = await tx.payment.findUnique({
     where: { paymentIntent: input.paymentIntent },
-    select: { id: true, description: true },
+    select: { id: true, description: true, amount: true },
   });
   if (existing) {
     if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
       return null;
     }
+    await postUnappliedReceipt(tx, {
+      paymentId: existing.id,
+      capturedPaise: existing.amount,
+    });
     return {
       kind: "refund",
       paymentId: existing.id,
@@ -260,6 +265,10 @@ async function stageCaptureRefund(
         : {}),
     },
     select: { id: true },
+  });
+  await postUnappliedReceipt(tx, {
+    paymentId: created.id,
+    capturedPaise: input.chargedPaise,
   });
   return {
     kind: "refund",

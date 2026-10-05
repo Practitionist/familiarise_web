@@ -446,6 +446,8 @@ export type ConsumerInvoicePdfData = {
   sacCode: string;
   taxRateBps: number;
   taxableValuePaise: number;
+  /** Pre-tax discount (welcome discount or code) taken off the list price; 0 when none. */
+  discountPaise?: number;
   cgstPaise: number;
   sgstPaise: number;
   igstPaise: number;
@@ -499,10 +501,13 @@ export function ConsumerInvoiceDocument({
                 data.description ??
                 "Consulting services booked on the platform",
               code: data.sacCode,
-              amountPaise: data.taxableValuePaise,
+              amountPaise: data.taxableValuePaise + (data.discountPaise ?? 0),
             },
           ]}
           totals={[
+            ...(data.discountPaise
+              ? [{ label: "Discount", paise: -data.discountPaise }]
+              : []),
             { label: "Taxable value", paise: data.taxableValuePaise },
             ...taxTotalLines(data),
           ]}

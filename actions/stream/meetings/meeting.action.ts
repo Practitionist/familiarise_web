@@ -4,7 +4,14 @@ import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  isDeliberateEnd,
+} from "@/lib/appointments/occurrences";
+import {
+  isCompletedLikeStatus,
+  isConfirmedStatus,
+} from "@/lib/appointments/status";
 import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
 import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
@@ -510,9 +517,14 @@ async function refuseMeetingCreation(
   const dbSlot = await prisma.appointmentOccurrence.findUnique({
     where: { id: parsedSlot.data.id },
     select: {
+      startsAt: true,
+      endsAt: true,
       isTentative: true,
       completionStatus: true,
       deletedAt: true,
+      meeting: {
+        select: { id: true, endedAt: true, endedReason: true },
+      },
       appointment: {
         select: {
           deletedAt: true,
@@ -531,28 +543,34 @@ async function refuseMeetingCreation(
   if (dbSlot.isTentative) {
     return "This session is not confirmed yet.";
   }
-  if (
-    dbSlot.deletedAt ||
-    dbSlot.completionStatus === "CANCELLED" ||
-    dbSlot.completionStatus === "RESCHEDULED"
-  ) {
+  if (isDeadOccurrence(dbSlot)) {
     return "This session was cancelled or moved.";
   }
+  if (isDeliberateEnd(dbSlot.meeting)) {
+    return "This session has already ended.";
+  }
   const appt = dbSlot.appointment;
-  if (!appt) return null;
-  const bookingStatus =
-    appt.consultation?.status ??
-    appt.subscription?.status ??
-    appt.webinar?.status ??
-    appt.class?.status ??
-    (appt.trial?.status === "CANCELLED" || appt.trial?.status === "REJECTED"
-      ? "CANCELLED"
-      : null);
-  if (
-    appt.deletedAt ||
-    (bookingStatus && TERMINAL_APPOINTMENT_STATUSES.has(bookingStatus))
-  ) {
-    return "This booking is no longer active.";
+  if (appt) {
+    if (appt.deletedAt) {
+      return "This booking is no longer active.";
+    }
+    const bookingStatus =
+      appt.consultation?.status ??
+      appt.subscription?.status ??
+      appt.webinar?.status ??
+      appt.class?.status ??
+      appt.trial?.status ??
+      null;
+    if (bookingStatus && TERMINAL_APPOINTMENT_STATUSES.has(bookingStatus)) {
+      return "This booking is no longer active.";
+    }
+    if (
+      bookingStatus &&
+      !isConfirmedStatus(bookingStatus) &&
+      !isCompletedLikeStatus(bookingStatus)
+    ) {
+      return "This booking is not confirmed yet.";
+    }
   }
 
   return null;
@@ -562,6 +580,7 @@ const TERMINAL_APPOINTMENT_STATUSES = new Set([
   "CANCELLED",
   "REJECTED",
   "EXPIRED",
+  "CONVERTED",
 ]);
 
 async function getMeetingCreationRefusal(

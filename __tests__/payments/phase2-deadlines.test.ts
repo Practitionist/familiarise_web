@@ -119,8 +119,6 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
 }));
 
 const ensureChannelsForAppointment = jest.fn();

@@ -14,6 +14,7 @@ export function computeWeeklyConfirmedCallCounts(
     appointmentType: string;
     subscription?: { id?: string; schedulingTimezone?: string | null } | null;
     occurrences?: Array<{
+      id?: string;
       startsAt: Date | string;
       isTentative?: boolean;
       completionStatus?: string | null;
@@ -21,12 +22,17 @@ export function computeWeeklyConfirmedCallCounts(
     }>;
   }>,
   subscriptionId: string,
+  excludeOccurrenceIds?: Iterable<string>,
 ): Record<string, number> {
+  const excludedSet = excludeOccurrenceIds
+    ? new Set(excludeOccurrenceIds)
+    : null;
   const counts: Record<string, number> = {};
   for (const appt of appointments) {
     if (appt.appointmentType !== "SUBSCRIPTION") continue;
     if (appt.subscription?.id !== subscriptionId) continue;
     for (const row of appt.occurrences ?? []) {
+      if (row.id && excludedSet?.has(row.id)) continue;
       if (row.isTentative || row.deletedAt) continue;
       if (
         row.completionStatus === "CANCELLED" ||

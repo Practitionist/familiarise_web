@@ -63,6 +63,7 @@ export async function GET(
           // #1819 — a class seat's line names the sessions it bought.
           payment: {
             select: {
+              originalAmount: true,
               appointment: {
                 select: {
                   class: {
@@ -97,6 +98,10 @@ export async function GET(
         sacCode: invoice.sacCode,
         taxRateBps: invoice.taxRateBps,
         taxableValuePaise: invoice.taxableValuePaise,
+        discountPaise: Math.max(
+          0,
+          invoice.payment.originalAmount - invoice.taxableValuePaise,
+        ),
         cgstPaise: invoice.cgstPaise,
         sgstPaise: invoice.sgstPaise,
         igstPaise: invoice.igstPaise,

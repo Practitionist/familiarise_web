@@ -161,4 +161,35 @@ describe("event slot buckets distinguish fresh holds from releases", () => {
     expect(latest?.eventSlots).toHaveLength(1);
     expect(latest?.eventTentativeSlots).toHaveLength(0);
   });
+
+  it("ignores soft-deleted occurrences when building eventSlots and eventTentativeSlots", async () => {
+    fetchEventSlots.mockResolvedValue({
+      data: [
+        {
+          id: "apt-1",
+          appointmentType: "CONSULTATION",
+          consultation: { status: "APPROVED" },
+          occurrences: [
+            {
+              ...occurrence("2026-03-18T09:00:00.000Z", false, "RESCHEDULED"),
+              deletedAt: "2026-03-17T12:00:00.000Z",
+            },
+            {
+              ...occurrence("2026-03-18T09:30:00.000Z", true, "RESCHEDULED"),
+              deletedAt: "2026-03-17T12:00:00.000Z",
+            },
+            occurrence("2026-03-18T10:00:00.000Z", false, "SCHEDULED"),
+          ],
+        },
+      ],
+      weeklyConfirmedCallCounts: {},
+    });
+
+    await act(async () => {
+      root.render(<Probe options={OPTIONS} />);
+    });
+
+    expect(latest?.eventSlots).toHaveLength(1);
+    expect(latest?.eventTentativeSlots).toHaveLength(0);
+  });
 });

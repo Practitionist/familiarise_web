@@ -150,23 +150,36 @@ describe("the join window spans the whole occurrence", () => {
     expect(joinable("10:59")).toBe(true);
   });
 
-  it("closes at the end of the occurrence", () => {
-    expect(joinable("11:01")).toBe(false);
+  it("stays open through the 30-minute rejoin grace window and closes after it", () => {
+    expect(joinable("11:01")).toBe(true);
+    expect(joinable("11:29")).toBe(true);
+    expect(joinable("11:30")).toBe(false);
   });
 
-  it("still closes at 10:30 for a genuine 30-minute booking", () => {
+  it("closes at 11:00 (10:30 + 30m grace) for a 30-minute booking, or 10:31 with rejoinGraceMs: 0", () => {
     const slots = [row("A", "10:00", "10:30")];
     const at1029 = getJoinableOccurrence(slots, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
       now: at("10:29"),
     });
-    const at1031 = getJoinableOccurrence(slots, {
+    const at1059 = getJoinableOccurrence(slots, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now: at("10:59"),
+    });
+    const at1100 = getJoinableOccurrence(slots, {
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now: at("11:00"),
+    });
+    const at1031NoGrace = getJoinableOccurrence(slots, {
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      rejoinGraceMs: 0,
       now: at("10:31"),
     });
 
     expect(at1029?.id).toBe("A");
-    expect(at1031).toBeNull();
+    expect(at1059?.id).toBe("A");
+    expect(at1100).toBeNull();
+    expect(at1031NoGrace).toBeNull();
   });
 
   it("falls back to the default duration when a row has no endsAt", () => {

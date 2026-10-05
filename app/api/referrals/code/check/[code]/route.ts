@@ -2,6 +2,10 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { validateReferralCode } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
+import {
+  readReferralProgramConfig,
+  referralTerms,
+} from "@/lib/referrals/program-config";
 import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis";
 
@@ -59,13 +63,14 @@ export async function GET(
       data: {
         valid: true,
         referrerName: user?.name ?? null,
-        refereeReward: referralCode.refereeReward,
-        // FIX #437: Credits are now given after first booking, not on signup
-        rewardTiming: "after_first_booking",
+        terms: referralTerms(await readReferralProgramConfig()),
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error checking referral code:", error);
     return NextResponse.json(
       { error: "Failed to check referral code" },

@@ -82,6 +82,11 @@ import {
 } from "@/lib/email/send-to-recipients";
 import { applyReversal, postPayoutClawback } from "./reversal-engine";
 import {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";
+import {
   findDedupedRefund,
   isDedupeKeyConflict,
   RefundValidationError,
@@ -159,6 +164,8 @@ export type BookingRefundResult = {
   amountRefundedPaise: number;
   /** Which rail actually returned the money (CREDITS = referral restoration). */
   rail: FundingRail;
+  /** Present when the gateway returned a settlement status ("SUCCEEDED" | "PENDING"). */
+  status?: "SUCCEEDED" | "PENDING";
 };
 
 export async function refundBookingPayment(input: {
@@ -209,6 +216,7 @@ export async function refundBookingPayment(input: {
       refundId: r.refundId,
       amountRefundedPaise: r.amountRefundedPaise,
       rail: "GATEWAY",
+      ...(r.status ? { status: r.status } : {}),
     };
   }
 
@@ -234,6 +242,7 @@ async function withDedupe(
           refundId: prior.refundId,
           amountRefundedPaise: prior.amountRefundedPaise,
           rail,
+          ...(prior.status ? { status: prior.status } : {}),
         }
       : null;
   };
@@ -328,7 +337,13 @@ async function refundFreeCreditPayment(input: {
         });
 
         // No amounts → full restoration of every usage row on the payment.
-        const restoredPaise = await reverseCreditsForPayment(payment.id, tx);
+        const restoredPaise = await reverseCreditsForPayment(
+          payment.id,
+          tx,
+          undefined,
+          undefined,
+          refundRow.id,
+        );
 
         // #1003 convention (mirrors cancelPendingCheckout): utilization is
         // debited at checkout before capture, so release it here. A no-op for
@@ -498,6 +513,7 @@ export async function restoreClassSeatCredits(input: {
             payment.id,
             tx,
             Math.min(asked, stillUsed),
+            refundRow.id,
           );
           if (restoredPaise <= 0) {
             throw new RefundValidationError(
@@ -688,6 +704,14 @@ async function reverseFreeCreditSettlement(
           refundedShareAmount: true,
           status: true,
           payoutId: true,
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
         },
       },
       organizationEarnings: {
@@ -736,6 +760,7 @@ async function reverseFreeCreditSettlement(
   // `appliedByEarning` is what each row ACTUALLY absorbed (<= request); the TDS
   // filing and counter-posting below must read it, never the request.
   const appliedByEarning = new Map<string, number>();
+  const consultantClawbacks = new Map<string, PendingConsultantClawback>();
   for (const earnings of payment.earnings) {
     const delta = part(earnings.consultantSharePaise);
     // #CASC — the shared writer repeats the cap and legal-source predicate in
@@ -762,7 +787,18 @@ async function reverseFreeCreditSettlement(
         refundId: input.refundId,
       });
     }
+
+    accumulatePaidConsultantClawback(
+      consultantClawbacks,
+      earnings,
+      reversal.reversedPaise,
+    );
   }
+
+  await applyPaidConsultantClawbacks(tx, consultantClawbacks, {
+    refundId: input.refundId,
+    reason: `credit-funded refund (${input.refundId})`,
+  });
 
   // Org earnings (the consultant's host org / collaborator orgs — not a
   // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
@@ -1075,6 +1111,7 @@ async function refundInternalFundedPayment(input: {
           tx,
           requested,
           payment.amount,
+          refundRow.id,
         );
 
         if (!input.keepSeat) {

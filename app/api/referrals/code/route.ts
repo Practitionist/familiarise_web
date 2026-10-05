@@ -2,6 +2,10 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { getReferralCode, createReferralCode } from "@/lib/referrals/service";
+import {
+  readReferralProgramConfig,
+  referralTerms,
+} from "@/lib/referrals/program-config";
 
 export async function GET() {
   try {
@@ -11,9 +15,13 @@ export async function GET() {
     }
 
     const code = await getReferralCode(session.user.id);
-    return NextResponse.json({ data: code });
+    const terms = referralTerms(await readReferralProgramConfig());
+    return NextResponse.json({ data: code, terms });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error fetching referral code:", error);
     return NextResponse.json(
       { error: "Failed to fetch referral code" },
@@ -30,9 +38,13 @@ export async function POST() {
     }
 
     const code = await createReferralCode(session.user.id);
-    return NextResponse.json({ data: code });
+    const terms = referralTerms(await readReferralProgramConfig());
+    return NextResponse.json({ data: code, terms });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error creating referral code:", error);
     return NextResponse.json(
       { error: "Failed to create referral code" },

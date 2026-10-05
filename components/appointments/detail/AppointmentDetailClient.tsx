@@ -498,15 +498,16 @@ export function AppointmentDetailClient({
       !isSponsoredPayment(p) ||
       p.childPayments.some((c) => c.userId === viewerId),
   );
+  const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
   // date line; the Sessions card stays only while it carries something the
   // header cannot — a held row awaiting payment, or an open proposal.
   const soleSession =
     isSingleSessionKind(vm.kind) &&
-    vm.occurrences.length === 1 &&
-    !vm.occurrences[0].isTentative &&
+    liveVmOccurrences.length === 1 &&
+    !liveVmOccurrences[0].isTentative &&
     !openProposal
-      ? vm.occurrences[0]
+      ? liveVmOccurrences[0]
       : null;
   const soleSessionOver =
     !!soleSession &&
@@ -524,10 +525,12 @@ export function AppointmentDetailClient({
       ? soleSession
       : null;
   const anchorSession = vm.nextAt
-    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? liveVmOccurrences.find(
+        (s) => s.startsAt.getTime() === vm.nextAt?.getTime(),
+      )
     : undefined;
-  const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
-  const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
+  const hasConfirmedSessions = liveVmOccurrences.some((s) => !s.isTentative);
+  const hasTentativeSessions = liveVmOccurrences.some((s) => s.isTentative);
   // #1429 F2 / #1775 P-1 — both Pay Now entry points ask the one shared
   // helper: the trial's branded page or our pay page (SPA push), else a hosted link.
   const payHref = bookingPayHref(vm);

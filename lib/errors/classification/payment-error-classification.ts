@@ -476,6 +476,14 @@ const BUSINESS_ERROR_ENTRIES = [
     userMessage:
       "Your available credits changed while this booking was being priced. Please try again — your card was not charged.",
   },
+  // One live welcome-discounted order per buyer; resuming that same order is still allowed.
+  {
+    code: "WELCOME_DISCOUNT_IN_USE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage:
+      "Your welcome discount is already on another open booking. Finish or cancel that booking first — your card was not charged.",
+  },
   // Its old message matched the "discount code" prose pattern and answered
   // AVAILABILITY with "No Longer Available", which is the wrong story.
   {

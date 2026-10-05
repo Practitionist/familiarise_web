@@ -84,6 +84,10 @@ const txStub = {
   bookingStatusHistory: { create: historyCreate },
 };
 
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: jest.fn(),
+  releaseUnappliedReceipt: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -126,8 +130,6 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   __esModule: true,

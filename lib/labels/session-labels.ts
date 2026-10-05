@@ -581,6 +581,18 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
     label: "Flagged",
     className: "bg-red-100 text-red-900 border-red-200",
   },
+  QUALIFYING: {
+    label: "Waiting for first session",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
+  VESTED: {
+    label: "Credit earned",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  VOID: {
+    label: "Didn't qualify",
+    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+  },
 };
 
 export const referralStatusBadge = (

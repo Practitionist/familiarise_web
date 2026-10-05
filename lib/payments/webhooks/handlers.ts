@@ -54,6 +54,10 @@ import {
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
+  postUnappliedReceipt,
+  releaseUnappliedReceipt,
+} from "@/lib/payments/ledger/unapplied-receipts";
+import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
 } from "@/schemas/webhooks/metadata";
@@ -80,13 +84,8 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import {
-  processQualifyingAction,
-  processConsultantBookingReferral,
-  reverseCreditsForPayment,
-} from "@/lib/referrals/service";
-import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
-import { scheduleAfter } from "@/lib/api/after-safe";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -247,6 +246,11 @@ export async function handlePaymentSuccess(
             reportSentryError(err, { subsystem: "payments" });
             throw err;
           }
+          const parkCapture = () =>
+            postUnappliedReceipt(tx, {
+              paymentId: payment.id,
+              capturedPaise: gatewayAmountPaise ?? payment.amount,
+            });
 
           const recoverable =
             recovering &&
@@ -282,6 +286,7 @@ export async function handlePaymentSuccess(
               });
               return null;
             }
+            await parkCapture();
             return {
               outcome: "captured_after_release",
               paymentId: payment.id,
@@ -358,6 +363,8 @@ export async function handlePaymentSuccess(
                 observedStatus: payment.paymentStatus,
                 reason: `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
               });
+            } else {
+              await parkCapture();
             }
             console.error(
               JSON.stringify({
@@ -454,6 +461,8 @@ export async function handlePaymentSuccess(
                 observedStatus: payment.paymentStatus,
                 reason: `metadata validation failed: ${errorMessage}`,
               });
+            } else {
+              await parkCapture();
             }
 
             console.error(
@@ -534,6 +543,7 @@ export async function handlePaymentSuccess(
                   ),
                 },
               });
+              await parkCapture();
               return {
                 outcome: "captured_after_release",
                 paymentId: payment.id,
@@ -621,6 +631,7 @@ export async function handlePaymentSuccess(
                     description: `Auto-refund pending: capture landed on a ${trial?.status ?? "missing"} trial. Booking NOT confirmed.`,
                   },
                 });
+                await parkCapture();
                 return {
                   outcome: "captured_after_release",
                   paymentId: payment.id,
@@ -664,7 +675,13 @@ export async function handlePaymentSuccess(
                 ),
               },
             });
+            await parkCapture();
           } else {
+            // Outside the savepoint: the booking confirms even when earnings
+            // defer, and the deferred retry must not see the cash as parked.
+            if (recoverable) {
+              await releaseUnappliedReceipt(tx, payment.id);
+            }
             await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =
@@ -704,6 +721,18 @@ export async function handlePaymentSuccess(
               );
               earningsCreatedInPhase1 = false;
             }
+            await recordReferralCaptureInSavepoint(tx, {
+              paymentId: payment.id,
+              consultantProfileId: async () =>
+                preplannedEarnings?.resolvedPayment.consultantProfileId ??
+                (
+                  await resolvePaymentForEarnings(
+                    { id: payment.id },
+                    metadata.appointmentType,
+                    tx,
+                  )
+                )?.consultantProfileId,
+            });
           }
           const appointmentForEmails = blocked
             ? null
@@ -755,19 +784,28 @@ export async function handlePaymentSuccess(
     if (!isExclusionViolation(err)) throw err;
     const loser = await prisma.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      select: { id: true, paymentStatus: true },
+      select: { id: true, paymentStatus: true, amount: true },
     });
     if (!loser) throw err;
-    const restamped = await prisma.payment.updateMany({
-      where: { id: loser.id, paymentStatus: PaymentStatus.PENDING },
-      data: {
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        ...capturedGatewayId,
-        capturedAt: new Date(),
-        description: autoRefundPendingDescription(
-          "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
-        ),
-      },
+    const restamped = await prisma.$transaction(async (tx) => {
+      const stamped = await tx.payment.updateMany({
+        where: { id: loser.id, paymentStatus: PaymentStatus.PENDING },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          ...capturedGatewayId,
+          capturedAt: new Date(),
+          description: autoRefundPendingDescription(
+            "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
+          ),
+        },
+      });
+      if (stamped.count === 1) {
+        await postUnappliedReceipt(tx, {
+          paymentId: loser.id,
+          capturedPaise: gatewayAmountPaise ?? loser.amount,
+        });
+      }
+      return stamped;
     });
     if (restamped.count === 0) {
       await reportTerminalCaptureRace({
@@ -983,39 +1021,6 @@ export async function handlePaymentSuccess(
         earningsError,
       );
     }
-  }
-
-  try {
-    await processQualifyingAction(userId, "first_paid_booking");
-    scheduleAfter(
-      () =>
-        notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-          console.error("[referral-qualification-bell] failed:", bellErr),
-        ),
-      "payments.handlePaymentSuccess.referral-bell",
-    );
-  } catch (referralError) {
-    reportSentryError(referralError, {
-      subsystem: "payments",
-      level: "warning",
-    });
-    console.error(
-      `⚠️ Failed to process referral qualifying action for user ${userId}:`,
-      referralError,
-    );
-  }
-
-  try {
-    await processConsultantBookingReferral({ id: paymentId }, userId);
-  } catch (consultantReferralError) {
-    reportSentryError(consultantReferralError, {
-      subsystem: "payments",
-      level: "warning",
-    });
-    console.error(
-      `⚠️ Failed to process consultant referral qualifying action:`,
-      consultantReferralError,
-    );
   }
 
   await mintConsumerInvoiceBestEffort({ paymentId });

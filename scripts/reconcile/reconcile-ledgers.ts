@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { ledgerAccountId } from "@/lib/payments/ledger/post";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -48,7 +49,11 @@ export type Finding = {
     | "OVERAGE_SETTLEMENT_MISMATCH"
     // An anti-invoice-fraud park older than 24h. Detect-only: age never
     // releases a park.
-    | "PENDING_TRUST_PARK_STALE";
+    | "PENDING_TRUST_PARK_STALE"
+    // The referral-credit liability disagrees with the vested, unredeemed credit balance.
+    | "REFERRAL_CREDIT_LIABILITY_DRIFT"
+    // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
+    | "UNAPPLIED_RECEIPTS_RESIDUE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -1150,6 +1155,120 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   }
 }
 
+// --- a parked capture's UNAPPLIED_RECEIPTS balance matches what is still owed back ---
+async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
+  const parked = await prisma.ledgerTransaction.findMany({
+    where: { kind: "UNAPPLIED_RECEIPT", paymentId: { not: null } },
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+  });
+  const paymentIds = parked
+    .map((t) => t.paymentId)
+    .filter((p): p is string => !!p);
+
+  for (let i = 0; i < paymentIds.length; i += CHUNK) {
+    const slice = paymentIds.slice(i, i + CHUNK);
+    const balances = await unappliedBalances(slice);
+    const settled = await settledRefundTotals(slice);
+    for (const paymentId of slice) {
+      const refundedPaise = settled.get(paymentId);
+      const balance = balances.get(paymentId);
+      if (refundedPaise === undefined || !balance) continue;
+      // A recovered capture released its remainder; otherwise each settled refund returned its share.
+      const expectedPaise =
+        balance.releasedPaise > 0
+          ? 0
+          : Math.max(0, balance.parkedPaise - refundedPaise);
+      if (balance.owedPaise === expectedPaise) continue;
+      ctx.findings.push({
+        kind: "UNAPPLIED_RECEIPTS_RESIDUE",
+        paymentId,
+        expectedPaise,
+        actualPaise: balance.owedPaise,
+        deltaPaise: balance.owedPaise - expectedPaise,
+        details: {
+          unit: "paise",
+          note: "A parked capture's UNAPPLIED_RECEIPTS balance differs from the captured amount less its settled refunds (positive: a settled refund never posted its clearing entry).",
+        },
+      });
+    }
+  }
+}
+
+type UnappliedBalance = {
+  parkedPaise: number;
+  releasedPaise: number;
+  owedPaise: number;
+};
+
+/** Per payment: paise parked, paise released into a booking, and the net still held. */
+async function unappliedBalances(
+  paymentIds: string[],
+): Promise<Map<string, UnappliedBalance>> {
+  const entries = await prisma.ledgerEntry.findMany({
+    where: {
+      account: { kind: "UNAPPLIED_RECEIPTS" },
+      transaction: { paymentId: { in: paymentIds } },
+    },
+    select: {
+      direction: true,
+      amountPaise: true,
+      transaction: { select: { paymentId: true, kind: true } },
+    },
+  });
+  const balances = new Map<string, UnappliedBalance>();
+  for (const e of entries) {
+    const paymentId = e.transaction.paymentId;
+    if (!paymentId) continue;
+    const paise = sumPaise(e.amountPaise);
+    const b = balances.get(paymentId) ?? {
+      parkedPaise: 0,
+      releasedPaise: 0,
+      owedPaise: 0,
+    };
+    if (e.direction === "CREDIT") {
+      b.parkedPaise += paise;
+      b.owedPaise += paise;
+    } else {
+      if (e.transaction.kind === "UNAPPLIED_RECEIPT") b.releasedPaise += paise;
+      b.owedPaise -= paise;
+    }
+    balances.set(paymentId, b);
+  }
+  return balances;
+}
+
+/** Settled refund paise per payment, only for payments with no refund still in flight. */
+async function settledRefundTotals(
+  paymentIds: string[],
+): Promise<Map<string, number>> {
+  const refunds = await prisma.refund.findMany({
+    where: { paymentId: { in: paymentIds }, deletedAt: null },
+    select: {
+      paymentId: true,
+      status: true,
+      cascadedAt: true,
+      amountPaise: true,
+    },
+  });
+  // Credit restorations (0 paise) settle in place and never cascade.
+  const inFlight = (r: (typeof refunds)[number]) =>
+    r.status === "PENDING" ||
+    (r.status === "SUCCEEDED" &&
+      r.cascadedAt === null &&
+      sumPaise(r.amountPaise) > 0);
+  const open = new Set(refunds.filter(inFlight).map((r) => r.paymentId));
+  const totals = new Map<string, number>();
+  for (const r of refunds) {
+    if (r.status !== "SUCCEEDED" || open.has(r.paymentId)) continue;
+    totals.set(
+      r.paymentId,
+      (totals.get(r.paymentId) ?? 0) + sumPaise(r.amountPaise),
+    );
+  }
+  return totals;
+}
+
 // --- PENDING_TRUST park watchdog ---
 // A park is released only when its sponsor is verified or pays an invoice, so
 // one that does neither withholds earnings forever. Report parks older than
@@ -1292,6 +1411,41 @@ export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
   return s.status === "RUNNING";
 }
 
+// --- referral-credit liability == Σ remaining of VESTED credits that posted a vest journal ---
+async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
+  // One snapshot for both reads, so a vest committing between them is not drift.
+  const { sums, vested } = await prisma.$transaction(
+    async (tx) => ({
+      sums: await tx.ledgerEntry.groupBy({
+        by: ["direction"],
+        where: {
+          accountId: ledgerAccountId({ kind: "REFERRAL_CREDIT_LIABILITY" }),
+        },
+        _sum: { amountPaise: true },
+      }),
+      vested: await tx.referralCredit.aggregate({
+        where: { state: "VESTED", vestedAt: { not: null } },
+        _sum: { remainingAmount: true },
+      }),
+    }),
+    { isolationLevel: "RepeatableRead" },
+  );
+  let ledgerOwed = 0;
+  for (const row of sums) {
+    const amt = sumPaise(row._sum.amountPaise);
+    ledgerOwed += row.direction === "CREDIT" ? amt : -amt;
+  }
+  const expected = sumPaise(vested._sum.remainingAmount);
+  if (expected !== ledgerOwed) {
+    ctx.findings.push({
+      kind: "REFERRAL_CREDIT_LIABILITY_DRIFT",
+      expectedPaise: expected,
+      actualPaise: ledgerOwed,
+      deltaPaise: ledgerOwed - expected,
+    });
+  }
+}
+
 async function executeSteps(opts: ReconcileScope): Promise<{
   ctx: StepCtx;
   durationMs: number;
@@ -1323,6 +1477,10 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   await stepSplitSums(ctx);
   await stepOverageSettlement(ctx);
   await stepPendingTrustParks(ctx);
+  if (!opts.organizationId) {
+    await stepReferralCreditLiability(ctx);
+    await stepUnappliedReceipts(ctx);
+  }
 
   return { ctx, durationMs: Date.now() - startedAt };
 }

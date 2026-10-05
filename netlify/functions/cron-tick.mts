@@ -87,6 +87,8 @@ const TARGETS = [
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
   "retry-moderation-enforcement",
+  // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
+  "vest-referral-credits",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -110,6 +112,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "drain-notification-outbox": 20,
   // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
   "reconcile-orphaned-confirmations": 10,
+  // One Serializable transaction per referral; ten fit the 20 s budget.
+  "vest-referral-credits": 10,
   // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
   "settle-cancelled-sessions": 10,
   // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
@@ -141,6 +145,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "alert-orphaned-payments": 10,
   // Healer makes one gateway round trip per orphan; same bite fits 20 s.
   "reconcile-orphaned-payments": 10,
+  // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
+  "reconcile-refunds": 10,
 };
 
 /**
@@ -181,6 +187,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 30,
   "process-data-exports": 10,
   "retry-moderation-enforcement": 30,
+  // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
+  "vest-referral-credits": 30,
 };
 
 /**
@@ -221,6 +229,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 10,
   "process-data-exports": 0,
   "retry-moderation-enforcement": 25,
+  "vest-referral-credits": 5,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -252,6 +261,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reschedule-proposals": 20_000,
   "settle-cancelled-sessions": 20_000,
   "retry-auto-refunds": 20_000,
+  "vest-referral-credits": 20_000,
+  "reconcile-refunds": 20_000,
   // One Stream call-report round trip per judged session or candidate.
   "auto-complete-appointments": 20_000,
   "detect-consultant-no-shows": 20_000,
@@ -316,11 +327,45 @@ function jsonResponse(body: unknown, status: number): Response {
  * failure or an aborted request reports as status `0`, which the caller sorts
  * into `failed` the same as any other non-2xx/409 outcome.
  */
+async function readResponseText(res: Response): Promise<string> {
+  return typeof res.text === "function"
+    ? await res.text().catch(() => "")
+    : "";
+}
+
+async function parse503Response(
+  res: Response,
+): Promise<{ maintenance: boolean; errorBody?: string }> {
+  const rawText = await readResponseText(res);
+  let body: { phase?: unknown } | null = null;
+  if (rawText) {
+    try {
+      body = JSON.parse(rawText) as { phase?: unknown };
+    } catch {
+      body = null;
+    }
+  } else if (typeof res.json === "function") {
+    body = (await res.json().catch(() => null)) as {
+      phase?: unknown;
+    } | null;
+  }
+  const maintenance = typeof body?.phase === "string";
+  return {
+    maintenance,
+    ...(!maintenance && rawText ? { errorBody: rawText.slice(0, 500) } : {}),
+  };
+}
+
 async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
-): Promise<{ name: string; status: number; maintenance?: boolean }> {
+): Promise<{
+  name: string;
+  status: number;
+  maintenance?: boolean;
+  errorBody?: string;
+}> {
   const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -333,13 +378,31 @@ async function hitTarget(
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
+    let errorBody: string | undefined;
     if (res.status === 503) {
-      const body = (await res.json().catch(() => null)) as {
-        phase?: unknown;
-      } | null;
-      maintenance = typeof body?.phase === "string";
+      const parsed = await parse503Response(res);
+      maintenance = parsed.maintenance;
+      errorBody = parsed.errorBody;
+    } else if (bucketFor(res.status, false) === "failed") {
+      const rawText = await readResponseText(res);
+      if (rawText) errorBody = rawText.slice(0, 500);
     }
-    return { name, status: res.status, maintenance };
+    if (bucketFor(res.status, maintenance) === "failed" && errorBody) {
+      console.error(
+        JSON.stringify({
+          event: "cron-tick-target-failed",
+          target: name,
+          status: res.status,
+          errorBody,
+        }),
+      );
+    }
+    return {
+      name,
+      status: res.status,
+      maintenance,
+      ...(errorBody ? { errorBody } : {}),
+    };
   } catch {
     return { name, status: 0, maintenance: false };
   } finally {
@@ -408,6 +471,7 @@ async function alertMissingSecret(error: string): Promise<void> {
 export function buildFailedTargetEvent(failed: {
   name: string;
   status: number;
+  errorBody?: string;
 }) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
@@ -420,6 +484,7 @@ export function buildFailedTargetEvent(failed: {
         // 0 is this module's "never got an answer" value, not an HTTP status.
         status: failed.status,
         outcome: failed.status === 0 ? ("network" as const) : ("http" as const),
+        ...(failed.errorBody ? { errorBody: failed.errorBody } : {}),
       },
     },
   };
@@ -445,7 +510,7 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
  * a total outage is bounded by the shared 30/hour breaker.
  */
 async function alertFailedTargets(
-  failed: { name: string; status: number }[],
+  failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
 ): Promise<void> {
   // Judge against the tick's start: targets can run 20 s past a minute boundary.
@@ -586,6 +651,8 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const ok: string[] = [];
   const lockHeld: string[] = [];
   const failed: { name: string; status: number }[] = [];
+  const failedForAlert: { name: string; status: number; errorBody?: string }[] =
+    [];
 
   settled.forEach((result, i) => {
     const name = targets[i];
@@ -594,10 +661,19 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const status = result.status === "fulfilled" ? result.value.status : 0;
     const maintenance =
       result.status === "fulfilled" && result.value.maintenance === true;
+    const errorBody =
+      result.status === "fulfilled" ? result.value.errorBody : undefined;
     const bucket = bucketFor(status, maintenance);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
-    else failed.push({ name, status });
+    else {
+      failed.push({ name, status });
+      failedForAlert.push({
+        name,
+        status,
+        ...(errorBody ? { errorBody } : {}),
+      });
+    }
   });
 
   const durationMs = Date.now() - started;
@@ -623,7 +699,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // canary is still visible in the tick's own output and in the job-execution
   // history — only the Sentry report is suppressed.
   await alertFailedTargets(
-    failed.filter((f) => reportableToSentry(f.name)),
+    failedForAlert.filter((f) => reportableToSentry(f.name)),
     new Date(started),
   );
 

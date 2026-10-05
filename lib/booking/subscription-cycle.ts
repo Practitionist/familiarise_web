@@ -40,29 +40,41 @@ const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
  * first changes nothing about what it claws back.
  */
 export async function stampTranchesOnCancel(
-  tx: Pick<Tx, "consultantEarnings">,
+  tx: {
+    consultantEarnings?: Pick<Tx["consultantEarnings"], "updateMany">;
+    organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
+  },
   args: { paymentId: string; now: Date },
 ): Promise<number> {
-  const { count } = await tx.consultantEarnings.updateMany({
+  const holdUntil = computeHoldUntil({
+    capturedAt: args.now,
+    lastOccurrenceEndsAt: null,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  const res = await tx.consultantEarnings?.updateMany?.({
     where: {
       paymentId: args.paymentId,
       cycleOrdinal: { not: null },
       holdUntil: null,
       status: { in: [...UNSTAMPED_STATUSES] },
     },
-    data: {
-      holdUntil: computeHoldUntil({
-        capturedAt: args.now,
-        lastOccurrenceEndsAt: null,
-        holdHours: holdHoursFor("SUBSCRIPTION"),
-      }),
-    },
+    data: { holdUntil },
   });
-  return count;
+  await tx.organizationEarnings?.updateMany?.({
+    where: {
+      paymentId: args.paymentId,
+      holdUntil: null,
+      status: { in: [...UNSTAMPED_STATUSES] },
+    },
+    data: { holdUntil },
+  });
+  return res?.count ?? 0;
 }
 
 export async function settleSubscriptionCycle(
-  tx: SettleTx,
+  tx: SettleTx & {
+    organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
+  },
   args: { appointmentId: string; now: Date },
 ): Promise<StagedTrigger[]> {
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
@@ -108,7 +120,9 @@ export async function settleSubscriptionCycle(
     },
   });
   const sub = wrapper?.subscription;
-  if (!sub || sub.status !== "APPROVED") return [];
+  if (!sub || (sub.status !== "APPROVED" && sub.status !== "SCHEDULED")) {
+    return [];
+  }
 
   const entitlement = subscriptionEntitlement({
     sessionsTotal: sessionsTotalOf(sub),
@@ -122,10 +136,11 @@ export async function settleSubscriptionCycle(
 
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  const matured = maturedTrancheOrdinal(
-    subscriptionTranches(sub.subscriptionPlan, entitlement.total),
-    entitlement.completed,
+  const tranches = subscriptionTranches(
+    sub.subscriptionPlan,
+    entitlement.total,
   );
+  const matured = maturedTrancheOrdinal(tranches, entitlement.completed);
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences
       .filter((o) => !o.deletedAt && isCompletedOccurrence(o))
@@ -133,6 +148,11 @@ export async function settleSubscriptionCycle(
         (max, o) => (!max || o.endsAt > max ? o.endsAt : max),
         null,
       );
+    const holdUntil = computeHoldUntil({
+      capturedAt: args.now,
+      lastOccurrenceEndsAt: lastCompletedEnd,
+      holdHours: holdHoursFor("SUBSCRIPTION"),
+    });
     await tx.consultantEarnings.updateMany({
       where: {
         paymentId: { in: wrapper.payment.map((p) => p.id) },
@@ -141,13 +161,19 @@ export async function settleSubscriptionCycle(
         status: { in: [...UNSTAMPED_STATUSES] },
       },
       data: {
-        holdUntil: computeHoldUntil({
-          capturedAt: args.now,
-          lastOccurrenceEndsAt: lastCompletedEnd,
-          holdHours: holdHoursFor("SUBSCRIPTION"),
-        }),
+        holdUntil,
       },
     });
+    if (matured >= tranches.count - 1) {
+      await tx.organizationEarnings?.updateMany?.({
+        where: {
+          paymentId: { in: wrapper.payment.map((p) => p.id) },
+          holdUntil: null,
+          status: { in: [...UNSTAMPED_STATUSES] },
+        },
+        data: { holdUntil },
+      });
+    }
   }
 
   // Nothing live and something owed: the cycle just closed.

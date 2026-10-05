@@ -82,6 +82,13 @@ let p2002Targets: Set<string> = new Set();
 // methods proxy to the mock store.
 jest.mock("../../lib/prisma", () => {
   const mockTx = {
+    // B2C take rate: no fee schedule row (marketplace fallback), no waiver, no stored owner.
+    platformFeeSchedule: { findFirst: jest.fn().mockResolvedValue(null) },
+    consultantFeeWaiver: { findFirst: jest.fn().mockResolvedValue(null) },
+    expertCustomerRelationship: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     // #812 — createEarningsFromPayment now posts a balanced booking journal and
     // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn
     // (idempotency miss → upsert account → create txn → upsert balance). No-ops;

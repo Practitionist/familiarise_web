@@ -73,6 +73,7 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: (...a: unknown[]) => applyRefundCascade(...a),
   mintInvoiceRefundCreditNote: jest.fn(),
   mintRefundCreditNote: jest.fn(),
+  refundMemberOverageSidePayment: jest.fn(),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),

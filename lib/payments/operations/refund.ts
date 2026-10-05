@@ -70,6 +70,13 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
+import {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
@@ -83,6 +90,10 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  hasUnappliedReceipt,
+  postUnappliedRefund,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -813,6 +824,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           tx,
           requested,
           payment.amount,
+          boundRefundRowId,
         );
         if (restoredCredits > 0) {
           console.log(
@@ -836,46 +848,54 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   );
 
-  // #715/#716 — the parent booking was fully refunded and carried a CHARGED
-  // CHARGE_MEMBER overage on a SEPARATE side-payment. Refund it now that the
-  // parent settled: outside the tx (its own gateway call + Serializable
-  // cascade), and best-effort so a hiccup never rolls back the parent refund.
-  if (settled.memberOverageRefundDue) {
-    const sidePaymentId = settled.memberOverageRefundDue.overagePaymentId;
-    try {
-      await refundPayment({
-        paymentId: sidePaymentId,
-        reason: `overage credit-back — parent booking ${input.paymentId} refunded`,
-        initiatedByUserId: input.initiatedByUserId ?? null,
-      });
-    } catch (err) {
-      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
-      // re-drives — the nested refundPayment call already reported them
-      // (expected:true) at their origin above; anything else here is a real
-      // gap between the parent refund and the member's credit-back — page
-      // ops rather than fail the settled parent.
-      if (
-        !(err instanceof RefundValidationError) ||
-        (err.code !== "ALREADY_FULLY_REFUNDED" &&
-          err.code !== "PAYMENT_NOT_SUCCEEDED")
-      ) {
-        reportSentryError(err, {
-          subsystem: "payments",
-          tags: { feature: "overage-credit-back" },
-          extra: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
-          err,
-          context: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-      }
-    }
-  }
+  await refundMemberOverageSidePayment({
+    parentPaymentId: input.paymentId,
+    due: settled.memberOverageRefundDue,
+    initiatedByUserId: input.initiatedByUserId ?? null,
+  });
 
   return settled;
+}
+
+/**
+ * Refunds a fully-refunded booking's CHARGE_MEMBER overage side-payment once the
+ * parent's cascade has committed; best effort, so it never undoes the parent.
+ */
+export async function refundMemberOverageSidePayment(input: {
+  parentPaymentId: string;
+  due: ApplyRefundCascadeResult["memberOverageRefundDue"];
+  initiatedByUserId: string | null;
+}): Promise<void> {
+  if (!input.due) return;
+  const sidePaymentId = input.due.overagePaymentId;
+  try {
+    await refundPayment({
+      paymentId: sidePaymentId,
+      reason: `overage credit-back — parent booking ${input.parentPaymentId} refunded`,
+      initiatedByUserId: input.initiatedByUserId,
+    });
+  } catch (err) {
+    // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign re-drives the
+    // nested call already reported; anything else is a real credit-back gap.
+    if (
+      !(err instanceof RefundValidationError) ||
+      (err.code !== "ALREADY_FULLY_REFUNDED" &&
+        err.code !== "PAYMENT_NOT_SUCCEEDED")
+    ) {
+      reportSentryError(err, {
+        subsystem: "payments",
+        tags: { feature: "overage-credit-back" },
+        extra: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+      await recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
+        err,
+        context: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+    }
+  }
 }
 
 // ============================================================================
@@ -950,12 +970,26 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
-      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
-      // to find the original TDSRecord; the prior `payout` TDS-field include was
-      // dead (review finding).
-      earnings: true,
+      earnings: {
+        include: {
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
+        },
+      },
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
+      appointment: {
+        select: {
+          subscription: { select: { status: true } },
+          trial: { select: { status: true } },
+        },
+      },
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
       refunds: { select: { id: true, amountPaise: true, status: true } },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
@@ -1019,6 +1053,33 @@ export async function applyRefundCascade(
     // `reversal < 0` trigger and the journal rejects a 0 entry, which would
     // fail the tx at COMMIT and leave the refund re-cascading forever.
     // Still reverse the booking utilization so the seat returns.
+    if (payment.bookingUtilization) {
+      await reverseBookingUtilization(tx, {
+        paymentId: payment.id,
+        reason: input.reason,
+      });
+    }
+    return {
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+    };
+  }
+
+  // A parked capture never booked revenue, GST, earnings or an invoice, so its
+  // refund only returns the cash from UNAPPLIED_RECEIPTS.
+  if (
+    payment.earnings.length === 0 &&
+    payment.organizationEarnings.length === 0 &&
+    (await hasUnappliedReceipt(tx, payment.id))
+  ) {
+    await postUnappliedRefund(tx, {
+      paymentId: payment.id,
+      refundId: input.refundId,
+      amountPaise: input.amountPaise,
+    });
     if (payment.bookingUtilization) {
       await reverseBookingUtilization(tx, {
         paymentId: payment.id,
@@ -1257,6 +1318,8 @@ export async function applyRefundCascade(
   // debits and the TDS filing read this, never `reversalOf(row)`: booking the
   // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
   const appliedByEarning = new Map<string, number>();
+  let clawbackInitiated = false;
+  const consultantClawbacks = new Map<string, PendingConsultantClawback>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1303,13 +1366,44 @@ export async function applyRefundCascade(
         refundId: input.refundId,
       });
     }
+
+    accumulatePaidConsultantClawback(
+      consultantClawbacks,
+      earnings,
+      reversal.reversedPaise,
+      { isOrgPayment: Boolean(payment.organizationId) },
+    );
+  }
+
+  if (
+    await applyPaidConsultantClawbacks(tx, consultantClawbacks, {
+      refundId: input.refundId,
+      reason: input.reason,
+      onApplied: async (consultantPayoutId, claw) => {
+        await recordSystemEventSafe({
+          db: tx,
+          organizationId: null,
+          category: "PAYOUT",
+          severity: "WARN",
+          message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
+          context: {
+            paymentId: payment.id,
+            refundId: input.refundId,
+            consultantPayoutId,
+            consultantProfileId: claw.consultantProfileId,
+            clawbackPaise: claw.netAmountPaise,
+          },
+        });
+      },
+    })
+  ) {
+    clawbackInitiated = true;
   }
 
   // -----------------------------------------------------------------------
   // Step 7: OrganizationEarnings reversal + clawback.
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
-  let clawbackInitiated = false;
   // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
   // `appliedByEarning` above, for the identical reason.
   const appliedByOrgEarning = new Map<string, number>();
@@ -1674,7 +1768,19 @@ export async function applyRefundCascade(
           });
         }
       }
-      if (orgRev > 0 && orgId) {
+      if (payment.organizationEarnings.length > 0) {
+        for (const orgEarn of payment.organizationEarnings) {
+          const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
+          const hostOrgId = orgEarn.organizationId ?? orgId;
+          if (orgDelta > 0 && hostOrgId) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: hostOrgId },
+              direction: "DEBIT",
+              amountPaise: orgDelta,
+            });
+          }
+        }
+      } else if (orgRev > 0 && orgId) {
         debits.push({
           account: { kind: "ORG_PAYABLE", organizationId: orgId },
           direction: "DEBIT",
@@ -1747,6 +1853,22 @@ export async function applyRefundCascade(
       context: { paymentId: payment.id, refundId: input.refundId },
     });
     throw err;
+  }
+
+  if (payment.appointment?.subscription?.status === "CANCELLED") {
+    await stampTranchesOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
+  }
+  if (
+    payment.appointment?.trial?.status === "CANCELLED" ||
+    payment.appointment?.trial?.status === "REJECTED"
+  ) {
+    await stampTrialEarningsOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
   }
 
   return {

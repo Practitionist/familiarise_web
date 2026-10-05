@@ -67,6 +67,10 @@ const MAX_UNPAID_TRIALS = 25;
 const MAX_RESCHEDULE_PROPOSALS = 25;
 /** Tentative slots per run; a cheap soft cancel behind an expensive read. */
 const MAX_TENTATIVE_SLOTS = 200;
+/** QUALIFYING referrals per run; one Serializable transaction each. */
+const MAX_REFERRAL_VESTS = 50;
+/** Expired credits per breakage run; one Serializable transaction each. */
+const MAX_REFERRAL_BREAKAGE = 500;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -355,6 +359,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         status: (r) => (r.errors.length > 0 ? 500 : 200),
         unauthorizedMessage: "Provide a valid Bearer CRON_SECRET",
         failureMessage: "Notification outbox drain failed",
+      }),
+
+    // @cleanup-twin expire-referral-credits
+    "expire-referral-credits": () =>
+      cleanupRoute({
+        job: "expire-referral-credits",
+        run: async (req) => {
+          const { runExpireReferralCredits } =
+            await import("@/lib/referrals/vesting");
+          return runExpireReferralCredits({
+            limit: parseLimitParamOrDefault(req, MAX_REFERRAL_BREAKAGE),
+          });
+        },
+        summarize: (r) => ({
+          expired: r.expired,
+          breakagePaise: r.breakagePaise,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to expire referral credits",
       }),
 
     // @cleanup-twin expire-stale-requests
@@ -743,6 +766,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
           skippedCount: r.skippedCount,
           failedUnknownId: r.failedUnknownId,
+          redrivenCount: r.redrivenCount,
+          redriveFailedCount: r.redriveFailedCount,
+          redriveDeadLettered: r.redriveDeadLettered,
           errors: r.errors.slice(0, 5),
         }),
         failureMessage: "Failed to reconcile refunds",
@@ -1154,6 +1180,28 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: () => 200,
         failureMessage: "Cron job failed",
+      }),
+
+    // @cleanup-twin vest-referral-credits
+    "vest-referral-credits": () =>
+      cleanupRoute({
+        job: "vest-referral-credits",
+        run: async (req) => {
+          const { runVestReferralCredits } =
+            await import("@/lib/referrals/vesting");
+          return runVestReferralCredits({
+            limit: parseLimitParamOrDefault(req, MAX_REFERRAL_VESTS),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          vested: r.vested,
+          voided: r.voided,
+          deferred: r.deferred,
+          budgetExhausted: r.budgetExhausted,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to vest referral credits",
       }),
 
     // @cleanup-twin wind-down-deactivated-orgs

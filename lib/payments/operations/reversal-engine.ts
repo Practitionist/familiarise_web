@@ -584,3 +584,10 @@ export async function postConsultantPayoutClawback(
     throw err;
   }
 }
+
+export {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";
+

@@ -21,7 +21,11 @@
 import prisma from "../../lib/prisma";
 import { PaymentStatus, AppointmentsType, type Prisma } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
-import { createEarningsFromPayment } from "../../lib/payments/payouts/earnings-service";
+import {
+  createEarningsFromPayment,
+  ParkedCaptureEarningsError,
+} from "../../lib/payments/payouts/earnings-service";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -250,6 +254,8 @@ async function syncPaymentEarningsUnlocked(
         earnings: { none: {} }, // No linked earnings
         refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
         disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
+        // A parked capture's cash sits in UNAPPLIED_RECEIPTS; booking it would count CASH twice.
+        AND: [notSettledElsewhereWhere],
       },
       take,
       ...(cursor
@@ -411,6 +417,10 @@ async function syncPaymentEarningsUnlocked(
           skippedCount++;
         }
       } catch (err) {
+        if (err instanceof ParkedCaptureEarningsError) {
+          skippedCount++;
+          continue;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`Payment ${payment.id}: ${msg}`);
         errorCount++;
@@ -425,6 +435,7 @@ async function syncPaymentEarningsUnlocked(
   const skippedRefunded = await prisma.payment.count({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: { not: null },
       earnings: { none: {} },
       ...REFUNDED_OR_DISPUTED,
     },

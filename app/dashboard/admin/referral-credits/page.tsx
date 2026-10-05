@@ -18,14 +18,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Gift,
-  Plus,
-  RotateCcw,
-  Eye,
-  Search,
-  Loader2,
-} from "lucide-react";
+import { Gift, Plus, RotateCcw, Eye, Search, Loader2 } from "lucide-react";
 
 import { useSession } from "@/lib/auth-client";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -35,6 +28,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import type { ReferralCreditState } from "@prisma/client";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,11 +58,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type CreditSource =
-  | "REFERRAL_BONUS"
-  | "REFEREE_BONUS"
-  | "PROMOTION"
-  | "COMPENSATION"
-  | "MANUAL";
+  "REFERRAL_BONUS" | "REFEREE_BONUS" | "PROMOTION" | "COMPENSATION" | "MANUAL";
 
 export interface CreditUsageItem {
   id: string;
@@ -96,6 +86,7 @@ export interface ReferralCreditItem {
   reversedAt: string | null;
   reversedBy: string | null;
   reversedReason: string | null;
+  state: ReferralCreditState;
   createdAt: string;
   user: {
     id: string;
@@ -154,6 +145,12 @@ function deriveCreditState(c: ReferralCreditItem): {
 } {
   if (c.reversedAt) {
     return { label: "Reversed", tone: "critical" };
+  }
+  if (c.state === "PENDING") {
+    return { label: "Pending", tone: "info" };
+  }
+  if (c.state === "VOID") {
+    return { label: "Void", tone: "neutral" };
   }
   if (c.remainingAmount <= 0) {
     return { label: "Exhausted", tone: "neutral" };
@@ -261,8 +258,7 @@ const REFERRAL_CREDIT_COLUMNS: ResponsiveColumn<ReferralCreditItem>[] = [
     cell: (c) =>
       c.usages.length > 0 ? (
         <span>
-          {c.usages.length} (
-          {formatCurrencyAmount(c.usedAmount, c.currency)})
+          {c.usages.length} ({formatCurrencyAmount(c.usedAmount, c.currency)})
         </span>
       ) : (
         <span className="text-muted-foreground">—</span>
@@ -370,7 +366,9 @@ function IssueGoodwillCreditDialog({
     }
     const amountPaise = parseInrInputToPaise(amountINR);
     if (amountPaise === null) {
-      setError("Amount (₹) must be a positive number with up to 2 decimal places.");
+      setError(
+        "Amount (₹) must be a positive number with up to 2 decimal places.",
+      );
       return;
     }
     const trimmedReason = reason.trim();
@@ -786,8 +784,9 @@ export default function AdminReferralCreditsPage() {
   const [detailTarget, setDetailTarget] = useState<ReferralCreditItem | null>(
     null,
   );
-  const [reverseTarget, setReverseTarget] =
-    useState<ReferralCreditItem | null>(null);
+  const [reverseTarget, setReverseTarget] = useState<ReferralCreditItem | null>(
+    null,
+  );
 
   const creditsQuery = useQuery({
     queryKey: [
@@ -961,6 +960,7 @@ export default function AdminReferralCreditsPage() {
                 }}
               >
                 <option value="">All statuses</option>
+                <option value="PENDING">Pending</option>
                 <option value="ACTIVE">Active</option>
                 <option value="EXHAUSTED">Exhausted</option>
                 <option value="EXPIRED">Expired</option>

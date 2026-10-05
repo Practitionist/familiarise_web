@@ -14,6 +14,7 @@
 
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
@@ -443,10 +444,10 @@ export async function readConsulteePayments(args: {
         orderBy: { createdAt: "desc" },
         take: HISTORY_CAP,
       }),
-      // Balances come from the UNCAPPED table: the display list is capped and a
-      // sum over it would underreport past 250 credits (PR #1247 review).
+      // Balances come from the uncapped table over the spendable credits only,
+      // so total − used = remaining.
       prisma.referralCredit.aggregate({
-        where: { userId },
+        where: spendableCreditsWhere(userId),
         _sum: { amount: true, usedAmount: true, remainingAmount: true },
       }),
       prisma.referralCreditUsage.findMany({
@@ -529,7 +530,7 @@ export async function readConsulteeMoneySummary(args: {
       },
     }),
     prisma.referralCredit.aggregate({
-      where: { userId },
+      where: spendableCreditsWhere(userId),
       _sum: { remainingAmount: true },
     }),
   ]);
