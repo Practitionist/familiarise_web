@@ -42,9 +42,9 @@ Xflow's API design is modeled directly after Stripe's REST API (built by ex-Stri
 | Object / Endpoint | Purpose |
 |---|---|
 | `POST /v1/accounts` | Creates a `client` account representing the foreign buyer/organization. |
-| `POST /v1/receivables` | Creates a FEMA-compliant export receivable (`amount`, `currency`, `purpose_code: "P1007" \| "P0802"`, `invoice: { reference_number, creation_date, document }`). Must be reconciled against an invoice so the AD Bank can issue the e-FIRA. |
+| `POST /v1/receivables` | Creates a FEMA-compliant export receivable (`amount`, `currency`, `purpose_code: "P1006" \| "P0802"`, `invoice: { reference_number, creation_date, document }`). Must be reconciled against an invoice so the AD Bank can issue the e-FIRA. |
 | `POST /v1/payment_links` | Generates a hosted Stripe-powered checkout link for a `Receivable` (supports USD/EUR/GBP/CAD/AUD bank transfers and international cards). |
-| `receivable.reconciled` & `payout.settled` Webhooks | Signed via `Xflow-Signature` header (`t=...,v1=...`, identical to Stripe's webhook signature scheme). Signals when foreign currency is collected and when the exact INR settlement (`payout.settled`) lands in Familiarise's Indian bank account with the `fira_url`. |
+| `receivable.amount_reconciled.updated`, `deposit.status.completed` & `payout.status.settled` Webhooks | Signed via `Webhook-Id`, `Webhook-Timestamp`, and `Webhook-Signature` headers (Base64 HMAC-SHA256 over `id.timestamp.rawBody`). Signals when foreign currency is collected and reconciled, and when the exact INR settlement (`payout.status.settled`) lands in Familiarise's Indian bank account with the `fira_url`. |
 
 ---
 

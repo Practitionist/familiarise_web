@@ -15,13 +15,13 @@
 Currently, Familiarise can accept international consultee payments via Razorpay (settling in INR), but **cannot onboard or pay non-Indian consultants** (US, UK, EU, Singapore, Australia, Canada, UAE) because:
 1. **RazorpayX is strictly INR-only** (it cannot wire USD/EUR/GBP to foreign bank accounts).
 2. **Stripe Connect Cross-Border Payouts does NOT support India (`IN`)** as a recipient country and requires a non-Indian platform entity.
-3. **Remitting outbound from an Indian bank account** triggers a **4%–6% double-FX loss** (`USD → INR → USD`), **$15–$30 SWIFT fees**, **20% Indian Section 195 withholding** (unless the foreign mentor obtains a Tax Residency Certificate + files digital **Form 10F** on the Indian income tax portal), and per-remittance **Form 15CA / CA-certified Form 15CB** filings.
+3. **Remitting outbound from an Indian bank account** triggers a **4%–6% double-FX loss** (`USD → INR → USD`), **$15–$30 SWIFT fees**, **20% Indian Section 393 (`§393(2) Table Sl.17`, payment code `1057`; pre-April 1, 2026: Section 195) withholding** (unless the foreign mentor obtains a Tax Residency Certificate + files digital **Form 10F** on the Indian income tax portal), and per-remittance **Form 145 / CA-certified Form 146** (pre-April 1, 2026: **Form 15CA / Form 15CB**) filings.
 
 **Tazapay solves both sides of the cross-border marketplace**:
 - **Licensed & Consulting/Marketplace-Friendly**: Regulated by the Monetary Authority of Singapore (MAS Major Payment Institution), FinCEN (US MSB), FINTRAC (Canada), and partnered with Cashfree (RBI PA-CB) for India settlements. Explicitly supports **1:1 consulting, edtech, live tutoring, and two-sided marketplaces**.
 - **80+ Local Payment Methods for Global Consultees**: Collects via International Cards (Visa, Mastercard, Amex, Apple Pay, Google Pay) AND low-cost local bank rails (**US ACH**, **EU SEPA**, **UK Faster Payments**, **Brazil Pix**, **Singapore PayNow**, **UPI**).
 - **Split-Corridor Settlement & Treasury**:
-  - **When the Consultant is in India (`RESIDENT`)**: Tazapay settles the net amount in **INR** to Familiarise's Indian bank account within **T+1–T+2 days** with an automated **1-day e-FIRA** (via its RBI PA-CB partner), and RazorpayX / Cashfree Payouts disburses to the Indian consultant with Section 194-O TDS.
+  - **When the Consultant is in India (`RESIDENT`)**: Tazapay settles the net amount in **INR** to Familiarise's Indian bank account within **T+1–T+2 days** with an automated **1-day e-FIRA** (via its RBI PA-CB partner), and RazorpayX / Cashfree Payouts disburses to the Indian consultant with Section 393 (`§393(1) Table Sl.8(v)`, code `1035` / pre-cutover Section 194-O) TDS.
   - **When the Consultant is Outside India (`NON_RESIDENT`)**: Tazapay holds the collected funds in a **multi-currency treasury balance (`USD`, `EUR`, `GBP`, `SGD`, `AUD`, `CAD`)** and disburses directly to the foreign consultant's local bank account via `POST /v3/payout` (`ACH` in US, `SEPA` in EU, `FPS` in UK) for a flat **$2–$5 local payout fee** — **eliminating the `Foreign Buyer → INR → Foreign Consultant` double-FX conversion!**
 
 ---

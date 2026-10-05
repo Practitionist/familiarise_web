@@ -1,6 +1,6 @@
 # Razorpay International Payments, PA-CB & MoneySaver Export Account
 
-**When to load**: Enabling or debugging international card acceptance, Apple Pay, PayPal via Razorpay, MoneySaver Export Virtual Accounts (`USD`/`EUR`/`GBP`), multi-currency `currency` orders, RBI PA-CB limits (`₹25,00,000`), purpose codes (`P1007` / `P0802`), or automated FIRS / e-FIRA generation.
+**When to load**: Enabling or debugging international card acceptance, Apple Pay, PayPal via Razorpay, MoneySaver Export Virtual Accounts (`USD`/`EUR`/`GBP`), multi-currency `currency` orders, RBI PA-CB limits (`₹25,00,000`), purpose codes (`P1006` / `P0802`), or automated FIRS / e-FIRA generation.
 
 See also: [`docs/payments/gateways/razorpay/06-international-payments-and-moneysaver.md`](../../../../../docs/payments/gateways/razorpay/06-international-payments-and-moneysaver.md).
 
@@ -16,7 +16,7 @@ Razorpay holds final RBI authorization across **PA-O** (Online), **PA-P** (Physi
 | **Settlement Currency** | **`INR` only** | All foreign currency collections are converted into INR by Razorpay's AD-I partner banks before settlement to our Indian current account |
 | **Settlement Schedule** | **T+7 working days** | Applies to both newly onboarded and mature Indian export merchants for international cards (`T+2` applies only to domestic INR transactions) |
 | **Export Proof (`FIRS` / `e-FIRA`)** | **Automated (Free)** | Generated automatically per settled transaction in `Dashboard -> Settlements -> FIRS`; required for zero-rated GST export under LUT (IGST Act Section 16) |
-| **Purpose Code** | **`P1007`** / **`P0802`** / **`P1107`** | `P1007` (Management & business consultancy), `P0802` (Software/IT consultancy), `P1107` (Educational/training services). Must match the IEC and GST LUT description |
+| **Purpose Code** | **`P1006`** / **`P0802`** / **`P1107`** | `P1006` (Business & management consultancy and public relations), `P0802` (Software/IT consultancy), `P1107` (Educational/training services). Must match the IEC and GST LUT description |
 
 ---
 
@@ -53,7 +53,7 @@ Razorpay holds final RBI authorization across **PA-O** (Online), **PA-P** (Physi
     "receipt": "rcpt_intl_ibt_001",
     "method": "bank_transfer",
     "notes": {
-      "purpose_code": "P1007",
+      "purpose_code": "P1006",
       "invoice_number": "FAM-EXP-2026-0042"
     }
   }

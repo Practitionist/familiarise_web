@@ -35,7 +35,7 @@ Based on the October 2026 regulatory and technical audit ([`gateway-evaluation-2
 |---------|------|-----------------------|
 | **Razorpay International + MoneySaver** | Immediate International Layer | Enable **Apple Pay**, **PayPal**, **3DS 2.0**, and **MoneySaver Export Account** (virtual USD ACH / EUR SEPA / GBP FPS accounts at `1% + GST`) on our existing Indian entity (`<= ₹25,00,000` per unit under RBI PA-CB with automated e-FIRA/FIRS). See [`razorpay/06-international-payments-and-moneysaver.md`](./razorpay/06-international-payments-and-moneysaver.md). |
 | **Cashfree (`CASHFREE`)** | #1 Full-Stack Backup (Pay-ins + Payouts v2 + Verification + Split) | Direct 1:1 drop-in backup to **both** Razorpay PG and RazorpayX Payouts. Holds full **RBI PA + PA-CB** licenses. Lower domestic card fees (`1.60%–1.95%` vs `2%`), `0%` UPI, **Cashfree Payouts v2** (`IMPS`/`UPI`/`NEFT`/`RTGS`), **Secure ID** Penny Drop & Reverse Penny Drop, and **Easy Split**. See [`cashfree/README.md`](./cashfree/README.md). |
-| **Tazapay (`TAZAPAY`)** | #1 Global Pay-in + Foreign Consultant Payout Engine | Explicitly supports **EdTech, 1:1 consulting, coaching, and service marketplaces**. Collects in **173+ countries** (cards + **80+ local bank rails** like US ACH, EU SEPA, UK Faster Payments, Pix, PayNow) and holds **multi-currency USD/EUR/GBP balances** to pay **foreign (non-Indian) consultants in 70+ countries** in their local currency without double-FX conversion (`USD -> INR -> USD`) or per-payout Indian Section 195 / Form 15CA/15CB wire friction. See [`tazapay/README.md`](./tazapay/README.md). |
+| **Tazapay (`TAZAPAY`)** | #1 Global Pay-in + Foreign Consultant Payout Engine | Explicitly supports **EdTech, 1:1 consulting, coaching, and service marketplaces**. Collects in **173+ countries** (cards + **80+ local bank rails** like US ACH, EU SEPA, UK Faster Payments, Pix, PayNow) and holds **multi-currency USD/EUR/GBP balances** to pay **foreign (non-Indian) consultants in 70+ countries** in their local currency without double-FX conversion (`USD -> INR -> USD`) or per-payout Indian Section 393 / Forms 145 & 146 (pre-cutover Section 195 / Forms 15CA & 15CB) wire friction. See [`tazapay/README.md`](./tazapay/README.md). |
 | **Xflow (`XFLOW`)** | High-Ticket ($500+) International & B2B Export Rail | Built on **Stripe + JPMorgan Chase N.A.** rails for Indian service exporters. `0.4%–0.6%` tiered fee (`$12` min on Starter) with **0% FX markup** over the live mid-market Google rate and **24-hour automated e-FIRA**. Ideal for `>= $500` international mentorship cohorts and B2B `OrganizationInvoice` collections (`< $300` B2C sessions stay on Razorpay/Cashfree/Tazapay due to the `$12` minimum fee floor). See [`xflow/README.md`](./xflow/README.md). |
 | **Dodo Payments (`DODO_PAYMENTS`) & Polar (`Polar.sh`)** | **Disqualified for 1:1 Consulting & Marketplaces** (MoR Reference Only) | Both are **Merchants of Record (MoRs)** whose Acceptable Use Policies explicitly prohibit human 1:1 consulting, coaching, and two-sided marketplaces (see below and [`mor-guardrails/README.md`](./mor-guardrails/README.md)). Restricted strictly to hypothetical 100% automated first-party SaaS or self-paced digital downloads. |
 
@@ -75,9 +75,9 @@ direction is over-collection, which is recoverable.
 
 **Consultants: India only on RazorpayX today; foreign consultants planned via Tazapay multi-currency treasury.**
 On our domestic INR rail (RazorpayX), TDS is withheld under
-Section 194-O, which applies to Indian residents by definition. Remitting INR from an Indian current account to a non-resident
-consultant requires Section 195 withholding, DTAA relief against a Tax Residency
-Certificate (TRC) and Form 10F, and an AD-bank Form 15CA/15CB filing per remittance — and
+**Section 393 (`§393(1) Table Sl.8(v)`, payment code `1035`; pre-April 1, 2026: Section 194-O)** of the Income-tax Act, 2025, which applies to Indian residents by definition. Remitting INR from an Indian current account to a non-resident
+consultant on or after April 1, 2026 requires **Section 393 (`§393(2) Table Sl.17`, payment code `1057`; pre-April 1, 2026: Section 195)** withholding, DTAA relief against a Tax Residency
+Certificate (TRC) and Form 10F, and an AD-bank **Form 145 / Form 146** (pre-April 1, 2026: **Form 15CA / Form 15CB**) filing per remittance — and
 RazorpayX cannot pay a foreign bank account regardless. `processSinglePayout`
 throws for a non-resident rather than half-paying, `lib/compliance/tds.ts` has
 the DTAA engine written but unreachable (both callers hardcode
@@ -85,7 +85,7 @@ the DTAA engine written but unreachable (both callers hardcode
 uncalled stub.
 
 That throw is the correct behaviour on the INR domestic rail and should not be "fixed" without either:
-1. Building the full Section 195 + AD-bank Form 15CA/15CB outbound wire path, OR
+1. Building the full Section 393 (`§393(2) Table Sl.17`) + AD-bank Form 145/146 (pre-cutover Section 195 + Form 15CA/15CB) outbound wire path, OR
 2. Onboarding **Tazapay (`TAZAPAY`)** as our international collection + multi-currency treasury rail ([`tazapay/README.md`](./tazapay/README.md)), where foreign buyer funds stay in a USD/EUR/GBP Tazapay treasury balance to pay non-Indian consultants directly in 70+ countries (`POST /v3/payout`, `purpose: "PYR003"`) and only Familiarise's net platform commission is repatriated to India in INR with an automated `e-FIRA`.
 
 The current constraint is surfaced to consultants in the product by

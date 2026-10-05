@@ -54,7 +54,7 @@ Xflow is an institutional cross-border payment platform built for Indian service
 - Returns `account_...`.
 
 ### 2.2 Create Receivable with Export Invoice & Purpose Code (`POST /v1/receivables`)
-Every cross-border inflow into India under FEMA requires an underlying export invoice and RBI Purpose Code (`P1007` Management/business consultancy, `P0802` IT/software consultancy, or `P1107` Educational services):
+Every cross-border inflow into India under FEMA requires an underlying export invoice and RBI Purpose Code (`P1006` Business and management consultancy and public relations services, `P0802` IT/software consultancy, or `P1107` Educational services):
 ```json
 {
   "account_id": "account_clx123456",
@@ -69,7 +69,7 @@ Every cross-border inflow into India under FEMA requires an underlying export in
     "document": "file_xflow_invoice_pdf_123",
     "reference_number": "FAM-ORG-2026-0089"
   },
-  "purpose_code": "P1007",
+  "purpose_code": "P1006",
   "transaction_type": "services",
   "metadata": {
     "organizationInvoiceId": "org_inv_01J9X555",
@@ -81,42 +81,36 @@ Every cross-border inflow into India under FEMA requires an underlying export in
 
 ---
 
-## 3. Webhook Verification (`Xflow-Signature`) & Event Mapping
+## 3. Webhook Verification (`Webhook-Id`, `Webhook-Timestamp`, `Webhook-Signature`) & Event Mapping
 
-Xflow uses Stripe-style timestamped HMAC-SHA256 signatures in the `Xflow-Signature` header (`t=<unix_seconds>,v1=<hex_hmac>`).
+Xflow sends three webhook headers — `Webhook-Id`, `Webhook-Timestamp`, and `Webhook-Signature` — with a Base64-encoded HMAC-SHA256 signature computed over `${webhookId}.${webhookTimestamp}.${rawBody}`.
 
 ```typescript
 import crypto from "crypto";
 
 export function verifyXflowWebhookSignature(
   rawBody: string,
-  signatureHeader: string,
+  webhookId: string,
+  webhookTimestamp: string,
+  webhookSignature: string,
   webhookSecret: string,
   toleranceSeconds = 300
 ): boolean {
-  if (!rawBody || !signatureHeader || !webhookSecret) return false;
+  if (!rawBody || !webhookId || !webhookTimestamp || !webhookSignature || !webhookSecret) {
+    return false;
+  }
 
-  const parts = Object.fromEntries(
-    signatureHeader.split(",").map((part) => {
-      const [k, v] = part.split("=");
-      return [k?.trim(), v?.trim()];
-    })
-  );
-  const timestamp = parts.t;
-  const receivedHex = parts.v1;
-  if (!timestamp || !receivedHex) return false;
-
-  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
+  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - Number(webhookTimestamp));
   if (Number.isNaN(ageSeconds) || ageSeconds > toleranceSeconds) return false;
 
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const expectedHex = crypto
+  const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBody}`;
+  const expectedBase64 = crypto
     .createHmac("sha256", webhookSecret)
     .update(signedPayload, "utf8")
-    .digest("hex");
+    .digest("base64");
 
-  const expectedBuf = Buffer.from(expectedHex, "utf8");
-  const receivedBuf = Buffer.from(receivedHex, "utf8");
+  const expectedBuf = Buffer.from(expectedBase64, "utf8");
+  const receivedBuf = Buffer.from(webhookSignature, "utf8");
   if (expectedBuf.length !== receivedBuf.length) return false;
 
   return crypto.timingSafeEqual(expectedBuf, receivedBuf);
@@ -126,7 +120,7 @@ export function verifyXflowWebhookSignature(
 ### Event Mapping (`app/api/webhooks/xflow/route.ts`)
 | Xflow Event `type` | Internal Handler Action |
 | --- | --- |
-| `receivable.reconciled` | Route through single-writer `handlePaymentSuccess` / `markOrganizationInvoicePaid` inside a `Serializable` `$transaction` |
-| `deposit.credited` | Record incoming foreign currency deposit arrival against virtual account |
-| `payout.settled` | Record settled INR amount (`settled_amount_inr`), FX rate, and attach the 24h **e-FIRA** PDF (`payout.fira_file_id`) to `OrganizationInvoice` / `Invoice` |
-| `payout.failed` | Alert finance ops for compliance/FIRA document remediation |
+| `receivable.amount_reconciled.updated` | Route through single-writer `handlePaymentSuccess` / `markOrganizationInvoicePaid` inside a `Serializable` `$transaction` |
+| `deposit.status.completed` | Record incoming foreign currency deposit arrival against virtual account |
+| `payout.status.settled` | Record settled INR amount (`settled_amount_inr`), FX rate, and attach the 24h **e-FIRA** PDF (`payout.fira_file_id`) to `OrganizationInvoice` / `Invoice` |
+| `payout.status.failed` | Alert finance ops for compliance/FIRA document remediation |

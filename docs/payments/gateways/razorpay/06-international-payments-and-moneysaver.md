@@ -49,7 +49,7 @@ Enabling all four methods in the Razorpay Dashboard lifts international checkout
 5. **Configure RBI Purpose Code for Automated FIRS / e-FIRA**:
    - Navigate to **Account & Settings → International Payment Codes**.
    - Select the applicable RBI Purpose Code for Familiarise's services export:
-     - **`P1007`** — Advertising, trade fair, management, consulting, or public relations services
+     - **`P1006`** — Business and management consultancy and public relations services
      - **`P0802`** — Software / IT consultancy and implementation services
      - **`P1107`** — Educational, training, and coaching services
    - Once set, Razorpay automatically generates a downloadable **FIRS (Foreign Inward Remittance Statement)** per settlement batch under **Dashboard → Settlements → FIRS**, satisfying IGST Act Section 2(6) + Section 16 (`EXPORT_LUT`) proof of export in convertible foreign exchange.
