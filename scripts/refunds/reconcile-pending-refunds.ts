@@ -433,6 +433,7 @@ async function reconcilePendingRefundsUnlocked(
                 tx,
                 refund.amountPaise,
                 refund.payment.amount,
+                refund.id,
               );
               const notice = await notifyRefundProcessed(
                 refund.payment.userId,
@@ -638,6 +639,7 @@ async function bindGatewayRefundToPlaceholder(
             tx,
             cascade.amountPaise,
             cascade.paymentAmountPaise,
+            placeholderRowId,
           );
           return result.memberOverageRefundDue;
         },
@@ -772,6 +774,7 @@ async function redriveStrandedRefunds(
               tx,
               refund.amountPaise,
               refund.payment.amount,
+              refund.id,
             );
             return result;
           },

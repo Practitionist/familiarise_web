@@ -88,7 +88,7 @@ describe("booking-refund front door (#1161)", () => {
   it("routes free_ intents to credit restoration", () => {
     expect(refundSource).toContain("isFreeCreditIntent");
     expect(refundSource).toContain("refundFreeCreditPayment");
-    expect(refundSource).toContain("reverseCreditsForPayment(payment.id, tx)");
+    expect(refundSource).toContain("reverseCreditsForPayment(");
   });
 
   it("whole-event refunds carry the credits bucket and re-run skips", () => {

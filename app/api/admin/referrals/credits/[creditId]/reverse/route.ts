@@ -17,6 +17,7 @@
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
 export const POST = withOpsAction(
   "referrals.manage",
@@ -27,7 +28,11 @@ export const POST = withOpsAction(
     run: async (tx, ctx) => {
       const creditId = ctx.params.creditId;
       if (!creditId) {
-        throw new OpsRefusal("INVALID_CREDIT_ID", "Credit ID is required.", 400);
+        throw new OpsRefusal(
+          "INVALID_CREDIT_ID",
+          "Credit ID is required.",
+          400,
+        );
       }
 
       const existing = await tx.referralCredit.findUnique({
@@ -49,6 +54,14 @@ export const POST = withOpsAction(
         );
       }
 
+      if (existing.state === "EXPIRED" || existing.state === "VOID") {
+        throw new OpsRefusal(
+          "CREDIT_NOT_REVERSIBLE",
+          `This referral credit is ${existing.state.toLowerCase()} and holds nothing to reverse.`,
+          409,
+        );
+      }
+
       const remainingPaise = Number(existing.remainingAmount);
       const usedPaise = Number(existing.usedAmount);
       const originalAmountPaise = Number(existing.amount);
@@ -66,6 +79,7 @@ export const POST = withOpsAction(
         where: {
           id: creditId,
           reversedAt: null,
+          state: existing.state,
           usedAmount: existing.usedAmount,
           remainingAmount: existing.remainingAmount,
         },
@@ -77,6 +91,8 @@ export const POST = withOpsAction(
           reversedAt: now,
           reversedBy: ctx.actor.userId,
           reversedReason: ctx.body.reason,
+          state: "VOID",
+          voidedAt: now,
         },
       });
       if (cas.count !== 1) {
@@ -85,6 +101,26 @@ export const POST = withOpsAction(
           "Credit was modified or reversed concurrently; refresh and retry.",
           409,
         );
+      }
+      // A VESTED credit with vestedAt set sits in the liability; reversing it releases that balance.
+      if (cas.count === 1 && existing.vestedAt && existing.state === "VESTED") {
+        await postLedgerTxn(tx, {
+          idempotencyKey: `referral-reverse:${creditId}`,
+          kind: "REFERRAL_CREDIT",
+          description: `Referral credit ${creditId} reversed by ops`,
+          postings: [
+            {
+              account: { kind: "REFERRAL_CREDIT_LIABILITY" },
+              direction: "DEBIT",
+              amountPaise: remainingPaise,
+            },
+            {
+              account: { kind: "PLATFORM_PROMO" },
+              direction: "CREDIT",
+              amountPaise: remainingPaise,
+            },
+          ],
+        });
       }
 
       const updated = await tx.referralCredit.findUniqueOrThrow({

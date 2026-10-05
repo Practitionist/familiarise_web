@@ -36,6 +36,7 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import type { AppliedDiscount } from "@/types/checkout";
@@ -212,6 +213,9 @@ export default function WebinarCheckoutPage({
   });
 
   const planData = checkoutPlanQuery.data ?? null;
+  const referralPricing = useReferralPricing(
+    planData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     staleError ??
@@ -511,10 +515,17 @@ export default function WebinarCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
+    selectedOrganizationId,
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,

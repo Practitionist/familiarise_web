@@ -31,13 +31,17 @@ import {
   Prisma,
   type CoveredPlanType,
 } from "@prisma/client";
-import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
+import { AppointmentType } from "./constants";
 import {
   computeHoldUntil,
   holdHoursFor,
   resolveEarningsAnchor,
 } from "./earnings-hold";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import {
+  planB2cPlatformFeePaise,
+  settleB2cPlatformFeePaise,
+} from "@/lib/payments/pricing/platform-fee";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -95,12 +99,17 @@ interface OrgEarningsSummary {
 // Decimal as number); the raw Payment model type still says bigint/Decimal.
 type PaymentRow = Omit<
   Payment,
-  "amount" | "originalAmount" | "taxAmount" | "exchangeRateAtCheckout"
+  | "amount"
+  | "originalAmount"
+  | "taxAmount"
+  | "exchangeRateAtCheckout"
+  | "welcomeDiscountPaise"
 > & {
   amount: number;
   originalAmount: number;
   taxAmount: number;
   exchangeRateAtCheckout: number | null;
+  welcomeDiscountPaise: number | null;
 };
 
 export interface CreateEarningsParams {
@@ -699,7 +708,8 @@ async function planCollaboratorSettlements(
     collabOrgSplit: OrgEarningsSplit | null;
   }> = [];
   for (const split of collabSplits) {
-    const collabOrgSplit = await resolveOrgSplit( // NOSONAR
+    const collabOrgSplit = await resolveOrgSplit(
+      // NOSONAR
       db,
       split.consultantProfileId,
       split.share,
@@ -828,20 +838,21 @@ export async function planEarningsForPayment(
 
   const platformFeePaise = orgSplit
     ? orgSplit.platformFeePaise
-    : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+    : await planB2cPlatformFeePaise(
+        db,
+        payment,
+        consultantProfileId,
+        grossAmount,
+      );
   const totalConsultantPool = orgSplit
     ? orgSplit.consultantSharePaise
     : grossAmount - platformFeePaise;
 
   const splits =
     planType && planId
-      ? await calculateRevenueSplit(
-          planType,
-          planId,
-          totalConsultantPool,
-          db,
-          { excludeBuyerUserId: payment.userId },
-        )
+      ? await calculateRevenueSplit(planType, planId, totalConsultantPool, db, {
+          excludeBuyerUserId: payment.userId,
+        })
       : [];
 
   const collabSettlements = await planCollaboratorSettlements(
@@ -1461,12 +1472,7 @@ export async function createEarningsFromPayment(
           tx: txArg,
           preplanned: preplannedArg,
         };
-  const {
-    payment,
-    appointmentType,
-    tx: outerTx,
-    preplanned,
-  } = normalized;
+  const { payment, appointmentType, tx: outerTx, preplanned } = normalized;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
   const consultantProfileId = payment.appointment?.consultantProfile?.id;
@@ -1528,22 +1534,32 @@ export async function createEarningsFromPayment(
       ? EarningStatus.PENDING_TRUST
       : EarningStatus.PENDING;
 
+    const splitsFor = (pool: number): Promise<RevenueSplit[]> =>
+      planType && planId
+        ? calculateRevenueSplit(planType, planId, pool, tx, {
+            excludeBuyerUserId: payment.userId,
+          })
+        : Promise.resolve([]);
+    // A multi-party sale never takes a fee waiver, on either path; the split count is pool-independent.
+    const multiParty = hasPreplanned
+      ? preplanned.splits.length > 0
+      : (await splitsFor(0)).length > 0;
     const platformFeePaise = orgSplit
       ? orgSplit.platformFeePaise
-      : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
+      : await settleB2cPlatformFeePaise(
+          tx,
+          payment,
+          consultantProfileId,
+          grossAmount,
+          { allowWaiver: !multiParty },
+        );
     const totalConsultantPool = orgSplit
       ? orgSplit.consultantSharePaise
       : grossAmount - platformFeePaise;
 
     let splits: RevenueSplit[] = hasPreplanned ? preplanned.splits : [];
-    if (!hasPreplanned && planType && planId) {
-      splits = await calculateRevenueSplit(
-        planType,
-        planId,
-        totalConsultantPool,
-        tx,
-        { excludeBuyerUserId: payment.userId },
-      );
+    if (!hasPreplanned && multiParty) {
+      splits = await splitsFor(totalConsultantPool);
     }
 
     const collabSettlements = hasPreplanned
@@ -1615,8 +1631,7 @@ export async function createEarningsFromPayment(
   };
 
   const rawOuterTx = outerTx as
-    | { $executeRawUnsafe?: (query: string) => Promise<unknown> }
-    | undefined;
+    { $executeRawUnsafe?: (query: string) => Promise<unknown> } | undefined;
   const hasOuterSavepoint =
     !!outerTx && typeof rawOuterTx?.$executeRawUnsafe === "function";
 
@@ -1641,9 +1656,9 @@ export async function createEarningsFromPayment(
     );
   } catch (error) {
     if (hasOuterSavepoint) {
-      await rawOuterTx!
-        .$executeRawUnsafe!("ROLLBACK TO SAVEPOINT sp_create_earnings")
-        .catch(() => undefined);
+      await rawOuterTx!.$executeRawUnsafe!(
+        "ROLLBACK TO SAVEPOINT sp_create_earnings",
+      ).catch(() => undefined);
     }
     if (error instanceof ParkedCaptureEarningsError) {
       console.warn(

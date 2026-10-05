@@ -118,11 +118,11 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
 }));
 
 const mockRestoreUpTo = jest.fn(
-  async (_p: string, _t: unknown, n: number) => n,
+  async (_p: string, _t: unknown, n: number, _r: string) => n,
 );
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
-  restoreCreditsForPaymentUpTo: (...a: [string, unknown, number]) =>
+  restoreCreditsForPaymentUpTo: (...a: [string, unknown, number, string]) =>
     mockRestoreUpTo(...a),
 }));
 
@@ -241,7 +241,13 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
       rail: "CREDITS",
     });
     // No amounts passed → full restoration of every usage row.
-    expect(mockReverseCredits).toHaveBeenCalledWith(PAYMENT_ID, tx);
+    expect(mockReverseCredits).toHaveBeenCalledWith(
+      PAYMENT_ID,
+      tx,
+      undefined,
+      undefined,
+      "refund-row-1",
+    );
     // The consumer invoice is reversed for the whole credit-funded value.
     expect(mockMintConsumerCreditNote).toHaveBeenCalledWith(tx, {
       paymentId: PAYMENT_ID,
@@ -631,7 +637,12 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
   });
 
   expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 59_000 });
-  expect(mockRestoreUpTo).toHaveBeenCalledWith(PAYMENT_ID, tx, 59_000);
+  expect(mockRestoreUpTo).toHaveBeenCalledWith(
+    PAYMENT_ID,
+    tx,
+    59_000,
+    "refund-row-1",
+  );
   // W1c — CAS-in-WHERE, same shape as the assertion above.
   //
   // The `data` carries NO `status`, where the old write restated `"PENDING"` —

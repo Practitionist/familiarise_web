@@ -446,11 +446,7 @@ export type DocumentReviewedPayload = NotificationScope & {
   appointmentId: string;
   documentId: string;
   reviewStatus:
-    | "PENDING"
-    | "IN_REVIEW"
-    | "APPROVED"
-    | "REJECTED"
-    | "NEEDS_REVISION";
+    "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
   reviewNotes?: string;
   originalName: string;
   consultantName: string;
@@ -462,34 +458,6 @@ export type ConsultantApplicationPayload = {
   applicantEmail: string;
   dashboardUrl: string;
 };
-
-export type ReferralBonusPayload = {
-  referrerName: string;
-  refereeName: string;
-  bonusAmount: string;
-  bonusAmountPaise: number;
-  currency: string;
-  dashboardUrl: string;
-};
-
-export type ReferralBonusInput = Omit<
-  ReferralBonusPayload,
-  "bonusAmount" | "bonusAmountPaise"
-> & { bonusAmount: number };
-
-export type RefereeWelcomeBonusPayload = {
-  refereeName: string;
-  referrerName: string;
-  bonusAmount: string;
-  bonusAmountPaise: number;
-  currency: string;
-  dashboardUrl: string;
-};
-
-export type RefereeWelcomeBonusInput = Omit<
-  RefereeWelcomeBonusPayload,
-  "bonusAmount" | "bonusAmountPaise"
-> & { bonusAmount: number };
 
 export type ReferralCreditsAppliedPayload = {
   creditsUsed: string;

@@ -639,6 +639,7 @@ describe("reconcilePendingRefunds — stranded-refund backstop", () => {
       expect.anything(),
       4_000,
       10_000,
+      "ref_stranded",
     );
     expect(mockRefundSidePayment).toHaveBeenCalledWith({
       parentPaymentId: "pay_1",

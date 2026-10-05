@@ -337,7 +337,13 @@ async function refundFreeCreditPayment(input: {
         });
 
         // No amounts → full restoration of every usage row on the payment.
-        const restoredPaise = await reverseCreditsForPayment(payment.id, tx);
+        const restoredPaise = await reverseCreditsForPayment(
+          payment.id,
+          tx,
+          undefined,
+          undefined,
+          refundRow.id,
+        );
 
         // #1003 convention (mirrors cancelPendingCheckout): utilization is
         // debited at checkout before capture, so release it here. A no-op for
@@ -507,6 +513,7 @@ export async function restoreClassSeatCredits(input: {
             payment.id,
             tx,
             Math.min(asked, stillUsed),
+            refundRow.id,
           );
           if (restoredPaise <= 0) {
             throw new RefundValidationError(
@@ -1104,6 +1111,7 @@ async function refundInternalFundedPayment(input: {
           tx,
           requested,
           payment.amount,
+          refundRow.id,
         );
 
         if (!input.keepSeat) {

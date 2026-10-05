@@ -267,6 +267,7 @@ describe("refundBookingPayment", () => {
       expect.anything(),
       100_000,
       100_000,
+      "refund-row-1",
     );
   });
 

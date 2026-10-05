@@ -57,6 +57,9 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // #1370 — its healer mints tax invoices, which burns numbers from a gapless
   // statutory series. A half-deployed run leaves gaps that cannot be filled.
   "gst-outward-register-export",
+  // Referral vest and breakage post to the referral-credit liability ledger.
+  "vest-referral-credits",
+  "expire-referral-credits",
 ]);
 
 /**

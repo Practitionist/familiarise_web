@@ -1040,6 +1040,7 @@ export async function handleRefundCreated(
             tx,
             refundAmt,
             originalPaymentAmt,
+            refundRowId,
           );
           if (restored > 0) {
             console.log(

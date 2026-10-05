@@ -74,8 +74,6 @@ export {
   notifyDocumentUploaded,
   notifyDocumentReviewed,
   // Referrals
-  notifyReferralBonusEarned,
-  notifyRefereeWelcomeBonus,
   notifyReferralCreditsApplied,
   // Collaborators
   notifyCollaboratorInvited,

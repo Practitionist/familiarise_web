@@ -87,6 +87,8 @@ const TARGETS = [
   "process-data-exports",
   // Drains StreamRevocationRetry and the VendorErasureRetry outbox (DPDP erasure); every 30 minutes.
   "retry-moderation-enforcement",
+  // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
+  "vest-referral-credits",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -110,6 +112,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "drain-notification-outbox": 20,
   // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
   "reconcile-orphaned-confirmations": 10,
+  // One Serializable transaction per referral; ten fit the 20 s budget.
+  "vest-referral-credits": 10,
   // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
   "settle-cancelled-sessions": 10,
   // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
@@ -183,6 +187,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 30,
   "process-data-exports": 10,
   "retry-moderation-enforcement": 30,
+  // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
+  "vest-referral-credits": 30,
 };
 
 /**
@@ -223,6 +229,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-payments": 10,
   "process-data-exports": 0,
   "retry-moderation-enforcement": 25,
+  "vest-referral-credits": 5,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -254,6 +261,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reschedule-proposals": 20_000,
   "settle-cancelled-sessions": 20_000,
   "retry-auto-refunds": 20_000,
+  "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
   // One Stream call-report round trip per judged session or candidate.
   "auto-complete-appointments": 20_000,

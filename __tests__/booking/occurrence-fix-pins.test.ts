@@ -63,7 +63,6 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentBooked: jest.fn(),
 }));
 jest.mock("../../lib/referrals/service", () => ({
-  processConsultantBookingReferral: jest.fn(),
   reverseCreditsForPayment: jest.fn(),
   qualifyReferralOnFirstBooking: jest.fn(),
 }));

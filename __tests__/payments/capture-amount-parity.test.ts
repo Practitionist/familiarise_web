@@ -114,8 +114,6 @@ jest.mock("../../lib/novu", () => ({
 }));
 const reverseCreditsForPayment = jest.fn();
 jest.mock("../../lib/referrals/service", () => ({
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
   reverseCreditsForPayment: (...a: unknown[]) => reverseCreditsForPayment(...a),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
