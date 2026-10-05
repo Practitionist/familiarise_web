@@ -108,7 +108,10 @@ export async function getRazorpayPayoutStatus(
     return {
       kind: "status",
       status: payout.status,
-      failureReason: payout.failure_reason,
+      failureReason:
+        payout.failure_reason ??
+        payout.status_details?.description ??
+        payout.status_details?.reason,
       // #677 PM-15 — RazorpayX returns the bank UTR on a processed payout;
       // capture it so the COMPLETED delegation can persist the reference.
       utr: payout.utr,

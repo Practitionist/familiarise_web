@@ -1,220 +1,147 @@
-# Razorpay One-Time Payments
+# Orders & Standard Checkout (`POST /v1/orders` & `checkout.js`)
 
-Two flows for one-time payments: **Order flow** (Razorpay JS SDK popup) and **Invoice flow** (hosted page). Both require server-side HMAC verification.
+Official citations:
+- [Create an Order (`POST /v1/orders`)](https://razorpay.com/docs/api/orders/create/)
+- [Configure Capture Settings Using Orders API](https://razorpay.com/docs/payments/payments/capture-settings/api/)
+- [Standard Checkout Web Integration Steps](https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/integration-steps/)
 
-## One-Time Payments vs Subscriptions: Completely Different Checkout
+## Where It Lives in This Repo
 
-This is a common source of confusion. One-time payments and subscriptions use **entirely different APIs and checkout experiences**:
+- **Server Order Creation**: `createRazorpayOrder` in [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts) (called via `createPaymentIntent` in [`lib/payments/index.ts`](../../../../../lib/payments/index.ts)).
+- **Client Modal Options**: `buildCheckoutOptions` and `holdTimeoutSeconds` in [`lib/payments/client/checkout-options.ts`](../../../../../lib/payments/client/checkout-options.ts).
+- **Client Checkout Component**: [`app/checkout/components/RazorpayCheckout.tsx`](../../../../../app/checkout/components/RazorpayCheckout.tsx).
+- **Prefill Normalization**: `normalizeRazorpayContact` and `buildRazorpayPrefill` in [`lib/payments/razorpay-prefill.ts`](../../../../../lib/payments/razorpay-prefill.ts).
+- **Client-Return Signature Verification**: `POST /api/checkout/verify-signature` in [`app/api/checkout/verify-signature/route.ts`](../../../../../app/api/checkout/verify-signature/route.ts).
+- **Confirmation Pipeline**: `routeCapturedPayment` in [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) → `handlePaymentSuccess` in [`lib/payments/webhooks/handlers.ts`](../../../../../lib/payments/webhooks/handlers.ts).
 
-| | One-Time Payment | Subscription |
+---
+
+## 1. End-to-End Flow in This Repo
+
+```
+1. Client clicks "Pay with Razorpay" in RazorpayCheckout.tsx
+   └─ Sends POST /api/checkout with checkoutData + clientIdempotencyKey
+2. Server validates slot/entitlement, computes tax (determineTax, additive 18% GST),
+   creates Payment row (paymentStatus = PENDING, amount in integer paise),
+   and calls createRazorpayOrder() → POST /v1/orders
+3. Server stores order.id ("order_...") in Payment.paymentIntent and returns
+   { paymentIntent: { id, amount, currency, customerId }, holdExpiresAt }
+4. Client loads https://checkout.razorpay.com/v1/checkout.js and opens modal
+   with buildCheckoutOptions({ orderId, amount, currency, customerId, holdExpiresAt, ... })
+5. Buyer completes payment in modal:
+   ├─ Client path (fast UI feedback): handler() POSTs { razorpay_order_id,
+   │  razorpay_payment_id, razorpay_signature } to /api/checkout/verify-signature.
+   │  Route verifies HMAC-SHA256(order_id|payment_id, RAZORPAY_SECRET), fetches
+   │  live payment via razorpayClient.payments.fetch(razorpay_payment_id) to prove
+   │  status === "captured", and runs routeCapturedPayment() inside after().
+   └─ Webhook path (durable source of truth): Razorpay POSTs payment.captured
+      (and order.paid) to /api/webhooks/razorpay, which verifies x-razorpay-signature,
+      logs WebhookEvent idempotently, and runs routeCapturedPayment() inside after().
+```
+
+> **ADR 21 Invariant:** `/api/checkout/verify-signature` **never** flips `Payment.paymentStatus = SUCCEEDED` with a bare `updateMany`. Both `/api/checkout/verify-signature` and `/api/webhooks/razorpay` call the exact same idempotent, `Serializable` `routeCapturedPayment()` pipeline so whichever arrives first performs the appointment confirmation, `gatewayPaymentId` stamp, capture-amount parity check, `ConsultantEarnings` creation, and `booking:<paymentId>` ledger posting, and the second arrival is a clean no-op.
+
+---
+
+## 2. Creating an Order (`createRazorpayOrder`)
+
+```ts
+// lib/payments/core/razorpay.ts
+const order = await withRazorpaySdkTimeout("orders.create", () =>
+  razorpayClient.orders.create({
+    amount: amount, // integer paise (₹500.00 = 50000)
+    currency: settlementCurrency, // "INR" enforced by assertInrSettlement()
+    notes: metadata,
+    receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+    ...(customerId ? { customer_id: customerId } : {}),
+    ...(holdExpiresAt ? { payment: holdCaptureSettings(holdExpiresAt) } : {}),
+  }),
+);
+```
+
+### Verified Official `POST /v1/orders` Constraints
+
+| Field | Rule (Verified against `razorpay.com/docs/api/orders/create/`) |
+|---|---|
+| `amount` | **Mandatory integer** in smallest currency subunit (paise for INR). **Minimum `100` paise (₹1.00)** — `< 100` fails with `400 BAD_REQUEST_ERROR: "The amount must be at least INR 1.00"`. Never pass floats or strings. |
+| `currency` | **Mandatory 3-letter ISO code.** Our `assertInrSettlement` guard enforces `"INR"` before calling the SDK so a non-INR billing account cannot accidentally mint a foreign-currency order with paise numbers (#1396). |
+| `receipt` | **Optional string, max 40 ASCII characters, must be unique.** Razorpay treats `receipt` as an idempotency key: passing a duplicate `receipt` returns `400 BAD_REQUEST_ERROR: "Duplicate request. This request has already been processed."` Our format `receipt_${Date.now()}_${uuid8}` is 29 characters and collision-free (#PM-11). |
+| `notes` | **Optional JSON object of string key-value pairs.** **Max 15 keys, max 256 characters per key/value.** Note: when `notes` is empty, Razorpay's API returns `notes: []` (an empty array) instead of `{}` — `razorpayFetchedPaymentSchema` normalizes `[]` to `{}`. |
+| `payment` | Per-order capture settings (`capture: "automatic"`, `capture_options: { automatic_expiry_period, manual_expiry_period, refund_speed: "normal" }`). Floor for `automatic_expiry_period` is **`12` minutes**; ceiling for `manual_expiry_period` is **`7200` minutes (5 days)**. Sized to the booking slot hold via `holdCaptureSettings(holdExpiresAt)` (#1861 L1). |
+
+---
+
+## 3. Standard Checkout Options & Modal Lifecycle
+
+Built by `buildCheckoutOptions` in [`lib/payments/client/checkout-options.ts`](../../../../../lib/payments/client/checkout-options.ts):
+
+- **`timeout` (in seconds)**: Bounded to `secondsLeft - 60` before `holdExpiresAt` (refuses to open if `<= 120` seconds of hold remain). Prevents a buyer from starting payment on a slot hold that is about to expire.
+- **`modal.ondismiss`**: Fires when the buyer closes the Checkout sheet without paying. Resets `isProcessing` to `false` (closing the sheet fires neither `handler` nor `payment.failed`).
+- **`rzp.on("payment.failed", callback)`**: Fires when an in-modal payment attempt fails.
+- **`config.display.hide`**: When `ENABLE_CHECKOUT_EMI` is off, passes `{ display: { hide: [{ method: "emi" }], preferences: { show_default_blocks: true } } }` to hide Razorpay's EMI block (#1780).
+- **`prefill` (`lib/payments/razorpay-prefill.ts`)**: Passes `{ name, email, contact }`. `normalizeRazorpayContact` strips formatting, validates E.164 (`^\+?[1-9]\d{9,14}$`), and rejects 10+ identical consecutive digits (`9999999999`) because Razorpay test mode rejects repeated-digit phone numbers with an opaque modal error (#717).
+- **`retry.max_count` Watch-Out**: Official Razorpay docs note that `retry.max_count` is **not supported on Web Standard Checkout** (it only works in Android/iOS SDKs).
+
+---
+
+## 4. Signature Verification Formula (`order_id|payment_id`)
+
+> **CRITICAL:** One-time Orders and Subscriptions use **opposite** field ordering in their HMAC payload!
+
+| Flow | HMAC-SHA256 Payload String | Secret |
 |---|---|---|
-| **API** | Orders API (`razorpay.orders.create`) | Subscriptions API (`razorpay.subscriptions.create`) |
-| **Checkout UI** | JS SDK popup (`new Razorpay({...}).open()`) | Hosted page redirect (`short_url`) |
-| **Client script** | `checkout.js` loaded via `<Script>` tag | No client script needed |
-| **Verification** | Callback HMAC (`order_id\|payment_id`) | Hosted `short_url` flow: webhook only. JS-popup flow: callback HMAC (`payment_id\|subscription_id`) **and** webhook |
-| **Payment confirmation** | Immediate — `handler` callback fires | Webhook (`subscription.activated`) is the source of truth either way |
-| **Where it runs** | Inline popup on your page | Hosted page, or inline popup via `subscription_id` |
-| **Key used for HMAC** | `RAZORPAY_SECRET` (API secret) | Callback HMAC: `RAZORPAY_SECRET`; webhook: `RAZORPAY_WEBHOOK_SECRET` |
+| **One-Time Order** *(used in this repo)* | `${razorpay_order_id}\|${razorpay_payment_id}` | `RAZORPAY_SECRET` (API Key Secret, **not** Webhook Secret) |
+| **Subscription** *(not used in this repo)* | `${razorpay_payment_id}\|${razorpay_subscription_id}` | `RAZORPAY_SECRET` |
 
-**Do NOT mix these up.** You cannot use `short_url` for one-time orders. Subscriptions, however, *are* supported in Standard Checkout — pass `subscription_id` in the options instead of `order_id`. The hosted `short_url` page is just one option; the JS SDK popup is another. **Two distinct subscription verification paths, two distinct secrets**: if you use the JS popup with `subscription_id`, the `handler` callback returns `razorpay_payment_id`/`razorpay_subscription_id`/`razorpay_signature` — verify with `HMAC_SHA256(payment_id + "|" + subscription_id, RAZORPAY_SECRET)` (note the **reversed field order** vs orders). The webhook (`subscription.activated`, verified with `RAZORPAY_WEBHOOK_SECRET` over the raw body) remains the activation source of truth in both flows.
+### Safe Verification Pattern (`app/api/checkout/verify-signature/route.ts`)
 
-## Flow 1: Order + JS SDK (Recommended for UX)
-
-### Create Order (Server)
-
-```typescript
-// app/api/billing/create-order/route.ts
-export async function POST(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  const { productKey, amountPaise } = await request.json();
-
-  try {
-    const order = await razorpay.orders.create({
-      amount: amountPaise,       // Amount in paise (e.g., 11682 for Rs 116.82)
-      currency: "INR",
-      receipt: `${productKey}_${user.id}_${Date.now()}`,
-      notes: {
-        userId: user.id,
-        productKey,
-      },
-    });
-
-    return Response.json({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-    });
-  } catch (error) {
-    console.error("Failed to create order:", error);
-    return Response.json({ error: "Something went wrong" }, { status: 500 });
-  }
-}
-```
-
-### Client-Side Checkout
-
-```typescript
-const handlePayment = async () => {
-  // 1. Create order
-  const res = await fetch("/api/billing/create-order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ productKey: "day_pass", amountPaise: 11682 }),
-  });
-  const order = await res.json();
-
-  // 2. Open Razorpay popup
-  const rzp = new window.Razorpay({
-    key: order.keyId,
-    amount: order.amount,
-    currency: order.currency,
-    order_id: order.orderId,
-    name: "Your App",
-    description: "Day Pass",
-    handler: async (response: any) => {
-      // 3. Verify on server
-      const verifyRes = await fetch("/api/billing/verify-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          razorpay_order_id: response.razorpay_order_id,
-          razorpay_payment_id: response.razorpay_payment_id,
-          razorpay_signature: response.razorpay_signature,
-        }),
-      });
-      if (verifyRes.ok) {
-        window.location.href = "/success";
-      }
-    },
-    theme: { color: "#3b82f6" },
-    modal: {
-      ondismiss: () => {
-        // User closed the popup without paying — reset loading state here
-      },
-    },
-    // Fallback for popup-blocked / mobile: Razorpay redirects to callback_url
-    // with the payment params instead of firing `handler`.
-    // callback_url: "https://your-app.com/api/billing/verify-payment",
-    // redirect: true,
-  });
-  rzp.open();
-};
-```
-
-**Note**: Add `<Script src="https://checkout.razorpay.com/v1/checkout.js" />` to your layout.
-
-**Popup-blocked / mobile fallback**: Use `modal.ondismiss` to reset state when the user closes the popup. If the popup is blocked, set `callback_url` + `redirect: true` so Razorpay posts the result to a server endpoint instead of calling `handler`.
-
-### Verify Payment (Server)
-
-```typescript
-// This repo: app/api/checkout/verify-signature/route.ts
-import crypto from "crypto";
-
-export async function POST(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = await request.json();
-
-  // ORDER FLOW signature: HMAC(secret, "order_id|payment_id")
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_SECRET!)
-    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-    .digest("hex");
-
-  const expectedBuf = Buffer.from(expectedSignature, "hex");
-  const receivedBuf = Buffer.from(razorpay_signature, "hex");
-
-  // Length check required — timingSafeEqual throws on mismatched lengths
-  if (receivedBuf.length !== expectedBuf.length) {
-    return Response.json({ error: "Invalid signature" }, { status: 400 });
-  }
-
-  const isValid = crypto.timingSafeEqual(expectedBuf, receivedBuf);
-
-  if (!isValid) {
-    return Response.json({ error: "Invalid signature" }, { status: 400 });
-  }
-
-  // Payment verified — grant access
-  await grantDayPass(user.id, razorpay_order_id, razorpay_payment_id);
-
-  return Response.json({ success: true });
-}
-```
-
-## Flow 2: Invoice (Hosted Page)
-
-For invoice-based payments (no JS SDK needed):
-
-### Verify Invoice Payment
-
-```typescript
-// INVOICE FLOW signature: HMAC(secret, "invoice_id|invoice_receipt|invoice_status|payment_id")
-const signaturePayload = [
-  invoiceId,
-  invoiceReceipt ?? "",     // Use ?? "" for optional fields!
-  invoiceStatus ?? "",
-  paymentId,
-].join("|");
-
+```ts
 const expectedSignature = crypto
-  .createHmac("sha256", process.env.RAZORPAY_SECRET!)
-  .update(signaturePayload)
+  .createHmac("sha256", keySecret)
+  .update(`${razorpay_order_id}|${razorpay_payment_id}`)
   .digest("hex");
-```
 
-**CRITICAL**: Use `?? ""` for optional fields. If `invoiceReceipt` or `invoiceStatus` is undefined, the signature will be wrong.
+const sigBuf = Buffer.from(razorpay_signature, "hex");
+const expectedBuf = Buffer.from(expectedSignature, "hex");
 
-## GST Calculation (18%)
-
-**IMPORTANT**: Razorpay does NOT calculate GST for you — not for subscriptions, not for one-time payments. Your displayed price should include GST, and you must break it out yourself for invoicing. To create a proper GST invoice, use the Razorpay Invoice API (`razorpay.invoices.create()`) with separate line items for base amount, CGST, and SGST.
-
-```typescript
-function calculateGst(amountPaise: number) {
-  const basePaise = Math.round(amountPaise / 1.18);
-  const gstPaise = amountPaise - basePaise;
-  const cgstPaise = Math.floor(gstPaise / 2);
-  const sgstPaise = gstPaise - cgstPaise;  // Handles odd paise
-
-  return { basePaise, cgstPaise, sgstPaise };
-}
-
-// Example: Rs 116.82 (Rs 99 + 18% GST)
-// calculateGst(11682) → { basePaise: 9900, cgstPaise: 891, sgstPaise: 891 }
-```
-
-## Day Pass Pattern (24h Access)
-
-```typescript
-async function grantDayPass(userId: string, orderId: string, paymentId: string) {
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +24h
-
-  await db.insert(dayPasses).values({
-    userId,
-    razorpayOrderId: orderId,
-    razorpayPaymentId: paymentId,
-    amountPaise: 11682,
-    startedAt: now,
-    expiresAt,
-  }).onConflictDoUpdate({
-    target: [dayPasses.userId],  // One per user
-    set: { razorpayOrderId: orderId, razorpayPaymentId: paymentId, startedAt: now, expiresAt },
-  });
-
-  // Grant access tier
-  await updateUserAccess(userId, "day_pass");
+if (
+  sigBuf.length !== expectedBuf.length ||
+  !crypto.timingSafeEqual(sigBuf, expectedBuf)
+) {
+  return NextResponse.json(
+    { verified: false, error: "Invalid payment signature" },
+    { status: 400 },
+  );
 }
 ```
 
-## Gotchas
+### Why Signature Verification Alone Is Not Enough
 
-1. **Completely different from subscriptions**: One-time payments use the Orders API + JS SDK popup. Subscriptions use the Subscriptions API + hosted checkout page. Do not mix the two — they have different APIs, different checkout UIs, different verification methods, and different secrets.
-2. **Two different signature formats**: Order flow = `order_id|payment_id`. Invoice flow = `invoice_id|receipt|status|payment_id`. Using the wrong format = silent failure.
-3. **`?? ""` for optional invoice fields**: Missing fields in the signature payload produce wrong HMAC. Always default to empty string.
-4. **`timingSafeEqual` requires same length**: Catch errors from length mismatch — treat as invalid.
-5. **Verify key**: Order flow uses `RAZORPAY_SECRET` (your API key secret), NOT `RAZORPAY_WEBHOOK_SECRET`. These are different secrets for different purposes!
-6. **Race condition**: Check purchase status AFTER signature verification, not before. Prevents double-grant between concurrent requests.
-7. **Razorpay JS SDK script**: Must be loaded via `<Script>` tag, not `import`. It attaches to `window.Razorpay`. The same Standard Checkout script also drives subscriptions (pass `subscription_id` instead of `order_id`).
-8. **Payment confirmation is immediate**: Unlike subscriptions (which rely on async webhooks), one-time payments confirm in the `handler` callback. You verify the HMAC signature server-side and grant access right away.
+1. **The signature covers only `(order_id, payment_id)`** — it says nothing about the captured `amount`, `notes`, or whether the payment is `"captured"` vs still `"authorized"`.
+2. Therefore, `/api/checkout/verify-signature` fetches the authoritative payment from Razorpay (`await razorpayClient.payments.fetch(razorpay_payment_id)`), parses it through `razorpayFetchedPaymentSchema`, verifies `gatewayPayment.status === "captured"`, and passes `gatewayPayment.amount` and `gatewayPayment.notes` into `routeCapturedPayment`.
+3. Inside `handlePaymentSuccess`, the **capture-amount parity check** verifies that `capturedAmountPaise === payment.amount` before confirming the booking or crediting any wallet/invoice.
+
+---
+
+## 5. `payment.captured` vs `order.paid`
+
+Razorpay emits **both** `payment.captured` and `order.paid` when an order is paid (`order.paid` is the only `order.*` webhook event in Razorpay).
+- `payment.captured` carries `payload.payment.entity` (`id: "pay_..."`, `order_id: "order_..."`, `amount`, `notes`).
+- `order.paid` carries `contains: ["payment", "order"]` with **both** `payload.order.entity` and `payload.payment.entity` (#1582 F-P0-01).
+- In [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts), both events call `routeCapturedPayment`. Because `routeCapturedPayment` is idempotent on `Payment.paymentIntent` / `WalletEntry` / `OrganizationInvoice` / `RecordingPurchase`, receiving both events (plus the client `/api/checkout/verify-signature` call) is completely safe.
+
+---
+
+## 6. Cancelling / Expiring Abandoned Orders (`cancelRazorpayOrder`)
+
+Razorpay Orders have **no cancel endpoint** (`orders` remain in `created` or `attempted` indefinitely if unpaid).
+- When `scripts/payments/cleanup-abandoned-payments.ts` sweeps expired `PENDING` payments, it calls `cancelRazorpayOrder(orderId)` in [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts).
+- `cancelRazorpayOrder` calls `razorpayClient.orders.fetchPayments(orderId)` and checks whether any payment on the order has `status === "authorized"` or `"captured"`.
+- Only when `cancelRazorpayOrder` returns `"no_live_payment"` does the sweeper expire the `Payment` row and release the slot hold (#1861 L2).
+
+---
+
+## 7. GST & Tax Invoicing Note
+
+- Our checkout pricing adds **18% GST on top of the base price** (`determineTax` in [`lib/payments/tax/tax-engine.ts`](../../../../../lib/payments/tax/tax-engine.ts), SAC `999293`). Never back-calculate GST from a gross total with `amount / 1.18`.
+- **Never use `razorpay.invoices.create()` (`POST /v1/invoices`) for GST invoices**: official Razorpay docs explicitly state *"You can only create non-GST Invoices via APIs"* (`tax_rate`, `sac_code`, `hsn_code` cannot be set via API). See [`gst-invoicing.md`](gst-invoicing.md).

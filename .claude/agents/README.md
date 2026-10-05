@@ -24,7 +24,7 @@ The full rationale — session-budget economics, the resume-from-worktree patter
 
 ## The `razorpay-*` pack
 
-Nine vendor-specific agents scaffold and audit the Razorpay integration directly: `razorpay-setup`, `razorpay-one-time-payment`, `razorpay-subscription`, `razorpay-webhook`, `razorpay-test-webhook`, `razorpay-invoice`, `razorpay-db-schema`, `razorpay-diagnostics`, and `razorpay-code-audit`. They are narrower and more mechanical than the role agents above, are scoped to Razorpay integration code specifically, and are documented in full at `.claude/skills/finance/references/razorpay/README.md`.
+Nine vendor-specific agents operate on and audit this repo's Razorpay and RazorpayX integration (`Prisma` + `BigInt` paise, Orders/Standard Checkout, saved cards, webhooks, two-phase refunds, REST disputes API, RazorpayX payouts + Penny Drop / Reverse Penny Drop, and in-house GST invoicing): `razorpay-setup`, `razorpay-one-time-payment`, `razorpay-subscription`, `razorpay-webhook`, `razorpay-test-webhook`, `razorpay-invoice`, `razorpay-db-schema`, `razorpay-diagnostics`, and `razorpay-code-audit`. They are narrower and more mechanical than the role agents above, are scoped to Razorpay integration code specifically, and are documented in full at `.claude/skills/finance/references/razorpay/README.md`.
 
 ## Dispatch rule
 

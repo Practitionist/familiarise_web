@@ -1,220 +1,102 @@
-# Go-Live Checklist & Production Hardening
+# Razorpay & RazorpayX Go-Live Checklist (Familiarise Platform)
 
-Use this guide before launching a Razorpay integration to production, or to harden an existing live integration.
+Production cutover checklist for moving this repository from Razorpay Test Mode (`rzp_test_...`) to Live Mode (`rzp_live_...`).
 
+---
 
-## 1. Pre-Launch Checklist
+## 1. Pre-Cutover Boot Guards in This Repo (`PM-10`)
 
-Complete every item before going live:
+This repository enforces two fail-fast runtime guards so a production deployment can never accidentally process live traffic against test keys:
 
-- [ ] **CRITICAL: Verify auto-capture wasn't disabled** — Auto-capture is **ON by default** ("once your customer completes a payment, it is automatically moved to the captured state"). Confirm at Dashboard → Settings → Payments → "Automatic capture delay" (labelled Account & Settings → Payment Capture in some Dashboard versions). The Orders API `payment.capture` field (and per-order capture settings) override this dashboard default, so check both. If capture is off, payments stay `authorized` and webhook `payment.captured` never fires. <https://razorpay.com/docs/payments/payments/capture-settings/>
-- [ ] **Authorized-but-uncaptured payments are auto-refunded after 3 days** — the capture-settings page is explicit and repeats it ("payments that are not captured within this period will be refunded automatically", "the maximum value (default) is 3 days"). Razorpay's own Payments FAQ still says 5 days; that is stale, build against 3. The auto-refund goes out at Normal speed, so the customer sees it in 5–7 working days. Don't leave payments sitting in `authorized`.
-- [ ] Switch to live API keys (`rzp_live_` prefix)
-- [ ] Create live plans (separate from test plans — test plan IDs don't work in live mode)
-- [ ] Register webhook with production URL (HTTPS required, port 443)
-- [ ] Set live webhook secret (different from test)
-- [ ] Enable all needed webhook events
-- [ ] Test with a real Rs 1 payment end-to-end
-- [ ] Verify refund flow works in live mode (refunds take 5-7 business days in live, instant in test)
-- [ ] Confirm settlement schedule — the standard domestic cycle is **T+2 working days** (T = capture date), where working days exclude Sundays, 2nd/4th Saturdays and bank holidays. **T+7 is the international cycle**, not a probation period for new merchants; there is no documented new-merchant T+7 default. <https://razorpay.com/docs/payments/settlements/>
-- [ ] Remove all `console.log` of sensitive data
-- [ ] Verify `.env` is in `.gitignore`
-- [ ] Webhook route uses `runtime = "nodejs"` NOT edge (crypto module required)
-- [ ] Set up error monitoring (Sentry, etc.)
-- [ ] Set up reconciliation cron to catch missed webhooks (every 5-15 min)
-- [ ] Add `processed_webhook_events` table for idempotency
-- [ ] Complete KYC + activation — KYC approval and account activation are required before live payments work (~1–3 business days). International payments require domestic activation first, plus Video KYC (PA-CB / RBI requirement).
+1. **Core Gateway Guard ([`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts))**:
+   - At module load, if `NODE_ENV === "production"` (outside `NEXT_PHASE === "phase-production-build"`) and `RAZORPAY_KEY_ID` starts with `rzp_test_`, the module throws `PaymentError("...", "RAZORPAY_TEST_KEY_IN_PRODUCTION")` unless `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION === "true"`.
+   - **Go-Live Action**: Remove `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` from Netlify/production environment variables when setting `rzp_live_...` keys.
+2. **RazorpayX Payouts Guard ([`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts))**:
+   - In `getRazorpayPayoutsService()`, if `ENABLE_LIVE_PAYOUTS === true` and the resolved RazorpayX key starts with `rzp_test_`, it throws `PaymentError("...", "RAZORPAYX_TEST_KEYS_IN_LIVE_MODE")`.
+   - **Go-Live Action**: Set live `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, and `RAZORPAYX_ACCOUNT_NUMBER` before flipping `ENABLE_LIVE_PAYOUTS=true`.
 
+---
 
-## 2. Security Hardening
+## 2. Credentials & Environment Variables (Netlify Production)
 
-### a. Rate Limiting the Webhook Endpoint
+Generate Live keys in **Razorpay Dashboard** (switch top-bar toggle from **Test Mode** to **Live Mode** → **Account & Settings → API Keys**) and **RazorpayX Dashboard**:
 
-```typescript
-// Razorpay sends from known IPs but rate limit anyway
-// Simple in-memory rate limiter for webhook
+| Variable | Live Value Requirements |
+|---|---|
+| `RAZORPAY_KEY_ID` | Must start with `rzp_live_` |
+| `RAZORPAY_SECRET` | Live API Key Secret matching `RAZORPAY_KEY_ID` |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | **Must equal `RAZORPAY_KEY_ID`** (`rzp_live_...`) — baked into the client bundle at build time, so changing it requires a fresh Netlify build/deploy |
+| `RAZORPAY_WEBHOOK_SECRET` | High-entropy secret (`openssl rand -hex 32`) configured on the Live Razorpay Dashboard webhook; **must be distinct** from `RAZORPAY_SECRET` |
+| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` | Leave unset initially; populate with the retiring secret during any future webhook secret rotation (#1377) |
+| `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` | **Delete / unset** in production |
+| `RAZORPAYX_KEY_ID` | Live RazorpayX Key ID (`rzp_live_...`) |
+| `RAZORPAYX_KEY_SECRET` | Live RazorpayX Key Secret |
+| `RAZORPAYX_ACCOUNT_NUMBER` | Live RazorpayX virtual/current account number (note: Live `account_number` is different from Test mode!) |
+| `RAZORPAYX_WEBHOOK_SECRET` | High-entropy secret configured on the Live RazorpayX Dashboard webhook |
+| `ENABLE_LIVE_PAYOUTS` | Set to `"true"` only after live RazorpayX keys, account number, and IP allowlist are verified |
+| `ENABLE_SAVED_CARDS` | Set to `"true"` once Saved Cards / Flash Checkout tokenisation is active on the Live merchant account |
 
-const WINDOW_MS = 60_000; // 1 minute
-const MAX_REQUESTS = 100;
-const requestCounts = new Map<string, { count: number; resetAt: number }>();
+---
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = requestCounts.get(ip);
+## 3. Live Webhook Configuration (Two Dashboards)
 
-  if (!entry || now > entry.resetAt) {
-    requestCounts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
-    return false;
-  }
+Test Mode and Live Mode webhooks are completely separate. Configure both in **Live Mode**:
 
-  entry.count++;
-  return entry.count > MAX_REQUESTS;
-}
+### A. Razorpay Payments Dashboard (Developers → Webhooks → + Add New Webhook)
+- **Webhook URL**: `https://<production-domain>/api/webhooks/razorpay`
+- **Secret**: Value of `RAZORPAY_WEBHOOK_SECRET`
+- **Alert Email**: Engineering/ops alert distribution address (Razorpay emails this address if the webhook fails for 24h and is auto-disabled)
+- **Active Events to Subscribe (`14` events)**:
+  - **Payments & Orders**: `payment.captured`, `payment.failed`, `order.paid`
+  - **Refunds**: `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`
+  - **Disputes**: `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`
 
-// In your webhook handler:
-export async function POST(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-  if (isRateLimited(ip)) {
-    return new Response("Too Many Requests", { status: 429 });
-  }
-  // ... signature verification and processing
-}
-```
+### B. RazorpayX Dashboard (Settings → Webhooks)
+- **Webhook URL**: `https://<production-domain>/api/webhooks/razorpay`
+- **Secret**: Value of `RAZORPAYX_WEBHOOK_SECRET`
+- **Active Events to Subscribe (`8` events)**:
+  - `payout.initiated` *(mandatory for `processing` transition)*
+  - `payout.processed`
+  - `payout.updated`
+  - `payout.failed` *(mandatory per RazorpayX docs)*
+  - `payout.reversed`
+  - `payout.rejected`
+  - `payout.queued`
+  - `payout.pending`
 
-> **Note**: For production at scale, use a distributed rate limiter (Redis-based) instead of in-memory.
+---
 
-### b. Validate Webhook Source
+## 4. Zero-Downtime Webhook Secret Rotation Procedure (`#1377`)
 
-Signature verification is sufficient for authenticity. Additionally:
+Because Razorpay continues signing in-flight retries with the secret that was active when the event originally fired, rotating `RAZORPAY_WEBHOOK_SECRET` without a grace window causes 400 rejections and risks 24h webhook auto-disable. Always rotate in 3 steps:
 
-- Check `Content-Type` is `application/json` and reject non-JSON requests
-- Return `400` early for malformed payloads before attempting signature verification
+1. **Pre-stage**: Set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the **current** secret value and `RAZORPAY_WEBHOOK_SECRET` to the **new** secret value in Netlify, then redeploy. (`app/api/webhooks/razorpay/signature.ts` now accepts both).
+2. **Flip in Dashboard**: Update the webhook secret in the Razorpay Dashboard to the **new** value.
+3. **Retire old secret**: Wait 24 hours (until no `WARN` `SystemEvent` logs for `"Razorpay webhook verified with RAZORPAY_WEBHOOK_SECRET_PREVIOUS"` appear), then unset `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`.
 
-### c. Never Expose API Secret Client-Side
+---
 
-- Only `NEXT_PUBLIC_RAZORPAY_KEY_ID` should be public
-- `RAZORPAY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are **server-only**
-- Never prefix secrets with `NEXT_PUBLIC_` in Next.js
+## 5. RazorpayX Production Prerequisites
 
-### d. API Route Protection
+1. **IP Allowlisting**: RazorpayX requires server outbound IPs to be allowlisted in the RazorpayX Dashboard before live `POST /v1/payouts` calls are permitted (`https://razorpay.com/docs/x/payouts/best-practices/`).
+2. **Account Balance Preflight**: Verify `getAccountBalance()` in [`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts) against the live RazorpayX account before flipping `ENABLE_LIVE_PAYOUTS=true`.
+3. **Reverse Penny Drop (`upi_intent`)**: Confirm Account Validation is enabled on the live RazorpayX account; if disabled, `startReversePennyDrop` gracefully returns `503 RPD_UNAVAILABLE` and falls back to manual bank account entry.
 
-- All billing routes (except webhook) must require authentication
-- Webhook route must be exempt from auth middleware but **must verify signature**
-- Use CSRF protection on billing mutation routes (plan changes, cancellations)
+---
 
-### e. Input Validation
+## 6. International Payments (PA-CB) & FIRS
 
-- Validate `planKey` against allowed values — do not trust client input
-- Validate amounts server-side for one-time payments
-- Sanitize user input in `notes` fields before sending to Razorpay
+If accepting international cards or bank transfers (`https://razorpay.com/docs/payments/international-payments/`):
+1. **PA-CB Activation**: International card acceptance requires partner-bank approval under RBI's Payment Aggregator – Cross Border (PA-CB) framework (active website with pricing, Terms & Conditions, Privacy Policy, Refund & Cancellation Policy).
+2. **RBI Purpose Code & FIRS**: Configure the applicable RBI Transaction Purpose Code under **Account & Settings → International Payment Codes** so Razorpay automatically generates **FIRS (Foreign Inward Remittance Statement)** certificates per settlement cycle (`https://razorpay.com/docs/payments/international-payments/firs-automated-process/`), required to substantiate zero-rated `EXPORT_LUT` supplies under GST.
+3. **INR Settlement**: Razorpay settles international card payments in **INR** (T+7 working days default; T+2 working days for domestic payments).
 
+---
 
-## 3. Environment Variable Management
+## 7. Live Smoke Test Verification
 
-```
-# .env.local (development)
-RAZORPAY_KEY_ID=rzp_test_xxx
-RAZORPAY_SECRET=test_secret
-NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxx
-RAZORPAY_WEBHOOK_SECRET=test_webhook_secret
-
-# Production (Vercel/Railway/etc)
-RAZORPAY_KEY_ID=rzp_live_xxx
-RAZORPAY_SECRET=live_secret
-NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_live_xxx
-RAZORPAY_WEBHOOK_SECRET=live_webhook_secret
-```
-
-- **Never commit `.env` files** — ensure `.env*` is in `.gitignore`
-- Use platform secrets management (Vercel env vars, Railway variables, AWS Secrets Manager, etc.)
-- Rotate webhook secret periodically — update in both Razorpay Dashboard and your platform
-- Use separate API key pairs for test and live modes
-
-
-## 4. Error Monitoring Setup
-
-Set up alerts for these critical scenarios:
-
-- **Webhook processing errors**: Catch and report failures in event handlers
-- **Signature verification failures**: Alert immediately — may indicate tampering
-- **Elevated payment failure rates**: Monitor `payment.failed` event frequency
-- **Webhook response times**: Must respond within 5 seconds (Razorpay timeout)
-- **Subscription status distribution**: Track active vs churned vs paused ratios
-
-```typescript
-// Example: Sentry integration for webhook errors
-import * as Sentry from "@sentry/nextjs";
-
-try {
-  await processWebhookEvent(event);
-} catch (error) {
-  Sentry.captureException(error, {
-    tags: {
-      event_type: event.event,
-      subscription_id: event.payload?.subscription?.entity?.id,
-    },
-  });
-  // Still return 200 to prevent Razorpay retries if error is non-transient
-  // Return 5xx only for transient errors you want retried
-}
-```
-
-
-## 5. Logging Best Practices
-
-- **Do log**: Webhook event type, subscription ID, payment ID (for debugging)
-- **Never log**: Full payment details, card numbers, API secrets, webhook secrets
-- **Log signature verification failures** with request metadata (IP, headers) for investigation
-- Use **structured logging** (JSON format) for easy filtering and alerting
-
-```typescript
-// Good
-console.log(JSON.stringify({
-  event: "webhook.received",
-  type: payload.event,
-  subscriptionId: payload.payload?.subscription?.entity?.id,
-  timestamp: new Date().toISOString(),
-}));
-
-// Bad — never do this
-console.log("Webhook payload:", JSON.stringify(payload));
-console.log("Secret:", process.env.RAZORPAY_WEBHOOK_SECRET);
-```
-
-
-## 6. Database Considerations
-
-- **Index properly**: Add indexes on `user_id`, `razorpay_subscription_id`, and `razorpay_customer_id` columns
-- **Set up database backups** before launch — test restore process
-- **Consider read replicas** if webhook volume is high (thousands of events/minute)
-- **Add database connection pooling** — webhooks create concurrent connections
-
-```sql
--- Essential indexes
-CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
-CREATE INDEX idx_subscriptions_razorpay_id ON subscriptions(razorpay_subscription_id);
-CREATE INDEX idx_payments_subscription_id ON payments(subscription_id);
-CREATE INDEX idx_payments_razorpay_id ON payments(razorpay_payment_id);
-```
-
-
-## 7. Webhook Reliability
-
-- **Return 200 within 5 seconds** — Razorpay times out after that
-- For slow operations, **acknowledge immediately and process async** (queue pattern):
-
-```typescript
-export async function POST(req: Request) {
-  // Verify signature first
-  const isValid = verifySignature(body, signature);
-  if (!isValid) return new Response("Invalid", { status: 400 });
-
-  // Enqueue for async processing — respond immediately
-  await queue.add("process-webhook", { event: body });
-
-  return new Response("OK", { status: 200 });
-}
-```
-
-- Set up a **dead letter queue** for failed webhook processing
-- **Monitor for missing webhooks**: Compare Razorpay Dashboard event count vs your database records
-- Razorpay retries failed webhooks — ensure your handler is **idempotent**
-
-
-## 8. Scaling Considerations
-
-- Webhook endpoint should be **stateless** — no in-memory state between requests
-- Use **database-level locking** (optimistic locking with version columns) not in-memory locks
-- Consider a **separate webhook worker** if processing is heavy — decouple ingestion from processing
-- Razorpay may send **bursts of webhooks** (e.g., batch subscription renewals) — handle concurrency gracefully
-- Use database transactions to prevent race conditions when updating subscription state
-
-
-## 9. Compliance
-
-- **GST invoices** required for Indian businesses
-- **Store payment records for minimum 8 years** (Indian tax law)
-- **PCI compliance**: Never store card details — Razorpay handles tokenization and PCI-DSS
-- **Display pricing inclusive of GST** on your website
-- Include the **SAC code from `lib/payments/payouts/constants.ts`** (`999293` consulting, `999294` education, `999295` training) — never a hardcoded literal, or invoices and payouts drift apart
-- Provide clear cancellation and refund policies on your website
+1. ** ₹1 / Small Live Checkout**: Complete a real payment via UPI (`₹1` minimum on Razorpay Orders API).
+2. **Verify Both Confirmation Doors**:
+   - Check `SystemEvent` / logs for `/api/checkout/verify-signature` (`client-side payment confirmation`) and `WebhookEvent` for `payment.captured` (`processed = true`, `error = null`).
+   - Confirm `Payment.paymentStatus = 'SUCCEEDED'`, `Payment.gatewayPaymentId = 'pay_...'`, `Appointment` confirmed, `ConsultantEarnings` created, and `LedgerTransaction` (`booking:<paymentId>`) balanced (`SUM(DEBIT) === SUM(CREDIT)`).
+3. **Live Refund Smoke Test**: Issue a refund on the test booking, verify `X-Refund-Idempotency` succeeds (`Refund.refundId = 'rfnd_...'`), and confirm `refund.processed` runs `applyRefundCascade` and mints a `CreditNote`.

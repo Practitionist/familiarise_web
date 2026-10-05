@@ -57,7 +57,7 @@ function disputeEnvelope(suffix: string, status: string) {
   };
 }
 
-describe("RazorpayX payout.failed routing", () => {
+describe("RazorpayX payout.* routing and status_details fallback", () => {
   it("routes payout.failed to the payout reconciler (not the default drop)", async () => {
     await processRazorpayWebhookEvent(
       payoutEnvelope("failed") as never,
@@ -67,6 +67,90 @@ describe("RazorpayX payout.failed routing", () => {
     expect(handleRazorpayPayoutWebhook).toHaveBeenCalledWith(
       "payout.failed",
       expect.objectContaining({ id: "pout_test_1", status: "failed" }),
+    );
+  });
+
+  it("falls back to status_details.description when top-level failure_reason is null", async () => {
+    await processRazorpayWebhookEvent(
+      {
+        event: "payout.failed",
+        payload: {
+          payout: {
+            entity: {
+              id: "pout_test_status_details",
+              status: "failed",
+              failure_reason: null,
+              status_details: {
+                description: "IMPS is not enabled on beneficiary account",
+                source: "beneficiary_bank",
+                reason: "imps_not_allowed",
+              },
+            },
+          },
+        },
+      } as never,
+      "payout.failed",
+      "payout.failed:pout_test_status_details",
+    );
+    expect(handleRazorpayPayoutWebhook).toHaveBeenCalledWith(
+      "payout.failed",
+      expect.objectContaining({
+        id: "pout_test_status_details",
+        status: "failed",
+        failure_reason: "IMPS is not enabled on beneficiary account",
+      }),
+    );
+  });
+
+  it("routes payout.initiated (status=processing) and payout.updated to handleRazorpayPayoutWebhook", async () => {
+    await processRazorpayWebhookEvent(
+      {
+        event: "payout.initiated",
+        payload: {
+          payout: {
+            entity: {
+              id: "pout_test_init",
+              status: "processing",
+              reference_id: "cpout_row_1",
+            },
+          },
+        },
+      } as never,
+      "payout.initiated",
+      "payout.initiated:pout_test_init",
+    );
+    expect(handleRazorpayPayoutWebhook).toHaveBeenCalledWith(
+      "payout.initiated",
+      expect.objectContaining({
+        id: "pout_test_init",
+        status: "processing",
+        reference_id: "cpout_row_1",
+      }),
+    );
+
+    await processRazorpayWebhookEvent(
+      {
+        event: "payout.updated",
+        payload: {
+          payout: {
+            entity: {
+              id: "pout_test_upd",
+              status: "processed",
+              utr: "UTR123456789",
+            },
+          },
+        },
+      } as never,
+      "payout.updated",
+      "payout.updated:pout_test_upd",
+    );
+    expect(handleRazorpayPayoutWebhook).toHaveBeenCalledWith(
+      "payout.updated",
+      expect.objectContaining({
+        id: "pout_test_upd",
+        status: "processed",
+        utr: "UTR123456789",
+      }),
     );
   });
 });

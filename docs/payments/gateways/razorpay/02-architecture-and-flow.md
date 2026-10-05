@@ -81,38 +81,39 @@ Server updates payment, creates earnings, sends notifications
 
 ---
 
+## Saved Cards & Customer Tokenization
+
+Before or during checkout, `ensureRazorpayCustomer()` in `lib/payments/core/razorpay.ts` lazily provisions a Razorpay Customer (`POST /v1/customers` with `fail_existing: 0`) and stores `User.razorpayCustomerId` (`cust_...`) using a race-safe `updateMany({ where: { id: userId, razorpayCustomerId: null } })`.
+
+- Passing `customer_id` alongside `order_id` to Standard Checkout enables RBI-compliant **Card-on-File Tokenization (CoFT)** so returning consultees can pay with saved cards.
+- If the Customers API call fails or times out, `ensureRazorpayCustomer()` returns `null` and checkout proceeds normally without saved cards.
+- On GDPR/DPDP account erasure, `lib/Account-Deletion.ts` deletes all saved card tokens (`razorpay.customers.deleteToken(customerId, tokenId)`) and overwrites customer PII on Razorpay (`razorpay.customers.edit`).
+
+---
+
 ## Revenue Split
 
-Familiarise uses a **flat 20% platform fee** for all consultants. There are no tiered commission rates.
+For B2C bookings, the platform fee is calculated on `grossAmount` (`payment.originalAmount`, the pre-GST plan price) via `PlatformFeeSchedule` (`marketplaceBps` / `ownLinkBps`, defaulting to `PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE = 20%`, or `0%` when an active `ConsultantFeeWaiver` applies). For HOST/HYBRID organizations, the 3-way split (`platformBps + orgBps + consultantBps`) is governed by the active `RateCard`.
 
-### Breakdown (on Rs. 1,000 payment)
+### Breakdown (on Rs. 1,000 base plan price, domestic B2C)
 
 ```
-Customer Pays:                     Rs. 1,000.00
+Base Plan Price (grossAmount):     Rs. 1,000.00
+GST (18% principal supplier):      Rs.   180.00
+Total Charged to Consultee:        Rs. 1,180.00
                                    ============
 
-Gateway Fee:
-  Razorpay charges: 2% + 18% GST on fee
-  2% of 1000 = Rs. 20
-  18% GST on Rs. 20 = Rs. 3.60
-  Total gateway fee: Rs. 23.60 (~2.36%)
-
-  Simplified to ~3% for calculations:  Rs. 30
-                                       ------
-Net Amount to Platform:                Rs. 970
-
-Platform Commission (20% of net):      Rs. 194
-Consultant Earnings (80% of net):      Rs. 776
+Platform Fee (20% of grossAmount): Rs.   200.00  (platform absorbs Razorpay PG fee out of this share)
+Consultant Earnings (80% of base): Rs.   800.00  (subject to 0.1% Sec 194-O TDS at payout if > Rs. 5L/yr)
 ```
 
-| Party       | Amount        | Percentage   |
-| ----------- | ------------- | ------------ |
-| Razorpay    | Rs. 30        | ~3% of total |
-| Familiarise | Rs. 194       | 20% of net   |
-| Consultant  | Rs. 776       | 80% of net   |
-| **Total**   | **Rs. 1,000** | **100%**     |
+| Component                  | Amount (INR)  | Share of Base (`grossAmount`) | Notes                                                                                  |
+| -------------------------- | ------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
+| **Base Plan Price**        | **Rs. 1,000** | **100%**                      | Stored in `Payment.originalAmount` (100,000 paise)                                     |
+| **Platform Commission**    | **Rs. 200**   | **20%** (default marketplace) | Governed by `PlatformFeeSchedule` (`marketplaceBps` / `ownLinkBps`) or `0%` on waiver  |
+| **Consultant Gross Share** | **Rs. 800**   | **80%**                       | Stored in `ConsultantEarnings`; Razorpay PG fee (~2.36% cards / 0% UPI) is NOT deducted from consultant |
 
-**Source**: `lib/payments/payouts/constants.ts` and `lib/payments/payouts/earnings-service.ts`
+**Sources**: `lib/payments/pricing/platform-fee.ts`, `lib/payments/payouts/earnings-service.ts`, and `lib/payments/payouts/constants.ts`
 
 ---
 
@@ -153,37 +154,47 @@ In our system, these map to `PaymentStatus`: `PENDING` (created/authorized), `SU
 
 ## Webhook Events
 
-### Events Handled
+### Razorpay Payment, Refund & Dispute Events
 
-| Event                     | When It Fires                 | What We Do                                                             |
-| ------------------------- | ----------------------------- | ---------------------------------------------------------------------- |
-| `payment.captured`        | Payment successfully captured | Update payment to SUCCEEDED, create earnings record, send confirmation |
-| `order.paid`              | Order fully paid              | Same as payment.captured (alternative trigger)                         |
-| `payment.failed`          | Payment declined/errored      | Update payment to FAILED, send failure notification                    |
-| `refund.created`          | Refund initiated              | Create refund record with PENDING status                               |
-| `refund.processed`        | Refund completed              | Update refund to SUCCEEDED, mark earnings as REFUNDED                  |
-| `refund.failed`           | Refund processing failed      | Update refund to FAILED                                                |
-| `payment.dispute.created` | Customer raised chargeback    | Create dispute record, notify admin via Novu                           |
-| `payment.dispute.won`     | Merchant won the dispute      | Update dispute status to WON                                           |
-| `payment.dispute.lost`    | Customer won the dispute      | Update dispute status to LOST                                          |
-| `payment.dispute.closed`  | Dispute resolved              | Update dispute status                                                  |
+| Event                             | When It Fires                                       | What We Do                                                                                      |
+| --------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `payment.authorized`              | Payment authorized (prior to capture)               | Log and record payment authorization metadata                                                   |
+| `payment.captured`                | Payment successfully captured                       | Single-writer confirmation: update `Payment` to `SUCCEEDED`, create earnings, issue GST invoice |
+| `order.paid`                      | Order fully paid (carries both `order` & `payment`) | Confirm payment via single-writer pipeline if `payment.captured` has not already settled it     |
+| `payment.failed`                  | Payment declined/errored                            | Update `Payment` to `FAILED` (if not already `SUCCEEDED`), notify consultee                     |
+| `refund.created`                  | Refund initiated                                    | Ensure `Refund` record is tracked in `PENDING` status                                           |
+| `refund.processed`                | Refund completed by bank/network                    | Update `Refund` to `SUCCEEDED`, record ARN (`acquirer_data.arn`), reverse earnings & issue GST Credit Note |
+| `refund.failed`                   | Refund processing failed                            | Update `Refund` to `FAILED` and alert operations                                                |
+| `refund.speed_changed`            | Instant (`optimum`) refund downgraded to `normal`   | Update refund metadata (`speed_processed`)                                                      |
+| `payment.dispute.created`         | Customer raised chargeback/dispute                  | Upsert `Dispute` (`OPEN`), freeze linked earnings (`HELD`), notify admin                        |
+| `payment.dispute.under_review`    | Evidence submitted; under bank review               | Update `Dispute` status to `UNDER_REVIEW`                                                       |
+| `payment.dispute.action_required` | Additional evidence requested before `respond_by`   | Update `Dispute` status to `NEEDS_RESPONSE`, alert admin                                        |
+| `payment.dispute.won`             | Merchant won the dispute                            | Update `Dispute` to `WON`, release held earnings back to normal schedule                        |
+| `payment.dispute.lost`            | Customer won the dispute                            | Update `Dispute` to `LOST`, debit ledger/earnings, issue GST Credit Note                        |
+| `payment.dispute.closed`          | Dispute closed (`status` indicates won/lost/closed) | Finalize `Dispute` and reconcile earnings                                                       |
 
-### RazorpayX Payout Events (separate product)
+### RazorpayX Payout & Validation Events
 
-| Event              | When It Fires               | What We Do                                         |
-| ------------------ | --------------------------- | -------------------------------------------------- |
-| `payout.processed` | Payout completed            | Update payout to COMPLETED, mark earnings as PAID  |
-| `payout.reversed`  | Bank returned funds         | Update payout to FAILED, restore available balance |
-| `payout.rejected`  | Payout rejected             | Update payout to FAILED                            |
-| `payout.queued`    | Payout queued (low balance) | Update payout status                               |
-| `payout.pending`   | Payout pending processing   | Update payout status                               |
-| `payout.cancelled` | Payout cancelled            | Update payout to CANCELLED                         |
+| Event                               | When It Fires                                   | What We Do                                                                                     |
+| ----------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `payout.initiated`                  | Payout left queue and entered `processing`      | Update `Payout` status to `PROCESSING`                                                         |
+| `payout.updated`                    | Payout metadata/UTR or status updated           | Sync `Payout` status and UTR                                                                   |
+| `payout.processed`                  | Payout completed (`utr` assigned)               | Update `Payout` to `COMPLETED`, mark earnings `PAID`, post ledger settlement                   |
+| `payout.failed`                     | Transfer failed at bank or gateway              | Update `Payout` to `FAILED` (reading `status_details`), restore earnings to `READY`            |
+| `payout.reversed`                   | Bank returned funds after processing            | Update `Payout` to `FAILED`, reverse ledger/TDS and restore earnings to `READY`                |
+| `payout.rejected`                   | Approval rejected in RazorpayX workflow         | Update `Payout` to `FAILED`, alert admin                                                       |
+| `payout.queued`                     | Queued due to low balance (`queue_if_low_balance`)| Keep `Payout` in `PENDING`                                                                   |
+| `payout.pending`                    | Awaiting approval workflow                      | Keep `Payout` in `PENDING`                                                                     |
+| `fund_account.validation.completed` | Penny Drop / FAV finished (`fav_...`)           | Check `results.account_status === "active"`; mark `ConsultantBankAccount` verified or rejected |
+| `fund_account.validation.failed`    | Penny Drop / FAV request failed                 | Record validation failure on `ConsultantBankAccount`                                           |
 
-**Source**: `app/api/webhooks/razorpay/route.ts`
+**Sources**: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `schemas/webhooks/razorpay.ts`
 
-### Webhook Idempotency (Mar 2026)
+### Webhook Idempotency
 
-Razorpay webhook eventId is now constructed as a **composite key**: `{eventType}:{entityId}` (e.g., `payment.captured:pay_abc123`). This prevents cross-event collisions where different event types for the same entity (e.g., `payment.captured` and `refund.created` both referencing the same payment) would previously share the same idempotency key and incorrectly deduplicate.
+Inbound webhooks are deduplicated via the `WebhookEvent` table (`lib/webhooks/webhook-Deduplication.ts`):
+- **Primary key**: The `x-razorpay-event-id` HTTP header sent by Razorpay, which remains identical across all retries of the same webhook delivery over the 24-hour retry window.
+- **Fallback key**: If `x-razorpay-event-id` is missing (e.g., synthetic local test payloads), the route falls back to a deterministic composite/digest key so different event types on the same entity never collide.
 
 ---
 
@@ -191,19 +202,20 @@ Razorpay webhook eventId is now constructed as a **composite key**: `{eventType}
 
 All Razorpay payments are in **INR**. The checkout logic forces `currency: "INR"` when Razorpay is selected as the gateway.
 
-All amounts are stored and transmitted in **paise** (smallest unit). Rs. 1,000 = 100,000 paise.
+All amounts are stored as **`BigInt` paise** in Prisma and transmitted as integer paise to Razorpay (`Rs. 1,000 = 100,000 paise`; minimum Razorpay order amount is `100` paise = `₹1.00`).
 
 ---
 
-## Dispute Handling
+## Dispute Handling (Webhooks + REST Disputes API)
 
-Razorpay does **not** provide a direct API for managing disputes. Disputes are:
+Razorpay provides both **`payment.dispute.*` webhooks** and a **REST Disputes & Documents API**, both of which are integrated in this repo:
 
-- **Created** via webhook events only
-- **Managed** through the Razorpay dashboard
-- **Evidence submission** is done manually in the dashboard (no API)
-
-This differs from Stripe, which provides full dispute management APIs.
+- **Webhook lifecycle (`lib/payments/webhooks/handlers.ts`)**: Handles all 6 `payment.dispute.*` events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`), freezing consultant earnings on creation, releasing them on win, or reversing earnings and issuing a GST Credit Note on loss.
+- **REST Disputes & Evidence API (`lib/payments/operations/razorpay-disputes.ts`)**:
+  - `fetchRazorpayDispute(disputeId)` → `GET /v1/disputes/:id`
+  - `uploadRazorpayDisputeDocument({ file, fileName, mimeType })` → `POST /v1/documents` (`multipart/form-data` with `purpose: "dispute_evidence"`)
+  - `submitRazorpayDisputeEvidence(disputeId, evidence)` → `PATCH /v1/disputes/:id/contest` (`action: "draft" | "submit"`)
+  - Or accept liability via `POST /v1/disputes/:id/accept`.
 
 ---
 
@@ -213,10 +225,11 @@ This differs from Stripe, which provides full dispute management APIs.
 | -------------------- | ---------------------------------------------------- |
 | `BAD_REQUEST_ERROR`  | Invalid request parameters or authentication failure |
 | `GATEWAY_ERROR`      | Payment gateway temporarily unavailable              |
+| `SERVER_ERROR`       | Internal error on Razorpay's servers                 |
 | `PAYMENT_FAILED`     | Customer's payment method declined                   |
-| `SIGNATURE_MISMATCH` | Webhook secret mismatch                              |
+| `SIGNATURE_MISMATCH` | Checkout or webhook HMAC signature mismatch          |
 
-**Source**: `lib/payments/core/razorpay.ts` (error handling section)
+**Source**: `lib/payments/core/razorpay.ts`
 
 ---
 

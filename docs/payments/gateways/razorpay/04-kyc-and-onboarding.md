@@ -83,13 +83,13 @@ RazorpayX (for payouts) requires a separate activation:
 
 Individual consultants do **not** go through Razorpay KYC. Instead:
 
-1. Consultant provides bank account or UPI details through our platform
-2. Our server creates a **Contact** in RazorpayX
-3. Our server creates a **Fund Account** linked to that Contact
-4. (Optional) Bank account is validated via penny testing (Rs. 1 transfer, immediately reversed)
-5. Consultant is ready to receive payouts
+1. Consultant provides bank account details or initiates UPI verification through our platform
+2. Our server creates a **Contact** in RazorpayX (`POST /v1/contacts`)
+3. Our server creates a **Fund Account** (`POST /v1/fund_accounts`) linked to that Contact
+4. Ownership is verified via **Penny Drop** (`POST /v1/fund_accounts/validations` — transfers Rs. 1.00 to the beneficiary bank account and returns `results.account_status` + `results.registered_name`; note that the Rs. 1.00 is not reversed by RazorpayX) or **Reverse Penny Drop** (consultant pays Rs. 1.00 via UPI Intent, which is then auto-refunded)
+5. Consultant is ready to receive payouts (`ConsultantBankAccount.isVerified = true`)
 
-This is handled by `app/api/consultant/payout-accounts/route.ts`.
+This is handled by `app/api/consultant/payout-accounts/route.ts` and `lib/payments/payouts/reverse-penny-drop.ts`.
 
 ### What Consultants Provide
 
@@ -101,16 +101,17 @@ This is handled by `app/api/consultant/payout-accounts/route.ts`.
 
 **For UPI payouts**:
 
-- UPI ID (VPA)
+- UPI ID (VPA) or ₹1 UPI Intent payment via Reverse Penny Drop
 
 ### What We Store
 
-- RazorpayX Contact ID
-- RazorpayX Fund Account ID
-- Masked account display (e.g., "HDFC \*\*\*\*4521")
-- Account status (active/inactive)
+- RazorpayX Contact ID (`cont_...`)
+- RazorpayX Fund Account ID (`fa_...`)
+- RazorpayX Validation ID (`fav_...`) and verified account holder name (`verifiedName`)
+- Masked account display (e.g., "HDFC \*\*\*\*4521") or verified UPI VPA (`upiId`)
+- Account verification and active status (`isVerified`, `isActive`)
 
-We **never** store full bank account numbers or UPI IDs. These are held exclusively by RazorpayX.
+We **never** store full bank account numbers in plaintext — those are held by RazorpayX.
 
 ---
 

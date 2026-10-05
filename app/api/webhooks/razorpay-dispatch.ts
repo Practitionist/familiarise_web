@@ -73,6 +73,17 @@ const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
+  // Official RazorpayX docs mark top-level `failure_reason` as deprecated in
+  // favor of `status_details: { description, source, reason }`.
+  status_details: z
+    .object({
+      description: z.string().nullable().optional(),
+      source: z.string().nullable().optional(),
+      reason: z.string().nullable().optional(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
   // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
   // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
   utr: z.string().nullable().optional(),
@@ -444,20 +455,30 @@ export async function processRazorpayWebhookEvent(
       // `default` even though handleRazorpayPayoutWebhook + markOrgPayoutFailed
       // already handle it, leaving a failed org payout stuck in PROCESSING with
       // earnings unreleased; it is now routed alongside the other terminal events.
+      // `payout.initiated` fires when the payout enters `processing` (RazorpayX
+      // does not emit a `payout.processing` event name), and `payout.updated`
+      // fires when `status_details` or `utr` changes.
       case "payout.processed":
       case "payout.reversed":
       case "payout.rejected":
       case "payout.failed":
+      case "payout.initiated":
+      case "payout.updated":
       case "payout.queued":
       case "payout.pending":
       case "payout.cancelled": {
         const payoutEvent = payoutEntitySchema.parse(
           event.payload?.payout?.entity,
         );
+        const failureReason =
+          payoutEvent.failure_reason ??
+          payoutEvent.status_details?.description ??
+          payoutEvent.status_details?.reason ??
+          undefined;
         await handleRazorpayPayoutWebhook(eventType, {
           id: payoutEvent.id,
           status: payoutEvent.status,
-          failure_reason: payoutEvent.failure_reason ?? undefined,
+          failure_reason: failureReason,
           utr: payoutEvent.utr ?? undefined,
           reference_id: payoutEvent.reference_id ?? undefined,
         });
