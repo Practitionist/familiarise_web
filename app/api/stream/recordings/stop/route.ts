@@ -56,7 +56,10 @@ export async function POST(req: NextRequest) {
                         consultantProfileId: true,
                         // #1580 C-P1-4 — the accepted co-presenter may stop too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -70,7 +73,10 @@ export async function POST(req: NextRequest) {
                         consultantProfileId: true,
                         // #1580 C-P1-4 — the accepted co-presenter may stop too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },

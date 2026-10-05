@@ -62,7 +62,7 @@ describe("User Actions", () => {
     mockStreamClient.upsertUsers.mockReset();
     mockUserCache.isUserSynced.mockReturnValue(false);
     mockGetSession.mockResolvedValue({
-      user: { id: "current-user", role: "CONSULTANT" },
+      user: { id: "current-user", role: "ADMIN" },
     });
   });
 

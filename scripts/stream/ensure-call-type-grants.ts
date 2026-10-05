@@ -16,12 +16,9 @@ import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
-import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 import { canonical } from "../../lib/stream/config-fingerprint";
-import {
-  anyOpenCallMemberHolds,
-  MEMBER_ROLE,
-} from "./backfill-call-member-role";
+import { anyOpenCallMemberHolds } from "./backfill-call-member-role";
 import {
   BILLABLE_PERMISSIONS,
   matchesPermissionWithScope,
@@ -41,7 +38,7 @@ export const DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS = [
   CREATE_CALL,
   END_CALL,
 ];
-const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
+const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, CALL_MEMBER_ROLE];
 
 export function isRevokedClientPermission(perm: string): boolean {
   return matchesPermissionWithScope(
@@ -103,7 +100,7 @@ async function requireSomeoneHoldsMemberRole(
 
   let scan: Awaited<ReturnType<typeof anyOpenCallMemberHolds>>;
   try {
-    scan = await anyOpenCallMemberHolds(client, MEMBER_ROLE);
+    scan = await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE);
   } catch (err) {
     console.error(
       `\n🛑 Refusing to apply — could not read call members from Stream.\n`,
@@ -124,7 +121,7 @@ async function requireSomeoneHoldsMemberRole(
   console.error(
     `\n🛑 Refusing to apply.\n` +
       `\nScanned ${scan.callsScanned} open call(s). ${scan.membersMissingRole} member(s)` +
-      `\nacross ${scan.callsWithUncoveredMembers.length} call(s) do NOT hold \`${MEMBER_ROLE}\`.` +
+      `\nacross ${scan.callsWithUncoveredMembers.length} call(s) do NOT hold \`${CALL_MEMBER_ROLE}\`.` +
       formatAffectedCallsSuffix(scan.callsWithUncoveredMembers) +
       `\n\nBackfill the role first, then re-run:` +
       `\n  npx tsx scripts/stream/backfill-call-member-role.ts --apply\n`,
@@ -142,9 +139,9 @@ function computeRestoredGrants(
       grants[role] = [...roleGrants, JOIN_CALL];
     }
   }
-  const restoreMember = grants[MEMBER_ROLE];
+  const restoreMember = grants[CALL_MEMBER_ROLE];
   if (restoreMember && !restoreMember.includes(END_CALL)) {
-    grants[MEMBER_ROLE] = [...restoreMember, END_CALL];
+    grants[CALL_MEMBER_ROLE] = [...restoreMember, END_CALL];
   }
   return grants;
 }
@@ -173,9 +170,9 @@ function computeUpdatedGrants(
     }
   }
 
-  const memberGrants = grants[MEMBER_ROLE] ?? [];
+  const memberGrants = grants[CALL_MEMBER_ROLE] ?? [];
   if (!memberGrants.includes(JOIN_CALL)) {
-    grants[MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
+    grants[CALL_MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
   }
 
   return grants;
@@ -186,7 +183,7 @@ function logGrantChanges(
   grants: Record<string, string[]>,
 ): void {
   console.log(`Call type: ${STREAM_CALL_TYPE}`);
-  for (const role of [...JOIN_REVOKED_ROLES, MEMBER_ROLE, "admin"]) {
+  for (const role of [...JOIN_REVOKED_ROLES, CALL_MEMBER_ROLE, "admin"]) {
     const had = (existingGrants[role] ?? []).includes(JOIN_CALL);
     const now = (grants[role] ?? []).includes(JOIN_CALL);
     const suffix = grants[role] ? "" : "   (role absent on this call type)";
@@ -212,28 +209,28 @@ function verifyGrantsAfterWrite(
   desiredGrants: Record<string, string[]>,
   restore: boolean,
 ): boolean {
-  const memberPostWrite = verifyGrants[MEMBER_ROLE] ?? [];
+  const memberPostWrite = verifyGrants[CALL_MEMBER_ROLE] ?? [];
   if (!restore && !memberPostWrite.includes(JOIN_CALL)) {
     console.error(
-      `\n🚨 ${MEMBER_ROLE} does NOT hold ${JOIN_CALL} on Stream after this write.`,
+      `\n🚨 ${CALL_MEMBER_ROLE} does NOT hold ${JOIN_CALL} on Stream after this write.`,
     );
     return false;
   }
 
   if (!restore && memberPostWrite.some((g) => isRevokedClientPermission(g))) {
     console.error(
-      `\n🚨 ${MEMBER_ROLE} still holds a revoked control or billable permission on Stream after this write.`,
+      `\n🚨 ${CALL_MEMBER_ROLE} still holds a revoked control or billable permission on Stream after this write.`,
     );
     return false;
   }
 
   if (
     restore &&
-    (desiredGrants[MEMBER_ROLE] ?? []).includes(END_CALL) &&
+    (desiredGrants[CALL_MEMBER_ROLE] ?? []).includes(END_CALL) &&
     !memberPostWrite.includes(END_CALL)
   ) {
     console.error(
-      `\n🚨 ${MEMBER_ROLE} still lacks ${END_CALL} on Stream after the rollback.`,
+      `\n🚨 ${CALL_MEMBER_ROLE} still lacks ${END_CALL} on Stream after the rollback.`,
     );
     return false;
   }

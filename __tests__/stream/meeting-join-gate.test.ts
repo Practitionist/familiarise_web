@@ -3,36 +3,17 @@
  */
 
 /**
- * #1134 P0-1/P0-2 — the join gate, and the regression that closing P0-2 opened.
- *
- * P0-2 removed the client-side `getOrCreate()` that used to run on a cache miss,
- * because it raced the access check: any signed-in visitor to `/meetings/<x>`
- * minted a billable Stream call and became its `created_by` before being shown
- * "Access Denied". Removing it was right. What it also removed was the only
- * thing repairing a `Meeting` row whose Stream call does not exist — and
- * rows like that are not hypothetical:
- *
- *   - the seeds write them with `faker.string.uuid()` ids and no Stream object
- *     at all (75–800 rows depending on size, no production guard)
- *   - `createDbMeeting` is a `"use server"` action whose id validator is
- *     `z.string().min(1)`, so any entitled caller can persist any string
- *   - maintenance drain ends the Stream call and keeps the row
- *
- * `lib/meeting.ts` skips its own `getOrCreate` whenever a row already exists, so
- * nothing else heals them. `resolveMeetingAccess` reads the row and says yes,
- * `updateCallMembers` throws on the missing call, and the user is told they have
- * access and then handed a 500.
- *
- * The fix is to create AFTER authorization instead of before it, which is the
- * ordering P0-2 was ever about. These tests pin that ordering, because a future
- * "tidy-up" that drops the `getOrCreate` reintroduces a silent 500 and a
- * "tidy-up" that moves it above `resolveMeetingAccess` reintroduces P0-2.
+ * The admit route authorizes before it touches Stream, never creates the call
+ * (provisioning is the only creator), refuses a missing room with a typed 409,
+ * assigns co_presenter role to accepted co-presenters, and enforces Stream SDK
+ * enum contracts on updateCallMembers and updateUserPermissions.
  */
 
 const mockGetSession = jest.fn();
 const mockResolveMeetingAccess = jest.fn();
 const mockGetOrCreate = jest.fn();
 const mockUpdateCallMembers = jest.fn();
+const mockUpdateUserPermissions = jest.fn();
 const mockUpsertUsersToStream = jest.fn();
 
 /** Ordered log of what the route did, so we can assert sequence, not just calls. */
@@ -61,6 +42,8 @@ jest.mock("../../lib/meetings/access", () => ({
 // built INSIDE the factory and read back off the mocked module below.
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
+  streamHttpStatus: (e: { status?: number }) => e?.status ?? null,
+  streamErrorCode: (e: { code?: number }) => e?.code ?? null,
   StreamUnavailableError: class StreamUnavailableError extends Error {
     constructor() {
       super("Stream is unavailable");
@@ -72,12 +55,24 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: () => ({
         getOrCreate: (...a: unknown[]) => {
+          const { assertValidGetOrCreateCall } =
+            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          assertValidGetOrCreateCall(a[0]);
           sequence.push("getOrCreate");
           return mockGetOrCreate(...a);
         },
         updateCallMembers: (...a: unknown[]) => {
+          const { assertValidUpdateCallMembers } =
+            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          assertValidUpdateCallMembers(a[0]);
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
+        },
+        updateUserPermissions: (...a: unknown[]) => {
+          const { assertValidUpdateUserPermissions } =
+            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          assertValidUpdateUserPermissions(a[0]);
+          return mockUpdateUserPermissions(...a);
         },
       }),
     },
@@ -115,6 +110,7 @@ jest.mock("../../lib/prisma", () => ({
 import { POST } from "../../app/api/meetings/[meetingId]/join/route";
 // The mocked class — `instanceof` in the route must match what we throw here.
 import { StreamUnavailableError } from "../../lib/stream-client";
+import { reportSentryError } from "../../lib/observability/report";
 
 const params = Promise.resolve({ meetingId: "slot-abc" });
 const req = {} as never;
@@ -134,34 +130,42 @@ beforeEach(() => {
   });
   mockGetOrCreate.mockResolvedValue({});
   mockUpdateCallMembers.mockResolvedValue({});
+  mockUpdateUserPermissions.mockResolvedValue({});
   mockUpsertUsersToStream.mockResolvedValue({ users: {} });
 });
 
 describe("POST /api/meetings/[meetingId]/join", () => {
-  it("authorizes BEFORE it creates anything on Stream", async () => {
+  it("authorizes BEFORE it touches the call, and never creates it", async () => {
     await POST(req, { params });
 
-    // This ordering is the whole of P0-2. Creation must never precede the check.
-    expect(sequence).toEqual([
-      "resolveMeetingAccess",
-      "getOrCreate",
-      "updateCallMembers",
-    ]);
+    expect(sequence).toEqual(["resolveMeetingAccess", "updateCallMembers"]);
+    expect(mockGetOrCreate).not.toHaveBeenCalled();
   });
 
-  // #1270 — the regression this suite missed for 17 days. It asserted the
-  // ORDER of the Stream calls but never their arguments, so a bare
-  // `getOrCreate()` looked identical to a correct one. Server-side auth carries
-  // no user context, so Stream rejects an authorless create on every request —
-  // a total video outage that every existing assertion here still passed.
-  it("names an author on getOrCreate, which server-side auth requires", async () => {
-    await POST(req, { params });
-
-    expect(mockGetOrCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ created_by_id: expect.any(String) }),
-      }),
+  it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
     );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("ROOM_NOT_PROVISIONED");
+    expect(mockGetOrCreate).not.toHaveBeenCalled();
+    expect(reportSentryError).toHaveBeenCalledWith(
+      new Error("ROOM_NOT_PROVISIONED"),
+      expect.objectContaining({ op: "meetings.join" }),
+    );
+  });
+
+  it("treats a bare 404 without Stream's not-found code as a fault", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Not Found"), { status: 404 }),
+    );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(500);
   });
 
   it("syncs the caller to Stream before naming them as a member", async () => {
@@ -172,14 +176,6 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(mockUpsertUsersToStream).toHaveBeenCalled();
     expect(mockUpsertUsersToStream.mock.invocationCallOrder[0]).toBeLessThan(
       mockUpdateCallMembers.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("creates the call before granting membership on it", async () => {
-    await POST(req, { params });
-
-    expect(sequence.indexOf("getOrCreate")).toBeLessThan(
-      sequence.indexOf("updateCallMembers"),
     );
   });
 
@@ -236,6 +232,23 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     });
   });
 
+  it("grants an accepted co-presenter the co_presenter call role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      message: "Access granted as accepted co-presenter",
+      reason: "granted",
+      streamCallId: "slot-abc",
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "user_1", role: "co_presenter" }],
+    });
+  });
+
   it("refuses a suspended account before touching Stream", async () => {
     mockGetSession.mockResolvedValue({ user: { id: "user_1", banned: true } });
 
@@ -250,7 +263,7 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     // the "we broke something" bucket and, worse, the client used to render any
     // non-ok response as "You are not authorized to join this meeting" — telling
     // a legitimate participant they had been refused when Stream was simply down.
-    mockGetOrCreate.mockRejectedValue(new StreamUnavailableError());
+    mockUpdateCallMembers.mockRejectedValue(new StreamUnavailableError());
 
     const res = await POST(req, { params });
 
@@ -262,7 +275,7 @@ describe("POST /api/meetings/[meetingId]/join", () => {
   });
 
   it("still reports a genuine fault as 500", async () => {
-    mockGetOrCreate.mockRejectedValue(new Error("boom"));
+    mockUpdateCallMembers.mockRejectedValue(new Error("boom"));
 
     const res = await POST(req, { params });
 
@@ -276,6 +289,87 @@ describe("POST /api/meetings/[meetingId]/join", () => {
 
     expect(res.status).toBe(401);
     expect(sequence).toEqual([]);
+  });
+
+  it("grants publish permissions to a webinar host/co-presenter and revokes them for webinar attendees (#1999)", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(Date.now() + 65 * 60 * 1000);
+    mockGetSession.mockResolvedValue({
+      user: { id: "cohost_1", banned: false },
+    });
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      message: "Access granted as accepted co-presenter",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: {
+        id: "appt-webinar-1",
+        appointmentType: "WEBINAR",
+        webinar: {
+          webinarPlan: {
+            title: "Scaling Architecture Webinar",
+            consultantProfile: { userId: "owner_1" },
+          },
+        },
+      },
+      occurrence: {
+        id: "occ-w1",
+        appointmentId: "appt-webinar-1",
+        startsAt,
+        endsAt,
+        timeCapExtendedAt: null,
+      },
+    });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "cohost_1", role: "co_presenter" }],
+    });
+    expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
+      user_id: "cohost_1",
+      grant_permissions: ["send-audio", "send-video", "screenshare"],
+    });
+
+    // Now verify a webinar attendee has publish permissions revoked on join
+    mockUpdateUserPermissions.mockClear();
+    mockGetSession.mockResolvedValue({
+      user: { id: "attendee_1", banned: false },
+    });
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      message: "Access granted as participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: {
+        id: "appt-webinar-1",
+        appointmentType: "WEBINAR",
+        webinar: {
+          webinarPlan: {
+            title: "Scaling Architecture Webinar",
+            consultantProfile: { userId: "owner_1" },
+          },
+        },
+      },
+      occurrence: {
+        id: "occ-w1",
+        appointmentId: "appt-webinar-1",
+        startsAt,
+        endsAt,
+        timeCapExtendedAt: null,
+      },
+    });
+
+    const attendeeRes = await POST(req, { params });
+    expect(attendeeRes.status).toBe(200);
+    expect(mockUpdateUserPermissions).toHaveBeenCalledWith({
+      user_id: "attendee_1",
+      revoke_permissions: ["send-audio", "send-video", "screenshare"],
+    });
   });
 });
 
@@ -487,6 +581,7 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
     expect(access.hasAccess).toBe(true);
     expect(access.role).toBe("host");
+    expect(access).toMatchObject({ coPresenter: true });
   });
 
   it("admits an accepted crew collaborator as a participant, not a host", async () => {

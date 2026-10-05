@@ -263,6 +263,7 @@ function findAbandonedAppointments(limit?: number) {
     // same stale holds behind every tick while newer ones get processed.
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     where: {
+      deletedAt: null,
       payment: {
         some: {
           AND: [
@@ -291,7 +292,7 @@ function findAbandonedAppointments(limit?: number) {
       // non-tentative slots, so a tentative-slot filter would never see an
       // abandoned webinar or class checkout.
       OR: [
-        { occurrences: { some: { isTentative: true } } },
+        { occurrences: { some: { isTentative: true, deletedAt: null } } },
         { webinar: { isNot: null } },
         { class: { isNot: null } },
       ],
@@ -579,6 +580,7 @@ async function expireRequestAndReleaseSlots(
     where: {
       appointmentId: appointment.id,
       isTentative: false,
+      deletedAt: null,
     },
   });
   const now = new Date();
@@ -1126,12 +1128,12 @@ async function findReminderCandidates(
     select: { id: true, amount: true, currency: true, expiresAt: true },
     take: 1,
   } as const;
+  // Consultation has no tombstone; status plus the appointment's deletedAt retire a request.
   const requestWhere = {
     status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-    deletedAt: null,
     pendingPaymentUrl: { not: null },
-    appointment: { payment: { some: paymentWhere } },
-  } as const;
+    appointment: { deletedAt: null, payment: { some: paymentWhere } },
+  } satisfies Prisma.ConsultationWhereInput;
   const [consultations, subscriptions] = await Promise.all([
     prisma.consultation.findMany({
       take: limit,
@@ -1153,7 +1155,7 @@ async function findReminderCandidates(
     prisma.subscription.findMany({
       take: limit,
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-      where: requestWhere,
+      where: { ...requestWhere, deletedAt: null },
       select: {
         id: true,
         updatedAt: true,
@@ -1326,6 +1328,7 @@ async function remindApprovalPaymentsDueUnlocked(
 export async function runAllCleanupTasks(): Promise<{
   paymentResult: CleanupResult;
   consultationResult: CleanupResult;
+  reminderResult: CleanupResult;
   overallSuccess: boolean;
 }> {
   const startTime = Date.now();
@@ -1367,6 +1370,7 @@ export async function runAllCleanupTasks(): Promise<{
     return {
       paymentResult,
       consultationResult,
+      reminderResult,
       overallSuccess,
     };
   } finally {

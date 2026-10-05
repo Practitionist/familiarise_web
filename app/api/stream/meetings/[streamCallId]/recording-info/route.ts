@@ -52,7 +52,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                         consultantProfileId: true,
                         // #1580 C-P1-4 — the accepted co-presenter reads recording state too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -67,7 +70,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                         consultantProfileId: true,
                         // #1580 C-P1-4 — the accepted co-presenter reads recording state too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -103,6 +109,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     },
                   },
                 },
+                trial: {
+                  include: {
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
+                    },
+                    consulteeProfile: {
+                      select: { userId: true },
+                    },
+                  },
+                },
               },
             },
           },
@@ -121,10 +140,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Authorization check - verify user has access to this meeting
     const consultantProfileId =
+      meeting.occurrence?.consultantProfileId ||
       appointment?.webinar?.webinarPlan?.consultantProfileId ||
       appointment?.class?.classPlan?.consultantProfileId ||
       appointment?.consultation?.consultationPlan?.consultantProfileId ||
-      appointment?.subscription?.subscriptionPlan?.consultantProfileId;
+      appointment?.subscription?.subscriptionPlan?.consultantProfileId ||
+      appointment?.trial?.consultantProfileId ||
+      appointment?.trial?.subscriptionPlan?.consultantProfileId;
 
     // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
     // Access is granted if ANY independent path passes; each path is an
@@ -152,16 +174,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (
       !hasAccess &&
       (session.user.consultantProfileId === consultantProfileId ||
-        isAppointmentOwner(appointment, session.user.consultantProfileId))
+        isAppointmentOwner(
+          appointment,
+          session.user.consultantProfileId,
+          meeting.occurrence?.consultantProfileId,
+        ))
     ) {
       hasAccess = true;
     }
 
-    // Attendee path: the requestedBy user for consultation/subscription.
+    // Attendee path: the requestedBy user for consultation/subscription/trial.
     if (!hasAccess) {
       const consulteeUserId =
         appointment?.consultation?.requestedBy?.userId ||
-        appointment?.subscription?.requestedBy?.userId;
+        appointment?.subscription?.requestedBy?.userId ||
+        appointment?.trial?.consulteeProfile?.userId;
       hasAccess = consulteeUserId === session.user.id;
     }
 

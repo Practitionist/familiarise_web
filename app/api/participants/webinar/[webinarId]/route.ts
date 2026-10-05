@@ -64,6 +64,7 @@ export async function GET(
                           session.user.consultantProfileId ?? "__none__",
                         status: "ACCEPTED",
                         tier: "PRESENTER",
+                        consultantProfile: { deletedAt: null },
                       },
                     },
                   },

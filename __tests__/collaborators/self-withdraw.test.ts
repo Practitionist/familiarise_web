@@ -12,10 +12,15 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
+const mockUpdateCallMembers = jest.fn(async () => ({}));
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => ({
     channel: () => ({ removeMembers: jest.fn(async () => undefined) }),
   })),
+  getStreamVideoClient: jest.fn(() => ({
+    video: { call: () => ({ updateCallMembers: mockUpdateCallMembers }) },
+  })),
+  isExpectedStreamError: () => false,
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
@@ -63,7 +68,11 @@ jest.mock("../../lib/prisma", () => ({
     },
     webinar: { findMany: jest.fn(async () => []) },
     // #1580 — the shadow participant rows are cancelled with the standing.
-    appointmentParticipant: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    appointmentParticipant: {
+      updateMany: jest.fn(async () => ({ count: 1 })),
+      findMany: jest.fn(async () => []),
+    },
+    appointmentOccurrence: { findMany: jest.fn(async () => []) },
   },
 }));
 
@@ -104,6 +113,24 @@ describe("collaborator self-withdraw", () => {
         data: { status: "CANCELLED" },
       }),
     );
+  });
+
+  it("downgrades a seated collaborator to call_member on the plan's open calls", async () => {
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValueOnce([
+      { appointmentId: "appt-1", meeting: { streamCallId: "occurrence-o1" } },
+    ]);
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValueOnce(
+      [{ appointmentId: "appt-1" }],
+    );
+
+    const result = await removeCollaborator("webinar", "c-1", "plan-1", {
+      withdrawnByProfileId: "cp-collab",
+    });
+
+    expect(result).toMatchObject({ accessRevoked: true });
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "u-collab", role: "call_member" }],
+    });
   });
 
   it("matches no row for a third party", async () => {
