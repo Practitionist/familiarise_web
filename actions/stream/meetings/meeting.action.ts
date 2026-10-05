@@ -43,6 +43,9 @@ interface MeetingSlot {
 const slotIdSchema = z.string().min(1, "Slot ID is required");
 const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
+/** Callers here are already entitled via readSlotForCaller, so syncing the session's other members is allowed. */
+const STREAM_SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
+
 /** Stamped when the host closes a room before the scheduled slot ends. */
 const ENDED_EARLY_REASON = "ended_early";
 
@@ -415,7 +418,9 @@ async function resolveSessionCallProfile(
     const candidateUserIds = [...hostUserIds, ...guestUserIds];
     let droppedIds = new Set<string>();
     try {
-      const upsertResult = await upsertUsersToStream(candidateUserIds);
+      const upsertResult = await upsertUsersToStream(candidateUserIds, {
+        serverTrusted: STREAM_SERVER_TRUSTED,
+      });
       droppedIds = new Set(upsertResult?.droppedIds ?? []);
     } catch (upsertError) {
       streamLogger.warn(
@@ -923,7 +928,9 @@ export async function provisionAppointmentMeeting(
 
   try {
     await withStreamCircuitBreaker(async () => {
-      await upsertUsersToStream([authorUserId]);
+      await upsertUsersToStream([authorUserId], {
+        serverTrusted: STREAM_SERVER_TRUSTED,
+      });
 
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
