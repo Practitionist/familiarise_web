@@ -32,6 +32,11 @@ function resolveExtensionsUsed(
   return prevExtended >= EXTENSION_SECONDS ? 1 : 0;
 }
 
+/**
+ * Builds the Prisma `OR` clause matching any live occurrence that blocks a
+ * session extension for the host (direct `consultantProfileId`, hosted plan,
+ * or accepted co-host collaboration) or any active participant.
+ */
 function buildConflictScope(
   consultantProfileId: string | null,
   participantUserIds: string[],

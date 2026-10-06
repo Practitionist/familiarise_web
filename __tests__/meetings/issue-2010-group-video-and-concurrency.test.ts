@@ -254,6 +254,11 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
     const spyOccurrenceFindFirst = jest
       .spyOn(prisma.appointmentOccurrence, "findFirst")
       .mockResolvedValue({ id: "occ-existing-consultation" } as never);
+    const txSpy = jest
+      .spyOn(prisma, "$transaction")
+      .mockImplementation(async (fn: unknown) =>
+        (fn as (tx: unknown) => Promise<unknown>)(prisma),
+      );
 
     try {
       await expect(
@@ -262,7 +267,14 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
         name: "CollaboratorIneligibleError",
         httpStatus: 409,
       });
+      expect(txSpy).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({
+          isolationLevel: "Serializable",
+        }),
+      );
     } finally {
+      txSpy.mockRestore();
       spyCollabFindUnique.mockRestore();
       spyWebinarPlanFindUnique.mockRestore();
       spyProfileFindUnique.mockRestore();

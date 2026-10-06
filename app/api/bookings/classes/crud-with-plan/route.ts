@@ -121,6 +121,9 @@ function lateJoinCutoffRefusal(
   );
 }
 
+/**
+ * Creates a ClassPlan along with an optional scheduled or draft Class instance and its session occurrences.
+ */
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
@@ -480,6 +483,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Updates a ClassPlan and its associated Class instance, enforcing host and collaborator availability on schedule, publication, or owner changes.
+ */
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
@@ -929,12 +935,32 @@ export async function PATCH(request: NextRequest) {
               }
             }
 
+            const effectiveClassStatus = status ?? updatedClass.status;
+            const ownerProfileId =
+              consultantProfileId ??
+              updatedClassPlan.consultantProfile?.id ??
+              existingPlan.consultantProfile?.id;
+            const ownerUserId =
+              updatedClassPlan.consultantProfile?.id === ownerProfileId
+                ? updatedClassPlan.consultantProfile?.userId
+                : existingPlan.consultantProfile?.id === ownerProfileId
+                  ? existingPlan.consultantProfile?.userId
+                  : undefined;
+            const ownerChanged = Boolean(
+              consultantProfileId &&
+                consultantProfileId !== existingPlan.consultantProfileId,
+            );
+
             // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
-            // own time commit: when this PATCH moves the scheduling period or
-            // publishes a DRAFT class to SCHEDULED, the sessions it leaves
-            // standing must be free for every ACCEPTED co-host and for the
-            // host consultant.
-            if (periodMoved || publishing) {
+            // own time commit: when this PATCH moves the scheduling period,
+            // publishes a DRAFT class to SCHEDULED, or transfers the plan to a
+            // new consultant, the sessions it leaves standing must be free for
+            // every ACCEPTED co-host and for the target host consultant.
+            if (
+              periodMoved ||
+              publishing ||
+              (ownerChanged && effectiveClassStatus === "SCHEDULED")
+            ) {
               const liveSessions = await tx.appointment.findMany({
                 where: { classId: updatedClass.id, deletedAt: null },
                 select: {
@@ -947,29 +973,40 @@ export async function PATCH(request: NextRequest) {
               });
               const windows = liveSessions.flatMap((a) => a.occurrences);
               const excludeAppointmentIds = liveSessions.map((a) => a.id);
-              await assertCollaboratorsAvailableForWindows(tx, {
-                planType: "CLASS",
-                planId: id,
-                windows,
-                excludeAppointmentIds,
-              });
-              if (existingPlan.consultantProfile?.id && windows.length > 0) {
+              if (periodMoved || publishing) {
+                await assertCollaboratorsAvailableForWindows(tx, {
+                  planType: "CLASS",
+                  planId: id,
+                  windows,
+                  excludeAppointmentIds,
+                });
+              }
+              if (
+                effectiveClassStatus === "SCHEDULED" &&
+                ownerProfileId &&
+                windows.length > 0
+              ) {
                 await assertConsultantAvailableForWindows(tx, {
-                  consultantProfileId: existingPlan.consultantProfile.id,
-                  consultantUserId: existingPlan.consultantProfile.userId,
+                  consultantProfileId: ownerProfileId,
+                  consultantUserId: ownerUserId,
                   windows,
                   excludeAppointmentIds,
                 });
               }
             }
 
-            if (publishing) {
+            if (publishing || (ownerChanged && ownerProfileId)) {
               await tx.appointmentOccurrence?.updateMany?.({
                 where: {
                   appointment: { classId: updatedClass.id },
                   deletedAt: null,
                 },
-                data: { isTentative: false },
+                data: {
+                  ...(publishing ? { isTentative: false } : {}),
+                  ...(ownerChanged && ownerProfileId
+                    ? { consultantProfileId: ownerProfileId }
+                    : {}),
+                },
               });
             }
 

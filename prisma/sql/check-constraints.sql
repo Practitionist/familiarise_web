@@ -108,10 +108,18 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_over
 -- #2010 — every confirmed, live occurrence must carry its host
 -- consultantProfileId so occurrence_no_confirmed_overlap cannot be bypassed
 -- by a NULL consultantProfileId across any offering type.
-ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_confirmed_requires_consultant_chk";
+ALTER TABLE "AppointmentOccurrence"
+  DROP CONSTRAINT IF EXISTS "occurrence_confirmed_requires_consultant_chk",
+  ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"
+    CHECK (
+      "isTentative"
+      OR "deletedAt" IS NOT NULL
+      OR "consultantProfileId" IS NOT NULL
+      OR "completionStatus" IN ('CANCELLED', 'RESCHEDULED')
+    ) NOT VALID;
 -- SPLIT
-ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"
-  CHECK ("isTentative" OR "deletedAt" IS NOT NULL OR "consultantProfileId" IS NOT NULL);
+ALTER TABLE "AppointmentOccurrence"
+  VALIDATE CONSTRAINT "occurrence_confirmed_requires_consultant_chk";
 
 -- SPLIT
 -- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".

@@ -104,6 +104,9 @@ const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
     topics: z.array(z.string()).optional(),
   });
 
+/**
+ * Creates a WebinarPlan along with an optional scheduled or draft Webinar instance and its session occurrence.
+ */
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
@@ -466,6 +469,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Updates a WebinarPlan and its associated Webinar instance, enforcing host and collaborator availability on schedule, publication, or owner changes.
+ */
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
@@ -859,6 +865,16 @@ export async function PATCH(request: NextRequest) {
             // occurrence_no_confirmed_overlap protects the right profile).
             const ownerProfileId =
               consultantProfileId ?? existingPlan.consultantProfileId;
+            const ownerUserId =
+              updatedWebinarPlan.consultantProfile?.id === ownerProfileId
+                ? updatedWebinarPlan.consultantProfile.userId
+                : existingPlan.consultantProfile?.id === ownerProfileId
+                  ? existingPlan.consultantProfile.userId
+                  : undefined;
+            const ownerChanged = Boolean(
+              consultantProfileId &&
+                consultantProfileId !== existingPlan.consultantProfileId,
+            );
 
             // 8. Replace the appointment's live slot run (#1071) when times change.
             if (startTime && endTime) {
@@ -932,10 +948,7 @@ export async function PATCH(request: NextRequest) {
               if (effectiveWebinarStatus === "SCHEDULED") {
                 await assertConsultantAvailable(tx, {
                   consultantProfileId: ownerProfileId,
-                  consultantUserId:
-                    existingPlan.consultantProfile?.id === ownerProfileId
-                      ? existingPlan.consultantProfile.userId
-                      : undefined,
+                  consultantUserId: ownerUserId,
                   startsAt: startTime,
                   endsAt: endTime,
                   excludeAppointmentId: appointment?.id ?? null,
@@ -989,10 +1002,10 @@ export async function PATCH(request: NextRequest) {
                   );
                 }
               }
-            } else if (publishing && updatedWebinar.appointment) {
-              // #2010 — publishing a DRAFT webinar whose slot already exists
-              // without resending scheduledAt: verify co-host and host
-              // availability, then flip its occurrence(s) to non-tentative.
+            } else if ((publishing || ownerChanged) && updatedWebinar.appointment) {
+              // #2010 — publishing a DRAFT webinar or transferring a webinar's
+              // consultantProfileId without resending scheduledAt: verify co-host
+              // and target host availability, then synchronize the occurrence(s).
               const liveWindows = updatedWebinar.appointment.occurrences
                 .filter((s) => !isDeadOccurrence(s))
                 .map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt }));
@@ -1003,25 +1016,45 @@ export async function PATCH(request: NextRequest) {
                   windows: liveWindows,
                   excludeAppointmentIds: [updatedWebinar.appointment.id],
                 });
-                if (ownerProfileId) {
+                if (effectiveWebinarStatus === "SCHEDULED" && ownerProfileId) {
                   await assertConsultantAvailableForWindows(tx, {
                     consultantProfileId: ownerProfileId,
-                    consultantUserId:
-                      existingPlan.consultantProfile?.id === ownerProfileId
-                        ? existingPlan.consultantProfile.userId
-                        : undefined,
+                    consultantUserId: ownerUserId,
                     windows: liveWindows,
                     excludeAppointmentIds: [updatedWebinar.appointment.id],
                   });
                 }
               }
-              await tx.appointmentOccurrence?.updateMany?.({
-                where: {
+              if (
+                ownerChanged &&
+                ownerProfileId &&
+                liveWindows.length > 0 &&
+                typeof effectiveDurationForSlots === "number" &&
+                Number.isFinite(effectiveDurationForSlots) &&
+                effectiveDurationForSlots > 0 &&
+                typeof tx.appointmentOccurrence?.findMany === "function"
+              ) {
+                await replaceOccurrence(tx, {
                   appointmentId: updatedWebinar.appointment.id,
-                  deletedAt: null,
-                },
-                data: { isTentative: false },
-              });
+                  startsAt: liveWindows[0].startsAt,
+                  durationInHours: effectiveDurationForSlots,
+                  consultantProfileId: ownerProfileId,
+                  isTentative: effectiveWebinarStatus !== "SCHEDULED",
+                });
+              } else {
+                await tx.appointmentOccurrence?.updateMany?.({
+                  where: {
+                    appointmentId: updatedWebinar.appointment.id,
+                    deletedAt: null,
+                  },
+                  data: {
+                    ...(publishing ? { isTentative: false } : {}),
+                    ...(ownerChanged && ownerProfileId
+                      ? { consultantProfileId: ownerProfileId }
+                      : {}),
+                  },
+                });
+              }
             }
 
             // Retrieve the fully updated webinar after all changes

@@ -54,6 +54,34 @@ interface DeviceSnapshot {
  */
 const CLIENT_WAIT_TIMEOUT_MS = 45_000;
 
+const OCCURRENCE_CALL_ID_PATTERN =
+  /^occurrence-([0-9a-f-]{36})(?:-r[a-z0-9]+)?$/i;
+
+/**
+ * Extracts the occurrence slot ID from a join error payload or an
+ * `occurrence-<uuid>` call identifier.
+ */
+function resolveUnprovisionedSlotId(
+  callId: string,
+  occurrenceId: unknown,
+): string | null {
+  if (typeof occurrenceId === "string" && occurrenceId.length > 0) {
+    return occurrenceId;
+  }
+  const matched = callId.match(OCCURRENCE_CALL_ID_PATTERN);
+  if (matched?.[1]) {
+    return matched[1];
+  }
+  if (callId.startsWith("occurrence-")) {
+    return callId.slice("occurrence-".length);
+  }
+  return null;
+}
+
+/**
+ * Resolves and joins the Stream Video call for a meeting identifier, self-healing
+ * unprovisioned rooms and managing device state across reconnects.
+ */
 export const useGetCallById = (callId: string) => {
   const [call, setCall] = useState<Call | null>(null);
   const [isCallLoading, setIsCallLoading] = useState(true);
@@ -189,23 +217,15 @@ export const useGetCallById = (callId: string) => {
             /^occurrence-([0-9a-f-]{36})$/i.test(callId);
 
           if (isUnprovisionedRoom || isDirectOccurrenceUrl) {
-            const slotId =
-              typeof initialBody?.occurrenceId === "string" &&
-              initialBody.occurrenceId.length > 0
-                ? initialBody.occurrenceId
-                : /^occurrence-([0-9a-f-]{36})(?:-r[a-z0-9]+)?$/i.exec(
-                    callId,
-                  )?.[1] ??
-                  (callId.startsWith("occurrence-")
-                    ? callId.slice("occurrence-".length)
-                    : null);
+            const slotId = resolveUnprovisionedSlotId(
+              callId,
+              initialBody?.occurrenceId,
+            );
 
             if (slotId) {
               try {
                 const provisioned = await provisionAppointmentMeeting({
                   id: slotId,
-                  startsAt: new Date(0),
-                  endsAt: new Date(0),
                 });
                 if (cancelled) return;
                 if (provisioned.ok) {

@@ -118,6 +118,7 @@ const HOSTED_CLASS_SELECT = {
       id: true,
       classPlan: {
         select: {
+          id: true,
           title: true,
           consultantProfileId: true,
           consultantProfile: {
@@ -358,6 +359,78 @@ export async function onClassSessionVoided(
   }
 }
 
+/**
+ * Verifies that every ACCEPTED co-instructor on a class plan is free for the
+ * proposed make-up window, mapping conflicts to a 409 BookingRuleError.
+ */
+async function verifyMakeUpCollaboratorsAvailable(
+  tx: Tx,
+  planId: string | undefined,
+  startsAt: Date,
+  endsAt: Date,
+  appointmentId: string,
+): Promise<void> {
+  if (!planId || !("collaborator" in tx)) return;
+  try {
+    await assertCollaboratorsAvailable(tx, {
+      planType: "CLASS",
+      planId,
+      startsAt,
+      endsAt,
+      excludeAppointmentId: appointmentId,
+    });
+  } catch (err) {
+    if (err instanceof CollaboratorUnavailableError) {
+      throw new BookingRuleError("SCHEDULE_CONFLICT", err.message, 409);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Inserts the make-up AppointmentOccurrence row and translates unique or
+ * GiST exclusion constraint violations into typed BookingRuleErrors.
+ */
+async function createMakeUpOccurrence(
+  tx: Tx,
+  data: {
+    appointmentId: string;
+    ordinal: number;
+    startsAt: Date;
+    endsAt: Date;
+    consultantProfileId: string | null;
+    movedAt: Date;
+  },
+): Promise<{ id: string }> {
+  try {
+    return await tx.appointmentOccurrence.create({
+      data: {
+        ...data,
+        isTentative: false,
+      },
+      select: { id: true },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      throw new BookingRuleError(
+        "MAKEUP_EXISTS",
+        "A make-up for this session is already scheduled.",
+      );
+    }
+    if (isExclusionViolation(err)) {
+      throw new BookingRuleError(
+        "SCHEDULE_CONFLICT",
+        "That time conflicts with another confirmed session on your calendar.",
+        409,
+      );
+    }
+    throw err;
+  }
+}
+
 /** E-3 — schedule the make-up: same ordinal, held within 14 days. */
 export async function scheduleClassMakeUp(
   hosted: HostedClass,
@@ -414,59 +487,21 @@ export async function scheduleClassMakeUp(
       );
       const consultantProfileId =
         source.consultantProfileId ?? hosted.cls.classPlan.consultantProfileId;
-      const planId = (hosted.cls.classPlan as { id?: string }).id;
-      if (planId && "collaborator" in tx) {
-        try {
-          await assertCollaboratorsAvailable(tx, {
-            planType: "CLASS",
-            planId,
-            startsAt,
-            endsAt,
-            excludeAppointmentId: appointmentId,
-          });
-        } catch (err) {
-          if (err instanceof CollaboratorUnavailableError) {
-            throw new BookingRuleError("SCHEDULE_CONFLICT", err.message, 409);
-          }
-          throw err;
-        }
-      }
-      let makeUp;
-      try {
-        makeUp = await tx.appointmentOccurrence.create({
-          data: {
-            appointmentId,
-            ordinal: source.ordinal,
-            startsAt,
-            endsAt,
-            isTentative: false,
-            consultantProfileId,
-            // A make-up is a session moved on the buyer (decision 6).
-            movedAt: now,
-          },
-          select: { id: true },
-        });
-      } catch (err) {
-        // The live-ordinal partial unique: one live row per position.
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        ) {
-          throw new BookingRuleError(
-            "MAKEUP_EXISTS",
-            "A make-up for this session is already scheduled.",
-          );
-        }
-        // #2010 — map PostgreSQL occurrence_no_confirmed_overlap (23P01) to 409.
-        if (isExclusionViolation(err)) {
-          throw new BookingRuleError(
-            "SCHEDULE_CONFLICT",
-            "That time conflicts with another confirmed session on your calendar.",
-            409,
-          );
-        }
-        throw err;
-      }
+      await verifyMakeUpCollaboratorsAvailable(
+        tx,
+        hosted.cls.classPlan.id,
+        startsAt,
+        endsAt,
+        appointmentId,
+      );
+      const makeUp = await createMakeUpOccurrence(tx, {
+        appointmentId,
+        ordinal: source.ordinal,
+        startsAt,
+        endsAt,
+        consultantProfileId,
+        movedAt: now,
+      });
       // #1569 — the hold anchors on the last live session's end.
       await recomputeEarningsHold(tx, appointmentId);
       const seats = await tx.appointmentParticipant.findMany({
