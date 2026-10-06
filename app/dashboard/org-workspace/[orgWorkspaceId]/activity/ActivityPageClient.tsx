@@ -17,6 +17,7 @@
  * cache and drives Load-more client-side.
  */
 
+import { useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Activity as ActivityIcon, Building2 } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -77,6 +79,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   SETTINGS: "Settings",
   CONSENT: "Consent",
   CATALOG: "Catalog",
+  WEBHOOK: "Webhook",
   SYSTEM: "System",
 };
 
@@ -103,6 +106,9 @@ export function ActivityPageClient({
 }: {
   orgWorkspaceId: string;
 }) {
+  const [orgFilter, setOrgFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+
   const query = useInfiniteQuery({
     queryKey: ["org-workspace-activity", orgWorkspaceId],
     queryFn: ({ pageParam }) =>
@@ -112,7 +118,46 @@ export function ActivityPageClient({
       lastPage.pagination.hasMore ? lastPage.pagination.nextCursor : undefined,
   });
 
-  const rows = query.data?.pages.flatMap((p) => p.data) ?? [];
+  const rows = useMemo(
+    () => query.data?.pages.flatMap((p) => p.data) ?? [],
+    [query.data],
+  );
+
+  const orgOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      if (r.organizationId && !seen.has(r.organizationId)) {
+        seen.set(r.organizationId, r.organizationName ?? r.organizationId);
+      }
+    }
+    return [
+      { value: "all", label: "All organizations" },
+      ...Array.from(seen.entries()).map(([value, label]) => ({ value, label })),
+    ];
+  }, [rows]);
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: "all", label: "All categories" },
+      ...Object.entries(CATEGORY_LABEL).map(([value, label]) => ({
+        value,
+        label,
+      })),
+    ],
+    [],
+  );
+
+  const filteredRows = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          (orgFilter === "all" || r.organizationId === orgFilter) &&
+          (categoryFilter === "all" || r.category === categoryFilter),
+      ),
+    [rows, orgFilter, categoryFilter],
+  );
+
+  const hasActiveFilters = orgFilter !== "all" || categoryFilter !== "all";
 
   return (
     <>
@@ -121,6 +166,29 @@ export function ActivityPageClient({
         subtitle="Recent changes across all the organisations you operate"
       />
       <DashboardContent>
+        <FilterBar
+          selects={[
+            {
+              key: "organization",
+              label: "Organization",
+              value: orgFilter,
+              options: orgOptions,
+              onChange: setOrgFilter,
+            },
+            {
+              key: "category",
+              label: "Category",
+              value: categoryFilter,
+              options: categoryOptions,
+              onChange: setCategoryFilter,
+            },
+          ]}
+          canClear={hasActiveFilters}
+          onClear={() => {
+            setOrgFilter("all");
+            setCategoryFilter("all");
+          }}
+        />
         {query.isLoading ? (
           <Card>
             <CardContent className="p-0">
@@ -153,13 +221,14 @@ export function ActivityPageClient({
               />
             </CardContent>
           </Card>
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center">
-              <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-zinc-400" />
-              <p className="text-sm text-zinc-600">
-                No activity yet. As your members invite, book, and bill,
-                events will appear here.
+              <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                {hasActiveFilters
+                  ? "No activity matches the selected filters."
+                  : "No activity yet. As your members invite, book, and bill, events will appear here."}
               </p>
             </CardContent>
           </Card>
@@ -167,7 +236,7 @@ export function ActivityPageClient({
           <Card>
             <CardContent className="p-0">
               <ul className="divide-y">
-                {rows.map((r) => (
+                {filteredRows.map((r) => (
                   <li key={r.id} className="p-4 hover:bg-muted/30">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">

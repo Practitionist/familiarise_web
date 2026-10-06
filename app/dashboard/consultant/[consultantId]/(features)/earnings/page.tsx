@@ -13,7 +13,7 @@ import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 
 import { EARNINGS_FETCH_CAP } from "@/lib/dashboard/earnings-state";
 
-import { payoutSetupQueryKey } from "../settings/payouts/payout-setup-keys";
+import { payoutSetupQueryKey } from "../settings/get-paid/payout-setup-keys";
 import { EarningsTabs } from "./EarningsTabs";
 import { PayoutStatusChip } from "./PayoutStatusChip";
 

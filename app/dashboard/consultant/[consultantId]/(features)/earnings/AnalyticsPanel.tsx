@@ -9,7 +9,9 @@ import {
   CalendarClock,
   CheckCircle2,
   IndianRupee,
-  Wallet,
+  Link2,
+  Repeat,
+  Store,
 } from "lucide-react";
 import {
   Bar,
@@ -36,8 +38,12 @@ import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useSession } from "@/lib/auth-client";
 import { getAppointmentStatus } from "../../utils/appointmentHelpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import type { MonthlyEarning } from "@/lib/data/consultant-earnings-analytics";
-import { BUCKET_LABEL, type BucketSums } from "@/lib/dashboard/earnings-state";
+import type {
+  AttributionBreakdown,
+  MonthlyEarning,
+  RepeatLearnerStats,
+} from "@/lib/data/consultant-earnings-analytics";
+import type { BucketSums } from "@/lib/dashboard/earnings-state";
 
 interface EarningsAnalyticsResponse {
   summary: {
@@ -48,9 +54,10 @@ interface EarningsAnalyticsResponse {
     heldEarnings: number;
     pendingTrustEarnings: number;
   };
-  /** #1675 PR-Y — the Summary tab's whole-account tile sums. */
   totals?: BucketSums;
   monthlyEarnings?: MonthlyEarning[];
+  attributionBreakdown?: AttributionBreakdown;
+  repeatLearnerStats?: RepeatLearnerStats;
 }
 
 const formatInr = (paise: number) => formatCurrencyAmount(paise, "INR");
@@ -138,12 +145,18 @@ export default function AnalyticsPanel({
     totalInr: m.totalPaise / 100,
     count: m.count,
   }));
-  const thisMonth = monthly.at(-1);
   const hasAnyEarnings =
     (earningsData?.summary.totalEarnings ?? 0) > 0 ||
     monthly.some((m) => m.count > 0);
 
-  const summary = earningsData?.summary;
+  const attribution = earningsData?.attributionBreakdown;
+  const ownLinkPaise = attribution?.ownLinkPaise ?? 0;
+  const marketplacePaise = attribution?.marketplacePaise ?? 0;
+  const totalB2CPaise = ownLinkPaise + marketplacePaise;
+  const ownLinkPct =
+    totalB2CPaise > 0 ? Math.round((ownLinkPaise / totalB2CPaise) * 100) : 0;
+  const marketplacePct = totalB2CPaise > 0 ? 100 - ownLinkPct : 0;
+  const repeatStats = earningsData?.repeatLearnerStats;
 
   return (
     // No DashboardHeader — this is the Analytics tab of the Earnings page now,
@@ -177,28 +190,42 @@ export default function AnalyticsPanel({
         ) : (
           <DashboardGrid columns={3}>
             <StatCard
-              title="Total Earnings"
-              value={formatInr(summary?.totalEarnings ?? 0)}
-              icon={IndianRupee}
-              tooltip="All cleared earnings (pending + ready + paid + held). Excludes refunds and org-trust holds."
-            />
-            <StatCard
-              title="This Month"
-              value={formatInr(thisMonth?.totalPaise ?? 0)}
-              icon={CalendarCheck}
-              subtitle={
-                thisMonth ? `${thisMonth.count} earning sessions` : undefined
-              }
-            />
-            {/* #1675 PR-Y — the Summary tab's word and its figure (READY +
-                BATCHED, net of refunds), so the two tabs agree. */}
-            <StatCard
-              title={BUCKET_LABEL.AVAILABLE}
-              value={formatInr(
-                earningsData?.totals?.available ?? summary?.readyEarnings ?? 0,
-              )}
-              icon={Wallet}
+              title="Own-Link Revenue"
+              value={formatInr(ownLinkPaise)}
+              icon={Link2}
               variant="success"
+              subtitle={
+                totalB2CPaise > 0
+                  ? `${ownLinkPct}% of B2C · ${attribution?.ownLinkCount ?? 0} sessions (10% fee)`
+                  : "Keep 90% when learners book via your link"
+              }
+              tooltip="Net B2C revenue from learners who arrived via your personal link (10% platform fee, locked for repeat bookings)."
+            />
+            <StatCard
+              title="Marketplace Revenue"
+              value={formatInr(marketplacePaise)}
+              icon={Store}
+              subtitle={
+                totalB2CPaise > 0
+                  ? `${marketplacePct}% of B2C · ${attribution?.marketplaceCount ?? 0} sessions (20% fee)`
+                  : "Keep 80% on Marketplace-discovered bookings"
+              }
+              tooltip="Net B2C revenue from learners who discovered you through the Familiarise Marketplace (20% platform fee)."
+            />
+            <StatCard
+              title="Repeat Learner Rate"
+              value={
+                repeatStats && repeatStats.repeatLearnerRate !== null
+                  ? `${repeatStats.repeatLearnerRate}%`
+                  : "—"
+              }
+              icon={Repeat}
+              subtitle={
+                repeatStats && repeatStats.totalLearners > 0
+                  ? `${repeatStats.repeatLearners} of ${repeatStats.totalLearners} learners booked 2+ sessions`
+                  : "Learners with 2+ paid sessions"
+              }
+              tooltip="Share of your distinct B2C learners who have completed or booked two or more paid sessions."
             />
             <StatCard
               title="Sessions Completed"

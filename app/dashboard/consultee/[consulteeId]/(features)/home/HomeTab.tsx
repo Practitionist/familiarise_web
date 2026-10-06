@@ -72,6 +72,8 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
 import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
+import { z } from "zod";
+import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
@@ -403,6 +405,97 @@ function proposalsAwaiting(
   });
 }
 
+const subscriptionRenewalSchema = z
+  .object({
+    id: z.string(),
+    status: z.string().optional(),
+    subscriptionPlanId: z.string().optional(),
+    sessionsTotal: z.number().nullable().optional(),
+    remainingSessions: z.number().nullable().optional(),
+    subscriptionPlan: z
+      .object({
+        id: z.string().optional(),
+        title: z.string().optional(),
+        totalSessions: z.number().optional(),
+        consultantProfile: z
+          .object({
+            user: z
+              .object({ name: z.string().nullable().optional() })
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    appointment: z
+      .object({
+        occurrences: z
+          .array(
+            z.object({
+              endsAt: z.union([z.string(), z.date()]),
+              completionStatus: z.string().nullable().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+function lowSessionSubscriptions(
+  eventsData: TConsulteeEventsResponse,
+  now: Date,
+) {
+  return (eventsData.subscriptions ?? []).flatMap((sub) => {
+    const parsed = subscriptionRenewalSchema.safeParse(sub);
+    if (!parsed.success) return [];
+    const s = parsed.data;
+    const status = s.status?.toUpperCase();
+    if (status !== "APPROVED" && status !== "SCHEDULED") return [];
+    const planId = s.subscriptionPlan?.id ?? s.subscriptionPlanId;
+    if (!planId) return [];
+
+    let remaining: number | null = s.remainingSessions ?? null;
+    if (remaining === null) {
+      const occurrences = (s.appointment?.occurrences ?? []).filter(
+        (o) =>
+          o.completionStatus !== "CANCELLED" &&
+          o.completionStatus !== "RESCHEDULED",
+      );
+      const total =
+        s.sessionsTotal ??
+        s.subscriptionPlan?.totalSessions ??
+        occurrences.length;
+      if (total > 0) {
+        const completedOrPast = occurrences.filter(
+          (o) =>
+            o.completionStatus === "COMPLETED" ||
+            new Date(o.endsAt).getTime() <= now.getTime(),
+        ).length;
+        remaining = Math.max(0, total - completedOrPast);
+      }
+    }
+
+    if (remaining === null || remaining > 1) return [];
+    const title = s.subscriptionPlan?.title ?? "Subscription";
+    const consultantName =
+      s.subscriptionPlan?.consultantProfile?.user?.name ?? "your expert";
+    return [
+      {
+        key: `renew-subscription:${s.id}`,
+        severity: "info" as const,
+        title:
+          remaining === 1
+            ? `1 session left in ${title}`
+            : `All sessions completed in ${title}`,
+        body: `Continue working with ${consultantName} by renewing your subscription.`,
+        ctaLabel: "Renew subscription",
+        ctaHref: `/checkout/plans/subscription/${planId}?renewsSubscriptionId=${s.id}`,
+      },
+    ];
+  });
+}
+
 interface ReviewableSessionRow {
   appointmentId: string;
   consultantProfileId: string;
@@ -561,8 +654,8 @@ export default function HomeTab({
 
   const pendingPayments = money?.pendingPayments;
   const actionItems = useMemo(
-    () =>
-      deriveConsulteeActionItems({
+    () => [
+      ...deriveConsulteeActionItems({
         pendingPaymentCount: pendingPayments?.length ?? 0,
         pendingPaymentTotalPaise: (pendingPayments ?? []).reduce(
           (sum, p) => sum + (p.amount ?? 0),
@@ -610,6 +703,8 @@ export default function HomeTab({
         })),
         now,
       }),
+      ...lowSessionSubscriptions(eventsData, now),
+    ],
     [
       pendingPayments,
       money,
@@ -644,6 +739,8 @@ export default function HomeTab({
         }
         description="What needs you, and what's next."
       />
+
+      <WaitlistOfferBanner viewerZone={viewerZone} />
 
       <ActionRequiredPanel
         items={actionItems}

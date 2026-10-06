@@ -40,7 +40,7 @@ export function accountSettingsHref(
   if (user.role === "STAFF") return "/dashboard/staff/settings";
   if (user.role === "ORG_WORKSPACE") {
     return user.orgWorkspaceProfileId
-      ? `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/settings`
+      ? `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/settings/${section}`
       : null;
   }
   const base = personalBase(user);
@@ -52,11 +52,10 @@ export const DATA_CONSENT_ANCHOR = "data-consent";
 
 /**
  * Where a member grants or withdraws their own org consent (checkout's
- * CONSENT_REQUIRED points here). Null outside the personal trees, which are
- * the only ones rendering the shared Account settings.
+ * CONSENT_REQUIRED points here). Null for back-office roles.
  */
 export function dataConsentHref(user: AccountHrefUser): string | null {
-  if (["ADMIN", "STAFF", "ORG_WORKSPACE"].includes(user.role ?? "")) {
+  if (["ADMIN", "STAFF"].includes(user.role ?? "")) {
     return null;
   }
   const href = accountSettingsHref(user, "account");

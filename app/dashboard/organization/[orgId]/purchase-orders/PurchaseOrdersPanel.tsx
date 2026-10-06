@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
 
 import { useOrgRole } from "../useOrgRole";
 import { Button } from "@/components/ui/button";
@@ -78,6 +78,17 @@ export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
     return data.filter((po) => po.poNumber.toLowerCase().includes(needle));
   }, [list.data, searchTerm]);
 
+  const nearExhaustedPos = useMemo(() => {
+    const data = list.data?.data ?? [];
+    return data.filter(
+      (po) =>
+        po.status === "ACTIVE" &&
+        po.totalAmountPaise > 0 &&
+        (po.totalAmountPaise - po.remainingAmountPaise) / po.totalAmountPaise >=
+          0.8,
+    );
+  }, [list.data]);
+
   const stats: PurchaseOrderStats = useMemo(() => {
     const data = list.data?.data ?? [];
     let activeCount = 0;
@@ -115,6 +126,25 @@ export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
           </Button>
         )}
       </div>
+      {nearExhaustedPos.length > 0 && (
+        <div
+          role="status"
+          className="flex items-start gap-2.5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div>
+            <p className="font-medium">
+              {nearExhaustedPos.length === 1
+                ? `Purchase order ${nearExhaustedPos[0].poNumber} is at or above 80% consumption`
+                : `${nearExhaustedPos.length} active purchase orders are at or above 80% consumption`}
+            </p>
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              Issue a replacement or supplemental PO with your AP team before
+              remaining committed balance runs out.
+            </p>
+          </div>
+        </div>
+      )}
       <PurchaseOrderStatCards stats={stats} />
 
       <Card>

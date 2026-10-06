@@ -96,6 +96,7 @@ const PatchBodySchema = z
       .refine((v) => v === null || v === undefined || isValidPan(v), {
         message: "INVALID_PAN_FORMAT",
       }),
+    tan: z.string().trim().length(10).nullable().optional(),
     gstRegStatus: GstRegStatusSchema.optional(),
     gstStateCode: z.string().length(2).nullable().optional(),
     // MSME (MSMED Act) declaration — #1230. The payout deadline engine reads

@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { appendExpertShareAttribution } from "@/hooks/useExpertShareHref";
 import type { OfferingStat } from "@/lib/offerings/stats";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -58,6 +59,8 @@ export interface OfferingCardProps {
   stat?: OfferingStat;
   editHref: string | null;
   duplicateHref: string | null;
+  /** Signed expert share link whose `?via=<token>` / `?ref=<code>` param is appended to shared offering links. */
+  shareAttributionHref?: string | null;
   trials?: { href: string; pending: number };
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
   onArchiveToggle?: () => Promise<unknown>;
@@ -88,6 +91,7 @@ export function OfferingCard({
   stat,
   editHref,
   duplicateHref,
+  shareAttributionHref,
   trials,
   join,
   onArchiveToggle,
@@ -98,10 +102,13 @@ export function OfferingCard({
   const [restoring, setRestoring] = useState(false);
 
   const owned = !row.isCollaborated;
-  const shareHref =
+  const baseShareHref =
     row.planId && !row.isDraft && !row.isArchived
       ? publicOfferingHref(row.type, row.planId)
       : null;
+  const shareHref = baseShareHref
+    ? appendExpertShareAttribution(baseShareHref, shareAttributionHref)
+    : null;
   const orgGoverned = stat?.orgGoverned ?? false;
   // #1527-6 — Delete only on a plan with no bookings and no payments.
   const canDelete = !!onDelete && stat?.canDelete === true;
@@ -109,11 +116,17 @@ export function OfferingCard({
 
   const copyShareLink = async () => {
     if (!shareHref) return;
+    const isAttributed = shareHref !== baseShareHref;
     try {
       await navigator.clipboard.writeText(
         `${window.location.origin}${shareHref}`,
       );
-      toast({ title: "Link copied", description: row.title });
+      toast({
+        title: "Link copied",
+        description: isAttributed
+          ? `${row.title} — bookings via your link pay the 10% own-link fee.`
+          : row.title,
+      });
     } catch {
       toast({
         title: "Couldn't copy the link",
@@ -170,6 +183,13 @@ export function OfferingCard({
               tone={row.status.tone}
               size="sm"
             />
+            {row.trialEnabled && (
+              <StatusBadge
+                label={row.trialIsFree ? "Free trial" : "Trial available"}
+                tone="info"
+                size="sm"
+              />
+            )}
             {row.batch && (
               <StatusBadge
                 label={`Batch ${row.batch.index} of ${row.batch.total}`}
@@ -259,6 +279,28 @@ export function OfferingCard({
           <dt className="sr-only">Duration</dt>
           <dd>{row.durationText}</dd>
         </div>
+        {row.cadenceText && (
+          <div>
+            <dt className="sr-only">Cadence</dt>
+            <dd>{row.cadenceText}</dd>
+          </div>
+        )}
+        {row.topicCount > 0 && (
+          <div>
+            <dt className="sr-only">Topics</dt>
+            <dd className="tabular-nums">
+              {row.topicCount} {row.topicCount === 1 ? "topic" : "topics"}
+            </dd>
+          </div>
+        )}
+        {row.moduleCount > 0 && (
+          <div>
+            <dt className="sr-only">Modules</dt>
+            <dd className="tabular-nums">
+              {row.moduleCount} {row.moduleCount === 1 ? "module" : "modules"}
+            </dd>
+          </div>
+        )}
         {(row.type === "webinar" || row.type === "class") && (
           <div>
             <dt className="sr-only">First session</dt>

@@ -13,6 +13,7 @@ import {
   CASE_ORDER_BY,
   INBOX_MAX_DEPTH,
   INBOX_PAGE_SIZE,
+  SLA_ORDER_BY,
   STATS_WINDOW_DAYS,
   THREAD_OPEN_WHERE,
   TICKET_OPEN_WHERE,
@@ -27,19 +28,16 @@ import {
 } from "./inbox-query";
 import { slaStateOf } from "./sla";
 
-/**
- * #1527 — the Support inbox reads, shaped here so the client renders DTOs
- * (types/support-case.ts). Every read is bounded: the list merges the first
- * `skip + take` sort keys of each table and the stats read at most a few
- * thousand clock rows. One case's workspace is lib/support/case-workspace.ts.
- */
-
 const STATS_ROW_CAP = 5000;
 
-const orderBy =
-  CASE_ORDER_BY as unknown as Prisma.SupportTicketOrderByWithRelationInput[];
-const threadOrderBy =
-  CASE_ORDER_BY as unknown as Prisma.AppointmentSupportThreadOrderByWithRelationInput[];
+const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
+  ...CASE_ORDER_BY,
+];
+const slaOrderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
+  ...SLA_ORDER_BY,
+];
+const threadOrderBy: Prisma.AppointmentSupportThreadOrderByWithRelationInput[] =
+  [...CASE_ORDER_BY];
 
 export const SLA_SELECT = {
   status: true,
@@ -87,15 +85,26 @@ export async function readInboxPage(
   const depth = skip + pageSize;
   const ticketWhere = inboxTicketWhere(filters);
   const threadWhere = inboxThreadWhere(filters);
-  const keySelect = { id: true, lastMessageAt: true, createdAt: true } as const;
+  const ticketKeySelect = {
+    id: true,
+    lastMessageAt: true,
+    createdAt: true,
+    ackDueAt: true,
+    resolutionDueAt: true,
+  } as const;
+  const threadKeySelect = {
+    id: true,
+    lastMessageAt: true,
+    createdAt: true,
+  } as const;
 
   const [ticketKeys, threadKeys, ticketTotal, threadTotal] = await Promise.all([
     ticketWhere
       ? prisma.supportTicket.findMany({
           where: ticketWhere,
-          orderBy,
+          orderBy: filters.sort === "sla" ? slaOrderBy : orderBy,
           take: depth,
-          select: keySelect,
+          select: ticketKeySelect,
         })
       : [],
     threadWhere
@@ -103,7 +112,7 @@ export async function readInboxPage(
           where: threadWhere,
           orderBy: threadOrderBy,
           take: depth,
-          select: keySelect,
+          select: threadKeySelect,
         })
       : [],
     ticketWhere ? prisma.supportTicket.count({ where: ticketWhere }) : 0,
@@ -123,6 +132,7 @@ export async function readInboxPage(
     })),
     skip,
     pageSize,
+    filters.sort,
   );
   const ticketIds = pageKeys
     .filter((k) => k.key.startsWith("t_"))

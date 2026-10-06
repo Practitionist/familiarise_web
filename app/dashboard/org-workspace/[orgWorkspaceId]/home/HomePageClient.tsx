@@ -39,6 +39,7 @@ import {
   MEMBER_ROLE_LABEL,
 } from "@/lib/labels/org-labels";
 import { ORG_STATUS } from "@/lib/labels/backoffice-labels";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { useWorkspaceBilling } from "../hooks/useWorkspaceBilling";
 import { formatCurrencyTotals } from "../currency-totals";
 
@@ -57,6 +58,7 @@ interface OrgMembershipRow {
     billingAccount: {
       fundingSource: FundingSource;
       walletBalance: number | null;
+      minBalancePaise?: number | null;
       currency: string;
     } | null;
   };
@@ -83,6 +85,10 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
   const org = row.organization;
   const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
   const funding = org.billingAccount?.fundingSource ?? null;
+  const walletBalance = org.billingAccount?.walletBalance ?? 0;
+  const minBalancePaise = org.billingAccount?.minBalancePaise ?? 0;
+  const currency = org.billingAccount?.currency ?? "INR";
+  const isLowWallet = funding === "WALLET" && walletBalance <= minBalancePaise;
   return (
     // The bare org route lands each role on its own page.
     <Link
@@ -109,7 +115,15 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
         <StatusBadge {...ORG_STATUS[org.status]} size="sm" />
         <Badge variant="secondary">{CAPABILITY_LABEL[kind]}</Badge>
         {funding && (
-          <Badge variant="outline">{FUNDING_SOURCE_LABEL[funding]}</Badge>
+          <Badge variant="outline">
+            {FUNDING_SOURCE_LABEL[funding]}
+            {funding === "WALLET"
+              ? ` · ${formatCurrencyAmount(walletBalance, currency)}`
+              : ""}
+          </Badge>
+        )}
+        {isLowWallet && (
+          <StatusBadge label="Low wallet balance" tone="caution" size="sm" />
         )}
       </div>
     </Link>

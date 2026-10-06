@@ -13,7 +13,7 @@ import {
   payoutSetupQueryKey,
   type PayoutAccountView,
   type PayoutSetup,
-} from "../settings/payouts/get-paid-api";
+} from "../settings/get-paid/get-paid-api";
 
 /** `ab•••@okaxis` — the owner's own id, still not shouted across the header. */
 function maskUpi(upiId: string): string {

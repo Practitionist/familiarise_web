@@ -600,6 +600,67 @@ async function settlePrincipalStreamErasure(
   return [];
 }
 
+export interface SoleOwnerOrganization {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export async function soleOwnerOrganizationsForUser(
+  db: Db,
+  userId: string,
+): Promise<SoleOwnerOrganization[]> {
+  if (typeof db.membership?.findMany !== "function") return [];
+  const ownerRows = await db.membership.findMany({
+    where: {
+      userId,
+      role: "OWNER",
+      status: "ACTIVE",
+      organization: { deletedAt: null },
+    },
+    select: {
+      organizationId: true,
+      role: true,
+      status: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          status: true,
+        },
+      },
+    },
+  });
+  if (!Array.isArray(ownerRows) || ownerRows.length === 0) return [];
+
+  const soleOwned: SoleOwnerOrganization[] = [];
+  for (const row of ownerRows) {
+    if (row.role && row.role !== "OWNER") continue;
+    if (row.status && row.status !== "ACTIVE") continue;
+    if (row.organization?.status === "DEACTIVATED") continue;
+    const otherOwners =
+      typeof db.membership.count === "function"
+        ? await db.membership.count({
+            where: {
+              organizationId: row.organizationId,
+              role: "OWNER",
+              status: "ACTIVE",
+              userId: { not: userId },
+            },
+          })
+        : 0;
+    if (otherOwners === 0) {
+      soleOwned.push({
+        id: row.organization?.id ?? row.organizationId,
+        name: row.organization?.name ?? row.organizationId,
+        slug: row.organization?.slug ?? row.organizationId,
+      });
+    }
+  }
+  return soleOwned;
+}
+
 /** True when any money-in-flight count is non-zero. */
 export function hasMoneyInFlight(counts: MoneyInFlight): boolean {
   return Object.values(counts).some((n) => n > 0);

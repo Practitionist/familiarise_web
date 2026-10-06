@@ -148,12 +148,29 @@ export function DisputesPage({
     placeholderData: keepPreviousData,
   });
 
-  const disputes = data?.disputes ?? [];
+  const rawDisputes = data?.disputes ?? [];
+  const OPEN_DISPUTE_STATUSES = new Set([
+    "NEEDS_RESPONSE",
+    "WARNING_NEEDS_RESPONSE",
+    "UNDER_REVIEW",
+    "WARNING_UNDER_REVIEW",
+  ]);
+  const disputes = [...rawDisputes].sort((a, b) => {
+    const aOpen = OPEN_DISPUTE_STATUSES.has(a.status.toUpperCase());
+    const bOpen = OPEN_DISPUTE_STATUSES.has(b.status.toUpperCase());
+    if (aOpen !== bOpen) return aOpen ? -1 : 1;
+    if (aOpen && bOpen) {
+      if (Boolean(a.dueBy) !== Boolean(b.dueBy)) return a.dueBy ? -1 : 1;
+      if (a.dueBy && b.dueBy) {
+        const diff = new Date(a.dueBy).getTime() - new Date(b.dueBy).getTime();
+        if (diff !== 0) return diff;
+      }
+    }
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
-  // #997 secondary findings — server-computed, dashboard-wide (not the
-  // current page's rows via .filter()).
   const underReviewCount = data?.stats?.underReviewCount ?? 0;
   const wonCount = data?.stats?.wonCount ?? 0;
 
@@ -161,11 +178,6 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
-  // NOTE: the row itself still navigates via onRowClick below —
-  // ResponsiveTable renders plain <tr>/<Card> click targets with no href
-  // support, so making the row a prefetching Link would mean editing that
-  // shared component. The eye action IS a real Link (prefetched), and the
-  // table's own cell wrapper keeps its stopPropagation behavior.
   const renderRowActions = (dispute: Dispute) => (
     <Button asChild variant="ghost" size="icon" className="h-8 w-8">
       <Link
@@ -227,18 +239,31 @@ export function DisputesPage({
     },
     {
       key: "dueBy",
-      header: "Due By",
+      header: "Evidence Due By",
       cell: (dispute) => {
         const daysUntilDue = getDaysUntilDue(dispute.dueBy);
+        const hoursUntilDue = dispute.dueBy
+          ? (new Date(dispute.dueBy).getTime() - Date.now()) / (1000 * 60 * 60)
+          : null;
+        const isCritical48h =
+          hoursUntilDue !== null && hoursUntilDue <= 48 && hoursUntilDue >= 0;
         const isUrgent =
-          daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
+          isCritical48h ||
+          (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
         return dispute.dueBy ? (
           <div
             className={
               isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
             }
           >
-            {formatDate(dispute.dueBy)}
+            <div className="flex items-center gap-1.5">
+              <span>{formatDate(dispute.dueBy)}</span>
+              {isCritical48h && (
+                <Badge variant="destructive" className="text-[10px]">
+                  Due &lt; 48h
+                </Badge>
+              )}
+            </div>
             {daysUntilDue !== null && daysUntilDue >= 0 && (
               <p className="text-xs">
                 {daysUntilDue === 0

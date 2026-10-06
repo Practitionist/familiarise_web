@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { WaitlistSource } from "@prisma/client";
 import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
+import { listBackupInterest } from "@/lib/booking/backup-interest";
 import { getClientIp } from "@/lib/rate-limit";
 import { subscribe } from "@/lib/waitlist/service";
 
@@ -19,6 +20,57 @@ const subscribeSchema = z.object({
   source: z.nativeEnum(WaitlistSource).optional(),
   tags: z.array(z.string().trim().max(40)).max(10).optional(),
 });
+
+export async function GET(): Promise<NextResponse> {
+  try {
+    const session = await getSession(true).catch(() => null);
+    if (!session?.user?.id) {
+      return NextResponse.json({ data: [] });
+    }
+
+    const rows = await listBackupInterest(session.user.id);
+    const data = rows.map((row) => {
+      const planSegment = row.planKind.toLowerCase();
+      const baseHref =
+        row.planId &&
+        (planSegment === "consultation" ||
+          planSegment === "subscription" ||
+          planSegment === "webinar" ||
+          planSegment === "class")
+          ? `/checkout/plans/${planSegment}/${row.planId}`
+          : `/explore/experts/${row.consultantProfileId}`;
+      const qs = new URLSearchParams({
+        waitlist: row.id,
+        startsAt: row.windowStart.toISOString(),
+        endsAt: row.windowEnd.toISOString(),
+      });
+      return {
+        id: row.id,
+        status: row.status,
+        offerExpiresAt: row.windowEnd.toISOString(),
+        windowStart: row.windowStart.toISOString(),
+        windowEnd: row.windowEnd.toISOString(),
+        planKind: row.planKind,
+        planId: row.planId,
+        consultantProfileId: row.consultantProfileId,
+        consultantName: row.consultantProfile.user.name ?? "your expert",
+        checkoutHref: `${baseHref}?${qs.toString()}`,
+      };
+    });
+
+    return NextResponse.json({ data });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "waitlist" } },
+    );
+    console.error("[waitlist/get]", error);
+    return NextResponse.json(
+      { error: "Could not load waitlist entries." },
+      { status: 500 },
+    );
+  }
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {

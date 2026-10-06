@@ -24,6 +24,10 @@ export interface EventResource {
   status: string;
   date: string;
   eventType?: string;
+  offeringType?: string;
+  sourceType?: string;
+  classId?: string | null;
+  webinarId?: string | null;
   materials: {
     id: string;
     fileName: string;

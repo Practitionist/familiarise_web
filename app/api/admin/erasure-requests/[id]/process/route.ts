@@ -17,6 +17,7 @@ import {
   hasMoneyInFlight,
   moneyInFlightForUser,
   scrubUser,
+  soleOwnerOrganizationsForUser,
 } from "@/lib/compliance/erasure/scrub-user";
 
 export async function POST(
@@ -49,6 +50,22 @@ export async function POST(
           "Erasure is blocked while money is in flight for this user; settle the listed items first.",
         code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
         counts: inFlight,
+      },
+      { status: 409 },
+    );
+  }
+
+  const soleOwnedOrgs = await soleOwnerOrganizationsForUser(
+    prisma,
+    request.userId,
+  );
+  if (soleOwnedOrgs.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Erasure is blocked while the user is the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
+        code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
+        organizations: soleOwnedOrgs,
       },
       { status: 409 },
     );

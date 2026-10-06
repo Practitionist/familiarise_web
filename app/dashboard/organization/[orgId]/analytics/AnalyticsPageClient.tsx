@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import type { FundingSource, MemberRole } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -11,6 +12,7 @@ import {
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { Section } from "@/components/dashboard/Section";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { Button } from "@/components/ui/button";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -34,6 +36,28 @@ interface ProgramBreakdownRow {
   utilizedPaise: number;
   engagementsUsed: number;
   overageCount: number;
+}
+
+interface FeedbackConsultantRow {
+  consultantProfileId: string;
+  name: string | null;
+  average: number | null;
+  responses: number | null;
+  respondents: number | null;
+}
+
+interface OrgFeedbackSummary {
+  data: {
+    averageRating: number | null;
+    totalResponses: number | null;
+    respondents: number | null;
+    averageRating30d: number | null;
+    responses30d: number | null;
+    respondents30d: number | null;
+    minRespondents: number;
+    byConsultant: FeedbackConsultantRow[];
+    consultantsSuppressed: number;
+  };
 }
 
 // Types — match GET /api/organizations/[orgId]/analytics. Money sections are
@@ -96,6 +120,78 @@ async function fetchAnalytics(orgId: string): Promise<OrgAnalytics> {
   if (!res.ok) throw new Error("Failed to load analytics");
   return res.json();
 }
+
+async function fetchFeedbackSummary(
+  orgId: string,
+): Promise<OrgFeedbackSummary> {
+  const res = await fetch(`/api/organizations/${orgId}/feedback-summary`);
+  if (!res.ok) throw new Error("Failed to load feedback summary");
+  return res.json();
+}
+
+function downloadUtilizationCsv(
+  orgId: string,
+  monthlySeries: MonthlySeriesPoint[],
+  programBreakdown: ProgramBreakdownRow[],
+  seesMoney: boolean,
+) {
+  const lines: string[] = [
+    seesMoney
+      ? "Section,NameOrMonth,Model,Engagements,OveragesOrActiveLearners,SpendINR,OverageINR"
+      : "Section,NameOrMonth,Model,Engagements,OveragesOrActiveLearners",
+  ];
+  for (const pt of monthlySeries) {
+    lines.push(
+      seesMoney
+        ? `Monthly,${pt.month},,${pt.engagementsCount},${pt.activeLearners},${(pt.spendPaise / 100).toFixed(2)},${(pt.overagePaise / 100).toFixed(2)}`
+        : `Monthly,${pt.month},,${pt.engagementsCount},${pt.activeLearners}`,
+    );
+  }
+  for (const row of programBreakdown) {
+    const safeName = `"${row.name.replace(/"/g, '""')}"`;
+    lines.push(
+      seesMoney
+        ? `Program,${safeName},${row.subType},${row.engagementsUsed},${row.overageCount},${(row.utilizedPaise / 100).toFixed(2)},`
+        : `Program,${safeName},${row.subType},${row.engagementsUsed},${row.overageCount}`,
+    );
+  }
+  const blob = new Blob([lines.join("\n")], {
+    type: "text/csv;charset=utf-8;",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `org-${orgId}-utilization.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const feedbackConsultantColumns: ResponsiveColumn<FeedbackConsultantRow>[] = [
+  {
+    key: "name",
+    header: "Expert",
+    primary: true,
+    cell: (r) => <span className="font-medium">{r.name ?? "Expert"}</span>,
+  },
+  {
+    key: "average",
+    header: "Average CSAT",
+    className: "tabular-nums",
+    cell: (r) => (r.average !== null ? `${r.average.toFixed(1)} / 5.0` : "—"),
+  },
+  {
+    key: "respondents",
+    header: "Respondents",
+    className: "tabular-nums",
+    cell: (r) => r.respondents?.toLocaleString("en-IN") ?? "—",
+  },
+  {
+    key: "responses",
+    header: "Rated calls",
+    className: "tabular-nums",
+    cell: (r) => r.responses?.toLocaleString("en-IN") ?? "—",
+  },
+];
 
 const roleColumns: ResponsiveColumn<RoleRow>[] = [
   {
@@ -309,26 +405,56 @@ function MoneyStats({ data }: Readonly<{ data: OrgAnalytics }>) {
 }
 
 /**
- * Org Analytics: membership, 6-month utilization trends, and per-program
- * breakdown for operators, with money only for `billing.read`.
+ * Org Analytics: membership, 6-month utilization trends, per-program
+ * breakdown, and privacy-safe session quality cohorts.
  */
 export function AnalyticsPageClient({ orgId }: { orgId: string }) {
   const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "operations.read",
   });
+  const canReadQuality = can("quality.read");
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
     enabled: allowed,
   });
+  const feedbackQuery = useQuery({
+    queryKey: ["org-feedback-summary", orgId],
+    queryFn: () => fetchFeedbackSummary(orgId),
+    enabled: allowed && canReadQuality,
+  });
 
   if (!allowed) return null;
+
+  const seesMoney = can("billing.read");
+  const monthlySeries = data?.monthlySeries ?? [];
+  const programBreakdown = data?.programBreakdown ?? [];
 
   const header = (
     <DashboardHeader
       title="Analytics"
       description="Membership, programs and, for finance roles, money at a glance."
+      actions={
+        data ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              downloadUtilizationCsv(
+                orgId,
+                monthlySeries,
+                programBreakdown,
+                seesMoney,
+              )
+            }
+          >
+            <Download className="mr-1.5 h-4 w-4" />
+            Export Utilization CSV
+          </Button>
+        ) : undefined
+      }
     />
   );
 
@@ -361,10 +487,8 @@ export function AnalyticsPageClient({ orgId }: { orgId: string }) {
     );
   }
 
-  const seesMoney = can("billing.read");
   const currency = data.capabilities.currency ?? "INR";
-  const monthlySeries = data.monthlySeries ?? [];
-  const programBreakdown = data.programBreakdown ?? [];
+  const quality = feedbackQuery.data?.data;
 
   return (
     <>
@@ -387,6 +511,55 @@ export function AnalyticsPageClient({ orgId }: { orgId: string }) {
           />
         </StatRow>
         {seesMoney && <MoneyStats data={data} />}
+        {canReadQuality && quality && (
+          <Section
+            title="Session quality (anonymized CSAT)"
+            description={`Aggregated member ratings across completed sessions. Cohorts with fewer than ${quality.minRespondents} unique respondents are suppressed to protect employee anonymity.`}
+          >
+            {quality.averageRating === null ? (
+              <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
+                Session quality metrics will appear once at least{" "}
+                <strong>{quality.minRespondents}</strong> unique members have
+                submitted session ratings.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <StatRow columns={3}>
+                  <Stat
+                    label="All-time average rating"
+                    value={`${quality.averageRating.toFixed(1)} / 5.0`}
+                    hint={`${quality.respondents ?? 0} respondents · ${quality.totalResponses ?? 0} rated calls`}
+                  />
+                  <Stat
+                    label="Last 30 days"
+                    value={
+                      quality.averageRating30d !== null
+                        ? `${quality.averageRating30d.toFixed(1)} / 5.0`
+                        : "Suppressed"
+                    }
+                    hint={
+                      quality.averageRating30d !== null
+                        ? `${quality.respondents30d ?? 0} respondents`
+                        : `Requires ≥${quality.minRespondents} respondents in both windows`
+                    }
+                  />
+                  <Stat
+                    label="Suppressed expert cohorts"
+                    value={quality.consultantsSuppressed}
+                    hint="Cohorts below respondent floor"
+                  />
+                </StatRow>
+                {quality.byConsultant.length > 0 && (
+                  <ResponsiveTable<FeedbackConsultantRow>
+                    columns={feedbackConsultantColumns}
+                    rows={quality.byConsultant}
+                    getRowId={(r) => r.consultantProfileId}
+                  />
+                )}
+              </div>
+            )}
+          </Section>
+        )}
         {monthlySeries.length > 0 && (
           <Section
             title={

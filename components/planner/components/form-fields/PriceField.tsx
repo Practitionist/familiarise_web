@@ -112,6 +112,13 @@ export function PriceField<T extends FieldValues = FieldValues>({
         />
       </div>
 
+      <p className="text-xs text-muted-foreground">
+        You keep 80% on Marketplace · 90% via your personal link
+        {Number(priceField.value) > 0
+          ? ` (₹${Math.round(Number(priceField.value) * 0.8).toLocaleString("en-IN")} / ₹${Math.round(Number(priceField.value) * 0.9).toLocaleString("en-IN")})`
+          : ""}
+      </p>
+
       {error && <FormMessage>{error.message}</FormMessage>}
     </FormItem>
   );

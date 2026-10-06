@@ -101,10 +101,55 @@ type EarningRecord = Awaited<
 >["earnings"][number];
 
 /** One earning as the page reads it: the row, its plan title and its sponsor. */
-export type ConsultantEarningRow = EarningRecord & {
+export type ConsultantEarningRow = Omit<EarningRecord, "payment"> & {
   title: string | null;
   sponsorOrgName: string | null;
+  payment: Omit<
+    EarningRecord["payment"],
+    "attributionSource" | "platformFeeBps"
+  > & {
+    attributionSource?: EarningRecord["payment"]["attributionSource"];
+    platformFeeBps?: EarningRecord["payment"]["platformFeeBps"];
+  };
 };
+
+export interface ConsultantFeeWaiverStatus {
+  sessionsRemaining: number;
+  totalSessionsGranted: number;
+  expiresAt: Date;
+}
+
+export interface ConsultantTdsRecordRow {
+  id: string;
+  financialYear: string;
+  quarter: number;
+  cumulativeAmountCredited: number;
+  tdsDeducted: number;
+  tdsRateBps: number;
+  tdsSection: string | null;
+  payoutId: string | null;
+  isReversal: boolean;
+  reportedInForm26Q: boolean;
+  form26QFilingDate: Date | null;
+  challanNumber: string | null;
+  certificateNumber: string | null;
+  ackNumber: string | null;
+  createdAt: Date;
+}
+
+export interface AttributionBreakdown {
+  ownLinkPaise: number;
+  marketplacePaise: number;
+  ownLinkCount: number;
+  marketplaceCount: number;
+  feeWaivedCount: number;
+}
+
+export interface RepeatLearnerStats {
+  repeatLearners: number;
+  totalLearners: number;
+  repeatLearnerRate: number | null;
+}
 
 export type { ConsultantPayoutRow };
 
@@ -144,6 +189,169 @@ function toPayoutRow(
     failureReason: p.failureReason
       ? sanitizePayoutFailure(p.failureReason)
       : null,
+  };
+}
+
+async function readActiveFeeWaiver(
+  consultantProfileId: string,
+): Promise<ConsultantFeeWaiverStatus | null> {
+  const now = new Date();
+  const [waivers, config] = await Promise.all([
+    prisma.consultantFeeWaiver?.findMany?.({
+      where: {
+        consultantProfileId,
+        sessionsRemaining: { gt: 0 },
+        expiresAt: { gt: now },
+      },
+      orderBy: { expiresAt: "asc" },
+      select: { sessionsRemaining: true, expiresAt: true },
+    }) ?? Promise.resolve([]),
+    prisma.referralProgramConfig?.findUnique?.({
+      where: { id: "singleton" },
+      select: { expertWaiverSessions: true },
+    }) ?? Promise.resolve(null),
+  ]);
+  if (!waivers || waivers.length === 0) return null;
+  const sessionsRemaining = waivers.reduce(
+    (sum, w) => sum + w.sessionsRemaining,
+    0,
+  );
+  const perGrant = config?.expertWaiverSessions ?? 3;
+  return {
+    sessionsRemaining,
+    totalSessionsGranted: Math.max(
+      sessionsRemaining,
+      waivers.length * perGrant,
+    ),
+    expiresAt: waivers[0].expiresAt,
+  };
+}
+
+async function readConsultantTdsRecords(
+  consultantProfileId: string,
+): Promise<ConsultantTdsRecordRow[]> {
+  const rows =
+    (await prisma.tDSRecord?.findMany?.({
+      where: { consultantProfileId },
+      orderBy: [
+        { financialYear: "desc" },
+        { quarter: "desc" },
+        { createdAt: "desc" },
+      ],
+      select: {
+        id: true,
+        financialYear: true,
+        quarter: true,
+        cumulativeAmountCredited: true,
+        tdsDeducted: true,
+        tdsRateBps: true,
+        tdsSection: true,
+        payoutId: true,
+        isReversal: true,
+        reportedInForm26Q: true,
+        form26QFilingDate: true,
+        challanNumber: true,
+        certificateNumber: true,
+        ackNumber: true,
+        createdAt: true,
+      },
+    })) ?? [];
+  return rows.map((r) => ({
+    ...r,
+    cumulativeAmountCredited: sumPaise(r.cumulativeAmountCredited),
+    tdsDeducted: sumPaise(r.tdsDeducted),
+  }));
+}
+
+async function readAttributionAndRepeatStats(
+  consultantProfileId: string,
+  organizationId: string | null | undefined,
+): Promise<{
+  attributionBreakdown: AttributionBreakdown;
+  repeatLearnerStats: RepeatLearnerStats;
+}> {
+  const rows =
+    (await prisma.consultantEarnings?.findMany?.({
+      where: {
+        consultantProfileId,
+        status: { not: "REFUNDED" },
+        ...(organizationId !== undefined
+          ? { payment: { organizationId } }
+          : {}),
+      },
+      select: {
+        consultantSharePaise: true,
+        refundedShareAmount: true,
+        platformFeePaise: true,
+        grossAmount: true,
+        payment: {
+          select: {
+            userId: true,
+            attributionSource: true,
+            platformFeeBps: true,
+            organizationId: true,
+          },
+        },
+      },
+    })) ?? [];
+
+  let ownLinkPaise = 0;
+  let marketplacePaise = 0;
+  let ownLinkCount = 0;
+  let marketplaceCount = 0;
+  let feeWaivedCount = 0;
+  const sessionsByLearner = new Map<string, number>();
+
+  for (const row of rows) {
+    const netShare = Math.max(
+      0,
+      sumPaise(row.consultantSharePaise) - sumPaise(row.refundedShareAmount),
+    );
+    const isB2C = !row.payment.organizationId;
+    if (row.payment.attributionSource === "OWN_LINK") {
+      ownLinkPaise += netShare;
+      ownLinkCount += 1;
+    } else if (isB2C) {
+      marketplacePaise += netShare;
+      marketplaceCount += 1;
+    }
+    if (
+      isB2C &&
+      sumPaise(row.grossAmount) > 0 &&
+      (row.payment.platformFeeBps === 0 || sumPaise(row.platformFeePaise) === 0)
+    ) {
+      feeWaivedCount += 1;
+    }
+    if (row.payment.userId) {
+      sessionsByLearner.set(
+        row.payment.userId,
+        (sessionsByLearner.get(row.payment.userId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const totalLearners = sessionsByLearner.size;
+  let repeatLearners = 0;
+  for (const count of sessionsByLearner.values()) {
+    if (count >= 2) repeatLearners += 1;
+  }
+
+  return {
+    attributionBreakdown: {
+      ownLinkPaise,
+      marketplacePaise,
+      ownLinkCount,
+      marketplaceCount,
+      feeWaivedCount,
+    },
+    repeatLearnerStats: {
+      repeatLearners,
+      totalLearners,
+      repeatLearnerRate:
+        totalLearners > 0
+          ? Math.round((repeatLearners / totalLearners) * 100)
+          : null,
+    },
   };
 }
 
@@ -248,6 +456,10 @@ export async function buildConsultantEarningsPayload(
     prisma,
     payouts.map((p) => p.id),
   );
+  const feeWaiver = await readActiveFeeWaiver(consultantProfileId);
+  const tdsRecords = await readConsultantTdsRecords(consultantProfileId);
+  const { attributionBreakdown, repeatLearnerStats } =
+    await readAttributionAndRepeatStats(consultantProfileId, organizationId);
 
   return {
     summary,
@@ -255,6 +467,10 @@ export async function buildConsultantEarningsPayload(
     earnings: history.earnings.map(toEarningRow),
     payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
     totals,
+    feeWaiver,
+    tdsRecords,
+    attributionBreakdown,
+    repeatLearnerStats,
     pagination: {
       total: history.total,
       limit,

@@ -1825,6 +1825,8 @@ export async function getConsultantEarnings(
             organizationId: true,
             organization: { select: { name: true } },
             legs: { select: { source: true } },
+            attributionSource: true,
+            platformFeeBps: true,
             appointment: {
               select: {
                 id: true,

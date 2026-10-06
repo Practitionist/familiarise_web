@@ -5,17 +5,19 @@
  * filter. Replies go through the existing `/api/user/reviews/[id]/reply`.
  */
 
+import type { ReviewTrack } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { apiError } from "@/lib/errors/api-error";
-import {
-  REVIEWS_PAGE_SIZE,
-  readOwnReviews,
-} from "@/lib/reviews-inbox";
+import { REVIEWS_PAGE_SIZE, readOwnReviews } from "@/lib/reviews-inbox";
 
 function ratingParam(raw: string | null): number | null {
   const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
   return n >= 1 && n <= 5 ? n : null;
+}
+
+function trackParam(raw: string | null): ReviewTrack | null {
+  return raw === "ONE_TO_ONE" || raw === "GROUP" ? raw : null;
 }
 
 export async function GET(request: NextRequest) {
@@ -28,6 +30,7 @@ export async function GET(request: NextRequest) {
       consultantProfileId: profileId,
       cursor: params.get("cursor"),
       rating: ratingParam(params.get("rating")),
+      track: trackParam(params.get("track")),
       needsReply: params.get("needsReply") === "1",
       limit: limitRaw > 0 ? Math.min(limitRaw, 50) : REVIEWS_PAGE_SIZE,
     });

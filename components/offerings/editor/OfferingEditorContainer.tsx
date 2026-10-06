@@ -181,6 +181,21 @@ export function OfferingEditorContainer({
   });
 
   const planId = (existingPlan?.id as string | undefined) ?? undefined;
+  const copySourceId = (copySource?.id as string | undefined) ?? undefined;
+  const hydratedRef = React.useRef<string | undefined>(
+    planId ?? (copySourceId ? `copy:${copySourceId}` : undefined),
+  );
+  React.useEffect(() => {
+    const nextKey =
+      planId ?? (copySourceId ? `copy:${copySourceId}` : undefined);
+    if (nextKey && hydratedRef.current !== nextKey) {
+      hydratedRef.current = nextKey;
+      form.reset({
+        ...adapter.defaults,
+        ...(copySource ? duplicateFormValues(copySource) : existingPlan),
+      });
+    }
+  }, [adapter.defaults, copySource, copySourceId, existingPlan, form, planId]);
   const status = editorStatus(existingPlan, planId, saveCtx);
   // The org catalog's writer keeps its own reading of webinar/class status.
   const hasRealDraft = !isEvent || !onSave;

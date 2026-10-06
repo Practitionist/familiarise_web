@@ -22,11 +22,22 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
-const CreateBodySchema = z.object({
-  membershipId: z.string().min(1),
-  periodStart: z.coerce.date(),
-  periodEnd: z.coerce.date(),
-});
+const CreateBodySchema = z
+  .object({
+    membershipId: z.string().min(1).optional(),
+    membershipIds: z.array(z.string().min(1)).min(1).max(100).optional(),
+    periodStart: z.coerce.date(),
+    periodEnd: z.coerce.date(),
+  })
+  .refine(
+    (data) =>
+      Boolean(data.membershipId) ||
+      Boolean(data.membershipIds && data.membershipIds.length > 0),
+    {
+      message: "membershipId or membershipIds is required",
+      path: ["membershipId"],
+    },
+  );
 
 export async function GET(
   req: NextRequest,
@@ -123,6 +134,12 @@ export async function POST(
     );
   }
 
+  const targetMembershipIds = Array.from(
+    new Set(
+      body.membershipIds ?? (body.membershipId ? [body.membershipId] : []),
+    ),
+  );
+
   // Cross-org guards: program in this org, membership in this org.
   // One trip to the DB per object keeps the error messages specific —
   // a single findFirst union would surface a generic "not found".
@@ -147,83 +164,78 @@ export async function POST(
   const outcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        // B2B gap 10 — belonging to the org is not the same as being IN it. A
-        // PENDING member has not accepted the invite yet and a SUSPENDED/REMOVED/
-        // ERASED one is gone, so assigning either seats a program against somebody
-        // who cannot consume it: activeSeatCount goes up, the seat is billed, and
-        // nobody can use it.
-        //
-        // Read INSIDE the transaction. Checking first and claiming after left a
-        // window where a membership suspended in between still took a billed seat;
-        // Serializable puts this row in the transaction's read set, so the
-        // suspension and the claim can no longer interleave.
-        const membership = await tx.membership.findFirst({
-          where: { id: body.membershipId, organizationId: orgId },
+        const memberships = await tx.membership.findMany({
+          where: { id: { in: targetMembershipIds }, organizationId: orgId },
           select: { id: true, status: true },
         });
-        if (!membership)
-          return { ok: false as const, code: "FOREIGN" as const };
-        if (membership.status !== "ACTIVE") {
-          return {
-            ok: false as const,
-            code: "INACTIVE" as const,
-            status: membership.status,
-          };
+        const byId = new Map(memberships.map((m) => [m.id, m]));
+        for (const targetMembershipId of targetMembershipIds) {
+          const membership = byId.get(targetMembershipId);
+          if (!membership) {
+            return { ok: false as const, code: "FOREIGN" as const };
+          }
+          if (membership.status !== "ACTIVE") {
+            return {
+              ok: false as const,
+              code: "INACTIVE" as const,
+              status: membership.status,
+            };
+          }
         }
 
-        // claimProgramAssignment reports whether THIS call created the row (atomic
-        // INSERT … ON CONFLICT DO NOTHING). Seat-count only on a genuine create, so
-        // a re-claim or two concurrent identical POSTs increment activeSeatCount
-        // exactly once (the old preexisting-probe was a check-then-act race).
-        const { assignment: created, created: isNew } =
-          await claimProgramAssignment(tx, {
-            programId,
-            membershipId: body.membershipId,
-            periodStart: body.periodStart,
-            periodEnd: body.periodEnd,
-          });
-        if (isNew) {
-          await adjustActiveSeatCount(tx, { programId, delta: +1 });
-          // #779 — set-point for the persistent money-config lock: the FIRST genuine
-          // assignment freezes LOCKED_PROGRAM_FIELDS. updateMany gated on
-          // configLockedAt:null so a re-stamp (already-locked program, later
-          // assignment) is a no-op and the original lock instant is preserved.
-          await tx.program.updateMany({
-            where: { id: programId, configLockedAt: null },
-            data: { configLockedAt: new Date() },
-          });
-        }
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            targetMembershipId: body.membershipId,
-            category: "PROGRAM",
-            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-            description: `Assigned membership ${body.membershipId} to program ${programId}`,
-            details: {
+        const createdAssignments = [];
+        for (const targetMembershipId of targetMembershipIds) {
+          const { assignment: created, created: isNew } =
+            await claimProgramAssignment(tx, {
               programId,
-              membershipId: body.membershipId,
-              periodStart: body.periodStart.toISOString(),
-              periodEnd: body.periodEnd.toISOString(),
-            },
-          },
-        });
-        if (isNew && typeof tx.webhookEndpoint?.findMany === "function") {
-          await dispatchWebhookEvent({
-            prisma: tx,
-            organizationId: orgId,
-            eventType: "program.assigned",
-            payload: {
-              assignmentId: created.id,
-              programId,
-              membershipId: body.membershipId,
-              periodStart: body.periodStart.toISOString(),
-              periodEnd: body.periodEnd.toISOString(),
+              membershipId: targetMembershipId,
+              periodStart: body.periodStart,
+              periodEnd: body.periodEnd,
+            });
+          if (isNew) {
+            await adjustActiveSeatCount(tx, { programId, delta: +1 });
+            await tx.program.updateMany({
+              where: { id: programId, configLockedAt: null },
+              data: { configLockedAt: new Date() },
+            });
+          }
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: orgId,
+              actorMembershipId: access.member.id,
+              targetMembershipId,
+              category: "PROGRAM",
+              action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
+              description: `Assigned membership ${targetMembershipId} to program ${programId}`,
+              details: {
+                programId,
+                membershipId: targetMembershipId,
+                periodStart: body.periodStart.toISOString(),
+                periodEnd: body.periodEnd.toISOString(),
+              },
             },
           });
+          if (isNew && typeof tx.webhookEndpoint?.findMany === "function") {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "program.assigned",
+              payload: {
+                assignmentId: created.id,
+                programId,
+                membershipId: targetMembershipId,
+                periodStart: body.periodStart.toISOString(),
+                periodEnd: body.periodEnd.toISOString(),
+              },
+            });
+          }
+          createdAssignments.push(created);
         }
-        return { ok: true as const, assignment: created };
+        return {
+          ok: true as const,
+          assignment: createdAssignments[0],
+          assignments: createdAssignments,
+        };
       },
       { isolationLevel: "Serializable" },
     ),
@@ -247,5 +259,8 @@ export async function POST(
     );
   }
 
-  return NextResponse.json({ assignment: outcome.assignment }, { status: 201 });
+  return NextResponse.json(
+    { assignment: outcome.assignment, assignments: outcome.assignments },
+    { status: 201 },
+  );
 }

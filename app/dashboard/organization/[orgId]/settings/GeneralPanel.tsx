@@ -25,6 +25,7 @@ import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { CancellationPolicyCard } from "./CancellationPolicyCard";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -121,6 +122,8 @@ interface PatchPayload {
   gstin?: string | null;
   gstStateCode?: string | null;
   gstRegStatus?: GstRegStatus;
+  pan?: string | null;
+  tan?: string | null;
   // #1230 wave-4 — MSME declaration rides the same PATCH upsert.
   msmeStatus?: MsmeStatus;
   msmeWrittenAgreementOnFile?: boolean;
@@ -179,6 +182,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
   const [gstStateCode, setGstStateCode] = useState("");
   const [gstRegStatus, setGstRegStatus] =
     useState<GstRegStatus>("UNREGISTERED");
+  const [pan, setPan] = useState("");
+  const [tan, setTan] = useState("");
+  const [taxSaving, setTaxSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pendingDisable, setPendingDisable] = useState<
@@ -269,30 +275,66 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     setPendingDisable(null);
   };
 
-  // #777 §B — narrow tax-only PATCH so saving GSTIN doesn't drag every
-  // Profile field along. GSTIN is exactly 15 chars (API rejects partials
-  // with a 400); empty → null clears the satellite field. The API gates
-  // the whole taxInfo upsert OWNER-only, matching the UI gate below.
+  // Narrow tax-only PATCH so saving tax details never overwrites unsaved
+  // profile fields. Sends only taxInfo satellite fields.
   const trimmedGstin = gstin.trim().toUpperCase();
   const gstinValid = trimmedGstin.length === 0 || trimmedGstin.length === 15;
-  // GST state code is exactly 2 digits (e.g. "29"); empty clears it. An
-  // invalid value blocks the save with an error instead of silently saving
-  // null while the input still shows the bad value.
   const trimmedStateCode = gstStateCode.trim();
   const stateCodeValid =
     trimmedStateCode.length === 0 || /^\d{2}$/.test(trimmedStateCode);
-  const saveTaxInfo = () => {
+  const trimmedPan = pan.trim().toUpperCase();
+  const panValid =
+    trimmedPan.length === 0 || /^[A-Z]{5}\d{4}[A-Z]$/.test(trimmedPan);
+  const trimmedTan = tan.trim().toUpperCase();
+  const tanValid =
+    trimmedTan.length === 0 || /^[A-Z]{4}\d{5}[A-Z]$/.test(trimmedTan);
+
+  const saveTaxInfo = async () => {
     if (!gstinValid) return;
     if (!stateCodeValid) {
       setError("GST state code must be exactly 2 digits (e.g. 29).");
       return;
     }
+    if (!panValid) {
+      setError("PAN must be 10 characters (e.g. AAAAA0000A).");
+      return;
+    }
+    if (!tanValid) {
+      setError("TAN must be 10 characters (e.g. AAAA99999A).");
+      return;
+    }
     setError(null);
-    mutation.mutate({
-      gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
-      gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
-      gstRegStatus,
-    });
+    setTaxSaving(true);
+    try {
+      await patchSettings(orgId, {
+        ...(data && { expectedVersion: data.profile.version }),
+        gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
+        gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
+        gstRegStatus,
+        ...(trimmedPan.length === 10 && { pan: trimmedPan }),
+        ...(trimmedTan.length === 10 && { tan: trimmedTan }),
+      });
+      setPan("");
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: orgDetailsQueryKey(orgId),
+      });
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 2500);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "VERSION_CONFLICT") {
+        setConflictOpen(true);
+      } else {
+        setError(
+          err instanceof Error ? err.message : "Failed to save tax details",
+        );
+      }
+    } finally {
+      setTaxSaving(false);
+    }
   };
 
   // #1230 wave-4 — MSME declaration has its own NARROW save so a partial
@@ -470,8 +512,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     <p className="text-sm font-medium">Host experts</p>
                     <p className="text-xs text-zinc-500">
                       The organization hosts experts who deliver sessions.
-                      Enables the payout account, rate cards, and the Experts +
-                      Payouts sidebar entries.
+                      Enables the payout account, rate cards, and the Catalog
+                      and Payouts sidebar entries.
                     </p>
                   </div>
                 </label>
@@ -589,12 +631,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           </CardContent>
         </Card>
 
-        {/* #777 §B — Tax & compliance (GSTIN / GST state / reg status).
-            Writes to the OrganizationTaxInfo satellite via the org PATCH
-            upsert, which gates the whole tax block OWNER-only — so the
-            section is hidden for non-owners (read or edit) to avoid a
-            silent 403. PAN capture is intentionally out of scope here
-            (encrypted-at-rest; managed via the dedicated tax surface). */}
         {can("settings.ownerFields") && (
           <Card className="mt-6">
             <CardHeader>
@@ -602,8 +638,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 <FileText className="w-4 h-4" /> Tax &amp; compliance
               </CardTitle>
               <CardDescription>
-                India GST identity used on invoices and for 3-way-match
-                reconciliation. Only owners can edit these.
+                India GST, PAN, and TAN identity used on invoices, TDS filings,
+                and 3-way-match reconciliation. Only owners can edit these.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -644,6 +680,63 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tax-pan">PAN</Label>
+                  <Input
+                    id="tax-pan"
+                    value={pan}
+                    onChange={(e) =>
+                      setPan(e.target.value.toUpperCase().slice(0, 10))
+                    }
+                    placeholder={
+                      data.profile.taxInfo?.panLast4
+                        ? `••••••${data.profile.taxInfo.panLast4}`
+                        : "AAAAA0000A"
+                    }
+                    maxLength={10}
+                  />
+                  {data.profile.taxInfo?.panLast4 ? (
+                    <p className="text-xs text-zinc-500">
+                      PAN on file ending in {data.profile.taxInfo.panLast4}.
+                      Enter a new 10-character PAN to replace it.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-zinc-500">
+                      10-character Permanent Account Number (encrypted at rest).
+                    </p>
+                  )}
+                  {!panValid && (
+                    <p className="text-xs text-red-600">
+                      PAN must follow format AAAAA0000A.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tax-tan">
+                    TAN (Tax Deduction Account No.)
+                  </Label>
+                  <Input
+                    id="tax-tan"
+                    value={tan}
+                    onChange={(e) =>
+                      setTan(e.target.value.toUpperCase().slice(0, 10))
+                    }
+                    placeholder="AAAA99999A"
+                    maxLength={10}
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Optional 10-character TAN for Section 194J / 194O TDS
+                    certificates.
+                  </p>
+                  {!tanValid && (
+                    <p className="text-xs text-red-600">
+                      TAN must follow format AAAA99999A.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <div className="space-y-2 md:w-1/2">
                 <Label htmlFor="gst-reg-status">GST registration status</Label>
                 <Select
@@ -660,12 +753,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   </SelectContent>
                 </Select>
               </div>
-
-              {data.profile.taxInfo?.panLast4 && (
-                <p className="text-xs text-zinc-500">
-                  PAN on file ending in {data.profile.taxInfo.panLast4}.
-                </p>
-              )}
 
               {/* #1230 wave-4 — MSME (Udyam) declaration. Feeds the MSMED
                   15/45-day payment-terms engine on host-org payouts; an
@@ -723,10 +810,10 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             </CardContent>
             <CardFooter>
               <Button
-                onClick={saveTaxInfo}
-                disabled={mutation.isPending || !gstinValid}
+                onClick={() => void saveTaxInfo()}
+                disabled={taxSaving || !gstinValid || !panValid || !tanValid}
               >
-                {mutation.isPending ? "Saving…" : "Save tax details"}
+                {taxSaving ? "Saving…" : "Save tax details"}
               </Button>
             </CardFooter>
           </Card>
@@ -794,14 +881,13 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           <CancellationPolicyCard orgId={orgId} />
         )}
 
-        {/* #1844 — OWNER-only Danger Zone: Transfer Ownership & Deactivate / Close Organization */}
-        {can("org.delete") && (
-          <DangerZoneCard
-            orgId={orgId}
-            orgSlug={data.organization?.slug ?? ""}
-            orgStatus={data.profile.status}
-          />
-        )}
+        <DangerZoneCard
+          orgId={orgId}
+          orgName={data.organization?.name ?? "this organization"}
+          orgSlug={data.organization?.slug ?? ""}
+          orgStatus={data.profile.status}
+          canDeleteOrg={can("org.delete")}
+        />
 
         <AlertDialog
           open={pendingDisable !== null}
@@ -907,12 +993,16 @@ async function fetchActiveMembers(
 
 function DangerZoneCard({
   orgId,
+  orgName,
   orgSlug,
   orgStatus,
+  canDeleteOrg,
 }: Readonly<{
   orgId: string;
+  orgName: string;
   orgSlug: string;
   orgStatus: OrgStatus;
+  canDeleteOrg: boolean;
 }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -920,6 +1010,7 @@ function DangerZoneCard({
   const membersQuery = useQuery({
     queryKey: ["org-danger-zone-members", orgId],
     queryFn: () => fetchActiveMembers(orgId),
+    enabled: canDeleteOrg,
   });
 
   // Eligible candidates: active MAINTAINERs first, followed by other non-OWNER
@@ -1007,6 +1098,19 @@ function DangerZoneCard({
     },
   });
 
+  const handleLeaveOrganization = async () => {
+    const res = await fetch(`/api/organizations/${orgId}/members/leave`, {
+      method: "POST",
+    });
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
+      throw new Error(json.error ?? "Failed to leave organization");
+    }
+    queryClient.removeQueries({ queryKey: ["org-settings", orgId] });
+    queryClient.removeQueries({ queryKey: orgDetailsQueryKey(orgId) });
+    router.push("/dashboard");
+  };
+
   const selectedCandidate = eligibleMembers.find(
     (m) => m.id === selectedMemberId,
   );
@@ -1019,96 +1123,134 @@ function DangerZoneCard({
           <AlertTriangle className="h-4 w-4" /> Danger Zone
         </CardTitle>
         <CardDescription>
-          High-impact ownership and organization lifecycle actions. Restricted
-          to organization owners.
+          {canDeleteOrg
+            ? "High-impact ownership, membership, and organization lifecycle actions."
+            : "Leave this organization if you no longer need operator or member access."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* 1. Transfer Ownership */}
-        <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Transfer ownership / add co-owner
-            </p>
-            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-              Promote an active maintainer or operator to{" "}
-              <strong>OWNER</strong>. Promoting a successor owner is required
-              before the last owner can leave or be demoted.
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <select
-              aria-label="Select member to promote to owner"
-              className="flex h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              value={selectedMemberId}
-              onChange={(e) => {
-                setSelectedMemberId(e.target.value);
-                setTransferError(null);
-                setTransferSuccess(null);
-              }}
-            >
-              <option value="">Select an active member…</option>
-              {eligibleMembers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.user.name || m.user.email || m.id} ({m.role})
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              variant="outline"
-              className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
-              disabled={!selectedMemberId}
-              onClick={() => {
-                setTransferConfirmText("");
-                setTransferError(null);
-                setTransferOpen(true);
-              }}
-            >
-              Transfer ownership
-            </Button>
-          </div>
-          {eligibleMembers.length === 0 && !membersQuery.isLoading && (
-            <p className="text-xs text-zinc-500">
-              No eligible active maintainers or staff members found. Invite a
-              maintainer from the People page first.
-            </p>
-          )}
-          {transferSuccess && (
-            <p className="text-xs text-emerald-600">{transferSuccess}</p>
-          )}
-        </div>
-
-        {/* 2. Deactivate / Close Organization */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
+        {/* Leave Organization */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-red-900 dark:text-red-300">
-              Deactivate / close organization
+            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Leave organization
             </p>
-            <p className="text-xs text-red-800/90 dark:text-red-300/80">
-              Permanently closes this organization. Active or draft contracts,
-              unpaid invoices, open purchase orders, unsettled earnings,
-              in-flight payouts, and non-zero wallet balances must be wound down
-              first. If financial history exists, statutory invoice records are
-              retained while contact PII is scrubbed.
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              Relinquish your membership in <strong>{orgName}</strong>. Active
+              sponsored program entitlements will be released immediately.
+              {canDeleteOrg
+                ? " As an owner, another active owner must exist before you can leave."
+                : ""}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={orgStatus === "DEACTIVATED"}
-            onClick={() => {
-              setDeactivateConfirmSlug("");
-              setDeactivateError(null);
-              setDeactivateOpen(true);
-            }}
-          >
-            {orgStatus === "DEACTIVATED"
-              ? "Already deactivated"
-              : "Deactivate organization"}
-          </Button>
+          <ConfirmDialog
+            trigger={
+              <Button
+                type="button"
+                variant="outline"
+                className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+              >
+                Leave organization
+              </Button>
+            }
+            title={`Leave ${orgName}?`}
+            description="You will lose access to this organization's dashboard and any active sponsored program benefits."
+            confirmLabel="Leave organization"
+            tone="destructive"
+            requireTyped={orgSlug || orgName}
+            onConfirm={handleLeaveOrganization}
+          />
         </div>
+
+        {canDeleteOrg && (
+          <>
+            {/* 1. Transfer Ownership */}
+            <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Transfer ownership / add co-owner
+                </p>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+                  Promote an active maintainer or operator to{" "}
+                  <strong>OWNER</strong>. Promoting a successor owner is
+                  required before the last owner can leave or be demoted.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <select
+                  aria-label="Select member to promote to owner"
+                  className="flex h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                  value={selectedMemberId}
+                  onChange={(e) => {
+                    setSelectedMemberId(e.target.value);
+                    setTransferError(null);
+                    setTransferSuccess(null);
+                  }}
+                >
+                  <option value="">Select an active member…</option>
+                  {eligibleMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.user.name || m.user.email || m.id} ({m.role})
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+                  disabled={!selectedMemberId}
+                  onClick={() => {
+                    setTransferConfirmText("");
+                    setTransferError(null);
+                    setTransferOpen(true);
+                  }}
+                >
+                  Transfer ownership
+                </Button>
+              </div>
+              {eligibleMembers.length === 0 && !membersQuery.isLoading && (
+                <p className="text-xs text-zinc-500">
+                  No eligible active maintainers or staff members found. Invite
+                  a maintainer from the People page first.
+                </p>
+              )}
+              {transferSuccess && (
+                <p className="text-xs text-emerald-600">{transferSuccess}</p>
+              )}
+            </div>
+
+            {/* 2. Deactivate / Close Organization */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-red-900 dark:text-red-300">
+                  Deactivate / close organization
+                </p>
+                <p className="text-xs text-red-800/90 dark:text-red-300/80">
+                  Permanently closes this organization. Active or draft
+                  contracts, unpaid invoices, open purchase orders, unsettled
+                  earnings, in-flight payouts, and non-zero wallet balances must
+                  be wound down first. If financial history exists, statutory
+                  invoice records are retained while contact PII is scrubbed.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={orgStatus === "DEACTIVATED"}
+                onClick={() => {
+                  setDeactivateConfirmSlug("");
+                  setDeactivateError(null);
+                  setDeactivateOpen(true);
+                }}
+              >
+                {orgStatus === "DEACTIVATED"
+                  ? "Already deactivated"
+                  : "Deactivate organization"}
+              </Button>
+            </div>
+          </>
+        )}
       </CardContent>
 
       {/* Transfer ownership confirmation dialog */}
@@ -1126,7 +1268,8 @@ function DangerZoneCard({
                     {selectedCandidate?.user.name ||
                       selectedCandidate?.user.email ||
                       "this member"}
-                  </strong>.
+                  </strong>
+                  .
                 </p>
                 <div className="space-y-1.5">
                   <Label htmlFor="confirm-transfer-slug">

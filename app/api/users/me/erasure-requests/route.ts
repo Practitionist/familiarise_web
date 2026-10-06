@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { soleOwnerOrganizationsForUser } from "@/lib/compliance/erasure/scrub-user";
 
 const CreateBodySchema = z.object({
   reason: z.string().trim().min(1).max(1000).optional(),
@@ -44,6 +45,19 @@ export async function POST(req: Request) {
   }
 
   const userId = auth.session.user.id;
+
+  const soleOwnedOrgs = await soleOwnerOrganizationsForUser(prisma, userId);
+  if (soleOwnedOrgs.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Cannot request account erasure while you are the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
+        code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
+        organizations: soleOwnedOrgs,
+      },
+      { status: 409 },
+    );
+  }
 
   // Idempotent: short-circuit on an existing open request.
   const existing = await prisma.erasureRequest.findFirst({

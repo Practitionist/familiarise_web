@@ -14,6 +14,7 @@
 
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -25,6 +26,8 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { EmptyState as EmptyBlock } from "@/components/dashboard/EmptyState";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { humanizeEnum } from "@/lib/ui/tone";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
@@ -109,8 +112,26 @@ export default async function MyProgramPage({
       <DashboardHeader
         title="My Program"
         description={`${access.org.name} sponsors your bookings through the programs below.`}
+        actions={
+          <Button asChild size="sm">
+            <Link href="/explore/experts">Browse experts</Link>
+          </Button>
+        }
       />
       <DashboardContent>
+        <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-400" />
+          <div className="text-xs text-emerald-900 dark:text-emerald-200">
+            <p className="font-semibold">Employee Confidentiality Guarantee</p>
+            <p className="mt-0.5 text-emerald-800/90 dark:text-emerald-300/90">
+              Your session conversations, call recordings, private notes, and
+              individual session ratings are strictly confidential.{" "}
+              {access.org.name} administrators only see high-level utilization
+              counts and anonymized cohort aggregates.
+            </p>
+          </div>
+        </div>
+
         {/* #777 §C.5/§F — outstanding overage deep-link banner. */}
         {outstandingOveragePaise > 0 && (
           <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -245,6 +266,12 @@ export default async function MyProgramPage({
                 cap === null
                   ? `${unitLabel} available — no cap this cycle${poolRateNote}`
                   : `${unitLabel} ${remainingWord} this cycle${poolRateNote}`;
+              const daysUntilReset = Math.max(
+                0,
+                Math.ceil(
+                  (a.periodEnd.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+                ),
+              );
 
               return (
                 <div key={a.id} className="rounded-lg border bg-card p-5">
@@ -260,7 +287,9 @@ export default async function MyProgramPage({
                         →{" "}
                         {a.periodEnd.toLocaleDateString("en-IN", {
                           timeZone: "Asia/Kolkata",
-                        })}
+                        })}{" "}
+                        · resets in {daysUntilReset}{" "}
+                        {daysUntilReset === 1 ? "day" : "days"}
                       </p>
                     </div>
                     <span className="rounded-full border px-2.5 py-0.5 text-xs">
@@ -302,14 +331,7 @@ export default async function MyProgramPage({
                         </span>
                       )}
                     </div>
-                    {cap !== null && pct !== null && (
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full bg-primary transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    )}
+                    {cap !== null && pct !== null && <Progress value={pct} />}
                   </div>
 
                   {/* Was rendered for LICENSED_SEAT only, so a CREDIT_POOL
@@ -406,37 +428,37 @@ export default async function MyProgramPage({
                           ? matchedAssignment.program.type === "CREDIT_POOL"
                           : hasCreditPool && !hasLicensedSeat;
                       return (
-                      <tr key={u.id} className="border-t">
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          {u.createdAt.toLocaleDateString("en-IN", {
-                            timeZone: "Asia/Kolkata",
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
-                        </td>
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          {humanizeEnum(
-                            u.payment.appointment?.appointmentType,
-                          ) || "—"}
-                        </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {isPoolUtilization
-                            ? `${Math.round(u.priceAtBookingPaise / 100).toLocaleString("en-IN")} credits`
-                            : u.engagementsConsumed}
-                        </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
-                        </td>
-                        <td className="px-4 py-2 text-xs whitespace-nowrap">
-                          {u.reversedAt
-                            ? "Reversed"
-                            : u.wasOverage
-                              ? "Overage"
-                              : "Covered"}
-                        </td>
-                      </tr>
-                    );
+                        <tr key={u.id} className="border-t">
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {u.createdAt.toLocaleDateString("en-IN", {
+                              timeZone: "Asia/Kolkata",
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {humanizeEnum(
+                              u.payment.appointment?.appointmentType,
+                            ) || "—"}
+                          </td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">
+                            {isPoolUtilization
+                              ? `${Math.round(u.priceAtBookingPaise / 100).toLocaleString("en-IN")} credits`
+                              : u.engagementsConsumed}
+                          </td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">
+                            {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
+                          </td>
+                          <td className="px-4 py-2 text-xs whitespace-nowrap">
+                            {u.reversedAt
+                              ? "Reversed"
+                              : u.wasOverage
+                                ? "Overage"
+                                : "Covered"}
+                          </td>
+                        </tr>
+                      );
                     });
                   })()}
                 </tbody>
@@ -536,16 +558,21 @@ function EmptyState({ orgId }: { orgId: string }) {
     <div className="rounded-lg border bg-card p-6">
       <h2 className="font-medium">No active programs yet</h2>
       <p className="text-sm text-muted-foreground mt-2">
-        You're a member of this organisation, but no Program has been assigned
-        to your account in the current cycle. Reach out to your org
+        You&apos;re a member of this organisation, but no Program has been
+        assigned to your account in the current cycle. Reach out to your org
         administrator to be added to a program.
       </p>
-      <Link
-        href={`/dashboard/organization/${orgId}/home`}
-        className="mt-4 inline-flex text-sm text-primary underline"
-      >
-        Back to overview
-      </Link>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button asChild size="sm">
+          <Link href="/explore/experts">Browse experts</Link>
+        </Button>
+        <Link
+          href={`/dashboard/organization/${orgId}/home`}
+          className="inline-flex text-sm text-primary underline"
+        >
+          Back to overview
+        </Link>
+      </div>
     </div>
   );
 }

@@ -1,11 +1,35 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getReferralCode, createReferralCode } from "@/lib/referrals/service";
 import {
   readReferralProgramConfig,
   referralTerms,
 } from "@/lib/referrals/program-config";
+
+async function readActiveFeeWaivers(userId: string, sessionsGranted: number) {
+  const profile = await prisma.consultantProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!profile) return [];
+  const rows = await prisma.consultantFeeWaiver.findMany({
+    where: {
+      consultantProfileId: profile.id,
+      sessionsRemaining: { gt: 0 },
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { expiresAt: "asc" },
+  });
+  return rows.map((w) => ({
+    id: w.id,
+    reason: w.reason,
+    sessionsRemaining: w.sessionsRemaining,
+    sessionsGranted: Math.max(sessionsGranted, w.sessionsRemaining),
+    expiresAt: w.expiresAt.toISOString(),
+  }));
+}
 
 export async function GET() {
   try {
@@ -14,9 +38,22 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const code = await getReferralCode(session.user.id);
-    const terms = referralTerms(await readReferralProgramConfig());
-    return NextResponse.json({ data: code, terms });
+    const [code, cfg] = await Promise.all([
+      getReferralCode(session.user.id),
+      readReferralProgramConfig(),
+    ]);
+    const weeklyVestCap = cfg?.weeklyVestCap ?? 3;
+    const sessionsGranted = cfg?.expertWaiverSessions ?? 3;
+    const feeWaivers = await readActiveFeeWaivers(
+      session.user.id,
+      sessionsGranted,
+    );
+    const terms = referralTerms(cfg);
+    return NextResponse.json({
+      data: code ? { ...code, weeklyVestCap } : null,
+      terms,
+      feeWaivers,
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -37,9 +74,22 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const code = await createReferralCode(session.user.id);
-    const terms = referralTerms(await readReferralProgramConfig());
-    return NextResponse.json({ data: code, terms });
+    const [code, cfg] = await Promise.all([
+      createReferralCode(session.user.id),
+      readReferralProgramConfig(),
+    ]);
+    const weeklyVestCap = cfg?.weeklyVestCap ?? 3;
+    const sessionsGranted = cfg?.expertWaiverSessions ?? 3;
+    const feeWaivers = await readActiveFeeWaivers(
+      session.user.id,
+      sessionsGranted,
+    );
+    const terms = referralTerms(cfg);
+    return NextResponse.json({
+      data: { ...code, weeklyVestCap },
+      terms,
+      feeWaivers,
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

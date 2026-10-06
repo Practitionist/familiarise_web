@@ -1,23 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  ResponsiveTable,
-  type ResponsiveColumn,
-} from "@/components/ui/responsive-table";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Search,
   RefreshCw,
@@ -27,11 +17,54 @@ import {
   XCircle,
   AlertTriangle,
   Users,
+  ExternalLink,
+  Calendar,
 } from "lucide-react";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/BookingOpsPanel";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
 } from "@/types/subscriptions";
+
+export interface EnrichedSubscriptionItem extends SubscriptionListItem {
+  appointmentId?: string | null;
+  subscriptionId?: string | null;
+  userId?: string;
+  consultantUserId?: string | null;
+  consultantEmail?: string | null;
+  planTitle?: string;
+  durationInMonths?: number;
+  sessionsPerWeek?: number;
+  sessionsTotal?: number;
+  sessionsCompleted?: number;
+  sessionsScheduled?: number;
+}
 
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
@@ -40,6 +73,7 @@ const getStatusColor = (status: string) => {
     case "expiring_soon":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "expired":
+    case "cancelled":
       return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
     default:
       return "bg-muted text-muted-foreground";
@@ -53,6 +87,7 @@ const getStatusIcon = (status: string) => {
     case "expiring_soon":
       return <AlertTriangle className="h-3 w-3" />;
     case "expired":
+    case "cancelled":
       return <XCircle className="h-3 w-3" />;
     default:
       return <Clock className="h-3 w-3" />;
@@ -79,24 +114,273 @@ const formatDate = (dateString: string | null) => {
 const EMPTY_STATS = { activeCount: 0, expiringCount: 0, expiredCount: 0 };
 const LIMIT = 20;
 
+function SubscriptionDetailSheet({
+  subscription,
+  open,
+  onOpenChange,
+  basePath,
+  canMutate,
+}: Readonly<{
+  subscription: EnrichedSubscriptionItem | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  basePath: string;
+  canMutate: boolean;
+}>) {
+  const queryClient = useQueryClient();
+  const [opsAction, setOpsAction] = useState<"CANCEL" | "PAUSE" | "RESUME">(
+    "CANCEL",
+  );
+  const [auditReason, setAuditReason] = useState("");
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const [opsSuccess, setOpsSuccess] = useState<string | null>(null);
+
+  const mutateSubscription = useMutation({
+    mutationFn: async (payload: {
+      subscriptionId: string;
+      action: "CANCEL" | "PAUSE" | "RESUME";
+      reason: string;
+    }) => {
+      const res = await fetch("/api/admin/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          (json as { error?: string }).error ??
+            "Failed to update subscription status",
+        );
+      }
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
+      setAuditReason("");
+      setOpsError(null);
+      setOpsSuccess("Subscription status updated and audited.");
+    },
+    onError: (err: Error) => {
+      setOpsSuccess(null);
+      setOpsError(err.message);
+    },
+  });
+
+  if (!subscription) return null;
+
+  const totalQuota = subscription.sessionsTotal ?? 0;
+  const completed = subscription.sessionsCompleted ?? 0;
+  const scheduled = subscription.sessionsScheduled ?? 0;
+  const progressPct =
+    totalQuota > 0
+      ? Math.min(100, Math.round((completed / totalQuota) * 100))
+      : 0;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full sm:max-w-lg overflow-y-auto space-y-6">
+        <SheetHeader>
+          <SheetTitle>
+            {subscription.planTitle || "Subscription Details"}
+          </SheetTitle>
+          <SheetDescription>
+            Inspect plan entitlement, session quota progress, cycle dates, and
+            operator actions.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-5 text-sm">
+          <div className="divide-y rounded-lg border px-3">
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-muted-foreground">Status</span>
+              <Badge
+                className={`${getStatusColor(subscription.status)} gap-1`}
+                variant="secondary"
+              >
+                {getStatusIcon(subscription.status)}
+                {subscription.status.replace(/_/g, " ")}
+              </Badge>
+            </div>
+
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-muted-foreground">Consultee</span>
+              {subscription.userId ? (
+                <Link
+                  href={`${basePath}/users/${subscription.userId}`}
+                  className="flex items-center gap-1 font-medium hover:underline"
+                >
+                  {subscription.userName}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              ) : (
+                <span className="font-medium">{subscription.userName}</span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-muted-foreground">Consultant</span>
+              {subscription.consultantUserId ? (
+                <Link
+                  href={`${basePath}/users/${subscription.consultantUserId}`}
+                  className="flex items-center gap-1 font-medium hover:underline"
+                >
+                  {subscription.consultantName || "Expert"}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              ) : (
+                <span className="font-medium">
+                  {subscription.consultantName || "—"}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-muted-foreground">Amount Paid</span>
+              <span className="font-semibold tabular-nums">
+                {formatCurrency(subscription.amount, subscription.currency)} (
+                {subscription.gateway})
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-muted-foreground">Cycle Dates</span>
+              <span className="flex items-center gap-1 text-xs">
+                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                {formatDate(subscription.startDate)} →{" "}
+                {formatDate(subscription.endDate)}
+              </span>
+            </div>
+
+            {subscription.durationInMonths && (
+              <div className="flex items-center justify-between py-2.5">
+                <span className="text-muted-foreground">Cadence</span>
+                <span>
+                  {subscription.sessionsPerWeek ?? 1}/week ·{" "}
+                  {subscription.durationInMonths} month(s)
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span>Session Quota Progress</span>
+              <span className="tabular-nums">
+                {completed} completed · {scheduled} scheduled / {totalQuota}{" "}
+                total
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full bg-emerald-600 transition-all"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          </div>
+
+          {canMutate && subscription.subscriptionId && (
+            <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+              <h4 className="text-sm font-semibold">
+                Subscription Status Action (Audited)
+              </h4>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="sub-ops-action">Action</Label>
+                  <Select
+                    value={opsAction}
+                    onValueChange={(v) =>
+                      setOpsAction(v as "CANCEL" | "PAUSE" | "RESUME")
+                    }
+                  >
+                    <SelectTrigger id="sub-ops-action">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PAUSE">Pause (Pending)</SelectItem>
+                      <SelectItem value="RESUME">Resume (Scheduled)</SelectItem>
+                      <SelectItem value="CANCEL">Cancel</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="sub-ops-reason">Audit reason *</Label>
+                  <Input
+                    id="sub-ops-reason"
+                    value={auditReason}
+                    onChange={(e) => setAuditReason(e.target.value)}
+                    placeholder="Reason for status change"
+                  />
+                </div>
+              </div>
+              {opsError && <p className="text-xs text-red-600">{opsError}</p>}
+              {opsSuccess && (
+                <p className="text-xs text-emerald-600">{opsSuccess}</p>
+              )}
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant={opsAction === "CANCEL" ? "destructive" : "default"}
+                  disabled={mutateSubscription.isPending}
+                  onClick={() => {
+                    setOpsError(null);
+                    setOpsSuccess(null);
+                    if (auditReason.trim().length < 5) {
+                      setOpsError(
+                        "Audit reason must be at least 5 characters.",
+                      );
+                      return;
+                    }
+                    if (!subscription.subscriptionId) return;
+                    mutateSubscription.mutate({
+                      subscriptionId: subscription.subscriptionId,
+                      action: opsAction,
+                      reason: auditReason.trim(),
+                    });
+                  }}
+                >
+                  {mutateSubscription.isPending ? (
+                    <>
+                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />{" "}
+                      Applying…
+                    </>
+                  ) : (
+                    `Apply ${opsAction}`
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {subscription.appointmentId && (
+            <div className="rounded-lg border p-3.5">
+              <BookingOpsPanel appointmentId={subscription.appointmentId} />
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export interface SubscriptionsPageProps {
-  /** API endpoint for fetching subscriptions */
   apiEndpoint?: string;
-  /** Page title */
   title?: string;
-  /** Page description */
   description?: string;
 }
 
 export function SubscriptionsPage({
   apiEndpoint = "/api/admin/subscriptions",
   title = "Subscriptions",
-  description = "View platform subscriptions (read-only)",
+  description = "Inspect platform subscriptions, session quota progress, and booking operations",
 }: SubscriptionsPageProps) {
+  const { basePath, can } = useBackofficeCapability();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedSubscription, setSelectedSubscription] =
+    useState<EnrichedSubscriptionItem | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -114,7 +398,11 @@ export function SubscriptionsPage({
       debouncedSearch,
       statusFilter,
     ],
-    queryFn: async (): Promise<SubscriptionListResponse> => {
+    queryFn: async (): Promise<
+      Omit<SubscriptionListResponse, "subscriptions"> & {
+        subscriptions: EnrichedSubscriptionItem[];
+      }
+    > => {
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
       params.set("offset", ((page - 1) * LIMIT).toString());
@@ -125,8 +413,6 @@ export function SubscriptionsPage({
       if (!response.ok) throw new Error("Failed to fetch subscriptions");
       return response.json();
     },
-    // Keep the previous page visible while the next one loads instead of
-    // flashing a spinner over the whole table on every page/filter change.
     placeholderData: keepPreviousData,
   });
 
@@ -136,10 +422,10 @@ export function SubscriptionsPage({
   const hasMore = data?.pagination.hasMore ?? false;
   const totalPages = Math.ceil(total / LIMIT);
 
-  const columns: ResponsiveColumn<SubscriptionListItem>[] = [
+  const columns: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
     {
       key: "user",
-      header: "User",
+      header: "Consultee",
       primary: true,
       cell: (subscription) => (
         <div>
@@ -152,9 +438,30 @@ export function SubscriptionsPage({
     },
     {
       key: "consultant",
-      header: "Expert",
+      header: "Expert / Plan",
       className: "text-sm text-muted-foreground",
-      cell: (subscription) => subscription.consultantName || "-",
+      cell: (subscription) => (
+        <div>
+          <p className="font-medium text-foreground">
+            {subscription.consultantName || "-"}
+          </p>
+          {subscription.planTitle && (
+            <p className="text-xs text-muted-foreground">
+              {subscription.planTitle}
+            </p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "quota",
+      header: "Sessions",
+      cell: (subscription) => (
+        <span className="text-sm tabular-nums">
+          {subscription.sessionsCompleted ?? 0} /{" "}
+          {subscription.sessionsTotal ?? "—"}
+        </span>
+      ),
     },
     {
       key: "amount",
@@ -188,17 +495,10 @@ export function SubscriptionsPage({
         </Badge>
       ),
     },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (subscription) => subscription.gateway,
-    },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <DashboardHeader
         title={title}
         subtitle={description}
@@ -216,7 +516,6 @@ export function SubscriptionsPage({
         }
       />
 
-      {/* Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
@@ -274,7 +573,6 @@ export function SubscriptionsPage({
         </Card>
       </div>
 
-      {/* Filters */}
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-col sm:flex-row gap-4">
@@ -308,7 +606,6 @@ export function SubscriptionsPage({
         </CardContent>
       </Card>
 
-      {/* Subscriptions Table */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
@@ -338,10 +635,20 @@ export function SubscriptionsPage({
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <ResponsiveTable<SubscriptionListItem>
+            <ResponsiveTable<EnrichedSubscriptionItem>
               columns={columns}
               rows={subscriptions}
               getRowId={(s) => s.id}
+              onRowClick={(s) => setSelectedSubscription(s)}
+              rowActions={(s) => (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedSubscription(s)}
+                >
+                  Inspect
+                </Button>
+              )}
               empty={
                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <RefreshCw className="h-12 w-12 mb-4 text-muted-foreground/40" />
@@ -353,7 +660,6 @@ export function SubscriptionsPage({
         </CardContent>
       </Card>
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
@@ -378,6 +684,20 @@ export function SubscriptionsPage({
           </div>
         </div>
       )}
+
+      <SubscriptionDetailSheet
+        key={selectedSubscription?.id ?? "none"}
+        subscription={
+          selectedSubscription
+            ? (subscriptions.find((s) => s.id === selectedSubscription.id) ??
+              selectedSubscription)
+            : null
+        }
+        open={!!selectedSubscription}
+        onOpenChange={(v) => !v && setSelectedSubscription(null)}
+        basePath={basePath}
+        canMutate={can("subscriptions.manage")}
+      />
     </div>
   );
 }

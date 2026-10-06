@@ -57,9 +57,45 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    if (loaded.plan.plan.visibility === "ORG_ONLY") {
+      if (!loaded.plan.plan.organizationId) {
+        return NextResponse.json(
+          {
+            error: "This recording is no longer available for purchase.",
+            code: "NOT_ELIGIBLE",
+          },
+          { status: 409 },
+        );
+      }
+      const activeMembership = await prisma.membership.findFirst({
+        where: {
+          userId: session.user.id,
+          organizationId: loaded.plan.plan.organizationId,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (!activeMembership) {
+        return NextResponse.json(
+          {
+            error:
+              "Active organization membership is required to purchase this recording.",
+            code: "ORG_MEMBERSHIP_REQUIRED",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    const isEligiblePlan =
+      isDiscoverablePlanPlan(loaded.plan.plan) ||
+      (loaded.plan.plan.archivedAt === null &&
+        Boolean(loaded.plan.plan.organizationId) &&
+        loaded.plan.plan.visibility === "ORG_ONLY");
+
     // Sell-side eligibility (R2 review) — must match publicRecordingWhere at
     // ORDER time: published, positively priced, still AVAILABLE on Supabase,
-    // under a live + discoverable plan.
+    // under a live + discoverable (or verified ORG_ONLY) plan.
     if (
       loaded.listingStatus !== "PUBLISHED" ||
       loaded.listPricePaise === null ||
@@ -68,7 +104,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
         status: loaded.recordingStatus,
         storageType: loaded.storageType,
       }) ||
-      !isDiscoverablePlanPlan(loaded.plan.plan)
+      !isEligiblePlan
     ) {
       return NextResponse.json(
         {

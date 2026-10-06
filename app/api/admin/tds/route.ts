@@ -1,24 +1,16 @@
-/**
- * Admin TDS API
- * View TDS deduction summaries and manage Form 26Q filing status
- */
-
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
 import prisma from "@/lib/prisma";
 import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 import {
   getTDSSummary,
   getConsultantTDSBreakdown,
-  markTDSAsFiled,
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
 
-// 404 when the flag is off, mirroring "endpoint doesn't exist" semantics
-// rather than 403 — the Form 26Q filing surface is intentionally hidden
-// pre-launch. Flip ENABLE_TDS_ADMIN_VIEW=true when finance is ready to
-// operate the quarterly filing flow. See lib/feature-flags.ts.
 function notFoundIfGated() {
   if (!ENABLE_TDS_ADMIN_VIEW) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -26,27 +18,113 @@ function notFoundIfGated() {
   return null;
 }
 
-/**
- * GET /api/admin/tds?fy=2026-27&view=summary|consultants
- */
+const TdsFilingPostSchema = z.object({
+  financialYear: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "Invalid financialYear format (expected YYYY-YY)"),
+  quarter: z.coerce.number().int().min(1).max(4),
+  filingDate: z.string().datetime().optional(),
+  challanNumber: z.string().trim().max(64).optional(),
+  bsrCode: z.string().trim().max(32).optional(),
+  ackNumber: z.string().trim().max(64).optional(),
+  certificateNumber: z.string().trim().max(64).optional(),
+  reportedInForm26Q: z.boolean().optional(),
+});
+
 export async function GET(req: NextRequest) {
   const gated = notFoundIfGated();
   if (gated) return gated;
+
   try {
     const auth = await requireBackofficeSurface("tds.read");
     if (auth.error) return auth.error;
     const session = auth.session;
+    const showPii = session.user.role === "ADMIN";
 
     const { searchParams } = new URL(req.url);
     const fy = searchParams.get("fy") || getIndianFinancialYear();
     const view = searchParams.get("view") || "summary";
 
-    if (view === "consultants") {
-      const breakdown = await getConsultantTDSBreakdown(fy);
-      return NextResponse.json({ financialYear: fy, consultants: breakdown });
+    if (!/^\d{4}-\d{2}$/.test(fy)) {
+      return NextResponse.json(
+        { error: "Invalid financialYear format. Expected e.g. '2026-27'" },
+        { status: 400 },
+      );
     }
 
-    // Form 26Q filing view — ADMIN only (exposes decrypted PAN)
+    if (view === "consultants") {
+      const [breakdown, unfiledGroups] = await Promise.all([
+        getConsultantTDSBreakdown(fy),
+        prisma.tDSRecord.groupBy({
+          by: ["consultantProfileId"],
+          where: { financialYear: fy, reportedInForm26Q: false },
+          _count: true,
+        }),
+      ]);
+
+      const unfiledByProfile = new Map<string, number>();
+      for (const g of unfiledGroups) {
+        if (g.consultantProfileId) {
+          unfiledByProfile.set(g.consultantProfileId, g._count);
+        }
+      }
+
+      const profileIds = breakdown
+        .map((b) => b.consultantProfileId)
+        .filter((id): id is string => Boolean(id));
+
+      const profiles =
+        profileIds.length > 0
+          ? await prisma.consultantProfile.findMany({
+              where: { id: { in: profileIds } },
+              select: {
+                id: true,
+                userId: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+                taxInfo: {
+                  select: {
+                    panLast4: true,
+                    panVerified: true,
+                  },
+                },
+              },
+            })
+          : [];
+
+      const profileById = new Map(profiles.map((p) => [p.id, p]));
+      const consultants = breakdown.map((row) => {
+        const profile = row.consultantProfileId
+          ? profileById.get(row.consultantProfileId)
+          : undefined;
+        const unfiledCount = row.consultantProfileId
+          ? (unfiledByProfile.get(row.consultantProfileId) ?? 0)
+          : 0;
+        return {
+          ...row,
+          userId: profile?.userId ?? null,
+          consultantName: profile?.user.name ?? null,
+          consultantEmail: showPii ? (profile?.user.email ?? null) : null,
+          panLast4: profile?.taxInfo?.panLast4 ?? null,
+          panVerified: profile?.taxInfo?.panVerified ?? false,
+          totalCredited: row._sum.cumulativeAmountCredited,
+          totalTDS: row._sum.tdsDeducted,
+          recordCount: row._count,
+          allFiled: unfiledCount === 0,
+        };
+      });
+
+      return NextResponse.json({
+        financialYear: fy,
+        consultants,
+      });
+    }
+
     if (view === "form26q") {
       if (session.user.role !== "ADMIN") {
         return NextResponse.json(
@@ -61,9 +139,6 @@ export async function GET(req: NextRequest) {
           consultantProfile: {
             include: { taxInfo: true, user: { select: { name: true } } },
           },
-          // #1354 — org-rail rows share this table, and a filing view that
-          // resolved only one rail's identity would hand finance a deduction
-          // with no deductee to file it against.
           organization: {
             select: {
               id: true,
@@ -79,14 +154,9 @@ export async function GET(req: NextRequest) {
       const { decryptPAN } = await import("@/lib/payments/tax/pan-crypto");
       const form26qData = records.map((r) => ({
         id: r.id,
-        // CR #1354 r1 — the deductee is a consultant XOR an organisation, so
-        // the row names which rail it is on rather than leaving the caller to
-        // infer it from a null id.
         deducteeType: r.consultantProfileId ? "CONSULTANT" : "ORGANIZATION",
         consultantProfileId: r.consultantProfileId,
         organizationId: r.organizationId,
-        // The return needs the name on the PAN; `name` is the editable trade
-        // name and is only the fallback.
         deducteeName:
           r.consultantProfile?.user?.name ??
           r.organization?.taxInfo?.legalName ??
@@ -95,12 +165,9 @@ export async function GET(req: NextRequest) {
         financialYear: r.financialYear,
         quarter: r.quarter,
         tdsDeducted: r.tdsDeducted,
-        // 26Q wants a percent column; storage is bps (#781 §C).
         tdsRatePercent: r.tdsRateBps / 100,
         cumulativeAmountCredited: r.cumulativeAmountCredited,
         isReversal: r.isReversal,
-        // #1354 — `consultantProfile` is now nullable because org-rail rows
-        // share this table, so each rail decrypts from its own tax satellite.
         consultantPAN: r.consultantProfile?.taxInfo?.panEncrypted
           ? decryptPAN(Buffer.from(r.consultantProfile.taxInfo.panEncrypted))
           : null,
@@ -113,14 +180,54 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ financialYear: fy, records: form26qData });
     }
 
-    const summary = await getTDSSummary(fy);
-    return NextResponse.json(summary);
+    const [summary, quarterRows] = await Promise.all([
+      getTDSSummary(fy),
+      prisma.tDSRecord.findMany({
+        where: { financialYear: fy },
+        select: {
+          quarter: true,
+          consultantProfileId: true,
+          organizationId: true,
+          cumulativeAmountCredited: true,
+          tdsDeducted: true,
+          reportedInForm26Q: true,
+        },
+      }),
+    ]);
+
+    const quarters = [1, 2, 3, 4].map((q) => {
+      const rowsForQ = quarterRows.filter((r) => r.quarter === q);
+      const deductees = new Set(
+        rowsForQ
+          .map((r) => r.consultantProfileId ?? r.organizationId)
+          .filter(Boolean),
+      );
+      return {
+        financialYear: fy,
+        quarter: q,
+        totalConsultants: deductees.size,
+        totalAmountCredited: rowsForQ.reduce(
+          (sum, r) => sum + Number(r.cumulativeAmountCredited),
+          0,
+        ),
+        totalTDSDeducted: rowsForQ.reduce(
+          (sum, r) => sum + Number(r.tdsDeducted),
+          0,
+        ),
+        totalRecords: rowsForQ.length,
+        unfiledRecords: rowsForQ.filter((r) => !r.reportedInForm26Q).length,
+      };
+    });
+
+    return NextResponse.json({
+      ...summary,
+      quarters,
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "admin" } },
     );
-    console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
       { status: 500 },
@@ -128,58 +235,96 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/**
- * POST /api/admin/tds
- * Mark TDS records as filed in Form 26Q
- * Body: { financialYear: string, quarter: number, filingDate: string }
- *
- * Strict ADMIN only — filing Form 26Q is a sensitive financial mutation
- * (creates a permanent compliance record with the income tax department).
- * Matches the access-control semantics of `/api/admin/payouts/process`
- * and the `view=form26q` GET above which both expose decrypted PAN data.
- */
 export async function POST(req: NextRequest) {
   const gated = notFoundIfGated();
   if (gated) return gated;
+
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const body = await req.json();
-    const { financialYear, quarter, filingDate } = body;
-
-    if (!financialYear || !quarter || !filingDate) {
+    const rawBody = await req.json().catch(() => ({}));
+    const parsed = TdsFilingPostSchema.safeParse(rawBody);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "financialYear, quarter, and filingDate are required" },
+        {
+          error:
+            parsed.error.issues[0]?.message ?? "Invalid TDS filing payload",
+        },
         { status: 400 },
       );
     }
 
-    if (quarter < 1 || quarter > 4) {
-      return NextResponse.json(
-        { error: "quarter must be 1-4" },
-        { status: 400 },
-      );
-    }
-
-    const result = await markTDSAsFiled({
+    const {
       financialYear,
       quarter,
-      filingDate: new Date(filingDate),
+      filingDate,
+      challanNumber,
+      bsrCode,
+      ackNumber,
+      certificateNumber,
+      reportedInForm26Q,
+    } = parsed.data;
+
+    const effectiveFilingDate = filingDate ? new Date(filingDate) : new Date();
+    const markFiled = reportedInForm26Q ?? Boolean(ackNumber);
+
+    const formattedChallan =
+      bsrCode && challanNumber
+        ? `${bsrCode}/${challanNumber}`
+        : challanNumber || bsrCode || undefined;
+
+    const artifactPatch: {
+      reportedInForm26Q?: boolean;
+      form26QFilingDate?: Date | null;
+      challanNumber?: string;
+      ackNumber?: string;
+      certificateNumber?: string;
+    } = {};
+    if (reportedInForm26Q !== undefined || ackNumber) {
+      artifactPatch.reportedInForm26Q = markFiled;
+      artifactPatch.form26QFilingDate = markFiled ? effectiveFilingDate : null;
+    }
+    if (formattedChallan) artifactPatch.challanNumber = formattedChallan;
+    if (ackNumber) artifactPatch.ackNumber = ackNumber;
+    if (certificateNumber) artifactPatch.certificateNumber = certificateNumber;
+
+    const recordsUpdated = await prisma.$transaction(async (tx) => {
+      let filedCount = 0;
+      if (markFiled) {
+        const res = await tx.tDSRecord.updateMany({
+          where: { financialYear, quarter, reportedInForm26Q: false },
+          data: {
+            reportedInForm26Q: true,
+            form26QFilingDate: effectiveFilingDate,
+          },
+        });
+        filedCount = res.count;
+      }
+      if (Object.keys(artifactPatch).length === 0) return filedCount;
+      const updatedArtifacts = await tx.tDSRecord.updateMany({
+        where: { financialYear, quarter },
+        data: artifactPatch,
+      });
+      return Math.max(filedCount, updatedArtifacts.count);
     });
 
     return NextResponse.json({
-      message: `Marked ${result.count} TDS records as filed`,
+      message: `Updated ${recordsUpdated} TDS record(s) for ${financialYear} Q${quarter}`,
       financialYear,
       quarter,
-      recordsUpdated: result.count,
+      recordsUpdated,
+      challanNumber: formattedChallan ?? null,
+      bsrCode: bsrCode ?? null,
+      ackNumber: ackNumber ?? null,
+      certificateNumber: certificateNumber ?? null,
+      reportedInForm26Q: markFiled,
     });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "admin" } },
     );
-    console.error("Admin TDS filing error:", error);
     return NextResponse.json(
       { error: "Failed to update TDS filing status" },
       { status: 500 },

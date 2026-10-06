@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -14,6 +15,7 @@ export function OfferingsTabs({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   const pathname = usePathname();
+  useExpertShareHref(consultantId);
   const base = `/dashboard/consultant/${consultantId}/offerings`;
   const tabs = [
     { href: base, label: "Offerings" },

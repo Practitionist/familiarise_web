@@ -38,6 +38,7 @@ export interface OperatorOrgRow {
     billingAccount: {
       fundingSource: FundingSource;
       walletBalance: number | null;
+      minBalancePaise: number | null;
       currency: string;
     } | null;
   };
@@ -66,6 +67,7 @@ export async function getOperatorOrganizations(
             select: {
               fundingSource: true,
               walletBalance: true,
+              minBalancePaise: true,
               currency: true,
             },
           },

@@ -8,7 +8,6 @@ import {
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
-import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
@@ -317,14 +316,13 @@ export async function POST(req: NextRequest) {
       const reviewerName = newReview.isAnonymous
         ? "A verified client"
         : newReview.consulteeProfile?.user?.name || "User";
+      const reviewsInboxHref = `/dashboard/consultant/${newReview.consultantProfileId}/reviews`;
       await notifyNewReview(newReview.consultantProfile.userId, {
         reviewerName,
         rating: newReview.rating,
         comment: newReview.reviewDescription || undefined,
         planTitle: reviewable.title,
-        // #1527 — was `/dashboard` (a bare role bounce) after
-        // `/dashboard/consultant/reviews` 404'd for every review ever notified.
-        dashboardUrl: goHref("expert", "reviews"),
+        dashboardUrl: reviewsInboxHref,
       });
       // #1653 — the email twin of the bell; the sender never throws.
       await sendNewReviewEmail(
@@ -334,8 +332,7 @@ export async function POST(req: NextRequest) {
           reviewerName,
           rating: newReview.rating,
           comment: newReview.reviewDescription,
-          // #1527 — same fix as the bell above.
-          reviewUrl: goHref("expert", "reviews"),
+          reviewUrl: reviewsInboxHref,
         },
         EMAIL_BUDGET_MS.REQUEST,
       );

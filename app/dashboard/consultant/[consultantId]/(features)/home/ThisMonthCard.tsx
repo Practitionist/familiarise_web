@@ -2,11 +2,20 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ExternalLink, Share2 } from "lucide-react";
 
 import { Section } from "@/components/dashboard/Section";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 
@@ -22,10 +31,6 @@ export function milestoneLine(delivered: number): string | null {
   return next ? `${done} · ${next - delivered} to ${next}` : done;
 }
 
-/**
- * #1527 §7.2 — Home's "This month": sessions, the Available balance (the
- * Earnings page's word for it) and the rating, then one milestone line.
- */
 export function ThisMonthCard({
   consultantId,
   sessionsThisMonth,
@@ -33,6 +38,10 @@ export function ThisMonthCard({
   availablePaise,
   averageRating,
   totalReviews,
+  publishedRatingOneToOne,
+  publishedRatingGroup,
+  ratedClientsOneToOne,
+  ratedEventsGroup,
 }: Readonly<{
   consultantId: string;
   sessionsThisMonth: number | null;
@@ -40,13 +49,72 @@ export function ThisMonthCard({
   availablePaise: number;
   averageRating: number;
   totalReviews: number;
+  publishedRatingOneToOne?: number | null;
+  publishedRatingGroup?: number | null;
+  ratedClientsOneToOne?: number;
+  ratedEventsGroup?: number;
 }>) {
   const base = `/dashboard/consultant/${consultantId}`;
+  const shareHref = useExpertShareHref(consultantId);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [copiedPost, setCopiedPost] = useState(false);
+
   const milestone =
     sessionsDelivered === null ? null : milestoneLine(sessionsDelivered);
+  const reachedMilestone =
+    sessionsDelivered === null
+      ? undefined
+      : MILESTONES.findLast((m) => sessionsDelivered >= m);
+
+  const fullShareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${shareHref}`
+      : shareHref;
+  const milestonePostText = reachedMilestone
+    ? `I just crossed ${reachedMilestone} ${reachedMilestone === 1 ? "delivered session" : "delivered sessions"} mentoring on Familiarise! Book a 1:1 session or join an upcoming cohort with me: ${fullShareUrl}`
+    : "";
+
+  const copyMilestonePost = async () => {
+    try {
+      await navigator.clipboard.writeText(milestonePostText);
+      setCopiedPost(true);
+      setTimeout(() => setCopiedPost(false), 2000);
+    } catch {
+      setCopiedPost(false);
+    }
+  };
+
+  const oneToOneScore =
+    publishedRatingOneToOne !== undefined
+      ? publishedRatingOneToOne !== null
+        ? publishedRatingOneToOne.toFixed(1)
+        : "—"
+      : totalReviews > 0
+        ? averageRating.toFixed(1)
+        : "—";
+  const oneToOneHint =
+    publishedRatingOneToOne !== undefined
+      ? publishedRatingOneToOne !== null && (ratedClientsOneToOne ?? 0) > 0
+        ? `From ${ratedClientsOneToOne} ${ratedClientsOneToOne === 1 ? "learner" : "learners"}`
+        : "1:1 consultations & plans"
+      : totalReviews > 0
+        ? `${totalReviews} ${totalReviews === 1 ? "review" : "reviews"}`
+        : "No 1:1 reviews yet";
+
+  const groupScore =
+    publishedRatingGroup !== undefined && publishedRatingGroup !== null
+      ? publishedRatingGroup.toFixed(1)
+      : "—";
+  const groupHint =
+    publishedRatingGroup !== undefined &&
+    publishedRatingGroup !== null &&
+    (ratedEventsGroup ?? 0) > 0
+      ? `From ${ratedEventsGroup} ${ratedEventsGroup === 1 ? "event" : "events"}`
+      : "Webinars & classes";
+
   return (
     <Section title="This month" variant="card">
-      <StatRow columns={3}>
+      <StatRow columns={4}>
         <Stat
           label="Sessions"
           value={sessionsThisMonth ?? "—"}
@@ -60,19 +128,100 @@ export function ThisMonthCard({
           href={`${base}/earnings`}
         />
         <Stat
-          label="Rating"
-          value={totalReviews > 0 ? averageRating.toFixed(1) : "—"}
-          hint={
-            totalReviews > 0
-              ? `${totalReviews} ${totalReviews === 1 ? "review" : "reviews"}`
-              : "No reviews yet"
-          }
+          label="1:1 rating"
+          value={oneToOneScore}
+          hint={oneToOneHint}
+          href={`${base}/reviews`}
+        />
+        <Stat
+          label="Group rating"
+          value={groupScore}
+          hint={groupHint}
           href={`${base}/reviews`}
         />
       </StatRow>
       {milestone && (
-        <p className="mt-3 text-sm text-muted-foreground">{milestone}</p>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">{milestone}</p>
+          {reachedMilestone && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setShareOpen(true)}
+              className="gap-1.5"
+            >
+              <Share2 className="h-3.5 w-3.5" aria-hidden />
+              Share milestone
+            </Button>
+          )}
+        </div>
       )}
+
+      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Share your milestone</DialogTitle>
+            <DialogDescription>
+              Bookings from your personal link pay half the platform fee (10% vs
+              20% — you keep 90%) and lock that rate for repeat learners.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea
+              readOnly
+              value={milestonePostText}
+              rows={4}
+              aria-label="Milestone social post"
+              className="text-sm"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void copyMilestonePost()}
+              >
+                {copiedPost ? (
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {copiedPost ? "Copied post" : "Copy post & link"}
+              </Button>
+              <Button type="button" size="sm" variant="outline" asChild>
+                <a
+                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(milestonePostText)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Share on X
+                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                </a>
+              </Button>
+              <Button type="button" size="sm" variant="outline" asChild>
+                <a
+                  href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(fullShareUrl)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Share on LinkedIn
+                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                </a>
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShareOpen(false)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Section>
   );
 }
@@ -98,7 +247,7 @@ export function ShareProfilePrompt({
   return (
     <Section
       title="Share your page"
-      description="Most bookings start on your public page. Add the link to your bio, emails and posts."
+      description="Bookings from your personal link pay half the platform fee (10% vs 20% — you keep 90%) and lock that lower rate for repeat bookings. Add your link to your bio, emails, and posts."
       variant="card"
     >
       <div className="flex gap-2">

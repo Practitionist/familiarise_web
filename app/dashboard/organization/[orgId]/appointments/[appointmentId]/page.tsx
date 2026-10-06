@@ -19,6 +19,7 @@ import DetailPageClient from "./DetailPageClient";
 import { DelivererDetailClient } from "./DelivererDetailClient";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+import StreamProvider from "@/providers/StreamProvider";
 import { OrgActorDetail, type OrgActorDetailProps } from "./OrgActorDetail";
 
 type Appointment = TAppointmentDetail["appointment"];
@@ -108,8 +109,11 @@ export default async function OrgAppointmentDetailPage({
 
   const { appointment } = detail;
 
-  // Belongs to THIS org — not merely to some org.
-  if (appointment.organizationId !== orgId) notFound();
+  // Belongs to THIS org — either hosted by this org or funded via a seat payment for this org.
+  const belongsToOrg =
+    appointment.organizationId === orgId ||
+    appointment.payment.some((p) => p.organizationId === orgId);
+  if (!belongsToOrg) notFound();
 
   // 1. The caller is on it. Mirrors the consultee detail page's participation
   // test: requester, trial consultee, or a live seat holder (#1554).
@@ -118,17 +122,20 @@ export default async function OrgAppointmentDetailPage({
     (appointment.consultation?.requestedBy?.id === profile.id ||
       appointment.subscription?.requestedBy?.id === profile.id ||
       appointment.trial?.consulteeProfile?.id === profile.id ||
-      appointment.participants.some((seat) => seat.userId === userId));
+      appointment.participants.some((seat) => seat.userId === userId) ||
+      appointment.payment.some((p) => p.userId === userId));
   if (owns) {
     return (
-      <DisplayZoneProvider zone={viewerZone.zone}>
-        <DetailPageClient
-          orgId={orgId}
-          appointmentId={appointmentId}
-          consulteeId={profile.id}
-          readOnly={suspended}
-        />
-      </DisplayZoneProvider>
+      <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
+        <DisplayZoneProvider zone={viewerZone.zone}>
+          <DetailPageClient
+            orgId={orgId}
+            appointmentId={appointmentId}
+            consulteeId={profile.id}
+            readOnly={suspended}
+          />
+        </DisplayZoneProvider>
+      </StreamProvider>
     );
   }
 
@@ -138,14 +145,16 @@ export default async function OrgAppointmentDetailPage({
     appointmentViewerSides(userId, detail).asConsultant
   ) {
     return (
-      <DisplayZoneProvider zone={viewerZone.zone}>
-        <DelivererDetailClient
-          orgId={orgId}
-          appointmentId={appointmentId}
-          consultantId={consultantProfile.id}
-          readOnly={suspended}
-        />
-      </DisplayZoneProvider>
+      <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
+        <DisplayZoneProvider zone={viewerZone.zone}>
+          <DelivererDetailClient
+            orgId={orgId}
+            appointmentId={appointmentId}
+            consultantId={consultantProfile.id}
+            readOnly={suspended}
+          />
+        </DisplayZoneProvider>
+      </StreamProvider>
     );
   }
 
@@ -188,10 +197,16 @@ export default async function OrgAppointmentDetailPage({
       appointmentId={appointmentId}
       meta={toMetadata(appointment)}
       canCancel={
-        mayCancel && status !== null && fundedByOrg && CANCELLABLE_FROM.includes(status)
+        mayCancel &&
+        status !== null &&
+        fundedByOrg &&
+        CANCELLABLE_FROM.includes(status)
       }
       canReschedule={
-        mayReschedule && status !== null && fundedByOrg && RESCHEDULABLE_FROM.includes(status)
+        mayReschedule &&
+        status !== null &&
+        fundedByOrg &&
+        RESCHEDULABLE_FROM.includes(status)
       }
       canAllocate={
         mayAllocate && status === "PENDING" && fundedByOrg && booking !== null
