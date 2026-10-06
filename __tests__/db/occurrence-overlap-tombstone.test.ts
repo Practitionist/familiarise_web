@@ -20,13 +20,23 @@ const constraintPredicate = (sql: string): string => {
   return match[1].replace(/\s+/g, " ");
 };
 
-describe("occurrence_no_confirmed_overlap tombstone exemption (#1694)", () => {
-  it("exempts soft-deleted rows in the sidecar exclusion constraint", () => {
-    const sidecar = constraintPredicate(
-      read("prisma/sql/check-constraints.sql"),
-    );
+describe("occurrence_no_confirmed_overlap tombstone exemption (#1694 / #2010)", () => {
+  it("exempts soft-deleted and cancelled/rescheduled rows in the sidecar exclusion constraint", () => {
+    const sql = read("prisma/sql/check-constraints.sql");
+    const sidecar = constraintPredicate(sql);
     expect(sidecar).toContain('"consultantProfileId" IS NOT NULL');
     expect(sidecar).toContain('NOT "isTentative"');
     expect(sidecar).toContain('"deletedAt" IS NULL');
+    expect(sidecar).toContain(
+      "\"completionStatus\" NOT IN ('CANCELLED', 'RESCHEDULED')",
+    );
+  });
+
+  it("enforces non-null consultantProfileId on confirmed, non-deleted occurrences (#2010)", () => {
+    const sql = read("prisma/sql/check-constraints.sql");
+    expect(sql).toMatch(
+      /ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"\s+CHECK \("isTentative" OR "deletedAt" IS NOT NULL OR "consultantProfileId" IS NOT NULL\);/,
+    );
   });
 });
+

@@ -15,6 +15,10 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  buildCohostCommitmentFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 const EXTENSION_SECONDS = 15 * 60;
 const EXTENSION_MS = EXTENSION_SECONDS * 1000;
@@ -39,18 +43,34 @@ function buildConflictScope(
           userId: { in: participantUserIds },
           status: {
             in: ["HELD", "CONFIRMED", "ATTENDED"] as (
-              "HELD" | "CONFIRMED" | "ATTENDED"
+              | "HELD"
+              | "CONFIRMED"
+              | "ATTENDED"
             )[],
           },
         },
       },
     },
   };
-  if (consultantProfileId && participantUserIds.length > 0) {
-    return { OR: [{ consultantProfileId }, participantClause] };
+  const consultantClauses = consultantProfileId
+    ? [
+        { consultantProfileId },
+        {
+          appointment: {
+            deletedAt: null,
+            OR: [
+              ...buildOccupiedAppointmentFilter(consultantProfileId),
+              ...buildCohostCommitmentFilter(consultantProfileId),
+            ],
+          },
+        },
+      ]
+    : [];
+  if (consultantClauses.length > 0 && participantUserIds.length > 0) {
+    return { OR: [...consultantClauses, participantClause] };
   }
-  if (consultantProfileId) {
-    return { consultantProfileId };
+  if (consultantClauses.length > 0) {
+    return { OR: consultantClauses };
   }
   return participantClause;
 }

@@ -41,6 +41,10 @@ import {
   recordParticipants,
   transitionParticipant,
 } from "@/lib/booking/participants";
+import {
+  assertConsultantAvailableForWindows,
+  ConsultantScheduleConflictError,
+} from "@/lib/collaborators/availability";
 
 // #1593 — `removeCollaboratorStanding` is deliberately NOT re-exported here:
 // its callers import `@/lib/collaborators/standing` so they never load this
@@ -242,6 +246,56 @@ async function assertPlanOpen(
       "This plan is archived; collaborators cannot be invited or accepted",
       409,
     );
+  }
+}
+
+/**
+ * #2010 — When accepting a collaboration on a plan that already has scheduled
+ * sessions, reject if the invitee has an overlapping commitment on their
+ * calendar (closes the reverse order where scheduling ran before acceptance).
+ */
+async function assertInviteeAvailableForPlanEvents(
+  planType: PlanType,
+  planId: string,
+  consultantProfileId: string,
+  userId: string,
+): Promise<void> {
+  if (!prisma.appointmentOccurrence?.findMany) return;
+
+  const planOccurrences = await prisma.appointmentOccurrence.findMany({
+    where: {
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      appointment: livePlanAppointmentsWhere(planType, planId),
+    },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+    },
+  });
+  if (planOccurrences.length === 0) return;
+
+  try {
+    await assertConsultantAvailableForWindows(prisma, {
+      consultantProfileId,
+      consultantUserId: userId,
+      windows: planOccurrences.map((o) => ({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+      })),
+      excludeAppointmentIds: [
+        ...new Set(planOccurrences.map((o) => o.appointmentId)),
+      ],
+    });
+  } catch (err) {
+    if (err instanceof ConsultantScheduleConflictError) {
+      throw new CollaboratorIneligibleError(
+        "Accepting this collaboration conflicts with another session on your calendar",
+        409,
+      );
+    }
+    throw err;
   }
 }
 
@@ -447,6 +501,12 @@ export async function respondToInvitation(
     const invitee = await assertInviteeEligible(consultantProfileId);
     if (!invitee) return null;
     await assertNotAttendee(planType, planId, invitee.userId);
+    await assertInviteeAvailableForPlanEvents(
+      planType,
+      planId,
+      consultantProfileId,
+      invitee.userId,
+    );
     acceptedUserId = invitee.userId;
   }
 

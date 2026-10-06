@@ -122,6 +122,9 @@ export async function POST(
           error:
             "This session's video room is not available. Please contact support.",
           code: "ROOM_NOT_PROVISIONED",
+          ...(access.occurrence?.id
+            ? { occurrenceId: access.occurrence.id }
+            : {}),
         },
         { status: 409 },
       );

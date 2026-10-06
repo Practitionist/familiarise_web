@@ -82,21 +82,17 @@ ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
 ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
--- #440 — DB-level double-booking backstop for 1:1 bookings. The application
--- guards (consultant allocation lock, #827 confirm-time recheck) are the
--- first line; this exclusion constraint is the last line: two CONFIRMED
--- occurrences for the same consultant may never overlap in time. Scoped to rows
--- carrying the denormalized consultantProfileId — consultation/subscription
--- occurrence creates set it; webinar/class attendee rows deliberately leave it
--- NULL (many same-window rows per event are legitimate there) and legacy
--- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
--- conflict.
--- #1694 — tombstones are exempt. A cancel or a hold-release keeps the row
--- (CANCELLED + deletedAt, isTentative untouched) and every reader treats it as
--- free, so without the exemption re-booking a cancelled time 409s at commit.
--- On a LIVE database do not replay this chunk by hand: run
--- `scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies and swaps
--- under a lock timeout.
+-- #440 / #2010 — DB-level single-active-session overlap backstop across all 5
+-- offering types (Consultation, Subscription, Webinar, Class, Trial). Since
+-- #1554 unified seat rosters into AppointmentParticipant, group events create
+-- one AppointmentOccurrence per session and denormalize the host's
+-- consultantProfileId onto every occurrence. Two CONFIRMED, live occurrences
+-- for the same consultant may never overlap in time; tstzrange is '[)' so
+-- back-to-back occurrences don't conflict.
+-- #1694 / #2010 — tombstones (deletedAt IS NOT NULL) and replaced/cancelled
+-- sessions (completionStatus IN ('CANCELLED', 'RESCHEDULED'), e.g. class
+-- session cancellations that omit deletedAt so they stay countable as misses)
+-- are exempt so a make-up or re-booked slot can take the vacated time.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
@@ -106,7 +102,16 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_over
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&
   )
-  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL);
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL AND "completionStatus" NOT IN ('CANCELLED', 'RESCHEDULED'));
+
+-- SPLIT
+-- #2010 — every confirmed, live occurrence must carry its host
+-- consultantProfileId so occurrence_no_confirmed_overlap cannot be bypassed
+-- by a NULL consultantProfileId across any offering type.
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_confirmed_requires_consultant_chk";
+-- SPLIT
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"
+  CHECK ("isTentative" OR "deletedAt" IS NOT NULL OR "consultantProfileId" IS NOT NULL);
 
 -- SPLIT
 -- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".

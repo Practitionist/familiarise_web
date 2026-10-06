@@ -24,7 +24,11 @@ import {
 } from "@/lib/events/capacity";
 import {
   assertCollaboratorsAvailable,
+  assertCollaboratorsAvailableForWindows,
+  assertConsultantAvailable,
+  assertConsultantAvailableForWindows,
   CollaboratorUnavailableError,
+  ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
@@ -310,19 +314,38 @@ export async function POST(request: NextRequest) {
             webinarPlan.id,
           );
 
+          const effectiveStatus = initialStatus === "DRAFT" ? "DRAFT" : status;
+
+          if (startTime && endTime) {
+            await assertCollaboratorsAvailable(tx, {
+              planType: "WEBINAR",
+              planId: webinarPlan.id,
+              startsAt: startTime,
+              endsAt: endTime,
+            });
+            if (effectiveStatus === "SCHEDULED") {
+              await assertConsultantAvailable(tx, {
+                consultantProfileId,
+                consultantUserId: session.user.id,
+                startsAt: startTime,
+                endsAt: endTime,
+              });
+            }
+          }
+
           const webinar = await tx.webinar.create({
             data: {
               // A session-less webinar is authored, not live — see initialStatus.
               // The client cannot promote it past DRAFT by sending a status.
-              status: initialStatus === "DRAFT" ? "DRAFT" : status,
+              status: effectiveStatus,
               webinarPlan: { connect: { id: webinarPlan.id } },
               // Create the appointment at the same time
               // Ensure startTime and endTime are valid before creating appointment
               appointment:
                 startTime && endTime
                   ? {
-                      // #1554 — one occurrence with the real end (same shape
-                      // as SchedulingService).
+                      // #1554 / #2010 — one occurrence with the real end (same
+                      // shape as SchedulingService); non-tentative when SCHEDULED.
                       create: {
                         appointmentType: "WEBINAR",
                         occurrences: {
@@ -330,7 +353,7 @@ export async function POST(request: NextRequest) {
                             startsAt: startTime,
                             durationInHours,
                             consultantProfileId,
-                            isTentative: false,
+                            isTentative: effectiveStatus !== "SCHEDULED",
                           }),
                         },
                       },
@@ -399,6 +422,14 @@ export async function POST(request: NextRequest) {
     }
     // --- End Zod Error Handling ---
 
+    // AE-2 (#784) — co-host clash is a conflict, not a server error.
+    if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #2010 — host overlap against live hold / co-host commitment / session → 409.
+    if (error instanceof ConsultantScheduleConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     // #784 — owner now denormalized onto group-event slots, so a scheduling
     // overlap trips occurrence_no_confirmed_overlap (23P01): that's a conflict, not 500.
     if (isExclusionViolation(error)) {
@@ -741,10 +772,11 @@ export async function PATCH(request: NextRequest) {
             // tab could flip a CANCELLED (already refunded) event back to
             // SCHEDULED. Publishing is the one edge that leaves DRAFT, and it
             // is not in EVENT_ALLOWED_FROM.SCHEDULED by design (#1060).
+            const publishing =
+              status === "SCHEDULED" && updatedWebinar.status === "DRAFT";
+            const effectiveWebinarStatus = status ?? updatedWebinar.status;
             let statusChanged = false;
             if (status !== undefined && status !== updatedWebinar.status) {
-              const publishing =
-                status === "SCHEDULED" && updatedWebinar.status === "DRAFT";
               await transitionWebinarEvent(tx, {
                 where: { id: updatedWebinar.id },
                 to: status,
@@ -822,6 +854,12 @@ export async function PATCH(request: NextRequest) {
               });
             }
 
+            // Prefer the PATCH-requested owner when transferring the plan so
+            // rewritten atoms land on the new consultant's calendar (and
+            // occurrence_no_confirmed_overlap protects the right profile).
+            const ownerProfileId =
+              consultantProfileId ?? existingPlan.consultantProfileId;
+
             // 8. Replace the appointment's live slot run (#1071) when times change.
             if (startTime && endTime) {
               const appointment = updatedWebinar.appointment;
@@ -883,15 +921,25 @@ export async function PATCH(request: NextRequest) {
                   "Invalid duration for rewriting the occurrence.",
                 );
               }
-              // Prefer the PATCH-requested owner when transferring the plan so
-              // rewritten atoms land on the new consultant's calendar (and
-              // occurrence_no_confirmed_overlap protects the right profile).
-              const ownerProfileId =
-                consultantProfileId ?? existingPlan.consultantProfileId;
               if (!ownerProfileId) {
                 throw new Error(
                   "Webinar plan is missing consultantProfileId; cannot rewrite slots.",
                 );
+              }
+
+              // #2010 — verify host consultant availability against live holds,
+              // co-host commitments, and confirmed sessions when scheduled.
+              if (effectiveWebinarStatus === "SCHEDULED") {
+                await assertConsultantAvailable(tx, {
+                  consultantProfileId: ownerProfileId,
+                  consultantUserId:
+                    existingPlan.consultantProfile?.id === ownerProfileId
+                      ? existingPlan.consultantProfile.userId
+                      : undefined,
+                  startsAt: startTime,
+                  endsAt: endTime,
+                  excludeAppointmentId: appointment?.id ?? null,
+                });
               }
 
               if (appointment) {
@@ -907,7 +955,7 @@ export async function PATCH(request: NextRequest) {
                   startsAt: startTime,
                   durationInHours: effectiveDurationForSlots,
                   consultantProfileId: ownerProfileId,
-                  isTentative: false,
+                  isTentative: effectiveWebinarStatus !== "SCHEDULED",
                 });
               } else {
                 console.log("Creating new appointment + occurrence");
@@ -921,7 +969,7 @@ export async function PATCH(request: NextRequest) {
                         startsAt: startTime,
                         durationInHours: effectiveDurationForSlots,
                         consultantProfileId: ownerProfileId,
-                        isTentative: false,
+                        isTentative: effectiveWebinarStatus !== "SCHEDULED",
                       }),
                     },
                   },
@@ -941,6 +989,39 @@ export async function PATCH(request: NextRequest) {
                   );
                 }
               }
+            } else if (publishing && updatedWebinar.appointment) {
+              // #2010 — publishing a DRAFT webinar whose slot already exists
+              // without resending scheduledAt: verify co-host and host
+              // availability, then flip its occurrence(s) to non-tentative.
+              const liveWindows = updatedWebinar.appointment.occurrences
+                .filter((s) => !isDeadOccurrence(s))
+                .map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt }));
+              if (liveWindows.length > 0) {
+                await assertCollaboratorsAvailableForWindows(tx, {
+                  planType: "WEBINAR",
+                  planId: id,
+                  windows: liveWindows,
+                  excludeAppointmentIds: [updatedWebinar.appointment.id],
+                });
+                if (ownerProfileId) {
+                  await assertConsultantAvailableForWindows(tx, {
+                    consultantProfileId: ownerProfileId,
+                    consultantUserId:
+                      existingPlan.consultantProfile?.id === ownerProfileId
+                        ? existingPlan.consultantProfile.userId
+                        : undefined,
+                    windows: liveWindows,
+                    excludeAppointmentIds: [updatedWebinar.appointment.id],
+                  });
+                }
+              }
+              await tx.appointmentOccurrence?.updateMany?.({
+                where: {
+                  appointmentId: updatedWebinar.appointment.id,
+                  deletedAt: null,
+                },
+                data: { isTentative: false },
+              });
             }
 
             // Retrieve the fully updated webinar after all changes
@@ -1026,6 +1107,10 @@ export async function PATCH(request: NextRequest) {
     }
     // AE-2 — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #2010 — host overlap against live hold / co-host commitment / session → 409.
+    if (error instanceof ConsultantScheduleConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // #784 — owner overlap on the shared exclusion constraint → 409, not 500.

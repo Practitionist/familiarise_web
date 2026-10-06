@@ -775,13 +775,14 @@ export class ScheduleValidationService {
             ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
               ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
               : []),
-            // #1554 — the roster is AppointmentParticipant; the occurrence
-            // window is a separate predicate on the same appointment. The
-            // co-host arm rides an OR beside the roster: an ACCEPTED
-            // webinar/class seat is a commitment without a participation row
-            // (AE-2 #784), and the grid counts it via
-            // buildConsultantOccupancyWhere — validation must too, or green
-            // cells fail only at commit time.
+            // #1554 / #2010 — the roster is AppointmentParticipant; the
+            // occurrence window is a separate predicate on the same
+            // appointment. However, hosted webinars and classes (and legacy
+            // rows) are owned via plan consultantProfileId or occurrence
+            // consultantProfileId without always minting a CONSULTANT
+            // AppointmentParticipant row, and accepted co-host commitments
+            // ride Collaborator (AE-2 #784). Include all three arms so
+            // validateNoConflicts matches buildConsultantOccupancyWhere.
             {
               OR: [
                 {
@@ -793,7 +794,22 @@ export class ScheduleValidationService {
                   },
                 },
                 ...(consultantProfileId
-                  ? [{ OR: buildCohostCommitmentFilter(consultantProfileId) }]
+                  ? [
+                      {
+                        OR: buildOccupiedAppointmentFilter(consultantProfileId),
+                      },
+                      {
+                        OR: buildCohostCommitmentFilter(consultantProfileId),
+                      },
+                      {
+                        occurrences: {
+                          some: {
+                            consultantProfileId,
+                            deletedAt: null,
+                          },
+                        },
+                      },
+                    ]
                   : []),
               ],
             },

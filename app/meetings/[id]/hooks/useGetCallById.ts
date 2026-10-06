@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Call, useStreamVideoClient } from "@stream-io/video-react-sdk";
 
+import { provisionAppointmentMeeting } from "@/actions/stream/meetings/meeting.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 
@@ -163,19 +164,83 @@ export const useGetCallById = (callId: string) => {
           await leaveCallAndReleaseMedia(previousCall.current);
         }
 
-        const response = await fetch(
+        let response = await fetch(
           `/api/meetings/${encodeURIComponent(callId)}/join`,
           { method: "POST" },
         );
 
         if (cancelled) return;
 
+        let healRefusalMessage: string | null = null;
+        if (
+          !response.ok &&
+          (response.status === 409 || response.status === 404)
+        ) {
+          const initialBody = await response
+            .clone()
+            .json()
+            .catch(() => ({}));
+          const isUnprovisionedRoom =
+            response.status === 409 &&
+            initialBody?.code === "ROOM_NOT_PROVISIONED";
+          const isDirectOccurrenceUrl =
+            response.status === 404 &&
+            initialBody?.reason === "not_found" &&
+            /^occurrence-([0-9a-f-]{36})$/i.test(callId);
+
+          if (isUnprovisionedRoom || isDirectOccurrenceUrl) {
+            const slotId =
+              typeof initialBody?.occurrenceId === "string" &&
+              initialBody.occurrenceId.length > 0
+                ? initialBody.occurrenceId
+                : /^occurrence-([0-9a-f-]{36})(?:-r[a-z0-9]+)?$/i.exec(
+                    callId,
+                  )?.[1] ??
+                  (callId.startsWith("occurrence-")
+                    ? callId.slice("occurrence-".length)
+                    : null);
+
+            if (slotId) {
+              try {
+                const provisioned = await provisionAppointmentMeeting({
+                  id: slotId,
+                  startsAt: new Date(0),
+                  endsAt: new Date(0),
+                });
+                if (cancelled) return;
+                if (provisioned.ok) {
+                  response = await fetch(
+                    `/api/meetings/${encodeURIComponent(provisioned.streamCallId || callId)}/join`,
+                    { method: "POST" },
+                  );
+                  if (cancelled) return;
+                } else if (isDirectOccurrenceUrl) {
+                  healRefusalMessage = provisioned.refusal;
+                }
+              } catch (healErr) {
+                streamLogger.warn(
+                  "Self-heal provisioning failed during meeting join",
+                  {
+                    callId,
+                    slotId,
+                    reason:
+                      healErr instanceof Error
+                        ? healErr.message
+                        : String(healErr),
+                  },
+                );
+              }
+            }
+          }
+        }
+
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
           const message =
-            typeof body?.error === "string"
+            healRefusalMessage ??
+            (typeof body?.error === "string"
               ? body.error
-              : "Could not join this meeting.";
+              : "Could not join this meeting.");
 
           // Only an authorization verdict is an access denial. Everything else
           // — Stream down (503), a server fault (500), a bad id (400) — used to

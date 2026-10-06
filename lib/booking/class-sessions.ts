@@ -37,6 +37,11 @@ import type { NovuWorkflowId } from "@/lib/novu/templates/types";
 import { goHref } from "@/lib/dashboard/go";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  assertCollaboratorsAvailable,
+  CollaboratorUnavailableError,
+} from "@/lib/collaborators/availability";
 import { BookingRuleError } from "./booking-rule-error";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
 import {
@@ -407,6 +412,25 @@ export async function scheduleClassMakeUp(
         startsAt.getTime() +
           (source.endsAt.getTime() - source.startsAt.getTime()),
       );
+      const consultantProfileId =
+        source.consultantProfileId ?? hosted.cls.classPlan.consultantProfileId;
+      const planId = (hosted.cls.classPlan as { id?: string }).id;
+      if (planId && "collaborator" in tx) {
+        try {
+          await assertCollaboratorsAvailable(tx, {
+            planType: "CLASS",
+            planId,
+            startsAt,
+            endsAt,
+            excludeAppointmentId: appointmentId,
+          });
+        } catch (err) {
+          if (err instanceof CollaboratorUnavailableError) {
+            throw new BookingRuleError("SCHEDULE_CONFLICT", err.message, 409);
+          }
+          throw err;
+        }
+      }
       let makeUp;
       try {
         makeUp = await tx.appointmentOccurrence.create({
@@ -416,7 +440,7 @@ export async function scheduleClassMakeUp(
             startsAt,
             endsAt,
             isTentative: false,
-            consultantProfileId: source.consultantProfileId,
+            consultantProfileId,
             // A make-up is a session moved on the buyer (decision 6).
             movedAt: now,
           },
@@ -431,6 +455,14 @@ export async function scheduleClassMakeUp(
           throw new BookingRuleError(
             "MAKEUP_EXISTS",
             "A make-up for this session is already scheduled.",
+          );
+        }
+        // #2010 — map PostgreSQL occurrence_no_confirmed_overlap (23P01) to 409.
+        if (isExclusionViolation(err)) {
+          throw new BookingRuleError(
+            "SCHEDULE_CONFLICT",
+            "That time conflicts with another confirmed session on your calendar.",
+            409,
           );
         }
         throw err;
