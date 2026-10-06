@@ -35,8 +35,8 @@ import { liveParticipant } from "@/lib/booking/participants";
 
 interface MeetingSlot {
   id: string;
-  startsAt: Date | string;
-  endsAt: Date | string | null;
+  startsAt?: Date | string;
+  endsAt?: Date | string | null;
   isTentative?: boolean;
   appointmentId?: string | null;
 }
@@ -201,7 +201,7 @@ async function requireEntitledCaller(slotId: string) {
 
 const slotSchema = z.object({
   id: z.string().min(1),
-  startsAt: z.coerce.date(),
+  startsAt: z.coerce.date().optional(),
   endsAt: z.coerce.date().nullable().optional(),
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
@@ -911,9 +911,8 @@ export async function provisionAppointmentMeeting(
 
   const startsAt =
     callProfile?.startsAt ??
-    (anchorSlot.startsAt
-      ? new Date(anchorSlot.startsAt)
-      : authorized.slot.startsAt);
+    authorized.slot.startsAt ??
+    (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date());
 
   const authorUserId = callProfile?.hostUserIds[0] ?? authorized.userId;
 

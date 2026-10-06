@@ -41,6 +41,10 @@ import {
   recordParticipants,
   transitionParticipant,
 } from "@/lib/booking/participants";
+import {
+  assertConsultantAvailableForWindows,
+  ConsultantScheduleConflictError,
+} from "@/lib/collaborators/availability";
 
 // #1593 — `removeCollaboratorStanding` is deliberately NOT re-exported here:
 // its callers import `@/lib/collaborators/standing` so they never load this
@@ -242,6 +246,57 @@ async function assertPlanOpen(
       "This plan is archived; collaborators cannot be invited or accepted",
       409,
     );
+  }
+}
+
+/**
+ * #2010 — When accepting a collaboration on a plan that already has scheduled
+ * sessions, reject if the invitee has an overlapping commitment on their
+ * calendar (closes the reverse order where scheduling ran before acceptance).
+ */
+async function assertInviteeAvailableForPlanEvents(
+  planType: PlanType,
+  planId: string,
+  consultantProfileId: string,
+  userId: string,
+  db: PrismaLike = prisma,
+): Promise<void> {
+  if (typeof db.appointmentOccurrence?.findMany !== "function") return;
+
+  const planOccurrences = await db.appointmentOccurrence.findMany({
+    where: {
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      appointment: livePlanAppointmentsWhere(planType, planId),
+    },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+    },
+  });
+  if (planOccurrences.length === 0) return;
+
+  try {
+    await assertConsultantAvailableForWindows(db, {
+      consultantProfileId,
+      consultantUserId: userId,
+      windows: planOccurrences.map((o) => ({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+      })),
+      excludeAppointmentIds: [
+        ...new Set(planOccurrences.map((o) => o.appointmentId)),
+      ],
+    });
+  } catch (err) {
+    if (err instanceof ConsultantScheduleConflictError) {
+      throw new CollaboratorIneligibleError(
+        "Accepting this collaboration conflicts with another session on your calendar",
+        409,
+      );
+    }
+    throw err;
   }
 }
 
@@ -450,16 +505,40 @@ export async function respondToInvitation(
     acceptedUserId = invitee.userId;
   }
 
-  // CAS in the WHERE: an owner's removal landing between the read and this
-  // write must not be overwritten back to ACCEPTED and reach the split (#1580).
-  const moved = await prisma.collaborator.updateMany({
-    where: { id: collaborationId, status: "PENDING" },
-    data: { status: response, respondedAt: new Date() },
-  });
-  if (moved.count === 0) return null;
-  const updated = await prisma.collaborator.findUniqueOrThrow({
-    where: { id: collaborationId },
-  });
+  // #2010 — Wrap the plan-occurrence conflict check and PENDING -> ACCEPTED CAS
+  // inside a Serializable transaction so concurrent scheduling or acceptance on
+  // another plan cannot bypass the overlap check.
+  const updated = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        if (response === "ACCEPTED" && acceptedUserId) {
+          await assertInviteeAvailableForPlanEvents(
+            planType,
+            planId,
+            consultantProfileId,
+            acceptedUserId,
+            tx,
+          );
+        }
+
+        // CAS in the WHERE: an owner's removal landing between the read and this
+        // write must not be overwritten back to ACCEPTED and reach the split (#1580).
+        const moved = await tx.collaborator.updateMany({
+          where: { id: collaborationId, status: "PENDING" },
+          data: { status: response, respondedAt: new Date() },
+        });
+        if (moved.count === 0) return null;
+        return tx.collaborator.findUniqueOrThrow({
+          where: { id: collaborationId },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        timeout: 10000,
+      },
+    ),
+  );
+  if (!updated) return null;
 
   if (response === "ACCEPTED") {
     await runAcceptedInvitationSideEffects(
