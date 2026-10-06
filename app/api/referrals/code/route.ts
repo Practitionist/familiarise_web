@@ -8,6 +8,14 @@ import {
   referralTerms,
 } from "@/lib/referrals/program-config";
 
+function currentCapWeekKey(now: Date = new Date()): string {
+  const monday = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday.toISOString().slice(0, 10);
+}
+
 async function readActiveFeeWaivers(userId: string, sessionsGranted: number) {
   const profile = await prisma.consultantProfile.findUnique({
     where: { userId },
@@ -26,7 +34,7 @@ async function readActiveFeeWaivers(userId: string, sessionsGranted: number) {
     id: w.id,
     reason: w.reason,
     sessionsRemaining: w.sessionsRemaining,
-    sessionsGranted: Math.max(sessionsGranted, w.sessionsRemaining),
+    sessionsGranted: Math.max(w.sessionsRemaining, sessionsGranted),
     expiresAt: w.expiresAt.toISOString(),
   }));
 }
@@ -49,8 +57,12 @@ export async function GET() {
       sessionsGranted,
     );
     const terms = referralTerms(cfg);
+    const effectiveWeekVests =
+      code && code.capWeek === currentCapWeekKey() ? code.weekVests : 0;
     return NextResponse.json({
-      data: code ? { ...code, weeklyVestCap } : null,
+      data: code
+        ? { ...code, weekVests: effectiveWeekVests, weeklyVestCap }
+        : null,
       terms,
       feeWaivers,
     });
@@ -85,8 +97,10 @@ export async function POST() {
       sessionsGranted,
     );
     const terms = referralTerms(cfg);
+    const effectiveWeekVests =
+      code.capWeek === currentCapWeekKey() ? code.weekVests : 0;
     return NextResponse.json({
-      data: { ...code, weeklyVestCap },
+      data: { ...code, weekVests: effectiveWeekVests, weeklyVestCap },
       terms,
       feeWaivers,
     });

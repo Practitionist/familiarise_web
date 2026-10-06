@@ -188,11 +188,18 @@ export function OfferingEditorContainer({
   React.useEffect(() => {
     const nextKey =
       planId ?? (copySourceId ? `copy:${copySourceId}` : undefined);
-    if (nextKey && hydratedRef.current !== nextKey) {
+    if (hydratedRef.current !== nextKey) {
       hydratedRef.current = nextKey;
+      setStagedImage(null);
+      let sourceValues: Record<string, unknown> | undefined;
+      if (nextKey) {
+        sourceValues = copySource
+          ? duplicateFormValues(copySource)
+          : existingPlan;
+      }
       form.reset({
         ...adapter.defaults,
-        ...(copySource ? duplicateFormValues(copySource) : existingPlan),
+        ...sourceValues,
       });
     }
   }, [adapter.defaults, copySource, copySourceId, existingPlan, form, planId]);

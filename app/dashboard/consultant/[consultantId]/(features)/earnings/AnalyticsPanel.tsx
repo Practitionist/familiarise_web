@@ -150,11 +150,13 @@ export default function AnalyticsPanel({
     monthly.some((m) => m.count > 0);
 
   const attribution = earningsData?.attributionBreakdown;
-  const ownLinkPaise = attribution?.ownLinkPaise ?? 0;
-  const marketplacePaise = attribution?.marketplacePaise ?? 0;
-  const totalB2CPaise = ownLinkPaise + marketplacePaise;
+  const ownLinkPaise = attribution?.ownLinkPaise;
+  const marketplacePaise = attribution?.marketplacePaise;
+  const totalB2CPaise = (ownLinkPaise ?? 0) + (marketplacePaise ?? 0);
   const ownLinkPct =
-    totalB2CPaise > 0 ? Math.round((ownLinkPaise / totalB2CPaise) * 100) : 0;
+    totalB2CPaise > 0
+      ? Math.round(((ownLinkPaise ?? 0) / totalB2CPaise) * 100)
+      : 0;
   const marketplacePct = totalB2CPaise > 0 ? 100 - ownLinkPct : 0;
   const repeatStats = earningsData?.repeatLearnerStats;
 
@@ -191,37 +193,46 @@ export default function AnalyticsPanel({
           <DashboardGrid columns={3}>
             <StatCard
               title="Own-Link Revenue"
-              value={formatInr(ownLinkPaise)}
+              value={
+                earningsError || ownLinkPaise === undefined
+                  ? "—"
+                  : formatInr(ownLinkPaise)
+              }
               icon={Link2}
               variant="success"
               subtitle={
-                totalB2CPaise > 0
-                  ? `${ownLinkPct}% of B2C · ${attribution?.ownLinkCount ?? 0} sessions (10% fee)`
+                attribution && totalB2CPaise > 0
+                  ? `${ownLinkPct}% of B2C · ${attribution.ownLinkCount} sessions (10% standard fee)`
                   : "Keep 90% when learners book via your link"
               }
-              tooltip="Net B2C revenue from learners who arrived via your personal link (10% platform fee, locked for repeat bookings)."
+              tooltip="Net B2C revenue from learners who arrived via your personal link (10% standard platform fee, locked for repeat bookings)."
             />
             <StatCard
               title="Marketplace Revenue"
-              value={formatInr(marketplacePaise)}
+              value={
+                earningsError || marketplacePaise === undefined
+                  ? "—"
+                  : formatInr(marketplacePaise)
+              }
               icon={Store}
               subtitle={
-                totalB2CPaise > 0
-                  ? `${marketplacePct}% of B2C · ${attribution?.marketplaceCount ?? 0} sessions (20% fee)`
+                attribution && totalB2CPaise > 0
+                  ? `${marketplacePct}% of B2C · ${attribution.marketplaceCount} sessions (20% standard fee)`
                   : "Keep 80% on Marketplace-discovered bookings"
               }
-              tooltip="Net B2C revenue from learners who discovered you through the Familiarise Marketplace (20% platform fee)."
+              tooltip="Net B2C revenue from learners who discovered you through the Familiarise Marketplace (20% standard platform fee)."
             />
             <StatCard
               title="Repeat Learner Rate"
               value={
-                repeatStats && repeatStats.repeatLearnerRate !== null
+                !earningsError &&
+                typeof repeatStats?.repeatLearnerRate === "number"
                   ? `${repeatStats.repeatLearnerRate}%`
                   : "—"
               }
               icon={Repeat}
               subtitle={
-                repeatStats && repeatStats.totalLearners > 0
+                (repeatStats?.totalLearners ?? 0) > 0 && repeatStats
                   ? `${repeatStats.repeatLearners} of ${repeatStats.totalLearners} learners booked 2+ sessions`
                   : "Learners with 2+ paid sessions"
               }

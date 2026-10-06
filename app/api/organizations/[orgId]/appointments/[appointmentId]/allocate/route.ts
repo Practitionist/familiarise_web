@@ -267,8 +267,7 @@ export async function POST(
           ...notificationScope(orgId, appointment.organization?.name),
           appointmentId: appointment.id,
           appointmentType: eventType.toUpperCase(),
-          consultantName:
-            planArm.consultantProfile?.user?.name ?? "Consultant",
+          consultantName: planArm.consultantProfile?.user?.name ?? "Consultant",
           consulteeName: planArm.consulteeName,
           planTitle: planArm.planTitle,
           ...(body.slots?.[0] ? { dateTime: body.slots[0] } : {}),
@@ -276,9 +275,7 @@ export async function POST(
         });
       } catch (notifyErr) {
         Sentry.captureException(
-          notifyErr instanceof Error
-            ? notifyErr
-            : new Error(String(notifyErr)),
+          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
           { tags: { subsystem: "notifications", op: "org.allocate" } },
         );
       }

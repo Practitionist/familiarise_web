@@ -75,6 +75,12 @@ function buildClaimHref(entry: WaitlistOfferEntry): string {
   return `/explore/experts?waitlist=${encodeURIComponent(entry.id)}`;
 }
 
+function resolveOfferLabel(offer: WaitlistOfferEntry): string {
+  if (offer.title) return offer.title;
+  if (offer.consultantName) return `Session with ${offer.consultantName}`;
+  return "Waitlist spot";
+}
+
 export function WaitlistOfferBanner({
   entries,
   viewerZone,
@@ -152,11 +158,7 @@ export function WaitlistOfferBanner({
           viewerZone,
         );
         const claimHref = buildClaimHref(offer);
-        const label =
-          offer.title ??
-          (offer.consultantName
-            ? `Session with ${offer.consultantName}`
-            : "Waitlist spot");
+        const label = resolveOfferLabel(offer);
 
         return (
           <div

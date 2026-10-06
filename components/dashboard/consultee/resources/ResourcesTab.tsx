@@ -69,15 +69,24 @@ const OFFERING_FILTER_OPTIONS: {
  */
 type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
 
-function matchesResourceQuery(event: EventResource, query: string): boolean {
+function matchesResourceQuery(
+  event: EventResource,
+  query: string,
+  artifact: ResourceArtifact = "both",
+): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (event.planTitle.toLowerCase().includes(q)) return true;
+  if ((event.contextTitle ?? "").toLowerCase().includes(q)) return true;
   if ((event.consultantName ?? "").toLowerCase().includes(q)) return true;
-  if (event.recordings.some((r) => r.title.toLowerCase().includes(q))) {
+  if (
+    artifact !== "materials" &&
+    event.recordings.some((r) => r.title.toLowerCase().includes(q))
+  ) {
     return true;
   }
   if (
+    artifact !== "recordings" &&
     event.materials.some(
       (m) =>
         (m.originalName || m.fileName).toLowerCase().includes(q) ||
@@ -93,9 +102,10 @@ function filterEvents(
   events: EventResource[],
   filter: FilterOption,
   searchQuery = "",
+  artifact: ResourceArtifact = "both",
 ): EventResource[] {
   return events.filter((e) => {
-    if (!matchesResourceQuery(e, searchQuery)) return false;
+    if (!matchesResourceQuery(e, searchQuery, artifact)) return false;
     if (filter === "all") return true;
     if (filter === "with_recordings") return e.recordings.length > 0;
     if (filter === "with_materials") return e.materials.length > 0;
@@ -120,6 +130,12 @@ function isFilterOption(value: string): value is FilterOption {
     value === "with_materials" ||
     value === "completed"
   );
+}
+
+function resolveArtifactNoun(artifact: ResourceArtifact): string {
+  if (artifact === "materials") return "documents";
+  if (artifact === "recordings") return "recordings";
+  return "resources";
 }
 
 export function ResourcesTab({
@@ -175,6 +191,7 @@ export function ResourcesTab({
           keepOffering("consultation", data.consultations),
           resourceFilter,
           searchQuery,
+          artifact,
         ),
         sortDir,
       ),
@@ -183,6 +200,7 @@ export function ResourcesTab({
           keepOffering("subscription", data.subscriptions),
           resourceFilter,
           searchQuery,
+          artifact,
         ),
         sortDir,
       ),
@@ -191,6 +209,7 @@ export function ResourcesTab({
           keepOffering("webinar", data.webinars),
           resourceFilter,
           searchQuery,
+          artifact,
         ),
         sortDir,
       ),
@@ -199,6 +218,7 @@ export function ResourcesTab({
           keepOffering("class", data.classes),
           resourceFilter,
           searchQuery,
+          artifact,
         ),
         sortDir,
       ),
@@ -207,11 +227,19 @@ export function ResourcesTab({
           offeringFilter === "all" ? (data.trials ?? []) : [],
           resourceFilter,
           searchQuery,
+          artifact,
         ),
         sortDir,
       ),
     };
-  }, [artifactData, resourceFilter, searchQuery, offeringFilter, sortDir]);
+  }, [
+    artifactData,
+    resourceFilter,
+    searchQuery,
+    offeringFilter,
+    sortDir,
+    artifact,
+  ]);
 
   if (!data || !artifactData || !filteredData) return null;
 
@@ -241,12 +269,7 @@ export function ResourcesTab({
     );
   }
 
-  const artifactNoun =
-    artifact === "materials"
-      ? "documents"
-      : artifact === "recordings"
-        ? "recordings"
-        : "resources";
+  const artifactNoun = resolveArtifactNoun(artifact);
 
   const isFiltered =
     resourceFilter !== "all" ||

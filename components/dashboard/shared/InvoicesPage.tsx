@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   FileText,
   Download,
   Building2,
   Calendar,
   ExternalLink,
+  RefreshCw,
   Search,
 } from "lucide-react";
 
@@ -74,6 +76,13 @@ export interface InvoicesPageProps {
   apiEndpoint: string;
   dashboardBasePath?: string;
   queryKeyPrefix: string;
+}
+
+interface InvoicePagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }
 
 interface OrgInvoiceItem {
@@ -145,228 +154,210 @@ function getStatusBadge(status: string) {
   );
 }
 
-function OrganizationInvoicesTab({
-  apiEndpoint,
-  dashboardBasePath,
-  queryKeyPrefix,
-}: Readonly<{
-  apiEndpoint: string;
-  dashboardBasePath: string;
-  queryKeyPrefix: string;
-}>) {
+function useDebouncedInvoiceFilters() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useQuery<{
-    invoices: OrgInvoiceItem[];
-    pagination: {
-      page: number;
-      limit: number;
-      total: number;
-      totalPages: number;
-    };
-    summary: {
-      totalPaidPaise: number;
-      totalIssuedPaise: number;
-      totalOverduePaise: number;
-      counts: Record<string, number>;
-    };
-  }>({
-    queryKey: [`${queryKeyPrefix}-b2b`, statusFilter, q, page],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        scope: "b2b",
-        page: page.toString(),
-        limit: "20",
-      });
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (q.trim()) params.set("q", q.trim());
-      const res = await fetch(`${apiEndpoint}?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch organization invoices");
-      return res.json();
-    },
-    placeholderData: keepPreviousData,
-  });
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQ(q.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [q]);
 
-  const invoices = data?.invoices ?? [];
-  const pagination = data?.pagination;
-  const summary = data?.summary;
+  const handleSearchChange = (value: string) => {
+    setQ(value);
+    setPage(1);
+  };
+
+  const handleStatusChange = (value: string) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
+
+  return {
+    statusFilter,
+    q,
+    debouncedQ,
+    page,
+    setPage,
+    handleSearchChange,
+    handleStatusChange,
+  };
+}
+
+function InvoiceAmountAndPdfAction({
+  totalPaise,
+  taxPaise,
+  currency,
+  invoiceNumber,
+  pdfHref,
+}: Readonly<{
+  totalPaise: number;
+  taxPaise: number;
+  currency: string;
+  invoiceNumber: string;
+  pdfHref: string | null;
+}>) {
+  return (
+    <div className="flex items-center gap-4">
+      <div className="text-right">
+        <p className="font-semibold">
+          {formatCurrencyAmount(totalPaise, currency)}
+        </p>
+        {taxPaise > 0 && (
+          <p className="text-[10px] text-muted-foreground">
+            incl. {formatCurrencyAmount(taxPaise, currency)} GST
+          </p>
+        )}
+      </div>
+      {pdfHref && (
+        <Button variant="ghost" size="icon" asChild>
+          <a
+            href={pdfHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Download PDF for ${invoiceNumber}`}
+          >
+            <Download className="h-4 w-4" />
+          </a>
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function InvoicesTabScaffold<T extends { id: string }>({
+  stats,
+  searchAriaLabel,
+  searchPlaceholder,
+  searchValue,
+  onSearchChange,
+  statusAriaLabel,
+  statusValue,
+  statusOptions,
+  onStatusChange,
+  cardTitle,
+  isLoading,
+  isError,
+  onRetry,
+  emptyMessage,
+  items,
+  renderRow,
+  pagination,
+  page,
+  onPageChange,
+}: Readonly<{
+  stats: Array<{
+    title: string;
+    value: string | number;
+    subtitle?: string;
+    variant?: "default" | "success" | "warning" | "danger";
+  }>;
+  searchAriaLabel: string;
+  searchPlaceholder: string;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  statusAriaLabel: string;
+  statusValue: string;
+  statusOptions: Array<{ value: string; label: string }>;
+  onStatusChange: (value: string) => void;
+  cardTitle: string;
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+  emptyMessage: string;
+  items: T[];
+  renderRow: (item: T) => ReactNode;
+  pagination: InvoicePagination | undefined;
+  page: number;
+  onPageChange: (nextPage: number) => void;
+}>) {
+  let content: ReactNode;
+  if (isLoading) {
+    content = (
+      <div className="space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
+    );
+  } else if (isError && items.length === 0) {
+    content = (
+      <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <span>Failed to load invoices.</span>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
+    );
+  } else if (items.length === 0) {
+    content = (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        {emptyMessage}
+      </p>
+    );
+  } else {
+    content = <div className="divide-y">{items.map(renderRow)}</div>;
+  }
 
   return (
     <div className="space-y-6">
       <DashboardGrid columns={4}>
-        <StatCard
-          title="Total B2B Invoices"
-          value={pagination?.total ?? 0}
-          icon={FileText}
-          loading={isLoading}
-        />
-        <StatCard
-          title="Paid"
-          value={formatCurrencyAmount(summary?.totalPaidPaise ?? 0, "INR")}
-          subtitle={`${summary?.counts?.PAID ?? 0} invoices`}
-          icon={FileText}
-          variant="success"
-          loading={isLoading}
-        />
-        <StatCard
-          title="Issued (Pending)"
-          value={formatCurrencyAmount(summary?.totalIssuedPaise ?? 0, "INR")}
-          subtitle={`${summary?.counts?.ISSUED ?? 0} invoices`}
-          icon={FileText}
-          variant="warning"
-          loading={isLoading}
-        />
-        <StatCard
-          title="Overdue"
-          value={formatCurrencyAmount(summary?.totalOverduePaise ?? 0, "INR")}
-          subtitle={`${summary?.counts?.OVERDUE ?? 0} invoices`}
-          icon={FileText}
-          variant="danger"
-          loading={isLoading}
-        />
+        {stats.map((stat) => (
+          <StatCard
+            key={stat.title}
+            title={stat.title}
+            value={stat.value}
+            subtitle={stat.subtitle}
+            icon={FileText}
+            variant={stat.variant}
+            loading={isLoading}
+          />
+        ))}
       </DashboardGrid>
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            aria-label="Search organization invoices"
+            aria-label={searchAriaLabel}
             className="pl-8"
-            placeholder="Search invoice #, organization name, GSTIN…"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
+            placeholder={searchPlaceholder}
+            value={searchValue}
+            onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
 
-        <Select
-          value={statusFilter}
-          onValueChange={(v) => {
-            setStatusFilter(v);
-            setPage(1);
-          }}
-        >
+        <Select value={statusValue} onValueChange={onStatusChange}>
           <SelectTrigger
-            aria-label="Filter B2B status"
+            aria-label={statusAriaLabel}
             className="w-full sm:w-44"
           >
             <SelectValue placeholder="Filter status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All Statuses</SelectItem>
-            <SelectItem value="PAID">Paid</SelectItem>
-            <SelectItem value="ISSUED">Issued</SelectItem>
-            <SelectItem value="OVERDUE">Overdue</SelectItem>
-            <SelectItem value="DRAFT">Draft</SelectItem>
-            <SelectItem value="CANCELLED">Cancelled</SelectItem>
-            <SelectItem value="VOID">Void</SelectItem>
-            <SelectItem value="REFUNDED">Refunded</SelectItem>
+            {statusOptions.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">
-            Organization Invoices ({pagination?.total ?? 0})
-          </CardTitle>
+          <CardTitle className="text-base">{cardTitle}</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : invoices.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No organization invoices found
-            </p>
-          ) : (
-            <div className="divide-y">
-              {invoices.map((inv) => {
-                const taxPaise = inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
-                const pdfDownloadHref =
-                  inv.pdfUrl ||
-                  (inv.status !== "DRAFT"
-                    ? `/api/organizations/${inv.organization.id}/billing-account/invoices/${inv.id}/pdf`
-                    : null);
-                return (
-                  <div
-                    key={inv.id}
-                    className="flex items-center justify-between py-3.5 text-sm"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-medium">
-                          {inv.invoiceNumber}
-                        </span>
-                        {getStatusBadge(inv.status)}
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <a
-                          href={`${dashboardBasePath}/organizations/${inv.organization.id}`}
-                          className="flex items-center gap-1 hover:underline"
-                        >
-                          <Building2 className="h-3 w-3" />
-                          {inv.organization.name}
-                          <ExternalLink className="h-2.5 w-2.5" />
-                        </a>
-                        {inv.dueDate && (
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            Due: {new Date(inv.dueDate).toLocaleDateString()}
-                          </span>
-                        )}
-                        {inv.paidAt && (
-                          <span className="text-emerald-600">
-                            Paid: {new Date(inv.paidAt).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="font-semibold">
-                          {formatCurrencyAmount(
-                            inv.totalPaise,
-                            inv.displayCurrency,
-                          )}
-                        </p>
-                        {taxPaise > 0 && (
-                          <p className="text-[10px] text-muted-foreground">
-                            incl.{" "}
-                            {formatCurrencyAmount(
-                              taxPaise,
-                              inv.displayCurrency,
-                            )}{" "}
-                            GST
-                          </p>
-                        )}
-                      </div>
-                      {pdfDownloadHref && (
-                        <Button variant="ghost" size="icon" asChild>
-                          <a
-                            href={pdfDownloadHref}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label={`Download PDF for ${inv.invoiceNumber}`}
-                          >
-                            <Download className="h-4 w-4" />
-                          </a>
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {content}
 
           {pagination && pagination.totalPages > 1 && (
             <div className="flex items-center justify-between pt-4 border-t mt-4">
@@ -378,7 +369,7 @@ function OrganizationInvoicesTab({
                   variant="outline"
                   size="sm"
                   disabled={page <= 1}
-                  onClick={() => setPage(page - 1)}
+                  onClick={() => onPageChange(page - 1)}
                 >
                   Previous
                 </Button>
@@ -386,7 +377,7 @@ function OrganizationInvoicesTab({
                   variant="outline"
                   size="sm"
                   disabled={page >= pagination.totalPages}
-                  onClick={() => setPage(page + 1)}
+                  onClick={() => onPageChange(page + 1)}
                 >
                   Next
                 </Button>
@@ -399,6 +390,170 @@ function OrganizationInvoicesTab({
   );
 }
 
+const B2B_STATUS_OPTIONS = [
+  { value: "ALL", label: "All Statuses" },
+  { value: "PAID", label: "Paid" },
+  { value: "ISSUED", label: "Issued" },
+  { value: "OVERDUE", label: "Overdue" },
+  { value: "DRAFT", label: "Draft" },
+  { value: "CANCELLED", label: "Cancelled" },
+  { value: "VOID", label: "Void" },
+  { value: "REFUNDED", label: "Refunded" },
+];
+
+const B2C_STATUS_OPTIONS = [
+  { value: "ALL", label: "All Statuses" },
+  { value: "ISSUED", label: "Issued" },
+  { value: "CREDIT_NOTED", label: "Credit Noted" },
+];
+
+function OrganizationInvoicesTab({
+  apiEndpoint,
+  dashboardBasePath,
+  queryKeyPrefix,
+}: Readonly<{
+  apiEndpoint: string;
+  dashboardBasePath: string;
+  queryKeyPrefix: string;
+}>) {
+  const {
+    statusFilter,
+    q,
+    debouncedQ,
+    page,
+    setPage,
+    handleSearchChange,
+    handleStatusChange,
+  } = useDebouncedInvoiceFilters();
+
+  const { data, isLoading, isError, refetch } = useQuery<{
+    invoices: OrgInvoiceItem[];
+    pagination: InvoicePagination;
+    summary: {
+      totalPaidPaise: number;
+      totalIssuedPaise: number;
+      totalOverduePaise: number;
+      counts: Record<string, number>;
+    };
+  }>({
+    queryKey: [`${queryKeyPrefix}-b2b`, statusFilter, debouncedQ, page],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        scope: "b2b",
+        page: page.toString(),
+        limit: "20",
+      });
+      if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (debouncedQ) params.set("q", debouncedQ);
+      const res = await fetch(`${apiEndpoint}?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch organization invoices");
+      return res.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const invoices = data?.invoices ?? [];
+  const pagination = data?.pagination;
+  const summary = data?.summary;
+
+  return (
+    <InvoicesTabScaffold<OrgInvoiceItem>
+      stats={[
+        {
+          title: "Total B2B Invoices",
+          value: pagination?.total ?? 0,
+        },
+        {
+          title: "Paid",
+          value: formatCurrencyAmount(summary?.totalPaidPaise ?? 0, "INR"),
+          subtitle: `${summary?.counts?.PAID ?? 0} invoices`,
+          variant: "success",
+        },
+        {
+          title: "Issued (Pending)",
+          value: formatCurrencyAmount(summary?.totalIssuedPaise ?? 0, "INR"),
+          subtitle: `${summary?.counts?.ISSUED ?? 0} invoices`,
+          variant: "warning",
+        },
+        {
+          title: "Overdue",
+          value: formatCurrencyAmount(summary?.totalOverduePaise ?? 0, "INR"),
+          subtitle: `${summary?.counts?.OVERDUE ?? 0} invoices`,
+          variant: "danger",
+        },
+      ]}
+      searchAriaLabel="Search organization invoices"
+      searchPlaceholder="Search invoice #, organization name, GSTIN…"
+      searchValue={q}
+      onSearchChange={handleSearchChange}
+      statusAriaLabel="Filter B2B status"
+      statusValue={statusFilter}
+      statusOptions={B2B_STATUS_OPTIONS}
+      onStatusChange={handleStatusChange}
+      cardTitle={`Organization Invoices (${pagination?.total ?? 0})`}
+      isLoading={isLoading}
+      isError={isError}
+      onRetry={() => void refetch()}
+      emptyMessage="No organization invoices found"
+      items={invoices}
+      pagination={pagination}
+      page={page}
+      onPageChange={setPage}
+      renderRow={(inv) => {
+        const taxPaise = inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
+        let pdfDownloadHref: string | null = inv.pdfUrl;
+        if (!pdfDownloadHref && inv.status !== "DRAFT") {
+          pdfDownloadHref = `/api/organizations/${inv.organization.id}/billing-account/invoices/${inv.id}/pdf`;
+        }
+        return (
+          <div
+            key={inv.id}
+            className="flex items-center justify-between py-3.5 text-sm"
+          >
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-medium">
+                  {inv.invoiceNumber}
+                </span>
+                {getStatusBadge(inv.status)}
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <a
+                  href={`${dashboardBasePath}/organizations/${inv.organization.id}`}
+                  className="flex items-center gap-1 hover:underline"
+                >
+                  <Building2 className="h-3 w-3" />
+                  {inv.organization.name}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+                {inv.dueDate && (
+                  <span className="flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    Due: {new Date(inv.dueDate).toLocaleDateString()}
+                  </span>
+                )}
+                {inv.paidAt && (
+                  <span className="text-emerald-600">
+                    Paid: {new Date(inv.paidAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <InvoiceAmountAndPdfAction
+              totalPaise={inv.totalPaise}
+              taxPaise={taxPaise}
+              currency={inv.displayCurrency}
+              invoiceNumber={inv.invoiceNumber}
+              pdfHref={pdfDownloadHref}
+            />
+          </div>
+        );
+      }}
+    />
+  );
+}
+
 function ConsumerInvoicesTab({
   apiEndpoint,
   dashboardBasePath,
@@ -408,18 +563,19 @@ function ConsumerInvoicesTab({
   dashboardBasePath: string;
   queryKeyPrefix: string;
 }>) {
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
+  const {
+    statusFilter,
+    q,
+    debouncedQ,
+    page,
+    setPage,
+    handleSearchChange,
+    handleStatusChange,
+  } = useDebouncedInvoiceFilters();
 
-  const { data, isLoading } = useQuery<{
+  const { data, isLoading, isError, refetch } = useQuery<{
     invoices: ConsumerInvoiceItem[];
-    pagination: {
-      page: number;
-      limit: number;
-      total: number;
-      totalPages: number;
-    };
+    pagination: InvoicePagination;
     summary: {
       totalInvoices: number;
       issuedCount: number;
@@ -428,7 +584,7 @@ function ConsumerInvoicesTab({
       taxableValuePaise: number;
     };
   }>({
-    queryKey: [`${queryKeyPrefix}-b2c`, statusFilter, q, page],
+    queryKey: [`${queryKeyPrefix}-b2c`, statusFilter, debouncedQ, page],
     queryFn: async () => {
       const params = new URLSearchParams({
         scope: "b2c",
@@ -436,7 +592,7 @@ function ConsumerInvoicesTab({
         limit: "20",
       });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (q.trim()) params.set("q", q.trim());
+      if (debouncedQ) params.set("q", debouncedQ);
       const res = await fetch(`${apiEndpoint}?${params}`);
       if (!res.ok) throw new Error("Failed to fetch consumer invoices");
       return res.json();
@@ -449,194 +605,98 @@ function ConsumerInvoicesTab({
   const summary = data?.summary;
 
   return (
-    <div className="space-y-6">
-      <DashboardGrid columns={4}>
-        <StatCard
-          title="Total B2C Invoices"
-          value={summary?.totalInvoices ?? 0}
-          icon={FileText}
-          loading={isLoading}
-        />
-        <StatCard
-          title="Gross Invoiced"
-          value={formatCurrencyAmount(summary?.totalValuePaise ?? 0, "INR")}
-          subtitle={`${summary?.issuedCount ?? 0} active`}
-          icon={FileText}
-          variant="success"
-          loading={isLoading}
-        />
-        <StatCard
-          title="Taxable Supply"
-          value={formatCurrencyAmount(summary?.taxableValuePaise ?? 0, "INR")}
-          icon={FileText}
-          loading={isLoading}
-        />
-        <StatCard
-          title="Credit Noted"
-          value={summary?.creditNotedCount ?? 0}
-          subtitle="Reversed via s.34 CN"
-          icon={FileText}
-          variant="warning"
-          loading={isLoading}
-        />
-      </DashboardGrid>
-
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            aria-label="Search consumer invoices"
-            className="pl-8"
-            placeholder="Search invoice #, buyer name, email, or payment ID…"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-
-        <Select
-          value={statusFilter}
-          onValueChange={(v) => {
-            setStatusFilter(v);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger
-            aria-label="Filter B2C status"
-            className="w-full sm:w-44"
+    <InvoicesTabScaffold<ConsumerInvoiceItem>
+      stats={[
+        {
+          title: "Total B2C Invoices",
+          value: summary?.totalInvoices ?? 0,
+        },
+        {
+          title: "Gross Invoiced",
+          value: formatCurrencyAmount(summary?.totalValuePaise ?? 0, "INR"),
+          subtitle: `${summary?.issuedCount ?? 0} active`,
+          variant: "success",
+        },
+        {
+          title: "Taxable Supply",
+          value: formatCurrencyAmount(summary?.taxableValuePaise ?? 0, "INR"),
+        },
+        {
+          title: "Credit Noted",
+          value: summary?.creditNotedCount ?? 0,
+          subtitle: "Reversed via s.34 CN",
+          variant: "warning",
+        },
+      ]}
+      searchAriaLabel="Search consumer invoices"
+      searchPlaceholder="Search invoice #, buyer name, email, or payment ID…"
+      searchValue={q}
+      onSearchChange={handleSearchChange}
+      statusAriaLabel="Filter B2C status"
+      statusValue={statusFilter}
+      statusOptions={B2C_STATUS_OPTIONS}
+      onStatusChange={handleStatusChange}
+      cardTitle={`Consumer Tax Invoices (${pagination?.total ?? 0})`}
+      isLoading={isLoading}
+      isError={isError}
+      onRetry={() => void refetch()}
+      emptyMessage="No consumer tax invoices found"
+      items={invoices}
+      pagination={pagination}
+      page={page}
+      onPageChange={setPage}
+      renderRow={(inv) => {
+        const taxPaise = inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
+        return (
+          <div
+            key={inv.id}
+            className="flex items-center justify-between py-3.5 text-sm"
           >
-            <SelectValue placeholder="Filter status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All Statuses</SelectItem>
-            <SelectItem value="ISSUED">Issued</SelectItem>
-            <SelectItem value="CREDIT_NOTED">Credit Noted</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">
-            Consumer Tax Invoices ({pagination?.total ?? 0})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : invoices.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No consumer tax invoices found
-            </p>
-          ) : (
-            <div className="divide-y">
-              {invoices.map((inv) => {
-                const taxPaise = inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
-                return (
-                  <div
-                    key={inv.id}
-                    className="flex items-center justify-between py-3.5 text-sm"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-medium">
-                          {inv.invoiceNumber}
-                        </span>
-                        {getStatusBadge(inv.status)}
-                        {inv.creditNoteNumber && (
-                          <Badge
-                            variant="outline"
-                            className="font-mono text-xs"
-                          >
-                            CN: {inv.creditNoteNumber}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <a
-                          href={`${dashboardBasePath}/users/${inv.userId}`}
-                          className="flex items-center gap-1 hover:underline"
-                        >
-                          {inv.buyerName}
-                          {inv.buyerEmail ? ` (${inv.buyerEmail})` : ""}
-                          <ExternalLink className="h-2.5 w-2.5" />
-                        </a>
-                        <a
-                          href={`${dashboardBasePath}/payments/${inv.paymentId}`}
-                          className="font-mono hover:underline"
-                        >
-                          Payment: {inv.paymentId.slice(0, 10)}…
-                        </a>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          Issued: {new Date(inv.issuedAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="font-semibold">
-                          {formatCurrencyAmount(inv.totalPaise, inv.currency)}
-                        </p>
-                        {taxPaise > 0 && (
-                          <p className="text-[10px] text-muted-foreground">
-                            incl. {formatCurrencyAmount(taxPaise, inv.currency)}{" "}
-                            GST
-                          </p>
-                        )}
-                      </div>
-                      <Button variant="ghost" size="icon" asChild>
-                        <a
-                          href={inv.pdfUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Download PDF for ${inv.invoiceNumber}`}
-                        >
-                          <Download className="h-4 w-4" />
-                        </a>
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {pagination && pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t mt-4">
-              <p className="text-xs text-muted-foreground">
-                Page {pagination.page} of {pagination.totalPages}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage(page - 1)}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-medium">
+                  {inv.invoiceNumber}
+                </span>
+                {getStatusBadge(inv.status)}
+                {inv.creditNoteNumber && (
+                  <Badge variant="outline" className="font-mono text-xs">
+                    CN: {inv.creditNoteNumber}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <a
+                  href={`${dashboardBasePath}/users/${inv.userId}`}
+                  className="flex items-center gap-1 hover:underline"
                 >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= pagination.totalPages}
-                  onClick={() => setPage(page + 1)}
+                  {inv.buyerName}
+                  {inv.buyerEmail ? ` (${inv.buyerEmail})` : ""}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+                <a
+                  href={`${dashboardBasePath}/payments/${inv.paymentId}`}
+                  className="font-mono hover:underline"
                 >
-                  Next
-                </Button>
+                  Payment: {inv.paymentId.slice(0, 10)}…
+                </a>
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3 w-3" />
+                  Issued: {new Date(inv.issuedAt).toLocaleDateString()}
+                </span>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+
+            <InvoiceAmountAndPdfAction
+              totalPaise={inv.totalPaise}
+              taxPaise={taxPaise}
+              currency={inv.currency}
+              invoiceNumber={inv.invoiceNumber}
+              pdfHref={inv.pdfUrl}
+            />
+          </div>
+        );
+      }}
+    />
   );
 }
 

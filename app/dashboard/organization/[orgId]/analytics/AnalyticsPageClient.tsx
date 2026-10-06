@@ -36,6 +36,7 @@ interface ProgramBreakdownRow {
   utilizedPaise: number;
   engagementsUsed: number;
   overageCount: number;
+  overagePaise?: number;
 }
 
 interface FeedbackConsultantRow {
@@ -129,6 +130,13 @@ async function fetchFeedbackSummary(
   return res.json();
 }
 
+function escapeCsvCell(value: string): string {
+  const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(value.trim());
+  const neutralized =
+    !isNumeric && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return `"${neutralized.replaceAll('"', '""')}"`;
+}
+
 function downloadUtilizationCsv(
   orgId: string,
   monthlySeries: MonthlySeriesPoint[],
@@ -141,18 +149,21 @@ function downloadUtilizationCsv(
       : "Section,NameOrMonth,Model,Engagements,OveragesOrActiveLearners",
   ];
   for (const pt of monthlySeries) {
+    const safeMonth = escapeCsvCell(pt.month);
     lines.push(
       seesMoney
-        ? `Monthly,${pt.month},,${pt.engagementsCount},${pt.activeLearners},${(pt.spendPaise / 100).toFixed(2)},${(pt.overagePaise / 100).toFixed(2)}`
-        : `Monthly,${pt.month},,${pt.engagementsCount},${pt.activeLearners}`,
+        ? `Monthly,${safeMonth},,${pt.engagementsCount},${pt.activeLearners},${(pt.spendPaise / 100).toFixed(2)},${(pt.overagePaise / 100).toFixed(2)}`
+        : `Monthly,${safeMonth},,${pt.engagementsCount},${pt.activeLearners}`,
     );
   }
   for (const row of programBreakdown) {
-    const safeName = `"${row.name.replace(/"/g, '""')}"`;
+    const safeName = escapeCsvCell(row.name);
+    const safeSubType = escapeCsvCell(row.subType);
+    const overageInr = ((row.overagePaise ?? 0) / 100).toFixed(2);
     lines.push(
       seesMoney
-        ? `Program,${safeName},${row.subType},${row.engagementsUsed},${row.overageCount},${(row.utilizedPaise / 100).toFixed(2)},`
-        : `Program,${safeName},${row.subType},${row.engagementsUsed},${row.overageCount}`,
+        ? `Program,${safeName},${safeSubType},${row.engagementsUsed},${row.overageCount},${(row.utilizedPaise / 100).toFixed(2)},${overageInr}`
+        : `Program,${safeName},${safeSubType},${row.engagementsUsed},${row.overageCount}`,
     );
   }
   const blob = new Blob([lines.join("\n")], {

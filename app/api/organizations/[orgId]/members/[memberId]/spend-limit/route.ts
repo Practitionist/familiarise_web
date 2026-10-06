@@ -41,7 +41,9 @@ export async function PATCH(
   }
 
   const actorMembershipId =
-    access.member.id === "ADMIN" ? null : access.member.id;
+    access.member.id.startsWith("__admin_stub_") || access.member.id === "ADMIN"
+      ? null
+      : access.member.id;
 
   await prisma.orgAuditLog.create({
     data: {

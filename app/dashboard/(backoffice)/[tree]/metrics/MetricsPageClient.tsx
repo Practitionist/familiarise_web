@@ -31,67 +31,95 @@ import {
 import { durationLabel } from "@/lib/support/case-format";
 import type { InboxStats } from "@/types/support-case";
 
-interface MetricsData {
-  period: string;
-  tickets: {
-    resolved: number;
-    open: number;
-    inProgress: number;
-    avgResponseHours: number | null;
-    avgResolutionHours: number | null;
-    resolutionRate: number;
+interface StaffMetrics {
+  supportMetrics: {
+    ticketsResolvedToday: number;
+    ticketsResolvedThisWeek: number;
+    ticketsResolvedThisMonth: number;
+    openTickets: number;
+    avgResponseTimeHours: number;
   };
-  users: {
-    newThisPeriod: number;
-    total: number;
+  userMetrics: {
+    usersHelpedThisWeek: number;
+    activeUsers: number;
+    newSignupsThisMonth: number;
+    totalUsers: number;
   };
-  appointments: {
-    totalThisPeriod: number;
-    completedThisPeriod: number;
-    completionRate: number;
+  platformMetrics: {
+    totalAppointments: number;
+    pendingPayments: number;
   };
-  feedbacks: {
-    thisPeriod: number;
-  };
-  supportRequests: {
-    pending: number;
-  };
-  activityTrend: Record<string, number>;
 }
 
-const DEFAULT_METRICS: MetricsData = {
-  period: "week",
-  tickets: {
-    resolved: 0,
-    open: 0,
-    inProgress: 0,
-    avgResponseHours: null,
-    avgResolutionHours: null,
-    resolutionRate: 0,
+const DEFAULT_METRICS: StaffMetrics = {
+  supportMetrics: {
+    ticketsResolvedToday: 0,
+    ticketsResolvedThisWeek: 0,
+    ticketsResolvedThisMonth: 0,
+    openTickets: 0,
+    avgResponseTimeHours: 0,
   },
-  users: { newThisPeriod: 0, total: 0 },
-  appointments: {
-    totalThisPeriod: 0,
-    completedThisPeriod: 0,
-    completionRate: 0,
+  userMetrics: {
+    usersHelpedThisWeek: 0,
+    activeUsers: 0,
+    newSignupsThisMonth: 0,
+    totalUsers: 0,
   },
-  feedbacks: { thisPeriod: 0 },
-  supportRequests: { pending: 0 },
-  activityTrend: {},
+  platformMetrics: {
+    totalAppointments: 0,
+    pendingPayments: 0,
+  },
 };
+
+const PERIOD_LABELS: Record<string, string> = {
+  today: "Today",
+  week: "This Week",
+  month: "This Month",
+};
+
+function getResolvedTicketsForPeriod(
+  supportMetrics: StaffMetrics["supportMetrics"],
+  period: string,
+): number {
+  if (period === "today") return supportMetrics.ticketsResolvedToday;
+  if (period === "month") return supportMetrics.ticketsResolvedThisMonth;
+  return supportMetrics.ticketsResolvedThisWeek;
+}
+
+function getSlaAttainmentTone(
+  slaBreaches: number,
+  slaAttainmentPct: number,
+): "critical" | "warning" | "success" {
+  if (slaBreaches > 0) return "critical";
+  if (slaAttainmentPct < 95) return "warning";
+  return "success";
+}
+
+function formatFirstResponseValue(
+  avgFirstResponseMs: number | null | undefined,
+  avgResponseTimeHours: number,
+): string {
+  if (avgFirstResponseMs !== null && avgFirstResponseMs !== undefined) {
+    return durationLabel(avgFirstResponseMs);
+  }
+  if (avgResponseTimeHours > 0) {
+    return `${avgResponseTimeHours}h`;
+  }
+  return "N/A";
+}
 
 export default function StaffMetricsPage() {
   const [period, setPeriod] = useState("week");
 
   const {
-    data: metrics = DEFAULT_METRICS,
+    data: rawMetrics,
     isLoading: loading,
     isError,
     refetch,
-  } = useQuery<MetricsData>({
-    queryKey: ["staff-metrics", period],
+  } = useQuery<StaffMetrics>({
+    queryKey: ["staff-metrics"],
     queryFn: async () => {
-      const response = await fetch(`/api/staff/metrics?period=${period}`);
+      const response = await fetch("/api/staff/metrics");
       if (!response.ok) throw new Error("Failed to fetch metrics");
       return response.json();
     },
@@ -108,18 +136,25 @@ export default function StaffMetricsPage() {
     staleTime: 60_000,
   });
 
-  const periodLabels: Record<string, string> = {
-    today: "Today",
-    week: "This Week",
-    month: "This Month",
-  };
+  const supportMetrics =
+    rawMetrics?.supportMetrics ?? DEFAULT_METRICS.supportMetrics;
+  const userMetrics = rawMetrics?.userMetrics ?? DEFAULT_METRICS.userMetrics;
+  const platformMetrics =
+    rawMetrics?.platformMetrics ?? DEFAULT_METRICS.platformMetrics;
 
-  const openCases = slaStats.data?.openCases ?? metrics.tickets.open;
+  const periodLabel = PERIOD_LABELS[period] ?? "This Week";
+  const resolvedInPeriod = getResolvedTicketsForPeriod(supportMetrics, period);
+  const openCases = slaStats.data?.openCases ?? supportMetrics.openTickets;
   const slaBreaches = slaStats.data?.slaBreaches ?? 0;
   const slaAttainmentPct =
     openCases > 0
       ? Math.max(0, Math.round(((openCases - slaBreaches) / openCases) * 100))
       : 100;
+  const totalHandledInPeriod = resolvedInPeriod + supportMetrics.openTickets;
+  const resolutionRate =
+    totalHandledInPeriod > 0
+      ? Math.round((resolvedInPeriod / totalHandledInPeriod) * 100)
+      : 0;
 
   return (
     <>
@@ -179,13 +214,7 @@ export default function StaffMetricsPage() {
                           : `${slaBreaches} active case(s) breached`
                       }
                       icon={ShieldCheck}
-                      tone={
-                        slaBreaches > 0
-                          ? "critical"
-                          : slaAttainmentPct < 95
-                            ? "warning"
-                            : "success"
-                      }
+                      tone={getSlaAttainmentTone(slaBreaches, slaAttainmentPct)}
                     />
                     <Stat
                       label="SLA Breaches"
@@ -196,38 +225,26 @@ export default function StaffMetricsPage() {
                     />
                     <Stat
                       label="Avg First Response"
-                      value={
-                        slaStats.data?.avgFirstResponseMs !== null &&
-                        slaStats.data?.avgFirstResponseMs !== undefined
-                          ? durationLabel(slaStats.data.avgFirstResponseMs)
-                          : metrics.tickets.avgResponseHours !== null
-                            ? `${metrics.tickets.avgResponseHours}h`
-                            : "N/A"
-                      }
+                      value={formatFirstResponseValue(
+                        slaStats.data?.avgFirstResponseMs,
+                        supportMetrics.avgResponseTimeHours,
+                      )}
                       hint={`${slaStats.data?.windowDays ?? 7}-day rolling window`}
                       icon={Clock}
                     />
                     <Stat
                       label="Resolution Rate"
-                      value={`${metrics.tickets.resolutionRate}%`}
-                      hint={
-                        metrics.tickets.avgResolutionHours !== null
-                          ? `Avg resolution: ${metrics.tickets.avgResolutionHours}h`
-                          : `${metrics.tickets.resolved} resolved (${periodLabels[period]})`
-                      }
+                      value={`${resolutionRate}%`}
+                      hint={`${resolvedInPeriod} resolved (${periodLabel})`}
                       icon={CheckCircle}
-                      tone={
-                        metrics.tickets.resolutionRate >= 80
-                          ? "success"
-                          : "neutral"
-                      }
+                      tone={resolutionRate >= 80 ? "success" : "neutral"}
                     />
                   </>
                 )}
               </StatRow>
             </Section>
 
-            <Section title={`Queue Volume (${periodLabels[period]})`}>
+            <Section title={`Queue Volume (${periodLabel})`}>
               <StatRow>
                 {loading ? (
                   [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
@@ -235,28 +252,28 @@ export default function StaffMetricsPage() {
                   <>
                     <Stat
                       label="Tickets Resolved"
-                      value={metrics.tickets.resolved}
-                      hint={periodLabels[period]}
+                      value={resolvedInPeriod}
+                      hint={periodLabel}
                       icon={CheckCircle}
                       tone="success"
                     />
                     <Stat
                       label="Open Cases"
                       value={openCases}
-                      hint={`${metrics.tickets.inProgress} in progress`}
+                      hint={`${supportMetrics.openTickets} open support tickets`}
                       icon={Ticket}
                       tone={openCases > 0 ? "warning" : "neutral"}
                     />
                     <Stat
-                      label="Session Support Requests"
-                      value={metrics.supportRequests.pending}
-                      hint="Pending action"
-                      icon={Activity}
+                      label="Users Helped"
+                      value={userMetrics.usersHelpedThisWeek}
+                      hint="Distinct users this week"
+                      icon={Users}
                     />
                     <Stat
-                      label="Feedback Received"
-                      value={metrics.feedbacks.thisPeriod}
-                      hint={periodLabels[period]}
+                      label="Active Users"
+                      value={userMetrics.activeUsers}
+                      hint="With payments this month"
                       icon={Activity}
                     />
                   </>
@@ -272,63 +289,30 @@ export default function StaffMetricsPage() {
                   <>
                     <Stat
                       label="Total Users"
-                      value={metrics.users.total.toLocaleString()}
-                      hint={`+${metrics.users.newThisPeriod} ${periodLabels[period].toLowerCase()}`}
+                      value={userMetrics.totalUsers.toLocaleString()}
+                      hint={`+${userMetrics.newSignupsThisMonth} new this month`}
                       icon={Users}
                     />
                     <Stat
-                      label={`Sessions (${periodLabels[period]})`}
-                      value={metrics.appointments.totalThisPeriod}
-                      hint={`${metrics.appointments.completedThisPeriod} completed`}
+                      label="Total Appointments"
+                      value={platformMetrics.totalAppointments.toLocaleString()}
+                      hint="All-time sessions"
                       icon={Activity}
                     />
                     <Stat
-                      label="Session Completion Rate"
-                      value={`${metrics.appointments.completionRate}%`}
-                      hint={periodLabels[period]}
-                      icon={CheckCircle}
+                      label="Pending Payments"
+                      value={platformMetrics.pendingPayments}
+                      hint="Awaiting settlement"
+                      icon={Clock}
+                      tone={
+                        platformMetrics.pendingPayments > 0
+                          ? "warning"
+                          : "neutral"
+                      }
                     />
                   </>
                 )}
               </StatRow>
-            </Section>
-
-            <Section
-              title="7-Day Ticket Volume"
-              description="Daily support ticket creation over the past 7 days"
-              variant="card"
-            >
-              <div className="flex items-end justify-between gap-2 h-36 pt-4">
-                {Object.entries(metrics.activityTrend).map(([date, count]) => {
-                  const maxCount = Math.max(
-                    ...Object.values(metrics.activityTrend),
-                    1,
-                  );
-                  const height = (count / maxCount) * 100;
-                  const dayLabel = new Date(date).toLocaleDateString("en-US", {
-                    weekday: "short",
-                  });
-                  return (
-                    <div
-                      key={date}
-                      className="flex-1 flex flex-col items-center gap-1"
-                    >
-                      <span className="text-xs font-medium tabular-nums">
-                        {count}
-                      </span>
-                      <div className="w-full bg-muted rounded-t flex-1 relative min-h-[72px]">
-                        <div
-                          className="absolute bottom-0 left-0 right-0 bg-foreground rounded-t transition-all"
-                          style={{ height: `${Math.max(height, 4)}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {dayLabel}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
             </Section>
           </>
         )}

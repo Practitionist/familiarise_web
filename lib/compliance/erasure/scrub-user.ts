@@ -606,6 +606,33 @@ export interface SoleOwnerOrganization {
   slug: string;
 }
 
+function isActiveOwnerMembershipRow(row: {
+  role?: string | null;
+  status?: string | null;
+  organization?: { status?: string | null } | null;
+}): boolean {
+  if (row.role && row.role !== "OWNER") return false;
+  if (row.status && row.status !== "ACTIVE") return false;
+  return row.organization?.status !== "DEACTIVATED";
+}
+
+async function isSoleActiveOrgOwner(
+  db: Db,
+  organizationId: string,
+  userId: string,
+): Promise<boolean> {
+  if (typeof db.membership.count !== "function") return true;
+  const otherOwners = await db.membership.count({
+    where: {
+      organizationId,
+      role: "OWNER",
+      status: "ACTIVE",
+      userId: { not: userId },
+    },
+  });
+  return otherOwners === 0;
+}
+
 export async function soleOwnerOrganizationsForUser(
   db: Db,
   userId: string,
@@ -636,21 +663,8 @@ export async function soleOwnerOrganizationsForUser(
 
   const soleOwned: SoleOwnerOrganization[] = [];
   for (const row of ownerRows) {
-    if (row.role && row.role !== "OWNER") continue;
-    if (row.status && row.status !== "ACTIVE") continue;
-    if (row.organization?.status === "DEACTIVATED") continue;
-    const otherOwners =
-      typeof db.membership.count === "function"
-        ? await db.membership.count({
-            where: {
-              organizationId: row.organizationId,
-              role: "OWNER",
-              status: "ACTIVE",
-              userId: { not: userId },
-            },
-          })
-        : 0;
-    if (otherOwners === 0) {
+    if (!isActiveOwnerMembershipRow(row)) continue;
+    if (await isSoleActiveOrgOwner(db, row.organizationId, userId)) {
       soleOwned.push({
         id: row.organization?.id ?? row.organizationId,
         name: row.organization?.name ?? row.organizationId,

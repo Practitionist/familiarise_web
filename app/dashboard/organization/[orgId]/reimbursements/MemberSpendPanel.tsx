@@ -51,6 +51,8 @@ interface ByMemberRow {
   netReimbursablePaise: number;
   paymentCount: number;
   spendLimitPaise?: number | null;
+  exceedsSpendLimit?: boolean;
+  cappedReimbursablePaise?: number;
 }
 
 interface ReimbursementsResponse {
@@ -71,7 +73,7 @@ const COLUMNS: Column<ReimbursementRow>[] = [
   },
   {
     header: "Member",
-    accessor: (r) => r.user.name || r.user.email,
+    accessor: (r) => r.user.name ?? r.user.email,
   },
   { header: "Description", accessor: (r) => r.description ?? "—" },
   {
@@ -165,7 +167,7 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(
-          (body as { error?: string }).error || "Failed to update spend limit",
+          (body as { error?: string }).error ?? "Failed to update spend limit",
         );
       }
       return body;
@@ -186,7 +188,7 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
   const openEditLimit = (member: ByMemberRow) => {
     setEditMember(member);
     setLimitRupees(
-      member.spendLimitPaise != null
+      typeof member.spendLimitPaise === "number"
         ? (member.spendLimitPaise / 100).toFixed(2)
         : "",
     );
@@ -200,14 +202,16 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
     let spendLimitPaise: number | null = null;
     if (trimmed !== "") {
       const numeric = Number(trimmed.replace(/,/g, ""));
-      if (!Number.isFinite(numeric) || numeric < 0) {
-        setLimitError("Enter a non-negative amount in rupees, or leave blank.");
+      if (!Number.isFinite(numeric) || numeric < 1) {
+        setLimitError(
+          "Enter a valid positive limit in INR (at least ₹1), or leave blank for unlimited.",
+        );
         return;
       }
       spendLimitPaise = Math.round(numeric * 100);
     }
     spendLimitMutation.mutate({
-      memberKey: editMember.membershipId || editMember.userId,
+      memberKey: editMember.membershipId ?? editMember.userId,
       spendLimitPaise,
     });
   };
@@ -294,13 +298,16 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
                 className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
               >
                 <div>
-                  <p className="font-medium">{m.name || m.email || m.userId}</p>
+                  <p className="font-medium">{m.name ?? m.email ?? m.userId}</p>
                   <p className="text-xs text-muted-foreground">
                     {m.paymentCount} payment{m.paymentCount === 1 ? "" : "s"} ·
                     Net reimbursable ₹
                     {(m.netReimbursablePaise / 100).toFixed(2)}
-                    {m.spendLimitPaise != null &&
+                    {typeof m.spendLimitPaise === "number" &&
                       ` · Spend limit ₹${(m.spendLimitPaise / 100).toFixed(2)}`}
+                    {m.exceedsSpendLimit &&
+                      typeof m.cappedReimbursablePaise === "number" &&
+                      ` (Capped at ₹${(m.cappedReimbursablePaise / 100).toFixed(2)})`}
                   </p>
                 </div>
                 {canEditLimit && (
@@ -353,7 +360,7 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
             <p className="text-sm text-muted-foreground">
               Set the reimbursement / credit-pool spend ceiling for{" "}
               <strong>
-                {editMember?.name || editMember?.email || "this member"}
+                {editMember?.name ?? editMember?.email ?? "this member"}
               </strong>
               .
             </p>

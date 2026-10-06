@@ -114,6 +114,38 @@ const formatDate = (dateString: string | null) => {
 const EMPTY_STATS = { activeCount: 0, expiringCount: 0, expiredCount: 0 };
 const LIMIT = 20;
 
+function UserLinkRow({
+  label,
+  userId,
+  name,
+  fallback,
+  basePath,
+}: Readonly<{
+  label: string;
+  userId?: string | null;
+  name?: string | null;
+  fallback: string;
+  basePath: string;
+}>) {
+  const display = name || fallback;
+  return (
+    <div className="flex items-center justify-between py-2.5">
+      <span className="text-muted-foreground">{label}</span>
+      {userId ? (
+        <Link
+          href={`${basePath}/users/${userId}`}
+          className="flex items-center gap-1 font-medium hover:underline"
+        >
+          {display}
+          <ExternalLink className="h-3 w-3" />
+        </Link>
+      ) : (
+        <span className="font-medium">{display}</span>
+      )}
+    </div>
+  );
+}
+
 function SubscriptionDetailSheet({
   subscription,
   open,
@@ -203,37 +235,21 @@ function SubscriptionDetailSheet({
               </Badge>
             </div>
 
-            <div className="flex items-center justify-between py-2.5">
-              <span className="text-muted-foreground">Consultee</span>
-              {subscription.userId ? (
-                <Link
-                  href={`${basePath}/users/${subscription.userId}`}
-                  className="flex items-center gap-1 font-medium hover:underline"
-                >
-                  {subscription.userName}
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              ) : (
-                <span className="font-medium">{subscription.userName}</span>
-              )}
-            </div>
+            <UserLinkRow
+              label="Consultee"
+              userId={subscription.userId}
+              name={subscription.userName}
+              fallback="—"
+              basePath={basePath}
+            />
 
-            <div className="flex items-center justify-between py-2.5">
-              <span className="text-muted-foreground">Consultant</span>
-              {subscription.consultantUserId ? (
-                <Link
-                  href={`${basePath}/users/${subscription.consultantUserId}`}
-                  className="flex items-center gap-1 font-medium hover:underline"
-                >
-                  {subscription.consultantName || "Expert"}
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              ) : (
-                <span className="font-medium">
-                  {subscription.consultantName || "—"}
-                </span>
-              )}
-            </div>
+            <UserLinkRow
+              label="Consultant"
+              userId={subscription.consultantUserId}
+              name={subscription.consultantName}
+              fallback={subscription.consultantUserId ? "Expert" : "—"}
+              basePath={basePath}
+            />
 
             <div className="flex items-center justify-between py-2.5">
               <span className="text-muted-foreground">Amount Paid</span>
@@ -600,6 +616,7 @@ export function SubscriptionsPage({
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="expiring_soon">Expiring Soon</SelectItem>
                 <SelectItem value="expired">Expired</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -614,7 +631,7 @@ export function SubscriptionsPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {isError && !data ? (
+          {isError && !data && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
               <div className="flex items-center gap-2 text-destructive">
                 <AlertTriangle className="h-5 w-5" />
@@ -630,11 +647,13 @@ export function SubscriptionsPage({
                 Retry
               </Button>
             </div>
-          ) : isPending ? (
+          )}
+          {(!isError || Boolean(data)) && isPending && (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
-          ) : (
+          )}
+          {(!isError || Boolean(data)) && !isPending && (
             <ResponsiveTable<EnrichedSubscriptionItem>
               columns={columns}
               rows={subscriptions}

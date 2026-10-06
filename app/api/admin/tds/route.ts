@@ -275,16 +275,10 @@ export async function POST(req: NextRequest) {
         : challanNumber || bsrCode || undefined;
 
     const artifactPatch: {
-      reportedInForm26Q?: boolean;
-      form26QFilingDate?: Date | null;
       challanNumber?: string;
       ackNumber?: string;
       certificateNumber?: string;
     } = {};
-    if (reportedInForm26Q !== undefined || ackNumber) {
-      artifactPatch.reportedInForm26Q = markFiled;
-      artifactPatch.form26QFilingDate = markFiled ? effectiveFilingDate : null;
-    }
     if (formattedChallan) artifactPatch.challanNumber = formattedChallan;
     if (ackNumber) artifactPatch.ackNumber = ackNumber;
     if (certificateNumber) artifactPatch.certificateNumber = certificateNumber;

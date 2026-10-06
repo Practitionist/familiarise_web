@@ -199,7 +199,7 @@ function humanizeEnum(val: string): string {
     .join(" ");
 }
 
-function parseInrInputToPaise(raw: string): number | null {
+function parseInrToPaise(raw: string, allowZero: boolean): number | null {
   const trimmed = raw.trim();
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
   const [rupeesPart, decimalsPart = ""] = trimmed.split(".");
@@ -209,26 +209,19 @@ function parseInrInputToPaise(raw: string): number | null {
     return null;
   }
   const totalPaise = rupees * 100 + paise;
-  if (!Number.isSafeInteger(totalPaise) || totalPaise <= 0) {
+  const minAllowed = allowZero ? 0 : 1;
+  if (!Number.isSafeInteger(totalPaise) || totalPaise < minAllowed) {
     return null;
   }
   return totalPaise;
 }
 
+function parseInrInputToPaise(raw: string): number | null {
+  return parseInrToPaise(raw, false);
+}
+
 function parseNonNegativeInrToPaise(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
-  const [rupeesPart, decimalsPart = ""] = trimmed.split(".");
-  const rupees = Number(rupeesPart);
-  const paise = Number(decimalsPart.padEnd(2, "0"));
-  if (!Number.isSafeInteger(rupees) || !Number.isSafeInteger(paise)) {
-    return null;
-  }
-  const totalPaise = rupees * 100 + paise;
-  if (!Number.isSafeInteger(totalPaise) || totalPaise < 0) {
-    return null;
-  }
-  return totalPaise;
+  return parseInrToPaise(raw, true);
 }
 
 export function deriveCreditState(c: ReferralCreditItem): {
@@ -1284,6 +1277,166 @@ function RevokeFeeWaiverDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Shared List Card for Credits & Fee Waivers
+// ---------------------------------------------------------------------------
+
+interface FilterSelectConfig {
+  key: string;
+  ariaLabel: string;
+  widthClass: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}
+
+function ReferralsListCard<T extends { id: string }>({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  searchAriaLabel,
+  searchPlaceholder,
+  searchValue,
+  onSearchChange,
+  selects,
+  isLoading,
+  loadingLabel,
+  emptyIcon: EmptyIcon,
+  emptyMessage,
+  columns,
+  rows,
+  rowActions,
+  page,
+  totalPages,
+  onPageChange,
+}: Readonly<{
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  searchAriaLabel: string;
+  searchPlaceholder: string;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  selects: FilterSelectConfig[];
+  isLoading: boolean;
+  loadingLabel: string;
+  emptyIcon: typeof Gift;
+  emptyMessage: string;
+  columns: ResponsiveColumn<T>[];
+  rows: T[];
+  rowActions?: (item: T) => React.ReactNode;
+  page: number;
+  totalPages: number;
+  onPageChange: (updater: (prev: number) => number) => void;
+}>) {
+  return (
+    <Card>
+      <CardHeader className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-base">{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          {actionLabel && onAction && (
+            <Button size="sm" onClick={onAction}>
+              <Plus className="mr-1 h-4 w-4" /> {actionLabel}
+            </Button>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              aria-label={searchAriaLabel}
+              className="pl-8"
+              placeholder={searchPlaceholder}
+              value={searchValue}
+              onChange={(e) => onSearchChange(e.target.value)}
+            />
+          </div>
+
+          {selects.map((sel) => (
+            <Select
+              key={sel.key}
+              value={sel.value}
+              onValueChange={sel.onChange}
+            >
+              <SelectTrigger
+                aria-label={sel.ariaLabel}
+                className={sel.widthClass}
+              >
+                <SelectValue placeholder={sel.placeholder} />
+              </SelectTrigger>
+              <SelectContent>
+                {sel.options.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ))}
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        {isLoading && (
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> {loadingLabel}
+          </div>
+        )}
+        {!isLoading && rows.length === 0 && (
+          <div className="py-12 text-center text-muted-foreground">
+            <EmptyIcon className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+            <p className="text-sm">{emptyMessage}</p>
+          </div>
+        )}
+        {!isLoading && rows.length > 0 && (
+          <>
+            <ResponsiveTable<T>
+              columns={columns}
+              rows={rows}
+              getRowId={(r) => r.id}
+              rowActions={rowActions}
+            />
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  Page {page} of {totalPages}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page <= 1}
+                    onClick={() => onPageChange((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page >= totalPages}
+                    onClick={() =>
+                      onPageChange((p) => Math.min(totalPages, p + 1))
+                    }
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tab 1: Credits Panel
 // ---------------------------------------------------------------------------
 
@@ -1358,135 +1511,68 @@ function CreditsTabPanel({
 
   return (
     <>
-      <Card>
-        <CardHeader className="space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base">{creditCountLabel}</CardTitle>
-              <CardDescription>
-                Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID),
-                balances, and payment redemptions.
-              </CardDescription>
-            </div>
-            {canManage && (
-              <Button size="sm" onClick={onOpenIssue}>
-                <Plus className="mr-1 h-4 w-4" /> Issue Goodwill Credit
-              </Button>
-            )}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                aria-label="Search by email, name, or referral code"
-                className="pl-8"
-                placeholder="Search by user email, name, referral code, or ID…"
-                value={q}
-                onChange={(e) => {
-                  setQ(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
-
-            <Select
-              value={sourceFilter}
-              onValueChange={(val) => {
-                setSourceFilter(val);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger
-                aria-label="Filter by source"
-                className="w-full sm:w-[180px]"
-              >
-                <SelectValue placeholder="All sources" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All sources</SelectItem>
-                {CREDIT_SOURCES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {humanizeEnum(s)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={statusFilter}
-              onValueChange={(val) => {
-                setStatusFilter(val);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger
-                aria-label="Filter by status"
-                className="w-full sm:w-[170px]"
-              >
-                <SelectValue placeholder="All statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All statuses</SelectItem>
-                <SelectItem value="PENDING">Pending</SelectItem>
-                <SelectItem value="ACTIVE">Vested (Active)</SelectItem>
-                <SelectItem value="EXHAUSTED">Exhausted</SelectItem>
-                <SelectItem value="EXPIRED">Expired</SelectItem>
-                <SelectItem value="REVERSED">Void / Reversed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-
-        <CardContent>
-          {creditsQuery.isLoading ? (
-            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading credits…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground">
-              <Gift className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
-              <p className="text-sm">No referral credits match the filter.</p>
-            </div>
-          ) : (
-            <>
-              <ResponsiveTable<ReferralCreditItem>
-                columns={REFERRAL_CREDIT_COLUMNS}
-                rows={rows}
-                getRowId={(c) => c.id}
-                rowActions={renderRowActions}
-              />
-              {totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>
-                    Page {page} of {totalPages}
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={page >= totalPages}
-                      onClick={() =>
-                        setPage((p) => Math.min(totalPages, p + 1))
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <ReferralsListCard<ReferralCreditItem>
+        title={creditCountLabel}
+        description="Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID), balances, and payment redemptions."
+        actionLabel={canManage ? "Issue Goodwill Credit" : undefined}
+        onAction={canManage ? onOpenIssue : undefined}
+        searchAriaLabel="Search by email, name, or referral code"
+        searchPlaceholder="Search by user email, name, referral code, or ID…"
+        searchValue={q}
+        onSearchChange={(val) => {
+          setQ(val);
+          setPage(1);
+        }}
+        selects={[
+          {
+            key: "source",
+            ariaLabel: "Filter by source",
+            widthClass: "w-full sm:w-[180px]",
+            placeholder: "All sources",
+            value: sourceFilter,
+            onChange: (val) => {
+              setSourceFilter(val);
+              setPage(1);
+            },
+            options: [
+              { value: "ALL", label: "All sources" },
+              ...CREDIT_SOURCES.map((s) => ({
+                value: s,
+                label: humanizeEnum(s),
+              })),
+            ],
+          },
+          {
+            key: "status",
+            ariaLabel: "Filter by status",
+            widthClass: "w-full sm:w-[170px]",
+            placeholder: "All statuses",
+            value: statusFilter,
+            onChange: (val) => {
+              setStatusFilter(val);
+              setPage(1);
+            },
+            options: [
+              { value: "ALL", label: "All statuses" },
+              { value: "PENDING", label: "Pending" },
+              { value: "ACTIVE", label: "Vested (Active)" },
+              { value: "EXHAUSTED", label: "Exhausted" },
+              { value: "EXPIRED", label: "Expired" },
+              { value: "REVERSED", label: "Void / Reversed" },
+            ],
+          },
+        ]}
+        isLoading={creditsQuery.isLoading}
+        loadingLabel="Loading credits…"
+        emptyIcon={Gift}
+        emptyMessage="No referral credits match the filter."
+        columns={REFERRAL_CREDIT_COLUMNS}
+        rows={rows}
+        rowActions={renderRowActions}
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
 
       {detailTarget && (
         <CreditDetailDialog
@@ -1537,6 +1623,10 @@ function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
   const rows = waiversQuery.data?.data ?? [];
   const total = waiversQuery.data?.total ?? 0;
   const totalPages = waiversQuery.data?.totalPages ?? 1;
+  const waiverSuffix = total === 1 ? "" : "s";
+  const waiverCountLabel = waiversQuery.isLoading
+    ? "Loading…"
+    : `${total} fee waiver${waiverSuffix}`;
 
   const renderRowActions = (w: FeeWaiverItem) => {
     const canRevoke = canManage && w.sessionsRemaining > 0;
@@ -1557,136 +1647,64 @@ function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
 
   return (
     <>
-      <Card>
-        <CardHeader className="space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base">
-                {waiversQuery.isLoading
-                  ? "Loading…"
-                  : `${total} fee waiver${total === 1 ? "" : "s"}`}
-              </CardTitle>
-              <CardDescription>
-                0% platform-fee session waivers granted to referred and
-                referring experts.
-              </CardDescription>
-            </div>
-            {canManage && (
-              <Button size="sm" onClick={() => setGrantOpen(true)}>
-                <Plus className="mr-1 h-4 w-4" /> Grant Fee Waiver
-              </Button>
-            )}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                aria-label="Search fee waivers"
-                className="pl-8"
-                placeholder="Search by consultant name, email, or referral ID…"
-                value={q}
-                onChange={(e) => {
-                  setQ(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
-
-            <Select
-              value={reasonFilter}
-              onValueChange={(val) => {
-                setReasonFilter(val);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger
-                aria-label="Filter by waiver reason"
-                className="w-full sm:w-[190px]"
-              >
-                <SelectValue placeholder="All reasons" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All reasons</SelectItem>
-                <SelectItem value="REFERRED_EXPERT">Referred Expert</SelectItem>
-                <SelectItem value="REFERRING_EXPERT">
-                  Referring Expert
-                </SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={statusFilter}
-              onValueChange={(val) => {
-                setStatusFilter(val);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger
-                aria-label="Filter by waiver status"
-                className="w-full sm:w-[160px]"
-              >
-                <SelectValue placeholder="All statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All statuses</SelectItem>
-                <SelectItem value="ACTIVE">Active</SelectItem>
-                <SelectItem value="EXHAUSTED">Exhausted</SelectItem>
-                <SelectItem value="EXPIRED">Expired</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-
-        <CardContent>
-          {waiversQuery.isLoading ? (
-            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading fee waivers…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground">
-              <Sparkles className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
-              <p className="text-sm">No consultant fee waivers found.</p>
-            </div>
-          ) : (
-            <>
-              <ResponsiveTable<FeeWaiverItem>
-                columns={FEE_WAIVER_COLUMNS}
-                rows={rows}
-                getRowId={(w) => w.id}
-                rowActions={canManage ? renderRowActions : undefined}
-              />
-              {totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>
-                    Page {page} of {totalPages}
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={page >= totalPages}
-                      onClick={() =>
-                        setPage((p) => Math.min(totalPages, p + 1))
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <ReferralsListCard<FeeWaiverItem>
+        title={waiverCountLabel}
+        description="0% platform-fee session waivers granted to referred and referring experts."
+        actionLabel={canManage ? "Grant Fee Waiver" : undefined}
+        onAction={canManage ? () => setGrantOpen(true) : undefined}
+        searchAriaLabel="Search fee waivers"
+        searchPlaceholder="Search by consultant name, email, or referral ID…"
+        searchValue={q}
+        onSearchChange={(val) => {
+          setQ(val);
+          setPage(1);
+        }}
+        selects={[
+          {
+            key: "reason",
+            ariaLabel: "Filter by waiver reason",
+            widthClass: "w-full sm:w-[190px]",
+            placeholder: "All reasons",
+            value: reasonFilter,
+            onChange: (val) => {
+              setReasonFilter(val);
+              setPage(1);
+            },
+            options: [
+              { value: "ALL", label: "All reasons" },
+              { value: "REFERRED_EXPERT", label: "Referred Expert" },
+              { value: "REFERRING_EXPERT", label: "Referring Expert" },
+            ],
+          },
+          {
+            key: "status",
+            ariaLabel: "Filter by waiver status",
+            widthClass: "w-full sm:w-[160px]",
+            placeholder: "All statuses",
+            value: statusFilter,
+            onChange: (val) => {
+              setStatusFilter(val);
+              setPage(1);
+            },
+            options: [
+              { value: "ALL", label: "All statuses" },
+              { value: "ACTIVE", label: "Active" },
+              { value: "EXHAUSTED", label: "Exhausted" },
+              { value: "EXPIRED", label: "Expired" },
+            ],
+          },
+        ]}
+        isLoading={waiversQuery.isLoading}
+        loadingLabel="Loading fee waivers…"
+        emptyIcon={Sparkles}
+        emptyMessage="No consultant fee waivers found."
+        columns={FEE_WAIVER_COLUMNS}
+        rows={rows}
+        rowActions={canManage ? renderRowActions : undefined}
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
 
       {canManage && (
         <GrantFeeWaiverDialog open={grantOpen} onOpenChange={setGrantOpen} />
@@ -1706,6 +1724,49 @@ function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
 // ---------------------------------------------------------------------------
 // Tab 3: Program & Fee Config Panel (Maker-Checker)
 // ---------------------------------------------------------------------------
+
+const FEE_SCHEDULE_COLUMNS: ResponsiveColumn<PlatformFeeScheduleItem>[] = [
+  {
+    key: "rates",
+    header: "Take Rates",
+    primary: true,
+    cell: (s) => (
+      <div className="font-medium tabular-nums">
+        Marketplace: {(s.marketplaceBps / 100).toFixed(2)}% ({s.marketplaceBps}{" "}
+        bps) · Own-Link: {(s.ownLinkBps / 100).toFixed(2)}% ({s.ownLinkBps} bps)
+      </div>
+    ),
+  },
+  {
+    key: "effectiveFrom",
+    header: "Effective From",
+    cell: (s) => (
+      <span className="text-xs text-muted-foreground">
+        {fmtDate(s.effectiveFrom)}
+      </span>
+    ),
+  },
+  {
+    key: "maker",
+    header: "Maker / Checker",
+    cell: (s) => (
+      <div className="text-xs text-muted-foreground">
+        <p>Maker: {s.makerUserId}</p>
+        {s.checkerUserId && <p>Checker: {s.checkerUserId}</p>}
+      </div>
+    ),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (s) => (
+      <StatusBadge
+        label={s.approvedAt ? "APPROVED" : "PENDING_CHECKER"}
+        tone={s.approvedAt ? "success" : "warning"}
+      />
+    ),
+  },
+];
 
 function ProgramAndFeeConfigTabPanel({
   canManage,
@@ -1952,6 +2013,8 @@ function ProgramAndFeeConfigTabPanel({
     });
   };
 
+  const schedules = schedulesQuery.data?.schedules ?? [];
+
   return (
     <div className="space-y-6">
       <Card>
@@ -2002,77 +2065,55 @@ function ProgramAndFeeConfigTabPanel({
                   </Select>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-budget">Monthly Budget (₹)</Label>
-                  <Input
-                    id="cfg-budget"
-                    type="number"
-                    disabled={!canManage}
-                    value={monthlyBudgetINR}
-                    onChange={(e) => setMonthlyBudgetINR(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-reward">Referrer Reward (₹)</Label>
-                  <Input
-                    id="cfg-reward"
-                    type="number"
-                    disabled={!canManage}
-                    value={referrerRewardINR}
-                    onChange={(e) => setReferrerRewardINR(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-discount-bps">
-                    Referee Discount (bps)
-                  </Label>
-                  <Input
-                    id="cfg-discount-bps"
-                    type="number"
-                    disabled={!canManage}
-                    value={discountBps}
-                    onChange={(e) => setDiscountBps(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-discount-max">
-                    Max Referee Discount (₹)
-                  </Label>
-                  <Input
-                    id="cfg-discount-max"
-                    type="number"
-                    disabled={!canManage}
-                    value={discountMaxINR}
-                    onChange={(e) => setDiscountMaxINR(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-redemption-bps">
-                    Redemption Cap (bps)
-                  </Label>
-                  <Input
-                    id="cfg-redemption-bps"
-                    type="number"
-                    disabled={!canManage}
-                    value={redemptionCapBps}
-                    onChange={(e) => setRedemptionCapBps(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-min-order">Min Order Amount (₹)</Label>
-                  <Input
-                    id="cfg-min-order"
-                    type="number"
-                    disabled={!canManage}
-                    value={minOrderINR}
-                    onChange={(e) => setMinOrderINR(e.target.value)}
-                  />
-                </div>
+                {[
+                  {
+                    id: "cfg-budget",
+                    label: "Monthly Budget (₹)",
+                    value: monthlyBudgetINR,
+                    onChange: setMonthlyBudgetINR,
+                  },
+                  {
+                    id: "cfg-reward",
+                    label: "Referrer Reward (₹)",
+                    value: referrerRewardINR,
+                    onChange: setReferrerRewardINR,
+                  },
+                  {
+                    id: "cfg-discount-bps",
+                    label: "Referee Discount (bps)",
+                    value: discountBps,
+                    onChange: setDiscountBps,
+                  },
+                  {
+                    id: "cfg-discount-max",
+                    label: "Max Referee Discount (₹)",
+                    value: discountMaxINR,
+                    onChange: setDiscountMaxINR,
+                  },
+                  {
+                    id: "cfg-redemption-bps",
+                    label: "Redemption Cap (bps)",
+                    value: redemptionCapBps,
+                    onChange: setRedemptionCapBps,
+                  },
+                  {
+                    id: "cfg-min-order",
+                    label: "Min Order Amount (₹)",
+                    value: minOrderINR,
+                    onChange: setMinOrderINR,
+                  },
+                ].map((field) => (
+                  <div key={field.id} className="space-y-1.5">
+                    <Label htmlFor={field.id}>{field.label}</Label>
+                    <Input
+                      id={field.id}
+                      type="number"
+                      disabled={!canManage}
+                      value={field.value}
+                      onChange={(e) => field.onChange(e.target.value)}
+                    />
+                  </div>
+                ))}
 
                 {canManage && (
                   <div className="space-y-1.5 sm:col-span-2">
@@ -2207,61 +2248,21 @@ function ProgramAndFeeConfigTabPanel({
             </div>
           )}
 
-          {schedulesQuery.isLoading ? (
+          {schedulesQuery.isLoading && (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading fee
               schedules…
             </div>
-          ) : (schedulesQuery.data?.schedules.length ?? 0) === 0 ? (
+          )}
+          {!schedulesQuery.isLoading && schedules.length === 0 && (
             <p className="py-6 text-center text-sm text-muted-foreground">
               No custom fee schedules proposed yet. Using default take rates.
             </p>
-          ) : (
+          )}
+          {!schedulesQuery.isLoading && schedules.length > 0 && (
             <ResponsiveTable<PlatformFeeScheduleItem>
-              columns={[
-                {
-                  key: "rates",
-                  header: "Take Rates",
-                  primary: true,
-                  cell: (s) => (
-                    <div className="font-medium tabular-nums">
-                      Marketplace: {(s.marketplaceBps / 100).toFixed(2)}% (
-                      {s.marketplaceBps} bps) · Own-Link:{" "}
-                      {(s.ownLinkBps / 100).toFixed(2)}% ({s.ownLinkBps} bps)
-                    </div>
-                  ),
-                },
-                {
-                  key: "effectiveFrom",
-                  header: "Effective From",
-                  cell: (s) => (
-                    <span className="text-xs text-muted-foreground">
-                      {fmtDate(s.effectiveFrom)}
-                    </span>
-                  ),
-                },
-                {
-                  key: "maker",
-                  header: "Maker / Checker",
-                  cell: (s) => (
-                    <div className="text-xs text-muted-foreground">
-                      <p>Maker: {s.makerUserId}</p>
-                      {s.checkerUserId && <p>Checker: {s.checkerUserId}</p>}
-                    </div>
-                  ),
-                },
-                {
-                  key: "status",
-                  header: "Status",
-                  cell: (s) => (
-                    <StatusBadge
-                      label={s.approvedAt ? "APPROVED" : "PENDING_CHECKER"}
-                      tone={s.approvedAt ? "success" : "warning"}
-                    />
-                  ),
-                },
-              ]}
-              rows={schedulesQuery.data?.schedules ?? []}
+              columns={FEE_SCHEDULE_COLUMNS}
+              rows={schedules}
               getRowId={(s) => s.id}
               rowActions={
                 canManage

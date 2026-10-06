@@ -33,6 +33,60 @@ import {
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
+class OrgMembershipRequiredError extends Error {
+  constructor() {
+    super(
+      "Active organization membership is required to purchase this recording.",
+    );
+    this.name = "OrgMembershipRequiredError";
+  }
+}
+
+async function persistRecordingPurchase(params: {
+  recordingId: string;
+  buyerId: string;
+  orderId: string;
+  amountPaise: number;
+  hostOrgId: string | null | undefined;
+}): Promise<void> {
+  const { recordingId, buyerId, orderId, amountPaise, hostOrgId } = params;
+  if (!hostOrgId) {
+    await prisma.recordingPurchase.create({
+      data: {
+        recordingId,
+        buyerId,
+        gatewayOrderId: orderId,
+        amountPaise,
+        status: "PENDING",
+      },
+    });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const activeMembership = await tx.membership.findFirst({
+      where: {
+        userId: buyerId,
+        organizationId: hostOrgId,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    if (!activeMembership) {
+      throw new OrgMembershipRequiredError();
+    }
+    await tx.recordingPurchase.create({
+      data: {
+        recordingId,
+        buyerId,
+        gatewayOrderId: orderId,
+        amountPaise,
+        status: "PENDING",
+      },
+    });
+  });
+}
+
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
@@ -57,8 +111,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const hostOrgId =
+      loaded.plan.plan.visibility === "ORG_ONLY"
+        ? loaded.plan.plan.organizationId
+        : null;
     if (loaded.plan.plan.visibility === "ORG_ONLY") {
-      if (!loaded.plan.plan.organizationId) {
+      if (!hostOrgId) {
         return NextResponse.json(
           {
             error: "This recording is no longer available for purchase.",
@@ -70,7 +128,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       const activeMembership = await prisma.membership.findFirst({
         where: {
           userId: session.user.id,
-          organizationId: loaded.plan.plan.organizationId,
+          organizationId: hostOrgId,
           status: "ACTIVE",
         },
         select: { id: true },
@@ -146,6 +204,20 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       recordingId,
       buyerId,
       async () => {
+        if (hostOrgId) {
+          const activeMembership = await prisma.membership.findFirst({
+            where: {
+              userId: buyerId,
+              organizationId: hostOrgId,
+              status: "ACTIVE",
+            },
+            select: { id: true },
+          });
+          if (!activeMembership) {
+            return { kind: "forbidden_org" as const };
+          }
+        }
+
         const [owned, pendingOrder] = await Promise.all([
           prisma.recordingPurchase.findFirst({
             where: { recordingId, buyerId, status: "SUCCEEDED" },
@@ -184,14 +256,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
         });
 
         try {
-          await prisma.recordingPurchase.create({
-            data: {
-              recordingId,
-              buyerId,
-              gatewayOrderId: order.id,
-              amountPaise: derived.amount,
-              status: "PENDING",
-            },
+          await persistRecordingPurchase({
+            recordingId,
+            buyerId,
+            orderId: order.id,
+            amountPaise: derived.amount,
+            hostOrgId,
           });
         } catch (rowError) {
           // A payable order must not outlive its ledger row — best-effort cancel
@@ -214,6 +284,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       },
     );
 
+    if (outcome.kind === "forbidden_org") {
+      return NextResponse.json(
+        {
+          error:
+            "Active organization membership is required to purchase this recording.",
+          code: "ORG_MEMBERSHIP_REQUIRED",
+        },
+        { status: 403 },
+      );
+    }
     if (outcome.kind === "owned") {
       return NextResponse.json(
         { error: "You already own this recording", code: "ALREADY_ENTITLED" },
@@ -226,6 +306,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       { status: kind === "minted" ? 201 : 200 },
     );
   } catch (error) {
+    if (error instanceof OrgMembershipRequiredError) {
+      return NextResponse.json(
+        {
+          error:
+            "Active organization membership is required to purchase this recording.",
+          code: "ORG_MEMBERSHIP_REQUIRED",
+        },
+        { status: 403 },
+      );
+    }
     // The mint lock's refusals are typed (409 busy / 503 Redis down), not faults.
     if (
       error instanceof RecordingPurchaseInProgressError ||

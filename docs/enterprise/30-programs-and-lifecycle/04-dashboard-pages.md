@@ -109,11 +109,11 @@ page that already owned the object. Every tab is addressable as
 `?tab=<value>`, and legacy standalone routes (`purchase-orders`, `reimbursements`,
 `disputes`) redirect through `ORG_TAB_REDIRECTS` in `lib/dashboard/org-tab-redirect.ts`.
 
-| Page        | Tabs / Sections                                                                | Why they merged                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `/members`  | `all`, `learners`, `experts`, `invitations`                                    | `learners` and `experts` are role filters against `/api/organizations/[orgId]/members`.                                 |
-| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                                   | Rendered via `SettingsLayout` with one canonical URL per section.                                                       |
-| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `spend`, `reimbursements`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface. |
+| Page        | Tabs / Sections                                                     | Why they merged                                                                                                         |
+| ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `/members`  | `all`, `learners`, `experts`, `invitations`                         | `learners` and `experts` are role filters against `/api/organizations/[orgId]/members`.                                 |
+| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                       |
+| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface. |
 
 Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
 a role that cannot reach a surface does not get a trigger for it.
@@ -175,7 +175,7 @@ A few additional surfaces are not in the org-scoped tree:
   `Settings`: both collided head-on with the per-org dashboard's entries of the
   same name, and an operator moving between the two layers had no way to tell
   which one they were looking at.
-  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA. Replaces the old `/dashboard/organization` switcher list (which now 308-redirects here for OrgWorkspaces).
+  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA. Replaces the old `/dashboard/organization` switcher list (which now 308-redirects here for `OrgWorkspace` profiles).
   - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
     across all owned orgs with `<FilterBar>` organization and category filters (including `WEBHOOK`). Cursor-paginated. Distinct from per-org
     `/audit` which scopes to one org and supports rich filters.

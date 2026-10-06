@@ -2,22 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Copy, ExternalLink, Share2 } from "lucide-react";
+import { Check, Copy, Share2 } from "lucide-react";
 
 import { Section } from "@/components/dashboard/Section";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
+import { SocialShareDialog } from "../reviews/SocialShareDialog";
 
 /** Round numbers worth a line of recognition; the next one ahead is shown. */
 const MILESTONES = [1, 10, 25, 50, 100, 250, 500, 1000];
@@ -31,13 +23,25 @@ export function milestoneLine(delivered: number): string | null {
   return next ? `${done} · ${next - delivered} to ${next}` : done;
 }
 
+function formatTrackHint(
+  score: number | null | undefined,
+  count: number | undefined,
+  singularNoun: string,
+  pluralNoun: string,
+  fallbackText: string,
+): string {
+  if (typeof score === "number" && (count ?? 0) > 0) {
+    const noun = count === 1 ? singularNoun : pluralNoun;
+    return `From ${count} ${noun}`;
+  }
+  return fallbackText;
+}
+
 export function ThisMonthCard({
   consultantId,
   sessionsThisMonth,
   sessionsDelivered,
   availablePaise,
-  averageRating,
-  totalReviews,
   publishedRatingOneToOne,
   publishedRatingGroup,
   ratedClientsOneToOne,
@@ -47,8 +51,8 @@ export function ThisMonthCard({
   sessionsThisMonth: number | null;
   sessionsDelivered: number | null;
   availablePaise: number;
-  averageRating: number;
-  totalReviews: number;
+  averageRating?: number;
+  totalReviews?: number;
   publishedRatingOneToOne?: number | null;
   publishedRatingGroup?: number | null;
   ratedClientsOneToOne?: number;
@@ -57,7 +61,6 @@ export function ThisMonthCard({
   const base = `/dashboard/consultant/${consultantId}`;
   const shareHref = useExpertShareHref(consultantId);
   const [shareOpen, setShareOpen] = useState(false);
-  const [copiedPost, setCopiedPost] = useState(false);
 
   const milestone =
     sessionsDelivered === null ? null : milestoneLine(sessionsDelivered);
@@ -70,47 +73,35 @@ export function ThisMonthCard({
     typeof window !== "undefined"
       ? `${window.location.origin}${shareHref}`
       : shareHref;
+  const sessionWord =
+    reachedMilestone === 1 ? "delivered session" : "delivered sessions";
   const milestonePostText = reachedMilestone
-    ? `I just crossed ${reachedMilestone} ${reachedMilestone === 1 ? "delivered session" : "delivered sessions"} mentoring on Familiarise! Book a 1:1 session or join an upcoming cohort with me: ${fullShareUrl}`
+    ? `I just crossed ${reachedMilestone} ${sessionWord} mentoring on Familiarise! Book a 1:1 session or join an upcoming cohort with me: ${fullShareUrl}`
     : "";
 
-  const copyMilestonePost = async () => {
-    try {
-      await navigator.clipboard.writeText(milestonePostText);
-      setCopiedPost(true);
-      setTimeout(() => setCopiedPost(false), 2000);
-    } catch {
-      setCopiedPost(false);
-    }
-  };
-
   const oneToOneScore =
-    publishedRatingOneToOne !== undefined
-      ? publishedRatingOneToOne !== null
-        ? publishedRatingOneToOne.toFixed(1)
-        : "—"
-      : totalReviews > 0
-        ? averageRating.toFixed(1)
-        : "—";
-  const oneToOneHint =
-    publishedRatingOneToOne !== undefined
-      ? publishedRatingOneToOne !== null && (ratedClientsOneToOne ?? 0) > 0
-        ? `From ${ratedClientsOneToOne} ${ratedClientsOneToOne === 1 ? "learner" : "learners"}`
-        : "1:1 consultations & plans"
-      : totalReviews > 0
-        ? `${totalReviews} ${totalReviews === 1 ? "review" : "reviews"}`
-        : "No 1:1 reviews yet";
+    typeof publishedRatingOneToOne === "number"
+      ? publishedRatingOneToOne.toFixed(1)
+      : "—";
+  const oneToOneHint = formatTrackHint(
+    publishedRatingOneToOne,
+    ratedClientsOneToOne,
+    "learner",
+    "learners",
+    "1:1 consultations & plans",
+  );
 
   const groupScore =
-    publishedRatingGroup !== undefined && publishedRatingGroup !== null
+    typeof publishedRatingGroup === "number"
       ? publishedRatingGroup.toFixed(1)
       : "—";
-  const groupHint =
-    publishedRatingGroup !== undefined &&
-    publishedRatingGroup !== null &&
-    (ratedEventsGroup ?? 0) > 0
-      ? `From ${ratedEventsGroup} ${ratedEventsGroup === 1 ? "event" : "events"}`
-      : "Webinars & classes";
+  const groupHint = formatTrackHint(
+    publishedRatingGroup,
+    ratedEventsGroup,
+    "event",
+    "events",
+    "Webinars & classes",
+  );
 
   return (
     <Section title="This month" variant="card">
@@ -158,70 +149,17 @@ export function ThisMonthCard({
         </div>
       )}
 
-      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Share your milestone</DialogTitle>
-            <DialogDescription>
-              Bookings from your personal link pay half the platform fee (10% vs
-              20% — you keep 90%) and lock that rate for repeat learners.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Textarea
-              readOnly
-              value={milestonePostText}
-              rows={4}
-              aria-label="Milestone social post"
-              className="text-sm"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void copyMilestonePost()}
-              >
-                {copiedPost ? (
-                  <Check className="mr-1.5 h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                {copiedPost ? "Copied post" : "Copy post & link"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" asChild>
-                <a
-                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(milestonePostText)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Share on X
-                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-              <Button type="button" size="sm" variant="outline" asChild>
-                <a
-                  href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(fullShareUrl)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Share on LinkedIn
-                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShareOpen(false)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SocialShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        title="Share your milestone"
+        description="Bookings from your personal link pay half the platform fee (10% vs 20% — you keep 90%) and lock that rate for repeat learners."
+        postText={milestonePostText}
+        shareUrl={fullShareUrl}
+        textareaAriaLabel="Milestone social post"
+        copyLabel="Copy post & link"
+        copiedLabel="Copied post"
+      />
     </Section>
   );
 }

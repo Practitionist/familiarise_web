@@ -89,6 +89,7 @@ export async function readInboxPage(
     id: true,
     lastMessageAt: true,
     createdAt: true,
+    acknowledgedAt: true,
     ackDueAt: true,
     resolutionDueAt: true,
   } as const;
@@ -124,6 +125,7 @@ export async function readInboxPage(
   const pageKeys = mergeCasePage(
     ticketKeys.map((t) => ({
       ...t,
+      ackDueAt: t.acknowledgedAt ? null : t.ackDueAt,
       key: caseKeyOf({ kind: "ticket", id: t.id }),
     })),
     threadKeys.map((t) => ({
@@ -193,7 +195,10 @@ export async function readInboxPage(
       status: t.status,
       priority: t.priority,
       channel: null,
-      sla: slaStateOf(t, now),
+      sla: slaStateOf(
+        { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
+        now,
+      ),
       assignee: t.assignedTo,
       lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
     });

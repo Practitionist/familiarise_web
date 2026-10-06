@@ -154,7 +154,7 @@ export const POST = withOpsAction(
   MutateWaiverShape,
   {
     mode: "tx",
-    run: async (tx, { body, actor }) => {
+    run: async (tx, { body }) => {
       if (body.action === "REVOKE") {
         if (!body.waiverId) {
           throw new OpsRefusal(
@@ -303,45 +303,27 @@ export const POST = withOpsAction(
 
       let referralId = body.referralId;
       if (!referralId) {
-        const existingReferral = await tx.referral.findFirst({
-          where: {
-            OR: [
-              { referredUserId: profile.userId },
-              { referralCode: { userId: profile.userId } },
-            ],
-          },
-          orderBy: { createdAt: "desc" },
-          select: { id: true },
-        });
+        const existingReferral =
+          body.waiverReason === "REFERRED_EXPERT"
+            ? await tx.referral.findFirst({
+                where: { referredUserId: profile.userId },
+                orderBy: { createdAt: "desc" },
+                select: { id: true },
+              })
+            : await tx.referral.findFirst({
+                where: { referralCode: { userId: profile.userId } },
+                orderBy: { createdAt: "desc" },
+                select: { id: true },
+              });
 
-        if (existingReferral) {
-          referralId = existingReferral.id;
-        } else {
-          let actorCode = await tx.referralCode.findUnique({
-            where: { userId: actor.userId },
-            select: { id: true },
-          });
-          if (!actorCode) {
-            actorCode = await tx.referralCode.create({
-              data: {
-                userId: actor.userId,
-                code: `OPS-${actor.userId.slice(0, 8).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
-              },
-              select: { id: true },
-            });
-          }
-          const createdReferral = await tx.referral.create({
-            data: {
-              referralCodeId: actorCode.id,
-              referredUserId: profile.userId,
-              status: "VESTED",
-              vestedAt: new Date(),
-              configVersion: cfg?.version ?? 1,
-            },
-            select: { id: true },
-          });
-          referralId = createdReferral.id;
+        if (!existingReferral) {
+          throw new OpsRefusal(
+            "REFERRAL_NOT_FOUND",
+            "No qualifying referral exists for this expert and waiver reason; specify a referralId or create a referral first.",
+            404,
+          );
         }
+        referralId = existingReferral.id;
       }
 
       const waiver = await tx.consultantFeeWaiver.upsert({

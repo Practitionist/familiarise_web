@@ -238,12 +238,12 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       if (!plan) return undefined;
       // The trial price is edited in rupees like `price`; the service converts back.
       const trialPaise = plan.trialPriceInPaise;
-      const sessionsPerWeek =
-        typeof plan.sessionsPerWeek === "number"
-          ? plan.sessionsPerWeek
-          : typeof plan.callsPerWeek === "number"
-            ? plan.callsPerWeek
-            : 1;
+      let sessionsPerWeek = 1;
+      if (typeof plan.sessionsPerWeek === "number") {
+        sessionsPerWeek = plan.sessionsPerWeek;
+      } else if (typeof plan.callsPerWeek === "number") {
+        sessionsPerWeek = plan.callsPerWeek;
+      }
       const sessionDurationInHours =
         typeof plan.sessionDurationInHours === "number" &&
         plan.sessionDurationInHours > 0

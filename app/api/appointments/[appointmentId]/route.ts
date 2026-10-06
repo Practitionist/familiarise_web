@@ -102,7 +102,13 @@ export async function PATCH(
         });
       }
       const updated = await prisma.consultation.updateMany({
-        where: { id: consultation.id, status: "PENDING" },
+        where: {
+          id: consultation.id,
+          status: "PENDING",
+          appointment: {
+            is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+          },
+        },
         data: { requestNotes: parsed.data.requestNotes },
       });
       if (updated.count === 0) {
@@ -125,7 +131,13 @@ export async function PATCH(
         });
       }
       const updated = await prisma.subscription.updateMany({
-        where: { id: subscription.id, status: "PENDING" },
+        where: {
+          id: subscription.id,
+          status: "PENDING",
+          appointment: {
+            is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+          },
+        },
         data: { requestNotes: parsed.data.requestNotes },
       });
       if (updated.count === 0) {

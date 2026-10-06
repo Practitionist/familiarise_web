@@ -8,15 +8,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import {
-  Check,
-  Copy,
-  ExternalLink,
-  Flag,
-  MessageSquareQuote,
-  Share2,
-  Star,
-} from "lucide-react";
+import { Flag, MessageSquareQuote, Share2, Star } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -50,6 +42,7 @@ import { useListParams } from "@/hooks/useListParams";
 import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
+import { SocialShareDialog } from "./SocialShareDialog";
 
 const reviewsKey = (consultantId: string) => ["own-reviews", consultantId];
 
@@ -200,7 +193,6 @@ function ReviewCard({
   );
   const [reportDetails, setReportDetails] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
-  const [copiedShare, setCopiedShare] = useState(false);
 
   const replyUrl = `/api/user/reviews/${review.id}/reply`;
   const refresh = () =>
@@ -280,16 +272,6 @@ function ReviewCard({
   const shareText = review.body
     ? `"${review.body}" — ${sanitisedAuthor} (${review.rating}★)\n\nBook a session with me on Familiarise: ${fullShareUrl}`
     : `${review.rating}★ review from ${sanitisedAuthor} on Familiarise!\n\nBook a session with me: ${fullShareUrl}`;
-
-  const copySharePost = async () => {
-    try {
-      await navigator.clipboard.writeText(shareText);
-      setCopiedShare(true);
-      setTimeout(() => setCopiedShare(false), 2000);
-    } catch {
-      setCopiedShare(false);
-    }
-  };
 
   return (
     <li className="px-4 py-4 sm:px-5">
@@ -401,70 +383,17 @@ function ReviewCard({
         onConfirm={remove}
       />
 
-      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Share this review</DialogTitle>
-            <DialogDescription>
-              Includes your signed personal link (10% platform fee vs 20%
-              Marketplace).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Textarea
-              readOnly
-              value={shareText}
-              rows={4}
-              aria-label="Review share post"
-              className="text-sm"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void copySharePost()}
-              >
-                {copiedShare ? (
-                  <Check className="mr-1.5 h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                {copiedShare ? "Copied" : "Copy quote & link"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" asChild>
-                <a
-                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Share on X
-                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-              <Button type="button" size="sm" variant="outline" asChild>
-                <a
-                  href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(fullShareUrl)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Share on LinkedIn
-                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShareOpen(false)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SocialShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        title="Share this review"
+        description="Includes your signed personal link (10% platform fee vs 20% Marketplace)."
+        postText={shareText}
+        shareUrl={fullShareUrl}
+        textareaAriaLabel="Review share post"
+        copyLabel="Copy quote & link"
+        copiedLabel="Copied"
+      />
 
       <Dialog open={reportOpen} onOpenChange={setReportOpen}>
         <DialogContent className="sm:max-w-md">
@@ -664,11 +593,8 @@ export function ReviewsInbox({
         canClear={Boolean(rating || track)}
         onClear={list.clear}
       >
-        <div
-          role="group"
-          aria-label="Track"
-          className="inline-flex rounded-lg bg-muted p-1"
-        >
+        <fieldset className="inline-flex rounded-lg border-0 bg-muted p-1">
+          <legend className="sr-only">Track</legend>
           {TRACK_OPTIONS.map((opt) => {
             const pressed = (track ?? null) === opt.value;
             return (
@@ -688,7 +614,7 @@ export function ReviewsInbox({
               </button>
             );
           })}
-        </div>
+        </fieldset>
       </FilterBar>
       <UrlTabs
         tabs={[

@@ -92,6 +92,121 @@ const getDaysUntilDue = (dueBy: string | null) => {
   return diffDays;
 };
 
+const OPEN_DISPUTE_STATUSES = new Set([
+  "NEEDS_RESPONSE",
+  "WARNING_NEEDS_RESPONSE",
+  "UNDER_REVIEW",
+  "WARNING_UNDER_REVIEW",
+]);
+
+function isOpenDisputeStatus(status: string): boolean {
+  return OPEN_DISPUTE_STATUSES.has(status.toUpperCase());
+}
+
+function compareDisputes(a: Dispute, b: Dispute): number {
+  const aOpen = isOpenDisputeStatus(a.status);
+  const bOpen = isOpenDisputeStatus(b.status);
+  if (aOpen !== bOpen) return aOpen ? -1 : 1;
+  if (aOpen && bOpen) {
+    if (Boolean(a.dueBy) !== Boolean(b.dueBy)) return a.dueBy ? -1 : 1;
+    if (a.dueBy && b.dueBy) {
+      const diff = new Date(a.dueBy).getTime() - new Date(b.dueBy).getTime();
+      if (diff !== 0) return diff;
+    }
+  }
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+}
+
+function DisputeDueCell({ dueBy }: Readonly<{ dueBy: string | null }>) {
+  if (!dueBy) return <>-</>;
+  const daysUntilDue = getDaysUntilDue(dueBy);
+  const hoursUntilDue =
+    (new Date(dueBy).getTime() - Date.now()) / (1000 * 60 * 60);
+  const isCritical48h = hoursUntilDue <= 48 && hoursUntilDue >= 0;
+  const isUrgent =
+    isCritical48h ||
+    (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
+
+  return (
+    <div
+      className={
+        isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
+      }
+    >
+      <div className="flex items-center gap-1.5">
+        <span>{formatDate(dueBy)}</span>
+        {isCritical48h && (
+          <Badge variant="destructive" className="text-[10px]">
+            Due &lt; 48h
+          </Badge>
+        )}
+      </div>
+      {daysUntilDue !== null && daysUntilDue >= 0 && (
+        <p className="text-xs">
+          {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
+  {
+    key: "disputeId",
+    header: "Dispute ID",
+    primary: true,
+    cell: (dispute) => (
+      <div>
+        <p className="font-mono text-sm">
+          {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+        </p>
+        {dispute.payment && (
+          <p className="text-xs text-muted-foreground/70">
+            Payment: {dispute.payment.paymentIntent.slice(-12)}
+          </p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    className: "font-medium",
+    cell: (dispute) =>
+      formatCurrencyAmount(dispute.amountPaise, dispute.currency),
+  },
+  {
+    key: "gateway",
+    header: "Gateway",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => gatewayLabel(dispute.paymentGateway),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (dispute) => (
+      <Badge
+        className={`${getStatusColor(dispute.status)} gap-1`}
+        variant="secondary"
+      >
+        {getStatusIcon(dispute.status)}
+        {dispute.status.toLowerCase().replace(/_/g, " ")}
+      </Badge>
+    ),
+  },
+  {
+    key: "dueBy",
+    header: "Evidence Due By",
+    cell: (dispute) => <DisputeDueCell dueBy={dispute.dueBy} />,
+  },
+  {
+    key: "created",
+    header: "Created",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => formatDate(dispute.createdAt),
+  },
+];
+
 export interface DisputesPageProps {
   /** API endpoint for fetching disputes */
   apiEndpoint?: string;
@@ -144,30 +259,10 @@ export function DisputesPage({
       if (!response.ok) throw new Error("Failed to fetch disputes");
       return response.json();
     },
-    // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,
   });
 
-  const rawDisputes = data?.disputes ?? [];
-  const OPEN_DISPUTE_STATUSES = new Set([
-    "NEEDS_RESPONSE",
-    "WARNING_NEEDS_RESPONSE",
-    "UNDER_REVIEW",
-    "WARNING_UNDER_REVIEW",
-  ]);
-  const disputes = [...rawDisputes].sort((a, b) => {
-    const aOpen = OPEN_DISPUTE_STATUSES.has(a.status.toUpperCase());
-    const bOpen = OPEN_DISPUTE_STATUSES.has(b.status.toUpperCase());
-    if (aOpen !== bOpen) return aOpen ? -1 : 1;
-    if (aOpen && bOpen) {
-      if (Boolean(a.dueBy) !== Boolean(b.dueBy)) return a.dueBy ? -1 : 1;
-      if (a.dueBy && b.dueBy) {
-        const diff = new Date(a.dueBy).getTime() - new Date(b.dueBy).getTime();
-        if (diff !== 0) return diff;
-      }
-    }
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
+  const disputes = [...(data?.disputes ?? [])].sort(compareDisputes);
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
@@ -191,99 +286,6 @@ export function DisputesPage({
       </Link>
     </Button>
   );
-
-  const columns: ResponsiveColumn<Dispute>[] = [
-    {
-      key: "disputeId",
-      header: "Dispute ID",
-      primary: true,
-      cell: (dispute) => (
-        <div>
-          <p className="font-mono text-sm">
-            {dispute.disputeId?.slice(-12) ||
-              dispute.id.slice(-8).toUpperCase()}
-          </p>
-          {dispute.payment && (
-            <p className="text-xs text-muted-foreground/70">
-              Payment: {dispute.payment.paymentIntent.slice(-12)}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      className: "font-medium",
-      cell: (dispute) =>
-        formatCurrencyAmount(dispute.amountPaise, dispute.currency),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => gatewayLabel(dispute.paymentGateway),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (dispute) => (
-        <Badge
-          className={`${getStatusColor(dispute.status)} gap-1`}
-          variant="secondary"
-        >
-          {getStatusIcon(dispute.status)}
-          {dispute.status.toLowerCase().replace(/_/g, " ")}
-        </Badge>
-      ),
-    },
-    {
-      key: "dueBy",
-      header: "Evidence Due By",
-      cell: (dispute) => {
-        const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-        const hoursUntilDue = dispute.dueBy
-          ? (new Date(dispute.dueBy).getTime() - Date.now()) / (1000 * 60 * 60)
-          : null;
-        const isCritical48h =
-          hoursUntilDue !== null && hoursUntilDue <= 48 && hoursUntilDue >= 0;
-        const isUrgent =
-          isCritical48h ||
-          (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
-        return dispute.dueBy ? (
-          <div
-            className={
-              isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
-            }
-          >
-            <div className="flex items-center gap-1.5">
-              <span>{formatDate(dispute.dueBy)}</span>
-              {isCritical48h && (
-                <Badge variant="destructive" className="text-[10px]">
-                  Due &lt; 48h
-                </Badge>
-              )}
-            </div>
-            {daysUntilDue !== null && daysUntilDue >= 0 && (
-              <p className="text-xs">
-                {daysUntilDue === 0
-                  ? "Due today!"
-                  : `${daysUntilDue} days left`}
-              </p>
-            )}
-          </div>
-        ) : (
-          "-"
-        );
-      },
-    },
-    {
-      key: "created",
-      header: "Created",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => formatDate(dispute.createdAt),
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -435,7 +437,7 @@ export function DisputesPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {isError && !data ? (
+          {isError && !data && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
               <div className="flex items-center gap-2 text-destructive">
                 <AlertTriangle className="h-5 w-5" />
@@ -451,13 +453,15 @@ export function DisputesPage({
                 Retry
               </Button>
             </div>
-          ) : isPending ? (
+          )}
+          {(!isError || Boolean(data)) && isPending && (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
-          ) : (
+          )}
+          {(!isError || Boolean(data)) && !isPending && (
             <ResponsiveTable<Dispute>
-              columns={columns}
+              columns={DISPUTE_COLUMNS}
               rows={disputes}
               getRowId={(d) => d.id}
               onRowClick={(d) => handleViewDispute(d.id)}

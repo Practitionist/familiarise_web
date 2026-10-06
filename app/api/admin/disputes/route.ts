@@ -54,7 +54,10 @@ export async function GET(req: NextRequest) {
           where,
           skip: (page - 1) * limit,
           take: limit,
-          orderBy: { createdAt: "desc" },
+          orderBy: [
+            { dueBy: { sort: "asc", nulls: "last" } },
+            { createdAt: "desc" },
+          ],
           include: {
             payment: {
               select: {

@@ -115,11 +115,25 @@ export function PriceField<T extends FieldValues = FieldValues>({
       <p className="text-xs text-muted-foreground">
         You keep 80% on Marketplace · 90% via your personal link
         {Number(priceField.value) > 0
-          ? ` (₹${Math.round(Number(priceField.value) * 0.8).toLocaleString("en-IN")} / ₹${Math.round(Number(priceField.value) * 0.9).toLocaleString("en-IN")})`
+          ? ` (${formatProceeds(Number(priceField.value) * 0.8, String(currencyField.value || "INR"))} / ${formatProceeds(Number(priceField.value) * 0.9, String(currencyField.value || "INR"))})`
           : ""}
       </p>
 
       {error && <FormMessage>{error.message}</FormMessage>}
     </FormItem>
   );
+}
+
+function formatProceeds(amountMajor: number, currency: string): string {
+  const rounded = Math.round(amountMajor);
+  const code = currency || "INR";
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(rounded);
+  } catch {
+    return `${code} ${rounded.toLocaleString("en-IN")}`;
+  }
 }

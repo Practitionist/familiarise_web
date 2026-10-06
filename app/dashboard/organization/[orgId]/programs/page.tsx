@@ -2005,6 +2005,179 @@ function AssignmentStateBadge({
   return <StatusBadge label="Active" tone="success" size="sm" />;
 }
 
+function UnassignedMembersChecklist({
+  isLoading,
+  isError,
+  assignableMembers,
+  selectedMembershipIds,
+  onToggleMember,
+}: Readonly<{
+  isLoading: boolean;
+  isError: boolean;
+  assignableMembers: MemberListItem[];
+  selectedMembershipIds: string[];
+  onToggleMember: (id: string, checked: boolean) => void;
+}>) {
+  if (isLoading) {
+    return <p className="text-xs text-muted-foreground">Loading members…</p>;
+  }
+  if (isError) {
+    return <p className="text-xs text-destructive">Failed to load members</p>;
+  }
+  if (assignableMembers.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        All eligible members are already assigned to this program.
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-40 overflow-y-auto rounded-md border p-2 space-y-1.5">
+      {assignableMembers.map((m) => {
+        const checked = selectedMembershipIds.includes(m.id);
+        return (
+          <label
+            key={m.id}
+            className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/50 cursor-pointer"
+          >
+            <span className="flex items-center gap-2">
+              <Checkbox
+                checked={checked}
+                onCheckedChange={(next) => onToggleMember(m.id, Boolean(next))}
+              />
+              <span>{m.user.name ?? m.user.email}</span>
+            </span>
+            <Badge variant="secondary" className="text-[10px]">
+              {MEMBER_ROLE_LABEL[m.role as keyof typeof MEMBER_ROLE_LABEL] ??
+                humanizeEnum(m.role)}
+            </Badge>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProgramAssignmentsTable({
+  orgId,
+  program,
+  isLoading,
+  assignmentList,
+  canAssign,
+}: Readonly<{
+  orgId: string;
+  program: ProgramListItem;
+  isLoading: boolean;
+  assignmentList: AssignmentListItem[];
+  canAssign: boolean;
+}>) {
+  const queryClient = useQueryClient();
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (assignmentList.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500">
+        No members assigned yet. Use the form above to assign learners.
+      </p>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Member</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Period</TableHead>
+          <TableHead>Usage</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="w-24" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {assignmentList.map((a) => {
+          const engagementsUsed = a.engagementsUsed ?? 0;
+          const consumedPaise = a.consumedPaise ?? 0;
+          const isDormant =
+            isLiveAssignment(a) && engagementsUsed === 0 && consumedPaise === 0;
+          return (
+            <TableRow key={a.id}>
+              <TableCell className="text-sm">
+                {a.membership.user.name ?? a.membership.user.email}
+              </TableCell>
+              <TableCell>
+                <Badge variant="secondary" className="text-xs">
+                  {MEMBER_ROLE_LABEL[
+                    a.membership.role as keyof typeof MEMBER_ROLE_LABEL
+                  ] ?? humanizeEnum(a.membership.role)}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-xs text-zinc-600">
+                {new Date(a.periodStart).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  timeZone: "UTC",
+                })}
+                {" → "}
+                {new Date(a.periodEnd).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                  timeZone: "UTC",
+                })}
+              </TableCell>
+              <TableCell className="text-xs tabular-nums">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span>
+                    {engagementsUsed} sessions ·{" "}
+                    {formatCurrencyAmount(consumedPaise, "INR")}
+                  </span>
+                  {isDormant && (
+                    <Badge variant="outline" className="text-[10px]">
+                      Dormant
+                    </Badge>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                <AssignmentStateBadge assignment={a} />
+              </TableCell>
+              <TableCell className="text-right">
+                {canAssign && isLiveAssignment(a) && (
+                  <ConfirmDialog
+                    title="End this assignment?"
+                    description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
+                    confirmLabel="End assignment"
+                    tone="destructive"
+                    onConfirm={async () => {
+                      await endAssignment(orgId, program.id, a.id);
+                      void queryClient.invalidateQueries({
+                        queryKey: ["program-assignments", orgId, program.id],
+                      });
+                      void queryClient.invalidateQueries({
+                        queryKey: ["org-programs", orgId],
+                      });
+                    }}
+                    trigger={
+                      <Button variant="ghost" size="sm">
+                        Unassign
+                      </Button>
+                    }
+                  />
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 function ManageProgramDialog({
   orgId,
   program,
@@ -2265,46 +2438,13 @@ function ManageProgramDialog({
             </div>
             <div className="space-y-2">
               <Label>Unassigned members</Label>
-              {members.isLoading ? (
-                <p className="text-xs text-muted-foreground">
-                  Loading members…
-                </p>
-              ) : members.isError ? (
-                <p className="text-xs text-destructive">
-                  Failed to load members
-                </p>
-              ) : assignableMembers.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  All eligible members are already assigned to this program.
-                </p>
-              ) : (
-                <div className="max-h-40 overflow-y-auto rounded-md border p-2 space-y-1.5">
-                  {assignableMembers.map((m) => {
-                    const checked = selectedMembershipIds.includes(m.id);
-                    return (
-                      <label
-                        key={m.id}
-                        className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/50 cursor-pointer"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(next) =>
-                              toggleMember(m.id, Boolean(next))
-                            }
-                          />
-                          <span>{m.user.name ?? m.user.email}</span>
-                        </span>
-                        <Badge variant="secondary" className="text-[10px]">
-                          {MEMBER_ROLE_LABEL[
-                            m.role as keyof typeof MEMBER_ROLE_LABEL
-                          ] ?? humanizeEnum(m.role)}
-                        </Badge>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
+              <UnassignedMembersChecklist
+                isLoading={members.isLoading}
+                isError={members.isError}
+                assignableMembers={assignableMembers}
+                selectedMembershipIds={selectedMembershipIds}
+                onToggleMember={toggleMember}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -2357,110 +2497,13 @@ function ManageProgramDialog({
           <h4 className="text-sm font-semibold">
             Assignments ({assignmentList.length})
           </h4>
-          {assignments.isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-zinc-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
-          ) : assignmentList.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              No members assigned yet. Use the form above to assign learners.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead>Usage</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-24" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assignmentList.map((a) => {
-                  const engagementsUsed = a.engagementsUsed ?? 0;
-                  const consumedPaise = a.consumedPaise ?? 0;
-                  const isDormant =
-                    isLiveAssignment(a) &&
-                    engagementsUsed === 0 &&
-                    consumedPaise === 0;
-                  return (
-                    <TableRow key={a.id}>
-                      <TableCell className="text-sm">
-                        {a.membership.user.name ?? a.membership.user.email}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className="text-xs">
-                          {MEMBER_ROLE_LABEL[
-                            a.membership.role as keyof typeof MEMBER_ROLE_LABEL
-                          ] ?? humanizeEnum(a.membership.role)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-600">
-                        {new Date(a.periodStart).toLocaleDateString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          timeZone: "UTC",
-                        })}
-                        {" → "}
-                        {new Date(a.periodEnd).toLocaleDateString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                          timeZone: "UTC",
-                        })}
-                      </TableCell>
-                      <TableCell className="text-xs tabular-nums">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span>
-                            {engagementsUsed} sessions ·{" "}
-                            {formatCurrencyAmount(consumedPaise, "INR")}
-                          </span>
-                          {isDormant && (
-                            <Badge variant="outline" className="text-[10px]">
-                              Dormant
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <AssignmentStateBadge assignment={a} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {canAssign && isLiveAssignment(a) && (
-                          <ConfirmDialog
-                            title="End this assignment?"
-                            description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
-                            confirmLabel="End assignment"
-                            tone="destructive"
-                            onConfirm={async () => {
-                              await endAssignment(orgId, program.id, a.id);
-                              void queryClient.invalidateQueries({
-                                queryKey: [
-                                  "program-assignments",
-                                  orgId,
-                                  program.id,
-                                ],
-                              });
-                              void queryClient.invalidateQueries({
-                                queryKey: ["org-programs", orgId],
-                              });
-                            }}
-                            trigger={
-                              <Button variant="ghost" size="sm">
-                                Unassign
-                              </Button>
-                            }
-                          />
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+          <ProgramAssignmentsTable
+            orgId={orgId}
+            program={program}
+            isLoading={assignments.isLoading}
+            assignmentList={assignmentList}
+            canAssign={canAssign}
+          />
         </div>
 
         {canManage && assignments.isSuccess && assignmentList.length === 0 && (

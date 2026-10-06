@@ -213,5 +213,32 @@ describe("deriveCreditState", () => {
       status: "VOID",
       tone: "critical",
     });
+    expect(
+      deriveCreditState(makeCredit({ state: "VESTED", remainingAmount: 0 })),
+    ).toEqual({
+      label: "EXHAUSTED",
+      status: "EXHAUSTED",
+      tone: "neutral",
+    });
+    expect(
+      deriveCreditState(makeCredit({ state: "VESTED", remainingAmount: -100 })),
+    ).toEqual({
+      label: "EXHAUSTED",
+      status: "EXHAUSTED",
+      tone: "neutral",
+    });
+    expect(
+      deriveCreditState(
+        makeCredit({
+          state: "VESTED",
+          remainingAmount: 30000,
+          expiresAt: "2020-01-01T00:00:00.000Z",
+        }),
+      ),
+    ).toEqual({
+      label: "EXPIRED",
+      status: "EXPIRED",
+      tone: "warning",
+    });
   });
 });

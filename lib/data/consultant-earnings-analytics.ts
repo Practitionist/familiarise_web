@@ -279,6 +279,8 @@ async function readAttributionAndRepeatStats(
           ? { payment: { organizationId } }
           : {}),
       },
+      orderBy: { createdAt: "desc" },
+      take: 1000,
       select: {
         consultantSharePaise: true,
         refundedShareAmount: true,

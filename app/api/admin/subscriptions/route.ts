@@ -1,12 +1,52 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { AppointmentStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+
+function buildSubscriptionFilter(
+  status: string | null,
+  now: Date,
+  soonThreshold: Date,
+): Prisma.SubscriptionWhereInput | undefined {
+  if (status === "active") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { gt: soonThreshold },
+    };
+  }
+  if (status === "expiring_soon") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+    };
+  }
+  if (status === "expired") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { lte: now },
+    };
+  }
+  if (status === "cancelled") {
+    return { status: "CANCELLED" };
+  }
+  return undefined;
+}
+
+function deriveSubscriptionDisplayStatus(
+  isCancelled: boolean,
+  isActive: boolean,
+  isExpiringSoon: boolean,
+): "cancelled" | "expiring_soon" | "active" | "expired" {
+  if (isCancelled) return "cancelled";
+  if (!isActive) return "expired";
+  if (isExpiringSoon) return "expiring_soon";
+  return "active";
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,29 +62,16 @@ export async function GET(req: NextRequest) {
 
     const now = new Date();
     const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-    let subscriptionDateFilter: Prisma.SubscriptionWhereInput = {};
-    if (status === "active") {
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { gt: now },
-      };
-    } else if (status === "expiring_soon") {
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
-      };
-    } else if (status === "expired") {
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { lte: now },
-      };
-    }
+    const subscriptionFilter = buildSubscriptionFilter(
+      status,
+      now,
+      soonThreshold,
+    );
 
     const where: Prisma.PaymentWhereInput = {
       appointment: {
         appointmentType: "SUBSCRIPTION",
-        subscription:
-          Object.keys(subscriptionDateFilter).length > 0
-            ? subscriptionDateFilter
-            : undefined,
+        subscription: subscriptionFilter,
       },
     };
 
@@ -125,7 +152,10 @@ export async function GET(req: NextRequest) {
             ...baseWhere,
             appointment: {
               appointmentType: "SUBSCRIPTION",
-              subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
+              subscription: {
+                status: { not: "CANCELLED" },
+                schedulingPeriodEndsAt: { gt: soonThreshold },
+              },
             },
           },
         }),
@@ -135,6 +165,7 @@ export async function GET(req: NextRequest) {
             appointment: {
               appointmentType: "SUBSCRIPTION",
               subscription: {
+                status: { not: "CANCELLED" },
                 schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
               },
             },
@@ -145,7 +176,10 @@ export async function GET(req: NextRequest) {
             ...baseWhere,
             appointment: {
               appointmentType: "SUBSCRIPTION",
-              subscription: { schedulingPeriodEndsAt: { lte: now } },
+              subscription: {
+                status: { not: "CANCELLED" },
+                schedulingPeriodEndsAt: { lte: now },
+              },
             },
           },
         }),
@@ -165,11 +199,12 @@ export async function GET(req: NextRequest) {
 
       const endDate = subscription?.schedulingPeriodEndsAt;
       const isCancelled = subscription?.status === "CANCELLED";
-      const isActive = !isCancelled && endDate && new Date(endDate) > now;
-      const isExpiringSoon =
-        isActive &&
-        endDate &&
-        new Date(endDate) < new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const isActive = Boolean(
+        !isCancelled && endDate && new Date(endDate) > now,
+      );
+      const isExpiringSoon = Boolean(
+        isActive && endDate && new Date(endDate) <= soonThreshold,
+      );
 
       return {
         id: s.id,
@@ -194,13 +229,11 @@ export async function GET(req: NextRequest) {
         startDate: subscription?.schedulingPeriodStartsAt,
         endDate: subscription?.schedulingPeriodEndsAt,
         subscriptionStatus: subscription?.status,
-        status: isCancelled
-          ? "cancelled"
-          : isActive
-            ? isExpiringSoon
-              ? "expiring_soon"
-              : "active"
-            : "expired",
+        status: deriveSubscriptionDisplayStatus(
+          isCancelled,
+          isActive,
+          isExpiringSoon,
+        ),
         createdAt: s.createdAt,
       };
     });
@@ -237,6 +270,86 @@ const MutateSubscriptionShape = {
   action: z.enum(["CANCEL", "PAUSE", "RESUME"]),
 };
 
+type SubscriptionAction = "CANCEL" | "PAUSE" | "RESUME";
+
+async function resolveSubscriptionTransition(
+  tx: Tx,
+  subscriptionId: string,
+  currentStatus: AppointmentStatus,
+  hasSucceededPayment: boolean,
+  action: SubscriptionAction,
+): Promise<{
+  targetStatus: AppointmentStatus;
+  allowedSourceStatuses: readonly AppointmentStatus[];
+  before: { status: AppointmentStatus; prePauseStatus?: AppointmentStatus };
+}> {
+  if (action === "CANCEL") {
+    return {
+      targetStatus: "CANCELLED",
+      allowedSourceStatuses: [
+        "PENDING",
+        "APPROVED",
+        "APPROVED_PENDING_PAYMENT",
+        "SCHEDULED",
+      ],
+      before: { status: currentStatus },
+    };
+  }
+
+  if (action === "PAUSE") {
+    if (!hasSucceededPayment) {
+      throw new OpsRefusal(
+        "UNPAID_SUBSCRIPTION",
+        "Cannot pause a subscription without a succeeded payment.",
+        409,
+      );
+    }
+    return {
+      targetStatus: "PENDING",
+      allowedSourceStatuses: ["SCHEDULED", "APPROVED"],
+      before: { status: currentStatus, prePauseStatus: currentStatus },
+    };
+  }
+
+  if (!hasSucceededPayment) {
+    throw new OpsRefusal(
+      "UNPAID_SUBSCRIPTION",
+      "Cannot resume an unpaid PENDING subscription.",
+      409,
+    );
+  }
+
+  const lastPauseLog = await tx.opsActionLog.findFirst({
+    where: {
+      targetKind: "Subscription",
+      targetId: subscriptionId,
+      action: "subscriptions.ops.mutate",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { before: true, after: true },
+  });
+
+  const lastAfter = lastPauseLog?.after as Record<string, unknown> | null;
+  if (!lastPauseLog || lastAfter?.action !== "PAUSE") {
+    throw new OpsRefusal(
+      "NOT_PAUSED",
+      "Subscription was not paused by an admin action and cannot be resumed.",
+      409,
+    );
+  }
+
+  const lastBefore = lastPauseLog.before as Record<string, unknown> | null;
+  const priorStatus = lastBefore?.prePauseStatus ?? lastBefore?.status;
+  const restoredStatus: AppointmentStatus =
+    priorStatus === "APPROVED" ? "APPROVED" : "SCHEDULED";
+
+  return {
+    targetStatus: restoredStatus,
+    allowedSourceStatuses: ["PENDING"],
+    before: { status: currentStatus },
+  };
+}
+
 export const POST = withOpsAction(
   "subscriptions.manage",
   "subscriptions.ops.mutate",
@@ -249,6 +362,15 @@ export const POST = withOpsAction(
         select: {
           id: true,
           status: true,
+          appointment: {
+            select: {
+              payment: {
+                where: { paymentStatus: "SUCCEEDED" },
+                select: { id: true },
+                take: 1,
+              },
+            },
+          },
         },
       });
       if (!existing) {
@@ -259,19 +381,16 @@ export const POST = withOpsAction(
         );
       }
 
-      const targetStatus =
-        body.action === "CANCEL"
-          ? "CANCELLED"
-          : body.action === "PAUSE"
-            ? "PENDING"
-            : "SCHEDULED";
-
-      const allowedSourceStatuses: readonly (typeof existing.status)[] =
-        body.action === "CANCEL"
-          ? ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"]
-          : body.action === "PAUSE"
-            ? ["SCHEDULED", "APPROVED"]
-            : ["PENDING"];
+      const hasSucceededPayment =
+        (existing.appointment?.payment?.length ?? 0) > 0;
+      const { targetStatus, allowedSourceStatuses, before } =
+        await resolveSubscriptionTransition(
+          tx,
+          existing.id,
+          existing.status,
+          hasSucceededPayment,
+          body.action,
+        );
 
       if (existing.status === targetStatus) {
         throw new OpsRefusal(
@@ -322,7 +441,7 @@ export const POST = withOpsAction(
           previousStatus: existing.status,
           status: targetStatus,
         },
-        before: { status: existing.status },
+        before,
         after: { status: targetStatus, action: body.action },
       };
     },

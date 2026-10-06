@@ -240,11 +240,12 @@ export default async function MyProgramPage({
               // engagements. Both are normalised to the pool's own unit here:
               // whole-rupee credits, where 1 credit = ₹1 = 100 paise.
               const isPool = a.program.type === "CREDIT_POOL";
-              const cap = isPool
-                ? (pool?.creditBudgetPerCycle ?? null)
-                : a.program.type === "LICENSED_SEAT"
-                  ? (seat?.coveredEngagementsPerCycle ?? null)
-                  : null;
+              let cap: number | null = null;
+              if (isPool) {
+                cap = pool?.creditBudgetPerCycle ?? null;
+              } else if (a.program.type === "LICENSED_SEAT") {
+                cap = seat?.coveredEngagementsPerCycle ?? null;
+              }
               const used = isPool
                 ? Math.round(Number(a.consumedPaise ?? 0) / 100)
                 : a.engagementsUsed;
@@ -422,11 +423,19 @@ export default async function MyProgramPage({
                       const matchedAssignment = assignments.find(
                         (a) => a.id === u.programAssignmentId,
                       );
-                      const isPoolUtilization = u.programSubType
-                        ? u.programSubType === "CREDIT_POOL"
-                        : matchedAssignment
-                          ? matchedAssignment.program.type === "CREDIT_POOL"
-                          : hasCreditPool && !hasLicensedSeat;
+                      let isPoolUtilization = hasCreditPool && !hasLicensedSeat;
+                      if (u.programSubType) {
+                        isPoolUtilization = u.programSubType === "CREDIT_POOL";
+                      } else if (matchedAssignment) {
+                        isPoolUtilization =
+                          matchedAssignment.program.type === "CREDIT_POOL";
+                      }
+                      let statusLabel = "Covered";
+                      if (u.reversedAt) {
+                        statusLabel = "Reversed";
+                      } else if (u.wasOverage) {
+                        statusLabel = "Overage";
+                      }
                       return (
                         <tr key={u.id} className="border-t">
                           <td className="px-4 py-2 whitespace-nowrap">
@@ -451,11 +460,7 @@ export default async function MyProgramPage({
                             {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
                           </td>
                           <td className="px-4 py-2 text-xs whitespace-nowrap">
-                            {u.reversedAt
-                              ? "Reversed"
-                              : u.wasOverage
-                                ? "Overage"
-                                : "Covered"}
+                            {statusLabel}
                           </td>
                         </tr>
                       );
@@ -523,9 +528,9 @@ export default async function MyProgramPage({
                       </span>
                     )}
                   </div>
-                  {(plan.subtitle || plan.description) && (
+                  {(plan.subtitle ?? plan.description) && (
                     <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                      {plan.subtitle || plan.description}
+                      {plan.subtitle ?? plan.description}
                     </p>
                   )}
                   <p className="text-xs font-semibold text-muted-foreground mt-2">
@@ -539,6 +544,19 @@ export default async function MyProgramPage({
             </div>
           </section>
         )}
+
+        <div className="pt-2 border-t text-xs text-muted-foreground flex items-center justify-between gap-4 flex-wrap">
+          <span>
+            Need to leave {access.org.name}? Manage your organization membership
+            in settings.
+          </span>
+          <Link
+            href={`/dashboard/organization/${orgId}/settings/general`}
+            className="text-destructive underline hover:opacity-80"
+          >
+            Leave organization
+          </Link>
+        </div>
       </DashboardContent>
     </>
   );

@@ -89,10 +89,8 @@ export function StaffSupportComposeDialog({
       return json as { id: string };
     },
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["staff-support-inbox"] });
-      queryClient.invalidateQueries({
-        queryKey: ["staff-support-inbox-stats"],
-      });
+      queryClient.invalidateQueries({ queryKey: ["support-inbox"] });
+      queryClient.invalidateQueries({ queryKey: ["support-inbox-stats"] });
       reset();
       onOpenChange(false);
       onCreated?.(created.id);

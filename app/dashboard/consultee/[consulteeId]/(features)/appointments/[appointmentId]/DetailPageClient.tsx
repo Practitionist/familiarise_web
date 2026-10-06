@@ -15,6 +15,17 @@ import {
 import { z } from "zod";
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -168,6 +179,32 @@ function downloadIcs(vm: AppointmentVM) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function resolveFeedbackSlotContext(
+  feedback: ReturnType<typeof useSessionFeedback>,
+  vm: AppointmentVM,
+) {
+  const rateableSlotIds = [...feedback.rateable];
+  const ratedSlotIds = Object.keys(feedback.ratings);
+  const targetOccurrenceId =
+    rateableSlotIds[0] ??
+    ratedSlotIds[0] ??
+    vm.occurrences.find((o) => !isDeadOccurrence(o) && isOccurrenceOver(o))
+      ?.occurrenceId;
+
+  const slotRating = targetOccurrenceId
+    ? feedback.ratings[targetOccurrenceId]
+    : undefined;
+  const existingRating =
+    slotRating ?? Object.values(feedback.ratings)[0] ?? null;
+
+  const slotComment = targetOccurrenceId
+    ? feedback.comments?.[targetOccurrenceId]
+    : undefined;
+  const existingComment = slotComment ?? feedback.comments?.booking ?? "";
+
+  return { targetOccurrenceId, existingRating, existingComment };
+}
+
 function ConsulteeSessionRatingFollowUp({
   appointmentId,
   vm,
@@ -180,24 +217,8 @@ function ConsulteeSessionRatingFollowUp({
   const feedback = useSessionFeedback(appointmentId);
   const expertName = vm.counterpart.name || "your expert";
 
-  const rateableSlotIds = [...feedback.rateable];
-  const ratedSlotIds = Object.keys(feedback.ratings);
-  const targetOccurrenceId =
-    rateableSlotIds[0] ??
-    ratedSlotIds[0] ??
-    vm.occurrences.find((o) => !isDeadOccurrence(o) && isOccurrenceOver(o))
-      ?.occurrenceId;
-
-  const existingRating =
-    (targetOccurrenceId ? feedback.ratings[targetOccurrenceId] : undefined) ??
-    Object.values(feedback.ratings)[0] ??
-    null;
-  const existingComment =
-    (targetOccurrenceId
-      ? feedback.comments?.[targetOccurrenceId]
-      : undefined) ??
-    feedback.comments?.booking ??
-    "";
+  const { targetOccurrenceId, existingRating, existingComment } =
+    resolveFeedbackSlotContext(feedback, vm);
 
   const [rating, setRating] = useState<number>(
     existingRating ? Math.round(existingRating) : 0,
@@ -227,6 +248,8 @@ function ConsulteeSessionRatingFollowUp({
 
   if (!canRateAny) return null;
 
+  const isBusy = saving || Boolean(feedback.isSubmitting);
+
   const handleSubmit = async () => {
     if (rating < 1 || rating > 5) return;
     setSaving(true);
@@ -239,14 +262,17 @@ function ConsulteeSessionRatingFollowUp({
           occurrenceId: targetOccurrenceId,
         });
       } else {
+        const payload = targetOccurrenceId
+          ? {
+              rating,
+              occurrenceId: targetOccurrenceId,
+              comment: trimmedComment,
+            }
+          : { rating, comment: trimmedComment };
         const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            rating,
-            ...(targetOccurrenceId ? { occurrenceId: targetOccurrenceId } : {}),
-            comment: trimmedComment,
-          }),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) throw new Error("Failed to save session feedback");
         await queryClient.invalidateQueries({
@@ -284,26 +310,26 @@ function ConsulteeSessionRatingFollowUp({
             role="group"
             aria-label="Session star rating"
           >
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button
-                key={star}
-                type="button"
-                aria-label={`Rate ${star} star${star === 1 ? "" : "s"}`}
-                onClick={() => {
-                  setRating(star);
-                  setEditing(true);
-                }}
-                className="p-0.5 text-amber-500 hover:scale-110 transition-transform"
-              >
-                <Star
-                  className={`h-4 w-4 ${
-                    star <= rating
-                      ? "fill-amber-400 text-amber-500"
-                      : "text-muted-foreground/40"
-                  }`}
-                />
-              </button>
-            ))}
+            {[1, 2, 3, 4, 5].map((star) => {
+              const starClass =
+                star <= rating
+                  ? "fill-amber-400 text-amber-500"
+                  : "text-muted-foreground/40";
+              return (
+                <button
+                  key={star}
+                  type="button"
+                  aria-label={`Rate ${star} star${star === 1 ? "" : "s"}`}
+                  onClick={() => {
+                    setRating(star);
+                    setEditing(true);
+                  }}
+                  className="p-0.5 text-amber-500 hover:scale-110 transition-transform"
+                >
+                  <Star className={`h-4 w-4 ${starClass}`} />
+                </button>
+              );
+            })}
           </div>
         </div>
         {!editing && existingComment && (
@@ -331,10 +357,10 @@ function ConsulteeSessionRatingFollowUp({
             type="button"
             size="sm"
             className="h-8 text-xs"
-            disabled={saving || feedback.isSubmitting || rating < 1}
+            disabled={isBusy || rating < 1}
             onClick={() => void handleSubmit()}
           >
-            {saving || feedback.isSubmitting ? "Saving…" : "Save feedback"}
+            {isBusy ? "Saving…" : "Save feedback"}
           </Button>
         </div>
       )}
@@ -376,6 +402,7 @@ function UnpaidRequestedBookingControls({
   const [notes, setNotes] = useState(initialNotes);
   const [savingNotes, setSavingNotes] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [confirmWithdrawOpen, setConfirmWithdrawOpen] = useState(false);
 
   useEffect(() => {
     setNotes(initialNotes);
@@ -414,6 +441,7 @@ function UnpaidRequestedBookingControls({
   };
 
   const handleWithdrawRequest = async () => {
+    setConfirmWithdrawOpen(false);
     setWithdrawing(true);
     try {
       const res = await fetch(`/api/bookings/${appointmentId}/abandon`, {
@@ -473,21 +501,46 @@ function UnpaidRequestedBookingControls({
             <Pencil className="mr-1 h-3 w-3" />
             {editingNotes ? "Cancel edit" : "Edit request notes"}
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
-            disabled={withdrawing}
-            onClick={() => void handleWithdrawRequest()}
+          <AlertDialog
+            open={confirmWithdrawOpen}
+            onOpenChange={setConfirmWithdrawOpen}
           >
-            <Trash2 className="mr-1 h-3 w-3" />
-            {withdrawing ? "Withdrawing…" : "Withdraw request"}
-          </Button>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                disabled={withdrawing}
+              >
+                <Trash2 className="mr-1 h-3 w-3" />
+                {withdrawing ? "Withdrawing…" : "Withdraw request"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Withdraw booking request?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Withdraw this booking request? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={withdrawing}>
+                  Keep request
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={withdrawing}
+                  onClick={() => void handleWithdrawRequest()}
+                >
+                  Confirm withdrawal
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
-      {editingNotes ? (
+      {editingNotes && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Input
             value={notes}
@@ -507,27 +560,21 @@ function UnpaidRequestedBookingControls({
             {savingNotes ? "Saving…" : "Save notes"}
           </Button>
         </div>
-      ) : notes ? (
+      )}
+
+      {!editingNotes && notes && (
         <p className="text-muted-foreground">
           <span className="font-medium text-foreground">Your note:</span>{" "}
           {notes}
         </p>
-      ) : null}
+      )}
     </div>
   );
 }
 
-function ConsulteeExtraActions({
-  vm,
-  consulteeId,
-  appointmentId,
-}: Readonly<{
-  vm: AppointmentVM;
-  consulteeId: string;
-  appointmentId: string;
-}>) {
+function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const canRebook =
-    !!vm.consultantProfileId &&
+    Boolean(vm.consultantProfileId) &&
     (vm.bucket === "past" || vm.bucket === "cancelled");
   const canAddToCalendar = calendarSessions(vm).length > 0;
   const expertName = vm.counterpart.name || "Expert";
@@ -565,8 +612,8 @@ function ConsulteeExtraActions({
     (vm.status === "APPROVED" ||
       vm.status === "SCHEDULED" ||
       vm.status === "COMPLETED") &&
-    !!subscriptionPlanId &&
-    !!subscriptionId;
+    Boolean(subscriptionPlanId) &&
+    Boolean(subscriptionId);
 
   const totalSessions =
     vm.group?.total ??
@@ -577,10 +624,12 @@ function ConsulteeExtraActions({
     vm.group?.completed ??
     vm.occurrences.filter((o) => !isDeadOccurrence(o) && isOccurrenceOver(o))
       .length;
+  const computedRemaining =
+    totalSessions > 0 ? Math.max(0, totalSessions - completedSessions) : null;
   const remainingSessions =
     vmExtra?.remainingSessions ??
     rawSub?.remainingSessions ??
-    (totalSessions > 0 ? Math.max(0, totalSessions - completedSessions) : null);
+    computedRemaining;
 
   const showLowSessionRenewalNudge =
     canRenewSubscription &&
@@ -590,24 +639,68 @@ function ConsulteeExtraActions({
   const isCompletedOneOnOne =
     (vm.kind === "CONSULTATION" || vm.kind === "TRIAL") &&
     (vm.status === "COMPLETED" || vm.bucket === "past") &&
-    !!vm.consultantProfileId;
+    Boolean(vm.consultantProfileId);
 
-  const hasSucceededPayment = (rawAppt?.payment ?? []).some(
-    (p) => p.paymentStatus === "SUCCEEDED",
-  );
+  const isPendingRequestEntity =
+    rawConsultation?.status === "PENDING" || rawSub?.status === "PENDING";
+  const isVerifiedUnpaid =
+    Array.isArray(rawAppt?.payment) &&
+    rawAppt.payment.every((p) => p.paymentStatus !== "SUCCEEDED");
   const isUnpaidRequested =
     (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION") &&
-    (vm.status === "PENDING" ||
-      vm.status === "REQUESTED" ||
-      rawConsultation?.status === "PENDING" ||
-      rawSub?.status === "PENDING") &&
-    !hasSucceededPayment;
+    isPendingRequestEntity &&
+    isVerifiedUnpaid;
 
   const initialRequestNotes =
     vmExtra?.requestNotes ??
     rawConsultation?.requestNotes ??
     rawSub?.requestNotes ??
     "";
+
+  return {
+    canRebook,
+    canAddToCalendar,
+    expertName,
+    expertUserId,
+    subscriptionPlanId,
+    subscriptionId,
+    canRenewSubscription,
+    remainingSessions,
+    showLowSessionRenewalNudge,
+    isCompletedOneOnOne,
+    isUnpaidRequested,
+    initialRequestNotes,
+  };
+}
+
+function ConsulteeExtraActions({
+  vm,
+  consulteeId,
+  appointmentId,
+}: Readonly<{
+  vm: AppointmentVM;
+  consulteeId: string;
+  appointmentId: string;
+}>) {
+  const {
+    canRebook,
+    canAddToCalendar,
+    expertName,
+    expertUserId,
+    subscriptionPlanId,
+    subscriptionId,
+    canRenewSubscription,
+    remainingSessions,
+    showLowSessionRenewalNudge,
+    isCompletedOneOnOne,
+    isUnpaidRequested,
+    initialRequestNotes,
+  } = deriveConsulteeActionMeta(vm);
+
+  const renewalNudgeMessage =
+    remainingSessions === 1
+      ? `1 session left in your subscription with ${expertName}. Renew now to keep your momentum going.`
+      : `You've completed all sessions in this subscription with ${expertName}. Renew to continue working together.`;
 
   return (
     <>
@@ -659,11 +752,7 @@ function ConsulteeExtraActions({
           data-testid="subscription-renewal-nudge"
           className="w-full mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3.5 py-2.5 text-xs text-amber-900"
         >
-          <span>
-            {remainingSessions === 1
-              ? `1 session left in your subscription with ${expertName}. Renew now to keep your momentum going.`
-              : `You've completed all sessions in this subscription with ${expertName}. Renew to continue working together.`}
-          </span>
+          <span>{renewalNudgeMessage}</span>
           <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
             <Link
               href={`/checkout/plans/subscription/${subscriptionPlanId}?renewsSubscriptionId=${subscriptionId}`}

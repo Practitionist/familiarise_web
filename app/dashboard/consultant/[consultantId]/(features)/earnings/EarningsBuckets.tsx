@@ -94,11 +94,42 @@ const typeLabel = (type: string | null | undefined) =>
   type ? type.charAt(0) + type.slice(1).toLowerCase() : null;
 
 function csvCell(val: string | number | boolean | null | undefined): string {
-  const s = val === null || val === undefined ? "" : String(val);
-  if (/[",\n\r]/.test(s)) {
-    return `"${s.replaceAll('"', '""')}"`;
+  const raw = val === null || val === undefined ? "" : String(val);
+  const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(raw.trim());
+  const safe = !isNumeric && /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  if (/[",\n\r]/.test(safe)) {
+    return `"${safe.replaceAll('"', '""')}"`;
   }
-  return s;
+  return safe;
+}
+
+function formatFeePercent(
+  platformFeeBps: number | null | undefined,
+  fallbackPercent: string,
+): string {
+  if (typeof platformFeeBps === "number") {
+    const pct = platformFeeBps / 100;
+    return `${platformFeeBps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
+  }
+  return fallbackPercent;
+}
+
+function deriveEarningSourceLabel(e: EarningRow): string {
+  if (e.sponsorOrgName) {
+    return `Sponsored (${e.sponsorOrgName})`;
+  }
+  const isWaived =
+    e.grossAmount > 0 &&
+    (e.payment.platformFeeBps === 0 || e.platformFeePaise === 0);
+  if (isWaived) {
+    return "Fee waived (0%)";
+  }
+  if (e.payment.attributionSource === "OWN_LINK") {
+    const rate = formatFeePercent(e.payment.platformFeeBps, "10%");
+    return `Own link (${rate})`;
+  }
+  const rate = formatFeePercent(e.payment.platformFeeBps, "20%");
+  return `Marketplace (${rate})`;
 }
 
 function indianFinancialYear(dateInput: string | Date): string {
@@ -130,17 +161,7 @@ function downloadFyEarningsCsv(data: EarningsResponse) {
 
   for (const e of data.earnings) {
     const fy = indianFinancialYear(e.createdAt);
-    const isWaived =
-      !e.sponsorOrgName &&
-      e.grossAmount > 0 &&
-      (e.payment.platformFeeBps === 0 || e.platformFeePaise === 0);
-    const source = e.sponsorOrgName
-      ? `Sponsored (${e.sponsorOrgName})`
-      : isWaived
-        ? "Fee waived (0%)"
-        : e.payment.attributionSource === "OWN_LINK"
-          ? "Own link (10%)"
-          : "Marketplace (20%)";
+    const source = deriveEarningSourceLabel(e);
     lines.push(
       [
         "EARNING",
@@ -304,7 +325,7 @@ export function EarningsSummary({
         </output>
       )}
 
-      {feeWaiver && feeWaiver.sessionsRemaining > 0 && (
+      {(feeWaiver?.sessionsRemaining ?? 0) > 0 && feeWaiver && (
         <output className="flex items-start gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
           <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
           <div>
@@ -821,7 +842,8 @@ function EarningItem({
           )}
           {isOwnLink && (
             <Badge className="rounded-md border-0 bg-sky-500/10 px-1.5 py-0 text-[10px] font-semibold text-sky-700 dark:text-sky-400">
-              Own link · 10% fee
+              Own link ·{" "}
+              {formatFeePercent(earning.payment.platformFeeBps, "10%")} fee
             </Badge>
           )}
         </div>

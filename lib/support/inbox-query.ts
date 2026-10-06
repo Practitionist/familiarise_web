@@ -185,7 +185,10 @@ export function inboxTicketWhere(
     and.push(TICKET_OPEN_WHERE);
     and.push({
       awaitingUserSince: null,
-      OR: [{ ackDueAt: { not: null } }, { resolutionDueAt: { not: null } }],
+      OR: [
+        { acknowledgedAt: null, ackDueAt: { not: null } },
+        { resolutionDueAt: { not: null } },
+      ],
     });
   }
   if (f.view === "mine") and.push({ assignedToId: f.viewerId });
@@ -271,6 +274,7 @@ export interface SortKey {
   key: string;
   lastMessageAt: Date | null;
   createdAt: Date;
+  acknowledgedAt?: Date | null;
   ackDueAt?: Date | null;
   resolutionDueAt?: Date | null;
 }
@@ -303,8 +307,8 @@ export function compareCases(a: SortKey, b: SortKey): number {
 }
 
 export function compareCasesBySla(a: SortKey, b: SortKey): number {
-  const aAck = a.ackDueAt ?? null;
-  const bAck = b.ackDueAt ?? null;
+  const aAck = a.acknowledgedAt ? null : (a.ackDueAt ?? null);
+  const bAck = b.acknowledgedAt ? null : (b.ackDueAt ?? null);
   if (Boolean(aAck) !== Boolean(bAck)) return aAck ? -1 : 1;
   if (aAck && bAck) {
     const diff = aAck.getTime() - bAck.getTime();

@@ -637,43 +637,13 @@ export function ReferralsPage({
         </div>
 
         {/* Referrals List */}
-        <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-zinc-200">
-            <h3 className="text-sm font-medium text-zinc-900">
-              Your Referrals
-            </h3>
-          </div>
-          {referralsLoading && !referralsData ? (
-            <div className="p-4">
-              <DataCardSkeleton />
-            </div>
-          ) : referralsError ? (
-            <EmptyState
-              icon={AlertTriangle}
-              title="Couldn't load your referrals"
-              description="Retry, or come back later."
-              action={
-                <Button variant="outline" onClick={() => refetchReferrals()}>
-                  Retry
-                </Button>
-              }
-            />
-          ) : (
-            <ResponsiveTable
-              columns={referralColumns}
-              rows={referrals}
-              getRowId={(ref) => ref.id}
-              className="[&>ul]:p-3"
-              empty={
-                <EmptyState
-                  icon={Users}
-                  title="No referrals yet"
-                  description="Share your link to get started!"
-                />
-              }
-            />
-          )}
-        </div>
+        <ReferralsListSection
+          loading={referralsLoading && !referralsData}
+          error={Boolean(referralsError)}
+          onRetry={() => void refetchReferrals()}
+          rows={referrals}
+          columns={referralColumns}
+        />
 
         <CreditHistory
           error={!!creditsError}
@@ -696,6 +666,67 @@ export function ReferralsPage({
         )}
       </DashboardContent>
     </>
+  );
+}
+
+function ReferralsListSection({
+  loading,
+  error,
+  onRetry,
+  rows,
+  columns,
+}: Readonly<{
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  rows: Referral[];
+  columns: ResponsiveColumn<Referral>[];
+}>) {
+  let body: React.ReactNode;
+  if (loading) {
+    body = (
+      <div className="p-4">
+        <DataCardSkeleton />
+      </div>
+    );
+  } else if (error) {
+    body = (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load your referrals"
+        description="Retry, or come back later."
+        action={
+          <Button variant="outline" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      />
+    );
+  } else {
+    body = (
+      <ResponsiveTable
+        columns={columns}
+        rows={rows}
+        getRowId={(ref) => ref.id}
+        className="[&>ul]:p-3"
+        empty={
+          <EmptyState
+            icon={Users}
+            title="No referrals yet"
+            description="Share your link to get started!"
+          />
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-zinc-200">
+        <h3 className="text-sm font-medium text-zinc-900">Your Referrals</h3>
+      </div>
+      {body}
+    </div>
   );
 }
 

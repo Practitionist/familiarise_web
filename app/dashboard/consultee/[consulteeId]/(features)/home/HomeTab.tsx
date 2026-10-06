@@ -411,7 +411,13 @@ const subscriptionRenewalSchema = z
     status: z.string().optional(),
     subscriptionPlanId: z.string().optional(),
     sessionsTotal: z.number().nullable().optional(),
+    totalSessions: z.number().nullable().optional(),
     remainingSessions: z.number().nullable().optional(),
+    plan: z
+      .object({
+        totalSessions: z.number().optional(),
+      })
+      .optional(),
     subscriptionPlan: z
       .object({
         id: z.string().optional(),
@@ -442,6 +448,20 @@ const subscriptionRenewalSchema = z
   })
   .passthrough();
 
+function resolveSubscriptionPlanTotal(
+  s: z.infer<typeof subscriptionRenewalSchema>,
+): number {
+  if (typeof s.sessionsTotal === "number" && s.sessionsTotal > 0) {
+    return s.sessionsTotal;
+  }
+  if (typeof s.totalSessions === "number" && s.totalSessions > 0) {
+    return s.totalSessions;
+  }
+  const planTotal =
+    s.subscriptionPlan?.totalSessions ?? s.plan?.totalSessions ?? 0;
+  return typeof planTotal === "number" && planTotal > 0 ? planTotal : 0;
+}
+
 function lowSessionSubscriptions(
   eventsData: TConsulteeEventsResponse,
   now: Date,
@@ -457,23 +477,19 @@ function lowSessionSubscriptions(
 
     let remaining: number | null = s.remainingSessions ?? null;
     if (remaining === null) {
+      const planTotal = resolveSubscriptionPlanTotal(s);
+      if (planTotal <= 0) return [];
       const occurrences = (s.appointment?.occurrences ?? []).filter(
         (o) =>
           o.completionStatus !== "CANCELLED" &&
           o.completionStatus !== "RESCHEDULED",
       );
-      const total =
-        s.sessionsTotal ??
-        s.subscriptionPlan?.totalSessions ??
-        occurrences.length;
-      if (total > 0) {
-        const completedOrPast = occurrences.filter(
-          (o) =>
-            o.completionStatus === "COMPLETED" ||
-            new Date(o.endsAt).getTime() <= now.getTime(),
-        ).length;
-        remaining = Math.max(0, total - completedOrPast);
-      }
+      const completedOrPast = occurrences.filter(
+        (o) =>
+          o.completionStatus === "COMPLETED" ||
+          new Date(o.endsAt).getTime() <= now.getTime(),
+      ).length;
+      remaining = Math.max(0, planTotal - completedOrPast);
     }
 
     if (remaining === null || remaining > 1) return [];

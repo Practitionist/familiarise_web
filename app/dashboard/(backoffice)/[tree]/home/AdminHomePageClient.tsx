@@ -145,6 +145,7 @@ function NeedsAttention() {
     );
   }
   const breachedSupport = supportStats.data?.slaBreaches ?? 0;
+  const openSupport = supportStats.data?.openCases ?? 0;
 
   return (
     <StatRow>
@@ -155,16 +156,17 @@ function NeedsAttention() {
         const value = counts.data[q.key] ?? 0;
         const isSupportBreached = q.key === "support" && breachedSupport > 0;
         const hint = isSupportBreached
-          ? `${breachedSupport} SLA breached · ${q.hint}`
+          ? `${breachedSupport} SLA breached (${openSupport || value} open)`
           : q.hint;
         const href = isSupportBreached
           ? `${basePath}/support?view=sla-at-risk`
           : `${basePath}/${q.path}`;
-        const tone = isSupportBreached
-          ? "critical"
-          : value > 0
-            ? "warning"
-            : "neutral";
+        let tone: "critical" | "warning" | "neutral" = "neutral";
+        if (isSupportBreached) {
+          tone = "critical";
+        } else if (value > 0) {
+          tone = "warning";
+        }
 
         return (
           <Stat

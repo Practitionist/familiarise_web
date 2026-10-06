@@ -205,45 +205,46 @@ function RecordFilingDialog({
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="tds-challan-no">Challan Serial No.</Label>
-              <Input
-                id="tds-challan-no"
-                value={challanNumber}
-                onChange={(e) => setChallanNumber(e.target.value)}
-                placeholder="e.g. 04521"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tds-bsr-code">BSR Code (7 digits)</Label>
-              <Input
-                id="tds-bsr-code"
-                value={bsrCode}
-                onChange={(e) => setBsrCode(e.target.value)}
-                placeholder="e.g. 0510308"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="tds-ack-no">TRACES Token / Ack No.</Label>
-              <Input
-                id="tds-ack-no"
-                value={ackNumber}
-                onChange={(e) => setAckNumber(e.target.value)}
-                placeholder="PRN / Ack number"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tds-cert-no">Form 16A Certificate Ref</Label>
-              <Input
-                id="tds-cert-no"
-                value={certificateNumber}
-                onChange={(e) => setCertificateNumber(e.target.value)}
-                placeholder="Optional cert batch ref"
-              />
-            </div>
+            {[
+              {
+                id: "tds-challan-no",
+                label: "Challan Serial No.",
+                value: challanNumber,
+                onChange: setChallanNumber,
+                placeholder: "e.g. 04521",
+              },
+              {
+                id: "tds-bsr-code",
+                label: "BSR Code (7 digits)",
+                value: bsrCode,
+                onChange: setBsrCode,
+                placeholder: "e.g. 0510308",
+              },
+              {
+                id: "tds-ack-no",
+                label: "TRACES Token / Ack No.",
+                value: ackNumber,
+                onChange: setAckNumber,
+                placeholder: "PRN / Ack number",
+              },
+              {
+                id: "tds-cert-no",
+                label: "Form 16A Certificate Ref",
+                value: certificateNumber,
+                onChange: setCertificateNumber,
+                placeholder: "Optional cert batch ref",
+              },
+            ].map((field) => (
+              <div key={field.id} className="space-y-1.5">
+                <Label htmlFor={field.id}>{field.label}</Label>
+                <Input
+                  id={field.id}
+                  value={field.value}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  placeholder={field.placeholder}
+                />
+              </div>
+            ))}
           </div>
 
           <div className="space-y-1.5">
@@ -368,6 +369,12 @@ export default function AdminTDSPage() {
   }, [consultantData?.consultants, filingFilter, searchQuery]);
 
   const handleExportCsv = () => {
+    const sanitizeCsvCell = (value: string) => {
+      const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(value.trim());
+      const safe =
+        !isNumeric && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+      return `"${safe.replaceAll('"', '""')}"`;
+    };
     const rows = [
       [
         "Financial Year",
@@ -393,9 +400,7 @@ export default function AdminTDSPage() {
       ]),
     ];
     const csvContent = rows
-      .map((r) =>
-        r.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","),
-      )
+      .map((r) => r.map((cell) => sanitizeCsvCell(String(cell))).join(","))
       .join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);

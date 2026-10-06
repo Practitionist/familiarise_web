@@ -38,8 +38,8 @@ const RECORDING_CATEGORIES: {
 ];
 
 export function isPurchasedClassRecording(item: EventResource): boolean {
-  if (item.classId) return true;
-  if (item.webinarId) return false;
+  if (item.classId || item.classPlan) return true;
+  if (item.webinarId || item.webinarPlan) return false;
   const tag = (
     item.offeringType ??
     item.sourceType ??
@@ -74,6 +74,7 @@ function matchesSearch(event: EventResource, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (event.planTitle.toLowerCase().includes(q)) return true;
+  if ((event.contextTitle ?? "").toLowerCase().includes(q)) return true;
   if ((event.consultantName ?? "").toLowerCase().includes(q)) return true;
   return event.recordings.some((r) => r.title.toLowerCase().includes(q));
 }
@@ -198,6 +199,41 @@ export function ConsulteeRecordingsPage({
   const hasSearchOrCategoryFilter =
     searchQuery.trim().length > 0 || category !== "all";
 
+  let recordingsContent: React.ReactNode;
+  if (category === "purchased" && purchasedItems.length > 0) {
+    recordingsContent = (
+      <div className="space-y-4">
+        {purchasedItems.map((event) => (
+          <EventResourceCard
+            key={event.id}
+            event={event}
+            artifact="recordings"
+          />
+        ))}
+      </div>
+    );
+  } else if (hasSearchOrCategoryFilter && totalScopedCount === 0) {
+    recordingsContent = (
+      <div className="rounded-lg border bg-card p-8 text-center">
+        <p className="text-sm font-medium text-foreground">
+          No recordings match your current filter
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Try clearing your search query or switching back to All recordings.
+        </p>
+      </div>
+    );
+  } else {
+    recordingsContent = (
+      <ResourcesTab
+        data={scopedData}
+        artifact="recordings"
+        title="Recordings"
+        subtitle="Recordings of the sessions you've attended and purchased replays"
+      />
+    );
+  }
+
   return (
     <DashboardErrorBoundary>
       <div className="space-y-4">
@@ -207,22 +243,27 @@ export function ConsulteeRecordingsPage({
             aria-label="Recording categories"
             className="flex flex-wrap items-center gap-1.5"
           >
-            {RECORDING_CATEGORIES.map((tab) => (
-              <Button
-                key={tab.value}
-                type="button"
-                role="tab"
-                aria-selected={category === tab.value}
-                variant={category === tab.value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setCategory(tab.value)}
-              >
-                {tab.label}
-                {tab.value === "purchased" && (data?.purchased?.length ?? 0) > 0
-                  ? ` (${data?.purchased?.length ?? 0})`
-                  : ""}
-              </Button>
-            ))}
+            {RECORDING_CATEGORIES.map((tab) => {
+              const purchasedCount = data?.purchased?.length ?? 0;
+              const badgeSuffix =
+                tab.value === "purchased" && purchasedCount > 0
+                  ? ` (${purchasedCount})`
+                  : "";
+              return (
+                <Button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={category === tab.value}
+                  variant={category === tab.value ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setCategory(tab.value)}
+                >
+                  {tab.label}
+                  {badgeSuffix}
+                </Button>
+              );
+            })}
           </div>
 
           <div className="relative w-full sm:w-64">
@@ -241,34 +282,7 @@ export function ConsulteeRecordingsPage({
           </div>
         </div>
 
-        {category === "purchased" && purchasedItems.length > 0 ? (
-          <div className="space-y-4">
-            {purchasedItems.map((event) => (
-              <EventResourceCard
-                key={event.id}
-                event={event}
-                artifact="recordings"
-              />
-            ))}
-          </div>
-        ) : hasSearchOrCategoryFilter && totalScopedCount === 0 ? (
-          <div className="rounded-lg border bg-card p-8 text-center">
-            <p className="text-sm font-medium text-foreground">
-              No recordings match your current filter
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Try clearing your search query or switching back to All
-              recordings.
-            </p>
-          </div>
-        ) : (
-          <ResourcesTab
-            data={scopedData}
-            artifact="recordings"
-            title="Recordings"
-            subtitle="Recordings of the sessions you've attended and purchased replays"
-          />
-        )}
+        {recordingsContent}
       </div>
     </DashboardErrorBoundary>
   );

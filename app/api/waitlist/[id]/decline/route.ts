@@ -30,27 +30,34 @@ export async function POST(
     const { id } = parsedParams.data;
     const userId = session.user.id;
 
-    const [backupResult, waitlistResult] = await Promise.all([
-      withdrawBackupInterest(userId, id),
-      prisma.waitlist.updateMany({
-        where: {
-          id,
-          userId,
-          status: { in: ["PENDING", "SUBSCRIBED"] },
-        },
+    const backupResult = await withdrawBackupInterest(userId, id);
+    if (backupResult.count > 0) {
+      return NextResponse.json({
         data: {
-          status: "UNSUBSCRIBED",
-          unsubscribedAt: new Date(),
+          id,
+          status: "WITHDRAWN",
+          declined: true,
         },
-      }),
-    ]);
+      });
+    }
 
-    return NextResponse.json({
-      data: {
-        id,
-        declined: backupResult.count > 0 || waitlistResult.count > 0,
-      },
+    const entry = await prisma.windowBackupInterest.findUnique({
+      where: { id },
+      select: { id: true, userId: true, status: true },
     });
+    if (!entry) {
+      return NextResponse.json(
+        { error: "Waitlist entry not found" },
+        { status: 404 },
+      );
+    }
+    if (entry.userId !== userId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.json(
+      { error: `Cannot decline a waitlist entry with status ${entry.status}` },
+      { status: 409 },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

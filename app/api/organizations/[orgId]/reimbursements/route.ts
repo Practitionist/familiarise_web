@@ -32,7 +32,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "reimbursements.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "reimbursements.read",
+  });
   if (access.error) return access.error;
 
   // Conditional render: only orgs whose BillingAccount.fundingSource is
@@ -187,29 +189,29 @@ export async function GET(
   }
 
   const memberUserIds = Array.from(perMember.keys());
-  const [memberships, spendLimitLogs] =
+  const memberships =
     memberUserIds.length > 0
-      ? await Promise.all([
-          prisma.membership.findMany({
-            where: { organizationId: orgId, userId: { in: memberUserIds } },
-            select: { id: true, userId: true },
-          }),
-          prisma.orgAuditLog.findMany({
-            where: {
-              organizationId: orgId,
-              category: "PROGRAM",
-              action: "program.assignment.updated",
-            },
-            orderBy: { createdAt: "desc" },
-            take: 200,
-            select: { targetMembershipId: true, details: true },
-          }),
-        ])
-      : [[], []];
+      ? await prisma.membership.findMany({
+          where: { organizationId: orgId, userId: { in: memberUserIds } },
+          select: { id: true, userId: true },
+        })
+      : [];
+  const membershipIds = memberships.map((m) => m.id);
+  const spendLimitLogs =
+    membershipIds.length > 0
+      ? await prisma.orgAuditLog.findMany({
+          where: {
+            organizationId: orgId,
+            category: "PROGRAM",
+            action: "program.assignment.updated",
+            targetMembershipId: { in: membershipIds },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { targetMembershipId: true, details: true },
+        })
+      : [];
 
-  const membershipByUserId = new Map(
-    memberships.map((m) => [m.userId, m.id]),
-  );
+  const membershipByUserId = new Map(memberships.map((m) => [m.userId, m.id]));
   const spendLimitByMembershipId = new Map<string, number | null>();
   for (const log of spendLimitLogs) {
     if (
@@ -240,12 +242,21 @@ export async function GET(
     byMember: Array.from(perMember.values())
       .map((m) => {
         const membershipId = membershipByUserId.get(m.userId) ?? null;
+        const spendLimitPaise = membershipId
+          ? (spendLimitByMembershipId.get(membershipId) ?? null)
+          : null;
+        const exceedsSpendLimit =
+          spendLimitPaise !== null && m.netReimbursablePaise > spendLimitPaise;
+        const cappedReimbursablePaise =
+          spendLimitPaise !== null
+            ? Math.min(m.netReimbursablePaise, spendLimitPaise)
+            : m.netReimbursablePaise;
         return {
           ...m,
           membershipId,
-          spendLimitPaise: membershipId
-            ? (spendLimitByMembershipId.get(membershipId) ?? null)
-            : null,
+          spendLimitPaise,
+          exceedsSpendLimit,
+          cappedReimbursablePaise,
         };
       })
       .sort((a, b) => b.netReimbursablePaise - a.netReimbursablePaise),

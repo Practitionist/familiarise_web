@@ -28,9 +28,9 @@ import { InvoicesPanel } from "./InvoicesPanel";
 import { AccruedUsagePanel } from "./AccruedUsagePanel";
 import { LicensePanel } from "./LicensePanel";
 import { WalletTab } from "./WalletTab";
-import { PurchaseOrdersPanel } from "./PurchaseOrdersPanel";
-import { DisputesPanel } from "./DisputesPanel";
-import { MemberSpendPanel } from "./MemberSpendPanel";
+import { PurchaseOrdersPanel } from "../purchase-orders/PurchaseOrdersPanel";
+import { DisputesPanel } from "../disputes/DisputesPanel";
+import { MemberSpendPanel } from "../reimbursements/MemberSpendPanel";
 
 function resolveWalletTopUpBlockReason(opts: {
   walletFrozen: boolean;

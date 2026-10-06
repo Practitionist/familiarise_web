@@ -25,8 +25,23 @@ export async function POST(
   const access = await requireOrgAccess(orgId, { requireActive: true });
   if (access.error) return access.error;
 
-  const memberId = access.member.id;
   const userId = access.session.user.id;
+  const realMember = await prisma.membership.findUnique({
+    where: {
+      userId_organizationId: {
+        userId,
+        organizationId: orgId,
+      },
+    },
+    select: { id: true, role: true, status: true },
+  });
+  if (!realMember || realMember.status === "REMOVED") {
+    return NextResponse.json(
+      { error: "Not a member of this organization" },
+      { status: 403 },
+    );
+  }
+  const memberId = realMember.id;
 
   try {
     await withSerializableRetry(() =>

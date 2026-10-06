@@ -164,13 +164,11 @@ export async function POST(
   const outcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const memberships = await tx.membership.findMany({
-          where: { id: { in: targetMembershipIds }, organizationId: orgId },
-          select: { id: true, status: true },
-        });
-        const byId = new Map(memberships.map((m) => [m.id, m]));
         for (const targetMembershipId of targetMembershipIds) {
-          const membership = byId.get(targetMembershipId);
+          const membership = await tx.membership.findFirst({
+            where: { id: targetMembershipId, organizationId: orgId },
+            select: { id: true, status: true },
+          });
           if (!membership) {
             return { ok: false as const, code: "FOREIGN" as const };
           }
@@ -184,6 +182,7 @@ export async function POST(
         }
 
         const createdAssignments = [];
+        let createdCount = 0;
         for (const targetMembershipId of targetMembershipIds) {
           const { assignment: created, created: isNew } =
             await claimProgramAssignment(tx, {
@@ -193,11 +192,7 @@ export async function POST(
               periodEnd: body.periodEnd,
             });
           if (isNew) {
-            await adjustActiveSeatCount(tx, { programId, delta: +1 });
-            await tx.program.updateMany({
-              where: { id: programId, configLockedAt: null },
-              data: { configLockedAt: new Date() },
-            });
+            createdCount += 1;
           }
           await tx.orgAuditLog.create({
             data: {
@@ -231,6 +226,15 @@ export async function POST(
           }
           createdAssignments.push(created);
         }
+
+        if (createdCount > 0) {
+          await adjustActiveSeatCount(tx, { programId, delta: createdCount });
+          await tx.program.updateMany({
+            where: { id: programId, configLockedAt: null },
+            data: { configLockedAt: new Date() },
+          });
+        }
+
         return {
           ok: true as const,
           assignment: createdAssignments[0],
