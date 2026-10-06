@@ -261,11 +261,9 @@ async function assertInviteeAvailableForPlanEvents(
   userId: string,
   db: PrismaLike = prisma,
 ): Promise<void> {
-  const occDb =
-    typeof db.appointmentOccurrence?.findMany === "function" ? db : prisma;
-  if (typeof occDb.appointmentOccurrence?.findMany !== "function") return;
+  if (typeof db.appointmentOccurrence?.findMany !== "function") return;
 
-  const planOccurrences = await occDb.appointmentOccurrence.findMany({
+  const planOccurrences = await db.appointmentOccurrence.findMany({
     where: {
       deletedAt: null,
       completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
@@ -280,7 +278,7 @@ async function assertInviteeAvailableForPlanEvents(
   if (planOccurrences.length === 0) return;
 
   try {
-    await assertConsultantAvailableForWindows(occDb, {
+    await assertConsultantAvailableForWindows(db, {
       consultantProfileId,
       consultantUserId: userId,
       windows: planOccurrences.map((o) => ({
@@ -507,45 +505,39 @@ export async function respondToInvitation(
     acceptedUserId = invitee.userId;
   }
 
-  const performResponseCas = async (tx: Tx): Promise<Collaborator | null> => {
-    if (response === "ACCEPTED" && acceptedUserId) {
-      await assertInviteeAvailableForPlanEvents(
-        planType,
-        planId,
-        consultantProfileId,
-        acceptedUserId,
-        tx,
-      );
-    }
-
-    const collabDelegate =
-      typeof tx.collaborator?.updateMany === "function"
-        ? tx.collaborator
-        : prisma.collaborator;
-    // CAS in the WHERE: an owner's removal landing between the read and this
-    // write must not be overwritten back to ACCEPTED and reach the split (#1580).
-    const moved = await collabDelegate.updateMany({
-      where: { id: collaborationId, status: "PENDING" },
-      data: { status: response, respondedAt: new Date() },
-    });
-    if (moved.count === 0) return null;
-    return collabDelegate.findUniqueOrThrow({
-      where: { id: collaborationId },
-    });
-  };
-
   // #2010 — Wrap the plan-occurrence conflict check and PENDING -> ACCEPTED CAS
   // inside a Serializable transaction so concurrent scheduling or acceptance on
   // another plan cannot bypass the overlap check.
-  const updated =
-    typeof prisma.$transaction === "function"
-      ? await withSerializableRetry(() =>
-          prisma.$transaction(performResponseCas, {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            timeout: 10000,
-          }),
-        )
-      : await performResponseCas(prisma as unknown as Tx);
+  const updated = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        if (response === "ACCEPTED" && acceptedUserId) {
+          await assertInviteeAvailableForPlanEvents(
+            planType,
+            planId,
+            consultantProfileId,
+            acceptedUserId,
+            tx,
+          );
+        }
+
+        // CAS in the WHERE: an owner's removal landing between the read and this
+        // write must not be overwritten back to ACCEPTED and reach the split (#1580).
+        const moved = await tx.collaborator.updateMany({
+          where: { id: collaborationId, status: "PENDING" },
+          data: { status: response, respondedAt: new Date() },
+        });
+        if (moved.count === 0) return null;
+        return tx.collaborator.findUniqueOrThrow({
+          where: { id: collaborationId },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        timeout: 10000,
+      },
+    ),
+  );
   if (!updated) return null;
 
   if (response === "ACCEPTED") {

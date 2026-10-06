@@ -940,12 +940,12 @@ export async function PATCH(request: NextRequest) {
               consultantProfileId ??
               updatedClassPlan.consultantProfile?.id ??
               existingPlan.consultantProfile?.id;
-            const ownerUserId =
-              updatedClassPlan.consultantProfile?.id === ownerProfileId
-                ? updatedClassPlan.consultantProfile?.userId
-                : existingPlan.consultantProfile?.id === ownerProfileId
-                  ? existingPlan.consultantProfile?.userId
-                  : undefined;
+            let ownerUserId: string | undefined;
+            if (updatedClassPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = updatedClassPlan.consultantProfile?.userId;
+            } else if (existingPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = existingPlan.consultantProfile?.userId;
+            }
             const ownerChanged = Boolean(
               consultantProfileId &&
                 consultantProfileId !== existingPlan.consultantProfileId,
@@ -996,7 +996,7 @@ export async function PATCH(request: NextRequest) {
             }
 
             if (publishing || (ownerChanged && ownerProfileId)) {
-              await tx.appointmentOccurrence?.updateMany?.({
+              await tx.appointmentOccurrence.updateMany({
                 where: {
                   appointment: { classId: updatedClass.id },
                   deletedAt: null,

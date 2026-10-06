@@ -54,8 +54,10 @@ interface DeviceSnapshot {
  */
 const CLIENT_WAIT_TIMEOUT_MS = 45_000;
 
-const OCCURRENCE_CALL_ID_PATTERN =
-  /^occurrence-([0-9a-f-]{36})(?:-r[a-z0-9]+)?$/i;
+const OCCURRENCE_PREFIX = "occurrence-";
+const UUID_LENGTH = 36;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Extracts the occurrence slot ID from a join error payload or an
@@ -68,14 +70,15 @@ function resolveUnprovisionedSlotId(
   if (typeof occurrenceId === "string" && occurrenceId.length > 0) {
     return occurrenceId;
   }
-  const matched = callId.match(OCCURRENCE_CALL_ID_PATTERN);
-  if (matched?.[1]) {
-    return matched[1];
+  if (!callId.startsWith(OCCURRENCE_PREFIX)) {
+    return null;
   }
-  if (callId.startsWith("occurrence-")) {
-    return callId.slice("occurrence-".length);
+  const rest = callId.slice(OCCURRENCE_PREFIX.length);
+  const candidateUuid = rest.slice(0, UUID_LENGTH);
+  if (UUID_PATTERN.test(candidateUuid)) {
+    return candidateUuid;
   }
-  return null;
+  return rest.length > 0 ? rest : null;
 }
 
 /**

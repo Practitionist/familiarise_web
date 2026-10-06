@@ -21,7 +21,10 @@ const mockTx = {
   appointment: { findMany: jest.fn().mockResolvedValue([]) },
   payment: { count: jest.fn().mockResolvedValue(0) },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
-  appointmentOccurrence: { findFirst: jest.fn().mockResolvedValue(null) },
+  appointmentOccurrence: {
+    findFirst: jest.fn().mockResolvedValue(null),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
 };
 
 const transaction = jest.fn();

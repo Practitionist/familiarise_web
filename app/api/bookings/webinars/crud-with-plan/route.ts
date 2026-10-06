@@ -865,12 +865,12 @@ export async function PATCH(request: NextRequest) {
             // occurrence_no_confirmed_overlap protects the right profile).
             const ownerProfileId =
               consultantProfileId ?? existingPlan.consultantProfileId;
-            const ownerUserId =
-              updatedWebinarPlan.consultantProfile?.id === ownerProfileId
-                ? updatedWebinarPlan.consultantProfile.userId
-                : existingPlan.consultantProfile?.id === ownerProfileId
-                  ? existingPlan.consultantProfile.userId
-                  : undefined;
+            let ownerUserId: string | undefined;
+            if (updatedWebinarPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = updatedWebinarPlan.consultantProfile?.userId;
+            } else if (existingPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = existingPlan.consultantProfile?.userId;
+            }
             const ownerChanged = Boolean(
               consultantProfileId &&
                 consultantProfileId !== existingPlan.consultantProfileId,
