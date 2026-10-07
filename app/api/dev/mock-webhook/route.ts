@@ -170,8 +170,13 @@ async function handleMockPaymentCaptured(
   };
 
   try {
-    // Use the same handler as real webhooks
-    await handlePaymentSuccess(payment.paymentIntent, metadata);
+    // Use the same handler as real webhooks. The mock simulates a full
+    // capture of the order total, so pass it as gateway truth for parity.
+    await handlePaymentSuccess(
+      payment.paymentIntent,
+      metadata,
+      payment.amount,
+    );
 
     // If release flag is set, immediately mark earnings as READY
     if (release) {

@@ -41,7 +41,10 @@ import {
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
 import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
+import { autoRefundPendingDescription } from "@/lib/payments/webhooks/auto-refund-marker";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -49,7 +52,13 @@ import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-i
  */
 export async function handleOverageMemberSuccess(
   paymentIntentId: string,
+  capturedPaise?: number,
 ): Promise<void> {
+  let refundAfterCommit: {
+    sideId: string;
+    capturedPaise: number;
+    organizationId: string | null;
+  } | null = null;
   const settledSideId = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -70,6 +79,35 @@ export async function handleOverageMemberSuccess(
     }
     if (side.paymentStatus === PaymentStatus.SUCCEEDED) {
       return null; // already settled
+    }
+
+    // Settle only on gateway truth; without a captured amount stay PENDING.
+    if (capturedPaise === undefined) {
+      return null;
+    }
+    if (capturedPaise !== side.amount) {
+      // Gateway truth differs from the side-charge: stamp for auto-refund
+      // like a booking mismatch, never CHARGE or journal the wrong amount.
+      const stamped = await tx.payment.updateMany({
+        where: { id: side.id, paymentStatus: side.paymentStatus },
+        data: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          description: autoRefundPendingDescription(
+            `capture amount ${capturedPaise}p != expected ${side.amount}p`,
+          ),
+        },
+      });
+      if (stamped.count === 0) return null;
+      await postUnappliedReceipt(tx, {
+        paymentId: side.id,
+        capturedPaise,
+      });
+      refundAfterCommit = {
+        sideId: side.id,
+        capturedPaise,
+        organizationId: side.organizationId,
+      };
+      return null;
     }
 
     // #1846 SM-B2 — CAS on the status just read. A plain update let a
@@ -292,8 +330,28 @@ export async function handleOverageMemberSuccess(
     ),
   );
   // Same document path as a booking capture: the member's own tax invoice.
+  // A mismatched capture is refunded, never invoiced.
   if (settledSideId) {
     await mintConsumerInvoiceBestEffort({ paymentId: settledSideId });
+  }
+  if (refundAfterCommit) {
+    try {
+      await refundBookingPayment({
+        paymentId: refundAfterCommit.sideId,
+        amountPaise: refundAfterCommit.capturedPaise,
+        reason: "Overage side-payment capture amount != expected; auto-refunding gateway truth",
+        dedupeKey: `overage-mismatch:${refundAfterCommit.sideId}`,
+      });
+    } catch (err) {
+      // The SUCCEEDED + marker stamp above lets retry-auto-refunds re-drive.
+      await recordSystemErrorSafe({
+        organizationId: refundAfterCommit.organizationId,
+        category: "OVERAGE",
+        summary: `Overage mismatch refund failed for side-payment ${refundAfterCommit.sideId} - sweeper backstop owns it`,
+        err: err instanceof Error ? err : new Error(String(err)),
+        context: { sidePaymentId: refundAfterCommit.sideId, paymentIntentId },
+      });
+    }
   }
 }
 

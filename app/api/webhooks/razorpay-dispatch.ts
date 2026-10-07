@@ -143,17 +143,22 @@ export async function routeCapturedPayment(params: {
     return;
   }
   if (notes.type === "overage_member") {
-    await handleOverageMemberSuccess(orderId);
+    // Settle only on gateway truth; withhold order total without a payment entity.
+    await handleOverageMemberSuccess(
+      orderId,
+      gatewayPaymentId ? amountPaise : undefined,
+    );
     return;
   }
   if (notes.type === "recording_purchase") {
     // #366 — standalone replay sale; not a Payment row, settled on its own
-    // RecordingPurchase record (idempotent per gatewayOrderId).
+    // RecordingPurchase record (idempotent per gatewayOrderId). Withhold the
+    // order total without a payment entity, like the org and overage rails.
     await handleRecordingPurchaseSuccess(
       orderId,
       gatewayPaymentId,
       notes,
-      amountPaise,
+      gatewayPaymentId ? amountPaise : undefined,
     );
     return;
   }

@@ -537,7 +537,11 @@ export async function handleRecordingPurchaseSuccess(
         });
       }
 
-      const chargedPaise = capturedPaise ?? Number(purchase.amountPaise);
+      // Settle only on gateway truth; without a captured amount stay PENDING.
+      if (capturedPaise === undefined) {
+        return null;
+      }
+      const chargedPaise = capturedPaise;
       if (!Number.isSafeInteger(chargedPaise) || chargedPaise <= 0) {
         throw new Error(
           `[recording-purchase] invalid charged amount for order ${orderId}`,
@@ -557,6 +561,12 @@ export async function handleRecordingPurchaseSuccess(
           gatewayPaymentId,
           reason,
         });
+      if (chargedPaise !== Number(purchase.amountPaise)) {
+        return refundCapture(
+          orderId,
+          `capture amount ${chargedPaise}p != expected ${purchase.amountPaise}p`,
+        );
+      }
 
       if (purchase.status === "SUCCEEDED" || purchase.status === "REFUNDED") {
         if (!gatewayPaymentId) return null;
