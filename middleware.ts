@@ -285,6 +285,18 @@ export async function middleware(
     return NextResponse.next();
   }
 
+  if (
+    pathname.startsWith("/dashboard/consultant/") &&
+    pathname.endsWith("/settings/payouts")
+  ) {
+    const targetUrl = req.nextUrl.clone();
+    targetUrl.pathname = pathname.replace(
+      /\/settings\/payouts$/,
+      "/settings/get-paid",
+    );
+    return NextResponse.redirect(targetUrl, 308);
+  }
+
   const isSubNavigation =
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
