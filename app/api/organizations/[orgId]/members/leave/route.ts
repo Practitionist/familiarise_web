@@ -6,10 +6,23 @@ import { MembershipGuardError } from "@/lib/enterprise/membership-guards";
 import { removeMember } from "@/lib/enterprise/member-removal";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
+  const acceptsHtml = req.headers.get("accept")?.includes("text/html") ?? false;
+  const respondError = (message: string, status: number, extra?: object) => {
+    if (acceptsHtml) {
+      const target = new URL(
+        `/dashboard/organization/${orgId}/my-program`,
+        req.url,
+      );
+      target.searchParams.set("leaveError", message);
+      return NextResponse.redirect(target, { status: 303 });
+    }
+    return NextResponse.json({ error: message, ...extra }, { status });
+  };
+
   const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) return access.error;
 
@@ -28,10 +41,7 @@ export async function POST(
     realMember.status === "REMOVED" ||
     realMember.status === "ERASED"
   ) {
-    return NextResponse.json(
-      { error: "Not a member of this organization" },
-      { status: 403 },
-    );
+    return respondError("Not a member of this organization", 403);
   }
 
   try {
@@ -48,29 +58,27 @@ export async function POST(
       releaseActiveSeats: true,
     });
 
+    if (acceptsHtml) {
+      return NextResponse.redirect(new URL("/dashboard", req.url), {
+        status: 303,
+      });
+    }
     return NextResponse.json({ left: true });
   } catch (err) {
     if (err instanceof MembershipGuardError) {
-      return NextResponse.json(
-        {
-          error: err.message,
-          code: err.code,
-          ...(err.counts && { counts: err.counts }),
-        },
-        { status: err.httpStatus },
-      );
+      return respondError(err.message, err.httpStatus, {
+        code: err.code,
+        ...(err.counts && { counts: err.counts }),
+      });
     }
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      return respondError(err.message, status);
     }
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
       { tags: { subsystem: "organizations" } },
     );
-    return NextResponse.json(
-      { error: "Failed to leave organization" },
-      { status: 500 },
-    );
+    return respondError("Failed to leave organization", 500);
   }
 }

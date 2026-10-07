@@ -29,7 +29,6 @@ import { EmptyState as EmptyBlock } from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { humanizeEnum } from "@/lib/ui/tone";
-import { LeaveOrgButton } from "./LeaveOrgButton";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
   LICENSED_SEAT: "Licensed seat",
@@ -46,10 +45,17 @@ const OVERAGE_BEHAVIOR_LABEL: Record<string, string> = {
 
 export default async function MyProgramPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orgId: string }>;
+  searchParams?: Promise<{ leaveError?: string }>;
 }) {
   const { orgId } = await params;
+  const resolvedSearch = searchParams ? await searchParams : undefined;
+  const leaveError =
+    typeof resolvedSearch?.leaveError === "string"
+      ? resolvedSearch.leaveError
+      : null;
   const access = await requireOrgAccess(orgId);
   // Same grant as the nav item (#1527): the sponsored member's own page.
   if (access.error || !hasOrgPermission(access.member.role, "myProgram.read")) {
@@ -568,16 +574,49 @@ export default async function MyProgramPage({
           </section>
         )}
 
-        <div className="pt-2 border-t text-xs text-muted-foreground flex items-center justify-between gap-4 flex-wrap">
-          <span>
-            Need to leave {access.org.name}? Exiting releases any active program
-            seats under this organization.
-          </span>
-          <LeaveOrgButton
-            orgId={orgId}
-            orgName={access.org.name}
-            orgSlug={access.org.slug}
-          />
+        <div className="pt-2 border-t text-xs text-muted-foreground space-y-2">
+          {leaveError && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {leaveError}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <span>
+              Need to leave {access.org.name}? Exiting releases any active
+              program seats under this organization.
+            </span>
+            <details className="relative">
+              <summary className="list-none cursor-pointer inline-flex items-center justify-center rounded-md text-xs font-medium h-8 px-3 border border-destructive/30 text-destructive hover:bg-destructive/10">
+                Leave organization
+              </summary>
+              <div className="mt-2 rounded-lg border border-destructive/30 bg-card p-3 space-y-2 text-foreground max-w-sm">
+                <p className="text-xs font-medium">
+                  Leave {access.org.name} ({access.org.slug})?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Your membership ends immediately and active program seats are
+                  released. Completed sessions and receipts remain on your
+                  account.
+                </p>
+                <form
+                  action={`/api/organizations/${orgId}/members/leave`}
+                  method="post"
+                >
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs"
+                  >
+                    Confirm leave organization
+                  </Button>
+                </form>
+              </div>
+            </details>
+          </div>
         </div>
       </DashboardContent>
     </>
