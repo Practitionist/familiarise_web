@@ -1,9 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { AppointmentStatus, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
@@ -193,6 +193,11 @@ export async function GET(req: NextRequest) {
       const sessionsCompleted = occurrences.filter(
         (o) => o.completionStatus === "COMPLETED",
       ).length;
+      const sessionsUpcoming = occurrences.filter(
+        (o) =>
+          o.completionStatus !== "COMPLETED" &&
+          o.completionStatus !== "CANCELLED",
+      ).length;
       const sessionsScheduled = occurrences.length;
       const sessionsTotal =
         subscription?.sessionsTotal ?? plan?.totalSessions ?? 0;
@@ -225,6 +230,7 @@ export async function GET(req: NextRequest) {
         sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
         sessionsTotal,
         sessionsCompleted,
+        sessionsUpcoming,
         sessionsScheduled,
         startDate: subscription?.schedulingPeriodStartsAt,
         endDate: subscription?.schedulingPeriodEndsAt,
@@ -267,108 +273,25 @@ export async function GET(req: NextRequest) {
 
 const MutateSubscriptionShape = {
   subscriptionId: z.string().trim().min(1),
-  action: z.enum(["CANCEL", "PAUSE", "RESUME"]),
+  action: z.literal("CANCEL"),
 };
-
-type SubscriptionAction = "CANCEL" | "PAUSE" | "RESUME";
-
-async function resolveSubscriptionTransition(
-  tx: Tx,
-  subscriptionId: string,
-  currentStatus: AppointmentStatus,
-  hasSucceededPayment: boolean,
-  action: SubscriptionAction,
-): Promise<{
-  targetStatus: AppointmentStatus;
-  allowedSourceStatuses: readonly AppointmentStatus[];
-  before: { status: AppointmentStatus; prePauseStatus?: AppointmentStatus };
-}> {
-  if (action === "CANCEL") {
-    return {
-      targetStatus: "CANCELLED",
-      allowedSourceStatuses: [
-        "PENDING",
-        "APPROVED",
-        "APPROVED_PENDING_PAYMENT",
-        "SCHEDULED",
-      ],
-      before: { status: currentStatus },
-    };
-  }
-
-  if (action === "PAUSE") {
-    if (!hasSucceededPayment) {
-      throw new OpsRefusal(
-        "UNPAID_SUBSCRIPTION",
-        "Cannot pause a subscription without a succeeded payment.",
-        409,
-      );
-    }
-    return {
-      targetStatus: "PENDING",
-      allowedSourceStatuses: ["SCHEDULED", "APPROVED"],
-      before: { status: currentStatus, prePauseStatus: currentStatus },
-    };
-  }
-
-  if (!hasSucceededPayment) {
-    throw new OpsRefusal(
-      "UNPAID_SUBSCRIPTION",
-      "Cannot resume an unpaid PENDING subscription.",
-      409,
-    );
-  }
-
-  const lastPauseLog = await tx.opsActionLog.findFirst({
-    where: {
-      targetKind: "Subscription",
-      targetId: subscriptionId,
-      action: "subscriptions.ops.mutate",
-    },
-    orderBy: { createdAt: "desc" },
-    select: { before: true, after: true },
-  });
-
-  const lastAfter = lastPauseLog?.after as Record<string, unknown> | null;
-  if (!lastPauseLog || lastAfter?.action !== "PAUSE") {
-    throw new OpsRefusal(
-      "NOT_PAUSED",
-      "Subscription was not paused by an admin action and cannot be resumed.",
-      409,
-    );
-  }
-
-  const lastBefore = lastPauseLog.before as Record<string, unknown> | null;
-  const priorStatus = lastBefore?.prePauseStatus ?? lastBefore?.status;
-  const restoredStatus: AppointmentStatus =
-    priorStatus === "APPROVED" ? "APPROVED" : "SCHEDULED";
-
-  return {
-    targetStatus: restoredStatus,
-    allowedSourceStatuses: ["PENDING"],
-    before: { status: currentStatus },
-  };
-}
 
 export const POST = withOpsAction(
   "subscriptions.manage",
   "subscriptions.ops.mutate",
   MutateSubscriptionShape,
   {
-    mode: "tx",
-    run: async (tx, { body, actor }) => {
-      const existing = await tx.subscription.findUnique({
+    mode: "gateway",
+    target: ({ body }) => ({ kind: "Subscription", id: body.subscriptionId }),
+    run: async ({ body, actor }) => {
+      const existing = await prisma.subscription.findUnique({
         where: { id: body.subscriptionId },
         select: {
           id: true,
           status: true,
           appointment: {
             select: {
-              payment: {
-                where: { paymentStatus: "SUCCEEDED" },
-                select: { id: true },
-                take: 1,
-              },
+              id: true,
             },
           },
         },
@@ -381,55 +304,65 @@ export const POST = withOpsAction(
         );
       }
 
-      const hasSucceededPayment =
-        (existing.appointment?.payment?.length ?? 0) > 0;
-      const { targetStatus, allowedSourceStatuses, before } =
-        await resolveSubscriptionTransition(
-          tx,
-          existing.id,
-          existing.status,
-          hasSucceededPayment,
-          body.action,
-        );
-
-      if (existing.status === targetStatus) {
+      if (existing.status === "CANCELLED") {
         throw new OpsRefusal(
           "ALREADY_IN_STATE",
-          `Subscription is already in ${targetStatus} state.`,
-          409,
-        );
-      }
-      if (!allowedSourceStatuses.includes(existing.status)) {
-        throw new OpsRefusal(
-          "INVALID_SOURCE_STATE",
-          `Cannot ${body.action.toLowerCase()} a subscription in ${existing.status} state.`,
+          "Subscription is already in CANCELLED state.",
           409,
         );
       }
 
-      const now = new Date();
-      const updated = await tx.subscription.updateMany({
-        where: {
-          id: existing.id,
-          status: { in: [...allowedSourceStatuses] },
-        },
-        data: {
-          status: targetStatus,
-          ...(body.action === "CANCEL"
-            ? {
-                cancelledAt: now,
-                cancelledBy: actor.userId,
-                cancellationNotes: body.reason,
-              }
-            : {}),
-        },
-      });
-
-      if (updated.count === 0) {
-        throw new OpsRefusal(
-          "CONCURRENT_UPDATE",
-          "Subscription status was updated concurrently; retry.",
-          409,
+      let refundOutcome: Prisma.InputJsonValue | null = null;
+      if (existing.appointment?.id) {
+        const { POST: cancelAppointmentPost } =
+          await import("@/app/api/appointments/[appointmentId]/cancel/route");
+        const cancelReq = new NextRequest(
+          new URL(
+            `http://localhost/api/appointments/${existing.appointment.id}/cancel`,
+          ),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              reason: "OTHER",
+              notes: body.reason,
+            }),
+          },
+        );
+        const cancelRes = await cancelAppointmentPost(cancelReq, {
+          params: Promise.resolve({ appointmentId: existing.appointment.id }),
+        });
+        const cancelBody = (await cancelRes.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+          refund?: Prisma.InputJsonValue;
+        };
+        if (!cancelRes.ok) {
+          throw new OpsRefusal(
+            cancelBody.code ?? "CANCEL_FAILED",
+            cancelBody.error ?? "Failed to cancel subscription booking.",
+            cancelRes.status === 404 ? 404 : 409,
+          );
+        }
+        refundOutcome = cancelBody.refund ?? null;
+      } else {
+        const { CANCELLABLE_FROM, transitionSubscriptionRequest } =
+          await import("@/lib/booking/transitions");
+        await prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            actorUserId: actor.userId,
+            reason: body.reason,
+            organizationId: null,
+            where: { id: existing.id },
+            to: "CANCELLED",
+            data: {
+              cancelledAt: new Date(),
+              cancelledBy: actor.userId,
+              cancellationReason: "OTHER",
+              cancellationNotes: body.reason,
+            },
+            fromIn: [...CANCELLABLE_FROM],
+          }),
         );
       }
 
@@ -439,10 +372,15 @@ export const POST = withOpsAction(
         response: {
           subscriptionId: existing.id,
           previousStatus: existing.status,
-          status: targetStatus,
+          status: "CANCELLED",
+          refund: refundOutcome,
         },
-        before,
-        after: { status: targetStatus, action: body.action },
+        before: { status: existing.status },
+        after: {
+          status: "CANCELLED",
+          action: "CANCEL",
+          refund: refundOutcome,
+        },
       };
     },
   },

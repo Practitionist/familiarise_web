@@ -8,29 +8,33 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 
-const waitlistOfferEntrySchema = z.object({
+const backupInterestEntrySchema = z.object({
   id: z.string(),
   status: z.string(),
-  offerExpiresAt: z.string().nullable().optional(),
-  windowStart: z.string().nullable().optional(),
-  windowEnd: z.string().nullable().optional(),
+  windowStart: z.string(),
+  windowEnd: z.string(),
   planKind: z.string().nullable().optional(),
   planId: z.string().nullable().optional(),
-  webinarId: z.string().nullable().optional(),
-  classId: z.string().nullable().optional(),
-  consultantProfileId: z.string().nullable().optional(),
+  consultantProfileId: z.string(),
   consultantName: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   checkoutHref: z.string().nullable().optional(),
+  consultantProfile: z
+    .object({
+      user: z.object({
+        name: z.string().nullable().optional(),
+      }),
+    })
+    .optional(),
 });
 
-export type WaitlistOfferEntry = z.infer<typeof waitlistOfferEntrySchema>;
+export type WaitlistOfferEntry = z.infer<typeof backupInterestEntrySchema>;
 
-const waitlistResponseSchema = z.object({
-  data: z.array(waitlistOfferEntrySchema).default([]),
+const backupInterestResponseSchema = z.object({
+  data: z.array(backupInterestEntrySchema).default([]),
 });
 
-export const CONSULTEE_WAITLIST_QUERY_KEY = ["consultee-waitlist"] as const;
+export const CONSULTEE_WAITLIST_QUERY_KEY = ["backup-interest"] as const;
 
 const FALLBACK_TIME_FORMAT = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
@@ -40,45 +44,46 @@ const FALLBACK_TIME_FORMAT = new Intl.DateTimeFormat("en-IN", {
   timeZone: "Asia/Kolkata",
 });
 
-function formatOfferDeadline(
-  offerExpiresAt: string | null | undefined,
+function formatSessionWindow(
+  windowStart: string,
+  windowEnd: string,
   viewerZone?: ViewerZone,
 ): string | null {
-  if (!offerExpiresAt) return null;
-  const parsed = new Date(offerExpiresAt);
-  if (Number.isNaN(parsed.getTime())) return null;
+  const start = new Date(windowStart);
+  const end = new Date(windowEnd);
+  if (Number.isNaN(start.getTime())) return null;
   if (viewerZone) {
-    return formatForViewer(parsed, viewerZone, "EEE, d MMM · h:mm a");
+    const startLabel = formatForViewer(
+      start,
+      viewerZone,
+      "EEE, d MMM · h:mm a",
+    );
+    const endLabel = Number.isNaN(end.getTime())
+      ? null
+      : formatForViewer(end, viewerZone, "h:mm a");
+    return endLabel ? `${startLabel} – ${endLabel}` : startLabel;
   }
-  return FALLBACK_TIME_FORMAT.format(parsed);
+  return FALLBACK_TIME_FORMAT.format(start);
 }
 
-function buildClaimHref(entry: WaitlistOfferEntry): string {
+function buildBookHref(entry: WaitlistOfferEntry): string {
   if (entry.checkoutHref) {
-    if (entry.checkoutHref.includes("waitlist=")) return entry.checkoutHref;
-    const sep = entry.checkoutHref.includes("?") ? "&" : "?";
-    return `${entry.checkoutHref}${sep}waitlist=${encodeURIComponent(entry.id)}`;
+    return entry.checkoutHref;
   }
-  if (entry.classId) {
-    return `/checkout/plans/class/${entry.classId}?waitlist=${encodeURIComponent(entry.id)}`;
+  if (entry.planId && entry.planKind === "CONSULTATION") {
+    const qs = new URLSearchParams({
+      startsAt: entry.windowStart,
+      endsAt: entry.windowEnd,
+    });
+    return `/checkout/plans/consultation/${entry.planId}?${qs.toString()}`;
   }
-  if (entry.webinarId) {
-    return `/checkout/plans/webinar/${entry.webinarId}?waitlist=${encodeURIComponent(entry.id)}`;
-  }
-  if (entry.planId && entry.planKind) {
-    const kind = entry.planKind.toLowerCase();
-    return `/checkout/plans/${kind}/${entry.planId}?waitlist=${encodeURIComponent(entry.id)}`;
-  }
-  if (entry.consultantProfileId) {
-    return `/explore/experts/${entry.consultantProfileId}?waitlist=${encodeURIComponent(entry.id)}`;
-  }
-  return `/explore/experts?waitlist=${encodeURIComponent(entry.id)}`;
+  return `/explore/experts/${entry.consultantProfileId}`;
 }
 
-function resolveOfferLabel(offer: WaitlistOfferEntry): string {
-  if (offer.title) return offer.title;
-  if (offer.consultantName) return `Session with ${offer.consultantName}`;
-  return "Waitlist spot";
+function resolveExpertName(offer: WaitlistOfferEntry): string {
+  return (
+    offer.consultantProfile?.user.name ?? offer.consultantName ?? "your expert"
+  );
 }
 
 export function WaitlistOfferBanner({
@@ -98,54 +103,54 @@ export function WaitlistOfferBanner({
     enabled: entries === undefined,
     staleTime: 60_000,
     queryFn: async () => {
-      const res = await fetch("/api/waitlist");
+      const res = await fetch("/api/scheduling/backup-interest");
       if (!res.ok) return [];
       const json = await res.json().catch(() => null);
-      const parsed = waitlistResponseSchema.safeParse(json);
+      const parsed = backupInterestResponseSchema.safeParse(json);
       return parsed.success ? parsed.data.data : [];
     },
   });
 
-  const declineMutation = useMutation({
+  const withdrawMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(
-        `/api/waitlist/${encodeURIComponent(id)}/decline`,
+        `/api/scheduling/backup-interest?id=${encodeURIComponent(id)}`,
         {
-          method: "POST",
+          method: "DELETE",
         },
       );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "Could not decline spot");
+        throw new Error(
+          body?.error ?? "Could not update notification preference",
+        );
       }
       return id;
     },
     onSuccess: async (id) => {
       onDeclined?.(id);
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: CONSULTEE_WAITLIST_QUERY_KEY,
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["backup-interest"],
-        }),
-      ]);
+      await queryClient.invalidateQueries({
+        queryKey: CONSULTEE_WAITLIST_QUERY_KEY,
+      });
       toast({
-        title: "Spot declined",
-        description: "We have released the offered spot.",
+        title: "Notification removed",
+        description: "You won't be notified about this time.",
       });
     },
     onError: (err: Error) => {
       toast({
-        title: "Couldn't decline spot",
+        title: "Couldn't update notification",
         description: err.message,
         variant: "destructive",
       });
     },
   });
 
+  const nowMs = Date.now();
   const activeOffers = (entries ?? fetchedEntries ?? []).filter(
-    (entry) => entry.status === "NOTIFIED",
+    (entry) =>
+      entry.status === "NOTIFIED" &&
+      new Date(entry.windowStart).getTime() > nowMs,
   );
 
   if (activeOffers.length === 0) return null;
@@ -153,18 +158,19 @@ export function WaitlistOfferBanner({
   return (
     <div className="mb-4 space-y-2" data-testid="waitlist-offer-banners">
       {activeOffers.map((offer) => {
-        const deadlineText = formatOfferDeadline(
-          offer.offerExpiresAt ?? offer.windowEnd,
+        const windowText = formatSessionWindow(
+          offer.windowStart,
+          offer.windowEnd,
           viewerZone,
         );
-        const claimHref = buildClaimHref(offer);
-        const label = resolveOfferLabel(offer);
+        const bookHref = buildBookHref(offer);
+        const expertName = resolveExpertName(offer);
 
         return (
           <div
             key={offer.id}
             role="region"
-            aria-label="Waitlist spot offer"
+            aria-label="Open session time alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950 shadow-sm"
           >
             <div className="flex items-start gap-3">
@@ -174,28 +180,28 @@ export function WaitlistOfferBanner({
               />
               <div>
                 <p className="text-sm font-semibold">
-                  {deadlineText
-                    ? `Spot Available — Respond before ${deadlineText}`
-                    : "Spot Available"}
+                  {windowText
+                    ? `A slot opened: ${windowText} with ${expertName}`
+                    : `A slot opened with ${expertName}`}
                 </p>
                 <p className="text-xs text-amber-800">
-                  A spot opened up for {label}. Claim your spot to complete
-                  checkout, or decline so the next learner can take it.
+                  A time you were waiting for just opened. First to book gets it
+                  — the slot is not held.
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" asChild>
-                <Link href={claimHref}>Claim Spot &amp; Pay</Link>
+                <Link href={bookHref}>Book now</Link>
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={declineMutation.isPending}
-                onClick={() => declineMutation.mutate(offer.id)}
+                disabled={withdrawMutation.isPending}
+                onClick={() => withdrawMutation.mutate(offer.id)}
               >
-                Decline Spot
+                Stop notifying me
               </Button>
             </div>
           </div>

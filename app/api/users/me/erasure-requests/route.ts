@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { soleOwnerOrganizationsForUser } from "@/lib/compliance/erasure/scrub-user";
+import { soleOwnedOrganizations } from "@/lib/compliance/erasure/scrub-user";
 
 const CreateBodySchema = z.object({
   reason: z.string().trim().min(1).max(1000).optional(),
@@ -46,45 +46,41 @@ export async function POST(req: Request) {
 
   const userId = auth.session.user.id;
 
-  const soleOwnedOrgs = await soleOwnerOrganizationsForUser(prisma, userId);
-  if (soleOwnedOrgs.length > 0) {
+  const [existing, soleOwnedOrgs] = await Promise.all([
+    prisma.erasureRequest.findFirst({
+      where: {
+        userId,
+        status: { in: ["PENDING", "IN_PROGRESS"] },
+      },
+    }),
+    soleOwnedOrganizations(prisma, userId),
+  ]);
+
+  if (existing) {
     return NextResponse.json(
       {
-        error:
-          "Cannot request account erasure while you are the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
-        code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
-        organizations: soleOwnedOrgs,
+        request: existing,
+        blockedUntilResolved: soleOwnedOrgs,
       },
-      { status: 409 },
+      { status: 200 },
     );
   }
 
-  // Idempotent: short-circuit on an existing open request.
-  const existing = await prisma.erasureRequest.findFirst({
-    where: {
-      userId,
-      status: { in: ["PENDING", "IN_PROGRESS"] },
-    },
-  });
-  if (existing) {
-    return NextResponse.json({ request: existing }, { status: 200 });
-  }
-
   const created = await prisma.$transaction(async (tx) => {
-    const request = await tx.erasureRequest.create({
+    return tx.erasureRequest.create({
       data: {
         userId,
         status: "PENDING",
         reason: parsed.data.reason ?? null,
       },
     });
-    // No org-scoped audit — the user may not be in any org. We log via
-    // a SYSTEM-bucket row scoped to NULL organizationId is not allowed
-    // by the schema, so the user-initiated request is recorded inline
-    // on the ErasureRequest itself. The processing path writes per-org
-    // audit rows once we know which orgs are affected.
-    return request;
   });
 
-  return NextResponse.json({ request: created }, { status: 201 });
+  return NextResponse.json(
+    {
+      request: created,
+      blockedUntilResolved: soleOwnedOrgs,
+    },
+    { status: 201 },
+  );
 }

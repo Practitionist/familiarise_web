@@ -117,7 +117,6 @@ interface FeeWaiverItem {
   id: string;
   consultantProfileId: string;
   reason: "REFERRED_EXPERT" | "REFERRING_EXPERT";
-  sessionsGranted: number;
   sessionsRemaining: number;
   expiresAt: string;
   referralId: string;
@@ -423,24 +422,12 @@ const FEE_WAIVER_COLUMNS: ResponsiveColumn<FeeWaiverItem>[] = [
     ),
   },
   {
-    key: "sessionsGranted",
-    header: "Granted",
-    className: "text-right",
-    headClassName: "text-right",
-    cell: (w) => (
-      <span className="font-medium tabular-nums">
-        {w.sessionsGranted} sessions
-      </span>
-    ),
-  },
-  {
     key: "sessionsRemaining",
-    header: "Remaining",
-    className: "text-right",
-    headClassName: "text-right",
+    header: "Fee-free sessions",
     cell: (w) => (
       <span className="font-semibold tabular-nums">
-        {w.sessionsRemaining} sessions
+        {w.sessionsRemaining} fee-free sessions left · expires{" "}
+        {fmtDate(w.expiresAt)}
       </span>
     ),
   },
@@ -448,15 +435,6 @@ const FEE_WAIVER_COLUMNS: ResponsiveColumn<FeeWaiverItem>[] = [
     key: "status",
     header: "Status",
     cell: (w) => <StatusBadge {...deriveWaiverState(w)} />,
-  },
-  {
-    key: "expiresAt",
-    header: "Expires",
-    cell: (w) => (
-      <span className="text-xs text-muted-foreground">
-        {fmtDate(w.expiresAt)}
-      </span>
-    ),
   },
 ];
 

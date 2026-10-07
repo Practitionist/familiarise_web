@@ -29,6 +29,7 @@ import { EmptyState as EmptyBlock } from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { LeaveOrgButton } from "./LeaveOrgButton";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
   LICENSED_SEAT: "Licensed seat",
@@ -106,6 +107,17 @@ export default async function MyProgramPage({
   // the personal dashboard now excludes. The org appointments page's "mine"
   // scope is the surface that actually holds them.
   const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
+  const primaryProgramId = assignments[0]?.program.id;
+  const browseCoveredHref = primaryProgramId
+    ? `/explore/experts?program=${primaryProgramId}`
+    : orgCatalog.length > 0
+      ? "#org-catalog"
+      : "/explore/experts";
+  const browseCoveredLabel = primaryProgramId
+    ? "Browse covered experts"
+    : orgCatalog.length > 0
+      ? "Browse org offerings"
+      : "Browse experts";
 
   return (
     <>
@@ -114,7 +126,7 @@ export default async function MyProgramPage({
         description={`${access.org.name} sponsors your bookings through the programs below.`}
         actions={
           <Button asChild size="sm">
-            <Link href="/explore/experts">Browse experts</Link>
+            <Link href={browseCoveredHref}>{browseCoveredLabel}</Link>
           </Button>
         }
       />
@@ -122,12 +134,19 @@ export default async function MyProgramPage({
         <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-400" />
           <div className="text-xs text-emerald-900 dark:text-emerald-200">
-            <p className="font-semibold">Employee Confidentiality Guarantee</p>
+            <p className="font-semibold">
+              Session Privacy &amp; Organization Visibility
+            </p>
             <p className="mt-0.5 text-emerald-800/90 dark:text-emerald-300/90">
-              Your session conversations, call recordings, private notes, and
-              individual session ratings are strictly confidential.{" "}
-              {access.org.name} administrators only see high-level utilization
-              counts and anonymized cohort aggregates.
+              Your session recordings, chat messages, session notes, and
+              individual ratings remain strictly private between you and your
+              expert. {access.org.name} administrators can see your program seat
+              assignment, session count and attendance status, and sponsor or
+              reimbursement ledger entries, as described in our{" "}
+              <Link href="/privacy" className="underline underline-offset-2">
+                Privacy Notice
+              </Link>
+              .
             </p>
           </div>
         </div>
@@ -224,7 +243,11 @@ export default async function MyProgramPage({
         )}
 
         {assignments.length === 0 ? (
-          <EmptyState orgId={orgId} />
+          <EmptyState
+            orgId={orgId}
+            browseHref={browseCoveredHref}
+            browseLabel={browseCoveredLabel}
+          />
         ) : (
           <section className="space-y-4">
             {assignments.map((a) => {
@@ -506,7 +529,7 @@ export default async function MyProgramPage({
           </section>
         )}
         {orgCatalog.length > 0 && (
-          <section className="space-y-3">
+          <section id="org-catalog" className="space-y-3">
             <div>
               <h2 className="font-medium">Offered by {access.org.name}</h2>
               <p className="text-sm text-muted-foreground">
@@ -547,15 +570,14 @@ export default async function MyProgramPage({
 
         <div className="pt-2 border-t text-xs text-muted-foreground flex items-center justify-between gap-4 flex-wrap">
           <span>
-            Need to leave {access.org.name}? Manage your organization membership
-            in settings.
+            Need to leave {access.org.name}? Exiting releases any active program
+            seats under this organization.
           </span>
-          <Link
-            href={`/dashboard/organization/${orgId}/settings/general`}
-            className="text-destructive underline hover:opacity-80"
-          >
-            Leave organization
-          </Link>
+          <LeaveOrgButton
+            orgId={orgId}
+            orgName={access.org.name}
+            orgSlug={access.org.slug}
+          />
         </div>
       </DashboardContent>
     </>
@@ -571,7 +593,15 @@ const CATALOG_DETAIL_PATH: Record<string, string> = {
   CLASS: "classes",
 };
 
-function EmptyState({ orgId }: { orgId: string }) {
+function EmptyState({
+  orgId,
+  browseHref,
+  browseLabel,
+}: {
+  orgId: string;
+  browseHref: string;
+  browseLabel: string;
+}) {
   return (
     <div className="rounded-lg border bg-card p-6">
       <h2 className="font-medium">No active programs yet</h2>
@@ -582,7 +612,7 @@ function EmptyState({ orgId }: { orgId: string }) {
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button asChild size="sm">
-          <Link href="/explore/experts">Browse experts</Link>
+          <Link href={browseHref}>{browseLabel}</Link>
         </Button>
         <Link
           href={`/dashboard/organization/${orgId}/home`}

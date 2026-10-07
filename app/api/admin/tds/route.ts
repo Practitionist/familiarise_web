@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 import {
   getTDSSummary,
-  getConsultantTDSBreakdown,
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
 
@@ -18,18 +19,19 @@ function notFoundIfGated() {
   return null;
 }
 
-const TdsFilingPostSchema = z.object({
+const TdsFilingShape = {
   financialYear: z
     .string()
     .regex(/^\d{4}-\d{2}$/, "Invalid financialYear format (expected YYYY-YY)"),
   quarter: z.coerce.number().int().min(1).max(4),
-  filingDate: z.string().datetime().optional(),
+  recordId: z.string().trim().min(1).optional(),
+  filingDate: z.string().trim().min(1).optional(),
   challanNumber: z.string().trim().max(64).optional(),
   bsrCode: z.string().trim().max(32).optional(),
   ackNumber: z.string().trim().max(64).optional(),
   certificateNumber: z.string().trim().max(64).optional(),
   reportedInForm26Q: z.boolean().optional(),
-});
+};
 
 export async function GET(req: NextRequest) {
   const gated = notFoundIfGated();
@@ -53,29 +55,41 @@ export async function GET(req: NextRequest) {
     }
 
     if (view === "consultants") {
-      const [breakdown, unfiledGroups] = await Promise.all([
-        getConsultantTDSBreakdown(fy),
+      const [deducteeGroups, unfiledGroups] = await Promise.all([
         prisma.tDSRecord.groupBy({
-          by: ["consultantProfileId"],
+          by: ["consultantProfileId", "organizationId"],
+          where: { financialYear: fy },
+          _sum: { tdsDeducted: true },
+          _max: { cumulativeAmountCredited: true },
+          _count: true,
+        }),
+        prisma.tDSRecord.groupBy({
+          by: ["consultantProfileId", "organizationId"],
           where: { financialYear: fy, reportedInForm26Q: false },
           _count: true,
         }),
       ]);
 
-      const unfiledByProfile = new Map<string, number>();
+      const unfiledByKey = new Map<string, number>();
       for (const g of unfiledGroups) {
-        if (g.consultantProfileId) {
-          unfiledByProfile.set(g.consultantProfileId, g._count);
-        }
+        const key = g.consultantProfileId
+          ? `consultant:${g.consultantProfileId}`
+          : g.organizationId
+            ? `org:${g.organizationId}`
+            : "unknown";
+        unfiledByKey.set(key, g._count);
       }
 
-      const profileIds = breakdown
+      const profileIds = deducteeGroups
         .map((b) => b.consultantProfileId)
         .filter((id): id is string => Boolean(id));
+      const orgIds = deducteeGroups
+        .map((b) => b.organizationId)
+        .filter((id): id is string => Boolean(id));
 
-      const profiles =
+      const [profiles, orgs] = await Promise.all([
         profileIds.length > 0
-          ? await prisma.consultantProfile.findMany({
+          ? prisma.consultantProfile.findMany({
               where: { id: { in: profileIds } },
               select: {
                 id: true,
@@ -95,25 +109,53 @@ export async function GET(req: NextRequest) {
                 },
               },
             })
-          : [];
+          : [],
+        orgIds.length > 0
+          ? prisma.organization.findMany({
+              where: { id: { in: orgIds } },
+              select: {
+                id: true,
+                name: true,
+                taxInfo: {
+                  select: {
+                    legalName: true,
+                  },
+                },
+              },
+            })
+          : [],
+      ]);
 
       const profileById = new Map(profiles.map((p) => [p.id, p]));
-      const consultants = breakdown.map((row) => {
+      const orgById = new Map(orgs.map((o) => [o.id, o]));
+
+      const consultants = deducteeGroups.map((row) => {
+        const key = row.consultantProfileId
+          ? `consultant:${row.consultantProfileId}`
+          : row.organizationId
+            ? `org:${row.organizationId}`
+            : "unknown";
         const profile = row.consultantProfileId
           ? profileById.get(row.consultantProfileId)
           : undefined;
-        const unfiledCount = row.consultantProfileId
-          ? (unfiledByProfile.get(row.consultantProfileId) ?? 0)
-          : 0;
+        const org = row.organizationId
+          ? orgById.get(row.organizationId)
+          : undefined;
+        const unfiledCount = unfiledByKey.get(key) ?? 0;
+
         return {
-          ...row,
+          deducteeKey: key,
+          deducteeType: row.consultantProfileId ? "CONSULTANT" : "ORGANIZATION",
+          consultantProfileId: row.consultantProfileId,
+          organizationId: row.organizationId,
           userId: profile?.userId ?? null,
-          consultantName: profile?.user.name ?? null,
+          consultantName:
+            profile?.user.name ?? org?.taxInfo?.legalName ?? org?.name ?? null,
           consultantEmail: showPii ? (profile?.user.email ?? null) : null,
           panLast4: profile?.taxInfo?.panLast4 ?? null,
           panVerified: profile?.taxInfo?.panVerified ?? false,
-          totalCredited: row._sum.cumulativeAmountCredited,
-          totalTDS: row._sum.tdsDeducted,
+          totalCredited: Number(row._max.cumulativeAmountCredited ?? 0),
+          totalTDS: Number(row._sum.tdsDeducted ?? 0),
           recordCount: row._count,
           allFiled: unfiledCount === 0,
         };
@@ -180,42 +222,43 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ financialYear: fy, records: form26qData });
     }
 
-    const [summary, quarterRows] = await Promise.all([
-      getTDSSummary(fy),
-      prisma.tDSRecord.findMany({
-        where: { financialYear: fy },
-        select: {
-          quarter: true,
-          consultantProfileId: true,
-          organizationId: true,
-          cumulativeAmountCredited: true,
-          tdsDeducted: true,
-          reportedInForm26Q: true,
-        },
-      }),
-    ]);
+    const [summary, deducteeQuarterGroups, unfiledQuarterGroups] =
+      await Promise.all([
+        getTDSSummary(fy),
+        prisma.tDSRecord.groupBy({
+          by: ["quarter", "consultantProfileId", "organizationId"],
+          where: { financialYear: fy },
+          _sum: { tdsDeducted: true },
+          _max: { cumulativeAmountCredited: true },
+          _count: true,
+        }),
+        prisma.tDSRecord.groupBy({
+          by: ["quarter"],
+          where: { financialYear: fy, reportedInForm26Q: false },
+          _count: true,
+        }),
+      ]);
+
+    const unfiledByQuarter = new Map(
+      unfiledQuarterGroups.map((g) => [g.quarter, g._count]),
+    );
 
     const quarters = [1, 2, 3, 4].map((q) => {
-      const rowsForQ = quarterRows.filter((r) => r.quarter === q);
-      const deductees = new Set(
-        rowsForQ
-          .map((r) => r.consultantProfileId ?? r.organizationId)
-          .filter(Boolean),
-      );
+      const groupsForQ = deducteeQuarterGroups.filter((g) => g.quarter === q);
       return {
         financialYear: fy,
         quarter: q,
-        totalConsultants: deductees.size,
-        totalAmountCredited: rowsForQ.reduce(
-          (sum, r) => sum + Number(r.cumulativeAmountCredited),
+        totalConsultants: groupsForQ.length,
+        totalAmountCredited: groupsForQ.reduce(
+          (sum, g) => sum + Number(g._max.cumulativeAmountCredited ?? 0),
           0,
         ),
-        totalTDSDeducted: rowsForQ.reduce(
-          (sum, r) => sum + Number(r.tdsDeducted),
+        totalTDSDeducted: groupsForQ.reduce(
+          (sum, g) => sum + Number(g._sum.tdsDeducted ?? 0),
           0,
         ),
-        totalRecords: rowsForQ.length,
-        unfiledRecords: rowsForQ.filter((r) => !r.reportedInForm26Q).length,
+        totalRecords: groupsForQ.reduce((sum, g) => sum + g._count, 0),
+        unfiledRecords: unfiledByQuarter.get(q) ?? 0,
       };
     });
 
@@ -235,93 +278,124 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
-  const gated = notFoundIfGated();
-  if (gated) return gated;
+export const POST = withOpsAction(
+  "tds.read",
+  "tds.filing.record",
+  TdsFilingShape,
+  {
+    mode: "tx",
+    run: async (tx, { body, actor }) => {
+      if (actor.role !== "ADMIN") {
+        throw new OpsRefusal(
+          "FORBIDDEN",
+          "Only administrators can record TDS filings",
+          403,
+        );
+      }
+      if (!ENABLE_TDS_ADMIN_VIEW) {
+        throw new OpsRefusal("NOT_FOUND", "Not found", 404);
+      }
 
-  try {
-    const auth = await requireAdminAuth();
-    if (auth.error) return auth.error;
+      const {
+        financialYear,
+        quarter,
+        recordId,
+        filingDate,
+        challanNumber,
+        bsrCode,
+        ackNumber,
+        certificateNumber,
+        reportedInForm26Q,
+      } = body;
 
-    const rawBody = await req.json().catch(() => ({}));
-    const parsed = TdsFilingPostSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error:
-            parsed.error.issues[0]?.message ?? "Invalid TDS filing payload",
-        },
-        { status: 400 },
-      );
-    }
+      const markFiled = reportedInForm26Q ?? Boolean(ackNumber);
 
-    const {
-      financialYear,
-      quarter,
-      filingDate,
-      challanNumber,
-      bsrCode,
-      ackNumber,
-      certificateNumber,
-      reportedInForm26Q,
-    } = parsed.data;
+      let effectiveFilingDate: Date | null = null;
+      if (filingDate) {
+        const parsedDate = new Date(filingDate);
+        if (Number.isNaN(parsedDate.getTime()) || parsedDate > new Date()) {
+          throw new OpsRefusal(
+            "INVALID_FILING_DATE",
+            "Filing date must be a valid non-future date.",
+            400,
+          );
+        }
+        effectiveFilingDate = parsedDate;
+      } else if (markFiled) {
+        throw new OpsRefusal(
+          "MISSING_FILING_DATE",
+          "Statutory filing date is required when marking Form 26Q (Form 140) as filed.",
+          400,
+        );
+      }
 
-    const effectiveFilingDate = filingDate ? new Date(filingDate) : new Date();
-    const markFiled = reportedInForm26Q ?? Boolean(ackNumber);
+      const formattedChallan =
+        bsrCode && challanNumber
+          ? `${bsrCode}/${challanNumber}`
+          : challanNumber || bsrCode || undefined;
 
-    const formattedChallan =
-      bsrCode && challanNumber
-        ? `${bsrCode}/${challanNumber}`
-        : challanNumber || bsrCode || undefined;
+      const unfiledBefore = await tx.tDSRecord.count({
+        where: { financialYear, quarter, reportedInForm26Q: false },
+      });
 
-    const artifactPatch: {
-      challanNumber?: string;
-      ackNumber?: string;
-      certificateNumber?: string;
-    } = {};
-    if (formattedChallan) artifactPatch.challanNumber = formattedChallan;
-    if (ackNumber) artifactPatch.ackNumber = ackNumber;
-    if (certificateNumber) artifactPatch.certificateNumber = certificateNumber;
+      let recordsUpdated = 0;
 
-    const recordsUpdated = await prisma.$transaction(async (tx) => {
-      let filedCount = 0;
-      if (markFiled) {
+      if (recordId) {
+        const rowPatch: {
+          challanNumber?: string;
+          ackNumber?: string;
+          certificateNumber?: string;
+          reportedInForm26Q?: boolean;
+          form26QFilingDate?: Date;
+        } = {};
+        if (formattedChallan) rowPatch.challanNumber = formattedChallan;
+        if (ackNumber) rowPatch.ackNumber = ackNumber;
+        if (certificateNumber) rowPatch.certificateNumber = certificateNumber;
+        if (markFiled && effectiveFilingDate) {
+          rowPatch.reportedInForm26Q = true;
+          rowPatch.form26QFilingDate = effectiveFilingDate;
+        }
+        const res = await tx.tDSRecord.updateMany({
+          where: { id: recordId, financialYear, quarter },
+          data: rowPatch,
+        });
+        recordsUpdated = res.count;
+      } else if (markFiled && effectiveFilingDate) {
         const res = await tx.tDSRecord.updateMany({
           where: { financialYear, quarter, reportedInForm26Q: false },
           data: {
             reportedInForm26Q: true,
             form26QFilingDate: effectiveFilingDate,
+            ...(ackNumber ? { ackNumber } : {}),
           },
         });
-        filedCount = res.count;
+        recordsUpdated = res.count;
       }
-      if (Object.keys(artifactPatch).length === 0) return filedCount;
-      const updatedArtifacts = await tx.tDSRecord.updateMany({
-        where: { financialYear, quarter },
-        data: artifactPatch,
-      });
-      return Math.max(filedCount, updatedArtifacts.count);
-    });
 
-    return NextResponse.json({
-      message: `Updated ${recordsUpdated} TDS record(s) for ${financialYear} Q${quarter}`,
-      financialYear,
-      quarter,
-      recordsUpdated,
-      challanNumber: formattedChallan ?? null,
-      bsrCode: bsrCode ?? null,
-      ackNumber: ackNumber ?? null,
-      certificateNumber: certificateNumber ?? null,
-      reportedInForm26Q: markFiled,
-    });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
-    return NextResponse.json(
-      { error: "Failed to update TDS filing status" },
-      { status: 500 },
-    );
-  }
-}
+      return {
+        target: { kind: "TDSQuarter", id: `${financialYear}-Q${quarter}` },
+        status: 200,
+        response: {
+          message: `Updated ${recordsUpdated} TDS record(s) for ${financialYear} Q${quarter}`,
+          financialYear,
+          quarter,
+          recordsUpdated,
+          challanNumber: recordId ? (formattedChallan ?? null) : null,
+          bsrCode: recordId ? (bsrCode ?? null) : null,
+          ackNumber: ackNumber ?? null,
+          certificateNumber: recordId ? (certificateNumber ?? null) : null,
+          reportedInForm26Q: markFiled,
+        },
+        before: { unfiledRecords: unfiledBefore },
+        after: {
+          recordsUpdated,
+          reportedInForm26Q: markFiled,
+          ackNumber: ackNumber ?? null,
+          recordId: recordId ?? null,
+        },
+      };
+    },
+  },
+);
+
+export const PATCH = POST;

@@ -13,6 +13,8 @@ import {
   authorizeAppointment,
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
 const DETAIL_ROUTE = "appointments.detail";
 
@@ -101,15 +103,36 @@ export async function PATCH(
           context: { route: DETAIL_ROUTE, action: "patch", appointmentId },
         });
       }
-      const updated = await prisma.consultation.updateMany({
-        where: {
-          id: consultation.id,
-          status: "PENDING",
-          appointment: {
-            is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+      const consultantUserId =
+        consultation.consultationPlan.consultantProfile.userId;
+      const consultantProfileId =
+        consultation.consultationPlan.consultantProfile.id;
+      const updated = await prisma.$transaction(async (tx) => {
+        const res = await tx.consultation.updateMany({
+          where: {
+            id: consultation.id,
+            status: "PENDING",
+            appointment: {
+              is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+            },
           },
-        },
-        data: { requestNotes: parsed.data.requestNotes },
+          data: { requestNotes: parsed.data.requestNotes },
+        });
+        if (res.count > 0 && consultantUserId) {
+          await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            recipients: [consultantUserId],
+            payload: {
+              consulteeName:
+                consultation.requestedBy.user.name ?? "A consultee",
+              planTitle: consultation.consultationPlan.title,
+              appointmentType: "Consultation",
+              dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
+            },
+            dedupeKey: `request-notes-updated:${appointmentId}:${Date.now()}`,
+          });
+        }
+        return res;
       });
       if (updated.count === 0) {
         return NextResponse.json(
@@ -130,15 +153,36 @@ export async function PATCH(
           context: { route: DETAIL_ROUTE, action: "patch", appointmentId },
         });
       }
-      const updated = await prisma.subscription.updateMany({
-        where: {
-          id: subscription.id,
-          status: "PENDING",
-          appointment: {
-            is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+      const consultantUserId =
+        subscription.subscriptionPlan.consultantProfile.userId;
+      const consultantProfileId =
+        subscription.subscriptionPlan.consultantProfile.id;
+      const updated = await prisma.$transaction(async (tx) => {
+        const res = await tx.subscription.updateMany({
+          where: {
+            id: subscription.id,
+            status: "PENDING",
+            appointment: {
+              is: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+            },
           },
-        },
-        data: { requestNotes: parsed.data.requestNotes },
+          data: { requestNotes: parsed.data.requestNotes },
+        });
+        if (res.count > 0 && consultantUserId) {
+          await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            recipients: [consultantUserId],
+            payload: {
+              consulteeName:
+                subscription.requestedBy.user.name ?? "A consultee",
+              planTitle: subscription.subscriptionPlan.title,
+              appointmentType: "Subscription",
+              dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
+            },
+            dedupeKey: `request-notes-updated:${appointmentId}:${Date.now()}`,
+          });
+        }
+        return res;
       });
       if (updated.count === 0) {
         return NextResponse.json(

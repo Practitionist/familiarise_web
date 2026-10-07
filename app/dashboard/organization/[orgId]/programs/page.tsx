@@ -391,6 +391,7 @@ async function fetchProgram(
 interface MemberListItem {
   id: string;
   role: string;
+  status?: string;
   user: { id: string; name: string | null; email: string };
 }
 
@@ -411,7 +412,9 @@ interface AssignmentListItem {
 async function fetchMembers(
   orgId: string,
 ): Promise<{ data: MemberListItem[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/members?perPage=100`);
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?status=ACTIVE&perPage=100`,
+  );
   if (!res.ok) throw new Error("Failed to load members");
   return res.json();
 }
@@ -2211,7 +2214,7 @@ function ManageProgramDialog({
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   const members = useQuery({
-    queryKey: ["org-members", orgId],
+    queryKey: ["org-members", orgId, "ACTIVE"],
     queryFn: () => fetchMembers(orgId),
     enabled: open && canAssign,
   });
@@ -2295,6 +2298,7 @@ function ManageProgramDialog({
   );
   const assignableMembers = memberList.filter(
     (m) =>
+      (!m.status || m.status === "ACTIVE") &&
       ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role) &&
       !activeAssignedMemberIds.has(m.id),
   );

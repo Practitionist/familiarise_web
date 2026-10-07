@@ -8,6 +8,7 @@ import {
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
@@ -316,7 +317,7 @@ export async function POST(req: NextRequest) {
       const reviewerName = newReview.isAnonymous
         ? "A verified client"
         : newReview.consulteeProfile?.user?.name || "User";
-      const reviewsInboxHref = `/dashboard/consultant/${newReview.consultantProfileId}/reviews`;
+      const reviewsInboxHref = goHref("expert", "reviews");
       await notifyNewReview(newReview.consultantProfile.userId, {
         reviewerName,
         rating: newReview.rating,

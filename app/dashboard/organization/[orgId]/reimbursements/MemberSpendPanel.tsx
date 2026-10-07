@@ -7,26 +7,18 @@
  */
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
-import { Download, Loader2, Pencil } from "lucide-react";
+import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   ScopedListTable,
   type Column,
 } from "@/components/dashboard/ScopedListTable";
-import { useOrgRole } from "../useOrgRole";
 
 interface ReimbursementRow {
   id: string;
@@ -43,16 +35,12 @@ interface ReimbursementRow {
 
 interface ByMemberRow {
   userId: string;
-  membershipId?: string | null;
   name: string | null;
   email: string | null;
   totalPaise: number;
   refundedPaise: number;
   netReimbursablePaise: number;
   paymentCount: number;
-  spendLimitPaise?: number | null;
-  exceedsSpendLimit?: boolean;
-  cappedReimbursablePaise?: number;
 }
 
 interface ReimbursementsResponse {
@@ -103,17 +91,10 @@ const COLUMNS: Column<ReimbursementRow>[] = [
 ];
 
 export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
-  const { can } = useOrgRole(orgId);
-  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [editMember, setEditMember] = useState<ByMemberRow | null>(null);
-  const [limitRupees, setLimitRupees] = useState("");
-  const [limitError, setLimitError] = useState<string | null>(null);
-
-  const canEditLimit = can("billing.manage") || can("programs.manage");
 
   // ISO-encode the date inputs so the server's z.string().datetime()
   // parser accepts them. Empty inputs are dropped — the API treats
@@ -150,71 +131,6 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
       return res.json();
     },
   });
-
-  const spendLimitMutation = useMutation({
-    mutationFn: async (args: {
-      memberKey: string;
-      spendLimitPaise: number | null;
-    }) => {
-      const res = await fetch(
-        `/api/organizations/${orgId}/members/${args.memberKey}/spend-limit`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spendLimitPaise: args.spendLimitPaise }),
-        },
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          (body as { error?: string }).error ?? "Failed to update spend limit",
-        );
-      }
-      return body;
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["org-reimbursements", orgId],
-      });
-      setEditMember(null);
-      setLimitRupees("");
-      setLimitError(null);
-    },
-    onError: (err: Error) => {
-      setLimitError(err.message);
-    },
-  });
-
-  const openEditLimit = (member: ByMemberRow) => {
-    setEditMember(member);
-    setLimitRupees(
-      typeof member.spendLimitPaise === "number"
-        ? (member.spendLimitPaise / 100).toFixed(2)
-        : "",
-    );
-    setLimitError(null);
-  };
-
-  const submitSpendLimit = () => {
-    if (!editMember) return;
-    setLimitError(null);
-    const trimmed = limitRupees.trim();
-    let spendLimitPaise: number | null = null;
-    if (trimmed !== "") {
-      const numeric = Number(trimmed.replace(/,/g, ""));
-      if (!Number.isFinite(numeric) || numeric < 1) {
-        setLimitError(
-          "Enter a valid positive limit in INR (at least ₹1), or leave blank for unlimited.",
-        );
-        return;
-      }
-      spendLimitPaise = Math.round(numeric * 100);
-    }
-    spendLimitMutation.mutate({
-      memberKey: editMember.membershipId ?? editMember.userId,
-      spendLimitPaise,
-    });
-  };
 
   // The card is labelled "Total to reimburse", so it shows the NET. It used to
   // read the gross, which over-stated the payroll transfer by every refund.
@@ -290,37 +206,18 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
 
       {data && data.byMember.length > 0 && (
         <div className="rounded-lg border bg-card p-4 space-y-3">
-          <p className="text-sm font-medium">Per-member spend &amp; limits</p>
+          <p className="text-sm font-medium">Per-member spend</p>
           <div className="divide-y">
             {data.byMember.map((m) => (
               <div
                 key={m.userId}
                 className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
               >
-                <div>
-                  <p className="font-medium">{m.name ?? m.email ?? m.userId}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {m.paymentCount} payment{m.paymentCount === 1 ? "" : "s"} ·
-                    Net reimbursable ₹
-                    {(m.netReimbursablePaise / 100).toFixed(2)}
-                    {typeof m.spendLimitPaise === "number" &&
-                      ` · Spend limit ₹${(m.spendLimitPaise / 100).toFixed(2)}`}
-                    {m.exceedsSpendLimit &&
-                      typeof m.cappedReimbursablePaise === "number" &&
-                      ` (Capped at ₹${(m.cappedReimbursablePaise / 100).toFixed(2)})`}
-                  </p>
-                </div>
-                {canEditLimit && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openEditLimit(m)}
-                  >
-                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                    Edit spend limit
-                  </Button>
-                )}
+                <p className="font-medium">{m.name ?? m.email ?? m.userId}</p>
+                <p className="text-xs text-muted-foreground">
+                  {m.paymentCount} payment{m.paymentCount === 1 ? "" : "s"} ·
+                  Net reimbursable ₹{(m.netReimbursablePaise / 100).toFixed(2)}
+                </p>
               </div>
             ))}
           </div>
@@ -342,68 +239,6 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
         rowKey={(r) => r.id}
         emptyMessage="No reimbursable payments yet — members on this org haven't paid out of pocket for any sessions."
       />
-
-      <Dialog
-        open={editMember !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditMember(null);
-            setLimitError(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Member Spend Limit</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Set the reimbursement / credit-pool spend ceiling for{" "}
-              <strong>
-                {editMember?.name ?? editMember?.email ?? "this member"}
-              </strong>
-              .
-            </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="member-spend-limit-rupees">
-                Spend limit (INR ₹)
-              </Label>
-              <Input
-                id="member-spend-limit-rupees"
-                type="text"
-                inputMode="decimal"
-                placeholder="Leave blank for no individual limit"
-                value={limitRupees}
-                onChange={(e) => setLimitRupees(e.target.value)}
-              />
-            </div>
-            {limitError && <p className="text-xs text-red-600">{limitError}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setEditMember(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={submitSpendLimit}
-              disabled={spendLimitMutation.isPending}
-            >
-              {spendLimitMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Save spend limit"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

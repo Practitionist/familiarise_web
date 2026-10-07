@@ -73,7 +73,7 @@ export function StaffSupportComposeDialog({
       issueType: OutboundIssueType;
       priority: SupportPriority;
     }) => {
-      const res = await fetch("/api/support/tickets", {
+      const res = await fetch("/api/staff/support-tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

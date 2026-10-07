@@ -59,7 +59,7 @@ export interface OfferingCardProps {
   stat?: OfferingStat;
   editHref: string | null;
   duplicateHref: string | null;
-  /** Signed expert share link whose `?via=<token>` / `?ref=<code>` param is appended to shared offering links. */
+  /** Signed expert share link whose `?via=<token>` param is appended to owned offering links. */
   shareAttributionHref?: string | null;
   trials?: { href: string; pending: number };
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
@@ -107,10 +107,11 @@ export function OfferingCard({
       ? publicOfferingHref(row.type, row.planId)
       : null;
   const shareHref = baseShareHref
-    ? appendExpertShareAttribution(baseShareHref, shareAttributionHref)
+    ? owned
+      ? appendExpertShareAttribution(baseShareHref, shareAttributionHref)
+      : baseShareHref
     : null;
   const orgGoverned = stat?.orgGoverned ?? false;
-  // #1527-6 — Delete only on a plan with no bookings and no payments.
   const canDelete = !!onDelete && stat?.canDelete === true;
   const isDevJoin = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
 
@@ -124,7 +125,7 @@ export function OfferingCard({
       toast({
         title: "Link copied",
         description: isAttributed
-          ? `${row.title} — bookings via your link pay the 10% own-link fee.`
+          ? `${row.title} — new learners who first book via your link stay on your personal-link fee rate.`
           : row.title,
       });
     } catch {

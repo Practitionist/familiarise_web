@@ -136,7 +136,7 @@ export function SupportInboxShell({
               value: f.sort ?? (view === "sla-at-risk" ? "sla" : "activity"),
               options: [
                 { value: "activity", label: "Latest activity" },
-                { value: "sla", label: "SLA deadline (ackDueAt ASC)" },
+                { value: "sla", label: "Nearest SLA deadline" },
               ],
               onChange: pick("sort"),
             },

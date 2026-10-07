@@ -16,7 +16,7 @@ function currentCapWeekKey(now: Date = new Date()): string {
   return monday.toISOString().slice(0, 10);
 }
 
-async function readActiveFeeWaivers(userId: string, sessionsGranted: number) {
+async function readActiveFeeWaivers(userId: string) {
   const profile = await prisma.consultantProfile.findUnique({
     where: { userId },
     select: { id: true },
@@ -34,7 +34,6 @@ async function readActiveFeeWaivers(userId: string, sessionsGranted: number) {
     id: w.id,
     reason: w.reason,
     sessionsRemaining: w.sessionsRemaining,
-    sessionsGranted: Math.max(w.sessionsRemaining, sessionsGranted),
     expiresAt: w.expiresAt.toISOString(),
   }));
 }
@@ -51,11 +50,7 @@ export async function GET() {
       readReferralProgramConfig(),
     ]);
     const weeklyVestCap = cfg?.weeklyVestCap ?? 3;
-    const sessionsGranted = cfg?.expertWaiverSessions ?? 3;
-    const feeWaivers = await readActiveFeeWaivers(
-      session.user.id,
-      sessionsGranted,
-    );
+    const feeWaivers = await readActiveFeeWaivers(session.user.id);
     const terms = referralTerms(cfg);
     const effectiveWeekVests =
       code && code.capWeek === currentCapWeekKey() ? code.weekVests : 0;
@@ -91,11 +86,7 @@ export async function POST() {
       readReferralProgramConfig(),
     ]);
     const weeklyVestCap = cfg?.weeklyVestCap ?? 3;
-    const sessionsGranted = cfg?.expertWaiverSessions ?? 3;
-    const feeWaivers = await readActiveFeeWaivers(
-      session.user.id,
-      sessionsGranted,
-    );
+    const feeWaivers = await readActiveFeeWaivers(session.user.id);
     const terms = referralTerms(cfg);
     const effectiveWeekVests =
       code.capWeek === currentCapWeekKey() ? code.weekVests : 0;

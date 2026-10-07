@@ -93,7 +93,9 @@ interface QuarterSummary {
 }
 
 interface ConsultantBreakdown {
+  deducteeKey?: string;
   consultantProfileId: string | null;
+  organizationId?: string | null;
   userId: string | null;
   consultantName: string | null;
   consultantEmail: string | null;
@@ -145,10 +147,11 @@ function RecordFilingDialog({
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [challanNumber, setChallanNumber] = useState("");
-  const [bsrCode, setBsrCode] = useState("");
+  const [filingDate, setFilingDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
   const [ackNumber, setAckNumber] = useState("");
-  const [certificateNumber, setCertificateNumber] = useState("");
+  const [reason, setReason] = useState("");
   const [reportedInForm26Q, setReportedInForm26Q] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,11 +159,10 @@ function RecordFilingDialog({
     mutationFn: async (payload: {
       financialYear: string;
       quarter: number;
-      challanNumber?: string;
-      bsrCode?: string;
+      filingDate: string;
       ackNumber?: string;
-      certificateNumber?: string;
       reportedInForm26Q: boolean;
+      reason: string;
     }) => {
       const res = await fetch("/api/admin/tds", {
         method: "POST",
@@ -171,19 +173,20 @@ function RecordFilingDialog({
       if (!res.ok) {
         throw new Error(
           (json as { error?: string }).error ??
-            "Failed to record Form 26Q filing",
+            "Failed to record Form 26Q (Form 140) filing",
         );
       }
       return json as { message: string };
     },
     onSuccess: (data) => {
-      toast({ title: "Form 26Q Updated", description: data.message });
+      toast({
+        title: "Form 26Q (Form 140) Updated",
+        description: data.message,
+      });
       queryClient.invalidateQueries({ queryKey: ["admin-tds"] });
       queryClient.invalidateQueries({ queryKey: ["admin-tds-consultants"] });
-      setChallanNumber("");
-      setBsrCode("");
       setAckNumber("");
-      setCertificateNumber("");
+      setReason("");
       setError(null);
       onOpenChange(false);
     },
@@ -199,56 +202,36 @@ function RecordFilingDialog({
       <ResponsiveModalContent className="sm:max-w-md">
         <ResponsiveModalHeader>
           <ResponsiveModalTitle>
-            Record Challan & Form 26Q Filing — FY {financialYear} Q{quarter}
+            Record Form 26Q (Form 140) Filing — FY {financialYear} Q{quarter}
           </ResponsiveModalTitle>
         </ResponsiveModalHeader>
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            {[
-              {
-                id: "tds-challan-no",
-                label: "Challan Serial No.",
-                value: challanNumber,
-                onChange: setChallanNumber,
-                placeholder: "e.g. 04521",
-              },
-              {
-                id: "tds-bsr-code",
-                label: "BSR Code (7 digits)",
-                value: bsrCode,
-                onChange: setBsrCode,
-                placeholder: "e.g. 0510308",
-              },
-              {
-                id: "tds-ack-no",
-                label: "TRACES Token / Ack No.",
-                value: ackNumber,
-                onChange: setAckNumber,
-                placeholder: "PRN / Ack number",
-              },
-              {
-                id: "tds-cert-no",
-                label: "Form 16A Certificate Ref",
-                value: certificateNumber,
-                onChange: setCertificateNumber,
-                placeholder: "Optional cert batch ref",
-              },
-            ].map((field) => (
-              <div key={field.id} className="space-y-1.5">
-                <Label htmlFor={field.id}>{field.label}</Label>
-                <Input
-                  id={field.id}
-                  value={field.value}
-                  onChange={(e) => field.onChange(e.target.value)}
-                  placeholder={field.placeholder}
-                />
-              </div>
-            ))}
+            <div className="space-y-1.5">
+              <Label htmlFor="tds-filing-date">Filing Date *</Label>
+              <Input
+                id="tds-filing-date"
+                type="date"
+                value={filingDate}
+                onChange={(e) => setFilingDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tds-ack-no">TRACES Token / Ack No.</Label>
+              <Input
+                id="tds-ack-no"
+                value={ackNumber}
+                onChange={(e) => setAckNumber(e.target.value)}
+                placeholder="PRN / Ack number"
+              />
+            </div>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="tds-reported-flag">Form 26Q Status</Label>
+            <Label htmlFor="tds-reported-flag">
+              Form 26Q (Form 140) Status
+            </Label>
             <Select
               value={reportedInForm26Q ? "FILED" : "PENDING"}
               onValueChange={(v) => setReportedInForm26Q(v === "FILED")}
@@ -258,13 +241,21 @@ function RecordFilingDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="FILED">
-                  Reported in Form 26Q (Filed)
+                  Reported in Form 26Q (Form 140) — Filed
                 </SelectItem>
-                <SelectItem value="PENDING">
-                  Challan recorded only (Unfiled)
-                </SelectItem>
+                <SelectItem value="PENDING">Pending filing</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="tds-audit-reason">Audit reason *</Label>
+            <Input
+              id="tds-audit-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Filed quarterly return on TRACES"
+            />
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -277,14 +268,17 @@ function RecordFilingDialog({
           <Button
             onClick={() => {
               setError(null);
+              if (reason.trim().length < 5) {
+                setError("Audit reason must be at least 5 characters.");
+                return;
+              }
               filingMutation.mutate({
                 financialYear,
                 quarter,
-                challanNumber: challanNumber.trim() || undefined,
-                bsrCode: bsrCode.trim() || undefined,
+                filingDate,
                 ackNumber: ackNumber.trim() || undefined,
-                certificateNumber: certificateNumber.trim() || undefined,
                 reportedInForm26Q,
+                reason: reason.trim(),
               });
             }}
             disabled={filingMutation.isPending}
@@ -385,7 +379,7 @@ export default function AdminTDSPage() {
         "Total Credited (INR)",
         "TDS Deducted (INR)",
         "Deduction Count",
-        "Form 26Q Status",
+        "Form 26Q (Form 140) Status",
       ],
       ...filteredConsultants.map((c) => [
         selectedFY,
@@ -415,7 +409,7 @@ export default function AdminTDSPage() {
     <>
       <DashboardHeader
         title="TDS Management (Section 194O / 194J)"
-        subtitle="Track tax deducted at source, Challan / BSR filings, and Form 26Q compliance"
+        subtitle="Track tax deducted at source, Challan / BSR filings, Form 26Q (Form 140), and Form 16A (Form 131) compliance"
         actions={
           <div className="flex items-center gap-2">
             <Select value={selectedFY} onValueChange={setSelectedFY}>
@@ -561,7 +555,10 @@ export default function AdminTDSPage() {
           page={1}
           perPage={Math.max(25, filteredConsultants.length)}
           rowKey={(c) =>
-            c.consultantProfileId ?? c.userId ?? String(c.totalCredited)
+            c.deducteeKey ??
+            c.consultantProfileId ??
+            c.userId ??
+            String(c.totalCredited)
           }
           emptyMessage={`No TDS deductions recorded for FY ${selectedFY}.`}
           toolbar={
@@ -575,7 +572,7 @@ export default function AdminTDSPage() {
               selects={[
                 {
                   key: "filingStatus",
-                  label: "Form 26Q status",
+                  label: "Form 26Q (Form 140) status",
                   value: filingFilter,
                   options: [
                     { value: "ALL", label: "All filing statuses" },
@@ -632,7 +629,7 @@ export default function AdminTDSPage() {
                   </span>
                 ) : (
                   <Badge variant="secondary" className="text-xs">
-                    No PAN (20% s.206AA)
+                    No PAN (5% §397(2) / 194-O)
                   </Badge>
                 ),
             },
@@ -659,7 +656,7 @@ export default function AdminTDSPage() {
               ),
             },
             {
-              header: "Form 26Q",
+              header: "Form 26Q (Form 140)",
               accessor: (c) => (
                 <Badge
                   variant={c.allFiled ? "default" : "secondary"}

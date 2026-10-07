@@ -51,8 +51,6 @@ export function ThisMonthCard({
   sessionsThisMonth: number | null;
   sessionsDelivered: number | null;
   availablePaise: number;
-  averageRating?: number;
-  totalReviews?: number;
   publishedRatingOneToOne?: number | null;
   publishedRatingGroup?: number | null;
   ratedClientsOneToOne?: number;
@@ -153,7 +151,7 @@ export function ThisMonthCard({
         open={shareOpen}
         onOpenChange={setShareOpen}
         title="Share your milestone"
-        description="Bookings from your personal link pay half the platform fee (10% vs 20% — you keep 90%) and lock that rate for repeat learners."
+        description="When a buyer first discovers and purchases from you via your shared link (?via=), their relationship with you stays on the reduced personal-link platform fee rate instead of the Marketplace rate."
         postText={milestonePostText}
         shareUrl={fullShareUrl}
         textareaAriaLabel="Milestone social post"
@@ -185,7 +183,7 @@ export function ShareProfilePrompt({
   return (
     <Section
       title="Share your page"
-      description="Bookings from your personal link pay half the platform fee (10% vs 20% — you keep 90%) and lock that lower rate for repeat bookings. Add your link to your bio, emails, and posts."
+      description="When a buyer first discovers and purchases from you through your shared link (?via=), their bookings with you use the personal-link platform fee rate instead of the Marketplace rate. Add your link to your bio, emails, and posts."
       variant="card"
     >
       <div className="flex gap-2">

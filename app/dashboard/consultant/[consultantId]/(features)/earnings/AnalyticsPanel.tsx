@@ -39,6 +39,7 @@ import { useSession } from "@/lib/auth-client";
 import { getAppointmentStatus } from "../../utils/appointmentHelpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
+  ActiveFeeSchedule,
   AttributionBreakdown,
   MonthlyEarning,
   RepeatLearnerStats,
@@ -55,12 +56,18 @@ interface EarningsAnalyticsResponse {
     pendingTrustEarnings: number;
   };
   totals?: BucketSums;
+  feeSchedule?: ActiveFeeSchedule;
   monthlyEarnings?: MonthlyEarning[];
   attributionBreakdown?: AttributionBreakdown;
   repeatLearnerStats?: RepeatLearnerStats;
 }
 
 const formatInr = (paise: number) => formatCurrencyAmount(paise, "INR");
+
+function formatBpsRate(bps: number): string {
+  const pct = bps / 100;
+  return `${bps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
+}
 
 const monthLabel = (month: string) =>
   format(parse(month, "yyyy-MM", new Date()), "MMM");
@@ -69,17 +76,10 @@ export default function AnalyticsPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   const { data: session } = useSession();
-  // GET /api/consultant/earnings is strictly session-scoped (it resolves
-  // the profile from the signed-in user), while the SSR prefetch keys this
-  // cache entry by the URL's consultantId. For a privileged viewer
-  // (ADMIN/STAFF on someone else's dashboard) a client refetch would fetch
-  // the WRONG record — so refetching is gated to the profile owner and
-  // non-owners render the server-prefetched data only.
   const isOwnDashboard =
     (session?.user as { consultantProfileId?: string } | undefined)
       ?.consultantProfileId === consultantId;
 
-  // queryKey MUST match the server prefetch in ./page.tsx.
   const {
     data: earningsData,
     isLoading: earningsLoading,
@@ -99,15 +99,10 @@ export default function AnalyticsPanel({
     enabled: isOwnDashboard,
   });
 
-  // react-query's refetch() bypasses `enabled`, so the Retry buttons must
-  // re-apply the owner gate — otherwise a privileged viewer's retry would
-  // fetch THEIR session-scoped earnings under this consultant's cache key.
   const retryEarnings = () => {
     if (isOwnDashboard) void refetchEarnings();
   };
 
-  // Personal-scope appointments — same key + payload as the appointments
-  // page's #890 SSR prefetch, so the two pages share one cache entry.
   const appointmentsQuery = createConsultantQueries(
     consultantId,
     "personal",
@@ -159,13 +154,23 @@ export default function AnalyticsPanel({
       : 0;
   const marketplacePct = totalB2CPaise > 0 ? 100 - ownLinkPct : 0;
   const repeatStats = earningsData?.repeatLearnerStats;
+  const feeSchedule = earningsData?.feeSchedule;
+  const ownFeeLabel = feeSchedule
+    ? formatBpsRate(feeSchedule.ownLinkBps)
+    : null;
+  const mktFeeLabel = feeSchedule
+    ? formatBpsRate(feeSchedule.marketplaceBps)
+    : null;
+  const ownKeepLabel = feeSchedule
+    ? formatBpsRate(10_000 - feeSchedule.ownLinkBps)
+    : null;
+  const mktKeepLabel = feeSchedule
+    ? formatBpsRate(10_000 - feeSchedule.marketplaceBps)
+    : null;
 
   return (
-    // No DashboardHeader — this is the Analytics tab of the Earnings page now,
-    // which renders one header above the tab strip.
     <DashboardErrorBoundary>
       <DashboardContent className="px-0 lg:px-0">
-        {/* KPI grid */}
         {earningsLoading || appointmentsLoading ? (
           <DashboardGrid columns={3}>
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -202,10 +207,12 @@ export default function AnalyticsPanel({
               variant="success"
               subtitle={
                 attribution && totalB2CPaise > 0
-                  ? `${ownLinkPct}% of B2C · ${attribution.ownLinkCount} sessions (10% standard fee)`
-                  : "Keep 90% when learners book via your link"
+                  ? `${ownLinkPct}% of B2C · ${attribution.ownLinkCount} ${attribution.ownLinkCount === 1 ? "booking" : "bookings"}${ownFeeLabel ? ` (${ownFeeLabel} fee)` : ""}`
+                  : ownKeepLabel
+                    ? `Keep ${ownKeepLabel} before TDS when learners first book via ?via=`
+                    : "Reduced fee when learners first book via your shared link"
               }
-              tooltip="Net B2C revenue from learners who arrived via your personal link (10% standard platform fee, locked for repeat bookings)."
+              tooltip="Net B2C revenue from buyers whose first purchase with you came through your personal share link (?via=)."
             />
             <StatCard
               title="Marketplace Revenue"
@@ -217,10 +224,12 @@ export default function AnalyticsPanel({
               icon={Store}
               subtitle={
                 attribution && totalB2CPaise > 0
-                  ? `${marketplacePct}% of B2C · ${attribution.marketplaceCount} sessions (20% standard fee)`
-                  : "Keep 80% on Marketplace-discovered bookings"
+                  ? `${marketplacePct}% of B2C · ${attribution.marketplaceCount} ${attribution.marketplaceCount === 1 ? "booking" : "bookings"}${mktFeeLabel ? ` (${mktFeeLabel} fee)` : ""}`
+                  : mktKeepLabel
+                    ? `Keep ${mktKeepLabel} before TDS on Marketplace-acquired bookings`
+                    : "Marketplace fee rate on Marketplace-acquired bookings"
               }
-              tooltip="Net B2C revenue from learners who discovered you through the Familiarise Marketplace (20% standard platform fee)."
+              tooltip="Net B2C revenue from buyers who first discovered you through the Familiarise Marketplace."
             />
             <StatCard
               title="Repeat Learner Rate"
@@ -233,10 +242,10 @@ export default function AnalyticsPanel({
               icon={Repeat}
               subtitle={
                 (repeatStats?.totalLearners ?? 0) > 0 && repeatStats
-                  ? `${repeatStats.repeatLearners} of ${repeatStats.totalLearners} learners booked 2+ sessions`
-                  : "Learners with 2+ paid sessions"
+                  ? `${repeatStats.repeatLearners} of ${repeatStats.totalLearners} learners made 2+ bookings`
+                  : "Learners with 2+ paid bookings"
               }
-              tooltip="Share of your distinct B2C learners who have completed or booked two or more paid sessions."
+              tooltip="Share of your distinct B2C learners who have completed two or more separate paid purchases with you."
             />
             <StatCard
               title="Sessions Completed"

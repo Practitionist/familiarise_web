@@ -188,47 +188,6 @@ export async function GET(
     perMember.set(row.user.id, entry);
   }
 
-  const memberUserIds = Array.from(perMember.keys());
-  const memberships =
-    memberUserIds.length > 0
-      ? await prisma.membership.findMany({
-          where: { organizationId: orgId, userId: { in: memberUserIds } },
-          select: { id: true, userId: true },
-        })
-      : [];
-  const membershipIds = memberships.map((m) => m.id);
-  const spendLimitLogs =
-    membershipIds.length > 0
-      ? await prisma.orgAuditLog.findMany({
-          where: {
-            organizationId: orgId,
-            category: "PROGRAM",
-            action: "program.assignment.updated",
-            targetMembershipId: { in: membershipIds },
-          },
-          orderBy: { createdAt: "desc" },
-          select: { targetMembershipId: true, details: true },
-        })
-      : [];
-
-  const membershipByUserId = new Map(memberships.map((m) => [m.userId, m.id]));
-  const spendLimitByMembershipId = new Map<string, number | null>();
-  for (const log of spendLimitLogs) {
-    if (
-      !log.targetMembershipId ||
-      spendLimitByMembershipId.has(log.targetMembershipId)
-    ) {
-      continue;
-    }
-    const details = log.details as Record<string, unknown> | null;
-    if (details && Object.hasOwn(details, "spendLimitPaise")) {
-      const val = details.spendLimitPaise;
-      if (typeof val === "number" || val === null) {
-        spendLimitByMembershipId.set(log.targetMembershipId, val);
-      }
-    }
-  }
-
   return NextResponse.json({
     items,
     total,
@@ -239,26 +198,8 @@ export async function GET(
     totalPaise,
     totalRefundedPaise,
     totalNetPaise,
-    byMember: Array.from(perMember.values())
-      .map((m) => {
-        const membershipId = membershipByUserId.get(m.userId) ?? null;
-        const spendLimitPaise = membershipId
-          ? (spendLimitByMembershipId.get(membershipId) ?? null)
-          : null;
-        const exceedsSpendLimit =
-          spendLimitPaise !== null && m.netReimbursablePaise > spendLimitPaise;
-        const cappedReimbursablePaise =
-          spendLimitPaise !== null
-            ? Math.min(m.netReimbursablePaise, spendLimitPaise)
-            : m.netReimbursablePaise;
-        return {
-          ...m,
-          membershipId,
-          spendLimitPaise,
-          exceedsSpendLimit,
-          cappedReimbursablePaise,
-        };
-      })
-      .sort((a, b) => b.netReimbursablePaise - a.netReimbursablePaise),
+    byMember: Array.from(perMember.values()).sort(
+      (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
+    ),
   });
 }

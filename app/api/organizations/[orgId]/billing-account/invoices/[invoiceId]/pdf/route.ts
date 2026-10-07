@@ -23,7 +23,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
+import { requireOrgAccess, requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import {
   renderOrgInvoicePdf,
@@ -49,15 +49,19 @@ export async function GET(
 ) {
   const { orgId, invoiceId } = await params;
   const access = await requireOrgAccess(orgId, { permission: "billing.read" });
-  if (access.error) return access.error;
+  let actorRateLimitKey: string;
+  if (access.error) {
+    const privileged = await requirePrivilegedAuth();
+    if (privileged.error) return access.error;
+    actorRateLimitKey = privileged.session.user.id;
+  } else {
+    actorRateLimitKey = access.member?.id ?? orgId;
+  }
 
   // #677/PM-36 — PDF rendering is expensive (puppeteer/HTML pipeline).
   // #1236-triage — key per ACTOR: orgId would let one manager's PDF browsing
   // exhaust the bucket shared with a billing admin's pay/initiate calls.
-  const limited = await applyRateLimit(
-    moneyOpsLimiter,
-    access.member?.id ?? orgId,
-  );
+  const limited = await applyRateLimit(moneyOpsLimiter, actorRateLimitKey);
   if (limited) return limited;
 
   // Fail-closed supplier identity (#1132/#1230) — the old dummy-GSTIN
@@ -89,10 +93,7 @@ export async function GET(
     },
   });
   if (!invoice) {
-    return NextResponse.json(
-      { error: "Invoice not found" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   }
 
   // DRAFT invoices aren't legally issued — refuse the PDF until ISSUED
@@ -187,7 +188,10 @@ export async function GET(
         reason: err instanceof Error ? err.message : String(err),
       }),
     );
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     return NextResponse.json(
       {
         error: "Failed to generate invoice PDF",
@@ -197,4 +201,3 @@ export async function GET(
     );
   }
 }
-

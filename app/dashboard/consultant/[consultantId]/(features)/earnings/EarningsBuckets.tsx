@@ -51,12 +51,24 @@ import type {
 import { PayoutWalkSheet } from "./PayoutWalkSheet";
 import { GetPaidNowSheet } from "./GetPaidNowSheet";
 
-/**
- * #1675 / #1527 — the Earnings Summary and Activity tabs, every word from
- * `lib/dashboard/earnings-state.ts`. An earning row walks the money (price →
- * platform fee → your share) and names the sponsor when an organisation paid;
- * a Payouts row is a payout with its share → TDS → net walk in a sheet.
- */
+const IST_OFFSET_MS = 330 * 60 * 1000;
+
+function getIndianFinancialYear(date: Date): string {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
+  const year = ist.getUTCFullYear();
+  const month = ist.getUTCMonth();
+  const startYear = month >= 3 ? year : year - 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
+function getIndianFYQuarter(date: Date): number {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
+  const month = ist.getUTCMonth();
+  if (month >= 3 && month <= 5) return 1;
+  if (month >= 6 && month <= 8) return 2;
+  if (month >= 9 && month <= 11) return 3;
+  return 4;
+}
 
 /** Dates arrive as strings over JSON and as Dates from the RSC seed. */
 type Json<T> = T extends Date
@@ -67,9 +79,14 @@ type Json<T> = T extends Date
 
 export type EarningsResponse = Omit<
   Json<ConsultantEarningsPayload>,
-  "feeWaiver" | "tdsRecords" | "attributionBreakdown" | "repeatLearnerStats"
+  | "feeSchedule"
+  | "feeWaiver"
+  | "tdsRecords"
+  | "attributionBreakdown"
+  | "repeatLearnerStats"
 > & {
   livePayoutsEnabled?: boolean;
+  feeSchedule?: Json<ConsultantEarningsPayload["feeSchedule"]>;
   feeWaiver?: Json<ConsultantEarningsPayload["feeWaiver"]>;
   tdsRecords?: Json<ConsultantEarningsPayload["tdsRecords"]>;
   attributionBreakdown?: Json<
@@ -93,6 +110,16 @@ const onDay = (d: string | Date) =>
 const typeLabel = (type: string | null | undefined) =>
   type ? type.charAt(0) + type.slice(1).toLowerCase() : null;
 
+function formatBpsPercent(bps: number): string {
+  const pct = bps / 100;
+  return `${bps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
+}
+
+function normalizeTdsSection(section: string | null | undefined): string {
+  if (!section || section === "194O") return "194-O";
+  return section;
+}
+
 function csvCell(val: string | number | boolean | null | undefined): string {
   const raw = val === null || val === undefined ? "" : String(val);
   const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(raw.trim());
@@ -101,17 +128,6 @@ function csvCell(val: string | number | boolean | null | undefined): string {
     return `"${safe.replaceAll('"', '""')}"`;
   }
   return safe;
-}
-
-function formatFeePercent(
-  platformFeeBps: number | null | undefined,
-  fallbackPercent: string,
-): string {
-  if (typeof platformFeeBps === "number") {
-    const pct = platformFeeBps / 100;
-    return `${platformFeeBps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
-  }
-  return fallbackPercent;
 }
 
 function deriveEarningSourceLabel(e: EarningRow): string {
@@ -124,21 +140,14 @@ function deriveEarningSourceLabel(e: EarningRow): string {
   if (isWaived) {
     return "Fee waived (0%)";
   }
+  const rateSuffix =
+    typeof e.payment.platformFeeBps === "number"
+      ? ` (${formatBpsPercent(e.payment.platformFeeBps)})`
+      : "";
   if (e.payment.attributionSource === "OWN_LINK") {
-    const rate = formatFeePercent(e.payment.platformFeeBps, "10%");
-    return `Own link (${rate})`;
+    return `Own link${rateSuffix}`;
   }
-  const rate = formatFeePercent(e.payment.platformFeeBps, "20%");
-  return `Marketplace (${rate})`;
-}
-
-function indianFinancialYear(dateInput: string | Date): string {
-  const d = new Date(dateInput);
-  const year = d.getUTCFullYear();
-  const month = d.getUTCMonth(); // 0-indexed; April = 3
-  const startYear = month >= 3 ? year : year - 1;
-  const endShort = String((startYear + 1) % 100).padStart(2, "0");
-  return `${startYear}-${endShort}`;
+  return `Marketplace${rateSuffix}`;
 }
 
 function downloadFyEarningsCsv(data: EarningsResponse) {
@@ -149,24 +158,27 @@ function downloadFyEarningsCsv(data: EarningsResponse) {
     "Date",
     "Reference ID",
     "Title / Section",
-    "Attribution / Source",
+    "Attribution / Filing Status",
     "Gross Amount (INR)",
     "Platform Fee (INR)",
-    "Net Share / Credited (INR)",
+    "Net Consultant Share (INR)",
+    "FY Cumulative Credited (INR)",
     "TDS Deducted (INR)",
     "TDS Rate (%)",
-    "Challan / Certificate",
+    "Form 16A (Form 131) / Challan",
   ];
   const lines: string[] = [headers.map(csvCell).join(",")];
 
   for (const e of data.earnings) {
-    const fy = indianFinancialYear(e.createdAt);
+    const createdDate = new Date(e.createdAt);
+    const fy = getIndianFinancialYear(createdDate);
+    const quarter = `Q${getIndianFYQuarter(createdDate)}`;
     const source = deriveEarningSourceLabel(e);
     lines.push(
       [
         "EARNING",
         fy,
-        "",
+        quarter,
         onDay(e.createdAt),
         e.id,
         e.title ??
@@ -176,6 +188,7 @@ function downloadFyEarningsCsv(data: EarningsResponse) {
         (e.grossAmount / 100).toFixed(2),
         (e.platformFeePaise / 100).toFixed(2),
         (e.consultantSharePaise / 100).toFixed(2),
+        "",
         "",
         "",
         "",
@@ -193,8 +206,11 @@ function downloadFyEarningsCsv(data: EarningsResponse) {
         `Q${t.quarter}`,
         onDay(t.createdAt),
         t.payoutId ?? t.id,
-        t.tdsSection ?? "194-O",
-        t.reportedInForm26Q ? "Reported in Form 26Q" : "Pending Form 26Q",
+        normalizeTdsSection(t.tdsSection),
+        t.reportedInForm26Q
+          ? "Reported in Form 26Q (Form 140)"
+          : "Pending Form 26Q (Form 140)",
+        "",
         "",
         "",
         (t.cumulativeAmountCredited / 100).toFixed(2),
@@ -207,13 +223,36 @@ function downloadFyEarningsCsv(data: EarningsResponse) {
     );
   }
 
-  const blob = new Blob([lines.join("\n")], {
+  if (data.pagination.hasMore) {
+    lines.push(
+      [
+        "NOTE",
+        getIndianFinancialYear(new Date()),
+        "",
+        "",
+        "",
+        `B2C earning rows truncated at ${EARNINGS_FETCH_CAP} most recent entries`,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+  }
+
+  const blob = new Blob([`\uFEFF${lines.join("\n")}`], {
     type: "text/csv;charset=utf-8;",
   });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `familiarise-earnings-tds-${indianFinancialYear(new Date())}.csv`;
+  a.download = `familiarise-earnings-tds-${getIndianFinancialYear(new Date())}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -330,12 +369,13 @@ export function EarningsSummary({
           <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
           <div>
             <p className="text-sm font-medium text-foreground">
-              {feeWaiver.sessionsRemaining} of {feeWaiver.totalSessionsGranted}{" "}
-              fee-free sessions remaining until {onDay(feeWaiver.expiresAt)}
+              {feeWaiver.sessionsRemaining} fee-free{" "}
+              {feeWaiver.sessionsRemaining === 1 ? "session" : "sessions"}{" "}
+              remaining until {onDay(feeWaiver.expiresAt)}
             </p>
             <p className="text-xs text-muted-foreground">
-              You keep 100% of the session price (0% platform fee) on your next
-              qualifying sessions.
+              0% platform fee on your next qualifying personal-practice bookings
+              (not on orders using a learner discount or credit; before TDS).
             </p>
           </div>
         </output>
@@ -377,7 +417,6 @@ export function EarningsSummary({
           <span className="font-medium">Next payout: </span>
           {nextPayoutCopy(now, live)}
         </p>
-        {/* #1771 row 6 — hidden for other viewers, while payouts are off, or at zero. */}
         {isOwnDashboard && live && sums.available > 0 && (
           <GetPaidNowSheet consultantId={consultantId} />
         )}
@@ -401,9 +440,9 @@ export function EarningsSummary({
       <TdsSummarySection tdsRecords={tdsRecords} data={data} />
 
       <p className="text-sm text-muted-foreground">
-        Familiarise charges 10% via your personal link &amp; repeat learners ·
-        20% via Marketplace · 0% on fee-waived sessions; sessions an
-        organisation pays for follow that organisation&apos;s agreement.{" "}
+        {data.feeSchedule
+          ? `Familiarise charges ${formatBpsPercent(data.feeSchedule.ownLinkBps)} when a buyer first discovers and purchases from you via your shared link (?via=) · ${formatBpsPercent(data.feeSchedule.marketplaceBps)} for Marketplace-acquired buyers · 0% on qualifying fee-waived bookings; sessions an organisation pays for follow that organisation's agreement.`
+          : "Platform fee rates follow the active schedule (reduced own-link rate when a buyer first discovers and purchases from you via ?via=, standard rate for Marketplace-acquired buyers); sessions an organisation pays for follow that organisation's agreement."}{" "}
         <Link
           href="/support/experts/payouts"
           className="font-medium text-foreground underline-offset-4 hover:underline"
@@ -422,7 +461,6 @@ const OFFERING_TYPE_WORD = {
   class: "Class",
 } as const;
 
-/** #1827 — every offering, earning or not, so a ₹0 row is visible too. */
 function ByOfferingTable({ stats }: Readonly<{ stats: OfferingStats | null }>) {
   const rows = useMemo(
     () =>
@@ -502,7 +540,7 @@ function TdsSummarySection({
         const rate = (row.tdsRateBps / 100).toFixed(
           row.tdsRateBps % 100 === 0 ? 0 : 1,
         );
-        return `s.${row.tdsSection ?? "194-O"} · ${rate}%`;
+        return `s.${normalizeTdsSection(row.tdsSection)} · ${rate}%`;
       },
     },
     {
@@ -519,7 +557,7 @@ function TdsSummarySection({
     },
     {
       key: "filing",
-      header: "Form 16A / Challan",
+      header: "Form 16A (Form 131) / Challan",
       cell: (row) => {
         if (row.certificateNumber) {
           return (
@@ -537,7 +575,9 @@ function TdsSummarySection({
         }
         return (
           <span className="text-xs text-muted-foreground">
-            {row.reportedInForm26Q ? "Reported in 26Q" : "Quarterly filing"}
+            {row.reportedInForm26Q
+              ? "Reported in Form 26Q (Form 140)"
+              : "Pending Form 26Q (Form 140)"}
           </span>
         );
       },
@@ -546,7 +586,7 @@ function TdsSummarySection({
 
   return (
     <Section
-      title="Tax & TDS (Form 16A)"
+      title="Tax & TDS — Form 16A (Form 131)"
       actions={
         <Button
           type="button"
@@ -575,7 +615,8 @@ function TdsSummarySection({
             </p>
             <p className="text-xs text-muted-foreground">
               Section 194-O / 194J deductions, challan numbers, and Form 16A
-              certificate references appear here by financial year and quarter.
+              (Form 131) certificate references appear here by financial year
+              and quarter.
             </p>
           </div>
         </div>
@@ -842,8 +883,10 @@ function EarningItem({
           )}
           {isOwnLink && (
             <Badge className="rounded-md border-0 bg-sky-500/10 px-1.5 py-0 text-[10px] font-semibold text-sky-700 dark:text-sky-400">
-              Own link ·{" "}
-              {formatFeePercent(earning.payment.platformFeeBps, "10%")} fee
+              Own link
+              {typeof earning.payment.platformFeeBps === "number"
+                ? ` · ${formatBpsPercent(earning.payment.platformFeeBps)} fee`
+                : ""}
             </Badge>
           )}
         </div>

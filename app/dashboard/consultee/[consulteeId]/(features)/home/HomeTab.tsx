@@ -35,7 +35,10 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
-import type { NeedsActionReason } from "@/lib/appointments/view-model";
+import {
+  toOccurrenceVM,
+  type NeedsActionReason,
+} from "@/lib/appointments/view-model";
 import {
   formatForViewer,
   formatInViewerZone,
@@ -64,6 +67,8 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
   getOccurrenceJoinState,
+  isDeadOccurrence,
+  isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
@@ -72,7 +77,6 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
 import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
-import { z } from "zod";
 import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
@@ -405,61 +409,41 @@ function proposalsAwaiting(
   });
 }
 
-const subscriptionRenewalSchema = z
-  .object({
-    id: z.string(),
-    status: z.string().optional(),
-    subscriptionPlanId: z.string().optional(),
-    sessionsTotal: z.number().nullable().optional(),
-    totalSessions: z.number().nullable().optional(),
-    remainingSessions: z.number().nullable().optional(),
-    plan: z
-      .object({
-        totalSessions: z.number().optional(),
-      })
-      .optional(),
-    subscriptionPlan: z
-      .object({
-        id: z.string().optional(),
-        title: z.string().optional(),
-        totalSessions: z.number().optional(),
-        consultantProfile: z
-          .object({
-            user: z
-              .object({ name: z.string().nullable().optional() })
-              .optional(),
-          })
-          .optional(),
-      })
-      .optional(),
-    appointment: z
-      .object({
-        occurrences: z
-          .array(
-            z.object({
-              endsAt: z.union([z.string(), z.date()]),
-              completionStatus: z.string().nullable().optional(),
-            }),
-          )
-          .optional(),
-      })
-      .nullable()
-      .optional(),
-  })
-  .passthrough();
+function hasLiveRenewal(
+  renewal:
+    | {
+        id?: string;
+        status?: string;
+        deletedAt?: Date | string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!renewal?.id || renewal.deletedAt) return false;
+  const st = renewal.status?.toUpperCase();
+  return st !== "CANCELLED" && st !== "REJECTED" && st !== "EXPIRED";
+}
 
-function resolveSubscriptionPlanTotal(
-  s: z.infer<typeof subscriptionRenewalSchema>,
-): number {
-  if (typeof s.sessionsTotal === "number" && s.sessionsTotal > 0) {
-    return s.sessionsTotal;
+function readSubscriptionRenewal(sub: object): {
+  id?: string;
+  status?: string;
+  deletedAt?: Date | string | null;
+} | null {
+  if (!("renewal" in sub) || !sub.renewal || typeof sub.renewal !== "object") {
+    return null;
   }
-  if (typeof s.totalSessions === "number" && s.totalSessions > 0) {
-    return s.totalSessions;
-  }
-  const planTotal =
-    s.subscriptionPlan?.totalSessions ?? s.plan?.totalSessions ?? 0;
-  return typeof planTotal === "number" && planTotal > 0 ? planTotal : 0;
+  const r = sub.renewal;
+  const id = "id" in r && typeof r.id === "string" ? r.id : undefined;
+  const status =
+    "status" in r && typeof r.status === "string" ? r.status : undefined;
+  const deletedAt =
+    "deletedAt" in r &&
+    (typeof r.deletedAt === "string" ||
+      r.deletedAt instanceof Date ||
+      r.deletedAt === null)
+      ? r.deletedAt
+      : undefined;
+  return { id, status, deletedAt };
 }
 
 function lowSessionSubscriptions(
@@ -467,38 +451,30 @@ function lowSessionSubscriptions(
   now: Date,
 ) {
   return (eventsData.subscriptions ?? []).flatMap((sub) => {
-    const parsed = subscriptionRenewalSchema.safeParse(sub);
-    if (!parsed.success) return [];
-    const s = parsed.data;
-    const status = s.status?.toUpperCase();
-    if (status !== "APPROVED" && status !== "SCHEDULED") return [];
-    const planId = s.subscriptionPlan?.id ?? s.subscriptionPlanId;
+    const status = sub.status.toUpperCase();
+    if (status !== "APPROVED" && status !== "COMPLETED") return [];
+
+    if (hasLiveRenewal(readSubscriptionRenewal(sub))) return [];
+
+    const planId = sub.subscriptionPlan.id ?? sub.subscriptionPlanId;
     if (!planId) return [];
 
-    let remaining: number | null = s.remainingSessions ?? null;
-    if (remaining === null) {
-      const planTotal = resolveSubscriptionPlanTotal(s);
-      if (planTotal <= 0) return [];
-      const occurrences = (s.appointment?.occurrences ?? []).filter(
-        (o) =>
-          o.completionStatus !== "CANCELLED" &&
-          o.completionStatus !== "RESCHEDULED",
-      );
-      const completedOrPast = occurrences.filter(
-        (o) =>
-          o.completionStatus === "COMPLETED" ||
-          new Date(o.endsAt).getTime() <= now.getTime(),
-      ).length;
-      remaining = Math.max(0, planTotal - completedOrPast);
-    }
+    const planTotal = sub.sessionsTotal ?? sub.subscriptionPlan.totalSessions;
+    if (!planTotal || planTotal <= 0) return [];
 
-    if (remaining === null || remaining > 1) return [];
-    const title = s.subscriptionPlan?.title ?? "Subscription";
+    const occurrences = sub.appointment?.occurrences ?? [];
+    const completedOrPast = occurrences.filter(
+      (o) => !isDeadOccurrence(o) && isOccurrenceOver(toOccurrenceVM(o), now),
+    ).length;
+    const remaining = Math.max(0, planTotal - completedOrPast);
+
+    if (remaining > 1) return [];
+    const title = sub.subscriptionPlan.title || "Subscription";
     const consultantName =
-      s.subscriptionPlan?.consultantProfile?.user?.name ?? "your expert";
+      sub.subscriptionPlan.consultantProfile?.user?.name ?? "your expert";
     return [
       {
-        key: `renew-subscription:${s.id}`,
+        key: `renew-subscription:${sub.id}`,
         severity: "info" as const,
         title:
           remaining === 1
@@ -506,7 +482,7 @@ function lowSessionSubscriptions(
             : `All sessions completed in ${title}`,
         body: `Continue working with ${consultantName} by renewing your subscription.`,
         ctaLabel: "Renew subscription",
-        ctaHref: `/checkout/plans/subscription/${planId}?renewsSubscriptionId=${s.id}`,
+        ctaHref: `/checkout/plans/subscription/${planId}?renewsSubscriptionId=${sub.id}`,
       },
     ];
   });

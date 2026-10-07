@@ -85,10 +85,14 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
   const org = row.organization;
   const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
   const funding = org.billingAccount?.fundingSource ?? null;
-  const walletBalance = org.billingAccount?.walletBalance ?? 0;
-  const minBalancePaise = org.billingAccount?.minBalancePaise ?? 0;
+  const walletBalance = org.billingAccount?.walletBalance ?? null;
+  const minBalancePaise = org.billingAccount?.minBalancePaise ?? null;
   const currency = org.billingAccount?.currency ?? "INR";
-  const isLowWallet = funding === "WALLET" && walletBalance <= minBalancePaise;
+  const isLowWallet =
+    funding === "WALLET" &&
+    walletBalance !== null &&
+    minBalancePaise !== null &&
+    walletBalance <= minBalancePaise;
   return (
     // The bare org route lands each role on its own page.
     <Link
@@ -118,7 +122,9 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
           <Badge variant="outline">
             {FUNDING_SOURCE_LABEL[funding]}
             {funding === "WALLET"
-              ? ` · ${formatCurrencyAmount(walletBalance, currency)}`
+              ? walletBalance !== null
+                ? ` · ${formatCurrencyAmount(walletBalance, currency)}`
+                : " · not yet funded"
               : ""}
           </Badge>
         )}

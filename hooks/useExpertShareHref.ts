@@ -24,9 +24,9 @@ export function useExpertShareHref(consultantId: string): string {
 }
 
 /**
- * Appends the expert's signed `?via=<token>` or `?ref=<code>` attribution
- * query param from their profile share link onto an individual offering URL so
- * shared offering links qualify for the 10% own-link platform fee.
+ * Appends the expert's signed `?via=<token>` attribution query param from
+ * their profile share link onto an individual offering URL so first-time buyer
+ * purchases through shared offering links record own-link attribution.
  */
 export function appendExpertShareAttribution(
   targetHref: string,
@@ -37,13 +37,11 @@ export function appendExpertShareAttribution(
   if (qIndex === -1) return targetHref;
   const sourceParams = new URLSearchParams(expertShareHref.slice(qIndex + 1));
   const via = sourceParams.get("via");
-  const ref = sourceParams.get("ref");
-  if (!via && !ref) return targetHref;
+  if (!via) return targetHref;
 
   const [basePath, existingQuery = ""] = targetHref.split("?");
   const targetParams = new URLSearchParams(existingQuery);
-  if (via && !targetParams.has("via")) targetParams.set("via", via);
-  if (ref && !targetParams.has("ref")) targetParams.set("ref", ref);
+  if (!targetParams.has("via")) targetParams.set("via", via);
   const qs = targetParams.toString();
   return qs ? `${basePath}?${qs}` : basePath;
 }

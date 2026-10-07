@@ -174,20 +174,26 @@ function range(f: InboxFilters) {
   };
 }
 
+export const SLA_ACK_AT_RISK_MS = 6 * 3_600_000;
+export const SLA_RESOLUTION_AT_RISK_MS = 12 * 3_600_000;
+
 export function inboxTicketWhere(
   f: InboxFilters,
+  now: Date = new Date(),
 ): Prisma.SupportTicketWhereInput | null {
   if (f.view === "self-serve") return null;
   if (f.status && !TICKET_STATUSES.has(f.status)) return null;
   const and: Prisma.SupportTicketWhereInput[] = [];
   if (f.view === "needs-reply") and.push(TICKET_NEEDS_REPLY_WHERE);
   if (f.view === "sla-at-risk") {
+    const ackThreshold = new Date(now.getTime() + SLA_ACK_AT_RISK_MS);
+    const resThreshold = new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS);
     and.push(TICKET_OPEN_WHERE);
     and.push({
       awaitingUserSince: null,
       OR: [
-        { acknowledgedAt: null, ackDueAt: { not: null } },
-        { resolutionDueAt: { not: null } },
+        { acknowledgedAt: null, ackDueAt: { lte: ackThreshold } },
+        { resolutionDueAt: { lte: resThreshold } },
       ],
     });
   }
@@ -287,6 +293,7 @@ export const CASE_ORDER_BY = [
 ] as const;
 
 export const SLA_ORDER_BY = [
+  { acknowledgedAt: { sort: "asc", nulls: "first" } },
   { ackDueAt: { sort: "asc", nulls: "last" } },
   { resolutionDueAt: { sort: "asc", nulls: "last" } },
   { createdAt: "asc" },

@@ -25,7 +25,8 @@ export interface OwnReviewRow {
   body: string | null;
   createdAt: string;
   editedAt: string | null;
-  revisionNumber: number;
+  editCount: number;
+  isOrgSponsored: boolean;
   track: ReviewTrack | null;
   reviewer: { name: string | null; image: string | null } | null;
   offeringTitle: string | null;
@@ -74,6 +75,8 @@ const ROW_SELECT = {
   },
   appointment: {
     select: {
+      organizationId: true,
+      payment: { select: { organizationId: true } },
       consultation: {
         select: { consultationPlan: { select: { title: true } } },
       },
@@ -100,18 +103,31 @@ function offeringTitle(appointment: ReviewRecord["appointment"]) {
   );
 }
 
+export function formatShareReviewerName(
+  rawName: string | null | undefined,
+): string {
+  const trimmed = rawName?.trim();
+  if (!trimmed || trimmed.includes("@")) return "a verified learner";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "a verified learner";
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+}
+
 export function toOwnReviewRow(r: ReviewRecord): OwnReviewRow {
   const replyLive = r.replyBody !== null && r.replyDeletedAt === null;
-  const revisionNumber = r.editedAt
-    ? Math.max(1, (r.revisionNo ?? 1) - 1)
-    : Math.max(0, (r.revisionNo ?? 1) - 1);
+  const isOrgSponsored = Boolean(
+    r.appointment?.organizationId ||
+    r.appointment?.payment?.some((p) => p.organizationId != null),
+  );
   return {
     id: r.id,
     rating: r.rating,
     body: r.reviewDescription,
     createdAt: r.createdAt.toISOString(),
     editedAt: r.editedAt?.toISOString() ?? null,
-    revisionNumber,
+    editCount: Math.max(0, (r.revisionNo ?? 1) - 1),
+    isOrgSponsored,
     track: r.track,
     reviewer: r.isAnonymous
       ? null

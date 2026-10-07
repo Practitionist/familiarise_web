@@ -111,7 +111,10 @@ export async function readInboxPage(
     threadWhere
       ? prisma.appointmentSupportThread.findMany({
           where: threadWhere,
-          orderBy: threadOrderBy,
+          orderBy:
+            filters.sort === "sla"
+              ? [{ createdAt: "asc" }, { id: "asc" }]
+              : threadOrderBy,
           take: depth,
           select: threadKeySelect,
         })

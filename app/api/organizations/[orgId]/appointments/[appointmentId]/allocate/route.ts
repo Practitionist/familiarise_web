@@ -28,8 +28,6 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isActForOrgBooking, isOrgFundedByOrg } from "@/lib/booking/org-actor";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { notifyAppointmentBooked } from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
@@ -99,41 +97,6 @@ export async function POST(
         organizationId: true,
         consultationId: true,
         subscriptionId: true,
-        organization: { select: { name: true } },
-        consultation: {
-          select: {
-            requestedBy: { select: { user: { select: { name: true } } } },
-            consultationPlan: {
-              select: {
-                title: true,
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { name: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            requestedBy: { select: { user: { select: { name: true } } } },
-            subscriptionPlan: {
-              select: {
-                title: true,
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { name: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
       },
     });
 
@@ -236,49 +199,6 @@ export async function POST(
           overrideReason: body.overrideReason,
         },
       });
-    }
-
-    const planArm = appointment.consultation
-      ? {
-          planTitle:
-            appointment.consultation.consultationPlan?.title ?? "Consultation",
-          consultantProfile:
-            appointment.consultation.consultationPlan?.consultantProfile,
-          consulteeName:
-            appointment.consultation.requestedBy?.user?.name ??
-            appointment.organization?.name ??
-            "Organization Member",
-        }
-      : {
-          planTitle:
-            appointment.subscription?.subscriptionPlan?.title ?? "Subscription",
-          consultantProfile:
-            appointment.subscription?.subscriptionPlan?.consultantProfile,
-          consulteeName:
-            appointment.subscription?.requestedBy?.user?.name ??
-            appointment.organization?.name ??
-            "Organization Member",
-        };
-
-    const consultantUserId = planArm.consultantProfile?.userId;
-    if (consultantUserId) {
-      try {
-        await notifyAppointmentBooked([consultantUserId], {
-          ...notificationScope(orgId, appointment.organization?.name),
-          appointmentId: appointment.id,
-          appointmentType: eventType.toUpperCase(),
-          consultantName: planArm.consultantProfile?.user?.name ?? "Consultant",
-          consulteeName: planArm.consulteeName,
-          planTitle: planArm.planTitle,
-          ...(body.slots?.[0] ? { dateTime: body.slots[0] } : {}),
-          dashboardUrl: `/dashboard/consultant/${planArm.consultantProfile?.id ?? ""}/appointments`,
-        });
-      } catch (notifyErr) {
-        Sentry.captureException(
-          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-          { tags: { subsystem: "notifications", op: "org.allocate" } },
-        );
-      }
     }
 
     return NextResponse.json({

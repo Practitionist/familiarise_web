@@ -47,6 +47,7 @@ import {
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/BookingOpsPanel";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -63,6 +64,7 @@ export interface EnrichedSubscriptionItem extends SubscriptionListItem {
   sessionsPerWeek?: number;
   sessionsTotal?: number;
   sessionsCompleted?: number;
+  sessionsUpcoming?: number;
   sessionsScheduled?: number;
 }
 
@@ -94,13 +96,8 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-const formatCurrency = (amount: number, currency: string = "INR") => {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currency,
-    maximumFractionDigits: 0,
-  }).format(amount / 100);
-};
+const formatCurrency = (amount: number, currency: string = "INR") =>
+  formatCurrencyAmount(amount, currency);
 
 const formatDate = (dateString: string | null) => {
   if (!dateString) return "-";
@@ -160,9 +157,6 @@ function SubscriptionDetailSheet({
   canMutate: boolean;
 }>) {
   const queryClient = useQueryClient();
-  const [opsAction, setOpsAction] = useState<"CANCEL" | "PAUSE" | "RESUME">(
-    "CANCEL",
-  );
   const [auditReason, setAuditReason] = useState("");
   const [opsError, setOpsError] = useState<string | null>(null);
   const [opsSuccess, setOpsSuccess] = useState<string | null>(null);
@@ -170,7 +164,7 @@ function SubscriptionDetailSheet({
   const mutateSubscription = useMutation({
     mutationFn: async (payload: {
       subscriptionId: string;
-      action: "CANCEL" | "PAUSE" | "RESUME";
+      action: "CANCEL";
       reason: string;
     }) => {
       const res = await fetch("/api/admin/subscriptions", {
@@ -181,8 +175,7 @@ function SubscriptionDetailSheet({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(
-          (json as { error?: string }).error ??
-            "Failed to update subscription status",
+          (json as { error?: string }).error ?? "Failed to cancel subscription",
         );
       }
       return json;
@@ -191,7 +184,7 @@ function SubscriptionDetailSheet({
       queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
       setAuditReason("");
       setOpsError(null);
-      setOpsSuccess("Subscription status updated and audited.");
+      setOpsSuccess("Subscription cancelled and refund pipeline triggered.");
     },
     onError: (err: Error) => {
       setOpsSuccess(null);
@@ -204,6 +197,8 @@ function SubscriptionDetailSheet({
   const totalQuota = subscription.sessionsTotal ?? 0;
   const completed = subscription.sessionsCompleted ?? 0;
   const scheduled = subscription.sessionsScheduled ?? 0;
+  const upcoming =
+    subscription.sessionsUpcoming ?? Math.max(0, scheduled - completed);
   const progressPct =
     totalQuota > 0
       ? Math.min(100, Math.round((completed / totalQuota) * 100))
@@ -283,8 +278,7 @@ function SubscriptionDetailSheet({
             <div className="flex items-center justify-between text-xs font-medium">
               <span>Session Quota Progress</span>
               <span className="tabular-nums">
-                {completed} completed · {scheduled} scheduled / {totalQuota}{" "}
-                total
+                {completed} completed · {upcoming} upcoming / {totalQuota} total
               </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -295,78 +289,67 @@ function SubscriptionDetailSheet({
             </div>
           </div>
 
-          {canMutate && subscription.subscriptionId && (
-            <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
-              <h4 className="text-sm font-semibold">
-                Subscription Status Action (Audited)
-              </h4>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="sub-ops-action">Action</Label>
-                  <Select
-                    value={opsAction}
-                    onValueChange={(v) =>
-                      setOpsAction(v as "CANCEL" | "PAUSE" | "RESUME")
-                    }
-                  >
-                    <SelectTrigger id="sub-ops-action">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="PAUSE">Pause (Pending)</SelectItem>
-                      <SelectItem value="RESUME">Resume (Scheduled)</SelectItem>
-                      <SelectItem value="CANCEL">Cancel</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          {canMutate &&
+            subscription.subscriptionId &&
+            subscription.status !== "cancelled" && (
+              <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+                <h4 className="text-sm font-semibold">
+                  Cancel Subscription (Audited)
+                </h4>
                 <div className="space-y-1">
                   <Label htmlFor="sub-ops-reason">Audit reason *</Label>
                   <Input
                     id="sub-ops-reason"
                     value={auditReason}
                     onChange={(e) => setAuditReason(e.target.value)}
-                    placeholder="Reason for status change"
+                    placeholder="Reason for subscription cancellation"
                   />
                 </div>
+                {opsError && <p className="text-xs text-red-600">{opsError}</p>}
+                {opsSuccess && (
+                  <p className="text-xs text-emerald-600">{opsSuccess}</p>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <Button size="sm" variant="outline" asChild>
+                    <Link
+                      href={`/dashboard/admin/operations/bookings?search=${encodeURIComponent(subscription.id)}`}
+                    >
+                      Open in Bookings Ops
+                    </Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={mutateSubscription.isPending}
+                    onClick={() => {
+                      setOpsError(null);
+                      setOpsSuccess(null);
+                      if (auditReason.trim().length < 5) {
+                        setOpsError(
+                          "Audit reason must be at least 5 characters.",
+                        );
+                        return;
+                      }
+                      if (!subscription.subscriptionId) return;
+                      mutateSubscription.mutate({
+                        subscriptionId: subscription.subscriptionId,
+                        action: "CANCEL",
+                        reason: auditReason.trim(),
+                      });
+                    }}
+                  >
+                    {mutateSubscription.isPending ? (
+                      <>
+                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />{" "}
+                        Cancelling…
+                      </>
+                    ) : (
+                      "Cancel Subscription"
+                    )}
+                  </Button>
+                </div>
               </div>
-              {opsError && <p className="text-xs text-red-600">{opsError}</p>}
-              {opsSuccess && (
-                <p className="text-xs text-emerald-600">{opsSuccess}</p>
-              )}
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  variant={opsAction === "CANCEL" ? "destructive" : "default"}
-                  disabled={mutateSubscription.isPending}
-                  onClick={() => {
-                    setOpsError(null);
-                    setOpsSuccess(null);
-                    if (auditReason.trim().length < 5) {
-                      setOpsError(
-                        "Audit reason must be at least 5 characters.",
-                      );
-                      return;
-                    }
-                    if (!subscription.subscriptionId) return;
-                    mutateSubscription.mutate({
-                      subscriptionId: subscription.subscriptionId,
-                      action: opsAction,
-                      reason: auditReason.trim(),
-                    });
-                  }}
-                >
-                  {mutateSubscription.isPending ? (
-                    <>
-                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />{" "}
-                      Applying…
-                    </>
-                  ) : (
-                    `Apply ${opsAction}`
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
+            )}
 
           {subscription.appointmentId && (
             <div className="rounded-lg border p-3.5">
@@ -660,13 +643,22 @@ export function SubscriptionsPage({
               getRowId={(s) => s.id}
               onRowClick={(s) => setSelectedSubscription(s)}
               rowActions={(s) => (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setSelectedSubscription(s)}
-                >
-                  Inspect
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <Button size="sm" variant="ghost" asChild>
+                    <Link
+                      href={`/dashboard/admin/operations/bookings?search=${encodeURIComponent(s.id)}`}
+                    >
+                      Ops
+                    </Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelectedSubscription(s)}
+                  >
+                    Inspect
+                  </Button>
+                </div>
               )}
               empty={
                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">

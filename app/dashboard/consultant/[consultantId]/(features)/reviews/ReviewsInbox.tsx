@@ -39,7 +39,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useListParams } from "@/hooks/useListParams";
-import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
+import {
+  formatShareReviewerName,
+  type OwnReviewRow,
+  type OwnReviewsPage,
+} from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
 import { SocialShareDialog } from "./SocialShareDialog";
@@ -72,7 +76,6 @@ const REPORT_REASONS = [
   { value: "SPAM_OR_FAKE", label: "Spam or unverified claim" },
   { value: "HARASSMENT_OR_ABUSE", label: "Harassment or abusive language" },
   { value: "OFF_TOPIC", label: "Irrelevant or off-topic" },
-  { value: "PLATFORM_OUTAGE", label: "Platform or call outage (not my fault)" },
   { value: "OTHER", label: "Other policy concern" },
 ] as const;
 
@@ -102,7 +105,6 @@ function Stars({ rating }: Readonly<{ rating: number }>) {
 const onDay = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
 
-/** #1300 — two published scores, 1:1 and group, never one blended number. */
 function ScoreRow({
   summary,
 }: Readonly<{ summary: NonNullable<OwnReviewsPage["summary"]> }>) {
@@ -232,13 +234,13 @@ function ReviewCard({
             reviewId: review.id,
             reason: reportReason,
             description: reportDetails.trim() || undefined,
-            contentText: review.body ?? undefined,
           }),
         }),
         "Couldn't submit report",
       ),
     onSuccess: () => {
       setReportOpen(false);
+      setReportReason(REPORT_REASONS[0].value);
       setReportDetails("");
       toast({
         title: "Review reported",
@@ -262,16 +264,15 @@ function ReviewCard({
     await refresh();
   };
 
-  const isEdited = (review.revisionNumber ?? 0) > 0 || review.editedAt !== null;
+  const isEdited = review.editCount > 0;
   const fullShareUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}${shareHref}`
       : shareHref;
-  const sanitisedAuthor =
-    review.reviewer?.name ?? "Verified learner on Familiarise";
+  const displayReviewer = formatShareReviewerName(review.reviewer?.name);
   const shareText = review.body
-    ? `"${review.body}" — ${sanitisedAuthor} (${review.rating}★)\n\nBook a session with me on Familiarise: ${fullShareUrl}`
-    : `${review.rating}★ review from ${sanitisedAuthor} on Familiarise!\n\nBook a session with me: ${fullShareUrl}`;
+    ? `"${review.body}" — ${displayReviewer} (${review.rating}★)\n\nBook a session with me on Familiarise: ${fullShareUrl}`
+    : `${review.rating}★ review from ${displayReviewer} on Familiarise!\n\nBook a session with me: ${fullShareUrl}`;
 
   return (
     <li className="px-4 py-4 sm:px-5">
@@ -290,7 +291,6 @@ function ReviewCard({
         {isEdited && <StatusBadge label="Edited" tone="neutral" size="sm" />}
         <span className="text-xs text-muted-foreground">
           {onDay(review.createdAt)}
-          {review.editedAt ? " · edited" : ""}
         </span>
       </div>
       {review.offeringTitle && (
@@ -342,16 +342,18 @@ function ReviewCard({
             Reply
           </Button>
         )}
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={() => setShareOpen(true)}
-          className="gap-1.5 text-muted-foreground hover:text-foreground"
-        >
-          <Share2 className="h-3.5 w-3.5" aria-hidden />
-          Share review
-        </Button>
+        {!review.isOrgSponsored && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setShareOpen(true)}
+            className="gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Share2 className="h-3.5 w-3.5" aria-hidden />
+            Share review
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"
@@ -383,25 +385,26 @@ function ReviewCard({
         onConfirm={remove}
       />
 
-      <SocialShareDialog
-        open={shareOpen}
-        onOpenChange={setShareOpen}
-        title="Share this review"
-        description="Includes your signed personal link (10% platform fee vs 20% Marketplace)."
-        postText={shareText}
-        shareUrl={fullShareUrl}
-        textareaAriaLabel="Review share post"
-        copyLabel="Copy quote & link"
-        copiedLabel="Copied"
-      />
+      {!review.isOrgSponsored && (
+        <SocialShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share this review"
+          description="Includes your signed personal link (?via=) so buyers who first book through it use your personal-link platform fee rate."
+          postText={shareText}
+          shareUrl={fullShareUrl}
+          textareaAriaLabel="Review share post"
+          copyLabel="Copy quote & link"
+          copiedLabel="Copied"
+        />
+      )}
 
       <Dialog open={reportOpen} onOpenChange={setReportOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Report this review</DialogTitle>
             <DialogDescription>
-              Flag a review that violates community guidelines or reflects a
-              platform outage outside your control.
+              Flag a review that violates community guidelines.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

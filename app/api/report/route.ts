@@ -90,8 +90,13 @@ async function resolveReportedMessage(
 ): Promise<{
   streamMessageId: string | null;
   streamChannelCid: string | null;
+  messageText: string | null;
 }> {
-  const none = { streamMessageId: null, streamChannelCid: null };
+  const none = {
+    streamMessageId: null,
+    streamChannelCid: null,
+    messageText: null,
+  };
   if (!streamMessageId) return none;
 
   try {
@@ -111,6 +116,10 @@ async function resolveReportedMessage(
       streamMessageId: message.id,
       // Canonical, from Stream — never the caller's.
       streamChannelCid: message.cid ?? null,
+      messageText:
+        typeof message.text === "string" && message.text.length > 0
+          ? message.text
+          : null,
     };
   } catch (error) {
     streamLogger.warn("Could not resolve a reported Stream message", {
@@ -189,6 +198,7 @@ export async function POST(req: NextRequest) {
     let target = targetUserId ?? "";
     let reportedReviewId: string | null = null;
     let resolvedOrganizationId: string | null = null;
+    let reviewSnapshotText: string | null = null;
     if (type === "REVIEW") {
       if (!reviewId) {
         return NextResponse.json(
@@ -199,6 +209,7 @@ export async function POST(req: NextRequest) {
       const reported = await prisma.consultantReview.findFirst({
         where: { id: reviewId, deletedAt: null },
         select: {
+          reviewDescription: true,
           consulteeProfile: { select: { userId: true } },
           appointment: { select: { organizationId: true } },
         },
@@ -215,10 +226,11 @@ export async function POST(req: NextRequest) {
       target = reported.consulteeProfile.userId;
       reportedReviewId = reviewId;
       resolvedOrganizationId = reported.appointment?.organizationId ?? null;
+      reviewSnapshotText = reported.reviewDescription ?? null;
     }
 
     if (!resolvedOrganizationId && callerOrganizationId) {
-      const targetMembership = await prisma.membership?.findFirst?.({
+      const targetMembership = await prisma.membership.findFirst({
         where: {
           organizationId: callerOrganizationId,
           userId: target,
@@ -287,6 +299,15 @@ export async function POST(req: NextRequest) {
     });
 
     if (similarReport) {
+      const verifiedForBackfill =
+        similarReport.contentText === null && type === "MESSAGE"
+          ? await resolveReportedMessage(streamMessageId, target)
+          : null;
+      const backfillContentText =
+        type === "REVIEW"
+          ? reviewSnapshotText
+          : (verifiedForBackfill?.messageText ?? contentText);
+
       // Increment report count on existing report
       const updatedReport = await prisma.moderationReport.update({
         where: { id: similarReport.id },
@@ -297,8 +318,8 @@ export async function POST(req: NextRequest) {
           // than leave the moderator deciding a ban with nothing to read; a
           // row that already has an excerpt keeps it, because within one
           // content scope every reporter is describing the same content.
-          ...(similarReport.contentText === null && contentText
-            ? { contentText }
+          ...(similarReport.contentText === null && backfillContentText
+            ? { contentText: backfillContentText }
             : {}),
         },
       });
@@ -315,7 +336,14 @@ export async function POST(req: NextRequest) {
     const verifiedMessage =
       type === "MESSAGE"
         ? await resolveReportedMessage(streamMessageId, target)
-        : { streamMessageId: null, streamChannelCid: null };
+        : { streamMessageId: null, streamChannelCid: null, messageText: null };
+
+    const effectiveContentText =
+      type === "REVIEW"
+        ? reviewSnapshotText
+        : type === "MESSAGE"
+          ? (verifiedMessage.messageText ?? contentText)
+          : contentText;
 
     // Create new report
     const report = await prisma.moderationReport.create({
@@ -325,11 +353,12 @@ export async function POST(req: NextRequest) {
         description,
         reportedById: session.user.id,
         targetUserId: target,
-        contentText,
+        contentText: effectiveContentText,
         contentUrl,
         reviewId: reportedReviewId,
         organizationId: resolvedOrganizationId,
-        ...verifiedMessage,
+        streamMessageId: verifiedMessage.streamMessageId,
+        streamChannelCid: verifiedMessage.streamChannelCid,
       },
     });
 

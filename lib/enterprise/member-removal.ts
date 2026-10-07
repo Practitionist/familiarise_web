@@ -6,8 +6,12 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
+  assertNotLastOwner,
   assertRemovable,
+  countRemovalObligations,
+  MembershipGuardError,
   type GuardedMembership,
+  type RemovalObligations,
 } from "@/lib/enterprise/membership-guards";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import { recomputeConsultantIsIndependent } from "@/lib/api/organizations/membership-transitions";
@@ -38,9 +42,12 @@ export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
 export interface RemoveMemberInput {
   orgId: string;
   memberId: string;
-  actor: { membershipId: string; role: GuardedMembership["role"] };
+  actor:
+    | { membershipId: string; role: GuardedMembership["role"] }
+    | { kind: "self"; membershipId: string; role: GuardedMembership["role"] };
   actorUserId: string;
   force: boolean;
+  releaseActiveSeats?: boolean;
 }
 
 export type RemoveMemberResult = { removed: boolean };
@@ -73,12 +80,41 @@ async function removeInTx(
   }
 
   const now = new Date();
-  const { obligations, forced } = await assertRemovable(tx, {
-    membership: current,
-    actor: { kind: "member", ...actor },
-    force,
-    now,
-  });
+  const isSelfLeave = "kind" in actor && actor.kind === "self";
+  let obligations: RemovalObligations;
+  let forced = false;
+
+  if (isSelfLeave) {
+    if (current.role === "OWNER" && current.status === "ACTIVE") {
+      await assertNotLastOwner(tx, orgId, memberId);
+    }
+    const rawObligations = await countRemovalObligations(tx, current, now);
+    obligations = input.releaseActiveSeats
+      ? { ...rawObligations, liveSeats: 0 }
+      : rawObligations;
+    const total = Object.values(obligations).reduce((sum, n) => sum + n, 0);
+    if (total > 0) {
+      throw new MembershipGuardError(
+        "MEMBER_HAS_OBLIGATIONS",
+        "You still have upcoming sessions or money in progress under this organization. Settle or cancel those before leaving.",
+        409,
+        { ...obligations },
+      );
+    }
+  } else {
+    const res = await assertRemovable(tx, {
+      membership: current,
+      actor: {
+        kind: "member",
+        membershipId: actor.membershipId,
+        role: actor.role,
+      },
+      force,
+      now,
+    });
+    obligations = res.obligations;
+    forced = res.forced;
+  }
 
   // The CAS makes a concurrent double removal 409 instead of re-running the
   // cascade.
@@ -93,9 +129,9 @@ async function removeInTx(
   // Past OrganizationEarnings stay untouched: delivered sessions are settled
   // commitments, and no new org split accrues once the EXPERT row is gone.
   //
-  // Live seats close at `now` (only an OWNER force reaches here with some):
-  // a removed member's seat must stop counting against the program cap and
-  // the billed seat count. ROLLED/CLOSED rows are never re-stamped.
+  // Live seats close at `now` so a removed or self-exiting member's seat stops
+  // counting against the program cap and billed seat count. ROLLED/CLOSED rows
+  // are never re-stamped.
   const terminated = await tx.programAssignment.updateMany({
     where: {
       membershipId: memberId,
@@ -113,11 +149,14 @@ async function removeInTx(
       targetMembershipId: memberId,
       category: "MEMBER",
       action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
-      description: `Removed member ${memberId}`,
+      description: isSelfLeave
+        ? "Member left the organization"
+        : `Removed member ${memberId}`,
       details: {
         role: current.role,
         previousStatus: current.status,
         assignmentsTerminated: terminated.count,
+        ...(isSelfLeave && { selfLeave: true }),
         ...(forced && { forced: true, obligations: { ...obligations } }),
       },
     },

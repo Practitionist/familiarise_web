@@ -13,14 +13,17 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { claimProgramAssignment } from "@/lib/api/organizations/program-helpers";
+import {
+  claimProgramAssignment,
+  ProgramAssignmentOverlapError,
+} from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const CreateBodySchema = z
   .object({
@@ -109,8 +112,7 @@ export async function POST(
   },
 ) {
   const { orgId, programId } = await params;
-  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
-  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
+  // Seat assign/unassign is programs.assign (OWNER, MAINTAINER, MANAGER).
   const access = await requireOrgAccess(orgId, {
     permission: "programs.assign",
     canSponsor: true,
@@ -157,49 +159,157 @@ export async function POST(
     );
   }
 
-  // CR #1234 r5 — Serializable shares the conflict boundary with the PATCH
-  // money-config tx (which re-checks configLockedAt in-scope): the stamp and
-  // the lock check can no longer interleave under READ COMMITTED. Conflicts
-  // retry via the house helper.
-  const outcome = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        for (const targetMembershipId of targetMembershipIds) {
-          const membership = await tx.membership.findFirst({
-            where: { id: targetMembershipId, organizationId: orgId },
-            select: { id: true, status: true },
-          });
-          if (!membership) {
-            return { ok: false as const, code: "FOREIGN" as const };
-          }
-          if (membership.status !== "ACTIVE") {
-            return {
-              ok: false as const,
-              code: "INACTIVE" as const,
-              status: membership.status,
-            };
-          }
-        }
+  // Serializable shares the conflict boundary with the PATCH money-config tx
+  // (which re-checks configLockedAt in-scope). Batched reads/writes keep the
+  // round-trip count O(1) across 100 members on PG_POOL_MAX=1.
+  try {
+    const outcome = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          if (targetMembershipIds.length === 1) {
+            const singleMembershipId = targetMembershipIds[0];
+            const membership = await tx.membership.findFirst({
+              where: { id: singleMembershipId, organizationId: orgId },
+              select: { id: true, status: true },
+            });
+            if (!membership) {
+              return {
+                ok: false as const,
+                code: "FOREIGN" as const,
+                membershipId: singleMembershipId,
+              };
+            }
+            if (membership.status !== "ACTIVE") {
+              return {
+                ok: false as const,
+                code: "INACTIVE" as const,
+                status: membership.status,
+                membershipId: singleMembershipId,
+              };
+            }
 
-        const createdAssignments = [];
-        let createdCount = 0;
-        for (const targetMembershipId of targetMembershipIds) {
-          const { assignment: created, created: isNew } =
-            await claimProgramAssignment(tx, {
+            const { assignment, created } = await claimProgramAssignment(tx, {
               programId,
-              membershipId: targetMembershipId,
+              membershipId: singleMembershipId,
               periodStart: body.periodStart,
               periodEnd: body.periodEnd,
             });
-          if (isNew) {
-            createdCount += 1;
+            if (created) {
+              await adjustActiveSeatCount(tx, { programId, delta: 1 });
+              await tx.program.updateMany({
+                where: { id: programId, configLockedAt: null },
+                data: { configLockedAt: new Date() },
+              });
+            }
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                targetMembershipId: singleMembershipId,
+                category: "PROGRAM",
+                action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
+                description: `Assigned membership ${singleMembershipId} to program ${programId}`,
+                details: {
+                  programId,
+                  membershipId: singleMembershipId,
+                  periodStart: body.periodStart.toISOString(),
+                  periodEnd: body.periodEnd.toISOString(),
+                },
+              },
+            });
+            return {
+              ok: true as const,
+              assignment,
+              assignments: [assignment],
+            };
           }
-          await tx.orgAuditLog.create({
-            data: {
+
+          const foundMemberships = await tx.membership.findMany({
+            where: { id: { in: targetMembershipIds }, organizationId: orgId },
+            select: { id: true, status: true },
+          });
+          const membershipById = new Map(
+            foundMemberships.map((m) => [m.id, m]),
+          );
+          for (const targetMembershipId of targetMembershipIds) {
+            const membership = membershipById.get(targetMembershipId);
+            if (!membership) {
+              return {
+                ok: false as const,
+                code: "FOREIGN" as const,
+                membershipId: targetMembershipId,
+              };
+            }
+            if (membership.status !== "ACTIVE") {
+              return {
+                ok: false as const,
+                code: "INACTIVE" as const,
+                status: membership.status,
+                membershipId: targetMembershipId,
+              };
+            }
+          }
+
+          const overlapping = await tx.programAssignment.findFirst({
+            where: {
+              programId,
+              membershipId: { in: targetMembershipIds },
+              status: "ACTIVE",
+              periodStart: { lt: body.periodEnd, not: body.periodStart },
+              periodEnd: { gt: body.periodStart },
+            },
+            select: { membershipId: true },
+          });
+          if (overlapping) {
+            throw new ProgramAssignmentOverlapError(
+              programId,
+              overlapping.membershipId,
+            );
+          }
+
+          const existingExact = await tx.programAssignment.findMany({
+            where: {
+              programId,
+              membershipId: { in: targetMembershipIds },
+              periodStart: body.periodStart,
+            },
+            select: { membershipId: true },
+          });
+          const existingExactSet = new Set(
+            existingExact.map((e) => e.membershipId),
+          );
+
+          const ins = await tx.programAssignment.createMany({
+            data: targetMembershipIds.map((membershipId) => ({
+              programId,
+              membershipId,
+              periodStart: body.periodStart,
+              periodEnd: body.periodEnd,
+            })),
+            skipDuplicates: true,
+          });
+          const createdCount = ins.count;
+
+          const rows = await tx.programAssignment.findMany({
+            where: {
+              programId,
+              membershipId: { in: targetMembershipIds },
+              periodStart: body.periodStart,
+            },
+          });
+          const rowByMembershipId = new Map(
+            rows.map((r) => [r.membershipId, r]),
+          );
+          const createdAssignments = targetMembershipIds
+            .map((id) => rowByMembershipId.get(id))
+            .filter((r): r is NonNullable<typeof r> => Boolean(r));
+
+          await tx.orgAuditLog.createMany({
+            data: targetMembershipIds.map((targetMembershipId) => ({
               organizationId: orgId,
               actorMembershipId: access.member.id,
               targetMembershipId,
-              category: "PROGRAM",
+              category: "PROGRAM" as const,
               action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
               description: `Assigned membership ${targetMembershipId} to program ${programId}`,
               details: {
@@ -208,63 +318,104 @@ export async function POST(
                 periodStart: body.periodStart.toISOString(),
                 periodEnd: body.periodEnd.toISOString(),
               },
-            },
+            })),
           });
-          if (isNew && typeof tx.webhookEndpoint?.findMany === "function") {
-            await dispatchWebhookEvent({
-              prisma: tx,
-              organizationId: orgId,
-              eventType: "program.assigned",
-              payload: {
-                assignmentId: created.id,
-                programId,
-                membershipId: targetMembershipId,
-                periodStart: body.periodStart.toISOString(),
-                periodEnd: body.periodEnd.toISOString(),
+
+          const newlyCreatedAssignments = createdAssignments.filter(
+            (a) => !existingExactSet.has(a.membershipId),
+          );
+          if (newlyCreatedAssignments.length > 0) {
+            const endpoints = await tx.webhookEndpoint.findMany({
+              where: {
+                organizationId: orgId,
+                status: "ACTIVE",
+                eventSubscriptions: { has: "program.assigned" },
               },
+              select: { id: true },
+            });
+            if (endpoints.length > 0) {
+              await tx.outboundWebhookDelivery.createMany({
+                data: newlyCreatedAssignments.flatMap((created) =>
+                  endpoints.map((endpoint) => ({
+                    webhookEndpointId: endpoint.id,
+                    eventType: "program.assigned",
+                    payload: {
+                      assignmentId: created.id,
+                      programId,
+                      membershipId: created.membershipId,
+                      periodStart: body.periodStart.toISOString(),
+                      periodEnd: body.periodEnd.toISOString(),
+                    } satisfies Prisma.InputJsonValue,
+                    status: "PENDING" as const,
+                  })),
+                ),
+              });
+            }
+          }
+
+          if (createdCount > 0) {
+            await adjustActiveSeatCount(tx, {
+              programId,
+              delta: createdCount,
+            });
+            await tx.program.updateMany({
+              where: { id: programId, configLockedAt: null },
+              data: { configLockedAt: new Date() },
             });
           }
-          createdAssignments.push(created);
-        }
 
-        if (createdCount > 0) {
-          await adjustActiveSeatCount(tx, { programId, delta: createdCount });
-          await tx.program.updateMany({
-            where: { id: programId, configLockedAt: null },
-            data: { configLockedAt: new Date() },
-          });
-        }
+          return {
+            ok: true as const,
+            assignment: createdAssignments[0],
+            assignments: createdAssignments,
+          };
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
 
-        return {
-          ok: true as const,
-          assignment: createdAssignments[0],
-          assignments: createdAssignments,
-        };
-      },
-      { isolationLevel: "Serializable" },
-    ),
-  );
-
-  if (!outcome.ok) {
-    // 400 for a membership that is not this org's (malformed request), 409 for
-    // one that is but is in the wrong state (well formed, currently refused).
-    if (outcome.code === "FOREIGN") {
+    if (!outcome.ok) {
+      if (outcome.code === "FOREIGN") {
+        return NextResponse.json(
+          {
+            error: "Membership does not belong to this organization",
+            code: "MEMBERSHIP_FOREIGN",
+            ...(body.membershipIds
+              ? { membershipId: outcome.membershipId }
+              : {}),
+          },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
-        { error: "Membership does not belong to this organization" },
-        { status: 400 },
+        {
+          error: `Cannot assign a ${outcome.status} membership to a program`,
+          code: "MEMBERSHIP_NOT_ACTIVE",
+          ...(body.membershipIds ? { membershipId: outcome.membershipId } : {}),
+        },
+        { status: 409 },
       );
     }
-    return NextResponse.json(
-      {
-        error: `Cannot assign a ${outcome.status} membership to a program`,
-        code: "MEMBERSHIP_NOT_ACTIVE",
-      },
-      { status: 409 },
-    );
-  }
 
-  return NextResponse.json(
-    { assignment: outcome.assignment, assignments: outcome.assignments },
-    { status: 201 },
-  );
+    return NextResponse.json(
+      { assignment: outcome.assignment, assignments: outcome.assignments },
+      { status: 201 },
+    );
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.name === "ProgramAssignmentOverlapError" &&
+      "membershipId" in err
+    ) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: "ASSIGNMENT_OVERLAP",
+          membershipId: err.membershipId,
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 }

@@ -113,10 +113,15 @@ export type ConsultantEarningRow = Omit<EarningRecord, "payment"> & {
   };
 };
 
+import {
+  readActiveFeeSchedule,
+  type ActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
+
 export interface ConsultantFeeWaiverStatus {
   sessionsRemaining: number;
-  totalSessionsGranted: number;
   expiresAt: Date;
+  grants: Array<{ sessionsRemaining: number; expiresAt: Date }>;
 }
 
 export interface ConsultantTdsRecordRow {
@@ -142,7 +147,6 @@ export interface AttributionBreakdown {
   marketplacePaise: number;
   ownLinkCount: number;
   marketplaceCount: number;
-  feeWaivedCount: number;
 }
 
 export interface RepeatLearnerStats {
@@ -151,7 +155,7 @@ export interface RepeatLearnerStats {
   repeatLearnerRate: number | null;
 }
 
-export type { ConsultantPayoutRow };
+export type { ActiveFeeSchedule, ConsultantPayoutRow };
 
 export type ConsultantEarningsPayload = Awaited<
   ReturnType<typeof buildConsultantEarningsPayload>
@@ -196,66 +200,55 @@ async function readActiveFeeWaiver(
   consultantProfileId: string,
 ): Promise<ConsultantFeeWaiverStatus | null> {
   const now = new Date();
-  const [waivers, config] = await Promise.all([
-    prisma.consultantFeeWaiver?.findMany?.({
-      where: {
-        consultantProfileId,
-        sessionsRemaining: { gt: 0 },
-        expiresAt: { gt: now },
-      },
-      orderBy: { expiresAt: "asc" },
-      select: { sessionsRemaining: true, expiresAt: true },
-    }) ?? Promise.resolve([]),
-    prisma.referralProgramConfig?.findUnique?.({
-      where: { id: "singleton" },
-      select: { expertWaiverSessions: true },
-    }) ?? Promise.resolve(null),
-  ]);
-  if (!waivers || waivers.length === 0) return null;
+  const waivers = await prisma.consultantFeeWaiver.findMany({
+    where: {
+      consultantProfileId,
+      sessionsRemaining: { gt: 0 },
+      expiresAt: { gt: now },
+    },
+    orderBy: { expiresAt: "asc" },
+    select: { sessionsRemaining: true, expiresAt: true },
+  });
+  if (waivers.length === 0) return null;
   const sessionsRemaining = waivers.reduce(
     (sum, w) => sum + w.sessionsRemaining,
     0,
   );
-  const perGrant = config?.expertWaiverSessions ?? 3;
   return {
     sessionsRemaining,
-    totalSessionsGranted: Math.max(
-      sessionsRemaining,
-      waivers.length * perGrant,
-    ),
     expiresAt: waivers[0].expiresAt,
+    grants: waivers,
   };
 }
 
 async function readConsultantTdsRecords(
   consultantProfileId: string,
 ): Promise<ConsultantTdsRecordRow[]> {
-  const rows =
-    (await prisma.tDSRecord?.findMany?.({
-      where: { consultantProfileId },
-      orderBy: [
-        { financialYear: "desc" },
-        { quarter: "desc" },
-        { createdAt: "desc" },
-      ],
-      select: {
-        id: true,
-        financialYear: true,
-        quarter: true,
-        cumulativeAmountCredited: true,
-        tdsDeducted: true,
-        tdsRateBps: true,
-        tdsSection: true,
-        payoutId: true,
-        isReversal: true,
-        reportedInForm26Q: true,
-        form26QFilingDate: true,
-        challanNumber: true,
-        certificateNumber: true,
-        ackNumber: true,
-        createdAt: true,
-      },
-    })) ?? [];
+  const rows = await prisma.tDSRecord.findMany({
+    where: { consultantProfileId },
+    orderBy: [
+      { financialYear: "desc" },
+      { quarter: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      id: true,
+      financialYear: true,
+      quarter: true,
+      cumulativeAmountCredited: true,
+      tdsDeducted: true,
+      tdsRateBps: true,
+      tdsSection: true,
+      payoutId: true,
+      isReversal: true,
+      reportedInForm26Q: true,
+      form26QFilingDate: true,
+      challanNumber: true,
+      certificateNumber: true,
+      ackNumber: true,
+      createdAt: true,
+    },
+  });
   return rows.map((r) => ({
     ...r,
     cumulativeAmountCredited: sumPaise(r.cumulativeAmountCredited),
@@ -270,39 +263,33 @@ async function readAttributionAndRepeatStats(
   attributionBreakdown: AttributionBreakdown;
   repeatLearnerStats: RepeatLearnerStats;
 }> {
-  const rows =
-    (await prisma.consultantEarnings?.findMany?.({
-      where: {
-        consultantProfileId,
-        status: { not: "REFUNDED" },
-        ...(organizationId !== undefined
-          ? { payment: { organizationId } }
-          : {}),
-      },
-      orderBy: { createdAt: "desc" },
-      take: 1000,
-      select: {
-        consultantSharePaise: true,
-        refundedShareAmount: true,
-        platformFeePaise: true,
-        grossAmount: true,
-        payment: {
-          select: {
-            userId: true,
-            attributionSource: true,
-            platformFeeBps: true,
-            organizationId: true,
-          },
+  const rows = await prisma.consultantEarnings.findMany({
+    where: {
+      consultantProfileId,
+      status: { not: "REFUNDED" },
+      ...(organizationId !== undefined ? { payment: { organizationId } } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 1000,
+    select: {
+      paymentId: true,
+      consultantSharePaise: true,
+      refundedShareAmount: true,
+      payment: {
+        select: {
+          userId: true,
+          attributionSource: true,
+          organizationId: true,
         },
       },
-    })) ?? [];
+    },
+  });
 
   let ownLinkPaise = 0;
   let marketplacePaise = 0;
-  let ownLinkCount = 0;
-  let marketplaceCount = 0;
-  let feeWaivedCount = 0;
-  const sessionsByLearner = new Map<string, number>();
+  const ownLinkPaymentIds = new Set<string>();
+  const marketplacePaymentIds = new Set<string>();
+  const paymentsByLearner = new Map<string, Set<string>>();
 
   for (const row of rows) {
     const netShare = Math.max(
@@ -312,39 +299,31 @@ async function readAttributionAndRepeatStats(
     const isB2C = !row.payment.organizationId;
     if (row.payment.attributionSource === "OWN_LINK") {
       ownLinkPaise += netShare;
-      ownLinkCount += 1;
+      ownLinkPaymentIds.add(row.paymentId);
     } else if (isB2C) {
       marketplacePaise += netShare;
-      marketplaceCount += 1;
+      marketplacePaymentIds.add(row.paymentId);
     }
-    if (
-      isB2C &&
-      sumPaise(row.grossAmount) > 0 &&
-      (row.payment.platformFeeBps === 0 || sumPaise(row.platformFeePaise) === 0)
-    ) {
-      feeWaivedCount += 1;
-    }
-    if (row.payment.userId) {
-      sessionsByLearner.set(
-        row.payment.userId,
-        (sessionsByLearner.get(row.payment.userId) ?? 0) + 1,
-      );
+    if (isB2C && row.payment.userId) {
+      const existing =
+        paymentsByLearner.get(row.payment.userId) ?? new Set<string>();
+      existing.add(row.paymentId);
+      paymentsByLearner.set(row.payment.userId, existing);
     }
   }
 
-  const totalLearners = sessionsByLearner.size;
+  const totalLearners = paymentsByLearner.size;
   let repeatLearners = 0;
-  for (const count of sessionsByLearner.values()) {
-    if (count >= 2) repeatLearners += 1;
+  for (const paymentSet of paymentsByLearner.values()) {
+    if (paymentSet.size >= 2) repeatLearners += 1;
   }
 
   return {
     attributionBreakdown: {
       ownLinkPaise,
       marketplacePaise,
-      ownLinkCount,
-      marketplaceCount,
-      feeWaivedCount,
+      ownLinkCount: ownLinkPaymentIds.size,
+      marketplaceCount: marketplacePaymentIds.size,
     },
     repeatLearnerStats: {
       repeatLearners,
@@ -458,10 +437,34 @@ export async function buildConsultantEarningsPayload(
     prisma,
     payouts.map((p) => p.id),
   );
-  const feeWaiver = await readActiveFeeWaiver(consultantProfileId);
-  const tdsRecords = await readConsultantTdsRecords(consultantProfileId);
-  const { attributionBreakdown, repeatLearnerStats } =
-    await readAttributionAndRepeatStats(consultantProfileId, organizationId);
+  const hasExplicitScope = "organizationId" in options;
+  const feeSchedule =
+    hasExplicitScope || includeMonthly
+      ? await readActiveFeeSchedule(prisma)
+      : undefined;
+  const feeWaiver =
+    !includeMonthly && hasExplicitScope
+      ? await readActiveFeeWaiver(consultantProfileId)
+      : null;
+  const tdsRecords =
+    !includeMonthly && hasExplicitScope
+      ? await readConsultantTdsRecords(consultantProfileId)
+      : [];
+  const { attributionBreakdown, repeatLearnerStats } = includeMonthly
+    ? await readAttributionAndRepeatStats(consultantProfileId, organizationId)
+    : {
+        attributionBreakdown: {
+          ownLinkPaise: 0,
+          marketplacePaise: 0,
+          ownLinkCount: 0,
+          marketplaceCount: 0,
+        },
+        repeatLearnerStats: {
+          repeatLearners: 0,
+          totalLearners: 0,
+          repeatLearnerRate: null,
+        },
+      };
 
   return {
     summary,
@@ -469,6 +472,7 @@ export async function buildConsultantEarningsPayload(
     earnings: history.earnings.map(toEarningRow),
     payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
     totals,
+    feeSchedule,
     feeWaiver,
     tdsRecords,
     attributionBreakdown,

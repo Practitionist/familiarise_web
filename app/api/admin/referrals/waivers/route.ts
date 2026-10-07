@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     andConditions.length > 0 ? { AND: andConditions } : {};
 
   const skip = (page - 1) * limit;
-  const [waivers, total, config] = await Promise.all([
+  const [waivers, total] = await Promise.all([
     prisma.consultantFeeWaiver.findMany({
       where,
       include: {
@@ -118,19 +118,10 @@ export async function GET(req: NextRequest) {
       take: limit,
     }),
     prisma.consultantFeeWaiver.count({ where }),
-    readReferralProgramConfig(),
   ]);
 
-  const data = waivers.map((w) => ({
-    ...w,
-    sessionsGranted: Math.max(
-      w.sessionsRemaining,
-      config?.expertWaiverSessions ?? 3,
-    ),
-  }));
-
   return NextResponse.json({
-    data,
+    data: waivers,
     total,
     page,
     limit,
@@ -247,12 +238,26 @@ export const POST = withOpsAction(
           );
         }
 
-        const updated = await tx.consultantFeeWaiver.update({
-          where: { id: existing.id },
+        const casUpdate = await tx.consultantFeeWaiver.updateMany({
+          where: {
+            id: existing.id,
+            sessionsRemaining: existing.sessionsRemaining,
+          },
           data: {
             sessionsRemaining: sessionsToGrant,
             expiresAt: expiresAtDate,
           },
+        });
+        if (casUpdate.count === 0) {
+          throw new OpsRefusal(
+            "CONCURRENT_UPDATE",
+            "Fee waiver was modified concurrently; retry.",
+            409,
+          );
+        }
+
+        const updated = await tx.consultantFeeWaiver.findUniqueOrThrow({
+          where: { id: existing.id },
         });
 
         return {
@@ -301,17 +306,57 @@ export const POST = withOpsAction(
         );
       }
 
-      let referralId = body.referralId;
-      if (!referralId) {
+      let referralId: string;
+      if (body.referralId) {
+        const linkedReferral = await tx.referral.findUnique({
+          where: { id: body.referralId },
+          include: { referralCode: { select: { userId: true } } },
+        });
+        if (!linkedReferral) {
+          throw new OpsRefusal(
+            "REFERRAL_NOT_FOUND",
+            "Specified referral not found.",
+            404,
+          );
+        }
+        if (
+          linkedReferral.status !== "VESTED" &&
+          linkedReferral.status !== "QUALIFYING"
+        ) {
+          throw new OpsRefusal(
+            "INVALID_REFERRAL_STATUS",
+            "Fee waivers can only be linked to QUALIFYING or VESTED referrals.",
+            409,
+          );
+        }
+        const matchesRole =
+          body.waiverReason === "REFERRED_EXPERT"
+            ? linkedReferral.referredUserId === profile.userId
+            : linkedReferral.referralCode.userId === profile.userId;
+        if (!matchesRole) {
+          throw new OpsRefusal(
+            "REFERRAL_CONSULTANT_MISMATCH",
+            "Target consultant does not match the referral party for the selected waiver reason.",
+            400,
+          );
+        }
+        referralId = linkedReferral.id;
+      } else {
         const existingReferral =
           body.waiverReason === "REFERRED_EXPERT"
             ? await tx.referral.findFirst({
-                where: { referredUserId: profile.userId },
+                where: {
+                  referredUserId: profile.userId,
+                  status: { in: ["VESTED", "QUALIFYING"] },
+                },
                 orderBy: { createdAt: "desc" },
                 select: { id: true },
               })
             : await tx.referral.findFirst({
-                where: { referralCode: { userId: profile.userId } },
+                where: {
+                  referralCode: { userId: profile.userId },
+                  status: { in: ["VESTED", "QUALIFYING"] },
+                },
                 orderBy: { createdAt: "desc" },
                 select: { id: true },
               });
@@ -325,6 +370,15 @@ export const POST = withOpsAction(
         }
         referralId = existingReferral.id;
       }
+
+      const priorWaiver = await tx.consultantFeeWaiver.findUnique({
+        where: {
+          referralId_consultantProfileId: {
+            referralId,
+            consultantProfileId: profile.id,
+          },
+        },
+      });
 
       const waiver = await tx.consultantFeeWaiver.upsert({
         where: {
@@ -349,8 +403,17 @@ export const POST = withOpsAction(
 
       return {
         target: { kind: "ConsultantFeeWaiver", id: waiver.id },
-        status: 201,
+        status: priorWaiver ? 200 : 201,
         response: { waiver },
+        before: priorWaiver
+          ? {
+              consultantProfileId: priorWaiver.consultantProfileId,
+              referralId: priorWaiver.referralId,
+              reason: priorWaiver.reason,
+              sessionsRemaining: priorWaiver.sessionsRemaining,
+              expiresAt: priorWaiver.expiresAt.toISOString(),
+            }
+          : undefined,
         after: {
           consultantProfileId: waiver.consultantProfileId,
           referralId: waiver.referralId,
