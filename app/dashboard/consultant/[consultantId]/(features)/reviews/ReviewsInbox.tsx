@@ -39,14 +39,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useListParams } from "@/hooks/useListParams";
-import {
-  formatShareReviewerName,
-  type OwnReviewRow,
-  type OwnReviewsPage,
-} from "@/lib/reviews-inbox";
+import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
 import { SocialShareDialog } from "./SocialShareDialog";
+
+function formatShareReviewerName(rawName: string | null | undefined): string {
+  const trimmed = rawName?.trim();
+  if (!trimmed || trimmed.includes("@")) return "a verified learner";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "a verified learner";
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+}
 
 const reviewsKey = (consultantId: string) => ["own-reviews", consultantId];
 

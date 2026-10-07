@@ -103,17 +103,6 @@ function offeringTitle(appointment: ReviewRecord["appointment"]) {
   );
 }
 
-export function formatShareReviewerName(
-  rawName: string | null | undefined,
-): string {
-  const trimmed = rawName?.trim();
-  if (!trimmed || trimmed.includes("@")) return "a verified learner";
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "a verified learner";
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
-}
-
 export function toOwnReviewRow(r: ReviewRecord): OwnReviewRow {
   const replyLive = r.replyBody !== null && r.replyDeletedAt === null;
   const isOrgSponsored = Boolean(
