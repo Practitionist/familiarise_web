@@ -176,12 +176,10 @@ export function SessionRatingRow({
       </div>
 
       {rating > 0 && noteOpen && (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div className="flex flex-wrap items-center gap-1.5">
           <Input
             value={comment}
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => setComment(e.target.value)}
             placeholder="Private note (only Familiarise sees this)"
             aria-label="Private feedback note (visible only to Familiarise)"
@@ -193,7 +191,10 @@ export function SessionRatingRow({
             size="sm"
             className="h-7 px-2.5 text-xs"
             disabled={save.isPending}
-            onClick={() => save.mutate({ value: rating, note: comment })}
+            onClick={(e) => {
+              e.stopPropagation();
+              save.mutate({ value: rating, note: comment });
+            }}
           >
             {save.isPending ? "Saving…" : "Save note"}
           </Button>

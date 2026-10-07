@@ -164,14 +164,31 @@ function SubscriptionDetailSheet({
   const mutateSubscription = useMutation({
     mutationFn: async (payload: {
       subscriptionId: string;
+      appointmentId?: string | null;
       action: "CANCEL";
       reason: string;
     }) => {
-      const res = await fetch("/api/admin/subscriptions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = payload.appointmentId
+        ? await fetch(
+            `/api/appointments/${encodeURIComponent(payload.appointmentId)}/cancel`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                reason: "OTHER",
+                notes: payload.reason,
+              }),
+            },
+          )
+        : await fetch("/api/admin/subscriptions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subscriptionId: payload.subscriptionId,
+              action: payload.action,
+              reason: payload.reason,
+            }),
+          });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(
@@ -333,6 +350,7 @@ function SubscriptionDetailSheet({
                       if (!subscription.subscriptionId) return;
                       mutateSubscription.mutate({
                         subscriptionId: subscription.subscriptionId,
+                        appointmentId: subscription.appointmentId,
                         action: "CANCEL",
                         reason: auditReason.trim(),
                       });

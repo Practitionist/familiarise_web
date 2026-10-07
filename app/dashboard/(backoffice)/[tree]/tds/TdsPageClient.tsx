@@ -126,7 +126,7 @@ function getCurrentFY(): string {
 
 function getRecentFYs(): string[] {
   const current = getCurrentFY();
-  const startYear = parseInt(current.split("-")[0], 10);
+  const startYear = Number.parseInt(current.split("-")[0], 10);
   return [
     `${startYear}-${String(startYear + 1).slice(2)}`,
     `${startYear - 1}-${String(startYear).slice(2)}`,

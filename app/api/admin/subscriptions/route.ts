@@ -7,6 +7,10 @@ import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import {
+  CANCELLABLE_FROM,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
 
 function buildSubscriptionFilter(
   status: string | null,
@@ -312,59 +316,22 @@ export const POST = withOpsAction(
         );
       }
 
-      let refundOutcome: Prisma.InputJsonValue | null = null;
-      if (existing.appointment?.id) {
-        const { POST: cancelAppointmentPost } =
-          await import("@/app/api/appointments/[appointmentId]/cancel/route");
-        const cancelReq = new NextRequest(
-          new URL(
-            `http://localhost/api/appointments/${existing.appointment.id}/cancel`,
-          ),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              reason: "OTHER",
-              notes: body.reason,
-            }),
+      await prisma.$transaction((tx) =>
+        transitionSubscriptionRequest(tx, {
+          actorUserId: actor.userId,
+          reason: body.reason,
+          organizationId: null,
+          where: { id: existing.id },
+          to: "CANCELLED",
+          data: {
+            cancelledAt: new Date(),
+            cancelledBy: actor.userId,
+            cancellationReason: "OTHER",
+            cancellationNotes: body.reason,
           },
-        );
-        const cancelRes = await cancelAppointmentPost(cancelReq, {
-          params: Promise.resolve({ appointmentId: existing.appointment.id }),
-        });
-        const cancelBody = (await cancelRes.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-          refund?: Prisma.InputJsonValue;
-        };
-        if (!cancelRes.ok) {
-          throw new OpsRefusal(
-            cancelBody.code ?? "CANCEL_FAILED",
-            cancelBody.error ?? "Failed to cancel subscription booking.",
-            cancelRes.status === 404 ? 404 : 409,
-          );
-        }
-        refundOutcome = cancelBody.refund ?? null;
-      } else {
-        const { CANCELLABLE_FROM, transitionSubscriptionRequest } =
-          await import("@/lib/booking/transitions");
-        await prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
-            actorUserId: actor.userId,
-            reason: body.reason,
-            organizationId: null,
-            where: { id: existing.id },
-            to: "CANCELLED",
-            data: {
-              cancelledAt: new Date(),
-              cancelledBy: actor.userId,
-              cancellationReason: "OTHER",
-              cancellationNotes: body.reason,
-            },
-            fromIn: [...CANCELLABLE_FROM],
-          }),
-        );
-      }
+          fromIn: [...CANCELLABLE_FROM],
+        }),
+      );
 
       return {
         target: { kind: "Subscription", id: existing.id },
@@ -373,13 +340,11 @@ export const POST = withOpsAction(
           subscriptionId: existing.id,
           previousStatus: existing.status,
           status: "CANCELLED",
-          refund: refundOutcome,
         },
         before: { status: existing.status },
         after: {
           status: "CANCELLED",
           action: "CANCEL",
-          refund: refundOutcome,
         },
       };
     },
