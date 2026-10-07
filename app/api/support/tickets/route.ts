@@ -155,14 +155,13 @@ export async function POST(req: NextRequest) {
       },
     );
 
-    const caseKey = caseKeyOf("support", ticket.id);
+    const caseKey = caseKeyOf({ kind: "support", id: ticket.id });
     const dashboardUrl = supportRequestHref(caseKey, resolvedOrganizationId);
 
     void notifySupportTicketResponse(
       ticketUserId,
       {
         ticketId: ticket.id,
-        referenceNumber: ticket.referenceNumber ?? undefined,
         subject: ticket.title,
         responderName: session.user.name || "Support",
         messagePreview: validatedData.description.slice(0, 240),
@@ -171,6 +170,7 @@ export async function POST(req: NextRequest) {
       notificationScope(resolvedOrganizationId),
     ).catch((err) => {
       reportSentryError(err, {
+        subsystem: "support",
         tags: {
           domain: "support",
           route: STAFF_OUTBOUND_ROUTE,
@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
     return supportError({
       status: 500,
       code: "INTERNAL",
-      error,
+      cause: error,
       context: { route: STAFF_OUTBOUND_ROUTE, action: "create" },
     });
   }
