@@ -147,6 +147,7 @@ export async function routeCapturedPayment(params: {
     await handleOverageMemberSuccess(
       orderId,
       gatewayPaymentId ? amountPaise : undefined,
+      gatewayPaymentId,
     );
     return;
   }

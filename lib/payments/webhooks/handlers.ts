@@ -899,6 +899,7 @@ export async function handlePaymentSuccess(
     try {
       await refundBookingPayment({
         paymentId: txResult.paymentId,
+        amountPaise: gatewayAmountPaise,
         reason: `capture after hold release (${txResult.releasedBy})`,
         initiatedByUserId: null,
       });

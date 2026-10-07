@@ -204,9 +204,9 @@ export async function GET(req: NextRequest) {
             "orders.fetchPayments",
             () => razorpayClient.orders.fetchPayments(paymentIntent),
           );
-          const captured =
-            orderPayments.items?.find((p) => p.status === "captured") ??
-            orderPayments.items?.[0];
+          const captured = orderPayments.items?.find(
+            (p) => p.status === "captured",
+          );
 
           await routeCapturedPayment({
             orderId: paymentIntent,
