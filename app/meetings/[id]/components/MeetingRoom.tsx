@@ -26,6 +26,7 @@ import {
   Phone,
   MoreVertical,
   Radio,
+  MessageSquareText,
 } from "lucide-react";
 
 import {
@@ -38,6 +39,8 @@ import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { StageControls } from "./StageControls";
+import { StagePinnedBannerOverlay } from "./StagePinnedBannerOverlay";
+import { StageQaDrawer } from "./StageQaDrawer";
 import { OverrunBanner } from "./OverrunBanner";
 import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
 import { ConnectionStateScreen } from "./ConnectionStateScreen";
@@ -65,6 +68,12 @@ import {
   isInCallChatAllowed,
   isOneToManyAppointmentType,
 } from "@/lib/meetings/room-ready";
+import {
+  normalizeStageBannerFromCustomData,
+  STAGE_QA_EVENT_TYPES,
+  type StagePinnedBanner,
+  type StageQuestion,
+} from "@/lib/meetings/stage-qa";
 
 export { isInCallChatAllowed };
 
@@ -151,7 +160,14 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
-  const [showParticipants, setShowParticipants] = useState(false);
+  const [activeSideTab, setActiveSideTab] = useState<
+    "participants" | "qa" | null
+  >(null);
+  const [questions, setQuestions] = useState<StageQuestion[]>([]);
+  const [activeBanner, setActiveBanner] = useState<StagePinnedBanner | null>(
+    null,
+  );
+  const [isQaSubmitting, setIsQaSubmitting] = useState(false);
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
@@ -160,6 +176,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     callStateHooks;
   const useIsCallLive = callStateHooks.useIsCallLive ?? useDefaultTrue;
   const useCallSettings = callStateHooks.useCallSettings ?? useDefaultUndefined;
+  const useCallCustomData =
+    callStateHooks.useCallCustomData ?? useDefaultUndefined;
 
   const { meetingId, recordingEnabled } = useMeetingRecording(call?.id);
 
@@ -168,6 +186,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const participantCount = useParticipantCount();
   const isCallLive = useIsCallLive();
   const callSettings = useCallSettings();
+  const callCustomData = useCallCustomData();
 
   // Set Stream disconnection timeout so dropped connections emit participant_left events.
   useEffect(() => {
@@ -187,6 +206,141 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const defaultIncomingVideoCap: IncomingVideoSetting = isOneToMany
     ? "720p"
     : "480p";
+
+  // Hydrate initial active ON SCREEN banner from call.state.custom for late joiners.
+  useEffect(() => {
+    if (!inCallChatAllowed) return;
+    const initialBanner = normalizeStageBannerFromCustomData(
+      callCustomData as Record<string, unknown> | undefined,
+    );
+    if (initialBanner) {
+      setActiveBanner(initialBanner);
+    }
+  }, [callCustomData, inCallChatAllowed]);
+
+  // Subscribe to real-time Q&A and ON SCREEN stage banner events over Stream WebSocket.
+  useEffect(() => {
+    if (!call || !inCallChatAllowed || typeof call.on !== "function") return;
+
+    const handleCustomEvent = (event: {
+      custom?: Record<string, unknown>;
+    }) => {
+      const custom = event?.custom;
+      if (!custom || typeof custom.type !== "string") return;
+
+      if (
+        custom.type === STAGE_QA_EVENT_TYPES.QUESTION_ASKED &&
+        custom.question &&
+        typeof custom.question === "object"
+      ) {
+        const incoming = custom.question as StageQuestion;
+        setQuestions((prev) =>
+          prev.some((item) => item.id === incoming.id)
+            ? prev
+            : [...prev, incoming],
+        );
+      } else if (
+        custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED &&
+        custom.banner &&
+        typeof custom.banner === "object"
+      ) {
+        setActiveBanner(custom.banner as StagePinnedBanner);
+      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_UNPINNED) {
+        setActiveBanner(null);
+      }
+    };
+
+    const unsubscribe = call.on("custom", handleCustomEvent as never);
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, [call, inCallChatAllowed]);
+
+  const targetQaMeetingId = meetingId ?? call?.id ?? "";
+
+  const handleAskQuestion = useCallback(
+    async (text: string) => {
+      if (!targetQaMeetingId) return;
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "ask", text }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body?.error ?? "Failed to send question");
+        }
+        if (body?.question) {
+          setQuestions((prev) =>
+            prev.some((q) => q.id === body.question.id)
+              ? prev
+              : [...prev, body.question],
+          );
+        }
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetQaMeetingId],
+  );
+
+  const handlePinQuestion = useCallback(
+    async (question: StageQuestion) => {
+      if (!targetQaMeetingId || !isHost) return;
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "pin",
+              questionId: question.id,
+              text: question.text,
+              authorId: question.authorId,
+              authorName: question.authorName,
+              authorRole: question.authorRole,
+            }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body?.banner) {
+          setActiveBanner(body.banner);
+        }
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetQaMeetingId, isHost],
+  );
+
+  const handleUnpinQuestion = useCallback(async () => {
+    if (!targetQaMeetingId || !isHost) return;
+    setIsQaSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "unpin" }),
+        },
+      );
+      if (res.ok) {
+        setActiveBanner(null);
+      }
+    } finally {
+      setIsQaSubmitting(false);
+    }
+  }, [targetQaMeetingId, isHost]);
 
   // Enforce default incoming video cap on join (480p for 1:1 sessions, 720p for webinars/classes).
   useEffect(() => {
@@ -304,38 +458,87 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
             </div>
           </div>
 
+          {inCallChatAllowed && (
+            <StagePinnedBannerOverlay
+              banner={activeBanner}
+              isHost={isHost}
+              onUnpin={handleUnpinQuestion}
+              isUpdating={isQaSubmitting}
+            />
+          )}
+
           <div
             className={cn(
               "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
-              showParticipants ? "translate-x-0" : "translate-x-full",
+              activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-zinc-400" />
-                <span className="font-semibold text-white">Participants</span>
-                <span className="px-2 py-0.5 bg-zinc-800 rounded-full text-xs text-zinc-400">
-                  {participantCount}
-                </span>
+            <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveSideTab("participants")}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    activeSideTab === "participants"
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-zinc-200",
+                  )}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>People ({participantCount})</span>
+                </button>
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("qa")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "qa"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" />
+                    <span>Q&A</span>
+                    {questions.length > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {questions.length}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
               <button
-                onClick={() => setShowParticipants(false)}
+                onClick={() => setActiveSideTab(null)}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
-            <div className="h-[calc(100%-60px)] overflow-y-auto">
-              <CallParticipantsList
-                onClose={() => setShowParticipants(false)}
+            {activeSideTab === "qa" && inCallChatAllowed ? (
+              <StageQaDrawer
+                questions={questions}
+                activeBanner={activeBanner}
+                isHost={isHost}
+                onAskQuestion={handleAskQuestion}
+                onPinQuestion={handlePinQuestion}
+                onUnpinQuestion={handleUnpinQuestion}
+                isSubmitting={isQaSubmitting}
               />
-            </div>
+            ) : (
+              <div className="h-[calc(100%-60px)] overflow-y-auto">
+                <CallParticipantsList
+                  onClose={() => setActiveSideTab(null)}
+                />
+              </div>
+            )}
           </div>
 
-          {showParticipants && (
+          {activeSideTab && (
             <div
               className="fixed inset-0 bg-black/50 z-30 lg:hidden"
-              onClick={() => setShowParticipants(false)}
+              onClick={() => setActiveSideTab(null)}
             />
           )}
         </div>
@@ -412,11 +615,39 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
 
               <CallStatsButton />
 
+              {inCallChatAllowed && (
+                <button
+                  type="button"
+                  title="Live Q&A"
+                  data-testid="toggle-qa-drawer"
+                  onClick={() =>
+                    setActiveSideTab((prev) => (prev === "qa" ? null : "qa"))
+                  }
+                  className={cn(
+                    "p-3 rounded-xl transition-colors relative",
+                    activeSideTab === "qa"
+                      ? "bg-amber-400 text-zinc-950"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-white",
+                  )}
+                >
+                  <MessageSquareText className="w-5 h-5" />
+                  {questions.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
+                      {questions.length}
+                    </span>
+                  )}
+                </button>
+              )}
+
               <button
-                onClick={() => setShowParticipants((prev) => !prev)}
+                onClick={() =>
+                  setActiveSideTab((prev) =>
+                    prev === "participants" ? null : "participants",
+                  )
+                }
                 className={cn(
                   "p-3 rounded-xl transition-colors relative",
-                  showParticipants
+                  activeSideTab === "participants"
                     ? "bg-white text-zinc-900"
                     : "bg-zinc-800 hover:bg-zinc-700 text-white",
                 )}
