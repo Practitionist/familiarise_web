@@ -865,12 +865,17 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       mockCreateEarningsFromPayment.mockResolvedValueOnce("earn-1");
 
       // The mint stamps the GST split on the order notes; it sums to the charge.
-      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1", {
-        type: "recording_purchase",
-        originalAmountPaise: "84661",
-        taxAmountPaise: "15239",
-        buyerCountry: "IN",
-      });
+      await handleRecordingPurchaseSuccess(
+        "order_rec_1",
+        "pay_rzp_1",
+        {
+          type: "recording_purchase",
+          originalAmountPaise: "84661",
+          taxAmountPaise: "15239",
+          buyerCountry: "IN",
+        },
+        99900,
+      );
 
       expect(mockRecordingPurchaseUpdateMany).toHaveBeenCalledWith({
         where: { id: "rp-1", status: "PENDING" },
@@ -918,7 +923,12 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         gatewayPaymentId: "pay_rzp_1",
         recording: null,
       });
-      await handleRecordingPurchaseSuccess("order_rec_1", "pay_rzp_1");
+      await handleRecordingPurchaseSuccess(
+        "order_rec_1",
+        "pay_rzp_1",
+        undefined,
+        99900,
+      );
       expect(mockRecordingPurchaseUpdateMany).not.toHaveBeenCalled();
       expect(mockPaymentCreate).not.toHaveBeenCalled();
       expect(mockCreateEarningsFromPayment).not.toHaveBeenCalled();
