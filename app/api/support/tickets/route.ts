@@ -155,37 +155,31 @@ export async function POST(req: NextRequest) {
       },
     );
 
-    const caseKey = caseKeyOf({ kind: "support", id: ticket.id });
-    const dashboardUrl = supportRequestHref(caseKey, resolvedOrganizationId);
-
-    void notifySupportTicketResponse(
-      ticketUserId,
-      {
-        ticketId: ticket.id,
-        subject: ticket.title,
-        responderName: session.user.name || "Support",
-        messagePreview: validatedData.description.slice(0, 240),
-        dashboardUrl,
-      },
-      notificationScope(resolvedOrganizationId),
-    ).catch((err) => {
+    await notifySupportTicketResponse(ticket.userId, {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message: validatedData.description,
+      respondedBy: session.user.name ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        resolvedOrganizationId,
+      ),
+      ...notificationScope(resolvedOrganizationId),
+    }).catch((err) => {
       reportSentryError(err, {
         subsystem: "support",
-        tags: {
-          domain: "support",
-          route: STAFF_OUTBOUND_ROUTE,
-          action: "notify-outbound-recipient",
-        },
-        extra: { ticketId: ticket.id, targetUserId: ticketUserId },
+        op: "outbound.notifyUser",
+        extra: { ticketId: ticket.id },
       });
     });
 
     return NextResponse.json(ticket, { status: 201 });
-  } catch (error) {
+  } catch (cause) {
     return supportError({
       status: 500,
       code: "INTERNAL",
-      cause: error,
+      cause,
       context: { route: STAFF_OUTBOUND_ROUTE, action: "create" },
     });
   }
