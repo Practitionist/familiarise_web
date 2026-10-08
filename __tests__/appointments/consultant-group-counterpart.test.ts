@@ -131,5 +131,26 @@ describe("Consultant group-event counterpart resolution", () => {
     );
 
     expect(vms[0]?.counterpart.name).toBe("Aarav Anderson");
+
+    const collabDetailPayload = {
+      appointment: collabWebinar,
+    } as unknown as TAppointmentDetail;
+
+    const collaboratorDetail = mapAppointmentDetail(
+      collabDetailPayload,
+      "consultant",
+      NOW,
+      "cp_guest_speaker",
+    );
+    const ownerDetail = mapAppointmentDetail(
+      collabDetailPayload,
+      "consultant",
+      NOW,
+      "cp_owner",
+    );
+
+    expect(collaboratorDetail.vm.counterpart.name).toBe("Aarav Anderson");
+    expect(collaboratorDetail.vm.counterpart.roleLabel).toBe("Host");
+    expect(ownerDetail.vm.counterpart.name).toBe("Registered attendees");
   });
 });
