@@ -18,6 +18,12 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  spamLimiter: {},
+  applyRateLimit: jest.fn(async () => null),
+}));
+
 // The REAL appointmentAuthzError must run (its mapping is what the route
 // ships), so appointment-access is only half-mocked below — which means its
 // own imports need mocks too, or requireActual drags in better-auth's ESM.
