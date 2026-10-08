@@ -146,16 +146,14 @@ export async function setMaintenanceState(
     });
 
     if (phase === MaintenancePhase.OFF) {
-      if (activeWindow) {
-        await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase: MaintenancePhase.OFF,
-            endedAt: new Date(),
-            endedBy: config.endedBy,
-          },
-        });
-      }
+      await tx.maintenanceWindow.updateMany({
+        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+        data: {
+          phase: MaintenancePhase.OFF,
+          endedAt: new Date(),
+          endedBy: config.endedBy,
+        },
+      });
     } else if (activeWindow) {
       await tx.maintenanceWindow.update({
         where: { id: activeWindow.id },

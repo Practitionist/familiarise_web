@@ -252,6 +252,9 @@ async function stageCaptureRefund(
       const claimed = await tx.payment.updateMany({
         where: { id: existing.id, paymentStatus: "PENDING" },
         data: {
+          amount: input.chargedPaise,
+          originalAmount: input.charge.originalAmount,
+          taxAmount: input.charge.taxAmount,
           paymentStatus: "SUCCEEDED",
           gatewayPaymentId: input.gatewayPaymentId,
           capturedAt: new Date(),
@@ -259,9 +262,15 @@ async function stageCaptureRefund(
         },
       });
       if (claimed.count === 0) return null;
+      if (input.chargedPaise !== existing.amount) {
+        await tx.paymentLeg.updateMany({
+          where: { paymentId: existing.id, source: "CARD" },
+          data: { amountPaise: input.chargedPaise },
+        });
+      }
       await postUnappliedReceipt(tx, {
         paymentId: existing.id,
-        capturedPaise: existing.amount,
+        capturedPaise: input.chargedPaise,
       });
       return {
         kind: "refund",
