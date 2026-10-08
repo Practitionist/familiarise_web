@@ -184,6 +184,29 @@ export function OfferingEditorContainer({
   const [persistedStatus, setPersistedStatus] = React.useState<
     "DRAFT" | "PUBLISHED" | null
   >(null);
+  const copySourceId = (copySource?.id as string | undefined) ?? undefined;
+  const hydratedRef = React.useRef<string | undefined>(
+    planId ?? (copySourceId ? `copy:${copySourceId}` : undefined),
+  );
+  React.useEffect(() => {
+    const nextKey =
+      planId ?? (copySourceId ? `copy:${copySourceId}` : undefined);
+    if (hydratedRef.current !== nextKey) {
+      hydratedRef.current = nextKey;
+      setStagedImage(null);
+      setPersistedStatus(null);
+      let sourceValues: Record<string, unknown> | undefined;
+      if (nextKey) {
+        sourceValues = copySource
+          ? duplicateFormValues(copySource)
+          : existingPlan;
+      }
+      form.reset({
+        ...adapter.defaults,
+        ...sourceValues,
+      });
+    }
+  }, [adapter.defaults, copySource, copySourceId, existingPlan, form, planId]);
   const status = persistedStatus ?? editorStatus(existingPlan, planId, saveCtx);
   // The org catalog's writer keeps its own reading of webinar/class status.
   const hasRealDraft = !isEvent || !onSave;

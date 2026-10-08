@@ -706,14 +706,17 @@ export function HomeTab({
                 </DataCard>
               )}
 
-              {/* #1527 — Available is the Earnings page's word for READY. */}
               <ThisMonthCard
                 consultantId={consultantId}
                 sessionsThisMonth={sessionsDelivered?.thisMonth ?? null}
                 sessionsDelivered={sessionsDelivered?.lifetime ?? null}
                 availablePaise={financialSummary?.availableEarnings ?? 0}
-                averageRating={performanceSnapshot?.averageRating ?? 0}
-                totalReviews={performanceSnapshot?.totalReviews ?? 0}
+                publishedRatingOneToOne={
+                  performanceSnapshot?.publishedRatingOneToOne
+                }
+                publishedRatingGroup={performanceSnapshot?.publishedRatingGroup}
+                ratedClientsOneToOne={performanceSnapshot?.ratedClientsOneToOne}
+                ratedEventsGroup={performanceSnapshot?.ratedEventsGroup}
               />
               <ShareProfilePrompt consultantId={consultantId} />
             </motion.div>

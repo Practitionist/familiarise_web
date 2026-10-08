@@ -9,7 +9,9 @@ import {
   CalendarClock,
   CheckCircle2,
   IndianRupee,
-  Wallet,
+  Link2,
+  Repeat,
+  Store,
 } from "lucide-react";
 import {
   Bar,
@@ -36,8 +38,13 @@ import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { useSession } from "@/lib/auth-client";
 import { getAppointmentStatus } from "../../utils/appointmentHelpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import type { MonthlyEarning } from "@/lib/data/consultant-earnings-analytics";
-import { BUCKET_LABEL, type BucketSums } from "@/lib/dashboard/earnings-state";
+import type {
+  ActiveFeeSchedule,
+  AttributionBreakdown,
+  MonthlyEarning,
+  RepeatLearnerStats,
+} from "@/lib/data/consultant-earnings-analytics";
+import type { BucketSums } from "@/lib/dashboard/earnings-state";
 
 interface EarningsAnalyticsResponse {
   summary: {
@@ -48,31 +55,51 @@ interface EarningsAnalyticsResponse {
     heldEarnings: number;
     pendingTrustEarnings: number;
   };
-  /** #1675 PR-Y — the Summary tab's whole-account tile sums. */
   totals?: BucketSums;
+  feeSchedule?: ActiveFeeSchedule;
   monthlyEarnings?: MonthlyEarning[];
+  attributionBreakdown?: AttributionBreakdown;
+  repeatLearnerStats?: RepeatLearnerStats;
 }
 
 const formatInr = (paise: number) => formatCurrencyAmount(paise, "INR");
 
+function formatBpsRate(bps: number): string {
+  const pct = bps / 100;
+  return `${bps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
+}
+
 const monthLabel = (month: string) =>
   format(parse(month, "yyyy-MM", new Date()), "MMM");
+
+function formatChannelSubtitle(opts: {
+  hasB2C: boolean;
+  pct: number;
+  count: number;
+  feeLabel: string | null;
+  keepLabel: string | null;
+  fallbackKeepPrefix: string;
+  fallbackDefault: string;
+}): string {
+  if (opts.hasB2C) {
+    const noun = opts.count === 1 ? "booking" : "bookings";
+    const feeSuffix = opts.feeLabel ? ` (${opts.feeLabel} fee)` : "";
+    return `${opts.pct}% of B2C · ${opts.count} ${noun}${feeSuffix}`;
+  }
+  if (opts.keepLabel) {
+    return opts.fallbackKeepPrefix.replace("{keep}", opts.keepLabel);
+  }
+  return opts.fallbackDefault;
+}
 
 export default function AnalyticsPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   const { data: session } = useSession();
-  // GET /api/consultant/earnings is strictly session-scoped (it resolves
-  // the profile from the signed-in user), while the SSR prefetch keys this
-  // cache entry by the URL's consultantId. For a privileged viewer
-  // (ADMIN/STAFF on someone else's dashboard) a client refetch would fetch
-  // the WRONG record — so refetching is gated to the profile owner and
-  // non-owners render the server-prefetched data only.
   const isOwnDashboard =
     (session?.user as { consultantProfileId?: string } | undefined)
       ?.consultantProfileId === consultantId;
 
-  // queryKey MUST match the server prefetch in ./page.tsx.
   const {
     data: earningsData,
     isLoading: earningsLoading,
@@ -92,15 +119,10 @@ export default function AnalyticsPanel({
     enabled: isOwnDashboard,
   });
 
-  // react-query's refetch() bypasses `enabled`, so the Retry buttons must
-  // re-apply the owner gate — otherwise a privileged viewer's retry would
-  // fetch THEIR session-scoped earnings under this consultant's cache key.
   const retryEarnings = () => {
     if (isOwnDashboard) void refetchEarnings();
   };
 
-  // Personal-scope appointments — same key + payload as the appointments
-  // page's #890 SSR prefetch, so the two pages share one cache entry.
   const appointmentsQuery = createConsultantQueries(
     consultantId,
     "personal",
@@ -138,19 +160,37 @@ export default function AnalyticsPanel({
     totalInr: m.totalPaise / 100,
     count: m.count,
   }));
-  const thisMonth = monthly.at(-1);
   const hasAnyEarnings =
     (earningsData?.summary.totalEarnings ?? 0) > 0 ||
     monthly.some((m) => m.count > 0);
 
-  const summary = earningsData?.summary;
+  const attribution = earningsData?.attributionBreakdown;
+  const ownLinkPaise = attribution?.ownLinkPaise;
+  const marketplacePaise = attribution?.marketplacePaise;
+  const totalB2CPaise = (ownLinkPaise ?? 0) + (marketplacePaise ?? 0);
+  const ownLinkPct =
+    totalB2CPaise > 0
+      ? Math.round(((ownLinkPaise ?? 0) / totalB2CPaise) * 100)
+      : 0;
+  const marketplacePct = totalB2CPaise > 0 ? 100 - ownLinkPct : 0;
+  const repeatStats = earningsData?.repeatLearnerStats;
+  const feeSchedule = earningsData?.feeSchedule;
+  const ownFeeLabel = feeSchedule
+    ? formatBpsRate(feeSchedule.ownLinkBps)
+    : null;
+  const mktFeeLabel = feeSchedule
+    ? formatBpsRate(feeSchedule.marketplaceBps)
+    : null;
+  const ownKeepLabel = feeSchedule
+    ? formatBpsRate(10_000 - feeSchedule.ownLinkBps)
+    : null;
+  const mktKeepLabel = feeSchedule
+    ? formatBpsRate(10_000 - feeSchedule.marketplaceBps)
+    : null;
 
   return (
-    // No DashboardHeader — this is the Analytics tab of the Earnings page now,
-    // which renders one header above the tab strip.
     <DashboardErrorBoundary>
       <DashboardContent className="px-0 lg:px-0">
-        {/* KPI grid */}
         {earningsLoading || appointmentsLoading ? (
           <DashboardGrid columns={3}>
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -177,28 +217,63 @@ export default function AnalyticsPanel({
         ) : (
           <DashboardGrid columns={3}>
             <StatCard
-              title="Total Earnings"
-              value={formatInr(summary?.totalEarnings ?? 0)}
-              icon={IndianRupee}
-              tooltip="All cleared earnings (pending + ready + paid + held). Excludes refunds and org-trust holds."
-            />
-            <StatCard
-              title="This Month"
-              value={formatInr(thisMonth?.totalPaise ?? 0)}
-              icon={CalendarCheck}
-              subtitle={
-                thisMonth ? `${thisMonth.count} earning sessions` : undefined
+              title="Own-Link Revenue"
+              value={
+                earningsError || ownLinkPaise === undefined
+                  ? "—"
+                  : formatInr(ownLinkPaise)
               }
-            />
-            {/* #1675 PR-Y — the Summary tab's word and its figure (READY +
-                BATCHED, net of refunds), so the two tabs agree. */}
-            <StatCard
-              title={BUCKET_LABEL.AVAILABLE}
-              value={formatInr(
-                earningsData?.totals?.available ?? summary?.readyEarnings ?? 0,
-              )}
-              icon={Wallet}
+              icon={Link2}
               variant="success"
+              subtitle={formatChannelSubtitle({
+                hasB2C: Boolean(attribution && totalB2CPaise > 0),
+                pct: ownLinkPct,
+                count: attribution?.ownLinkCount ?? 0,
+                feeLabel: ownFeeLabel,
+                keepLabel: ownKeepLabel,
+                fallbackKeepPrefix:
+                  "Keep {keep} before TDS when learners first book via ?via=",
+                fallbackDefault:
+                  "Reduced fee when learners first book via your shared link",
+              })}
+              tooltip="Net B2C revenue from buyers whose first purchase with you came through your personal share link (?via=)."
+            />
+            <StatCard
+              title="Marketplace Revenue"
+              value={
+                earningsError || marketplacePaise === undefined
+                  ? "—"
+                  : formatInr(marketplacePaise)
+              }
+              icon={Store}
+              subtitle={formatChannelSubtitle({
+                hasB2C: Boolean(attribution && totalB2CPaise > 0),
+                pct: marketplacePct,
+                count: attribution?.marketplaceCount ?? 0,
+                feeLabel: mktFeeLabel,
+                keepLabel: mktKeepLabel,
+                fallbackKeepPrefix:
+                  "Keep {keep} before TDS on Marketplace-acquired bookings",
+                fallbackDefault:
+                  "Marketplace fee rate on Marketplace-acquired bookings",
+              })}
+              tooltip="Net B2C revenue from buyers who first discovered you through the Familiarise Marketplace."
+            />
+            <StatCard
+              title="Repeat Learner Rate"
+              value={
+                !earningsError &&
+                typeof repeatStats?.repeatLearnerRate === "number"
+                  ? `${repeatStats.repeatLearnerRate}%`
+                  : "—"
+              }
+              icon={Repeat}
+              subtitle={
+                (repeatStats?.totalLearners ?? 0) > 0 && repeatStats
+                  ? `${repeatStats.repeatLearners} of ${repeatStats.totalLearners} learners made 2+ bookings`
+                  : "Learners with 2+ paid bookings"
+              }
+              tooltip="Share of your distinct B2C learners who have completed two or more separate paid purchases with you."
             />
             <StatCard
               title="Sessions Completed"

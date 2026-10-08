@@ -14,6 +14,11 @@ export const WORKSPACE_SETTINGS_SECTIONS = [
     label: "Notification routing",
     description: "Where notifications from your organizations reach you",
   },
+  {
+    key: "account",
+    label: "Account",
+    description: "Sign-in security, sessions, and data privacy consent",
+  },
 ] as const;
 
 export type WorkspaceSettingsKey =
@@ -76,6 +81,7 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   settings: "Workspace settings",
   landing: "Default landing organization",
   notifications: "Notification routing",
+  account: "Account",
   support: "Support requests",
   create: "New organization",
 };

@@ -21,10 +21,11 @@ import type {
   OrgStatus,
 } from "@prisma/client";
 
-import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole } from "../useOrgRole";
 import { CancellationPolicyCard } from "./CancellationPolicyCard";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -121,6 +122,7 @@ interface PatchPayload {
   gstin?: string | null;
   gstStateCode?: string | null;
   gstRegStatus?: GstRegStatus;
+  pan?: string | null;
   // #1230 wave-4 — MSME declaration rides the same PATCH upsert.
   msmeStatus?: MsmeStatus;
   msmeWrittenAgreementOnFile?: boolean;
@@ -137,7 +139,7 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
   if (!res.ok) {
     // Carry the structured code so onError can branch (VERSION_CONFLICT →
     // stale-tab dialog instead of the generic error banner).
-    throw Object.assign(new Error(body.error || "Failed to update settings"), {
+    throw Object.assign(new Error(body.error ?? "Failed to update settings"), {
       code: body.code as string | undefined,
       currentVersion: body.currentVersion as number | undefined,
     });
@@ -145,17 +147,312 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
   return body;
 }
 
+function resolveMarketplaceVisibilityCopy(
+  status: OrgStatus,
+  isPublic: boolean,
+): string {
+  if (status !== "ACTIVE") {
+    return "Organisation must be ACTIVE before enabling public listing.";
+  }
+  if (isPublic) {
+    return "Your organisation appears on the Explore page.";
+  }
+  return "Your organisation is hidden from the Explore page.";
+}
+
+function TaxComplianceCard({
+  orgId,
+  data,
+  onVersionConflict,
+  onError,
+  onSuccess,
+}: Readonly<{
+  orgId: string;
+  data: SettingsResponse;
+  onVersionConflict: () => void;
+  onError: (msg: string | null) => void;
+  onSuccess: () => void;
+}>) {
+  const queryClient = useQueryClient();
+  const [gstin, setGstin] = useState(data.profile.taxInfo?.gstin ?? "");
+  const [gstStateCode, setGstStateCode] = useState(
+    data.profile.taxInfo?.gstStateCode ?? "",
+  );
+  const [gstRegStatus, setGstRegStatus] = useState<GstRegStatus>(
+    data.profile.taxInfo?.gstRegStatus ?? "UNREGISTERED",
+  );
+  const [pan, setPan] = useState("");
+  const [taxSaving, setTaxSaving] = useState(false);
+
+  const [msmeStatus, setMsmeStatus] = useState<MsmeStatus>(
+    data.profile.msmeInfo?.msmeStatus ?? "NONE",
+  );
+  const [msmeAgreement, setMsmeAgreement] = useState(
+    data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
+  );
+  const [msmeSaving, setMsmeSaving] = useState(false);
+
+  useEffect(() => {
+    setGstin(data.profile.taxInfo?.gstin ?? "");
+    setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
+    setGstRegStatus(data.profile.taxInfo?.gstRegStatus ?? "UNREGISTERED");
+    setMsmeStatus(data.profile.msmeInfo?.msmeStatus ?? "NONE");
+    setMsmeAgreement(
+      data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
+    );
+  }, [data]);
+
+  const msmeDirty =
+    msmeStatus !== (data.profile.msmeInfo?.msmeStatus ?? "NONE") ||
+    msmeAgreement !==
+      (data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false);
+
+  const trimmedGstin = gstin.trim().toUpperCase();
+  const gstinValid = trimmedGstin.length === 0 || trimmedGstin.length === 15;
+  const trimmedStateCode = gstStateCode.trim();
+  const stateCodeValid =
+    trimmedStateCode.length === 0 || /^\d{2}$/.test(trimmedStateCode);
+  const trimmedPan = pan.trim().toUpperCase();
+  const panValid =
+    trimmedPan.length === 0 || /^[A-Z]{5}\d{4}[A-Z]$/.test(trimmedPan);
+
+  const saveTaxInfo = async () => {
+    if (!gstinValid) return;
+    if (!stateCodeValid) {
+      onError("GST state code must be exactly 2 digits (e.g. 29).");
+      return;
+    }
+    if (!panValid) {
+      onError("PAN must be 10 characters (e.g. AAAAA0000A).");
+      return;
+    }
+    onError(null);
+    setTaxSaving(true);
+    try {
+      await patchSettings(orgId, {
+        expectedVersion: data.profile.version,
+        gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
+        gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
+        gstRegStatus,
+        ...(trimmedPan.length === 10 ? { pan: trimmedPan } : {}),
+      });
+      setPan("");
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: orgDetailsQueryKey(orgId),
+      });
+      onSuccess();
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "VERSION_CONFLICT") {
+        onVersionConflict();
+      } else {
+        onError(
+          err instanceof Error ? err.message : "Failed to save tax details",
+        );
+      }
+    } finally {
+      setTaxSaving(false);
+    }
+  };
+
+  const saveMsme = async () => {
+    onError(null);
+    setMsmeSaving(true);
+    try {
+      await patchSettings(orgId, {
+        expectedVersion: data.profile.version,
+        msmeStatus,
+        msmeWrittenAgreementOnFile: msmeAgreement,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "VERSION_CONFLICT") {
+        onVersionConflict();
+      } else {
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Failed to save MSME declaration",
+        );
+      }
+    } finally {
+      setMsmeSaving(false);
+    }
+  };
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileText className="w-4 h-4" /> Tax &amp; compliance
+        </CardTitle>
+        <CardDescription>
+          India GST and PAN identity used on invoices, TDS filings, and
+          3-way-match reconciliation. Only owners can edit these.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="gstin">GSTIN</Label>
+            <Input
+              id="gstin"
+              value={gstin}
+              onChange={(e) =>
+                setGstin(e.target.value.toUpperCase().slice(0, 15))
+              }
+              placeholder="22AAAAA0000A1Z5"
+              maxLength={15}
+            />
+            {!gstinValid && (
+              <p className="text-xs text-red-600">
+                GSTIN must be exactly 15 characters.
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="gst-state-code">GST state code</Label>
+            <Input
+              id="gst-state-code"
+              value={gstStateCode}
+              onChange={(e) =>
+                setGstStateCode(
+                  e.target.value.replace(/[^0-9]/g, "").slice(0, 2),
+                )
+              }
+              placeholder="e.g. 22"
+              maxLength={2}
+            />
+            <p className="text-xs text-zinc-500">
+              First two digits of the GSTIN — the state of registration.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="tax-pan">PAN</Label>
+            <Input
+              id="tax-pan"
+              value={pan}
+              onChange={(e) =>
+                setPan(e.target.value.toUpperCase().slice(0, 10))
+              }
+              placeholder={
+                data.profile.taxInfo?.panLast4
+                  ? `••••••${data.profile.taxInfo.panLast4}`
+                  : "AAAAA0000A"
+              }
+              maxLength={10}
+            />
+            {data.profile.taxInfo?.panLast4 ? (
+              <p className="text-xs text-zinc-500">
+                PAN on file ending in {data.profile.taxInfo.panLast4}. Enter a
+                new 10-character PAN to replace it, or leave blank to keep the
+                existing PAN.
+              </p>
+            ) : (
+              <p className="text-xs text-zinc-500">
+                10-character Permanent Account Number (encrypted at rest).
+              </p>
+            )}
+            {!panValid && (
+              <p className="text-xs text-red-600">
+                PAN must follow format AAAAA0000A.
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="gst-reg-status">GST registration status</Label>
+            <Select
+              value={gstRegStatus}
+              onValueChange={(v) => setGstRegStatus(v as GstRegStatus)}
+            >
+              <SelectTrigger id="gst-reg-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="REGULAR">Regular</SelectItem>
+                <SelectItem value="COMPOSITION">Composition</SelectItem>
+                <SelectItem value="UNREGISTERED">Unregistered</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="space-y-2 pt-2 border-t">
+          <Label htmlFor="msme-status">MSME / Udyam classification</Label>
+          <Select
+            value={msmeStatus}
+            onValueChange={(v) => setMsmeStatus(v as MsmeStatus)}
+          >
+            <SelectTrigger id="msme-status" className="md:w-1/2">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="NONE">
+                Not an MSME / prefer not to say
+              </SelectItem>
+              <SelectItem value="MICRO">Micro (Udyam registered)</SelectItem>
+              <SelectItem value="SMALL">Small (Udyam registered)</SelectItem>
+              <SelectItem value="MEDIUM">Medium</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-zinc-500">
+            Micro &amp; Small suppliers must be paid within 15 days (45 with a
+            signed agreement) under the MSMED Act; declaring accurately lets us
+            schedule your payouts to that clock.
+          </p>
+          {msmeStatus !== "NONE" && (
+            <div className="flex items-center gap-2 pt-1">
+              <Checkbox
+                id="msme-agreement"
+                checked={msmeAgreement}
+                onCheckedChange={(v) => setMsmeAgreement(v === true)}
+              />
+              <Label htmlFor="msme-agreement" className="font-normal">
+                A written agreement covering payment terms is on file
+              </Label>
+            </div>
+          )}
+          {msmeDirty && (
+            <Button
+              size="sm"
+              onClick={() => void saveMsme()}
+              disabled={msmeSaving}
+            >
+              {msmeSaving ? "Saving…" : "Save MSME declaration"}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+      <CardFooter>
+        <Button
+          onClick={() => void saveTaxInfo()}
+          disabled={taxSaving || !gstinValid || !panValid}
+        >
+          {taxSaving ? "Saving…" : "Save tax details"}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
 export function GeneralPanel({ orgId }: { orgId: string }) {
-  const { can } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgAccess(orgId, {
-    permission: "settings.manage",
-  });
+  const { can, isLoading: roleLoading } = useOrgRole(orgId);
+  const canManage = can("settings.manage");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-settings", orgId],
     queryFn: () => fetchSettings(orgId),
-    enabled: allowed,
+    enabled: canManage,
   });
 
   const [name, setName] = useState("");
@@ -164,29 +461,12 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
   const [isPublic, setIsPublic] = useState(false);
-  // #777 §B — Tax & compliance (OrganizationTaxInfo). UNREGISTERED is the
-  // #1230 wave-4 — MSME (Udyam) declaration. Drives the MSMED 15/45-day
-  // payment-terms engine on host-org payouts; NONE keeps 60-day defaults.
-  const [msmeStatus, setMsmeStatus] = useState<MsmeStatus>("NONE");
-  const [msmeAgreement, setMsmeAgreement] = useState(false);
-  const msmeDirty =
-    msmeStatus !== (data?.profile.msmeInfo?.msmeStatus ?? "NONE") ||
-    msmeAgreement !==
-      (data?.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false);
   const [resubmitting, setResubmitting] = useState(false);
-  // schema default, so an org with no taxInfo row reads as UNREGISTERED.
-  const [gstin, setGstin] = useState("");
-  const [gstStateCode, setGstStateCode] = useState("");
-  const [gstRegStatus, setGstRegStatus] =
-    useState<GstRegStatus>("UNREGISTERED");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pendingDisable, setPendingDisable] = useState<
     null | "canSponsor" | "canHost"
   >(null);
-  // Stale-tab write rejected by the server's version CAS (409
-  // VERSION_CONFLICT) — the dialog offers a reload instead of silently
-  // letting last-write-wins eat the other session's changes.
   const [conflictOpen, setConflictOpen] = useState(false);
 
   useEffect(() => {
@@ -197,27 +477,15 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
     setIsPublic(data.profile.isPublic ?? false);
-    setGstin(data.profile.taxInfo?.gstin ?? "");
-    setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
-    setGstRegStatus(data.profile.taxInfo?.gstRegStatus ?? "UNREGISTERED");
-    setMsmeStatus(data.profile.msmeInfo?.msmeStatus ?? "NONE");
-    setMsmeAgreement(
-      data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
-    );
   }, [data]);
 
   const mutation = useMutation({
-    // #779 §A — the API enforces field-level RBAC: descriptive fields are
-    // MAINTAINER+, slug/isPublic OWNER-only. Send only what this role may
-    // touch so a maintainer's rename doesn't 403 on fields they never edited.
-    // Billing email and terms live on the Billing contacts tab only (#1527).
     mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
-        // Optimistic lock — the server CASes on this and 409s a stale tab.
         ...(data && { expectedVersion: data.profile.version }),
         ...(can("settings.ownerFields") && {
           slug: slug.trim() || undefined,
@@ -243,11 +511,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     },
   });
 
-  // Capability toggle is a narrow single-field PATCH so flipping a
-  // capability doesn't accidentally save every Profile field. Server
-  // enforces guards (disable-both, wallet>0) — surfaced inline via
-  // `error` from onError. Source of truth stays on `data.profile.*`,
-  // so a 409 leaves the checkbox at its true value with no manual rollback.
   const handleCapabilityToggle = (
     field: "canSponsor" | "canHost",
     nextValue: boolean,
@@ -269,67 +532,28 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     setPendingDisable(null);
   };
 
-  // #777 §B — narrow tax-only PATCH so saving GSTIN doesn't drag every
-  // Profile field along. GSTIN is exactly 15 chars (API rejects partials
-  // with a 400); empty → null clears the satellite field. The API gates
-  // the whole taxInfo upsert OWNER-only, matching the UI gate below.
-  const trimmedGstin = gstin.trim().toUpperCase();
-  const gstinValid = trimmedGstin.length === 0 || trimmedGstin.length === 15;
-  // GST state code is exactly 2 digits (e.g. "29"); empty clears it. An
-  // invalid value blocks the save with an error instead of silently saving
-  // null while the input still shows the bad value.
-  const trimmedStateCode = gstStateCode.trim();
-  const stateCodeValid =
-    trimmedStateCode.length === 0 || /^\d{2}$/.test(trimmedStateCode);
-  const saveTaxInfo = () => {
-    if (!gstinValid) return;
-    if (!stateCodeValid) {
-      setError("GST state code must be exactly 2 digits (e.g. 29).");
-      return;
-    }
-    setError(null);
-    mutation.mutate({
-      gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
-      gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
-      gstRegStatus,
-    });
-  };
+  if (roleLoading) {
+    return (
+      <div className="space-y-6">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </div>
+    );
+  }
 
-  // #1230 wave-4 — MSME declaration has its own NARROW save so a partial
-  // tax-form fill never accidentally persists unrelated unsaved profile
-  // edits through the generic mutation (CR on PR #1240).
-  const [msmeSaving, setMsmeSaving] = useState(false);
-  const saveMsme = async () => {
-    setError(null);
-    setMsmeSaving(true);
-    try {
-      await patchSettings(orgId, {
-        ...(data && { expectedVersion: data.profile.version }),
-        msmeStatus,
-        msmeWrittenAgreementOnFile: msmeAgreement,
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ["org-settings", orgId],
-      });
-    } catch (err) {
-      // Stale-tab conflicts route through the same dialog as the generic
-      // mutation instead of a dead-end banner (CR #1240 r2).
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
-        setConflictOpen(true);
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to save MSME declaration",
-        );
-      }
-    } finally {
-      setMsmeSaving(false);
-    }
-  };
-
-  if (!allowed) return null;
+  if (!canManage) {
+    return (
+      <div className="space-y-6">
+        <PanelHeader description="Organization membership and access" />
+        <DangerZoneCard
+          orgId={orgId}
+          orgName="this organization"
+          orgSlug=""
+          orgStatus="ACTIVE"
+          canDeleteOrg={false}
+        />
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
@@ -361,7 +585,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       );
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || "Resubmit failed");
+        throw new Error((b as { error?: string }).error ?? "Resubmit failed");
       }
       await queryClient.invalidateQueries({
         queryKey: ["org-settings", orgId],
@@ -375,8 +599,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
 
   return (
     <>
-      {/* #1230 wave-4 — self-serve resubmit: the endpoint existed with zero
-          callers, so rejected orgs deadlocked until ops intervened. */}
       {rejectedPending && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-4 space-y-2">
           <p className="text-sm font-semibold text-amber-900">
@@ -399,14 +621,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           </Button>
         </div>
       )}
-      {/* No "SSO settings" button any more — SSO is a sibling tab, so a
-          button that navigates to it would duplicate the tab bar. */}
       <PanelHeader description="Organization profile, shape and tax details" />
       <div className="space-y-6">
-        {/* Capability + funding summary. Owners can flip canSponsor /
-            canHost in-place; non-owners see the read-only badge.
-            Funding source changes still go through the billing-account
-            route since they cascade to wallet / contract state. */}
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="text-base">Organization shape</CardTitle>
@@ -428,7 +644,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   Funding: {FUNDING_SOURCE_LABEL[fundingSource]}
                 </Badge>
               )}
-              {/* #1762-4 — a label, not the raw OrgStatus. */}
               <Badge variant="outline">
                 Status: {humanizeEnum(data.profile.status)}
               </Badge>
@@ -470,8 +685,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     <p className="text-sm font-medium">Host experts</p>
                     <p className="text-xs text-zinc-500">
                       The organization hosts experts who deliver sessions.
-                      Enables the payout account, rate cards, and the Experts +
-                      Payouts sidebar entries.
+                      Enables the payout account, rate cards, and the Catalog
+                      and Payouts sidebar entries.
                     </p>
                   </div>
                 </label>
@@ -488,10 +703,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* The MAINTAINER/OWNER split below mirrors the PATCH route's
-                field-level gate (#779 §A), not a blanket owner check: name,
-                description, industry and website are MAINTAINER+, while the
-                slug stays OWNER-only. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -589,147 +800,17 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           </CardContent>
         </Card>
 
-        {/* #777 §B — Tax & compliance (GSTIN / GST state / reg status).
-            Writes to the OrganizationTaxInfo satellite via the org PATCH
-            upsert, which gates the whole tax block OWNER-only — so the
-            section is hidden for non-owners (read or edit) to avoid a
-            silent 403. PAN capture is intentionally out of scope here
-            (encrypted-at-rest; managed via the dedicated tax surface). */}
         {can("settings.ownerFields") && (
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-4 h-4" /> Tax &amp; compliance
-              </CardTitle>
-              <CardDescription>
-                India GST identity used on invoices and for 3-way-match
-                reconciliation. Only owners can edit these.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="gstin">GSTIN</Label>
-                  <Input
-                    id="gstin"
-                    value={gstin}
-                    onChange={(e) =>
-                      setGstin(e.target.value.toUpperCase().slice(0, 15))
-                    }
-                    placeholder="22AAAAA0000A1Z5"
-                    maxLength={15}
-                  />
-                  {!gstinValid && (
-                    <p className="text-xs text-red-600">
-                      GSTIN must be exactly 15 characters.
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="gst-state-code">GST state code</Label>
-                  <Input
-                    id="gst-state-code"
-                    value={gstStateCode}
-                    onChange={(e) =>
-                      setGstStateCode(
-                        e.target.value.replace(/[^0-9]/g, "").slice(0, 2),
-                      )
-                    }
-                    placeholder="e.g. 22"
-                    maxLength={2}
-                  />
-                  <p className="text-xs text-zinc-500">
-                    First two digits of the GSTIN — the state of registration.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2 md:w-1/2">
-                <Label htmlFor="gst-reg-status">GST registration status</Label>
-                <Select
-                  value={gstRegStatus}
-                  onValueChange={(v) => setGstRegStatus(v as GstRegStatus)}
-                >
-                  <SelectTrigger id="gst-reg-status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="REGULAR">Regular</SelectItem>
-                    <SelectItem value="COMPOSITION">Composition</SelectItem>
-                    <SelectItem value="UNREGISTERED">Unregistered</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {data.profile.taxInfo?.panLast4 && (
-                <p className="text-xs text-zinc-500">
-                  PAN on file ending in {data.profile.taxInfo.panLast4}.
-                </p>
-              )}
-
-              {/* #1230 wave-4 — MSME (Udyam) declaration. Feeds the MSMED
-                  15/45-day payment-terms engine on host-org payouts; an
-                  accurate declaration here is what keeps the platform out of
-                  §37(2)(g)/43B(h) disallowance and §16 interest. */}
-              <div className="space-y-2 pt-2 border-t">
-                <Label htmlFor="msme-status">MSME / Udyam classification</Label>
-                <Select
-                  value={msmeStatus}
-                  onValueChange={(v) => setMsmeStatus(v as MsmeStatus)}
-                >
-                  <SelectTrigger id="msme-status" className="md:w-1/2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NONE">
-                      Not an MSME / prefer not to say
-                    </SelectItem>
-                    <SelectItem value="MICRO">
-                      Micro (Udyam registered)
-                    </SelectItem>
-                    <SelectItem value="SMALL">
-                      Small (Udyam registered)
-                    </SelectItem>
-                    <SelectItem value="MEDIUM">Medium</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-zinc-500">
-                  Micro &amp; Small suppliers must be paid within 15 days (45
-                  with a signed agreement) under the MSMED Act; declaring
-                  accurately lets us schedule your payouts to that clock.
-                </p>
-                {msmeStatus !== "NONE" && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <Checkbox
-                      id="msme-agreement"
-                      checked={msmeAgreement}
-                      onCheckedChange={(v) => setMsmeAgreement(v === true)}
-                    />
-                    <Label htmlFor="msme-agreement" className="font-normal">
-                      A written agreement covering payment terms is on file
-                    </Label>
-                  </div>
-                )}
-                {msmeDirty && (
-                  <Button
-                    size="sm"
-                    onClick={() => void saveMsme()}
-                    disabled={msmeSaving}
-                  >
-                    {msmeSaving ? "Saving…" : "Save MSME declaration"}
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Button
-                onClick={saveTaxInfo}
-                disabled={mutation.isPending || !gstinValid}
-              >
-                {mutation.isPending ? "Saving…" : "Save tax details"}
-              </Button>
-            </CardFooter>
-          </Card>
+          <TaxComplianceCard
+            orgId={orgId}
+            data={data}
+            onVersionConflict={() => setConflictOpen(true)}
+            onError={setError}
+            onSuccess={() => {
+              setSuccess(true);
+              setTimeout(() => setSuccess(false), 2500);
+            }}
+          />
         )}
 
         {/* Marketplace Visibility — only HOST/HYBRID orgs can opt in */}
@@ -756,11 +837,10 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 <div>
                   <p className="text-sm font-medium">Public listing</p>
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    {data.profile.status !== "ACTIVE"
-                      ? "Organisation must be ACTIVE before enabling public listing."
-                      : isPublic
-                        ? "Your organisation appears on the Explore page."
-                        : "Your organisation is hidden from the Explore page."}
+                    {resolveMarketplaceVisibilityCopy(
+                      data.profile.status,
+                      isPublic,
+                    )}
                   </p>
                 </div>
                 <Switch
@@ -787,21 +867,17 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           </Card>
         )}
 
-        {/* #1499 — the org's refund ladder. OWNER-only, matching the free-text
-            defaultCancellationPolicy field in the org PATCH: MemberRole has no
-            ADMIN, so OWNER is the narrowest role that can already write policy. */}
         {can("settings.cancellationPolicy.publish") && (
           <CancellationPolicyCard orgId={orgId} />
         )}
 
-        {/* #1844 — OWNER-only Danger Zone: Transfer Ownership & Deactivate / Close Organization */}
-        {can("org.delete") && (
-          <DangerZoneCard
-            orgId={orgId}
-            orgSlug={data.organization?.slug ?? ""}
-            orgStatus={data.profile.status}
-          />
-        )}
+        <DangerZoneCard
+          orgId={orgId}
+          orgName={data.organization?.name ?? "this organization"}
+          orgSlug={data.organization?.slug ?? ""}
+          orgStatus={data.profile.status}
+          canDeleteOrg={can("org.delete")}
+        />
 
         <AlertDialog
           open={pendingDisable !== null}
@@ -844,7 +920,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               <AlertDialogAction
                 onClick={() => {
                   setConflictOpen(false);
-                  // Refetch resets every form field via the data-sync effect.
                   queryClient.invalidateQueries({
                     queryKey: ["org-settings", orgId],
                   });
@@ -907,12 +982,16 @@ async function fetchActiveMembers(
 
 function DangerZoneCard({
   orgId,
+  orgName,
   orgSlug,
   orgStatus,
+  canDeleteOrg,
 }: Readonly<{
   orgId: string;
+  orgName: string;
   orgSlug: string;
   orgStatus: OrgStatus;
+  canDeleteOrg: boolean;
 }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -920,6 +999,7 @@ function DangerZoneCard({
   const membersQuery = useQuery({
     queryKey: ["org-danger-zone-members", orgId],
     queryFn: () => fetchActiveMembers(orgId),
+    enabled: canDeleteOrg,
   });
 
   // Eligible candidates: active MAINTAINERs first, followed by other non-OWNER
@@ -1007,6 +1087,19 @@ function DangerZoneCard({
     },
   });
 
+  const handleLeaveOrganization = async () => {
+    const res = await fetch(`/api/organizations/${orgId}/members/leave`, {
+      method: "POST",
+    });
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
+      throw new Error(json.error ?? "Failed to leave organization");
+    }
+    queryClient.removeQueries({ queryKey: ["org-settings", orgId] });
+    queryClient.removeQueries({ queryKey: orgDetailsQueryKey(orgId) });
+    router.push("/dashboard");
+  };
+
   const selectedCandidate = eligibleMembers.find(
     (m) => m.id === selectedMemberId,
   );
@@ -1019,96 +1112,134 @@ function DangerZoneCard({
           <AlertTriangle className="h-4 w-4" /> Danger Zone
         </CardTitle>
         <CardDescription>
-          High-impact ownership and organization lifecycle actions. Restricted
-          to organization owners.
+          {canDeleteOrg
+            ? "High-impact ownership, membership, and organization lifecycle actions."
+            : "Leave this organization if you no longer need operator or member access."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* 1. Transfer Ownership */}
-        <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Transfer ownership / add co-owner
-            </p>
-            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-              Promote an active maintainer or operator to{" "}
-              <strong>OWNER</strong>. Promoting a successor owner is required
-              before the last owner can leave or be demoted.
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <select
-              aria-label="Select member to promote to owner"
-              className="flex h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              value={selectedMemberId}
-              onChange={(e) => {
-                setSelectedMemberId(e.target.value);
-                setTransferError(null);
-                setTransferSuccess(null);
-              }}
-            >
-              <option value="">Select an active member…</option>
-              {eligibleMembers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.user.name || m.user.email || m.id} ({m.role})
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              variant="outline"
-              className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
-              disabled={!selectedMemberId}
-              onClick={() => {
-                setTransferConfirmText("");
-                setTransferError(null);
-                setTransferOpen(true);
-              }}
-            >
-              Transfer ownership
-            </Button>
-          </div>
-          {eligibleMembers.length === 0 && !membersQuery.isLoading && (
-            <p className="text-xs text-zinc-500">
-              No eligible active maintainers or staff members found. Invite a
-              maintainer from the People page first.
-            </p>
-          )}
-          {transferSuccess && (
-            <p className="text-xs text-emerald-600">{transferSuccess}</p>
-          )}
-        </div>
-
-        {/* 2. Deactivate / Close Organization */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
+        {/* Leave Organization */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-red-900 dark:text-red-300">
-              Deactivate / close organization
+            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Leave organization
             </p>
-            <p className="text-xs text-red-800/90 dark:text-red-300/80">
-              Permanently closes this organization. Active or draft contracts,
-              unpaid invoices, open purchase orders, unsettled earnings,
-              in-flight payouts, and non-zero wallet balances must be wound down
-              first. If financial history exists, statutory invoice records are
-              retained while contact PII is scrubbed.
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              Relinquish your membership in <strong>{orgName}</strong>. Active
+              sponsored program entitlements will be released immediately.
+              {canDeleteOrg
+                ? " As an owner, another active owner must exist before you can leave."
+                : ""}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={orgStatus === "DEACTIVATED"}
-            onClick={() => {
-              setDeactivateConfirmSlug("");
-              setDeactivateError(null);
-              setDeactivateOpen(true);
-            }}
-          >
-            {orgStatus === "DEACTIVATED"
-              ? "Already deactivated"
-              : "Deactivate organization"}
-          </Button>
+          <ConfirmDialog
+            trigger={
+              <Button
+                type="button"
+                variant="outline"
+                className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+              >
+                Leave organization
+              </Button>
+            }
+            title={`Leave ${orgName}?`}
+            description="You will lose access to this organization's dashboard and any active sponsored program benefits."
+            confirmLabel="Leave organization"
+            tone="destructive"
+            requireTyped={orgSlug || orgName}
+            onConfirm={handleLeaveOrganization}
+          />
         </div>
+
+        {canDeleteOrg && (
+          <>
+            {/* 1. Transfer Ownership */}
+            <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50/40 p-4 dark:border-red-950 dark:bg-red-950/20">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Transfer ownership / add co-owner
+                </p>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+                  Promote an active maintainer or operator to{" "}
+                  <strong>OWNER</strong>. Promoting a successor owner is
+                  required before the last owner can leave or be demoted.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <select
+                  aria-label="Select member to promote to owner"
+                  className="flex h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                  value={selectedMemberId}
+                  onChange={(e) => {
+                    setSelectedMemberId(e.target.value);
+                    setTransferError(null);
+                    setTransferSuccess(null);
+                  }}
+                >
+                  <option value="">Select an active member…</option>
+                  {eligibleMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.user.name ?? m.user.email ?? m.id} ({m.role})
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+                  disabled={!selectedMemberId}
+                  onClick={() => {
+                    setTransferConfirmText("");
+                    setTransferError(null);
+                    setTransferOpen(true);
+                  }}
+                >
+                  Transfer ownership
+                </Button>
+              </div>
+              {eligibleMembers.length === 0 && !membersQuery.isLoading && (
+                <p className="text-xs text-zinc-500">
+                  No eligible active maintainers or staff members found. Invite
+                  a maintainer from the People page first.
+                </p>
+              )}
+              {transferSuccess && (
+                <p className="text-xs text-emerald-600">{transferSuccess}</p>
+              )}
+            </div>
+
+            {/* 2. Deactivate / Close Organization */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-red-900 dark:text-red-300">
+                  Deactivate / close organization
+                </p>
+                <p className="text-xs text-red-800/90 dark:text-red-300/80">
+                  Permanently closes this organization. Active or draft
+                  contracts, unpaid invoices, open purchase orders, unsettled
+                  earnings, in-flight payouts, and non-zero wallet balances must
+                  be wound down first. If financial history exists, statutory
+                  invoice records are retained while contact PII is scrubbed.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={orgStatus === "DEACTIVATED"}
+                onClick={() => {
+                  setDeactivateConfirmSlug("");
+                  setDeactivateError(null);
+                  setDeactivateOpen(true);
+                }}
+              >
+                {orgStatus === "DEACTIVATED"
+                  ? "Already deactivated"
+                  : "Deactivate organization"}
+              </Button>
+            </div>
+          </>
+        )}
       </CardContent>
 
       {/* Transfer ownership confirmation dialog */}
@@ -1123,10 +1254,11 @@ function DangerZoneCard({
                   (including billing, tax identity, contract termination, and
                   organization closure) to{" "}
                   <strong>
-                    {selectedCandidate?.user.name ||
-                      selectedCandidate?.user.email ||
+                    {selectedCandidate?.user.name ??
+                      selectedCandidate?.user.email ??
                       "this member"}
-                  </strong>.
+                  </strong>
+                  {"."}
                 </p>
                 <div className="space-y-1.5">
                   <Label htmlFor="confirm-transfer-slug">

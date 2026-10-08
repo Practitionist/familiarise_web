@@ -121,7 +121,7 @@ export async function moneyInFlightForUser(
   db: Db,
   userId: string,
 ): Promise<MoneyInFlight> {
-  const [consultantPayouts, unsettledEarnings, liveDisputes, ownerRows] =
+  const [consultantPayouts, unsettledEarnings, liveDisputes, soleOwned] =
     await Promise.all([
       db.consultantPayout.count({
         where: {
@@ -143,27 +143,18 @@ export async function moneyInFlightForUser(
           status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
         },
       }),
-      db.membership.findMany({
-        where: { userId, role: "OWNER", status: "ACTIVE" },
-        select: { organizationId: true },
-      }),
+      soleOwnedOrganizations(db, userId, { includeInactive: true }),
     ]);
 
-  let orgInvoicesAsSoleOwner = 0;
-  for (const { organizationId } of ownerRows) {
-    const otherOwners = await db.membership.count({
-      where: {
-        organizationId,
-        role: "OWNER",
-        status: "ACTIVE",
-        userId: { not: userId },
-      },
-    });
-    if (otherOwners > 0) continue;
-    orgInvoicesAsSoleOwner += await db.organizationInvoice.count({
-      where: { organizationId, status: { in: ["ISSUED", "OVERDUE"] } },
-    });
-  }
+  const orgInvoicesAsSoleOwner =
+    soleOwned.length > 0
+      ? await db.organizationInvoice.count({
+          where: {
+            organizationId: { in: soleOwned.map((o) => o.id) },
+            status: { in: ["ISSUED", "OVERDUE"] },
+          },
+        })
+      : 0;
 
   return {
     consultantPayouts,
@@ -598,6 +589,72 @@ async function settlePrincipalStreamErasure(
     return ["stream: principal deletion not confirmed — re-run required"];
   }
   return [];
+}
+
+export interface SoleOwnerOrganization {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export async function soleOwnedOrganizations(
+  db: Db,
+  userId: string,
+  options?: { includeInactive?: boolean },
+): Promise<SoleOwnerOrganization[]> {
+  const owned = await db.membership.findMany({
+    where: {
+      userId,
+      role: "OWNER",
+      status: "ACTIVE",
+      organization: options?.includeInactive
+        ? { deletedAt: null }
+        : {
+            deletedAt: null,
+            status: { not: "DEACTIVATED" },
+          },
+    },
+    select: {
+      organizationId: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+    },
+  });
+  if (owned.length === 0) return [];
+
+  const otherOwnerGroups = await db.membership.groupBy({
+    by: ["organizationId"],
+    where: {
+      organizationId: { in: owned.map((o) => o.organizationId) },
+      role: "OWNER",
+      status: "ACTIVE",
+      userId: { not: userId },
+    },
+    _count: true,
+  });
+  const orgIdsWithCoOwner = new Set(
+    otherOwnerGroups.map((g) => g.organizationId),
+  );
+
+  return owned
+    .filter((row) => !orgIdsWithCoOwner.has(row.organizationId))
+    .map((row) => ({
+      id: row.organization.id,
+      name: row.organization.name,
+      slug: row.organization.slug,
+    }));
+}
+
+export async function soleOwnerOrganizationsForUser(
+  db: Db,
+  userId: string,
+): Promise<SoleOwnerOrganization[]> {
+  return soleOwnedOrganizations(db, userId);
 }
 
 /** True when any money-in-flight count is non-zero. */

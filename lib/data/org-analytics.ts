@@ -37,6 +37,7 @@ export interface OrgProgramBreakdownRow {
   utilizedPaise: number;
   engagementsUsed: number;
   overageCount: number;
+  overagePaise: number;
 }
 
 export interface OrgAnalyticsPayload {
@@ -335,6 +336,13 @@ export async function getOrgAnalytics(
                 priceAtBookingPaise: true,
                 engagementsConsumed: true,
                 wasOverage: true,
+                overageEvent: {
+                  select: {
+                    marginalPaise: true,
+                    chargeStatus: true,
+                    reversedAt: true,
+                  },
+                },
               },
             },
           },
@@ -377,7 +385,8 @@ export async function getOrgAnalytics(
   }
 
   for (const u of sixMonthUtilizations) {
-    const dt = u.createdAt instanceof Date ? u.createdAt : new Date(u.createdAt);
+    const dt =
+      u.createdAt instanceof Date ? u.createdAt : new Date(u.createdAt);
     const ym = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
     const bucket = buckets.get(ym);
     if (!bucket) continue;
@@ -419,13 +428,25 @@ export async function getOrgAnalytics(
       let utilizedPaise = 0;
       let engagementsUsed = 0;
       let overageCount = 0;
+      let overagePaise = 0;
 
       for (const a of p.assignments ?? []) {
         for (const u of a.utilizations ?? []) {
-          utilizedPaise += Number(u.priceAtBookingPaise ?? 0);
+          const pricePaise = Number(u.priceAtBookingPaise ?? 0);
+          utilizedPaise += pricePaise;
           engagementsUsed += Number(u.engagementsConsumed ?? 0);
           if (u.wasOverage) {
             overageCount += 1;
+          }
+          if (
+            u.overageEvent &&
+            !u.overageEvent.reversedAt &&
+            u.overageEvent.chargeStatus !== "REVERSED" &&
+            u.overageEvent.chargeStatus !== "BLOCKED"
+          ) {
+            overagePaise += Number(u.overageEvent.marginalPaise ?? 0);
+          } else if (u.wasOverage && !u.overageEvent) {
+            overagePaise += pricePaise;
           }
         }
       }
@@ -437,6 +458,7 @@ export async function getOrgAnalytics(
         utilizedPaise,
         engagementsUsed,
         overageCount,
+        overagePaise,
       };
     },
   );
@@ -540,6 +562,7 @@ export function orgAnalyticsForRole(
       programBreakdown: (payload.programBreakdown ?? []).map((row) => ({
         ...row,
         utilizedPaise: 0,
+        overagePaise: 0,
       })),
       wallet: null,
       invoices: null,
