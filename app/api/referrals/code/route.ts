@@ -53,7 +53,7 @@ export async function GET() {
     const feeWaivers = await readActiveFeeWaivers(session.user.id);
     const terms = referralTerms(cfg);
     const effectiveWeekVests =
-      code && code.capWeek === currentCapWeekKey() ? code.weekVests : 0;
+      code?.capWeek === currentCapWeekKey() ? code.weekVests : 0;
     return NextResponse.json({
       data: code
         ? { ...code, weekVests: effectiveWeekVests, weeklyVestCap }

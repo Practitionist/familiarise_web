@@ -43,6 +43,17 @@ const OVERAGE_BEHAVIOR_LABEL: Record<string, string> = {
   CHARGE_ORG: "Over-cap bookings billed to the organisation",
 };
 
+const LEAVE_ERROR_COPY: Record<string, string> = {
+  SOLE_OWNER:
+    "You are the sole owner of this organization. Transfer ownership before leaving.",
+  MEMBER_HAS_OBLIGATIONS:
+    "You still have upcoming sessions or money in progress under this organization. Settle or cancel those before leaving.",
+  NOT_A_MEMBER: "You are no longer an active member of this organization.",
+  ACCESS_DENIED: "Unable to verify organization access for leaving.",
+  LEAVE_FAILED:
+    "We could not complete your request to leave this organization. Please try again.",
+};
+
 export default async function MyProgramPage({
   params,
   searchParams,
@@ -54,7 +65,7 @@ export default async function MyProgramPage({
   const resolvedSearch = searchParams ? await searchParams : undefined;
   const leaveError =
     typeof resolvedSearch?.leaveError === "string"
-      ? resolvedSearch.leaveError
+      ? (LEAVE_ERROR_COPY[resolvedSearch.leaveError] ?? null)
       : null;
   const access = await requireOrgAccess(orgId);
   // Same grant as the nav item (#1527): the sponsored member's own page.
@@ -114,16 +125,15 @@ export default async function MyProgramPage({
   // scope is the surface that actually holds them.
   const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
   const primaryProgramId = assignments[0]?.program.id;
-  const browseCoveredHref = primaryProgramId
-    ? `/explore/experts?program=${primaryProgramId}`
-    : orgCatalog.length > 0
-      ? "#org-catalog"
-      : "/explore/experts";
-  const browseCoveredLabel = primaryProgramId
-    ? "Browse covered experts"
-    : orgCatalog.length > 0
-      ? "Browse org offerings"
-      : "Browse experts";
+  let browseCoveredHref = "/explore/experts";
+  let browseCoveredLabel = "Browse experts";
+  if (primaryProgramId) {
+    browseCoveredHref = `/explore/experts?program=${primaryProgramId}`;
+    browseCoveredLabel = "Browse covered experts";
+  } else if (orgCatalog.length > 0) {
+    browseCoveredHref = "#org-catalog";
+    browseCoveredLabel = "Browse org offerings";
+  }
 
   return (
     <>

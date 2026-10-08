@@ -200,6 +200,30 @@ export async function POST(
                 where: { id: programId, configLockedAt: null },
                 data: { configLockedAt: new Date() },
               });
+              const endpoints = await tx.webhookEndpoint.findMany({
+                where: {
+                  organizationId: orgId,
+                  status: "ACTIVE",
+                  eventSubscriptions: { has: "program.assigned" },
+                },
+                select: { id: true },
+              });
+              if (endpoints.length > 0) {
+                await tx.outboundWebhookDelivery.createMany({
+                  data: endpoints.map((endpoint) => ({
+                    webhookEndpointId: endpoint.id,
+                    eventType: "program.assigned",
+                    payload: {
+                      assignmentId: assignment.id,
+                      programId,
+                      membershipId: singleMembershipId,
+                      periodStart: body.periodStart.toISOString(),
+                      periodEnd: body.periodEnd.toISOString(),
+                    } satisfies Prisma.InputJsonValue,
+                    status: "PENDING" as const,
+                  })),
+                });
+              }
             }
             await tx.orgAuditLog.create({
               data: {

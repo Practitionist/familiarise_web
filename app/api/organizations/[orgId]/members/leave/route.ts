@@ -11,20 +11,35 @@ export async function POST(
 ) {
   const { orgId } = await params;
   const acceptsHtml = req.headers.get("accept")?.includes("text/html") ?? false;
-  const respondError = (message: string, status: number, extra?: object) => {
+  const respondError = (
+    message: string,
+    status: number,
+    extra?: { code?: string; counts?: Record<string, number> },
+  ) => {
     if (acceptsHtml) {
       const target = new URL(
         `/dashboard/organization/${orgId}/my-program`,
         req.url,
       );
-      target.searchParams.set("leaveError", message);
+      target.searchParams.set("leaveError", extra?.code ?? "LEAVE_FAILED");
       return NextResponse.redirect(target, { status: 303 });
     }
     return NextResponse.json({ error: message, ...extra }, { status });
   };
 
   const access = await requireOrgAccess(orgId, { allowSuspended: true });
-  if (access.error) return access.error;
+  if (access.error) {
+    if (acceptsHtml) {
+      return respondError(
+        "Unable to access organization",
+        access.error.status,
+        {
+          code: "ACCESS_DENIED",
+        },
+      );
+    }
+    return access.error;
+  }
 
   const userId = access.session.user.id;
   const realMember = await prisma.membership.findUnique({
@@ -41,7 +56,9 @@ export async function POST(
     realMember.status === "REMOVED" ||
     realMember.status === "ERASED"
   ) {
-    return respondError("Not a member of this organization", 403);
+    return respondError("Not a member of this organization", 403, {
+      code: "NOT_A_MEMBER",
+    });
   }
 
   try {
@@ -73,12 +90,14 @@ export async function POST(
     }
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return respondError(err.message, status);
+      return respondError(err.message, status, { code: "LEAVE_FAILED" });
     }
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
       { tags: { subsystem: "organizations" } },
     );
-    return respondError("Failed to leave organization", 500);
+    return respondError("Failed to leave organization", 500, {
+      code: "LEAVE_FAILED",
+    });
   }
 }

@@ -19,6 +19,15 @@ function notFoundIfGated() {
   return null;
 }
 
+function deducteeKey(row: {
+  consultantProfileId: string | null;
+  organizationId: string | null;
+}): string {
+  if (row.consultantProfileId) return `consultant:${row.consultantProfileId}`;
+  if (row.organizationId) return `org:${row.organizationId}`;
+  return "unknown";
+}
+
 const TdsFilingShape = {
   financialYear: z
     .string()
@@ -72,12 +81,7 @@ export async function GET(req: NextRequest) {
 
       const unfiledByKey = new Map<string, number>();
       for (const g of unfiledGroups) {
-        const key = g.consultantProfileId
-          ? `consultant:${g.consultantProfileId}`
-          : g.organizationId
-            ? `org:${g.organizationId}`
-            : "unknown";
-        unfiledByKey.set(key, g._count);
+        unfiledByKey.set(deducteeKey(g), g._count);
       }
 
       const profileIds = deducteeGroups
@@ -130,11 +134,7 @@ export async function GET(req: NextRequest) {
       const orgById = new Map(orgs.map((o) => [o.id, o]));
 
       const consultants = deducteeGroups.map((row) => {
-        const key = row.consultantProfileId
-          ? `consultant:${row.consultantProfileId}`
-          : row.organizationId
-            ? `org:${row.organizationId}`
-            : "unknown";
+        const key = deducteeKey(row);
         const profile = row.consultantProfileId
           ? profileById.get(row.consultantProfileId)
           : undefined;
@@ -243,16 +243,25 @@ export async function GET(req: NextRequest) {
       unfiledQuarterGroups.map((g) => [g.quarter, g._count]),
     );
 
+    const maxPrevByDeductee = new Map<string, number>();
     const quarters = [1, 2, 3, 4].map((q) => {
       const groupsForQ = deducteeQuarterGroups.filter((g) => g.quarter === q);
+      let quarterCredited = 0;
+      for (const g of groupsForQ) {
+        const key = g.consultantProfileId ?? g.organizationId ?? "platform";
+        const prevMax = maxPrevByDeductee.get(key) ?? 0;
+        const currMax = Number(g._max.cumulativeAmountCredited ?? 0);
+        const delta = Math.max(0, currMax - prevMax);
+        quarterCredited += delta;
+        if (currMax > prevMax) {
+          maxPrevByDeductee.set(key, currMax);
+        }
+      }
       return {
         financialYear: fy,
         quarter: q,
         totalConsultants: groupsForQ.length,
-        totalAmountCredited: groupsForQ.reduce(
-          (sum, g) => sum + Number(g._max.cumulativeAmountCredited ?? 0),
-          0,
-        ),
+        totalAmountCredited: quarterCredited,
         totalTDSDeducted: groupsForQ.reduce(
           (sum, g) => sum + Number(g._sum.tdsDeducted ?? 0),
           0,

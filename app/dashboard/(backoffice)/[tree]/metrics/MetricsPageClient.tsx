@@ -200,48 +200,58 @@ export default function StaffMetricsPage() {
               title="Support Queue Health & Statutory SLA Attainment"
               description="Live acknowledgement and resolution SLA compliance across active cases"
             >
-              <StatRow>
-                {loading && slaStats.isLoading ? (
-                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
-                ) : (
-                  <>
-                    <Stat
-                      label="SLA Attainment"
-                      value={`${slaAttainmentPct}%`}
-                      hint={
-                        slaBreaches === 0
-                          ? "All open cases within statutory ceiling"
-                          : `${slaBreaches} active case(s) breached`
-                      }
-                      icon={ShieldCheck}
-                      tone={getSlaAttainmentTone(slaBreaches, slaAttainmentPct)}
-                    />
-                    <Stat
-                      label="SLA Breaches"
-                      value={slaBreaches}
-                      hint="Acknowledgement or resolution overdue"
-                      icon={AlertTriangle}
-                      tone={slaBreaches > 0 ? "critical" : "neutral"}
-                    />
-                    <Stat
-                      label="Avg First Response"
-                      value={formatFirstResponseValue(
-                        slaStats.data?.avgFirstResponseMs,
-                        supportMetrics.avgResponseTimeHours,
-                      )}
-                      hint={`${slaStats.data?.windowDays ?? 7}-day rolling window`}
-                      icon={Clock}
-                    />
-                    <Stat
-                      label="Resolution Rate"
-                      value={`${resolutionRate}%`}
-                      hint={`${resolvedInPeriod} resolved (${periodLabel})`}
-                      icon={CheckCircle}
-                      tone={resolutionRate >= 80 ? "success" : "neutral"}
-                    />
-                  </>
-                )}
-              </StatRow>
+              {slaStats.isError ? (
+                <ErrorState
+                  title="SLA compliance metrics could not be loaded"
+                  onRetry={() => void slaStats.refetch()}
+                />
+              ) : (
+                <StatRow>
+                  {loading || slaStats.isLoading ? (
+                    [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                  ) : (
+                    <>
+                      <Stat
+                        label="SLA Attainment"
+                        value={`${slaAttainmentPct}%`}
+                        hint={
+                          slaBreaches === 0
+                            ? "All open cases within statutory ceiling"
+                            : `${slaBreaches} active case(s) breached`
+                        }
+                        icon={ShieldCheck}
+                        tone={getSlaAttainmentTone(
+                          slaBreaches,
+                          slaAttainmentPct,
+                        )}
+                      />
+                      <Stat
+                        label="SLA Breaches"
+                        value={slaBreaches}
+                        hint="Acknowledgement or resolution overdue"
+                        icon={AlertTriangle}
+                        tone={slaBreaches > 0 ? "critical" : "neutral"}
+                      />
+                      <Stat
+                        label="Avg First Response"
+                        value={formatFirstResponseValue(
+                          slaStats.data?.avgFirstResponseMs,
+                          supportMetrics.avgResponseTimeHours,
+                        )}
+                        hint={`${slaStats.data?.windowDays ?? 7}-day rolling window`}
+                        icon={Clock}
+                      />
+                      <Stat
+                        label="Resolution Rate"
+                        value={`${resolutionRate}%`}
+                        hint={`${resolvedInPeriod} resolved (${periodLabel})`}
+                        icon={CheckCircle}
+                        tone={resolutionRate >= 80 ? "success" : "neutral"}
+                      />
+                    </>
+                  )}
+                </StatRow>
+              )}
             </Section>
 
             <Section title={`Queue Volume (${periodLabel})`}>

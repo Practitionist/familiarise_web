@@ -167,9 +167,8 @@ export function WaitlistOfferBanner({
         const expertName = resolveExpertName(offer);
 
         return (
-          <div
+          <section
             key={offer.id}
-            role="region"
             aria-label="Open session time alert"
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950 shadow-sm"
           >
@@ -204,7 +203,7 @@ export function WaitlistOfferBanner({
                 Stop notifying me
               </Button>
             </div>
-          </div>
+          </section>
         );
       })}
     </div>

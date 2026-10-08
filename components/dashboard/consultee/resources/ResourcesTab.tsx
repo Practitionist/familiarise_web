@@ -301,8 +301,7 @@ export function ResourcesTab({
             className="pl-8"
           />
         </div>
-        <div
-          role="group"
+        <fieldset
           aria-label="Filter by offering type"
           className="flex flex-wrap items-center gap-1"
         >
@@ -317,7 +316,7 @@ export function ResourcesTab({
               {opt.label}
             </Button>
           ))}
-        </div>
+        </fieldset>
         <Select
           value={resourceFilter}
           onValueChange={(v) => {

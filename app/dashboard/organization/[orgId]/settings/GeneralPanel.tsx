@@ -1258,7 +1258,7 @@ function DangerZoneCard({
                       selectedCandidate?.user.email ??
                       "this member"}
                   </strong>
-                  .
+                  {"."}
                 </p>
                 <div className="space-y-1.5">
                   <Label htmlFor="confirm-transfer-slug">

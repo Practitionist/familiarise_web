@@ -515,6 +515,68 @@ function ByOfferingTable({ stats }: Readonly<{ stats: OfferingStats | null }>) {
   );
 }
 
+const TDS_COLUMNS: ResponsiveColumn<TdsRow>[] = [
+  {
+    key: "period",
+    header: "FY & Quarter",
+    primary: true,
+    cell: (row) => (
+      <span className="font-medium text-foreground">
+        FY {row.financialYear} · Q{row.quarter}
+      </span>
+    ),
+  },
+  {
+    key: "section",
+    header: "Section & Rate",
+    cell: (row) => {
+      const rate = (row.tdsRateBps / 100).toFixed(
+        row.tdsRateBps % 100 === 0 ? 0 : 1,
+      );
+      return `s.${normalizeTdsSection(row.tdsSection)} · ${rate}%`;
+    },
+  },
+  {
+    key: "credited",
+    header: "Cumulative Credited",
+    className: "tabular-nums",
+    cell: (row) => inr(row.cumulativeAmountCredited),
+  },
+  {
+    key: "tds",
+    header: "TDS Deducted",
+    className: "tabular-nums",
+    cell: (row) => inr(row.tdsDeducted),
+  },
+  {
+    key: "filing",
+    header: "Form 16A (Form 131) / Challan",
+    cell: (row) => {
+      if (row.certificateNumber) {
+        return (
+          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            Cert {row.certificateNumber}
+          </span>
+        );
+      }
+      if (row.challanNumber) {
+        return (
+          <span className="text-xs text-foreground">
+            Challan {row.challanNumber}
+          </span>
+        );
+      }
+      return (
+        <span className="text-xs text-muted-foreground">
+          {row.reportedInForm26Q
+            ? "Reported in Form 26Q (Form 140)"
+            : "Pending Form 26Q (Form 140)"}
+        </span>
+      );
+    },
+  },
+];
+
 function TdsSummarySection({
   tdsRecords,
   data,
@@ -522,67 +584,7 @@ function TdsSummarySection({
   tdsRecords: TdsRow[];
   data: EarningsResponse;
 }>) {
-  const columns: ResponsiveColumn<TdsRow>[] = [
-    {
-      key: "period",
-      header: "FY & Quarter",
-      primary: true,
-      cell: (row) => (
-        <span className="font-medium text-foreground">
-          FY {row.financialYear} · Q{row.quarter}
-        </span>
-      ),
-    },
-    {
-      key: "section",
-      header: "Section & Rate",
-      cell: (row) => {
-        const rate = (row.tdsRateBps / 100).toFixed(
-          row.tdsRateBps % 100 === 0 ? 0 : 1,
-        );
-        return `s.${normalizeTdsSection(row.tdsSection)} · ${rate}%`;
-      },
-    },
-    {
-      key: "credited",
-      header: "Cumulative Credited",
-      className: "tabular-nums",
-      cell: (row) => inr(row.cumulativeAmountCredited),
-    },
-    {
-      key: "tds",
-      header: "TDS Deducted",
-      className: "tabular-nums",
-      cell: (row) => inr(row.tdsDeducted),
-    },
-    {
-      key: "filing",
-      header: "Form 16A (Form 131) / Challan",
-      cell: (row) => {
-        if (row.certificateNumber) {
-          return (
-            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-              Cert {row.certificateNumber}
-            </span>
-          );
-        }
-        if (row.challanNumber) {
-          return (
-            <span className="text-xs text-foreground">
-              Challan {row.challanNumber}
-            </span>
-          );
-        }
-        return (
-          <span className="text-xs text-muted-foreground">
-            {row.reportedInForm26Q
-              ? "Reported in Form 26Q (Form 140)"
-              : "Pending Form 26Q (Form 140)"}
-          </span>
-        );
-      },
-    },
-  ];
+  const columns = TDS_COLUMNS;
 
   return (
     <Section

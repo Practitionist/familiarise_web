@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/appointment-access";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const DETAIL_ROUTE = "appointments.detail";
 
@@ -68,6 +69,12 @@ export async function PATCH(
         appointmentId,
       });
     }
+
+    const rl = await applyRateLimit(
+      eventMutationLimiter,
+      `appointment-notes:${auth.userId}`,
+    );
+    if (rl) return rl;
 
     const parsed = patchRequestNotesSchema.safeParse(
       await request.json().catch(() => null),
@@ -129,7 +136,7 @@ export async function PATCH(
               appointmentType: "Consultation",
               dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
             },
-            dedupeKey: `request-notes-updated:${appointmentId}:${Date.now()}`,
+            dedupeKey: `request-notes-updated:${appointmentId}:${Math.floor(Date.now() / 300_000)}`,
           });
         }
         return res;
@@ -179,7 +186,7 @@ export async function PATCH(
               appointmentType: "Subscription",
               dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
             },
-            dedupeKey: `request-notes-updated:${appointmentId}:${Date.now()}`,
+            dedupeKey: `request-notes-updated:${appointmentId}:${Math.floor(Date.now() / 300_000)}`,
           });
         }
         return res;

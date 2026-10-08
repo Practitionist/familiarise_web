@@ -32,6 +32,8 @@ jest.mock("../../lib/prisma", () => ({
           findFirst: (...a: unknown[]) => mockMembershipFindFirst(...a),
         },
         program: { updateMany: jest.fn() },
+        webhookEndpoint: { findMany: jest.fn().mockResolvedValue([]) },
+        outboundWebhookDelivery: { createMany: jest.fn() },
         orgAuditLog: { create: (...a: unknown[]) => mockAuditCreate(...a) },
       }),
   },

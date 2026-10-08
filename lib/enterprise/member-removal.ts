@@ -85,6 +85,12 @@ async function removeInTx(
   let forced = false;
 
   if (isSelfLeave) {
+    if (actor.membershipId !== memberId || current.userId !== actorUserId) {
+      throw Object.assign(
+        new Error("Cannot leave on behalf of another member"),
+        { httpStatus: 403 },
+      );
+    }
     if (current.role === "OWNER" && current.status === "ACTIVE") {
       await assertNotLastOwner(tx, orgId, memberId);
     }

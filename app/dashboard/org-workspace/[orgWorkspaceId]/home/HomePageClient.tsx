@@ -81,6 +81,18 @@ async function fetchOrgs(): Promise<{ data: OrgMembershipRow[] }> {
   return res.json();
 }
 
+function formatWalletSuffix(
+  funding: string,
+  walletBalance: number | null,
+  currency: string,
+): string {
+  if (funding !== "WALLET") return "";
+  if (walletBalance !== null) {
+    return ` · ${formatCurrencyAmount(walletBalance, currency)}`;
+  }
+  return " · not yet funded";
+}
+
 function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
   const org = row.organization;
   const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
@@ -121,11 +133,7 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
         {funding && (
           <Badge variant="outline">
             {FUNDING_SOURCE_LABEL[funding]}
-            {funding === "WALLET"
-              ? walletBalance !== null
-                ? ` · ${formatCurrencyAmount(walletBalance, currency)}`
-                : " · not yet funded"
-              : ""}
+            {formatWalletSuffix(funding, walletBalance, currency)}
           </Badge>
         )}
         {isLowWallet && (

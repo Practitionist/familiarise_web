@@ -50,7 +50,8 @@ function formatShareReviewerName(rawName: string | null | undefined): string {
   const parts = trimmed.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "a verified learner";
   if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+  const lastInitial = parts.at(-1)?.[0] ?? "";
+  return `${parts[0]} ${lastInitial}.`;
 }
 
 const reviewsKey = (consultantId: string) => ["own-reviews", consultantId];

@@ -72,6 +72,26 @@ function formatBpsRate(bps: number): string {
 const monthLabel = (month: string) =>
   format(parse(month, "yyyy-MM", new Date()), "MMM");
 
+function formatChannelSubtitle(opts: {
+  hasB2C: boolean;
+  pct: number;
+  count: number;
+  feeLabel: string | null;
+  keepLabel: string | null;
+  fallbackKeepPrefix: string;
+  fallbackDefault: string;
+}): string {
+  if (opts.hasB2C) {
+    const noun = opts.count === 1 ? "booking" : "bookings";
+    const feeSuffix = opts.feeLabel ? ` (${opts.feeLabel} fee)` : "";
+    return `${opts.pct}% of B2C · ${opts.count} ${noun}${feeSuffix}`;
+  }
+  if (opts.keepLabel) {
+    return opts.fallbackKeepPrefix.replace("{keep}", opts.keepLabel);
+  }
+  return opts.fallbackDefault;
+}
+
 export default function AnalyticsPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
@@ -205,13 +225,17 @@ export default function AnalyticsPanel({
               }
               icon={Link2}
               variant="success"
-              subtitle={
-                attribution && totalB2CPaise > 0
-                  ? `${ownLinkPct}% of B2C · ${attribution.ownLinkCount} ${attribution.ownLinkCount === 1 ? "booking" : "bookings"}${ownFeeLabel ? ` (${ownFeeLabel} fee)` : ""}`
-                  : ownKeepLabel
-                    ? `Keep ${ownKeepLabel} before TDS when learners first book via ?via=`
-                    : "Reduced fee when learners first book via your shared link"
-              }
+              subtitle={formatChannelSubtitle({
+                hasB2C: Boolean(attribution && totalB2CPaise > 0),
+                pct: ownLinkPct,
+                count: attribution?.ownLinkCount ?? 0,
+                feeLabel: ownFeeLabel,
+                keepLabel: ownKeepLabel,
+                fallbackKeepPrefix:
+                  "Keep {keep} before TDS when learners first book via ?via=",
+                fallbackDefault:
+                  "Reduced fee when learners first book via your shared link",
+              })}
               tooltip="Net B2C revenue from buyers whose first purchase with you came through your personal share link (?via=)."
             />
             <StatCard
@@ -222,13 +246,17 @@ export default function AnalyticsPanel({
                   : formatInr(marketplacePaise)
               }
               icon={Store}
-              subtitle={
-                attribution && totalB2CPaise > 0
-                  ? `${marketplacePct}% of B2C · ${attribution.marketplaceCount} ${attribution.marketplaceCount === 1 ? "booking" : "bookings"}${mktFeeLabel ? ` (${mktFeeLabel} fee)` : ""}`
-                  : mktKeepLabel
-                    ? `Keep ${mktKeepLabel} before TDS on Marketplace-acquired bookings`
-                    : "Marketplace fee rate on Marketplace-acquired bookings"
-              }
+              subtitle={formatChannelSubtitle({
+                hasB2C: Boolean(attribution && totalB2CPaise > 0),
+                pct: marketplacePct,
+                count: attribution?.marketplaceCount ?? 0,
+                feeLabel: mktFeeLabel,
+                keepLabel: mktKeepLabel,
+                fallbackKeepPrefix:
+                  "Keep {keep} before TDS on Marketplace-acquired bookings",
+                fallbackDefault:
+                  "Marketplace fee rate on Marketplace-acquired bookings",
+              })}
               tooltip="Net B2C revenue from buyers who first discovered you through the Familiarise Marketplace."
             />
             <StatCard

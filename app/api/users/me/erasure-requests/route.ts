@@ -66,15 +66,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const created = await prisma.$transaction(async (tx) => {
-    return tx.erasureRequest.create({
+  const created = await prisma.$transaction((tx) =>
+    tx.erasureRequest.create({
       data: {
         userId,
         status: "PENDING",
         reason: parsed.data.reason ?? null,
       },
-    });
-  });
+    }),
+  );
 
   return NextResponse.json(
     {

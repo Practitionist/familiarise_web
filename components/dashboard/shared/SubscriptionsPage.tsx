@@ -329,7 +329,7 @@ function SubscriptionDetailSheet({
                 <div className="flex items-center justify-between gap-2">
                   <Button size="sm" variant="outline" asChild>
                     <Link
-                      href={`/dashboard/admin/operations/bookings?search=${encodeURIComponent(subscription.id)}`}
+                      href={`${basePath}/bookings?search=${encodeURIComponent(subscription.id)}`}
                     >
                       Open in Bookings Ops
                     </Link>
@@ -379,6 +379,81 @@ function SubscriptionDetailSheet({
     </Sheet>
   );
 }
+
+const SUBSCRIPTION_COLUMNS: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
+  {
+    key: "user",
+    header: "Consultee",
+    primary: true,
+    cell: (subscription) => (
+      <div>
+        <p className="font-medium">{subscription.userName}</p>
+        <p className="text-xs text-muted-foreground/70">
+          {subscription.userEmail}
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "consultant",
+    header: "Expert / Plan",
+    className: "text-sm text-muted-foreground",
+    cell: (subscription) => (
+      <div>
+        <p className="font-medium text-foreground">
+          {subscription.consultantName || "-"}
+        </p>
+        {subscription.planTitle && (
+          <p className="text-xs text-muted-foreground">
+            {subscription.planTitle}
+          </p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "quota",
+    header: "Sessions",
+    cell: (subscription) => (
+      <span className="text-sm tabular-nums">
+        {subscription.sessionsCompleted ?? 0} /{" "}
+        {subscription.sessionsTotal ?? "—"}
+      </span>
+    ),
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    className: "font-medium",
+    cell: (subscription) =>
+      formatCurrency(subscription.amount, subscription.currency),
+  },
+  {
+    key: "period",
+    header: "Period",
+    cell: (subscription) => (
+      <div className="text-sm">
+        <p>{formatDate(subscription.startDate)}</p>
+        <p className="text-muted-foreground/70">
+          to {formatDate(subscription.endDate)}
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (subscription) => (
+      <Badge
+        className={`${getStatusColor(subscription.status)} gap-1`}
+        variant="secondary"
+      >
+        {getStatusIcon(subscription.status)}
+        {subscription.status.replace(/_/g, " ")}
+      </Badge>
+    ),
+  },
+];
 
 export interface SubscriptionsPageProps {
   apiEndpoint?: string;
@@ -438,81 +513,6 @@ export function SubscriptionsPage({
   const total = data?.pagination.total ?? 0;
   const hasMore = data?.pagination.hasMore ?? false;
   const totalPages = Math.ceil(total / LIMIT);
-
-  const columns: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
-    {
-      key: "user",
-      header: "Consultee",
-      primary: true,
-      cell: (subscription) => (
-        <div>
-          <p className="font-medium">{subscription.userName}</p>
-          <p className="text-xs text-muted-foreground/70">
-            {subscription.userEmail}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "consultant",
-      header: "Expert / Plan",
-      className: "text-sm text-muted-foreground",
-      cell: (subscription) => (
-        <div>
-          <p className="font-medium text-foreground">
-            {subscription.consultantName || "-"}
-          </p>
-          {subscription.planTitle && (
-            <p className="text-xs text-muted-foreground">
-              {subscription.planTitle}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "quota",
-      header: "Sessions",
-      cell: (subscription) => (
-        <span className="text-sm tabular-nums">
-          {subscription.sessionsCompleted ?? 0} /{" "}
-          {subscription.sessionsTotal ?? "—"}
-        </span>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      className: "font-medium",
-      cell: (subscription) =>
-        formatCurrency(subscription.amount, subscription.currency),
-    },
-    {
-      key: "period",
-      header: "Period",
-      cell: (subscription) => (
-        <div className="text-sm">
-          <p>{formatDate(subscription.startDate)}</p>
-          <p className="text-muted-foreground/70">
-            to {formatDate(subscription.endDate)}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (subscription) => (
-        <Badge
-          className={`${getStatusColor(subscription.status)} gap-1`}
-          variant="secondary"
-        >
-          {getStatusIcon(subscription.status)}
-          {subscription.status.replace(/_/g, " ")}
-        </Badge>
-      ),
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -656,7 +656,7 @@ export function SubscriptionsPage({
           )}
           {(!isError || Boolean(data)) && !isPending && (
             <ResponsiveTable<EnrichedSubscriptionItem>
-              columns={columns}
+              columns={SUBSCRIPTION_COLUMNS}
               rows={subscriptions}
               getRowId={(s) => s.id}
               onRowClick={(s) => setSelectedSubscription(s)}
@@ -664,7 +664,7 @@ export function SubscriptionsPage({
                 <div className="flex items-center justify-end gap-1">
                   <Button size="sm" variant="ghost" asChild>
                     <Link
-                      href={`/dashboard/admin/operations/bookings?search=${encodeURIComponent(s.id)}`}
+                      href={`${basePath}/bookings?search=${encodeURIComponent(s.id)}`}
                     >
                       Ops
                     </Link>

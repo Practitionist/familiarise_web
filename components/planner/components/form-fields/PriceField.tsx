@@ -119,17 +119,43 @@ export function PriceField<T extends FieldValues = FieldValues>({
 
       {!isOrgCatalog && (
         <p className="text-xs text-muted-foreground">
-          {feeSchedule
-            ? numericPrice > 0
-              ? `You keep ${formatProceeds((numericPrice * (10_000 - feeSchedule.marketplaceBps)) / 10_000, currencyCode)} on Marketplace · ${formatProceeds((numericPrice * (10_000 - feeSchedule.ownLinkBps)) / 10_000, currencyCode)} via your personal link (?via=, before TDS)`
-              : `Marketplace fee ${(feeSchedule.marketplaceBps / 100).toFixed(feeSchedule.marketplaceBps % 100 === 0 ? 0 : 2)}% · Personal link (?via=) fee ${(feeSchedule.ownLinkBps / 100).toFixed(feeSchedule.ownLinkBps % 100 === 0 ? 0 : 2)}% (before TDS)`
-            : "Platform fee follows the active schedule (reduced own-link rate when a buyer first discovers you via ?via=, before TDS)."}
+          {formatFeeHint(feeSchedule, numericPrice, currencyCode)}
         </p>
       )}
 
       {error && <FormMessage>{error.message}</FormMessage>}
     </FormItem>
   );
+}
+
+function formatBpsPercent(bps: number): string {
+  const pct = bps / 100;
+  return pct.toFixed(bps % 100 === 0 ? 0 : 2);
+}
+
+function formatFeeHint(
+  feeSchedule:
+    { marketplaceBps: number; ownLinkBps: number } | null | undefined,
+  numericPrice: number,
+  currencyCode: string,
+): string {
+  if (!feeSchedule) {
+    return "Platform fee follows the active schedule (reduced own-link rate when a buyer first discovers you via ?via=, before TDS).";
+  }
+  if (numericPrice > 0) {
+    const mktKeep = formatProceeds(
+      (numericPrice * (10_000 - feeSchedule.marketplaceBps)) / 10_000,
+      currencyCode,
+    );
+    const ownKeep = formatProceeds(
+      (numericPrice * (10_000 - feeSchedule.ownLinkBps)) / 10_000,
+      currencyCode,
+    );
+    return `You keep ${mktKeep} on Marketplace · ${ownKeep} via your personal link (?via=, before TDS)`;
+  }
+  const mktRate = formatBpsPercent(feeSchedule.marketplaceBps);
+  const ownRate = formatBpsPercent(feeSchedule.ownLinkBps);
+  return `Marketplace fee ${mktRate}% · Personal link (?via=) fee ${ownRate}% (before TDS)`;
 }
 
 function formatProceeds(amountMajor: number, currency: string): string {

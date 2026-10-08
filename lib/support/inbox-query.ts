@@ -188,8 +188,7 @@ export function inboxTicketWhere(
   if (f.view === "sla-at-risk") {
     const ackThreshold = new Date(now.getTime() + SLA_ACK_AT_RISK_MS);
     const resThreshold = new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS);
-    and.push(TICKET_OPEN_WHERE);
-    and.push({
+    and.push(TICKET_OPEN_WHERE, {
       awaitingUserSince: null,
       OR: [
         { acknowledgedAt: null, ackDueAt: { lte: ackThreshold } },

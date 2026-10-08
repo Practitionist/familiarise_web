@@ -6,10 +6,8 @@ import { CreateSupportTicketSchema } from "@/schemas/support";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import { createOutboundStaffSupportTicket } from "@/lib/support/create-ticket";
-import {
-  GET as getUserSupportTickets,
-  POST as postUserSupportTicket,
-} from "@/app/api/user/support-tickets/route";
+export { GET } from "@/app/api/user/support-tickets/route";
+import { POST as postUserSupportTicket } from "@/app/api/user/support-tickets/route";
 
 const STAFF_OUTBOUND_ROUTE = "staff.support-tickets";
 
@@ -17,9 +15,10 @@ const OutboundSupportTicketSchema = CreateSupportTicketSchema.extend({
   targetUserId: z.string().trim().min(1).max(200),
 });
 
-export const GET = getUserSupportTickets;
-
 export async function POST(req: NextRequest) {
+  const tooLarge = assertBodySize(req);
+  if (tooLarge) return tooLarge;
+
   const cloned = req.clone();
   const peek = (await cloned.json().catch(() => null)) as {
     targetUserId?: unknown;
@@ -33,9 +32,6 @@ export async function POST(req: NextRequest) {
     const auth = await requireBackofficeSurface("tickets.manage");
     if (auth.error) return auth.error;
     const { session } = auth;
-
-    const tooLarge = assertBodySize(req);
-    if (tooLarge) return tooLarge;
 
     const result = OutboundSupportTicketSchema.safeParse(peek);
     if (!result.success) {

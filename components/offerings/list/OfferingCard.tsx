@@ -106,11 +106,13 @@ export function OfferingCard({
     row.planId && !row.isDraft && !row.isArchived
       ? publicOfferingHref(row.type, row.planId)
       : null;
-  const shareHref = baseShareHref
-    ? owned
-      ? appendExpertShareAttribution(baseShareHref, shareAttributionHref)
-      : baseShareHref
-    : null;
+  let shareHref = baseShareHref;
+  if (baseShareHref && owned) {
+    shareHref = appendExpertShareAttribution(
+      baseShareHref,
+      shareAttributionHref,
+    );
+  }
   const orgGoverned = stat?.orgGoverned ?? false;
   const canDelete = !!onDelete && stat?.canDelete === true;
   const isDevJoin = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";

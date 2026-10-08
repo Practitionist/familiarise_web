@@ -92,31 +92,6 @@ const getDaysUntilDue = (dueBy: string | null) => {
   return diffDays;
 };
 
-const OPEN_DISPUTE_STATUSES = new Set([
-  "NEEDS_RESPONSE",
-  "WARNING_NEEDS_RESPONSE",
-  "UNDER_REVIEW",
-  "WARNING_UNDER_REVIEW",
-]);
-
-function isOpenDisputeStatus(status: string): boolean {
-  return OPEN_DISPUTE_STATUSES.has(status.toUpperCase());
-}
-
-function compareDisputes(a: Dispute, b: Dispute): number {
-  const aOpen = isOpenDisputeStatus(a.status);
-  const bOpen = isOpenDisputeStatus(b.status);
-  if (aOpen !== bOpen) return aOpen ? -1 : 1;
-  if (aOpen && bOpen) {
-    if (Boolean(a.dueBy) !== Boolean(b.dueBy)) return a.dueBy ? -1 : 1;
-    if (a.dueBy && b.dueBy) {
-      const diff = new Date(a.dueBy).getTime() - new Date(b.dueBy).getTime();
-      if (diff !== 0) return diff;
-    }
-  }
-  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-}
-
 function DisputeDueCell({ dueBy }: Readonly<{ dueBy: string | null }>) {
   if (!dueBy) return <>-</>;
   const daysUntilDue = getDaysUntilDue(dueBy);
@@ -262,7 +237,7 @@ export function DisputesPage({
     placeholderData: keepPreviousData,
   });
 
-  const disputes = [...(data?.disputes ?? [])].sort(compareDisputes);
+  const disputes = data?.disputes ?? [];
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;

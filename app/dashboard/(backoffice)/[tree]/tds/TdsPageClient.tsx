@@ -589,88 +589,7 @@ export default function AdminTDSPage() {
               }}
             />
           }
-          columns={[
-            {
-              header: "Expert",
-              accessor: (c) => (
-                <div className="min-w-0">
-                  {c.userId ? (
-                    <Link
-                      href={`${basePath}/users/${c.userId}`}
-                      className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
-                    >
-                      {c.consultantName || "Unnamed Expert"}
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </Link>
-                  ) : (
-                    <span className="font-medium">
-                      {c.consultantName || c.consultantProfileId || "—"}
-                    </span>
-                  )}
-                  {c.consultantEmail && (
-                    <p className="text-xs text-muted-foreground">
-                      {c.consultantEmail}
-                    </p>
-                  )}
-                </div>
-              ),
-            },
-            {
-              header: "PAN",
-              accessor: (c) =>
-                c.panLast4 ? (
-                  <span className="font-mono text-xs">
-                    XXXXXX{c.panLast4}{" "}
-                    {c.panVerified && (
-                      <Badge variant="outline" className="ml-1 text-[10px]">
-                        Verified
-                      </Badge>
-                    )}
-                  </span>
-                ) : (
-                  <Badge variant="secondary" className="text-xs">
-                    No PAN (5% §397(2) / 194-O)
-                  </Badge>
-                ),
-            },
-            {
-              header: "Total Credited",
-              accessor: (c) => (
-                <span className="tabular-nums">
-                  {formatCurrencyFromMinorUnit(c.totalCredited, "INR")}
-                </span>
-              ),
-            },
-            {
-              header: "TDS Deducted",
-              accessor: (c) => (
-                <span className="font-semibold tabular-nums">
-                  {formatCurrencyFromMinorUnit(c.totalTDS, "INR")}
-                </span>
-              ),
-            },
-            {
-              header: "Deductions",
-              accessor: (c) => (
-                <span className="tabular-nums">{c.recordCount}</span>
-              ),
-            },
-            {
-              header: "Form 26Q (Form 140)",
-              accessor: (c) => (
-                <Badge
-                  variant={c.allFiled ? "default" : "secondary"}
-                  className={
-                    c.allFiled
-                      ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                      : ""
-                  }
-                >
-                  {c.allFiled ? "Filed" : "Pending"}
-                </Badge>
-              ),
-            },
-          ]}
+          columns={buildConsultantTdsColumns(basePath)}
         />
       </DashboardContent>
 
@@ -684,4 +603,87 @@ export default function AdminTDSPage() {
       )}
     </>
   );
+}
+
+function buildConsultantTdsColumns(basePath: string) {
+  return [
+    {
+      header: "Expert",
+      accessor: (c: ConsultantBreakdown) => (
+        <div className="min-w-0">
+          {c.userId ? (
+            <Link
+              href={`${basePath}/users/${c.userId}`}
+              className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+            >
+              {c.consultantName || "Unnamed Expert"}
+              <ExternalLink className="h-3 w-3 text-muted-foreground" />
+            </Link>
+          ) : (
+            <span className="font-medium">
+              {c.consultantName || c.consultantProfileId || "—"}
+            </span>
+          )}
+          {c.consultantEmail && (
+            <p className="text-xs text-muted-foreground">{c.consultantEmail}</p>
+          )}
+        </div>
+      ),
+    },
+    {
+      header: "PAN",
+      accessor: (c: ConsultantBreakdown) =>
+        c.panLast4 ? (
+          <span className="font-mono text-xs">
+            XXXXXX{c.panLast4}{" "}
+            {c.panVerified && (
+              <Badge variant="outline" className="ml-1 text-[10px]">
+                Verified
+              </Badge>
+            )}
+          </span>
+        ) : (
+          <Badge variant="secondary" className="text-xs">
+            No PAN (5% §397(2) / 194-O)
+          </Badge>
+        ),
+    },
+    {
+      header: "Total Credited",
+      accessor: (c: ConsultantBreakdown) => (
+        <span className="tabular-nums">
+          {formatCurrencyFromMinorUnit(c.totalCredited, "INR")}
+        </span>
+      ),
+    },
+    {
+      header: "TDS Deducted",
+      accessor: (c: ConsultantBreakdown) => (
+        <span className="font-semibold tabular-nums">
+          {formatCurrencyFromMinorUnit(c.totalTDS, "INR")}
+        </span>
+      ),
+    },
+    {
+      header: "Deductions",
+      accessor: (c: ConsultantBreakdown) => (
+        <span className="tabular-nums">{c.recordCount}</span>
+      ),
+    },
+    {
+      header: "Form 26Q (Form 140)",
+      accessor: (c: ConsultantBreakdown) => (
+        <Badge
+          variant={c.allFiled ? "default" : "secondary"}
+          className={
+            c.allFiled
+              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+              : ""
+          }
+        >
+          {c.allFiled ? "Filed" : "Pending"}
+        </Badge>
+      ),
+    },
+  ];
 }
