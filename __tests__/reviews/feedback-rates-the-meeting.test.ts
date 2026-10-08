@@ -18,6 +18,12 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  spamLimiter: {},
+  applyRateLimit: jest.fn(async () => null),
+}));
+
 // Fully mocked, not half-mocked: `requireActual` here pulls lib/auth-server ->
 // better-auth, whose ESM the jest transform will not take. These tests never
 // exercise the authz-error mapping, so the real module buys nothing.
