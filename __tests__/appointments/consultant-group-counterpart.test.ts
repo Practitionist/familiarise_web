@@ -1,5 +1,10 @@
+import {
+  getConsumeeName,
+  getUpcomingAppointments,
+} from "@/app/dashboard/consultant/[consultantId]/utils/appointmentHelpers";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
+import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
 
@@ -151,5 +156,64 @@ describe("Consultant group-event counterpart resolution", () => {
 
     expect(collaboratorDetail.vm.counterpart.name).toBe("Aarav Anderson");
     expect(ownerDetail.vm.counterpart.name).toBe("Registered attendees");
+    expect(getConsumeeName(collabWebinar, "cp_guest_speaker")).toBe(
+      "Aarav Anderson",
+    );
+    expect(getConsumeeName(collabWebinar, "cp_owner")).toBe(
+      "Registered attendees",
+    );
+  });
+
+  it("retains in-progress sessions in getUpcomingAppointments so Consultant Home renders 'Session in progress'", () => {
+    const runningWebinar = {
+      id: "appt_running_webinar",
+      appointmentType: "WEBINAR",
+      occurrences: [
+        {
+          id: "occ_running_1",
+          startsAt: new Date("2026-10-08T06:45:00Z"),
+          endsAt: new Date("2026-10-08T08:00:00Z"),
+          isTentative: false,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+      webinar: {
+        status: "IN_PROGRESS",
+        webinarPlan: {
+          id: "wp_running",
+          title: "Live Webinar Session",
+          consultantProfileId: "cp_aarav",
+          consultantProfile: {
+            id: "cp_aarav",
+            user: { name: "Aarav Anderson", image: null },
+          },
+        },
+      },
+    } as unknown as TAppointment;
+
+    const upcoming = getUpcomingAppointments([runningWebinar], NOW);
+    expect(upcoming).toHaveLength(1);
+
+    const items = deriveConsultantActionItems({
+      pendingApprovals: 0,
+      upcomingSessions: upcoming.flatMap((a) =>
+        (a.occurrences ?? []).map((slot) => ({
+          id: slot.id,
+          appointmentId: a.id,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          title: "Webinar - Live Webinar Session",
+        })),
+      ),
+      basePath: "/dashboard/consultant/cp_aarav",
+      now: NOW,
+    });
+
+    expect(items[0]).toMatchObject({
+      key: "session-imminent",
+      severity: "critical",
+      title: "Session in progress",
+      body: "Webinar - Live Webinar Session",
+    });
   });
 });
