@@ -341,13 +341,13 @@ export const getStartTime = (appointment: TAppointment): Date | null => {
   return times.length > 0 ? times[0] : null;
 };
 
-// Check if appointment has any future slots
+/** Returns true when at least one live occurrence has not ended yet (`endsAt >= referenceDate`). */
 export const hasUpcomingSlots = (
   appointment: TAppointment,
   referenceDate: Date = new Date(),
 ): boolean => {
-  return liveSlotsOf(appointment).some(
-    (slot) => !isOccurrenceOver(slot, referenceDate),
+  return liveOccurrences(occurrencesOfAppointment(appointment)).some(
+    (session) => !isOccurrenceOver(session, referenceDate),
   );
 };
 
@@ -565,9 +565,7 @@ export const getUpcomingAppointments = (
       (appointment.appointmentType === "CLASS" && appointment.class)
     ) {
       if (appointment.occurrences.length > 0) {
-        return appointment.occurrences.some(
-          (slot) => !isOccurrenceOver(slot, referenceDate),
-        );
+        return hasUpcomingSlots(appointment, referenceDate);
       }
       return true;
     }
