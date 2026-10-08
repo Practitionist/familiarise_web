@@ -169,10 +169,7 @@ export function mapAppointmentDetail(
       ? facts.consultant
       : (facts.consultee ??
         (isCollaboratorViewer
-          ? {
-              ...facts.consultant,
-              roleLabel: "Host",
-            }
+          ? facts.consultant
           : {
               name:
                 appointment.appointmentType === "WEBINAR"

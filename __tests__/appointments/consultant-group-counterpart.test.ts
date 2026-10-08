@@ -150,7 +150,6 @@ describe("Consultant group-event counterpart resolution", () => {
     );
 
     expect(collaboratorDetail.vm.counterpart.name).toBe("Aarav Anderson");
-    expect(collaboratorDetail.vm.counterpart.roleLabel).toBe("Host");
     expect(ownerDetail.vm.counterpart.name).toBe("Registered attendees");
   });
 });
