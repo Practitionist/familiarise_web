@@ -17,6 +17,7 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
 import { heldOccurrence } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
+import { RatingCauseSchema } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { apiError } from "@/lib/errors/api-error";
 import { Refusal } from "@/lib/errors/refusal";
@@ -24,6 +25,8 @@ import {
   authorizeAppointment,
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
+import { assertBodySize } from "@/lib/validation/limits";
+import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
 
 const FEEDBACK_ROUTE = "appointments.feedback";
 
@@ -38,6 +41,7 @@ const feedbackSchema = z.object({
   comment: z.string().trim().max(2000).optional(),
   /** Which call of this booking is being rated; absent = the whole booking. */
   occurrenceId: z.string().min(1).max(64).optional(),
+  ratingCause: RatingCauseSchema.optional(),
 });
 
 export async function GET(
@@ -137,6 +141,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  const tooLarge = assertBodySize(req);
+  if (tooLarge) return tooLarge;
+
   const id = await parseRouteParams(AppointmentIdParams, params, {
     route: FEEDBACK_ROUTE,
   });
@@ -150,6 +157,12 @@ export async function POST(
         appointmentId,
       });
     }
+
+    const rl = await applyRateLimit(
+      spamLimiter,
+      `appointment-feedback:${auth.userId}`,
+    );
+    if (rl) return rl;
     // CSAT is a PARTICIPANT's private rating: staff/admin read access must
     // not become write access — a privileged non-participant's row would
     // pollute the org quality aggregate with a rating they never earned.
@@ -273,6 +286,9 @@ export async function POST(
               rating: body.data.rating,
               comment: body.data.comment,
               raterRole,
+              ...(body.data.ratingCause !== undefined
+                ? { ratingCause: body.data.ratingCause }
+                : {}),
               ...(opinionChanged ? { updatedAt: new Date() } : {}),
             },
           })
@@ -282,26 +298,52 @@ export async function POST(
               appointmentId,
               userId: auth.userId,
               organizationId: auth.organizationId,
-              // #1550 — the consultant on the rated call (or on the booking's
-              // held call, for a whole-booking rating).
               consultantProfileId: slot.consultantProfileId,
-              // #1580 — the co-presenter the rating also speaks to.
               coPresenterProfileId: presenter?.consultantProfileId ?? null,
               rating: body.data.rating,
               comment: body.data.comment,
+              ratingCause: body.data.ratingCause ?? null,
               raterRole,
             },
           });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        return supportError({
-          status: 409,
-          code: "CONFLICT",
-          message: "You have already rated this; reload and edit it instead",
-          context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+        const concurrent = await prisma.appointmentFeedback.findFirst({
+          where: {
+            appointmentId,
+            appointmentOccurrenceId: ratedOccurrenceId,
+            userId: auth.userId,
+          },
+          select: { id: true, rating: true, comment: true },
         });
+        if (concurrent) {
+          const concurrentOpinionChanged =
+            concurrent.rating !== body.data.rating ||
+            (body.data.comment !== undefined &&
+              (concurrent.comment ?? "") !== body.data.comment);
+          feedback = await prisma.appointmentFeedback.update({
+            where: { id: concurrent.id },
+            data: {
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+              ...(body.data.ratingCause !== undefined
+                ? { ratingCause: body.data.ratingCause }
+                : {}),
+              ...(concurrentOpinionChanged ? { updatedAt: new Date() } : {}),
+            },
+          });
+        } else {
+          return supportError({
+            status: 409,
+            code: "CONFLICT",
+            message: "You have already rated this; reload and edit it instead",
+            context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+          });
+        }
+      } else {
+        throw error;
       }
-      throw error;
     }
     return NextResponse.json({ data: feedback });
   } catch (cause) {

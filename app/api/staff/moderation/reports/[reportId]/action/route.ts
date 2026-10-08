@@ -5,10 +5,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { ModerationActionType } from "@prisma/client";
+import { ModerationActionType, Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { parseJsonRequest } from "@/lib/api/parse";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
@@ -65,55 +66,57 @@ function applyModerationTransaction(
   staffUserId: string,
   input: ModerationActionInput,
 ) {
-  return prisma.$transaction(
-    async (tx) => {
-      // Status re-check rides the WHERE (CAS) — two staff racing the same
-      // report resolve to exactly one winner.
-      const moved = await tx.moderationReport.updateMany({
-        where: {
-          id: reportId,
-          status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
-        },
-        data: {
-          status: actionType === "NO_ACTION" ? "DISMISSED" : "ACTION_TAKEN",
-          resolvedAt: new Date(),
-          resolvedBy: staffUserId,
-        },
-      });
-      if (moved.count === 0) {
-        throw Object.assign(
-          new Error("This report has already been resolved"),
-          { httpStatus: 409 },
-        );
-      }
-
-      const action = await tx.moderationAction.create({
-        data: {
-          reportId,
-          actionType,
-          notes,
-          takenById: staffUserId,
-          // #1562 — the audit row names the content it was about, so "who removed
-          // this review and why" is one join from the review.
-          reviewId:
-            input.report.type === "REVIEW" ? input.report.reviewId : null,
-        },
-        include: {
-          takenBy: {
-            select: { id: true, name: true, email: true },
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const moved = await tx.moderationReport.updateMany({
+          where: {
+            id: reportId,
+            status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
           },
-        },
-      });
+          data: {
+            status: actionType === "NO_ACTION" ? "DISMISSED" : "ACTION_TAKEN",
+            resolvedAt: new Date(),
+            resolvedBy: staffUserId,
+          },
+        });
+        if (moved.count === 0) {
+          throw Object.assign(
+            new Error("This report has already been resolved"),
+            { httpStatus: 409 },
+          );
+        }
 
-      const transactional = await applyTransactionalEffects(tx, input);
+        const action = await tx.moderationAction.create({
+          data: {
+            reportId,
+            actionType,
+            notes,
+            takenById: staffUserId,
+            reviewId:
+              input.report.type === "REVIEW" ? input.report.reviewId : null,
+          },
+          include: {
+            takenBy: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        });
 
-      const updatedReport = await tx.moderationReport.findUniqueOrThrow({
-        where: { id: reportId },
-      });
+        const transactional = await applyTransactionalEffects(tx, input);
 
-      return { action, updatedReport, transactional };
-    },
-    { maxWait: 10000, timeout: 30000 },
+        const updatedReport = await tx.moderationReport.findUniqueOrThrow({
+          where: { id: reportId },
+        });
+
+        return { action, updatedReport, transactional };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    ),
   );
 }
 

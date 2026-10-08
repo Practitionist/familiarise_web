@@ -5,9 +5,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationReportStatus } from "@prisma/client";
+import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
+
+const patchReportSchema = z.object({
+  status: z
+    .enum([
+      "PENDING",
+      "UNDER_REVIEW",
+      "DISMISSED",
+      "ACTION_TAKEN",
+      "ESCALATED",
+    ] as const satisfies readonly ModerationReportStatus[])
+    .optional(),
+  assignedToId: z.string().nullable().optional(),
+});
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -99,33 +113,52 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const session = auth.session;
 
     const { reportId } = await params;
-    const body = await req.json();
-    const { status, assignedToId } = body;
+    const parsed = patchReportSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
+    const { status, assignedToId } = parsed.data;
+
+    if (assignedToId) {
+      const assignee = await prisma.user.findUnique({
+        where: { id: assignedToId },
+        select: { id: true, role: true },
+      });
+      if (
+        !assignee ||
+        (assignee.role !== "STAFF" && assignee.role !== "ADMIN")
+      ) {
+        return NextResponse.json(
+          { error: "Assignee must be a staff or admin user" },
+          { status: 400 },
+        );
+      }
+    }
+
+    const existing = await prisma.moderationReport.findUnique({
+      where: { id: reportId },
+      select: { id: true, status: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: "Report not found" }, { status: 404 });
+    }
 
     const updateData: {
       status?: ModerationReportStatus;
       assignedToId?: string | null;
-      resolvedAt?: Date;
-      resolvedBy?: string;
+      resolvedAt?: Date | null;
+      resolvedBy?: string | null;
     } = {};
 
     if (status !== undefined) {
-      const validStatuses: ModerationReportStatus[] = [
-        "PENDING",
-        "UNDER_REVIEW",
-        "DISMISSED",
-        "ACTION_TAKEN",
-        "ESCALATED",
-      ];
-      if (!validStatuses.includes(status)) {
-        return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-      }
       updateData.status = status;
 
-      // Set resolved info if resolving
       if (status === "DISMISSED" || status === "ACTION_TAKEN") {
         updateData.resolvedAt = new Date();
         updateData.resolvedBy = session.user.id;
+      } else if (status === "PENDING" || status === "UNDER_REVIEW") {
+        updateData.resolvedAt = null;
+        updateData.resolvedBy = null;
       }
     }
 
@@ -133,9 +166,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       updateData.assignedToId = assignedToId || null;
     }
 
-    const report = await prisma.moderationReport.update({
-      where: { id: reportId },
+    const updated = await prisma.moderationReport.updateMany({
+      where: { id: reportId, status: existing.status },
       data: updateData,
+    });
+    if (updated.count === 0) {
+      return NextResponse.json(
+        { error: "Report was modified concurrently" },
+        { status: 409 },
+      );
+    }
+
+    const report = await prisma.moderationReport.findUnique({
+      where: { id: reportId },
       include: {
         reportedBy: {
           select: { id: true, name: true, email: true },

@@ -34,12 +34,9 @@ import * as Sentry from "@sentry/nextjs";
 // GET /api/payments/disputes - List Disputes
 // ============================================================================
 
-// Shared disputes.manage gate for GET + POST (were 26 identical lines in
-// each handler). Neither handler needs the db user row past the gate.
-async function requireDisputesManager(): Promise<
+async function requireDisputesReader(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  // Authentication
   const session = await getSession(true);
   if (!session?.user) {
     return {
@@ -47,16 +44,35 @@ async function requireDisputesManager(): Promise<
     };
   }
 
-  // Admin/Staff check
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
   });
 
-  // Submitting evidence pushes an irreversible decision to the payment
-  // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
-  // that staff hold. The dashboard already told staff this
-  // ("As a staff member… you cannot submit evidence") and hid the button;
-  // the route contradicted its own UI and accepted the call anyway.
+  if (!user?.role || !hasBackofficePermission(user.role, "disputes.read")) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden - Staff or Admin access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session };
+}
+
+async function requireDisputesManager(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const session = await getSession(true);
+  if (!session?.user) {
+    return {
+      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
+
   if (!user?.role || !hasBackofficePermission(user.role, "disputes.manage")) {
     return {
       error: NextResponse.json(
@@ -70,7 +86,7 @@ async function requireDisputesManager(): Promise<
 
 export async function GET(req: NextRequest) {
   try {
-    const { error: authError } = await requireDisputesManager();
+    const { error: authError } = await requireDisputesReader();
     if (authError) return authError;
 
     const parsedLimit = z.coerce

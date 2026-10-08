@@ -75,6 +75,24 @@ export function planTitle(a: PlanTitled): string {
 
 // ── The list ────────────────────────────────────────────────────────────
 
+const CALLBACK_TAG_RE = /\[Callback Requested:\s*([^\]]+)\]/i;
+
+/** Parse an explicit callback phone tag from ticket/message bodies or fall back to user.phone. */
+export function extractCallbackInfo(
+  texts: readonly (string | null | undefined)[],
+  fallbackPhone?: string | null,
+): { phone: string | null; callbackRequested: boolean } {
+  for (const text of texts) {
+    if (!text) continue;
+    const match = CALLBACK_TAG_RE.exec(text);
+    if (match?.[1]?.trim()) {
+      return { phone: match[1].trim(), callbackRequested: true };
+    }
+  }
+  const cleanFallback = fallbackPhone?.trim() || null;
+  return { phone: cleanFallback, callbackRequested: false };
+}
+
 export async function readInboxPage(
   filters: InboxFilters,
   page: number,
@@ -146,7 +164,12 @@ export async function readInboxPage(
     .filter((k) => k.key.startsWith("s_"))
     .map((k) => k.id);
 
-  const userSelect = { id: true, name: true, email: true } as const;
+  const userSelect = {
+    id: true,
+    name: true,
+    email: true,
+    phone: true,
+  } as const;
   const [tickets, threads] = await Promise.all([
     ticketIds.length
       ? prisma.supportTicket.findMany({
@@ -155,6 +178,7 @@ export async function readInboxPage(
             id: true,
             referenceNumber: true,
             title: true,
+            description: true,
             priority: true,
             category: true,
             issueType: true,
@@ -187,11 +211,18 @@ export async function readInboxPage(
   const now = new Date();
   const byKey = new Map<string, InboxRow>();
   for (const t of tickets) {
+    const callback = extractCallbackInfo([t.description], t.user.phone);
+    const requester = {
+      id: t.user.id,
+      name: t.user.name,
+      email: opts.showEmail ? t.user.email : null,
+      phone: callback.phone,
+    };
     byKey.set(caseKeyOf({ kind: "ticket", id: t.id }), {
       key: caseKeyOf({ kind: "ticket", id: t.id }),
       kind: "ticket",
       scope: t.appointmentSupportThread ? "session" : "platform",
-      requester: { ...t.user, email: opts.showEmail ? t.user.email : null },
+      requester,
       subject: t.title,
       reference: t.referenceNumber,
       topic: ticketTopic(t),
@@ -207,11 +238,17 @@ export async function readInboxPage(
     });
   }
   for (const t of threads) {
+    const requester = {
+      id: t.user.id,
+      name: t.user.name,
+      email: opts.showEmail ? t.user.email : null,
+      phone: t.user.phone,
+    };
     byKey.set(caseKeyOf({ kind: "thread", id: t.id }), {
       key: caseKeyOf({ kind: "thread", id: t.id }),
       kind: "thread",
       scope: "session",
-      requester: { ...t.user, email: opts.showEmail ? t.user.email : null },
+      requester,
       subject: `Help with ${planTitle(t.appointment)}`,
       reference: null,
       topic: threadTopic(t.category),

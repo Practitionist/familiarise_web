@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import * as Sentry from "@sentry/nextjs";
 import { userRepliedPatch } from "@/lib/support/sla";
+import { allocateMessageSeq } from "@/lib/support/message-seq";
 import { notifyStaffOfTicketActivity } from "@/lib/support/create-ticket";
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
 ) {
   try {
-    const [session, resolvedParams] = await Promise.all([getSession(true), params]);
+    const [session, resolvedParams] = await Promise.all([
+      getSession(true),
+      params,
+    ]);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -21,7 +28,6 @@ export async function POST(
       );
     }
 
-    // #831 — raw body.message was unbounded and unlimited
     const rl = await applyRateLimit(
       spamLimiter,
       `ticket-response:${session.user.id}`,
@@ -40,11 +46,15 @@ export async function POST(
     }
     const body = parsed.data;
 
-    // Verify the ticket exists and belongs to the user
     const ticket = await prisma.supportTicket.findFirst({
       where: {
         id: ticketId,
         userId: session.user.id,
+      },
+      include: {
+        appointmentSupportThread: {
+          select: { id: true, status: true },
+        },
       },
     });
 
@@ -58,46 +68,100 @@ export async function POST(
       );
     }
 
-    // One transaction: the reply, the activity clock and the SLA resume commit
-    // together. Previously the reply was the ONLY write — `lastMessageAt` never
-    // moved, so a user chasing their own ticket never resurfaced it in the ops
-    // inbox, which sorts on exactly that column.
-    const now = new Date();
-    const response = await prisma.$transaction(async (tx) => {
-      const created = await tx.supportResponse.create({
-        data: {
-          message: body.message,
-          supportTicket: { connect: { id: ticketId } },
-          user: { connect: { id: session.user.id } },
+    if (ticket.status === "CLOSED") {
+      return NextResponse.json(
+        {
+          error:
+            "This support ticket is closed and can no longer receive replies.",
         },
-        include: {
-          user: {
-            select: {
-              name: true,
-              role: true,
+        { status: 400 },
+      );
+    }
+
+    const now = new Date();
+    const nextStatus =
+      ticket.status === "RESOLVED" || ticket.status === "ON_HOLD"
+        ? ticket.assignedToId
+          ? "IN_PROGRESS"
+          : "OPEN"
+        : "IN_PROGRESS";
+
+    const response = await prisma.$transaction(
+      async (tx) => {
+        const updated = await tx.supportTicket.updateMany({
+          where: {
+            id: ticketId,
+            status: ticket.status,
+            awaitingUserSince: ticket.awaitingUserSince,
+          },
+          data: {
+            lastMessageAt: now,
+            status: nextStatus,
+            resolvedAt: null,
+            closedAt: null,
+            ...userRepliedPatch(ticket, now),
+          },
+        });
+        if (updated.count === 0) {
+          return null;
+        }
+
+        const created = await tx.supportResponse.create({
+          data: {
+            message: body.message,
+            supportTicket: { connect: { id: ticketId } },
+            user: { connect: { id: session.user.id } },
+          },
+          include: {
+            user: {
+              select: {
+                name: true,
+                role: true,
+              },
             },
           },
-        },
-      });
+        });
 
-      await tx.supportTicket.update({
-        where: { id: ticketId },
-        data: {
-          lastMessageAt: now,
-          // The ball is back with us — restart the resolution clock.
-          ...userRepliedPatch(ticket, now),
-        },
-      });
-      // CAS, not a bare update: a concurrent staff move off OPEN must not be
-      // clobbered back by the user's reply landing a moment later.
-      await tx.supportTicket.updateMany({
-        where: { id: ticketId, status: "OPEN" },
-        data: { status: "IN_PROGRESS" },
-      });
-      return created;
-    });
+        if (
+          ticket.appointmentSupportThread &&
+          ticket.appointmentSupportThread.status !== "CLOSED"
+        ) {
+          const threadId = ticket.appointmentSupportThread.id;
+          const seq = await allocateMessageSeq(tx, threadId, 1);
+          await tx.supportMessage.create({
+            data: {
+              threadId,
+              seq: seq + 1,
+              sender: "USER",
+              body: body.message,
+              authorUserId: session.user.id,
+            },
+          });
+          await tx.appointmentSupportThread.update({
+            where: { id: threadId },
+            data: {
+              lastMessageAt: now,
+              status: "ESCALATED",
+              resolvedAt: null,
+            },
+          });
+        }
 
-    // Committed — safe to page the queue. A user's reply used to notify nobody.
+        return created;
+      },
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+
+    if (!response) {
+      return NextResponse.json(
+        { error: "Ticket was updated concurrently; please refresh and retry." },
+        { status: 409 },
+      );
+    }
+
     await notifyStaffOfTicketActivity(ticketId, null, response.id).catch(
       (error) => {
         console.error("support: user-reply notification failed", {
@@ -111,7 +175,7 @@ export async function POST(
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
+      { tags: { subsystem: "support" } },
     );
     console.error("Error creating support response:", error);
     return NextResponse.json(
