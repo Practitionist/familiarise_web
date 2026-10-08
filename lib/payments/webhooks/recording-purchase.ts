@@ -440,6 +440,55 @@ async function settleReplaySale(
   return { kind: "settled", paymentId: payment.id };
 }
 
+function evaluateReplayRejection(input: {
+  purchase: {
+    status: string;
+    recording: {
+      listingStatus: string | null;
+      status: string;
+      storageType: string;
+    } | null;
+  };
+  orderPayment: { description: string | null } | null;
+  orderId: string;
+  gatewayPaymentId?: string;
+  hasPlanInfo: boolean;
+}): { paymentIntent: string; reason: string } | null {
+  if (
+    AUTO_REFUND_MARKERS.some((prefix) =>
+      input.orderPayment?.description?.startsWith(prefix),
+    )
+  ) {
+    return {
+      paymentIntent: input.gatewayPaymentId ?? input.orderId,
+      reason: `late capture on replay order ${input.orderId}`,
+    };
+  }
+  const recording = input.purchase.recording;
+  if (
+    input.purchase.status === "FAILED" &&
+    (!recording ||
+      recording.listingStatus !== "PUBLISHED" ||
+      !isDurablyOurs(recording))
+  ) {
+    return {
+      paymentIntent: input.orderId,
+      reason: `late capture on replay order ${input.orderId}; the replay is no longer purchasable`,
+    };
+  }
+  if (!input.hasPlanInfo) {
+    Sentry.captureMessage(
+      `[recording-purchase] capture without earnings owner: ${input.orderId}`,
+      { level: "error", tags: { subsystem: "payments" } },
+    );
+    return {
+      paymentIntent: input.orderId,
+      reason: `capture on replay order ${input.orderId}; recording plan owner is missing`,
+    };
+  }
+  return null;
+}
+
 export async function handleRecordingPurchaseSuccess(
   orderId: string,
   gatewayPaymentId?: string,
@@ -593,38 +642,15 @@ export async function handleRecordingPurchaseSuccess(
       const orderPayment = await tx.payment.findUnique({
         where: { paymentIntent: orderId },
       });
-      // A refund already staged for this order is final; never grant over it.
-      if (
-        AUTO_REFUND_MARKERS.some((prefix) =>
-          orderPayment?.description?.startsWith(prefix),
-        )
-      ) {
-        return refundCapture(
-          gatewayPaymentId ?? orderId,
-          `late capture on replay order ${orderId}`,
-        );
-      }
-
-      const recording = purchase.recording;
-      if (
-        purchase.status === "FAILED" &&
-        (recording?.listingStatus !== "PUBLISHED" || !isDurablyOurs(recording))
-      ) {
-        return refundCapture(
-          orderId,
-          `late capture on replay order ${orderId}; the replay is no longer purchasable`,
-        );
-      }
-
-      if (!planInfo) {
-        Sentry.captureMessage(
-          `[recording-purchase] capture without earnings owner: ${orderId}`,
-          { level: "error", tags: { subsystem: "payments" } },
-        );
-        return refundCapture(
-          orderId,
-          `capture on replay order ${orderId}; recording plan owner is missing`,
-        );
+      const rejection = evaluateReplayRejection({
+        purchase,
+        orderPayment,
+        orderId,
+        gatewayPaymentId,
+        hasPlanInfo: Boolean(planInfo),
+      });
+      if (rejection) {
+        return refundCapture(rejection.paymentIntent, rejection.reason);
       }
 
       const entitled = await tx.recordingPurchase.findFirst({

@@ -813,6 +813,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                 consultantEarningsReversed: 0,
                 organizationEarningsReversed: 0,
                 clawbackInitiated: false,
+                memberOverageRefundDue: null,
               };
 
         // Restore referral credits. This closes the #B20 gap: credit restoration
