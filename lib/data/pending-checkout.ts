@@ -51,6 +51,11 @@ export async function readPendingCheckout(args: {
       appointmentId: true,
       discountCode: { select: { code: true } },
       creditUsages: { select: { amount: true } },
+      legs: {
+        where: { source: "REFERRAL_CREDIT" },
+        select: { amountPaise: true },
+        take: 1,
+      },
       user: { select: { consulteeProfile: { select: { id: true } } } },
       appointment: {
         select: {
@@ -66,10 +71,13 @@ export async function readPendingCheckout(args: {
   if (!payment) return null;
 
   const a = payment.appointment;
-  const creditsPaise = payment.creditUsages.reduce(
-    (sum, usage) => sum + Number(usage.amount),
-    0,
-  );
+  const creditsPaise =
+    payment.creditUsages.length > 0
+      ? payment.creditUsages.reduce(
+          (sum, usage) => sum + Number(usage.amount),
+          0,
+        )
+      : Number(payment.legs[0]?.amountPaise ?? 0);
   // amount = base − discount + GST − credits, so the discount is what is left.
   const discountPaise = Math.max(
     0,

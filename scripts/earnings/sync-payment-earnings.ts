@@ -234,6 +234,7 @@ async function syncPaymentEarningsUnlocked(
   );
   /** Collected across batches so the whole run pages in one indexed read. */
   const unaccruable: UnaccruablePayment[] = [];
+  const skippedRefundedIds: string[] = [];
 
   // FIX #571: Use cursor-based pagination instead of skip-based.
   // Skip-based pagination on a mutating result set (earnings: { none: {} })
@@ -382,15 +383,7 @@ async function syncPaymentEarningsUnlocked(
         select: { id: true },
       });
       if (refundedSince) {
-        reportSentryMessage(
-          `EARNINGS_SKIPPED_REFUNDED: payment ${payment.id} was refunded or charged back after the cohort read; not accrued`,
-          {
-            subsystem: "payments",
-            op: "sync-payment-earnings.race",
-            expected: true,
-            extra: { paymentId: payment.id },
-          },
-        );
+        skippedRefundedIds.push(payment.id);
         skippedCount++;
         continue;
       }
@@ -426,6 +419,18 @@ async function syncPaymentEarningsUnlocked(
         errorCount++;
       }
     }
+  }
+
+  if (skippedRefundedIds.length > 0) {
+    reportSentryMessage(
+      `EARNINGS_SKIPPED_REFUNDED: payment ${skippedRefundedIds.join(", ")} was refunded or charged back after the cohort read; not accrued`,
+      {
+        subsystem: "payments",
+        op: "sync-payment-earnings.race",
+        expected: true,
+        extra: { paymentIds: skippedRefundedIds },
+      },
+    );
   }
 
   const pagedCount = await pageUnaccruablePayments(unaccruable, now);

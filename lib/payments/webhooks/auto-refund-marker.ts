@@ -39,6 +39,7 @@ export const notSettledElsewhereWhere: Prisma.PaymentWhereInput = {
         AUTO_REFUNDED_PREFIX,
         AUTO_REFUND_STUCK_PREFIX,
         REPLAY_SALE_PREFIX,
+        "REQUIRES_MANUAL_RECOVERY:",
       ].map((prefix) => ({ description: { startsWith: prefix } })),
     },
   ],

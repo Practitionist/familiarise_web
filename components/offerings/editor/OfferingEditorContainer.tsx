@@ -181,7 +181,10 @@ export function OfferingEditorContainer({
   });
 
   const planId = (existingPlan?.id as string | undefined) ?? undefined;
-  const status = editorStatus(existingPlan, planId, saveCtx);
+  const [persistedStatus, setPersistedStatus] = React.useState<
+    "DRAFT" | "PUBLISHED" | null
+  >(null);
+  const status = persistedStatus ?? editorStatus(existingPlan, planId, saveCtx);
   // The org catalog's writer keeps its own reading of webinar/class status.
   const hasRealDraft = !isEvent || !onSave;
   // Publishing a webinar/class is one-way (EVENT_PUBLISHABLE_FROM).
@@ -271,11 +274,13 @@ export function OfferingEditorContainer({
         status: publish ? "SCHEDULED" : "DRAFT",
       };
 
+      const wasPublishedBeforeSave = status === "PUBLISHED";
       if (onSave) {
         await onSave(payload, { publish });
       } else {
         await adapter.save(payload, consultantId, saveCtx);
       }
+      setPersistedStatus(publish ? "PUBLISHED" : "DRAFT");
       // Re-read before the image commit so a failed image still shows the saved status.
       void invalidateOfferingQueries(queryClient, consultantId);
       if (!(await commitStagedImage())) return;
@@ -284,7 +289,7 @@ export function OfferingEditorContainer({
         savedToast({
           publish,
           hasRealDraft,
-          wasPublished: status === "PUBLISHED",
+          wasPublished: wasPublishedBeforeSave,
         }),
       );
 

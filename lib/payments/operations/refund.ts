@@ -618,8 +618,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId || reserved.refundId,
           status: RefundStatus.FAILED,
@@ -633,8 +633,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // (it still records the decline via the reconciler) and never surface a
       // raw P2002 for a refund whose money state is already correct.
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway declined the refund",
@@ -667,8 +667,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   let boundRefundRowId = reserved.id;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId,
           // Merge, not replace: Phase 1's audit keys (initiatedByUserId,
@@ -751,8 +751,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // FAILED branch) — just merge metadata onto the reservation row.
     if (gateway.metadata) {
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             metadata: {
               ...(reserved.metadata &&
@@ -795,18 +795,25 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   const settled = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const cascade = await applyRefundCascade(tx, {
-          paymentId: input.paymentId,
-          refundId: boundRefundRowId,
-          amountPaise: requested,
-          reason: input.reason,
-          initiatedByUserId: input.initiatedByUserId ?? null,
-        });
-
-        await tx.refund.update({
-          where: { id: boundRefundRowId },
+        const settledClaim = await tx.refund.updateMany({
+          where: { id: boundRefundRowId, status: RefundStatus.PENDING },
           data: { status: RefundStatus.SUCCEEDED },
         });
+        const cascade =
+          settledClaim.count > 0
+            ? await applyRefundCascade(tx, {
+                paymentId: input.paymentId,
+                refundId: boundRefundRowId,
+                amountPaise: requested,
+                reason: input.reason,
+                initiatedByUserId: input.initiatedByUserId ?? null,
+              })
+            : {
+                legsReversed: 0,
+                consultantEarningsReversed: 0,
+                organizationEarningsReversed: 0,
+                clawbackInitiated: false,
+              };
 
         // Restore referral credits. This closes the #B20 gap: credit restoration
         // used to live ONLY in the gateway-refund webhook, so a refund initiated
@@ -1515,11 +1522,13 @@ export async function applyRefundCascade(
   // reversal. Idempotent on refundId, so calling it from both paths (or a cron
   // retry) is safe.
   // -----------------------------------------------------------------------
+  const cascadeNow = new Date();
   const refundCreditNote = await mintRefundCreditNote(tx, {
     paymentId: payment.id,
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // #1365 — the B2C sibling: a personal buyer's invoice is reversed by its own
@@ -1529,6 +1538,7 @@ export async function applyRefundCascade(
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // -----------------------------------------------------------------------
@@ -1716,7 +1726,7 @@ export async function applyRefundCascade(
       // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
       const taxPaise = payment.taxAmount ?? 0;
       const gstRev =
-        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt)
+        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt, cascadeNow)
           ? 0
           : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
@@ -1918,7 +1928,7 @@ export type OrgCreditNoteMintResult = {
  * note already issued against it is summed, mirroring the consumer minter.
  * Aggregations bypass the money extension, hence `sumPaise`.
  */
-async function remainingOrgInvoiceCreditPaise(
+export async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
   invoice: { id: string; totalPaise: number; subtotalPaise: number },
 ): Promise<number> {
@@ -2006,6 +2016,7 @@ export async function mintRefundCreditNote(
     // CreditNote, so each path is idempotent independently.
     refundId?: string;
     disputeId?: string;
+    now?: Date;
   },
 ): Promise<OrgCreditNoteMintResult> {
   if (!params.refundId === !params.disputeId) {
@@ -2113,8 +2124,7 @@ export async function mintRefundCreditNote(
     cnTax = taxShare(cnTotal);
     cnSubtotal = cnTotal - cnTax;
   }
-  // The cutoff runs from the booking's supply, not the later rollup invoice.
-  const commercial = isPastGstCreditNoteCutoff(payment.createdAt);
+  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt, params.now);
   if (commercial) {
     cnTax = 0;
     cnTotal = cnSubtotal;
@@ -2127,7 +2137,7 @@ export async function mintRefundCreditNote(
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
     org,
-    new Date(),
+    params.now ?? new Date(),
   );
 
   const cn = await tx.creditNote.create({

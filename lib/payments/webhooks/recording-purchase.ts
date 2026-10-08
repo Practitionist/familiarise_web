@@ -79,12 +79,10 @@ function resolveReplayCharge(
       buyerCountry: parsed.data.buyerCountry.toUpperCase(),
     };
   }
-  if (notes?.taxAmountPaise !== undefined) {
-    Sentry.captureMessage(
-      `[recording-purchase] order notes do not sum to the charge: ${orderId}`,
-      { level: "error", tags: { subsystem: "payments" } },
-    );
-  }
+  Sentry.captureMessage(
+    `[recording-purchase] order notes missing or invalid tax split: ${orderId}`,
+    { level: "error", tags: { subsystem: "payments" } },
+  );
   return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
 }
 
@@ -227,9 +225,25 @@ async function stageCaptureRefund(
   const marker = `${AUTO_REFUND_PENDING_PREFIX} ${input.reason}. Replay NOT granted.`;
   const existing = await tx.payment.findUnique({
     where: { paymentIntent: input.paymentIntent },
-    select: { id: true, description: true, amount: true },
+    select: {
+      id: true,
+      description: true,
+      amount: true,
+      gatewayPaymentId: true,
+    },
   });
   if (existing) {
+    if (
+      existing.gatewayPaymentId &&
+      input.gatewayPaymentId &&
+      existing.gatewayPaymentId !== input.gatewayPaymentId &&
+      input.paymentIntent !== input.gatewayPaymentId
+    ) {
+      return stageCaptureRefund(tx, {
+        ...input,
+        paymentIntent: input.gatewayPaymentId,
+      });
+    }
     if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
       return null;
     }
@@ -367,7 +381,7 @@ async function settleReplaySale(
     chargedPaise: number;
     charge: ReplayCharge;
     organizationId: string | null;
-    planInfo: ResolvedPurchasePlanInfo | null;
+    planInfo: ResolvedPurchasePlanInfo;
   },
 ): Promise<CaptureOutcome> {
   const {
@@ -406,14 +420,6 @@ async function settleReplaySale(
         ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
       },
     }));
-
-  if (!planInfo) {
-    Sentry.captureMessage(
-      `[recording-purchase] settled without earnings owner: ${orderId}`,
-      { level: "error", tags: { subsystem: "payments" } },
-    );
-    return { kind: "settled", paymentId: payment.id };
-  }
 
   await createEarningsFromPayment({
     payment: {
@@ -594,7 +600,7 @@ export async function handleRecordingPurchaseSuccess(
         )
       ) {
         return refundCapture(
-          orderId,
+          gatewayPaymentId ?? orderId,
           `late capture on replay order ${orderId}`,
         );
       }
@@ -607,6 +613,17 @@ export async function handleRecordingPurchaseSuccess(
         return refundCapture(
           orderId,
           `late capture on replay order ${orderId}; the replay is no longer purchasable`,
+        );
+      }
+
+      if (!planInfo) {
+        Sentry.captureMessage(
+          `[recording-purchase] capture without earnings owner: ${orderId}`,
+          { level: "error", tags: { subsystem: "payments" } },
+        );
+        return refundCapture(
+          orderId,
+          `capture on replay order ${orderId}; recording plan owner is missing`,
         );
       }
 
@@ -657,16 +674,18 @@ export async function handleRecordingPurchaseSuccess(
     return;
   }
   try {
-    await refundBookingPayment({
+    const refundOutcome = await refundBookingPayment({
       paymentId: outcome.paymentId,
       reason: outcome.reason,
       initiatedByUserId: null,
       dedupeKey: `replay-capture:${outcome.paymentId}`,
     });
-    await prisma.payment.updateMany({
-      where: { id: outcome.paymentId, description: outcome.marker },
-      data: { description: settledAutoRefundDescription(outcome.marker) },
-    });
+    if (refundOutcome?.status !== "PENDING") {
+      await prisma.payment.updateMany({
+        where: { id: outcome.paymentId, description: outcome.marker },
+        data: { description: settledAutoRefundDescription(outcome.marker) },
+      });
+    }
   } catch (refundError) {
     // The marker stays pending, so retry-auto-refunds re-drives the refund.
     reportSentryError(refundError, {
