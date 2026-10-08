@@ -241,7 +241,7 @@ async function sweepStuckWebhookEventsUnlocked(
           where: { eventId: ev.eventId },
           select: { error: true, processed: true },
         });
-        if (after?.error) {
+        if (after?.error != null) {
           stillFailing++;
           errors.push(`${ev.eventId}: ${after.error}`);
         } else if (after && !after.processed) {

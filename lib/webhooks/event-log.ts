@@ -78,7 +78,7 @@ export async function logWebhookEvent(
       // This avoids a separate status enum while letting providers like Stream
       // retry failed events instead of silently dropping them.
       // If previously processed successfully, skip (true idempotency)
-      if (existing.processed && !existing.error) {
+      if (existing.processed && existing.error == null) {
         console.log(
           `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
         );
@@ -100,7 +100,7 @@ export async function logWebhookEvent(
       // The `updateMany` + count is the claim: two workers racing here, only one
       // sees `count === 1`, and the loser is told the row is not new. A bare
       // `update` cannot express that — it succeeds for both.
-      if (existing.error) {
+      if (existing.error != null) {
         const claimedAt = new Date();
         const claimed = await prisma.webhookEvent.updateMany({
           where: { eventId, error: { not: null } },
@@ -209,12 +209,7 @@ export async function logWebhookEvent(
  * `error` is the FAILED state that `logWebhookEvent` re-drives. Setting it only
  * on success would leave failures stuck in IN-PROGRESS forever.
  *
- * `error ?? null`, not `error || null`. A handler that throws `new Error("")`
- * yields an empty `processingError`, and `"" || null` collapses to null — which
- * is the SUCCESS shape. The event failed and was permanently marked handled, and
- * the sweeper's selector explicitly skips `processed=true, error=null`, so
- * nothing would ever look at it again. An empty message becomes a readable
- * placeholder rather than a silent success.
+ * Empty error stays empty (`??`, not `||`): still FAILED-shaped, never SUCCESS.
  */
 /**
  * Error prefixes that mean "never re-drive this row".
@@ -246,7 +241,7 @@ export function permanentFailure(reason: string): string {
 
 /** True when this row must never be re-driven, whatever its age. */
 export function isTerminalWebhookError(error: string | null): boolean {
-  if (!error) return false;
+  if (error == null) return false;
   return TERMINAL_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix));
 }
 
@@ -263,7 +258,7 @@ export async function markWebhookEventProcessed(
   const data = {
     processed: true,
     processedAt: new Date(),
-    error: error === undefined ? null : error || "unknown handler error",
+    error: error === undefined ? null : (error ?? "unknown handler error"),
   };
   if (!claim) {
     await prisma.webhookEvent.update({ where: { eventId }, data });
