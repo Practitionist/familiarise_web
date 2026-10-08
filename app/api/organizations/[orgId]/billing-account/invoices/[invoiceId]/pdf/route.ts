@@ -49,20 +49,21 @@ export async function GET(
 ) {
   const { orgId, invoiceId } = await params;
   const access = await requireOrgAccess(orgId, { permission: "billing.read" });
-  let actorRateLimitKey: string;
   if (access.error) {
     const privileged = await requirePrivilegedAuth();
     if (privileged.error) return access.error;
-    actorRateLimitKey = privileged.session.user.id;
+    const limited = await applyRateLimit(
+      moneyOpsLimiter,
+      privileged.session.user.id,
+    );
+    if (limited) return limited;
   } else {
-    actorRateLimitKey = access.member?.id ?? orgId;
+    const limited = await applyRateLimit(
+      moneyOpsLimiter,
+      access.member?.id ?? orgId,
+    );
+    if (limited) return limited;
   }
-
-  // #677/PM-36 — PDF rendering is expensive (puppeteer/HTML pipeline).
-  // #1236-triage — key per ACTOR: orgId would let one manager's PDF browsing
-  // exhaust the bucket shared with a billing admin's pay/initiate calls.
-  const limited = await applyRateLimit(moneyOpsLimiter, actorRateLimitKey);
-  if (limited) return limited;
 
   // Fail-closed supplier identity (#1132/#1230) — the old dummy-GSTIN
   // fallback produced legal-looking invoices carrying a fabricated GSTIN
