@@ -33,7 +33,9 @@ import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { buildOccurrence } from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
+  assertConsultantAvailableForWindows,
   CollaboratorUnavailableError,
+  ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -119,6 +121,9 @@ function lateJoinCutoffRefusal(
   );
 }
 
+/**
+ * Creates a ClassPlan along with an optional scheduled or draft Class instance and its session occurrences.
+ */
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
@@ -316,6 +321,13 @@ export async function POST(request: NextRequest) {
             },
           });
 
+          const sessionWindows = sessionStarts.map((startsAt) => ({
+            startsAt,
+            endsAt: new Date(
+              startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
+            ),
+          }));
+
           // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
           // times an ACCEPTED co-host is already busy for. A plan created in
           // this very transaction has none, so this only bites once a plan can
@@ -323,13 +335,18 @@ export async function POST(request: NextRequest) {
           await assertCollaboratorsAvailableForWindows(tx, {
             planType: "CLASS",
             planId: classPlan.id,
-            windows: sessionStarts.map((startsAt) => ({
-              startsAt,
-              endsAt: new Date(
-                startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
-              ),
-            })),
+            windows: sessionWindows,
           });
+
+          // #2010 — also verify the host consultant has no overlapping live
+          // hold, co-host commitment, or confirmed session when publishing.
+          if (classStatus === ClassStatus.SCHEDULED && sessionWindows.length > 0) {
+            await assertConsultantAvailableForWindows(tx, {
+              consultantProfileId,
+              consultantUserId: session.user.id,
+              windows: sessionWindows,
+            });
+          }
 
           // 2. Create the class instance with appointments
           const classEvent = await tx.class.create({
@@ -341,8 +358,9 @@ export async function POST(request: NextRequest) {
                 consultantProfile.user.timezone,
               ),
               classPlan: { connect: { id: classPlan.id } },
-              // #1554 — one wrapper with one tentative occurrence per session
-              // (allocator parity); only when a start date is defined.
+              // #1554 / #2010 — one wrapper with one occurrence per session;
+              // non-tentative when SCHEDULED so occurrence_no_confirmed_overlap
+              // enforces single-active-session across all offering types.
               appointment:
                 sessionStarts.length > 0
                   ? {
@@ -354,7 +372,7 @@ export async function POST(request: NextRequest) {
                               startsAt: slotStart,
                               durationInHours: sessionDurationInHours,
                               consultantProfileId,
-                              isTentative: true,
+                              isTentative: classStatus !== ClassStatus.SCHEDULED,
                               ordinal: index + 1,
                             }),
                           ),
@@ -422,6 +440,10 @@ export async function POST(request: NextRequest) {
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    // #2010 — host overlap against live hold / co-host commitment / session → 409.
+    if (error instanceof ConsultantScheduleConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     // #784 — the owner is denormalized onto group-event slots, so a scheduling
     // overlap trips occurrence_no_confirmed_overlap (23P01): a conflict, not a 500.
     if (isExclusionViolation(error)) {
@@ -461,6 +483,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Updates a ClassPlan and its associated Class instance, enforcing host and collaborator availability on schedule, publication, or owner changes.
+ */
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
@@ -789,9 +814,9 @@ export async function PATCH(request: NextRequest) {
             // stale tab must not resurrect a CANCELLED class after refunds.
             // The else-branch below re-reads the row when no other field
             // changed, so a status-only PATCH still returns the moved status.
+            const publishing =
+              status === "SCHEDULED" && updatedClass.status === "DRAFT";
             if (status !== undefined && status !== updatedClass.status) {
-              const publishing =
-                status === "SCHEDULED" && updatedClass.status === "DRAFT";
               await transitionClassEvent(tx, {
                 where: { id: updatedClass.id },
                 to: status,
@@ -910,12 +935,32 @@ export async function PATCH(request: NextRequest) {
               }
             }
 
-            // AE-2 (#784) — mirrors the webinar PATCH's guard at its own time
-            // commit: when this PATCH actually MOVES the scheduling period, the
-            // sessions it leaves standing must still be times every ACCEPTED
-            // co-host is free for. Co-hosts are not slot participants, so no
-            // other check here sees their clash.
-            if (periodMoved) {
+            const effectiveClassStatus = status ?? updatedClass.status;
+            const ownerProfileId =
+              consultantProfileId ??
+              updatedClassPlan.consultantProfile?.id ??
+              existingPlan.consultantProfile?.id;
+            let ownerUserId: string | undefined;
+            if (updatedClassPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = updatedClassPlan.consultantProfile?.userId;
+            } else if (existingPlan.consultantProfile?.id === ownerProfileId) {
+              ownerUserId = existingPlan.consultantProfile?.userId;
+            }
+            const ownerChanged = Boolean(
+              consultantProfileId &&
+                consultantProfileId !== existingPlan.consultantProfileId,
+            );
+
+            // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
+            // own time commit: when this PATCH moves the scheduling period,
+            // publishes a DRAFT class to SCHEDULED, or transfers the plan to a
+            // new consultant, the sessions it leaves standing must be free for
+            // every ACCEPTED co-host and for the target host consultant.
+            if (
+              periodMoved ||
+              publishing ||
+              (ownerChanged && effectiveClassStatus === "SCHEDULED")
+            ) {
               const liveSessions = await tx.appointment.findMany({
                 where: { classId: updatedClass.id, deletedAt: null },
                 select: {
@@ -926,11 +971,42 @@ export async function PATCH(request: NextRequest) {
                   },
                 },
               });
-              await assertCollaboratorsAvailableForWindows(tx, {
-                planType: "CLASS",
-                planId: id,
-                windows: liveSessions.flatMap((a) => a.occurrences),
-                excludeAppointmentIds: liveSessions.map((a) => a.id),
+              const windows = liveSessions.flatMap((a) => a.occurrences);
+              const excludeAppointmentIds = liveSessions.map((a) => a.id);
+              if (periodMoved || publishing) {
+                await assertCollaboratorsAvailableForWindows(tx, {
+                  planType: "CLASS",
+                  planId: id,
+                  windows,
+                  excludeAppointmentIds,
+                });
+              }
+              if (
+                effectiveClassStatus === "SCHEDULED" &&
+                ownerProfileId &&
+                windows.length > 0
+              ) {
+                await assertConsultantAvailableForWindows(tx, {
+                  consultantProfileId: ownerProfileId,
+                  consultantUserId: ownerUserId,
+                  windows,
+                  excludeAppointmentIds,
+                });
+              }
+            }
+
+            if (publishing || (ownerChanged && ownerProfileId)) {
+              await tx.appointmentOccurrence.updateMany({
+                where: {
+                  appointment: { classId: updatedClass.id },
+                  deletedAt: null,
+                },
+                data: {
+                  ...(publishing ? { isTentative: false } : {}),
+                  ...(ownerChanged && ownerProfileId
+                    ? { consultantProfileId: ownerProfileId }
+                    : {}),
+                },
               });
             }
 
@@ -1028,6 +1104,10 @@ export async function PATCH(request: NextRequest) {
     }
     // AE-2 (#784) — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #2010 — host overlap against live hold / co-host commitment / session → 409.
+    if (error instanceof ConsultantScheduleConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // #784 — owner overlap on the shared exclusion constraint → 409, not 500.

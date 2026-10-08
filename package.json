@@ -159,7 +159,7 @@
     "@hono/node-server": "^1.19.15",
     "valibot": "^1.5.0",
     "deepmerge-ts": "^8.0.2",
-    "seroval": "^1.6.3",
+    "seroval": "^1.6.8",
     "source-map-js": "^1.2.2"
   }
 }

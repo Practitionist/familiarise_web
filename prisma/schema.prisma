@@ -5095,13 +5095,13 @@ model AppointmentOccurrence {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
-  /// #440 — denormalized consultant for the DB-level overlap guard. The
-  /// exclusion constraint (btree_gist on (consultantProfileId,
-  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
-  /// sidecar (prisma/sql/check-constraints.sql: occurrence_no_confirmed_overlap); a
-  /// violation surfaces as Postgres 23P01 → 409 (SchedulingService
-  /// .classifyError). Nullable for attendee (webinar/class) rows, which the
-  /// partial-index guard excludes.
+  /// #440 / #2010 — denormalized host consultant for the DB-level single-active-
+  /// session overlap guard across all 5 offering types (Consultation,
+  /// Subscription, Webinar, Class, Trial). The exclusion constraint (btree_gist
+  /// on (consultantProfileId, tstzrange(startsAt, endsAt)) WHERE NOT isTentative
+  /// AND deletedAt IS NULL AND completionStatus NOT IN ('CANCELLED', 'RESCHEDULED'))
+  /// and CHECK constraint (occurrence_confirmed_requires_consultant_chk) live in
+  /// prisma/sql/check-constraints.sql; a violation surfaces as Postgres 23P01 → 409.
   consultantProfileId String?
 
   meeting     Meeting?
