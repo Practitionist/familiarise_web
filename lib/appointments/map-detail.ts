@@ -157,7 +157,13 @@ export function mapAppointmentDetail(
   const counterpart =
     role === "consultee"
       ? facts.consultant
-      : (facts.consultee ?? facts.consultant);
+      : (facts.consultee ?? {
+          name:
+            appointment.appointmentType === "WEBINAR"
+              ? "Registered attendees"
+              : "Enrolled learners",
+          image: facts.consultant.image,
+        });
 
   const rawOccurrences: OccurrenceLike[] = all
     .flatMap((a) =>
