@@ -175,7 +175,7 @@ export function HomeTab({
   const allUpcomingAppointments = useMemo(
     () =>
       sortAppointmentsByStartTime(
-        getUpcomingAppointments(expandedAppointments),
+        getUpcomingAppointments(expandedAppointments, now),
       ),
     [expandedAppointments, now],
   );
@@ -272,7 +272,10 @@ export function HomeTab({
                 {todayAppointments.length > 0 ? (
                   <div className="divide-y divide-zinc-100">
                     {todayAppointments.map((appointment) => {
-                      const userName = getConsumeeName(appointment);
+                      const userName = getConsumeeName(
+                        appointment,
+                        consultantId,
+                      );
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableOccurrence(
                         appointment.occurrences ?? [],
@@ -486,7 +489,10 @@ export function HomeTab({
                         groupKey.startsWith("subscription-") ||
                         groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
-                      const userName = getConsumeeName(firstAppointment);
+                      const userName = getConsumeeName(
+                        firstAppointment,
+                        consultantId,
+                      );
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
