@@ -112,7 +112,7 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
     }
   });
 
-  it("enables backstage and muted access-request stage settings for WEBINAR and CLASS", () => {
+  it("enables backstage and complete muted access-request stage settings for WEBINAR and CLASS (#2010)", () => {
     const expectedOneToManySettings = {
       backstage: {
         enabled: true,
@@ -120,12 +120,22 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
       },
       audio: {
         mic_default_on: false,
+        speaker_default_on: true,
         default_device: "speaker",
         access_request_enabled: true,
+        opus_dtx_enabled: true,
+        redundant_coding_enabled: true,
       },
       video: {
+        enabled: true,
         camera_default_on: false,
+        camera_facing: "front",
         access_request_enabled: true,
+        target_resolution: {
+          width: 1280,
+          height: 720,
+          bitrate: 1500000,
+        },
       },
     };
 

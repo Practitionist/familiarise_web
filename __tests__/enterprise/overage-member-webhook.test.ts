@@ -87,7 +87,7 @@ describe("handleOverageMemberSuccess", () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", 129_500);
 
     // #1846 SM-B2 — the status just read rides the WHERE.
     expect(tx.payment.updateMany).toHaveBeenCalledWith({
@@ -135,7 +135,7 @@ describe("handleOverageMemberSuccess", () => {
       paymentStatus: "SUCCEEDED",
     });
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", 129_500);
 
     expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
@@ -146,7 +146,7 @@ describe("handleOverageMemberSuccess", () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(0); // REVERSED not in CHARGED's allowed-from
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", 129_500);
 
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockSystemError).toHaveBeenCalledWith(
@@ -167,7 +167,7 @@ describe("handleOverageMemberSuccess", () => {
       .mockResolvedValueOnce({ count: 1 });
     mockTransition.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", 129_500);
 
     expect(tx.payment.updateMany).toHaveBeenLastCalledWith({
       where: { id: "side1", paymentStatus: "FAILED" },
@@ -186,7 +186,7 @@ describe("handleOverageMemberSuccess", () => {
   it("non-overage payment (no parentPaymentId) is ignored", async () => {
     tx.payment.findUnique.mockResolvedValue({ ...side, parentPaymentId: null });
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", 129_500);
 
     expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();

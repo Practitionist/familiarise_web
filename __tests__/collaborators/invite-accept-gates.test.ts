@@ -48,6 +48,14 @@ let plan: { title: string; archivedAt: Date | null } | null = {
 };
 let seat: { id: string } | null = null;
 
+// The accept write is a CAS `updateMany` on status PENDING (#1580); the row is
+// re-read afterwards. `collaboratorUpdate` spies on the CAS and shapes the re-read.
+const collaboratorUpdate = jest.fn(async (..._args: unknown[]) => ({
+  id: "c-1",
+  role: "MODERATOR",
+  status: "ACCEPTED",
+}));
+let lastWrite: { id: string; role: string; status: string } | null = null;
 const tx = {
   collaborator: {
     findMany: jest.fn(async () => []),
@@ -57,20 +65,17 @@ const tx = {
       ...(args.data as object),
     })),
     update: jest.fn(),
+    updateMany: async (...args: unknown[]) => {
+      lastWrite = (await collaboratorUpdate(...args)) as typeof lastWrite;
+      return { count: 1 };
+    },
+    findUniqueOrThrow: async () => lastWrite,
   },
   appointmentParticipant: {
     createMany: jest.fn(async () => ({ count: 1 })),
     updateMany: jest.fn(async () => ({ count: 0 })),
   },
 };
-// The accept write is a CAS `updateMany` on status PENDING (#1580); the row is
-// re-read afterwards. `collaboratorUpdate` spies on the CAS and shapes the re-read.
-const collaboratorUpdate = jest.fn(async (..._args: unknown[]) => ({
-  id: "c-1",
-  role: "MODERATOR",
-  status: "ACCEPTED",
-}));
-let lastWrite: { id: string; role: string; status: string } | null = null;
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

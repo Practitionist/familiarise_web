@@ -188,6 +188,123 @@ export function assertValidUpdateCallMembers(request: unknown): void {
   }
 }
 
+export const STREAM_CAMERA_FACING_VALUES = [
+  "front",
+  "back",
+  "external",
+] as const;
+
+export type StreamCameraFacing = (typeof STREAM_CAMERA_FACING_VALUES)[number];
+
+const CAMERA_FACING_SET = new Set<string>(STREAM_CAMERA_FACING_VALUES);
+
+export const STREAM_AUDIO_DEFAULT_DEVICES = ["speaker", "earpiece"] as const;
+
+export type StreamAudioDefaultDevice =
+  (typeof STREAM_AUDIO_DEFAULT_DEVICES)[number];
+
+const AUDIO_DEFAULT_DEVICE_SET = new Set<string>(STREAM_AUDIO_DEFAULT_DEVICES);
+
+type AudioSettingsOverrideInput = {
+  mic_default_on?: unknown;
+  speaker_default_on?: unknown;
+  default_device?: unknown;
+  access_request_enabled?: unknown;
+  opus_dtx_enabled?: unknown;
+  redundant_coding_enabled?: unknown;
+};
+
+type VideoSettingsOverrideInput = {
+  enabled?: unknown;
+  camera_default_on?: unknown;
+  camera_facing?: unknown;
+  access_request_enabled?: unknown;
+  target_resolution?: {
+    width?: unknown;
+    height?: unknown;
+    bitrate?: unknown;
+  };
+};
+
+/**
+ * Validates `settings_override.audio` against Stream's `AudioSettingsRequest`
+ * schema (`mic_default_on`, `speaker_default_on`, `access_request_enabled`, and
+ * `default_device` in `"speaker" | "earpiece"`).
+ */
+function assertValidAudioSettingsOverride(
+  audio: AudioSettingsOverrideInput | undefined,
+): void {
+  if (audio === undefined) return;
+  if (
+    typeof audio.mic_default_on !== "boolean" ||
+    typeof audio.speaker_default_on !== "boolean" ||
+    typeof audio.access_request_enabled !== "boolean"
+  ) {
+    throw new StreamContractError(
+      "GetOrCreateCall settings_override.audio requires boolean mic_default_on, speaker_default_on, and access_request_enabled",
+    );
+  }
+  if (
+    typeof audio.default_device !== "string" ||
+    !AUDIO_DEFAULT_DEVICE_SET.has(audio.default_device)
+  ) {
+    throw new StreamContractError(
+      `Invalid settings_override.audio.default_device "${String(audio.default_device)}". Allowed: ${STREAM_AUDIO_DEFAULT_DEVICES.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Validates `settings_override.video` against Stream's `VideoSettingsRequest`
+ * schema (`enabled`, `camera_default_on`, `access_request_enabled`, `camera_facing`,
+ * and `target_resolution` with width >= 240, height >= 240, bitrate > 0).
+ */
+function assertValidVideoSettingsOverride(
+  video: VideoSettingsOverrideInput | undefined,
+): void {
+  if (video === undefined) return;
+  if (
+    typeof video.enabled !== "boolean" ||
+    typeof video.camera_default_on !== "boolean" ||
+    typeof video.access_request_enabled !== "boolean"
+  ) {
+    throw new StreamContractError(
+      "GetOrCreateCall settings_override.video requires boolean enabled, camera_default_on, and access_request_enabled",
+    );
+  }
+  if (
+    typeof video.camera_facing !== "string" ||
+    !CAMERA_FACING_SET.has(video.camera_facing)
+  ) {
+    throw new StreamContractError(
+      `Invalid settings_override.video.camera_facing "${String(video.camera_facing)}". Allowed: ${STREAM_CAMERA_FACING_VALUES.join(", ")}`,
+    );
+  }
+  const res = video.target_resolution;
+  const isValidResolution =
+    Boolean(res) &&
+    typeof res?.width === "number" &&
+    Number.isFinite(res.width) &&
+    res.width >= 240 &&
+    typeof res?.height === "number" &&
+    Number.isFinite(res.height) &&
+    res.height >= 240 &&
+    typeof res?.bitrate === "number" &&
+    Number.isFinite(res.bitrate) &&
+    res.bitrate > 0;
+  if (!isValidResolution) {
+    throw new StreamContractError(
+      "GetOrCreateCall settings_override.video.target_resolution requires width >= 240, height >= 240, and bitrate > 0",
+    );
+  }
+}
+
+/**
+ * Validates `call.getOrCreate(...)` payloads before invoking the Stream Video API,
+ * catching missing `created_by_id`, invalid member roles, or incomplete
+ * `settings_override.audio` / `settings_override.video` / `settings_override.limits`
+ * shapes in unit tests and at runtime.
+ */
 export function assertValidGetOrCreateCall(request?: unknown): void {
   const req = request as
     | {
@@ -199,6 +316,8 @@ export function assertValidGetOrCreateCall(request?: unknown): void {
               enabled?: unknown;
               join_ahead_time_seconds?: unknown;
             };
+            audio?: AudioSettingsOverrideInput;
+            video?: VideoSettingsOverrideInput;
             limits?: {
               max_duration_seconds?: unknown;
               max_participants?: unknown;
@@ -231,6 +350,10 @@ export function assertValidGetOrCreateCall(request?: unknown): void {
       "GetOrCreateCall requires a non-negative join_ahead_time_seconds",
     );
   }
+
+  assertValidAudioSettingsOverride(req?.data?.settings_override?.audio);
+  assertValidVideoSettingsOverride(req?.data?.settings_override?.video);
+
   const excludeRoles =
     req?.data?.settings_override?.limits?.max_participants_exclude_roles;
   if (Array.isArray(excludeRoles)) {
@@ -243,3 +366,4 @@ export function assertValidGetOrCreateCall(request?: unknown): void {
     }
   }
 }
+

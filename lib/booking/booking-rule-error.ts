@@ -19,7 +19,8 @@ export type BookingRuleCode =
   | "BACKUP_WINDOW_PAST"
   | "ENROLMENT_CLOSED"
   | "CLASS_PRICE_CHANGED"
-  | "PLAN_NOT_PUBLISHED";
+  | "PLAN_NOT_PUBLISHED"
+  | "SCHEDULE_CONFLICT";
 
 export class BookingRuleError extends Error {
   constructor(
