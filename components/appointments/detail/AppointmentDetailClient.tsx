@@ -312,7 +312,9 @@ export function AppointmentDetailClient({
     mutationFn: () => postRequestAction("withdraw-approval"),
   });
 
-  const mapped = detail ? mapAppointmentDetail(detail, role) : null;
+  const mapped = detail
+    ? mapAppointmentDetail(detail, role, new Date(), consultantId)
+    : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
   // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);

@@ -173,7 +173,7 @@ describe("late capture after the parent was invoiced", () => {
   it("does NOT credit the base to ORG_PAYABLE a second time", async () => {
     mockRecarve.mockResolvedValue("invoiced");
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     // The org-relief journal is unchanged: full marginal, under the key the
     // OVERAGE_SETTLEMENT_MISMATCH reconcile invariant joins on.
@@ -240,7 +240,7 @@ describe("late capture after the parent was invoiced", () => {
       diagnosticSettled = true;
     });
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     // `db: tx` routes the insert through the capture transaction, so it
     // commits — and rolls back — with the correction, instead of racing it on
@@ -266,7 +266,7 @@ describe("late capture after the parent was invoiced", () => {
   it("a retry with the same side payment id applies once", async () => {
     mockRecarve.mockResolvedValue("invoiced");
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
     const firstKeys = appliedKeys();
     const firstMint = mockMint.mock.calls[0][1];
     const firstMintCount = mockMint.mock.calls.length;
@@ -276,7 +276,7 @@ describe("late capture after the parent was invoiced", () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockReset().mockResolvedValueOnce(0).mockResolvedValue(1);
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(mockPost).toHaveBeenCalledTimes(4); // 2 per attempt, all re-posted
     expect(appliedKeys()).toEqual(firstKeys); // none of them applied twice
@@ -295,7 +295,7 @@ describe("late capture after the parent was invoiced", () => {
       payment: { parentPayment: { billableToOrgInvoiceId: null } },
     });
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(appliedKeys()).toEqual(["overage:side1"]);
     expect(mockMint).not.toHaveBeenCalled();
@@ -321,7 +321,7 @@ describe("late capture after the parent was invoiced", () => {
       .mockResolvedValueOnce({ creditNoteId: "cn2" });
 
     // First overage event on inv1
-    await handleOverageMemberSuccess("order_abc_1");
+    await handleOverageMemberSuccess("order_abc_1", MARGINAL);
 
     // Second overage event on the same inv1
     tx.payment.findUnique.mockResolvedValue({
@@ -336,7 +336,7 @@ describe("late capture after the parent was invoiced", () => {
     });
     mockTransition.mockReset().mockResolvedValueOnce(0).mockResolvedValue(1);
 
-    await handleOverageMemberSuccess("order_abc_2");
+    await handleOverageMemberSuccess("order_abc_2", MARGINAL);
 
     expect(mockMint).toHaveBeenNthCalledWith(1, tx, {
       invoiceId: "inv1",
@@ -369,7 +369,7 @@ describe("unchanged paths", () => {
     });
     mockTransition.mockReset().mockResolvedValue(1);
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(mockRecarve).not.toHaveBeenCalled();
     expect(appliedKeys()).toEqual(["overage:side1"]);
@@ -381,7 +381,7 @@ describe("unchanged paths", () => {
   it("late capture whose parent is NOT invoiced: recarve succeeds, no reversal", async () => {
     mockRecarve.mockResolvedValue("recarved");
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(appliedKeys()).toEqual(["overage:side1"]);
     expect(netPosted("ORG_PAYABLE", "org1")).toBe(MARGINAL);
@@ -393,7 +393,7 @@ describe("unchanged paths", () => {
   it("capture racing a reversal (moved === 0): still no org credit, no reversal", async () => {
     mockTransition.mockReset().mockResolvedValue(0);
 
-    await handleOverageMemberSuccess("order_abc");
+    await handleOverageMemberSuccess("order_abc", MARGINAL);
 
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockMint).not.toHaveBeenCalled();

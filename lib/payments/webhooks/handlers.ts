@@ -246,6 +246,19 @@ export async function handlePaymentSuccess(
             reportSentryError(err, { subsystem: "payments" });
             throw err;
           }
+
+          // Settle only on gateway truth; without a captured amount stay PENDING.
+          if (!recovering && gatewayAmountPaise === undefined) {
+            reportSentryMessage(
+              "capture without gateway amount - staying PENDING",
+              {
+                subsystem: "payments",
+                expected: true,
+                extra: { paymentIntentId },
+              },
+            );
+            return null;
+          }
           const parkCapture = () =>
             postUnappliedReceipt(tx, {
               paymentId: payment.id,
@@ -886,6 +899,7 @@ export async function handlePaymentSuccess(
     try {
       await refundBookingPayment({
         paymentId: txResult.paymentId,
+        amountPaise: gatewayAmountPaise,
         reason: `capture after hold release (${txResult.releasedBy})`,
         initiatedByUserId: null,
       });
