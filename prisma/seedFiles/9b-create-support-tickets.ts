@@ -1,6 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { SupportPriority, SupportTicketStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { slaDeadlinesFor } from "../../lib/support/sla";
 import { UserWithProfiles } from "./1a-create-users";
 
 // Support ticket categories
@@ -230,36 +231,38 @@ export async function createSupportTickets(
       const category = faker.helpers.arrayElement(TICKET_CATEGORIES);
       const templates = TICKET_TEMPLATES[category];
       const title = faker.helpers.arrayElement(templates.titles);
-      const description = faker.helpers.arrayElement(templates.descriptions);
-      const priority = getWeightedPriority();
-      const status = getWeightedStatus();
+      const priority: SupportPriority =
+        i === 0 ? "URGENT" : getWeightedPriority();
+      const status: SupportTicketStatus =
+        i === 0 ? "OPEN" : getWeightedStatus();
+      const rawDescription = faker.helpers.arrayElement(templates.descriptions);
+      const description =
+        priority === "URGENT"
+          ? `[Callback Requested: +91-9876543210]\n\n${rawDescription}`
+          : rawDescription;
 
       const ticketDate = faker.date.recent({ days: 30 });
+      const referenceNumber = `SUP-2026-${String(i + 1).padStart(4, "0")}`;
+      const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
+        priority,
+        ticketDate,
+      );
 
-      const ticket = await prisma.supportTicket.create({
-        data: {
-          title,
-          description,
-          priority,
-          status,
-          category,
-          userId: creator.id,
-          createdAt: ticketDate,
-        },
-      });
-
-      ticketsCreated++;
-
-      // Create responses based on status
+      // Plan response timeline first so SLA and activity clocks match responses.
       const numResponses =
         status === "OPEN"
           ? faker.number.int({ min: 0, max: 2 })
           : faker.number.int({ min: 1, max: 5 });
 
+      const plannedResponses: {
+        message: string;
+        userId: string;
+        createdAt: Date;
+        isStaff: boolean;
+      }[] = [];
       let lastResponseDate = new Date(ticketDate);
 
       for (let j = 0; j < numResponses; j++) {
-        // Alternate between staff and user responses
         const isStaffResponse = j % 2 === 0;
         const responder = isStaffResponse
           ? faker.helpers.arrayElement(staffAndAdmins)
@@ -278,18 +281,58 @@ export async function createSupportTickets(
           message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
         }
 
-        // Response date is after ticket creation and previous response
         lastResponseDate = faker.date.between({
           from: lastResponseDate,
           to: new Date(),
         });
 
+        plannedResponses.push({
+          message,
+          userId: responder.id,
+          createdAt: lastResponseDate,
+          isStaff: isStaffResponse,
+        });
+      }
+
+      const firstStaffReply =
+        plannedResponses.find((r) => r.isStaff)?.createdAt ?? null;
+      const acknowledgedAt =
+        status === "OPEN" && !firstStaffReply
+          ? null
+          : (firstStaffReply ?? new Date(ticketDate.getTime() + 15 * 60_000));
+      const resolvedAt =
+        status === "RESOLVED" || status === "CLOSED" ? lastResponseDate : null;
+      const closedAt = status === "CLOSED" ? lastResponseDate : null;
+
+      const ticket = await prisma.supportTicket.create({
+        data: {
+          referenceNumber,
+          title,
+          description,
+          priority,
+          status,
+          category,
+          userId: creator.id,
+          createdAt: ticketDate,
+          lastMessageAt: lastResponseDate,
+          ackDueAt,
+          resolutionDueAt,
+          acknowledgedAt,
+          firstAgentReplyAt: firstStaffReply,
+          resolvedAt,
+          closedAt,
+        },
+      });
+
+      ticketsCreated++;
+
+      for (const resp of plannedResponses) {
         await prisma.supportResponse.create({
           data: {
-            message,
+            message: resp.message,
             supportTicketId: ticket.id,
-            userId: responder.id,
-            createdAt: lastResponseDate,
+            userId: resp.userId,
+            createdAt: resp.createdAt,
           },
         });
 

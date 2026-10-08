@@ -55,6 +55,7 @@ export interface ModerationReportRef {
   type: ModerationReportType;
   targetUserId: string;
   reviewId: string | null;
+  feedbackId?: string | null;
   /** #1270 — set on MESSAGE reports; what CONTENT_REMOVED deletes on Stream. */
   streamMessageId?: string | null;
   /**
@@ -142,15 +143,15 @@ export async function applyTransactionalEffects(
       // API call and cannot join this transaction (#1270).
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
+      return excludeReviewFromAggregate(tx, report.reviewId);
+    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
+      return excludeFeedbackFromAggregate(tx, report.feedbackId);
     case "WARNING_ISSUED":
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
-    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
-    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
-      // A reinstatement is taken through the unban route, and the four #1562 acts
-      // are written by their own routes with the audit row; none lands here.
       return {};
   }
 }
@@ -295,6 +296,40 @@ async function softDeleteReview(
     reviewRemoved: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
   };
+}
+
+async function excludeReviewFromAggregate(
+  tx: Tx,
+  reviewId: string | null,
+): Promise<TransactionalEffectResult> {
+  if (!reviewId) return {};
+  const review = await tx.consultantReview.findUnique({
+    where: { id: reviewId },
+    select: { consultantProfileId: true, excludedFromAggregateAt: true },
+  });
+  if (!review) return {};
+  if (!review.excludedFromAggregateAt) {
+    await tx.consultantReview.update({
+      where: { id: reviewId },
+      data: { excludedFromAggregateAt: new Date() },
+    });
+  }
+  await recomputeConsultantRating(tx, review.consultantProfileId);
+  return {
+    reviewRemovedConsultantProfileId: review.consultantProfileId,
+  };
+}
+
+async function excludeFeedbackFromAggregate(
+  tx: Tx,
+  feedbackId: string | null | undefined,
+): Promise<TransactionalEffectResult> {
+  if (!feedbackId) return {};
+  await tx.appointmentFeedback.updateMany({
+    where: { id: feedbackId, excludedFromAggregateAt: null },
+    data: { excludedFromAggregateAt: new Date() },
+  });
+  return {};
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;

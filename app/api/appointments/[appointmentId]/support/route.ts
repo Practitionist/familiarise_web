@@ -19,6 +19,8 @@ import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
+import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { assertBodySize } from "@/lib/validation/limits";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -138,13 +140,18 @@ export async function POST(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
-    // orgParty: true — an operator may open their OWN thread (ADR 20).
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
+
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
         route: SUPPORT_ROUTE,
         appointmentId,
       });
+
+    const rl = await applyRateLimit(spamLimiter, `appt-support:${auth.userId}`);
+    if (rl) return rl;
 
     const body = turnSchema.safeParse(await req.json().catch(() => ({})));
     if (!body.success) {

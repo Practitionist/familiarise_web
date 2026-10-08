@@ -4,7 +4,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
@@ -73,10 +76,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             createdAt: true,
             lastMessageAt: true,
             messages: {
-              // Newest 50, re-ordered ascending below — the ticket page needs
-              // a bounded preview, not the whole transcript; the dedicated
-              // thread route serves full history.
-              orderBy: { createdAt: "desc" },
+              orderBy: [{ seq: "desc" }, { createdAt: "desc" }],
               take: 50,
               select: { id: true, sender: true, body: true, createdAt: true },
             },
@@ -89,7 +89,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
-    // Fetch linked entities in parallel for better performance
     const [
       linkedConsultation,
       linkedSubscription,
@@ -105,9 +104,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                   title: true,
                   price: true,
                   priceCurrency: true,
-                  // #946 allowlist — a bare `include:` handed every staff
-                  // member opening a ticket the consultant's panNumber and
-                  // ibanOrAccount.
                   consultantProfile: {
                     select: {
                       ...consultantPublicScalars,
@@ -142,9 +138,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                   title: true,
                   price: true,
                   priceCurrency: true,
-                  // #946 allowlist — a bare `include:` handed every staff
-                  // member opening a ticket the consultant's panNumber and
-                  // ibanOrAccount.
                   consultantProfile: {
                     select: {
                       ...consultantPublicScalars,
@@ -186,8 +179,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       ...ticket,
-      // Transcript was fetched newest-50 for the bound; hand it back oldest-
-      // first, the ascending shape the page has always rendered.
       ...(ticket.appointmentSupportThread
         ? {
             appointmentSupportThread: {
@@ -234,7 +225,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
     const validatedData = result.data;
 
-    // Validate ticket exists
     const existingTicket = await prisma.supportTicket.findUnique({
       where: { id: ticketId },
     });
@@ -243,11 +233,21 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
-    // Build update data
-    const updateData: Prisma.SupportTicketUpdateInput = {};
+    const now = new Date();
+    const updateData: Prisma.SupportTicketUncheckedUpdateManyInput = {};
 
     if (validatedData.status) {
       updateData.status = validatedData.status;
+      if (validatedData.status === "RESOLVED") {
+        updateData.resolvedAt = now;
+        updateData.closedAt = null;
+      } else if (validatedData.status === "CLOSED") {
+        updateData.closedAt = now;
+        updateData.resolvedAt = existingTicket.resolvedAt ?? now;
+      } else {
+        updateData.resolvedAt = null;
+        updateData.closedAt = null;
+      }
     }
 
     if (validatedData.priority) {
@@ -255,7 +255,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     if (validatedData.assignedToId !== undefined) {
-      // Validate assignee is staff/admin if not null
       if (validatedData.assignedToId !== null) {
         const assignee = await prisma.user.findUnique({
           where: { id: validatedData.assignedToId },
@@ -272,74 +271,75 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           );
         }
       }
-      // #705 — assignedToId is now a real relation, so an unchecked update goes
-      // through connect/disconnect. The validation above is what keeps the FK
-      // satisfiable; this just expresses the same write.
-      updateData.assignedTo =
-        validatedData.assignedToId === null
-          ? { disconnect: true }
-          : { connect: { id: validatedData.assignedToId } };
+      updateData.assignedToId = validatedData.assignedToId;
     }
 
-    // Link to refund if provided
     if (validatedData.refundId) {
       updateData.refundId = validatedData.refundId;
     }
 
-    // The ticket and its linked thread move together or not at all. Sequential
-    // writes let the thread update fail after the ticket had already committed,
-    // leaving the queue and the user's conversation disagreeing about status
-    // while the route answered 500 — so the caller retried against a ticket
-    // that had in fact already moved.
-    const updatedTicket = await prisma.$transaction(async (tx) => {
-      const ticket = await tx.supportTicket.update({
-        where: { id: ticketId },
-        data: updateData,
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-          // #1527 — an org session's request opens in that org's dashboard.
-          appointmentSupportThread: { select: { organizationId: true } },
-        },
-      });
-
-      // #support-hub — mirror terminal statuses to the linked per-appointment
-      // thread so the user's conversation never disagrees with the queue.
-      // ON_HOLD has no thread equivalent (the thread stays ESCALATED); CAS on
-      // both sides: a thread already CLOSED stays closed.
-      if (
-        validatedData.status &&
-        validatedData.status !== "ON_HOLD" &&
-        validatedData.status !== "OPEN"
-      ) {
-        // CLOSED is guarded UNCONDITIONALLY — a status-conditional notIn array
-        // (e.g. [] for RESOLVED) is a no-op filter in Prisma and could clobber
-        // a thread a staff member already closed.
-        await tx.appointmentSupportThread.updateMany({
+    const updatedTicket = await prisma.$transaction(
+      async (tx) => {
+        const updated = await tx.supportTicket.updateMany({
           where: {
-            supportTicketId: ticketId,
-            status: { notIn: ["CLOSED"] },
+            id: ticketId,
+            status: existingTicket.status,
+            awaitingUserSince: existingTicket.awaitingUserSince,
           },
-          data: {
-            status: validatedData.status,
-            // RESOLVED stamps the clock, re-open clears it, CLOSED keeps it —
-            // same semantics as the thread route's own PATCH.
-            ...(validatedData.status === "RESOLVED"
-              ? { resolvedAt: new Date() }
-              : {}),
-            ...(validatedData.status === "IN_PROGRESS"
-              ? { resolvedAt: null }
-              : {}),
+          data: updateData,
+        });
+        if (updated.count === 0) {
+          return null;
+        }
+
+        if (
+          validatedData.status &&
+          validatedData.status !== "ON_HOLD" &&
+          validatedData.status !== "OPEN"
+        ) {
+          await tx.appointmentSupportThread.updateMany({
+            where: {
+              supportTicketId: ticketId,
+              status: { notIn: ["CLOSED"] },
+            },
+            data: {
+              status: validatedData.status,
+              ...(validatedData.status === "RESOLVED"
+                ? { resolvedAt: now }
+                : {}),
+              ...(validatedData.status === "IN_PROGRESS"
+                ? { resolvedAt: null }
+                : {}),
+            },
+          });
+        }
+
+        return tx.supportTicket.findUniqueOrThrow({
+          where: { id: ticketId },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            appointmentSupportThread: { select: { organizationId: true } },
           },
         });
-      }
-      return ticket;
-    });
+      },
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+
+    if (!updatedTicket) {
+      return NextResponse.json(
+        { error: "Ticket was modified concurrently; please retry." },
+        { status: 409 },
+      );
+    }
 
     // After the commit — a notification failure must not roll back a status
     // change the queue has already acted on.

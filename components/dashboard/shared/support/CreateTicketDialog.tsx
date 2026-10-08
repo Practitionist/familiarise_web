@@ -81,11 +81,11 @@ export function CreateTicketDialog({
   const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
+  const [callbackRequested, setCallbackRequested] = useState(false);
+  const [callbackPhone, setCallbackPhone] = useState("");
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  // #1527 — orgs this viewer may raise a request about; the route re-checks.
-  // Same key as the Support hub's session picker (ACTIVE memberships).
   const memberships = useQuery({
     queryKey: ["user-org-memberships"],
     queryFn: async (): Promise<OrgMembership[]> => {
@@ -101,13 +101,18 @@ export function CreateTicketDialog({
 
   const create = useMutation({
     mutationFn: async () => {
+      const trimmedPhone = callbackPhone.trim();
+      const formattedDescription =
+        callbackRequested && trimmedPhone
+          ? `[Callback Requested: ${trimmedPhone}]\n\n${description.trim()}`
+          : description.trim();
       const res = await fetch("/api/user/support-tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           issueType,
           title: title.trim(),
-          description: description.trim(),
+          description: formattedDescription,
           priority,
           ...(about !== ABOUT_ME && { organizationId: about }),
         }),
@@ -127,6 +132,8 @@ export function CreateTicketDialog({
       setTitle(defaults?.title ?? "");
       setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
+      setCallbackRequested(false);
+      setCallbackPhone("");
       setAbout(defaults?.organizationId ?? ABOUT_ME);
       if (requestHref && ticket?.id) router.push(requestHref(ticket.id));
     },
@@ -245,7 +252,13 @@ export function CreateTicketDialog({
             <Label htmlFor="new-ticket-priority">Priority</Label>
             <Select
               value={priority}
-              onValueChange={(v) => setPriority(v as SupportPriority)}
+              onValueChange={(v) => {
+                const nextPriority = v as SupportPriority;
+                setPriority(nextPriority);
+                if (nextPriority === "HIGH" || nextPriority === "URGENT") {
+                  setCallbackRequested(true);
+                }
+              }}
             >
               <SelectTrigger id="new-ticket-priority">
                 <SelectValue />
@@ -257,6 +270,34 @@ export function CreateTicketDialog({
                 <SelectItem value="URGENT">Urgent</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={callbackRequested}
+                onChange={(e) => setCallbackRequested(e.target.checked)}
+              />
+              <span>Request urgent phone callback</span>
+            </label>
+            {(callbackRequested ||
+              priority === "HIGH" ||
+              priority === "URGENT") && (
+              <Input
+                id="new-ticket-callback-phone"
+                type="tel"
+                value={callbackPhone}
+                onChange={(e) => {
+                  setCallbackPhone(e.target.value);
+                  if (!callbackRequested && e.target.value.trim()) {
+                    setCallbackRequested(true);
+                  }
+                }}
+                placeholder="+91 98765 43210"
+                maxLength={32}
+              />
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

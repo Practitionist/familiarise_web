@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, FileText } from "lucide-react";
+import { ExternalLink, FileText, Phone } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { caseStatus } from "@/lib/labels/backoffice-labels";
 import {
   appointmentStatusBadge,
@@ -14,6 +15,7 @@ import {
   paymentStatusBadge,
   trialStatusBadge,
 } from "@/lib/labels/session-labels";
+import { extractCallbackInfo } from "@/lib/support/case-read";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -47,7 +49,6 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 export const bookingHref = (basePath: string, appointmentId: string) =>
   `${basePath}/appointments?open=${encodeURIComponent(appointmentId)}`;
 
-/** #1527 — each booking kind's status lives on a different enum. */
 function bookingStatusLabel(booking: CaseBooking): string {
   if (!booking.status) return "—";
   if (booking.kind === "TRIAL") return trialStatusBadge(booking.status).label;
@@ -57,13 +58,23 @@ function bookingStatusLabel(booking: CaseBooking): string {
   return appointmentStatusBadge(booking.status).label;
 }
 
-/**
- * #1527 — the Details panel's body: who is asking, about what, and what came
- * before. The header carries the Open booking / payment / User 360 links.
- */
-export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
+type CaseWorkspaceWithPhone = CaseWorkspace & {
+  person: CaseWorkspace["person"] & { phone?: string | null };
+};
+
+export function CaseDetails({
+  data,
+}: Readonly<{ data: CaseWorkspaceWithPhone }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
+  const callback = extractCallbackInfo(
+    data.timeline.map((item) => item.body),
+    person.phone,
+  );
+  const telHref = callback.phone
+    ? `tel:${callback.phone.replace(/[^\d+]/g, "")}`
+    : null;
+
   return (
     <div className="space-y-5">
       <Section title="Person">
@@ -73,6 +84,30 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
             ["Role", humanizeEnum(person.role) || "—"],
             ...(person.email
               ? [["Email", person.email] as [string, ReactNode]]
+              : []),
+            ...(callback.phone && telHref
+              ? [
+                  [
+                    callback.callbackRequested ? "Callback" : "Phone",
+                    <div
+                      key="phone-row"
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <a
+                        href={telHref}
+                        className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
+                      >
+                        <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span>{callback.phone}</span>
+                      </a>
+                      {callback.callbackRequested && (
+                        <Badge variant="destructive" className="text-[11px]">
+                          Callback requested
+                        </Badge>
+                      )}
+                    </div>,
+                  ] as [string, ReactNode],
+                ]
               : []),
             ["Joined", day(person.joinedAt)],
           ]}

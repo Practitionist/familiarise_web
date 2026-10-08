@@ -14,6 +14,34 @@ import {
   Prisma,
   type UserRole,
 } from "@prisma/client";
+import { z } from "zod";
+
+const moderationReportsQuerySchema = z.object({
+  type: z
+    .enum([
+      "REVIEW",
+      "PROFILE",
+      "MESSAGE",
+      "DOCUMENT",
+      "OTHER",
+    ] as const satisfies readonly ModerationReportType[])
+    .optional(),
+  status: z
+    .enum([
+      "PENDING",
+      "UNDER_REVIEW",
+      "DISMISSED",
+      "ACTION_TAKEN",
+      "ESCALATED",
+    ] as const satisfies readonly ModerationReportStatus[])
+    .optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .transform((n) => Math.min(100, Math.max(1, n)))
+    .default(20),
+});
 
 /**
  * GET /api/staff/moderation/reports
@@ -25,13 +53,25 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type") as ModerationReportType | null;
-    const status = searchParams.get("status") as ModerationReportStatus | null;
+    const parsedQuery = moderationReportsQuerySchema.safeParse({
+      type: searchParams.get("type") ?? undefined,
+      status: searchParams.get("status") ?? undefined,
+      page: searchParams.get("page") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+    });
+    if (!parsedQuery.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid query parameters",
+          details: parsedQuery.error.issues,
+        },
+        { status: 400 },
+      );
+    }
+    const { type, status, page, limit } = parsedQuery.data;
     const assignedToId = searchParams.get("assignedToId");
     const organizationId = searchParams.get("organizationId");
     const search = searchParams.get("search");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
 
     const where: Prisma.ModerationReportWhereInput = {};

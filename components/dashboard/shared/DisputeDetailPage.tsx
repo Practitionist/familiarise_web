@@ -37,7 +37,13 @@ const getStatusColor = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "CHARGE_REFUNDED":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
     default:
       return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
   }
@@ -46,6 +52,7 @@ const getStatusColor = (status: string) => {
 const getStatusIcon = (status: string) => {
   switch (status.toUpperCase()) {
     case "WON":
+    case "CHARGE_REFUNDED":
       return <CheckCircle className="h-4 w-4" />;
     case "LOST":
       return <XCircle className="h-4 w-4" />;
@@ -53,7 +60,11 @@ const getStatusIcon = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return <AlertTriangle className="h-4 w-4" />;
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return <Clock className="h-4 w-4" />;
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return <AlertCircle className="h-4 w-4" />;
     default:
       return null;
   }
@@ -165,9 +176,12 @@ export function DisputeDetailPage({
   const canSubmitEvidence =
     allowEvidenceSubmission &&
     dispute.paymentGateway === "RAZORPAY" &&
-    ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
-      dispute.status,
-    );
+    [
+      "NEEDS_RESPONSE",
+      "WARNING_NEEDS_RESPONSE",
+      "UNDER_REVIEW",
+      "WARNING_UNDER_REVIEW",
+    ].includes(dispute.status);
 
   return (
     <div className="space-y-6">

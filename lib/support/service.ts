@@ -678,6 +678,7 @@ async function escalate(
               .join("\n\n"),
             priority,
             referenceNumber,
+            lastMessageAt: openedAt,
             ackDueAt,
             resolutionDueAt,
             category,
