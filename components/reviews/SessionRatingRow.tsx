@@ -27,14 +27,7 @@ import {
   useSessionFeedback,
 } from "@/hooks/useSessionFeedback";
 
-const RATING_CAUSE_OPTIONS: readonly { value: RatingCause; label: string }[] = [
-  { value: "CONSULTANT", label: "Expert quality" },
-  { value: "PLATFORM_TECHNICAL", label: "Audio / video quality" },
-  { value: "SCHEDULING", label: "Timing / scheduling" },
-  { value: "CONTENT", label: "Session content" },
-  { value: "PAYMENT", label: "Billing / pricing" },
-  { value: "OTHER", label: "Other" },
-];
+import { RatingCauseSelector } from "./RatingCauseSelector";
 
 export function SessionRatingRow({
   appointmentId,
@@ -53,17 +46,20 @@ export function SessionRatingRow({
   const qc = useQueryClient();
   const feedback = useSessionFeedback(bookingAppointmentId);
   const existingComment = feedback.comments[occurrenceId] ?? "";
+  const existingCause = feedback.ratingCauses[occurrenceId] ?? null;
 
   const [rating, setRating] = useState(existingRating ?? 0);
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState(existingComment);
   const [noteOpen, setNoteOpen] = useState(false);
-  const [ratingCause, setRatingCause] = useState<RatingCause | null>(null);
+  const [ratingCause, setRatingCause] = useState<RatingCause | null>(
+    existingCause,
+  );
 
   useEffect(() => {
     setRating(existingRating ?? 0);
-    setRatingCause(null);
-  }, [existingRating, occurrenceId]);
+    setRatingCause(existingCause);
+  }, [existingRating, existingCause, occurrenceId]);
 
   useEffect(() => {
     setComment(existingComment);
@@ -73,7 +69,7 @@ export function SessionRatingRow({
     mutationFn: async (args: {
       value: number;
       note?: string;
-      cause?: RatingCause;
+      cause: RatingCause | null;
     }) => {
       const trimmedNote = args.note?.trim();
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
@@ -83,7 +79,7 @@ export function SessionRatingRow({
           rating: args.value,
           occurrenceId,
           ...(trimmedNote !== undefined ? { comment: trimmedNote } : {}),
-          ...(args.cause ? { ratingCause: args.cause } : {}),
+          ratingCause: args.value > 3 ? null : args.cause,
         }),
       });
       if (!res.ok) await throwSupportError(res, "session rating");
@@ -158,11 +154,12 @@ export function SessionRatingRow({
               onClick={(e) => {
                 e.stopPropagation();
                 const previous = rating;
-                const nextCause = n <= 3 ? ratingCause : null;
-                setRating(n);
+                const nextRating = n;
+                const nextCause = nextRating > 3 ? null : ratingCause;
+                setRating(nextRating);
                 setRatingCause(nextCause);
                 save.mutate(
-                  { value: n, cause: nextCause ?? undefined },
+                  { value: nextRating, cause: nextCause },
                   { onError: () => setRating(previous) },
                 );
               }}
@@ -195,39 +192,17 @@ export function SessionRatingRow({
       </div>
 
       {rating > 0 && rating <= 3 && (
-        <div
-          className="flex flex-wrap gap-1"
-          role="group"
-          aria-label="Main reason for rating"
-        >
-          {RATING_CAUSE_OPTIONS.map((option) => {
-            const selected = ratingCause === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                disabled={save.isPending}
-                aria-pressed={selected}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const nextCause = selected ? null : option.value;
-                  setRatingCause(nextCause);
-                  save.mutate({
-                    value: rating,
-                    cause: nextCause ?? undefined,
-                  });
-                }}
-                className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
-                  selected
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border bg-background text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+        <RatingCauseSelector
+          value={ratingCause}
+          disabled={save.isPending}
+          onChange={(nextCause) => {
+            setRatingCause(nextCause);
+            save.mutate({
+              value: rating,
+              cause: rating > 3 ? null : nextCause,
+            });
+          }}
+        />
       )}
 
       {rating > 0 && noteOpen && (
@@ -251,7 +226,7 @@ export function SessionRatingRow({
               save.mutate({
                 value: rating,
                 note: comment,
-                cause: rating <= 3 && ratingCause ? ratingCause : undefined,
+                cause: rating > 3 ? null : ratingCause,
               });
             }}
           >

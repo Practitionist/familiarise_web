@@ -515,6 +515,7 @@ export function ModerationPage() {
     DISMISS: "NO_ACTION",
     WARN: "WARNING_ISSUED",
     REMOVE_CONTENT: "CONTENT_REMOVED",
+    EXCLUDE_REVIEW_AGGREGATE: "REVIEW_EXCLUDED_FROM_AGGREGATE",
     SUSPEND: "USER_SUSPENDED",
     BAN: "USER_BANNED",
   } as const;
@@ -699,6 +700,14 @@ export function ModerationPage() {
         key: "REMOVE_CONTENT",
         label: "Remove content",
         icon: Trash2,
+        variant: "outline",
+      });
+    }
+    if (report.reviewId) {
+      actions.push({
+        key: "EXCLUDE_REVIEW_AGGREGATE",
+        label: "Exclude from rating",
+        icon: Flag,
         variant: "outline",
       });
     }

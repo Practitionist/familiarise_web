@@ -22,7 +22,12 @@ export interface InboxRow {
   key: string;
   kind: "ticket" | "thread";
   scope: "session" | "platform";
-  requester: { id: string; name: string | null; email: string | null };
+  requester: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    phone?: string | null;
+  };
   subject: string;
   reference: string | null;
   topic: CaseTopic;
@@ -101,6 +106,7 @@ export interface CaseWorkspace {
     name: string | null;
     role: string | null;
     email: string | null;
+    phone: string | null;
     joinedAt: string;
   };
   booking: CaseBooking | null;

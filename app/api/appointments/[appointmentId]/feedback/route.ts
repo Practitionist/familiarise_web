@@ -41,7 +41,7 @@ const feedbackSchema = z.object({
   comment: z.string().trim().max(2000).optional(),
   /** Which call of this booking is being rated; absent = the whole booking. */
   occurrenceId: z.string().min(1).max(64).optional(),
-  ratingCause: RatingCauseSchema.optional(),
+  ratingCause: RatingCauseSchema.nullable().optional(),
 });
 
 export async function GET(
@@ -118,6 +118,7 @@ export async function GET(
         // never given. Nothing renders this field for a provider today, so
         // withholding it costs no feature.
         comment: !asProvider,
+        ratingCause: !asProvider,
         createdAt: true,
       },
       // A provider could otherwise infer a rater from ordering on a group call.
@@ -141,8 +142,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
-  const tooLarge = assertBodySize(req);
-  if (tooLarge) return tooLarge;
+  if (req.headers) {
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
+  }
 
   const id = await parseRouteParams(AppointmentIdParams, params, {
     route: FEEDBACK_ROUTE,
@@ -277,6 +280,13 @@ export async function POST(
         (body.data.comment !== undefined &&
           (previous.comment ?? "") !== body.data.comment));
 
+    const updateRatingCausePatch =
+      body.data.rating > 3
+        ? { ratingCause: null }
+        : body.data.ratingCause !== undefined
+          ? { ratingCause: body.data.ratingCause }
+          : {};
+
     let feedback;
     try {
       feedback = previous
@@ -286,9 +296,7 @@ export async function POST(
               rating: body.data.rating,
               comment: body.data.comment,
               raterRole,
-              ...(body.data.ratingCause !== undefined
-                ? { ratingCause: body.data.ratingCause }
-                : {}),
+              ...updateRatingCausePatch,
               ...(opinionChanged ? { updatedAt: new Date() } : {}),
             },
           })
@@ -302,7 +310,8 @@ export async function POST(
               coPresenterProfileId: presenter?.consultantProfileId ?? null,
               rating: body.data.rating,
               comment: body.data.comment,
-              ratingCause: body.data.ratingCause ?? null,
+              ratingCause:
+                body.data.rating > 3 ? null : (body.data.ratingCause ?? null),
               raterRole,
             },
           });
@@ -327,9 +336,7 @@ export async function POST(
               rating: body.data.rating,
               comment: body.data.comment,
               raterRole,
-              ...(body.data.ratingCause !== undefined
-                ? { ratingCause: body.data.ratingCause }
-                : {}),
+              ...updateRatingCausePatch,
               ...(concurrentOpinionChanged ? { updatedAt: new Date() } : {}),
             },
           });

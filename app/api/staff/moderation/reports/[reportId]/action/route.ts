@@ -36,6 +36,8 @@ const VALID_ACTIONS: ModerationActionType[] = [
   "USER_SUSPENDED",
   "USER_BANNED",
   "PROFILE_UNVERIFIED",
+  "REVIEW_EXCLUDED_FROM_AGGREGATE",
+  "FEEDBACK_EXCLUDED_FROM_AGGREGATE",
   "NO_ACTION",
 ];
 
@@ -55,6 +57,7 @@ const moderationActionPayloadSchema = z.object({
   ),
   notes: z.string().max(5000).optional(),
   suspensionDays: z.number().int().min(1).max(365).optional(),
+  feedbackId: z.string().min(1).max(64).optional(),
 });
 
 // Account-state side-effects commit atomically with the action row — the report
@@ -148,7 +151,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       req,
     );
     if (bodyError) return bodyError;
-    const { actionType, notes, suspensionDays } = body;
+    const { actionType, notes, suspensionDays, feedbackId } = body;
 
     // Moderation is staff's remit (`moderation.manage`), but banning and
     // suspending an account is not: BACKOFFICE_PERMISSIONS reserves
@@ -217,14 +220,29 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { status: 409 },
       );
     }
+    if (actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" && !report.reviewId) {
+      return NextResponse.json(
+        { error: "This report names no review to exclude from aggregate" },
+        { status: 409 },
+      );
+    }
+    if (actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE" && !feedbackId) {
+      return NextResponse.json(
+        {
+          error: "A feedbackId is required to exclude feedback from aggregate",
+        },
+        { status: 409 },
+      );
+    }
 
     const input = {
-      actionType: actionType as ModerationActionType,
+      actionType,
       report: {
         id: report.id,
         type: report.type,
         targetUserId: report.targetUserId,
         reviewId: report.reviewId,
+        feedbackId,
         streamMessageId: report.streamMessageId,
       },
       staffUserId: session.user.id,

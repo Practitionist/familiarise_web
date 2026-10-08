@@ -8,6 +8,7 @@ import type {
   TimelineItem,
 } from "@/types/support-case";
 
+import { extractCallbackInfo } from "./callback-info";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { PLAN_TITLE_SELECT, SLA_SELECT, planTitle } from "./case-read";
 import { threadTopic, ticketTopic } from "./case-topic";
@@ -230,6 +231,7 @@ const PERSON_SELECT = {
   id: true,
   name: true,
   email: true,
+  phone: true,
   role: true,
   createdAt: true,
 } as const;
@@ -361,6 +363,8 @@ async function readTicketWorkspace(
     findUserIssues({ userId: t.user.id, limit: 5 }),
   ]);
 
+  const cb = extractCallbackInfo([t.description], t.user.phone);
+
   return {
     key,
     kind: "ticket",
@@ -382,6 +386,10 @@ async function readTicketWorkspace(
       name: t.user.name,
       role: t.user.role,
       email: grants.showEmail ? t.user.email : null,
+      phone:
+        cb.callbackRequested && cb.phone
+          ? `[Callback Requested: ${cb.phone}]`
+          : t.user.phone,
       joinedAt: t.user.createdAt.toISOString(),
     },
     booking,
@@ -458,6 +466,7 @@ async function readThreadWorkspace(
       name: t.user.name,
       role: t.user.role,
       email: grants.showEmail ? t.user.email : null,
+      phone: t.user.phone,
       joinedAt: t.user.createdAt.toISOString(),
     },
     booking,

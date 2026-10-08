@@ -54,7 +54,9 @@ async function loadThread(threadId: string) {
   return prisma.appointmentSupportThread.findUnique({
     where: { id: threadId },
     include: {
-      user: { select: { id: true, name: true, email: true, image: true } },
+      user: {
+        select: { id: true, name: true, email: true, image: true, phone: true },
+      },
       messages: { orderBy: MESSAGE_ORDER },
       supportTicket: { select: { id: true, title: true, status: true } },
       appointment: {
@@ -334,7 +336,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       if (thread.supportTicketId) {
         const linked = await tx.supportTicket.findUnique({
           where: { id: thread.supportTicketId },
-          select: { status: true },
+          select: { status: true, resolvedAt: true },
         });
         if (linked?.status === "CLOSED" && status !== "CLOSED") return 0;
         await tx.supportTicket.updateMany({
@@ -345,7 +347,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             // #705 — stop the SLA clock with the status. Without these the
             // breach sweep keeps counting a ticket that ops has finished.
             ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
-            ...(status === "CLOSED" ? { closedAt: now } : {}),
+            ...(status === "CLOSED"
+              ? { closedAt: now, resolvedAt: linked?.resolvedAt ?? now }
+              : {}),
             ...(status === "IN_PROGRESS" ? { resolvedAt: null } : {}),
           },
         });
