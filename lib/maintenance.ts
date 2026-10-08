@@ -146,14 +146,16 @@ export async function setMaintenanceState(
     });
 
     if (phase === MaintenancePhase.OFF) {
-      await tx.maintenanceWindow.updateMany({
-        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        data: {
-          phase: MaintenancePhase.OFF,
-          endedAt: new Date(),
-          endedBy: config.endedBy,
-        },
-      });
+      if (activeWindow) {
+        await tx.maintenanceWindow.update({
+          where: { id: activeWindow.id },
+          data: {
+            phase: MaintenancePhase.OFF,
+            endedAt: new Date(),
+            endedBy: config.endedBy,
+          },
+        });
+      }
     } else if (activeWindow) {
       await tx.maintenanceWindow.update({
         where: { id: activeWindow.id },
@@ -177,20 +179,23 @@ export async function setMaintenanceState(
     }
   });
 
-  await Promise.all([
-    redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
-    redis.set(
-      REDIS_KEYS.CONFIG,
-      JSON.stringify({
-        reason: config.reason ?? null,
-        estimatedEnd: config.estimatedEnd ?? null,
-        bypassSecret: config.bypassSecret ?? null,
-        betterstackIncidentId: config.betterstackIncidentId ?? null,
-      }),
-      { ex: ttlSeconds },
-    ),
-  ]);
-  invalidateMaintenancePhaseCache();
+  try {
+    await Promise.all([
+      redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
+      redis.set(
+        REDIS_KEYS.CONFIG,
+        JSON.stringify({
+          reason: config.reason ?? null,
+          estimatedEnd: config.estimatedEnd ?? null,
+          bypassSecret: config.bypassSecret ?? null,
+          betterstackIncidentId: config.betterstackIncidentId ?? null,
+        }),
+        { ex: ttlSeconds },
+      ),
+    ]);
+  } finally {
+    invalidateMaintenancePhaseCache();
+  }
 }
 
 /**

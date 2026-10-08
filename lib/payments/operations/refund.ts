@@ -1139,6 +1139,13 @@ export async function applyRefundCascade(
     legAmounts[legAmounts.length - 1].reverse += remainder;
   }
 
+  const linkedOrgInvoice = payment.billableToOrgInvoiceId
+    ? await tx.organizationInvoice.findUnique({
+        where: { id: payment.billableToOrgInvoiceId },
+        select: { status: true, issuedAt: true },
+      })
+    : null;
+
   for (const { leg, reverse } of legAmounts) {
     if (reverse <= 0) continue;
     legsReversed++;
@@ -1190,25 +1197,7 @@ export async function applyRefundCascade(
 
       case "INVOICE_ACCRUAL":
       case "OVERAGE_INVOICE_ACCRUAL": {
-        // Both base and overage accrual legs share the same reversal
-        // semantics: if the invoice is already PAID, clawback is handled
-        // at the OrganizationEarnings level below (mutating the leg of a
-        // settled invoice would diverge from the issued document).
-        //
-        // #786/#781 §B — funding legs are append-only: the original leg is
-        // never mutated; the refund nets through a negative *_REVERSAL
-        // sibling. One reversal leg per source keeps @@unique([paymentId,
-        // source]) intact; subsequent partial refunds decrement the
-        // existing reversal leg. The monthly rollup sums original +
-        // reversal so it bills the net — and the full funding history
-        // stays readable from the legs.
-        const billable = payment.billableToOrgInvoiceId
-          ? await tx.organizationInvoice.findUnique({
-              where: { id: payment.billableToOrgInvoiceId },
-              select: { status: true },
-            })
-          : null;
-        const alreadyBilled = billable?.status === "PAID";
+        const alreadyBilled = linkedOrgInvoice?.status === "PAID";
         if (!alreadyBilled) {
           const reversalSource =
             leg.source === "INVOICE_ACCRUAL"
@@ -1726,8 +1715,9 @@ export async function applyRefundCascade(
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
       // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
       const taxPaise = payment.taxAmount ?? 0;
+      const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
       const gstRev =
-        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt, cascadeNow)
+        taxPaise > 0 && isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)
           ? 0
           : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture

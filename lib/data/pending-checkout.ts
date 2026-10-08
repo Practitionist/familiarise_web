@@ -77,7 +77,7 @@ export async function readPendingCheckout(args: {
           (sum, usage) => sum + Number(usage.amount),
           0,
         )
-      : Number(payment.legs[0]?.amountPaise ?? 0);
+      : Number(payment.legs?.[0]?.amountPaise ?? 0);
   // amount = base − discount + GST − credits, so the discount is what is left.
   const discountPaise = Math.max(
     0,

@@ -229,6 +229,7 @@ async function stageCaptureRefund(
       id: true,
       description: true,
       amount: true,
+      paymentStatus: true,
       gatewayPaymentId: true,
     },
   });
@@ -245,7 +246,29 @@ async function stageCaptureRefund(
       });
     }
     if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
-      return null;
+      if (existing.paymentStatus !== "PENDING") {
+        return null;
+      }
+      const claimed = await tx.payment.updateMany({
+        where: { id: existing.id, paymentStatus: "PENDING" },
+        data: {
+          paymentStatus: "SUCCEEDED",
+          gatewayPaymentId: input.gatewayPaymentId,
+          capturedAt: new Date(),
+          description: marker,
+        },
+      });
+      if (claimed.count === 0) return null;
+      await postUnappliedReceipt(tx, {
+        paymentId: existing.id,
+        capturedPaise: existing.amount,
+      });
+      return {
+        kind: "refund",
+        paymentId: existing.id,
+        reason: input.reason,
+        marker,
+      };
     }
     await postUnappliedReceipt(tx, {
       paymentId: existing.id,

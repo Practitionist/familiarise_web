@@ -892,11 +892,14 @@ export async function handlePaymentSuccess(
           },
         });
       }
-      if (outcome?.status !== "PENDING" && surplusPaise === 0) {
+      if (outcome?.status !== "PENDING") {
         await prisma.payment.update({
           where: { id: txResult.paymentId },
           data: {
-            description: `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
+            description:
+              surplusPaise > 0
+                ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${txResult.gatewayAmountPaise}p captured). Booking NOT confirmed.`
+                : `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
           },
         });
       }
