@@ -1,6 +1,9 @@
 /** @jest-environment node */
 
-import { extractCallbackInfo } from "@/lib/support/case-read";
+import {
+  buildEngineeringEscalationHref,
+  extractCallbackInfo,
+} from "@/lib/support/callback-info";
 import { slaStateOf } from "@/lib/support/sla";
 import {
   PlatformFeedbackStatusSchema,
@@ -40,6 +43,55 @@ describe("Support, Feedback & Review Megafix invariants", () => {
         phone: null,
         callbackRequested: false,
       });
+    });
+  });
+
+  describe("buildEngineeringEscalationHref", () => {
+    it("builds a GitHub issue URL with diagnostic identifiers and zero PII", () => {
+      const href = buildEngineeringEscalationHref({
+        key: "t_abc123",
+        reference: "SUP-2026-00042",
+        kind: "ticket",
+        topic: "billing",
+        priority: "URGENT",
+        status: "OPEN",
+        appointmentId: "appt_999",
+        paymentId: "pay_888",
+        backofficePath: "/dashboard/staff/support/t_abc123",
+      });
+      const parsed = new URL(href);
+      expect(parsed.origin).toBe("https://github.com");
+      expect(parsed.pathname).toBe("/Practitionist/familiarise_web/issues/new");
+      expect(parsed.searchParams.get("labels")).toBe("bug,from-support");
+      expect(parsed.searchParams.get("title")).toBe(
+        "[Support Escalation] SUP-2026-00042 (billing)",
+      );
+      const body = parsed.searchParams.get("body") ?? "";
+      expect(body).toContain("t_abc123");
+      expect(body).toContain("SUP-2026-00042");
+      expect(body).toContain("appt_999");
+      expect(body).toContain("pay_888");
+      expect(body).not.toMatch(/@/);
+      expect(body).not.toContain("+91");
+    });
+
+    it("falls back to case key when optional reference and entity IDs are omitted", () => {
+      const href = buildEngineeringEscalationHref({
+        key: "s_thread_77",
+        reference: null,
+        kind: "thread",
+        topic: "session",
+        status: "ESCALATED",
+        backofficePath: "/dashboard/staff/support/s_thread_77",
+      });
+      const parsed = new URL(href);
+      expect(parsed.searchParams.get("title")).toBe(
+        "[Support Escalation] s_thread_77 (session)",
+      );
+      const body = parsed.searchParams.get("body") ?? "";
+      expect(body).toContain("s_thread_77");
+      expect(body).not.toContain("Appointment ID");
+      expect(body).not.toContain("Payment ID");
     });
   });
 

@@ -26,14 +26,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
-const RATING_CAUSE_OPTIONS: readonly { value: RatingCause; label: string }[] = [
-  { value: "CONSULTANT", label: "Expert quality" },
-  { value: "PLATFORM_TECHNICAL", label: "Audio / video quality" },
-  { value: "SCHEDULING", label: "Timing / scheduling" },
-  { value: "CONTENT", label: "Session content" },
-  { value: "PAYMENT", label: "Billing / pricing" },
-  { value: "OTHER", label: "Other" },
-];
+import { RatingCauseSelector } from "./RatingCauseSelector";
 
 export interface ExistingReview {
   id: string;
@@ -89,7 +82,7 @@ export function ReviewComposer({
         rating,
         reviewDescription: text.trim() || null,
         isAnonymous: anonymous,
-        ...(rating > 0 && rating <= 3 && ratingCause ? { ratingCause } : {}),
+        ratingCause: rating > 3 ? null : (ratingCause ?? null),
       };
       const res = await fetch(`/api/user/reviews`, {
         method: "POST",
@@ -166,34 +159,11 @@ export function ReviewComposer({
       </div>
 
       {rating > 0 && rating <= 3 && (
-        <div
-          className="mt-2.5 flex flex-wrap gap-1.5"
-          role="group"
-          aria-label="Main reason for rating"
-        >
-          {RATING_CAUSE_OPTIONS.map((option) => {
-            const selected = ratingCause === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={selected}
-                onClick={() =>
-                  setRatingCause((prev) =>
-                    prev === option.value ? null : option.value,
-                  )
-                }
-                className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                  selected
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border bg-background text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+        <RatingCauseSelector
+          value={ratingCause}
+          onChange={setRatingCause}
+          className="mt-2.5"
+        />
       )}
 
       <Textarea

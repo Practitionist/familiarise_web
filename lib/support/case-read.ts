@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, UserRole } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import type {
@@ -7,6 +7,7 @@ import type {
   InboxStats,
 } from "@/types/support-case";
 
+import { extractCallbackInfo } from "./callback-info";
 import { caseKeyOf } from "./case-key";
 import { threadTopic, ticketTopic } from "./case-topic";
 import {
@@ -27,6 +28,8 @@ import {
   type InboxFilters,
 } from "./inbox-query";
 import { slaStateOf } from "./sla";
+
+export { extractCallbackInfo } from "./callback-info";
 
 const STATS_ROW_CAP = 5000;
 
@@ -75,22 +78,22 @@ export function planTitle(a: PlanTitled): string {
 
 // ── The list ────────────────────────────────────────────────────────────
 
-const CALLBACK_TAG_RE = /\[Callback Requested:\s*([^\]]+)\]/i;
-
-/** Parse an explicit callback phone tag from ticket/message bodies or fall back to user.phone. */
-export function extractCallbackInfo(
-  texts: readonly (string | null | undefined)[],
-  fallbackPhone?: string | null,
-): { phone: string | null; callbackRequested: boolean } {
-  for (const text of texts) {
-    if (!text) continue;
-    const match = CALLBACK_TAG_RE.exec(text);
-    if (match?.[1]?.trim()) {
-      return { phone: match[1].trim(), callbackRequested: true };
-    }
-  }
-  const cleanFallback = fallbackPhone?.trim() || null;
-  return { phone: cleanFallback, callbackRequested: false };
+function toCaseRequester(
+  u: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    role: UserRole;
+  },
+  showEmail: boolean,
+): InboxRow["requester"] {
+  return {
+    id: u.id,
+    name: u.name,
+    email: showEmail ? u.email : null,
+    phone: u.phone,
+  };
 }
 
 export async function readInboxPage(
@@ -169,6 +172,7 @@ export async function readInboxPage(
     name: true,
     email: true,
     phone: true,
+    role: true,
   } as const;
   const [tickets, threads] = await Promise.all([
     ticketIds.length
@@ -212,17 +216,14 @@ export async function readInboxPage(
   const byKey = new Map<string, InboxRow>();
   for (const t of tickets) {
     const callback = extractCallbackInfo([t.description], t.user.phone);
-    const requester = {
-      id: t.user.id,
-      name: t.user.name,
-      email: opts.showEmail ? t.user.email : null,
-      phone: callback.phone,
-    };
     byKey.set(caseKeyOf({ kind: "ticket", id: t.id }), {
       key: caseKeyOf({ kind: "ticket", id: t.id }),
       kind: "ticket",
       scope: t.appointmentSupportThread ? "session" : "platform",
-      requester,
+      requester: {
+        ...toCaseRequester(t.user, opts.showEmail),
+        phone: callback.phone,
+      },
       subject: t.title,
       reference: t.referenceNumber,
       topic: ticketTopic(t),
@@ -238,17 +239,11 @@ export async function readInboxPage(
     });
   }
   for (const t of threads) {
-    const requester = {
-      id: t.user.id,
-      name: t.user.name,
-      email: opts.showEmail ? t.user.email : null,
-      phone: t.user.phone,
-    };
     byKey.set(caseKeyOf({ kind: "thread", id: t.id }), {
       key: caseKeyOf({ kind: "thread", id: t.id }),
       kind: "thread",
       scope: "session",
-      requester,
+      requester: toCaseRequester(t.user, opts.showEmail),
       subject: `Help with ${planTitle(t.appointment)}`,
       reference: null,
       topic: threadTopic(t.category),

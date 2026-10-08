@@ -102,6 +102,46 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+function buildReportPatchData(
+  validatedData: z.infer<typeof patchReportSchema>,
+  userId: string,
+): {
+  status?: ModerationReportStatus;
+  assignedToId?: string | null;
+  resolvedAt?: Date | null;
+  resolvedBy?: string | null;
+} {
+  const updateData: {
+    status?: ModerationReportStatus;
+    assignedToId?: string | null;
+    resolvedAt?: Date | null;
+    resolvedBy?: string | null;
+  } = {};
+
+  if (validatedData.status !== undefined) {
+    updateData.status = validatedData.status;
+    if (
+      validatedData.status === "DISMISSED" ||
+      validatedData.status === "ACTION_TAKEN"
+    ) {
+      updateData.resolvedAt = new Date();
+      updateData.resolvedBy = userId;
+    } else if (
+      validatedData.status === "PENDING" ||
+      validatedData.status === "UNDER_REVIEW"
+    ) {
+      updateData.resolvedAt = null;
+      updateData.resolvedBy = null;
+    }
+  }
+
+  if (validatedData.assignedToId !== undefined) {
+    updateData.assignedToId = validatedData.assignedToId || null;
+  }
+
+  return updateData;
+}
+
 /**
  * PATCH /api/staff/moderation/reports/[reportId]
  * Update report status or assignment
@@ -113,11 +153,21 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const session = auth.session;
 
     const { reportId } = await params;
-    const parsed = patchReportSchema.safeParse(await req.json());
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    const rawBody = await req.json().catch(() => null);
+    if (!rawBody || typeof rawBody !== "object") {
+      return NextResponse.json(
+        { error: "Invalid request body", details: [] },
+        { status: 400 },
+      );
     }
-    const { status, assignedToId } = parsed.data;
+    const parsed = patchReportSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", details: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const { assignedToId } = parsed.data;
 
     if (assignedToId) {
       const assignee = await prisma.user.findUnique({
@@ -143,28 +193,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const updateData: {
-      status?: ModerationReportStatus;
-      assignedToId?: string | null;
-      resolvedAt?: Date | null;
-      resolvedBy?: string | null;
-    } = {};
-
-    if (status !== undefined) {
-      updateData.status = status;
-
-      if (status === "DISMISSED" || status === "ACTION_TAKEN") {
-        updateData.resolvedAt = new Date();
-        updateData.resolvedBy = session.user.id;
-      } else if (status === "PENDING" || status === "UNDER_REVIEW") {
-        updateData.resolvedAt = null;
-        updateData.resolvedBy = null;
-      }
-    }
-
-    if (assignedToId !== undefined) {
-      updateData.assignedToId = assignedToId || null;
-    }
+    const updateData = buildReportPatchData(parsed.data, session.user.id);
 
     const updated = await prisma.moderationReport.updateMany({
       where: { id: reportId, status: existing.status },

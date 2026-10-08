@@ -38,7 +38,7 @@ export const CreateReviewSchema = z.object({
    * from someone who may want to book this person again.
    */
   isAnonymous: z.boolean().optional(),
-  ratingCause: RatingCauseSchema.optional(),
+  ratingCause: RatingCauseSchema.nullable().optional(),
 });
 
 export const UpdateReviewSchema = CreateReviewSchema.pick({

@@ -271,9 +271,10 @@ export async function POST(req: NextRequest) {
                   ? { ratedOccurrenceAt: reviewable.heldAt }
                   : {}),
                 isAnonymous: validatedData.isAnonymous ?? undefined,
-                ...(validatedData.ratingCause !== undefined
-                  ? { ratingCause: validatedData.ratingCause }
-                  : {}),
+                ratingCause:
+                  validatedData.rating > 3
+                    ? null
+                    : (validatedData.ratingCause ?? null),
                 ...(withdrawnByAuthor
                   ? { deletedAt: null, removedBy: null }
                   : {}),
@@ -289,7 +290,10 @@ export async function POST(req: NextRequest) {
                 consulteeProfileId: sessionConsulteeProfileId,
                 appointmentId: reviewable.appointmentId,
                 isAnonymous: validatedData.isAnonymous ?? false,
-                ratingCause: validatedData.ratingCause ?? null,
+                ratingCause:
+                  validatedData.rating > 3
+                    ? null
+                    : (validatedData.ratingCause ?? null),
                 track: reviewable.track,
                 // Group only — see lib/reviews.ts. NULL on a 1:1 review, where
                 // the review is already one data point.

@@ -173,6 +173,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     const attachment = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${ticketId} FOR UPDATE`;
       const currentCount = await tx.supportTicketAttachment.count({
         where: { ticketId },
       });

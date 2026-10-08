@@ -292,11 +292,18 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           return null;
         }
 
-        if (
-          validatedData.status &&
-          validatedData.status !== "ON_HOLD" &&
-          validatedData.status !== "OPEN"
-        ) {
+        if (validatedData.status === "OPEN") {
+          await tx.appointmentSupportThread.updateMany({
+            where: {
+              supportTicketId: ticketId,
+              status: { notIn: ["CLOSED"] },
+            },
+            data: {
+              status: "ESCALATED",
+              resolvedAt: null,
+            },
+          });
+        } else if (validatedData.status && validatedData.status !== "ON_HOLD") {
           await tx.appointmentSupportThread.updateMany({
             where: {
               supportTicketId: ticketId,

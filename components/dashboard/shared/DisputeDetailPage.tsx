@@ -172,16 +172,11 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
-  // Only Razorpay disputes have an evidence form.
+  // Only Razorpay disputes awaiting response accept evidence submissions.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
     dispute.paymentGateway === "RAZORPAY" &&
-    [
-      "NEEDS_RESPONSE",
-      "WARNING_NEEDS_RESPONSE",
-      "UNDER_REVIEW",
-      "WARNING_UNDER_REVIEW",
-    ].includes(dispute.status);
+    dispute.status === "NEEDS_RESPONSE";
 
   return (
     <div className="space-y-6">

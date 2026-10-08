@@ -8,18 +8,21 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { RatingCause } from "@prisma/client";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 interface SlotFeedback {
   appointmentOccurrenceId: string | null;
   rating: number;
   comment?: string | null;
+  ratingCause?: RatingCause | null;
 }
 
 export interface SubmitFeedbackInput {
   rating: number;
   comment?: string;
   occurrenceId?: string;
+  ratingCause?: RatingCause | null;
 }
 
 /** The one cache key for a booking's ratings.
@@ -36,6 +39,8 @@ export interface SessionFeedbackState {
   ratings: Record<string, number>;
   /** slot id (or "booking") → the private comment this viewer saved. */
   comments: Record<string, string>;
+  /** slot id (or "booking") → the low-rating cause this viewer selected. */
+  ratingCauses: Record<string, RatingCause>;
   /** Slots this viewer may rate at all — attended, or offline. */
   rateable: Set<string>;
   /** Persist a session rating and optional private comment. */
@@ -67,6 +72,7 @@ export function useSessionFeedback(
     queryFn: async (): Promise<{
       ratings: Record<string, number>;
       comments: Record<string, string>;
+      ratingCauses: Record<string, RatingCause>;
       rateable: string[];
     }> => {
       const res = await fetch(
@@ -88,10 +94,14 @@ export function useSessionFeedback(
       // the group score.
       const bySlot = new Map<string, { total: number; n: number }>();
       const comments: Record<string, string> = {};
+      const ratingCauses: Record<string, RatingCause> = {};
       for (const r of rows) {
         const commentKey = r.appointmentOccurrenceId ?? "booking";
         if (typeof r.comment === "string" && r.comment.length > 0) {
           comments[commentKey] = r.comment;
+        }
+        if (r.ratingCause) {
+          ratingCauses[commentKey] = r.ratingCause;
         }
         if (!r.appointmentOccurrenceId) continue;
         const acc = bySlot.get(r.appointmentOccurrenceId) ?? { total: 0, n: 0 };
@@ -107,6 +117,7 @@ export function useSessionFeedback(
           ]),
         ),
         comments,
+        ratingCauses,
         rateable: json.rateableSlotIds ?? [],
       };
     },
@@ -127,6 +138,9 @@ export function useSessionFeedback(
             ...(trimmedComment !== undefined
               ? { comment: trimmedComment }
               : {}),
+            ...(input.ratingCause !== undefined
+              ? { ratingCause: input.ratingCause }
+              : {}),
           }),
         },
       );
@@ -142,6 +156,7 @@ export function useSessionFeedback(
   return {
     ratings: query.data?.ratings ?? {},
     comments: query.data?.comments ?? {},
+    ratingCauses: query.data?.ratingCauses ?? {},
     rateable: new Set(query.data?.rateable ?? []),
     submitFeedback,
     isSubmitting,

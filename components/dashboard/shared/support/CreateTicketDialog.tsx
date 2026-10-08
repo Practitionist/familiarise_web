@@ -101,7 +101,7 @@ export function CreateTicketDialog({
 
   const create = useMutation({
     mutationFn: async () => {
-      const trimmedPhone = callbackPhone.trim();
+      const trimmedPhone = callbackPhone.replace(/\]/g, "").trim();
       const formattedDescription =
         callbackRequested && trimmedPhone
           ? `[Callback Requested: ${trimmedPhone}]\n\n${description.trim()}`
@@ -305,7 +305,11 @@ export function CreateTicketDialog({
               Cancel
             </Button>
             <Button
-              disabled={!valid || create.isPending}
+              disabled={
+                !valid ||
+                create.isPending ||
+                (callbackRequested && !callbackPhone.trim())
+              }
               onClick={() => create.mutate()}
             >
               {create.isPending ? "Creating…" : "Create request"}

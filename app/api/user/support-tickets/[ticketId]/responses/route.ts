@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
-} from "lib/prisma";
+} from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
@@ -11,6 +11,17 @@ import * as Sentry from "@sentry/nextjs";
 import { userRepliedPatch } from "@/lib/support/sla";
 import { allocateMessageSeq } from "@/lib/support/message-seq";
 import { notifyStaffOfTicketActivity } from "@/lib/support/create-ticket";
+
+function resolveUserReplyNextStatus(
+  status: string,
+  assignedToId: string | null,
+): "IN_PROGRESS" | "OPEN" {
+  if (status === "RESOLVED" || status === "ON_HOLD") {
+    return assignedToId ? "IN_PROGRESS" : "OPEN";
+  }
+  return "IN_PROGRESS";
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
@@ -79,12 +90,10 @@ export async function POST(
     }
 
     const now = new Date();
-    const nextStatus =
-      ticket.status === "RESOLVED" || ticket.status === "ON_HOLD"
-        ? ticket.assignedToId
-          ? "IN_PROGRESS"
-          : "OPEN"
-        : "IN_PROGRESS";
+    const nextStatus = resolveUserReplyNextStatus(
+      ticket.status,
+      ticket.assignedToId,
+    );
 
     const response = await prisma.$transaction(
       async (tx) => {
@@ -93,6 +102,7 @@ export async function POST(
             id: ticketId,
             status: ticket.status,
             awaitingUserSince: ticket.awaitingUserSince,
+            pausedSeconds: ticket.pausedSeconds,
           },
           data: {
             lastMessageAt: now,
@@ -162,14 +172,16 @@ export async function POST(
       );
     }
 
-    await notifyStaffOfTicketActivity(ticketId, null, response.id).catch(
-      (error) => {
-        console.error("support: user-reply notification failed", {
-          ticketId,
-          error,
-        });
-      },
-    );
+    await notifyStaffOfTicketActivity(
+      ticketId,
+      ticket.organizationId,
+      response.id,
+    ).catch((error) => {
+      console.error("support: user-reply notification failed", {
+        ticketId,
+        error,
+      });
+    });
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {

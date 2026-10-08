@@ -15,7 +15,10 @@ import {
   paymentStatusBadge,
   trialStatusBadge,
 } from "@/lib/labels/session-labels";
-import { extractCallbackInfo } from "@/lib/support/case-read";
+import {
+  buildEngineeringEscalationHref,
+  extractCallbackInfo,
+} from "@/lib/support/callback-info";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -58,22 +61,27 @@ function bookingStatusLabel(booking: CaseBooking): string {
   return appointmentStatusBadge(booking.status).label;
 }
 
-type CaseWorkspaceWithPhone = CaseWorkspace & {
-  person: CaseWorkspace["person"] & { phone?: string | null };
-};
-
-export function CaseDetails({
-  data,
-}: Readonly<{ data: CaseWorkspaceWithPhone }>) {
+export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
   const callback = extractCallbackInfo(
-    data.timeline.map((item) => item.body),
+    [...data.timeline.map((m) => ("body" in m ? m.body : null)), person.phone],
     person.phone,
   );
   const telHref = callback.phone
     ? `tel:${callback.phone.replace(/[^\d+]/g, "")}`
     : null;
+  const escalationHref = buildEngineeringEscalationHref({
+    key: data.key,
+    reference: data.reference,
+    kind: data.kind,
+    topic: data.topic,
+    priority: data.priority,
+    status: data.status,
+    appointmentId: booking?.appointmentId ?? null,
+    paymentId: payment?.id ?? null,
+    backofficePath: `${basePath}/support/${data.key}`,
+  });
 
   return (
     <div className="space-y-5">
@@ -250,6 +258,21 @@ export function CaseDetails({
           </ul>
         </Section>
       )}
+
+      <Section title="Engineering">
+        <a
+          href={escalationHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          <span>Escalate to Engineering (GitHub Issue)</span>
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        </a>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Opens a pre-filled bug report with case IDs and zero customer PII.
+        </p>
+      </Section>
     </div>
   );
 }
