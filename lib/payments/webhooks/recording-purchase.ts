@@ -210,6 +210,83 @@ function cardLeg(amountPaise: number, paymentIntent: string) {
  * auto-refund marker. A row already staged for the intent is re-driven only
  * while its marker is still pending.
  */
+async function stageExistingCaptureRefund(
+  tx: Tx,
+  existing: {
+    id: string;
+    description: string | null;
+    amount: number;
+    paymentStatus: string;
+    gatewayPaymentId: string | null;
+  },
+  input: {
+    paymentIntent: string;
+    buyerId: string;
+    chargedPaise: number;
+    charge: ReplayCharge;
+    organizationId: string | null;
+    gatewayPaymentId: string | undefined;
+    reason: string;
+  },
+  marker: string,
+): Promise<CaptureOutcome | null> {
+  if (
+    existing.gatewayPaymentId &&
+    input.gatewayPaymentId &&
+    existing.gatewayPaymentId !== input.gatewayPaymentId &&
+    input.paymentIntent !== input.gatewayPaymentId
+  ) {
+    return stageCaptureRefund(tx, {
+      ...input,
+      paymentIntent: input.gatewayPaymentId,
+    });
+  }
+  if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
+    if (existing.paymentStatus !== "PENDING") {
+      return null;
+    }
+    const claimed = await tx.payment.updateMany({
+      where: { id: existing.id, paymentStatus: "PENDING" },
+      data: {
+        amount: input.chargedPaise,
+        originalAmount: input.charge.originalAmount,
+        taxAmount: input.charge.taxAmount,
+        paymentStatus: "SUCCEEDED",
+        gatewayPaymentId: input.gatewayPaymentId,
+        capturedAt: new Date(),
+        description: marker,
+      },
+    });
+    if (claimed.count === 0) return null;
+    if (input.chargedPaise !== existing.amount) {
+      await tx.paymentLeg.updateMany({
+        where: { paymentId: existing.id, source: "CARD" },
+        data: { amountPaise: input.chargedPaise },
+      });
+    }
+    await postUnappliedReceipt(tx, {
+      paymentId: existing.id,
+      capturedPaise: input.chargedPaise,
+    });
+    return {
+      kind: "refund",
+      paymentId: existing.id,
+      reason: input.reason,
+      marker,
+    };
+  }
+  await postUnappliedReceipt(tx, {
+    paymentId: existing.id,
+    capturedPaise: existing.amount,
+  });
+  return {
+    kind: "refund",
+    paymentId: existing.id,
+    reason: input.reason,
+    marker: existing.description,
+  };
+}
+
 async function stageCaptureRefund(
   tx: Tx,
   input: {
@@ -234,61 +311,7 @@ async function stageCaptureRefund(
     },
   });
   if (existing) {
-    if (
-      existing.gatewayPaymentId &&
-      input.gatewayPaymentId &&
-      existing.gatewayPaymentId !== input.gatewayPaymentId &&
-      input.paymentIntent !== input.gatewayPaymentId
-    ) {
-      return stageCaptureRefund(tx, {
-        ...input,
-        paymentIntent: input.gatewayPaymentId,
-      });
-    }
-    if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
-      if (existing.paymentStatus !== "PENDING") {
-        return null;
-      }
-      const claimed = await tx.payment.updateMany({
-        where: { id: existing.id, paymentStatus: "PENDING" },
-        data: {
-          amount: input.chargedPaise,
-          originalAmount: input.charge.originalAmount,
-          taxAmount: input.charge.taxAmount,
-          paymentStatus: "SUCCEEDED",
-          gatewayPaymentId: input.gatewayPaymentId,
-          capturedAt: new Date(),
-          description: marker,
-        },
-      });
-      if (claimed.count === 0) return null;
-      if (input.chargedPaise !== existing.amount) {
-        await tx.paymentLeg.updateMany({
-          where: { paymentId: existing.id, source: "CARD" },
-          data: { amountPaise: input.chargedPaise },
-        });
-      }
-      await postUnappliedReceipt(tx, {
-        paymentId: existing.id,
-        capturedPaise: input.chargedPaise,
-      });
-      return {
-        kind: "refund",
-        paymentId: existing.id,
-        reason: input.reason,
-        marker,
-      };
-    }
-    await postUnappliedReceipt(tx, {
-      paymentId: existing.id,
-      capturedPaise: existing.amount,
-    });
-    return {
-      kind: "refund",
-      paymentId: existing.id,
-      reason: input.reason,
-      marker: existing.description,
-    };
+    return stageExistingCaptureRefund(tx, existing, input, marker);
   }
   const created = await tx.payment.create({
     data: {
