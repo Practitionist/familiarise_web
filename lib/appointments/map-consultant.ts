@@ -109,7 +109,10 @@ type AppointmentWithTrial = TAppointment & {
 };
 
 /** Title + counterpart + lifecycle status live on the polymorphic parent. */
-function eventFacts(appointment: TAppointment): {
+function eventFacts(
+  appointment: TAppointment,
+  consultantId?: string,
+): {
   title: string;
   counterpart: PersonVM;
   status: string;
@@ -130,24 +133,40 @@ function eventFacts(appointment: TAppointment): {
         counterpart: person(appointment.subscription?.requestedBy?.user),
         status: normalizeStatus(appointment.subscription?.status?.toString()),
       };
-    case "WEBINAR":
+    case "WEBINAR": {
+      const plan = appointment.webinar?.webinarPlan;
+      const isCollaborator =
+        Boolean(consultantId) &&
+        Boolean(plan?.consultantProfileId) &&
+        plan?.consultantProfileId !== consultantId;
       return {
-        title: appointment.webinar?.webinarPlan?.title ?? "Webinar",
-        counterpart: person(
-          appointment.webinar?.webinarPlan?.consultantProfile?.user,
-          "Unknown Consultant",
-        ),
+        title: plan?.title ?? "Webinar",
+        counterpart: isCollaborator
+          ? person(plan?.consultantProfile?.user, "Host")
+          : {
+              name: "Registered attendees",
+              image: plan?.consultantProfile?.user?.image ?? null,
+            },
         status: normalizeStatus(appointment.webinar?.status?.toString()),
       };
-    case "CLASS":
+    }
+    case "CLASS": {
+      const plan = appointment.class?.classPlan;
+      const isCollaborator =
+        Boolean(consultantId) &&
+        Boolean(plan?.consultantProfileId) &&
+        plan?.consultantProfileId !== consultantId;
       return {
-        title: appointment.class?.classPlan?.title ?? "Class",
-        counterpart: person(
-          appointment.class?.classPlan?.consultantProfile?.user,
-          "Unknown Consultant",
-        ),
+        title: plan?.title ?? "Class",
+        counterpart: isCollaborator
+          ? person(plan?.consultantProfile?.user, "Host")
+          : {
+              name: "Enrolled learners",
+              image: plan?.consultantProfile?.user?.image ?? null,
+            },
         status: normalizeStatus(appointment.class?.status?.toString()),
       };
+    }
     case "TRIAL":
       return {
         title: appt.trial?.subscriptionPlan?.title ?? "Trial",
@@ -233,7 +252,7 @@ function mapSingle(
   now: Date,
 ): AppointmentVM {
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
-  const { title, counterpart, status } = eventFacts(appointment);
+  const { title, counterpart, status } = eventFacts(appointment, consultantId);
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -265,7 +284,7 @@ function mapGroup(
   const occurrences = sortOccurrences(
     children.flatMap((c) => occurrencesOfAppointment(c)),
   );
-  const { title, counterpart, status } = eventFacts(first);
+  const { title, counterpart, status } = eventFacts(first, consultantId);
   // #1554 — progress is counted over live occurrence rows, not wrappers.
   const live = liveOccurrences(occurrences);
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
@@ -365,7 +384,10 @@ function mapUnscheduledClass(
     appointmentId: null,
     kind: "CLASS",
     title: plan.title,
-    counterpart: person(plan.consultantProfile?.user, "You"),
+    counterpart: {
+      name: "Enrolled learners",
+      image: plan.consultantProfile?.user?.image ?? null,
+    },
     status,
     ...deriveBucket(
       { status, occurrences: [], isUnscheduled: true, now },
@@ -396,7 +418,10 @@ function mapUnscheduledWebinar(
     appointmentId: null,
     kind: "WEBINAR",
     title: w.webinarPlan.title,
-    counterpart: person(w.webinarPlan.consultantProfile?.user, "You"),
+    counterpart: {
+      name: "Registered attendees",
+      image: w.webinarPlan.consultantProfile?.user?.image ?? null,
+    },
     status,
     ...deriveBucket(
       { status, occurrences: [], isUnscheduled: true, now },
