@@ -11,14 +11,18 @@ export const STAGE_QA_EVENT_TYPES = {
 export type StageQaEventType =
   (typeof STAGE_QA_EVENT_TYPES)[keyof typeof STAGE_QA_EVENT_TYPES];
 
-export interface StageQuestion {
-  id: string;
-  text: string;
-  authorId: string;
-  authorName: string;
-  authorRole: "host" | "participant";
-  createdAt: string;
-}
+export const STAGE_QUESTION_TTL_SECONDS = 60 * 60 * 6;
+
+export const stageQuestionSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1).max(MAX_STAGE_QUESTION_LENGTH),
+  authorId: z.string().min(1),
+  authorName: z.string().min(1).max(120),
+  authorRole: z.enum(["host", "participant"]),
+  createdAt: z.string().min(1),
+});
+
+export type StageQuestion = z.infer<typeof stageQuestionSchema>;
 
 export interface StagePinnedBanner {
   questionId: string;
@@ -45,22 +49,34 @@ export const qaActionRequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("pin"),
     questionId: z.string().trim().min(1, "questionId is required"),
-    text: z
-      .string()
-      .trim()
-      .min(1, "Banner text cannot be empty")
-      .max(
-        MAX_STAGE_QUESTION_LENGTH,
-        `Banner text cannot exceed ${MAX_STAGE_QUESTION_LENGTH} characters`,
-      ),
-    authorId: z.string().trim().min(1, "authorId is required"),
-    authorName: z.string().trim().min(1, "authorName is required").max(120),
-    authorRole: z.enum(["host", "participant"]).default("participant"),
   }),
   z.object({
     action: z.literal("unpin"),
   }),
 ]);
+
+export function stageQuestionRedisKey(
+  callId: string,
+  questionId: string,
+): string {
+  return `stage-qa:${callId}:${questionId}`;
+}
+
+export function parseStoredStageQuestion(raw: unknown): StageQuestion | null {
+  if (!raw) return null;
+  const candidate =
+    typeof raw === "string"
+      ? (() => {
+          try {
+            return JSON.parse(raw) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : raw;
+  const parsed = stageQuestionSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
 
 export type QaActionRequest = z.infer<typeof qaActionRequestSchema>;
 

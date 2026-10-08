@@ -71,6 +71,7 @@ import {
 import {
   normalizeStageBannerFromCustomData,
   STAGE_QA_EVENT_TYPES,
+  stageQuestionSchema,
   type StagePinnedBanner,
   type StageQuestion,
 } from "@/lib/meetings/stage-qa";
@@ -167,6 +168,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const [activeBanner, setActiveBanner] = useState<StagePinnedBanner | null>(
     null,
   );
+  const [qaError, setQaError] = useState<string | null>(null);
   const [isQaSubmitting, setIsQaSubmitting] = useState(false);
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
   const handleEnding = useCallback(() => setExit("ending"), []);
@@ -207,44 +209,39 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     ? "720p"
     : "480p";
 
-  // Hydrate initial active ON SCREEN banner from call.state.custom for late joiners.
+  // Hydrate and sync active ON SCREEN banner from server-authoritative call.state.custom.
   useEffect(() => {
     if (!inCallChatAllowed) return;
-    const initialBanner = normalizeStageBannerFromCustomData(
+    const syncedBanner = normalizeStageBannerFromCustomData(
       callCustomData as Record<string, unknown> | undefined,
     );
-    if (initialBanner) {
-      setActiveBanner(initialBanner);
-    }
+    setActiveBanner(syncedBanner);
   }, [callCustomData, inCallChatAllowed]);
 
   // Subscribe to real-time Q&A and ON SCREEN stage banner events over Stream WebSocket.
   useEffect(() => {
     if (!call || !inCallChatAllowed || typeof call.on !== "function") return;
 
-    const handleCustomEvent = (event: {
-      custom?: Record<string, unknown>;
-    }) => {
+    const handleCustomEvent = (event: { custom?: Record<string, unknown> }) => {
       const custom = event?.custom;
       if (!custom || typeof custom.type !== "string") return;
 
-      if (
-        custom.type === STAGE_QA_EVENT_TYPES.QUESTION_ASKED &&
-        custom.question &&
-        typeof custom.question === "object"
-      ) {
-        const incoming = custom.question as StageQuestion;
+      if (custom.type === STAGE_QA_EVENT_TYPES.QUESTION_ASKED) {
+        const parsedQuestion = stageQuestionSchema.safeParse(custom.question);
+        if (!parsedQuestion.success) return;
+        const incoming = parsedQuestion.data;
         setQuestions((prev) =>
           prev.some((item) => item.id === incoming.id)
             ? prev
             : [...prev, incoming],
         );
-      } else if (
-        custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED &&
-        custom.banner &&
-        typeof custom.banner === "object"
-      ) {
-        setActiveBanner(custom.banner as StagePinnedBanner);
+      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED) {
+        const normalized = normalizeStageBannerFromCustomData({
+          activeStageBanner: custom.banner,
+        });
+        if (normalized) {
+          setActiveBanner(normalized);
+        }
       } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_UNPINNED) {
         setActiveBanner(null);
       }
@@ -263,6 +260,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const handleAskQuestion = useCallback(
     async (text: string) => {
       if (!targetQaMeetingId) return;
+      setQaError(null);
       setIsQaSubmitting(true);
       try {
         const res = await fetch(
@@ -294,6 +292,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const handlePinQuestion = useCallback(
     async (question: StageQuestion) => {
       if (!targetQaMeetingId || !isHost) return;
+      setQaError(null);
       setIsQaSubmitting(true);
       try {
         const res = await fetch(
@@ -304,17 +303,21 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
             body: JSON.stringify({
               action: "pin",
               questionId: question.id,
-              text: question.text,
-              authorId: question.authorId,
-              authorName: question.authorName,
-              authorRole: question.authorRole,
             }),
           },
         );
         const body = await res.json().catch(() => ({}));
-        if (res.ok && body?.banner) {
+        if (!res.ok) {
+          setQaError(body?.error ?? "Failed to pin question");
+          return;
+        }
+        if (body?.banner) {
           setActiveBanner(body.banner);
         }
+      } catch (err) {
+        setQaError(
+          err instanceof Error ? err.message : "Failed to pin question",
+        );
       } finally {
         setIsQaSubmitting(false);
       }
@@ -324,6 +327,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
 
   const handleUnpinQuestion = useCallback(async () => {
     if (!targetQaMeetingId || !isHost) return;
+    setQaError(null);
     setIsQaSubmitting(true);
     try {
       const res = await fetch(
@@ -334,9 +338,16 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           body: JSON.stringify({ action: "unpin" }),
         },
       );
-      if (res.ok) {
-        setActiveBanner(null);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setQaError(body?.error ?? "Failed to unpin question");
+        return;
       }
+      setActiveBanner(null);
+    } catch (err) {
+      setQaError(
+        err instanceof Error ? err.message : "Failed to unpin question",
+      );
     } finally {
       setIsQaSubmitting(false);
     }
@@ -464,6 +475,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               isHost={isHost}
               onUnpin={handleUnpinQuestion}
               isUpdating={isQaSubmitting}
+              error={qaError}
             />
           )}
 
@@ -525,12 +537,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 onPinQuestion={handlePinQuestion}
                 onUnpinQuestion={handleUnpinQuestion}
                 isSubmitting={isQaSubmitting}
+                error={qaError}
               />
             ) : (
               <div className="h-[calc(100%-60px)] overflow-y-auto">
-                <CallParticipantsList
-                  onClose={() => setActiveSideTab(null)}
-                />
+                <CallParticipantsList onClose={() => setActiveSideTab(null)} />
               </div>
             )}
           </div>

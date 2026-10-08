@@ -5,13 +5,17 @@ import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import { isInCallChatAllowed } from "@/lib/meetings/room-ready";
 import {
   canManageStageBanner,
+  parseStoredStageQuestion,
   qaActionRequestSchema,
   STAGE_QA_EVENT_TYPES,
+  STAGE_QUESTION_TTL_SECONDS,
+  stageQuestionRedisKey,
   type StagePinnedBanner,
   type StageQuestion,
 } from "@/lib/meetings/stage-qa";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
+import redis from "@/lib/redis";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -20,13 +24,59 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 
+function resolveAppointmentType(
+  appointment:
+    | {
+        appointmentType?: string | null;
+        webinar?: unknown;
+        class?: unknown;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (appointment?.appointmentType) {
+    return appointment.appointmentType;
+  }
+  if (appointment?.webinar) {
+    return "WEBINAR";
+  }
+  if (appointment?.class) {
+    return "CLASS";
+  }
+  return null;
+}
+
+async function updateCallStageBanner(
+  resolvedCallId: string,
+  banner: StagePinnedBanner | null,
+) {
+  const call = getStreamVideoClient().video.call(
+    STREAM_CALL_TYPE,
+    resolvedCallId,
+  );
+  const current = await call.get();
+  const existingCustom =
+    current?.call?.custom && typeof current.call.custom === "object"
+      ? current.call.custom
+      : {};
+
+  await call.update({
+    custom: {
+      ...existingCustom,
+      activeStageBanner: banner,
+    },
+  });
+
+  return call;
+}
+
 /**
  * POST /api/meetings/[meetingId]/qa
  *
  * Server-authoritative Live Q&A and 1-Click "ON SCREEN" Stage Banner controller.
  * - `action: "ask"`: Any authenticated, consented meeting participant or host on a
  *   non-TRIAL session submits a question over the live Stream WebSocket (`sendCallEvent`)
- *   with verified server-side author identity.
+ *   with verified server-side author identity, stored in Redis for server-verified pinning.
  * - `action: "pin" | "unpin"`: Restricted strictly to verified hosts & co-presenters
  *   (`access.role === "host"`). Broadcasts the `ON SCREEN` lower-third banner immediately
  *   over the Stream WebSocket AND persists `custom.activeStageBanner` (while preserving
@@ -44,13 +94,7 @@ export async function POST(
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
 
-    const appointmentType =
-      access.appointment?.appointmentType ??
-      (access.appointment?.webinar
-        ? "WEBINAR"
-        : access.appointment?.class
-          ? "CLASS"
-          : null);
+    const appointmentType = resolveAppointmentType(access.appointment);
 
     if (!isInCallChatAllowed(appointmentType)) {
       return NextResponse.json(
@@ -97,6 +141,12 @@ export async function POST(
         createdAt: nowIso,
       };
 
+      await redis.set(
+        stageQuestionRedisKey(resolvedCallId, question.id),
+        JSON.stringify(question),
+        { ex: STAGE_QUESTION_TTL_SECONDS },
+      );
+
       await withStreamCircuitBreaker(async () => {
         const call = getStreamVideoClient().video.call(
           STREAM_CALL_TYPE,
@@ -139,33 +189,32 @@ export async function POST(
     }
 
     if (payload.action === "pin") {
+      const rawStored = await redis.get(
+        stageQuestionRedisKey(resolvedCallId, payload.questionId),
+      );
+      const storedQuestion = parseStoredStageQuestion(rawStored);
+      if (!storedQuestion) {
+        return NextResponse.json(
+          {
+            error: "Question not found or has expired.",
+            reason: "question_not_found",
+          },
+          { status: 404 },
+        );
+      }
+
       const banner: StagePinnedBanner = {
-        questionId: payload.questionId,
-        text: payload.text,
-        authorId: payload.authorId,
-        authorName: payload.authorName,
-        authorRole: payload.authorRole,
+        questionId: storedQuestion.id,
+        text: storedQuestion.text,
+        authorId: storedQuestion.authorId,
+        authorName: storedQuestion.authorName,
+        authorRole: storedQuestion.authorRole,
         pinnedByUserId: userId,
         pinnedAt: nowIso,
       };
 
       await withStreamCircuitBreaker(async () => {
-        const call = getStreamVideoClient().video.call(
-          STREAM_CALL_TYPE,
-          resolvedCallId,
-        );
-        const current = await call.get().catch(() => null);
-        const existingCustom =
-          current?.call?.custom && typeof current.call.custom === "object"
-            ? current.call.custom
-            : {};
-
-        await call.update({
-          custom: {
-            ...existingCustom,
-            activeStageBanner: banner,
-          },
-        });
+        const call = await updateCallStageBanner(resolvedCallId, banner);
         await call.sendCallEvent({
           user_id: userId,
           custom: {
@@ -190,22 +239,7 @@ export async function POST(
 
     // payload.action === "unpin"
     await withStreamCircuitBreaker(async () => {
-      const call = getStreamVideoClient().video.call(
-        STREAM_CALL_TYPE,
-        resolvedCallId,
-      );
-      const current = await call.get().catch(() => null);
-      const existingCustom =
-        current?.call?.custom && typeof current.call.custom === "object"
-          ? current.call.custom
-          : {};
-
-      await call.update({
-        custom: {
-          ...existingCustom,
-          activeStageBanner: null,
-        },
-      });
+      const call = await updateCallStageBanner(resolvedCallId, null);
       await call.sendCallEvent({
         user_id: userId,
         custom: {
@@ -232,7 +266,9 @@ export async function POST(
         meetingId: meetingIdForLog,
       });
       return NextResponse.json(
-        { error: "Video service is temporarily unavailable. Please try again." },
+        {
+          error: "Video service is temporarily unavailable. Please try again.",
+        },
         { status: 503 },
       );
     }

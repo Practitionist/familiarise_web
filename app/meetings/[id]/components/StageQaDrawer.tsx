@@ -17,6 +17,7 @@ interface StageQaDrawerProps {
   onPinQuestion: (question: StageQuestion) => Promise<void>;
   onUnpinQuestion: () => Promise<void>;
   isSubmitting: boolean;
+  error?: string | null;
 }
 
 export function StageQaDrawer({
@@ -27,24 +28,29 @@ export function StageQaDrawer({
   onPinQuestion,
   onUnpinQuestion,
   isSubmitting,
-}: StageQaDrawerProps) {
+  error: externalError = null,
+}: Readonly<StageQaDrawerProps>) {
   const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = draft.trim();
     if (!trimmed || isSubmitting) return;
-    setError(null);
+    setSubmitError(null);
     try {
       await onAskQuestion(trimmed);
       setDraft("");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not send question right now.",
+      setSubmitError(
+        err instanceof Error
+          ? err.message
+          : "Could not send question right now.",
       );
     }
   };
+
+  const visibleError = externalError ?? submitError;
 
   return (
     <div
@@ -55,7 +61,9 @@ export function StageQaDrawer({
         {questions.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-4 text-center">
             <Tv2 className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm font-medium text-zinc-300">No questions yet</p>
+            <p className="text-sm font-medium text-zinc-300">
+              No questions yet
+            </p>
             <p className="mt-1 text-xs text-zinc-500">
               {isHost
                 ? "Questions from participants appear here. Click Show on Screen to spotlight any question over the live video stage."
@@ -132,7 +140,9 @@ export function StageQaDrawer({
         onSubmit={handleSubmit}
         className="border-t border-zinc-800 bg-zinc-950/60 p-3"
       >
-        {error && <p className="mb-1.5 text-xs text-red-400">{error}</p>}
+        {visibleError && (
+          <p className="mb-1.5 text-xs text-red-400">{visibleError}</p>
+        )}
         <div className="flex items-center gap-2">
           <input
             type="text"

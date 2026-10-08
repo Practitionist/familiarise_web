@@ -49,6 +49,7 @@ jest.mock("../../lib/stream-logger", () => ({
   },
 }));
 
+import { resetRedisForTesting } from "../../lib/redis";
 import { POST } from "../../app/api/meetings/[meetingId]/qa/route";
 import {
   normalizeStageBannerFromCustomData,
@@ -64,9 +65,29 @@ function makeReq(body: unknown) {
   });
 }
 
+function mockMeetingAccess(opts: {
+  userId: string;
+  role: "host" | "participant";
+  meetingId?: string;
+  streamCallId?: string;
+  appointmentType?: string;
+}) {
+  mockGuardMeetingRoute.mockResolvedValue({
+    ok: true,
+    userId: opts.userId,
+    meetingId: opts.meetingId ?? "mtg_webinar",
+    access: {
+      role: opts.role,
+      streamCallId: opts.streamCallId ?? "occurrence-slot-webinar",
+      appointment: { appointmentType: opts.appointmentType ?? "WEBINAR" },
+    },
+  });
+}
+
 describe("POST /api/meetings/[meetingId]/qa", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetRedisForTesting();
     mockSendCallEvent.mockResolvedValue({});
     mockCallGet.mockResolvedValue({
       call: { custom: { organizationId: "org_wipro_123" } },
@@ -75,15 +96,12 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("rejects Q&A actions on TRIAL sessions (403 trial_chat_disabled)", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
+    mockMeetingAccess({
       userId: "user_consultee",
+      role: "participant",
       meetingId: "mtg_trial",
-      access: {
-        role: "participant",
-        streamCallId: "occurrence-slot-1",
-        appointment: { appointmentType: "TRIAL" },
-      },
+      streamCallId: "occurrence-slot-1",
+      appointmentType: "TRIAL",
     });
 
     const res = await POST(makeReq({ action: "ask", text: "Hello?" }), {
@@ -96,16 +114,7 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("rejects invalid request payloads with 400 Bad Request", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_abhinav",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "participant",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+    mockMeetingAccess({ userId: "user_abhinav", role: "participant" });
 
     const res = await POST(makeReq({ action: "ask", text: "   " }), {
       params: Promise.resolve({ meetingId: "mtg_webinar" }),
@@ -114,16 +123,7 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("returns 503 when Stream circuit breaker is open", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_abhinav",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "participant",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+    mockMeetingAccess({ userId: "user_abhinav", role: "participant" });
     mockFindUniqueUser.mockResolvedValue({ name: "Abhinav" });
     mockSendCallEvent.mockRejectedValueOnce(new StreamUnavailableError());
 
@@ -134,16 +134,7 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("allows participant to submit a question with server-verified identity", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_abhinav",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "participant",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+    mockMeetingAccess({ userId: "user_abhinav", role: "participant" });
     mockFindUniqueUser.mockResolvedValue({
       name: "Abhinav Kumar",
       email: "abhinav@example.com",
@@ -176,25 +167,12 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("blocks non-host participant from pinning or unpinning stage banners (403 not_host)", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_abhinav",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "participant",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+    mockMeetingAccess({ userId: "user_abhinav", role: "participant" });
 
     const res = await POST(
       makeReq({
         action: "pin",
         questionId: "qa_1",
-        text: "Spoofed banner",
-        authorId: "user_abhinav",
-        authorName: "Abhinav",
-        authorRole: "participant",
       }),
       { params: Promise.resolve({ meetingId: "mtg_webinar" }) },
     );
@@ -205,44 +183,67 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
     expect(mockCallUpdate).not.toHaveBeenCalled();
   });
 
-  it("allows host/co-presenter to pin a question ON SCREEN while preserving custom.organizationId", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_host",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "host",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+  it("returns 404 question_not_found when host tries to pin an unknown questionId", async () => {
+    mockMeetingAccess({ userId: "user_host", role: "host" });
 
     const res = await POST(
       makeReq({
         action: "pin",
-        questionId: "qa_42",
-        text: "Can you walk through the system design diagram again?",
-        authorId: "user_abhinav",
-        authorName: "Abhinav Kumar",
-        authorRole: "participant",
+        questionId: "qa_nonexistent",
       }),
       { params: Promise.resolve({ meetingId: "mtg_webinar" }) },
     );
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const json = await res.json();
+    expect(json.reason).toBe("question_not_found");
+    expect(mockCallUpdate).not.toHaveBeenCalled();
+  });
+
+  it("allows host/co-presenter to pin a server-stored question ON SCREEN while preserving custom.organizationId", async () => {
+    mockMeetingAccess({ userId: "user_abhinav", role: "participant" });
+    mockFindUniqueUser.mockResolvedValue({
+      name: "Abhinav Kumar",
+      email: "abhinav@example.com",
+    });
+
+    const askRes = await POST(
+      makeReq({
+        action: "ask",
+        text: "Can you walk through the system design diagram again?",
+      }),
+      { params: Promise.resolve({ meetingId: "mtg_webinar" }) },
+    );
+    const askJson = await askRes.json();
+
+    mockMeetingAccess({ userId: "user_host", role: "host" });
+
+    const pinRes = await POST(
+      makeReq({
+        action: "pin",
+        questionId: askJson.question.id,
+      }),
+      { params: Promise.resolve({ meetingId: "mtg_webinar" }) },
+    );
+
+    expect(pinRes.status).toBe(200);
+    const json = await pinRes.json();
     expect(json.ok).toBe(true);
-    expect(json.banner.questionId).toBe("qa_42");
+    expect(json.banner.questionId).toBe(askJson.question.id);
+    expect(json.banner.text).toBe(
+      "Can you walk through the system design diagram again?",
+    );
+    expect(json.banner.authorName).toBe("Abhinav Kumar");
     expect(mockCallUpdate).toHaveBeenCalledWith({
       custom: {
         organizationId: "org_wipro_123",
         activeStageBanner: expect.objectContaining({
-          questionId: "qa_42",
+          questionId: askJson.question.id,
           authorName: "Abhinav Kumar",
         }),
       },
     });
-    expect(mockSendCallEvent).toHaveBeenCalledWith(
+    expect(mockSendCallEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
         user_id: "user_host",
         custom: expect.objectContaining({
@@ -253,16 +254,7 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
   });
 
   it("allows host to clear the ON SCREEN banner via action: unpin", async () => {
-    mockGuardMeetingRoute.mockResolvedValue({
-      ok: true,
-      userId: "user_host",
-      meetingId: "mtg_webinar",
-      access: {
-        role: "host",
-        streamCallId: "occurrence-slot-webinar",
-        appointment: { appointmentType: "WEBINAR" },
-      },
-    });
+    mockMeetingAccess({ userId: "user_host", role: "host" });
 
     const res = await POST(makeReq({ action: "unpin" }), {
       params: Promise.resolve({ meetingId: "mtg_webinar" }),
@@ -287,7 +279,9 @@ describe("POST /api/meetings/[meetingId]/qa", () => {
 
   it("normalizes activeStageBanner custom data safely for late joiners", () => {
     expect(normalizeStageBannerFromCustomData(null)).toBeNull();
-    expect(normalizeStageBannerFromCustomData({ activeStageBanner: null })).toBeNull();
+    expect(
+      normalizeStageBannerFromCustomData({ activeStageBanner: null }),
+    ).toBeNull();
     expect(
       normalizeStageBannerFromCustomData({
         activeStageBanner: {
