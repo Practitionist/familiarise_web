@@ -514,8 +514,9 @@ export async function GET(
         .map((p) => {
           const rec = p.recording;
           const apt = rec.meeting?.occurrence?.appointment;
-          const plan =
-            apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
+          const webinarPlan = apt?.webinar?.webinarPlan ?? null;
+          const classPlan = apt?.class?.classPlan ?? null;
+          const plan = webinarPlan ?? classPlan;
           const consultantUser = plan?.consultantProfile?.user;
           return {
             id: `purchased-${p.id}`,
@@ -525,6 +526,17 @@ export async function GET(
             status: "COMPLETED",
             date: rec.recordedAt,
             eventType: "purchased" as const,
+            offeringType: apt?.class
+              ? ("class" as const)
+              : ("webinar" as const),
+            classId: apt?.class?.id ?? null,
+            webinarId: apt?.webinar?.id ?? null,
+            classPlan: classPlan
+              ? { id: classPlan.id, title: classPlan.title }
+              : null,
+            webinarPlan: webinarPlan
+              ? { id: webinarPlan.id, title: webinarPlan.title }
+              : null,
             materials: [],
             recordings: [
               {

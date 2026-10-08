@@ -19,11 +19,18 @@ import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerMod
 export interface EventResource {
   id: string;
   planTitle: string;
+  contextTitle?: string | null;
   consultantName: string;
   consultantImage: string | null;
   status: string;
   date: string;
   eventType?: string;
+  offeringType?: string;
+  sourceType?: string;
+  classId?: string | null;
+  webinarId?: string | null;
+  classPlan?: { id?: string; title?: string } | null;
+  webinarPlan?: { id?: string; title?: string } | null;
   materials: {
     id: string;
     fileName: string;

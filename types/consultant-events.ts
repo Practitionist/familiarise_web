@@ -58,6 +58,10 @@ export interface TPerformanceSnapshot {
   completionRate: number | null;
   averageRating: number;
   totalReviews: number;
+  publishedRatingOneToOne?: number | null;
+  publishedRatingGroup?: number | null;
+  ratedClientsOneToOne?: number;
+  ratedEventsGroup?: number;
   /** Trial conversion rate (last 90 days). null when no data. */
   trialConversionRate: number | null;
 }

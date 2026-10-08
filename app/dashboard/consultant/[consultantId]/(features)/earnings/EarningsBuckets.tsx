@@ -4,7 +4,15 @@ import type React from "react";
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Building2, Landmark, Wallet } from "lucide-react";
+import {
+  ArrowUpRight,
+  Building2,
+  Download,
+  FileText,
+  Landmark,
+  Sparkles,
+  Wallet,
+} from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 
 import { DashboardContent } from "@/components/dashboard/PageScaffold";
@@ -15,7 +23,6 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import type { OfferingStat, OfferingStats } from "@/lib/offerings/stats";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -39,16 +46,29 @@ import {
 import type {
   ConsultantEarningRow,
   ConsultantEarningsPayload,
+  ConsultantTdsRecordRow,
 } from "@/lib/data/consultant-earnings-analytics";
 import { PayoutWalkSheet } from "./PayoutWalkSheet";
 import { GetPaidNowSheet } from "./GetPaidNowSheet";
 
-/**
- * #1675 / #1527 — the Earnings Summary and Activity tabs, every word from
- * `lib/dashboard/earnings-state.ts`. An earning row walks the money (price →
- * platform fee → your share) and names the sponsor when an organisation paid;
- * a Payouts row is a payout with its share → TDS → net walk in a sheet.
- */
+const IST_OFFSET_MS = 330 * 60 * 1000;
+
+function getIndianFinancialYear(date: Date): string {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
+  const year = ist.getUTCFullYear();
+  const month = ist.getUTCMonth();
+  const startYear = month >= 3 ? year : year - 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
+function getIndianFYQuarter(date: Date): number {
+  const ist = new Date(date.getTime() + IST_OFFSET_MS);
+  const month = ist.getUTCMonth();
+  if (month >= 3 && month <= 5) return 1;
+  if (month >= 6 && month <= 8) return 2;
+  if (month >= 9 && month <= 11) return 3;
+  return 4;
+}
 
 /** Dates arrive as strings over JSON and as Dates from the RSC seed. */
 type Json<T> = T extends Date
@@ -57,11 +77,26 @@ type Json<T> = T extends Date
     ? { [K in keyof T]: Json<T[K]> }
     : T;
 
-export type EarningsResponse = Json<ConsultantEarningsPayload> & {
+export type EarningsResponse = Omit<
+  Json<ConsultantEarningsPayload>,
+  | "feeSchedule"
+  | "feeWaiver"
+  | "tdsRecords"
+  | "attributionBreakdown"
+  | "repeatLearnerStats"
+> & {
   livePayoutsEnabled?: boolean;
+  feeSchedule?: Json<ConsultantEarningsPayload["feeSchedule"]>;
+  feeWaiver?: Json<ConsultantEarningsPayload["feeWaiver"]>;
+  tdsRecords?: Json<ConsultantEarningsPayload["tdsRecords"]>;
+  attributionBreakdown?: Json<
+    ConsultantEarningsPayload["attributionBreakdown"]
+  >;
+  repeatLearnerStats?: Json<ConsultantEarningsPayload["repeatLearnerStats"]>;
 };
 type EarningRow = Json<ConsultantEarningRow>;
 type PayoutRow = EarningsResponse["payouts"][number];
+type TdsRow = Json<ConsultantTdsRecordRow>;
 
 const PAGE_SIZE = 15;
 
@@ -74,6 +109,155 @@ const onDay = (d: string | Date) =>
   formatInTimeZone(d, PAYOUT_ZONE, "d MMM yyyy");
 const typeLabel = (type: string | null | undefined) =>
   type ? type.charAt(0) + type.slice(1).toLowerCase() : null;
+
+function formatBpsPercent(bps: number): string {
+  const pct = bps / 100;
+  return `${bps % 100 === 0 ? pct.toFixed(0) : pct.toFixed(2)}%`;
+}
+
+function normalizeTdsSection(section: string | null | undefined): string {
+  if (!section || section === "194O") return "194-O";
+  return section;
+}
+
+function csvCell(val: string | number | boolean | null | undefined): string {
+  const raw = val === null || val === undefined ? "" : String(val);
+  const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(raw.trim());
+  const safe = !isNumeric && /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  if (/[",\n\r]/.test(safe)) {
+    return `"${safe.replaceAll('"', '""')}"`;
+  }
+  return safe;
+}
+
+function deriveEarningSourceLabel(e: EarningRow): string {
+  if (e.sponsorOrgName) {
+    return `Sponsored (${e.sponsorOrgName})`;
+  }
+  const isWaived =
+    e.grossAmount > 0 &&
+    (e.payment.platformFeeBps === 0 || e.platformFeePaise === 0);
+  if (isWaived) {
+    return "Fee waived (0%)";
+  }
+  const rateSuffix =
+    typeof e.payment.platformFeeBps === "number"
+      ? ` (${formatBpsPercent(e.payment.platformFeeBps)})`
+      : "";
+  if (e.payment.attributionSource === "OWN_LINK") {
+    return `Own link${rateSuffix}`;
+  }
+  return `Marketplace${rateSuffix}`;
+}
+
+function downloadFyEarningsCsv(data: EarningsResponse) {
+  const headers = [
+    "Record Type",
+    "Financial Year",
+    "Quarter",
+    "Date",
+    "Reference ID",
+    "Title / Section",
+    "Attribution / Filing Status",
+    "Gross Amount (INR)",
+    "Platform Fee (INR)",
+    "Net Consultant Share (INR)",
+    "FY Cumulative Credited (INR)",
+    "TDS Deducted (INR)",
+    "TDS Rate (%)",
+    "Form 16A (Form 131) / Challan",
+  ];
+  const lines: string[] = [headers.map(csvCell).join(",")];
+
+  for (const e of data.earnings) {
+    const createdDate = new Date(e.createdAt);
+    const fy = getIndianFinancialYear(createdDate);
+    const quarter = `Q${getIndianFYQuarter(createdDate)}`;
+    const source = deriveEarningSourceLabel(e);
+    lines.push(
+      [
+        "EARNING",
+        fy,
+        quarter,
+        onDay(e.createdAt),
+        e.id,
+        e.title ??
+          typeLabel(e.payment.appointment?.appointmentType) ??
+          "Booking",
+        source,
+        (e.grossAmount / 100).toFixed(2),
+        (e.platformFeePaise / 100).toFixed(2),
+        (e.consultantSharePaise / 100).toFixed(2),
+        "",
+        "",
+        "",
+        "",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+  }
+
+  for (const t of data.tdsRecords ?? []) {
+    lines.push(
+      [
+        t.isReversal ? "TDS_REVERSAL" : "TDS_DEDUCTION",
+        t.financialYear,
+        `Q${t.quarter}`,
+        onDay(t.createdAt),
+        t.payoutId ?? t.id,
+        normalizeTdsSection(t.tdsSection),
+        t.reportedInForm26Q
+          ? "Reported in Form 26Q (Form 140)"
+          : "Pending Form 26Q (Form 140)",
+        "",
+        "",
+        "",
+        (t.cumulativeAmountCredited / 100).toFixed(2),
+        (t.tdsDeducted / 100).toFixed(2),
+        (t.tdsRateBps / 100).toFixed(2),
+        t.certificateNumber ?? t.challanNumber ?? "",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+  }
+
+  if (data.pagination.hasMore) {
+    lines.push(
+      [
+        "NOTE",
+        getIndianFinancialYear(new Date()),
+        "",
+        "",
+        "",
+        `B2C earning rows truncated at ${EARNINGS_FETCH_CAP} most recent entries`,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+  }
+
+  const blob = new Blob([`\uFEFF${lines.join("\n")}`], {
+    type: "text/csv;charset=utf-8;",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `familiarise-earnings-tds-${getIndianFinancialYear(new Date())}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 /** The bank-account blocker: no verified account, or Y2's reason once it lands. */
 function needsPayoutAccount(eligibility: EarningsResponse["eligibility"]) {
@@ -155,6 +339,8 @@ export function EarningsSummary({
   const nextClear = nextClearDate(pendingRows, now);
   const lastPaid = data.payouts.find((p) => p.status === "COMPLETED");
   const base = `/dashboard/consultant/${consultantId}`;
+  const feeWaiver = data.feeWaiver ?? null;
+  const tdsRecords = data.tdsRecords ?? [];
 
   return (
     <DashboardContent>
@@ -175,6 +361,23 @@ export function EarningsSummary({
           <Button asChild size="sm" variant="outline">
             <Link href={`${base}/settings/get-paid`}>Get paid</Link>
           </Button>
+        </output>
+      )}
+
+      {(feeWaiver?.sessionsRemaining ?? 0) > 0 && feeWaiver && (
+        <output className="flex items-start gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+          <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {feeWaiver.sessionsRemaining} fee-free{" "}
+              {feeWaiver.sessionsRemaining === 1 ? "session" : "sessions"}{" "}
+              remaining until {onDay(feeWaiver.expiresAt)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              0% platform fee on your next qualifying personal-practice bookings
+              (not on orders using a learner discount or credit; before TDS).
+            </p>
+          </div>
         </output>
       )}
 
@@ -214,7 +417,6 @@ export function EarningsSummary({
           <span className="font-medium">Next payout: </span>
           {nextPayoutCopy(now, live)}
         </p>
-        {/* #1771 row 6 — hidden for other viewers, while payouts are off, or at zero. */}
         {isOwnDashboard && live && sums.available > 0 && (
           <GetPaidNowSheet consultantId={consultantId} />
         )}
@@ -235,10 +437,12 @@ export function EarningsSummary({
 
       {stats !== undefined && <ByOfferingTable stats={stats} />}
 
+      <TdsSummarySection tdsRecords={tdsRecords} data={data} />
+
       <p className="text-sm text-muted-foreground">
-        Familiarise keeps {PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE}% of the
-        price of each booking you sell yourself; sessions an organisation pays
-        for follow that organisation&apos;s agreement.{" "}
+        {data.feeSchedule
+          ? `Familiarise charges ${formatBpsPercent(data.feeSchedule.ownLinkBps)} when a buyer first discovers and purchases from you via your shared link (?via=) · ${formatBpsPercent(data.feeSchedule.marketplaceBps)} for Marketplace-acquired buyers · 0% on qualifying fee-waived bookings; sessions an organisation pays for follow that organisation's agreement.`
+          : "Platform fee rates follow the active schedule (reduced own-link rate when a buyer first discovers and purchases from you via ?via=, standard rate for Marketplace-acquired buyers); sessions an organisation pays for follow that organisation's agreement."}{" "}
         <Link
           href="/support/experts/payouts"
           className="font-medium text-foreground underline-offset-4 hover:underline"
@@ -257,7 +461,6 @@ const OFFERING_TYPE_WORD = {
   class: "Class",
 } as const;
 
-/** #1827 — every offering, earning or not, so a ₹0 row is visible too. */
 function ByOfferingTable({ stats }: Readonly<{ stats: OfferingStats | null }>) {
   const rows = useMemo(
     () =>
@@ -308,6 +511,118 @@ function ByOfferingTable({ stats }: Readonly<{ stats: OfferingStats | null }>) {
           />
         }
       />
+    </Section>
+  );
+}
+
+const TDS_COLUMNS: ResponsiveColumn<TdsRow>[] = [
+  {
+    key: "period",
+    header: "FY & Quarter",
+    primary: true,
+    cell: (row) => (
+      <span className="font-medium text-foreground">
+        FY {row.financialYear} · Q{row.quarter}
+      </span>
+    ),
+  },
+  {
+    key: "section",
+    header: "Section & Rate",
+    cell: (row) => {
+      const rate = (row.tdsRateBps / 100).toFixed(
+        row.tdsRateBps % 100 === 0 ? 0 : 1,
+      );
+      return `s.${normalizeTdsSection(row.tdsSection)} · ${rate}%`;
+    },
+  },
+  {
+    key: "credited",
+    header: "Cumulative Credited",
+    className: "tabular-nums",
+    cell: (row) => inr(row.cumulativeAmountCredited),
+  },
+  {
+    key: "tds",
+    header: "TDS Deducted",
+    className: "tabular-nums",
+    cell: (row) => inr(row.tdsDeducted),
+  },
+  {
+    key: "filing",
+    header: "Form 16A (Form 131) / Challan",
+    cell: (row) => {
+      if (row.certificateNumber) {
+        return (
+          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            Cert {row.certificateNumber}
+          </span>
+        );
+      }
+      if (row.challanNumber) {
+        return (
+          <span className="text-xs text-foreground">
+            Challan {row.challanNumber}
+          </span>
+        );
+      }
+      return (
+        <span className="text-xs text-muted-foreground">
+          {row.reportedInForm26Q
+            ? "Reported in Form 26Q (Form 140)"
+            : "Pending Form 26Q (Form 140)"}
+        </span>
+      );
+    },
+  },
+];
+
+function TdsSummarySection({
+  tdsRecords,
+  data,
+}: Readonly<{
+  tdsRecords: TdsRow[];
+  data: EarningsResponse;
+}>) {
+  const columns = TDS_COLUMNS;
+
+  return (
+    <Section
+      title="Tax & TDS — Form 16A (Form 131)"
+      actions={
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => downloadFyEarningsCsv(data)}
+          className="gap-1.5"
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden />
+          Export FY Earnings &amp; Tax CSV
+        </Button>
+      }
+    >
+      {tdsRecords.length > 0 ? (
+        <ResponsiveTable
+          columns={columns}
+          rows={tdsRecords}
+          getRowId={(row) => row.id}
+        />
+      ) : (
+        <div className="flex items-start gap-3 rounded-xl border border-border bg-card p-4">
+          <FileText className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              No TDS deductions recorded yet
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Section 194-O / 194J deductions, challan numbers, and Form 16A
+              (Form 131) certificate references appear here by financial year
+              and quarter.
+            </p>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
@@ -539,6 +854,14 @@ function EarningItem({
     earning.role === "COLLABORATOR"
       ? `Collab ${earning.shareBps / 100} %`
       : `Owner ${earning.shareBps / 100} %`;
+  const isFeeWaived =
+    !earning.sponsorOrgName &&
+    earning.grossAmount > 0 &&
+    (earning.payment.platformFeeBps === 0 || earning.platformFeePaise === 0);
+  const isOwnLink =
+    !earning.sponsorOrgName &&
+    !isFeeWaived &&
+    earning.payment.attributionSource === "OWN_LINK";
   return (
     <li className="flex items-start gap-3 px-4 py-3.5 sm:px-5">
       <div className="min-w-0 flex-1">
@@ -553,6 +876,19 @@ function EarningItem({
             <Badge className="gap-1 rounded-md border-0 bg-muted px-1.5 py-0 text-[10px] font-semibold text-muted-foreground">
               <Building2 className="h-3 w-3" aria-hidden />
               {earning.sponsorOrgName}
+            </Badge>
+          )}
+          {isFeeWaived && (
+            <Badge className="rounded-md border-0 bg-emerald-500/10 px-1.5 py-0 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+              Fee waived · ₹0 fee
+            </Badge>
+          )}
+          {isOwnLink && (
+            <Badge className="rounded-md border-0 bg-sky-500/10 px-1.5 py-0 text-[10px] font-semibold text-sky-700 dark:text-sky-400">
+              Own link
+              {typeof earning.payment.platformFeeBps === "number"
+                ? ` · ${formatBpsPercent(earning.payment.platformFeeBps)} fee`
+                : ""}
             </Badge>
           )}
         </div>

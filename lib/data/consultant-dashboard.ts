@@ -1030,6 +1030,18 @@ export async function getConsultantDashboard(
     consultantProfileId,
     startOfMonth,
   ).catch(() => undefined);
+  const profileRatings =
+    (await prisma.consultantProfile
+      ?.findUnique?.({
+        where: { id: consultantProfileId },
+        select: {
+          publishedRatingOneToOne: true,
+          publishedRatingGroup: true,
+          ratedClientsOneToOne: true,
+          ratedEventsGroup: true,
+        },
+      })
+      .catch(() => null)) ?? null;
 
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
@@ -1169,6 +1181,10 @@ export async function getConsultantDashboard(
       completionRate,
       averageRating: ratingAgg._avg.rating ?? 0,
       totalReviews: ratingAgg._count.rating,
+      publishedRatingOneToOne: profileRatings?.publishedRatingOneToOne ?? null,
+      publishedRatingGroup: profileRatings?.publishedRatingGroup ?? null,
+      ratedClientsOneToOne: profileRatings?.ratedClientsOneToOne ?? 0,
+      ratedEventsGroup: profileRatings?.ratedEventsGroup ?? 0,
       trialConversionRate,
     },
     financialSummary,

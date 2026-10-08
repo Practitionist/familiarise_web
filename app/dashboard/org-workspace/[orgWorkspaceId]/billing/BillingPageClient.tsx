@@ -16,18 +16,16 @@
  */
 
 import Link from "next/link";
-import { CreditCard, Wallet, Receipt, Building2 } from "lucide-react";
+import { Building2 } from "lucide-react";
 
 import {
   DashboardHeader,
   DashboardContent,
-  DashboardGrid,
 } from "@/components/dashboard/PageScaffold";
-import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
+import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { EmptyState } from "@/components/dashboard/DataCard";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ResponsiveTable,
@@ -132,59 +130,47 @@ export function BillingPageClient({
       />
       <DashboardContent>
         {isError ? (
-          <Card>
-            <CardContent className="py-10">
-              <EmptyState
-                icon={Receipt}
-                title="Couldn't load the billing overview"
-                description="We hit an error fetching your cross-org billing roll-up."
-                action={
-                  <Button size="sm" variant="outline" onClick={() => refetch()}>
-                    Retry
-                  </Button>
-                }
-              />
-            </CardContent>
-          </Card>
+          <ErrorState
+            title="Couldn't load the billing overview"
+            description="We hit an error fetching your cross-org billing roll-up."
+            onRetry={() => void refetch()}
+          />
         ) : (
           <>
-            <DashboardGrid>
+            <StatRow columns={3}>
               {isLoading || !summary ? (
                 <>
-                  <StatCardSkeleton />
-                  <StatCardSkeleton />
-                  <StatCardSkeleton />
+                  <StatSkeleton />
+                  <StatSkeleton />
+                  <StatSkeleton />
                 </>
               ) : (
                 <>
-                  <StatCard
-                    title="Outstanding"
-                    subtitle={`across ${summary.orgsOwned} organization${summary.orgsOwned === 1 ? "" : "s"}`}
+                  <Stat
+                    label="Outstanding"
+                    hint={`across ${summary.orgsOwned} organization${summary.orgsOwned === 1 ? "" : "s"}`}
                     value={formatCurrencyTotals(summary.outstandingByCurrency)}
-                    icon={Receipt}
-                    variant={
+                    tone={
                       summary.outstandingByCurrency.length > 0
                         ? "warning"
-                        : "default"
+                        : "neutral"
                     }
                   />
-                  <StatCard
-                    title="Wallet balance"
-                    subtitle="prepaid funds across orgs"
+                  <Stat
+                    label="Wallet balance"
+                    hint="prepaid funds across orgs"
                     value={formatCurrencyTotals(summary.walletByCurrency)}
-                    icon={Wallet}
                   />
-                  <StatCard
-                    title="Funded orgs"
-                    subtitle="have a billing account"
+                  <Stat
+                    label="Funded orgs"
+                    hint="have a billing account"
                     value={rows
                       .filter((r) => r.fundingSource !== null)
                       .length.toString()}
-                    icon={CreditCard}
                   />
                 </>
               )}
-            </DashboardGrid>
+            </StatRow>
 
             <section className="mt-6">
               <h2 className="text-lg font-medium mb-3">

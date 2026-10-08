@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useSearchParams, useSelectedLayoutSegment } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { Plus } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useListParams } from "@/hooks/useListParams";
@@ -26,6 +28,7 @@ import type { InboxStats } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
 
 import { CaseList } from "./CaseList";
+import { StaffSupportComposeDialog } from "./StaffSupportComposeDialog";
 
 const ANY = "any";
 const withAny = (
@@ -39,7 +42,6 @@ function avgFirstResponse(s: InboxStats | undefined): string {
   return durationLabel(s.avgFirstResponseMs);
 }
 
-/** #1527 — the neutral stats line: counts, not colourful KPI tiles. */
 function StatsLine({ className }: Readonly<{ className?: string }>) {
   const stats = useQuery({
     queryKey: ["support-inbox-stats"],
@@ -73,12 +75,6 @@ function StatsLine({ className }: Readonly<{ className?: string }>) {
   );
 }
 
-/**
- * #1527 — the Support inbox: tickets and conversations as one list of cases.
- * At lg+ the list stays on the left and the case route renders on the right;
- * below lg they are separate pages. Views and filters live in the URL
- * (useListParams), so a case URL carries them and Back/forward restore both.
- */
 export function SupportInboxShell({
   children,
 }: Readonly<{ children: ReactNode }>) {
@@ -91,14 +87,25 @@ export function SupportInboxShell({
   const pick = (key: InboxFilterKey) => (value: string) =>
     list.setFilter(key, value === ANY ? null : value);
   const searchSuffix = search ? `?${search}` : "";
+  const [composeOpen, setComposeOpen] = useState(false);
 
   return (
     <div className="space-y-3">
-      {/* #1527 — title and stats share one line; no description. */}
       <PageHeader
         title="Support inbox"
         className="mb-0"
-        actions={<StatsLine className={cn(caseKey && "hidden lg:flex")} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-3">
+            <StatsLine className={cn(caseKey && "hidden lg:flex")} />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setComposeOpen(true)}
+            >
+              <Plus className="mr-1 h-4 w-4" /> New Outbound Ticket
+            </Button>
+          </div>
+        }
       />
       <div className={cn("space-y-3", caseKey && "hidden lg:block")}>
         <Tabs
@@ -123,6 +130,16 @@ export function SupportInboxShell({
             onChange: list.setQ,
           }}
           selects={[
+            {
+              key: "sort",
+              label: "Sort",
+              value: f.sort ?? (view === "sla-at-risk" ? "sla" : "activity"),
+              options: [
+                { value: "activity", label: "Latest activity" },
+                { value: "sla", label: "Nearest SLA deadline" },
+              ],
+              onChange: pick("sort"),
+            },
             {
               key: "scope",
               label: "Kind",
@@ -173,7 +190,6 @@ export function SupportInboxShell({
               onChange: pick("topic"),
             },
           ]}
-          // The view is a tab, not a filter: Clear keeps it.
           onClear={() =>
             list.setParams({
               q: "",
@@ -227,6 +243,11 @@ export function SupportInboxShell({
           {children}
         </div>
       </div>
+
+      <StaffSupportComposeDialog
+        open={composeOpen}
+        onOpenChange={setComposeOpen}
+      />
     </div>
   );
 }

@@ -106,11 +106,34 @@ const topicNames = (value: unknown): string[] => {
  */
 const toFormValues = (
   plan: Record<string, unknown>,
-): Record<string, unknown> => ({
-  ...plan,
-  price: typeof plan.price === "number" ? plan.price / 100 : plan.price,
-  topics: topicNames(plan.topics),
-});
+): Record<string, unknown> => {
+  const rawPrerequisites = plan.prerequisites ?? plan.prerequisite;
+  const rawMaterial = plan.materialProvided ?? plan.material;
+  const rawOutcomes = Array.isArray(plan.learningOutcomes)
+    ? plan.learningOutcomes
+    : [];
+  const rawDeliverables = Array.isArray(plan.deliverables)
+    ? plan.deliverables
+    : [];
+  const rawWhatsIncluded = Array.isArray(plan.whatsIncluded)
+    ? plan.whatsIncluded
+    : [];
+  return {
+    ...plan,
+    subtitle: typeof plan.subtitle === "string" ? plan.subtitle : "",
+    description: typeof plan.description === "string" ? plan.description : "",
+    prerequisites: typeof rawPrerequisites === "string" ? rawPrerequisites : "",
+    materialProvided: typeof rawMaterial === "string" ? rawMaterial : "",
+    learningOutcomes: rawOutcomes.length > 0 ? rawOutcomes : rawDeliverables,
+    whatsIncluded:
+      rawWhatsIncluded.length > 0 ? rawWhatsIncluded : rawDeliverables,
+    targetAudience: Array.isArray(plan.targetAudience)
+      ? plan.targetAudience
+      : [],
+    price: typeof plan.price === "number" ? plan.price / 100 : plan.price,
+    topics: topicNames(plan.topics),
+  };
+};
 
 /**
  * #1527 Q4 — the container speaks the webinar/class vocabulary (SCHEDULED or
@@ -215,8 +238,21 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       if (!plan) return undefined;
       // The trial price is edited in rupees like `price`; the service converts back.
       const trialPaise = plan.trialPriceInPaise;
+      let sessionsPerWeek = 1;
+      if (typeof plan.sessionsPerWeek === "number") {
+        sessionsPerWeek = plan.sessionsPerWeek;
+      } else if (typeof plan.callsPerWeek === "number") {
+        sessionsPerWeek = plan.callsPerWeek;
+      }
+      const sessionDurationInHours =
+        typeof plan.sessionDurationInHours === "number" &&
+        plan.sessionDurationInHours > 0
+          ? plan.sessionDurationInHours
+          : 1;
       return {
         ...toFormValues(plan),
+        sessionsPerWeek,
+        sessionDurationInHours,
         trialPriceInPaise:
           typeof trialPaise === "number" ? trialPaise / 100 : trialPaise,
       };
