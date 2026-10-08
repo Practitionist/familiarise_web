@@ -136,25 +136,27 @@ export async function POST(
           ticket.appointmentSupportThread &&
           ticket.appointmentSupportThread.status !== "CLOSED"
         ) {
-          const threadId = ticket.appointmentSupportThread.id;
-          const seq = await allocateMessageSeq(tx, threadId, 1);
-          await tx.supportMessage.create({
-            data: {
-              threadId,
-              seq: seq + 1,
-              sender: "USER",
-              body: body.message,
-              authorUserId: session.user.id,
-            },
-          });
-          await tx.appointmentSupportThread.update({
-            where: { id: threadId },
+          const linkedThread = ticket.appointmentSupportThread;
+          const movedThread = await tx.appointmentSupportThread.updateMany({
+            where: { id: linkedThread.id, status: { not: "CLOSED" } },
             data: {
               lastMessageAt: now,
               status: "ESCALATED",
               resolvedAt: null,
             },
           });
+          if (movedThread.count > 0) {
+            const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
+            await tx.supportMessage.create({
+              data: {
+                threadId: linkedThread.id,
+                seq: seq + 1,
+                sender: "USER",
+                body: body.message,
+                authorUserId: session.user.id,
+              },
+            });
+          }
         }
 
         return created;
@@ -193,7 +195,6 @@ export async function POST(
     return NextResponse.json(
       {
         error: "An unexpected error occurred while submitting your response",
-        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     );

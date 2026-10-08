@@ -187,7 +187,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const existing = await prisma.moderationReport.findUnique({
       where: { id: reportId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, assignedToId: true },
     });
     if (!existing) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
@@ -196,7 +196,11 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const updateData = buildReportPatchData(parsed.data, session.user.id);
 
     const updated = await prisma.moderationReport.updateMany({
-      where: { id: reportId, status: existing.status },
+      where: {
+        id: reportId,
+        status: existing.status,
+        assignedToId: existing.assignedToId,
+      },
       data: updateData,
     });
     if (updated.count === 0) {

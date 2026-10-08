@@ -107,6 +107,7 @@ export interface CaseWorkspace {
     role: string | null;
     email: string | null;
     phone: string | null;
+    callbackRequested?: boolean;
     joinedAt: string;
   };
   booking: CaseBooking | null;

@@ -154,13 +154,19 @@ export function SessionRatingRow({
               onClick={(e) => {
                 e.stopPropagation();
                 const previous = rating;
+                const previousCause = ratingCause;
                 const nextRating = n;
                 const nextCause = nextRating > 3 ? null : ratingCause;
                 setRating(nextRating);
                 setRatingCause(nextCause);
                 save.mutate(
                   { value: nextRating, cause: nextCause },
-                  { onError: () => setRating(previous) },
+                  {
+                    onError: () => {
+                      setRating(previous);
+                      setRatingCause(previousCause);
+                    },
+                  },
                 );
               }}
               className="rounded p-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"

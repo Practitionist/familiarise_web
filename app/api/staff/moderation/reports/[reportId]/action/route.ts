@@ -98,6 +98,7 @@ function applyModerationTransaction(
             takenById: staffUserId,
             reviewId:
               input.report.type === "REVIEW" ? input.report.reviewId : null,
+            feedbackId: input.report.feedbackId ?? null,
           },
           include: {
             takenBy: {
@@ -226,13 +227,32 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { status: 409 },
       );
     }
-    if (actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE" && !feedbackId) {
-      return NextResponse.json(
-        {
-          error: "A feedbackId is required to exclude feedback from aggregate",
-        },
-        { status: 409 },
-      );
+    if (actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
+      if (!feedbackId) {
+        return NextResponse.json(
+          {
+            error:
+              "A feedbackId is required to exclude feedback from aggregate",
+          },
+          { status: 409 },
+        );
+      }
+      const feedback = await prisma.appointmentFeedback.findUnique({
+        where: { id: feedbackId },
+        select: { id: true, userId: true },
+      });
+      if (!feedback) {
+        return NextResponse.json(
+          { error: "Feedback not found" },
+          { status: 404 },
+        );
+      }
+      if (feedback.userId !== report.targetUserId) {
+        return NextResponse.json(
+          { error: "Feedback does not belong to the reported user" },
+          { status: 409 },
+        );
+      }
     }
 
     const input = {

@@ -173,6 +173,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const now = new Date();
     const result = await prisma.$transaction(
       async (tx) => {
+        const touched = await tx.appointmentSupportThread.updateMany({
+          where: { id: thread.id, status: { not: "CLOSED" } },
+          data: { lastMessageAt: now },
+        });
+        if (touched.count === 0) {
+          return null;
+        }
         const seq = await allocateMessageSeq(tx, thread.id, 1);
         const agentMessage = await tx.supportMessage.create({
           data: {
@@ -182,10 +189,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             seq: seq + 1,
             authorUserId: session.user.id,
           },
-        });
-        await tx.appointmentSupportThread.update({
-          where: { id: thread.id },
-          data: { lastMessageAt: now },
         });
 
         if (thread.supportTicketId) {
@@ -219,6 +222,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         timeout: ALLOCATION_TX_TIMEOUT_MS,
       },
     );
+
+    if (!result) {
+      return supportError({
+        status: 409,
+        code: "CONFLICT",
+        message: "Cannot reply to a closed support thread",
+        context: { route: THREAD_ROUTE, action: "reply", threadId },
+      });
+    }
 
     if (thread.supportTicketId) {
       // #1527 — the request's own page: the org's dashboard for an org

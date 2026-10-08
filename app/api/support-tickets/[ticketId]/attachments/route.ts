@@ -172,26 +172,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const attachment = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${ticketId} FOR UPDATE`;
-      const currentCount = await tx.supportTicketAttachment.count({
-        where: { ticketId },
+    let attachment;
+    try {
+      attachment = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${ticketId} FOR UPDATE`;
+        const currentCount = await tx.supportTicketAttachment.count({
+          where: { ticketId },
+        });
+        if (currentCount >= 5) {
+          return null;
+        }
+        return tx.supportTicketAttachment.create({
+          data: {
+            ticketId,
+            fileName: uploadResult.fileName!,
+            originalName: file.name,
+            fileSize: uploadResult.fileSize!,
+            mimeType: uploadResult.mimeType!,
+            fileUrl: uploadResult.fileUrl!,
+            storagePath: uploadResult.storagePath!,
+          },
+        });
       });
-      if (currentCount >= 5) {
-        return null;
-      }
-      return tx.supportTicketAttachment.create({
-        data: {
-          ticketId,
-          fileName: uploadResult.fileName!,
-          originalName: file.name,
-          fileSize: uploadResult.fileSize!,
-          mimeType: uploadResult.mimeType!,
-          fileUrl: uploadResult.fileUrl!,
-          storagePath: uploadResult.storagePath!,
-        },
-      });
-    });
+    } catch (txErr) {
+      await deleteSupportTicketAttachment(uploadResult.storagePath!).catch(
+        () => {},
+      );
+      throw txErr;
+    }
 
     if (!attachment) {
       await deleteSupportTicketAttachment(uploadResult.storagePath!);

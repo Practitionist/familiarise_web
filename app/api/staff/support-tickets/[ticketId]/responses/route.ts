@@ -64,6 +64,26 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const now = new Date();
     const response = await prisma.$transaction(
       async (tx) => {
+        if (!validatedData.isInternal) {
+          const ticketUpdateData =
+            ticket.status === "OPEN"
+              ? {
+                  status: "IN_PROGRESS" as const,
+                  assignedToId: ticket.assignedToId || session.user.id,
+                  lastMessageAt: now,
+                }
+              : {
+                  lastMessageAt: now,
+                };
+          const touched = await tx.supportTicket.updateMany({
+            where: { id: ticketId, status: { not: "CLOSED" } },
+            data: ticketUpdateData,
+          });
+          if (touched.count === 0) {
+            return null;
+          }
+        }
+
         const created = await tx.supportResponse.create({
           data: {
             message: validatedData.message,
@@ -83,41 +103,29 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           },
         });
 
-        if (ticket.status === "OPEN" && !validatedData.isInternal) {
-          await tx.supportTicket.updateMany({
-            where: { id: ticketId, status: "OPEN" },
-            data: {
-              status: "IN_PROGRESS",
-              assignedToId: ticket.assignedToId || session.user.id,
-            },
-          });
-        }
-
         if (!validatedData.isInternal) {
           await applyStaffReply(tx, ticketId, now);
-          await tx.supportTicket.update({
-            where: { id: ticketId },
-            data: { lastMessageAt: now },
-          });
           const linkedThread = await tx.appointmentSupportThread.findUnique({
             where: { supportTicketId: ticketId },
             select: { id: true },
           });
           if (linkedThread) {
-            const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
-            await tx.supportMessage.create({
-              data: {
-                threadId: linkedThread.id,
-                sender: "AGENT",
-                body: validatedData.message,
-                seq: seq + 1,
-                authorUserId: session.user.id,
-              },
-            });
-            await tx.appointmentSupportThread.update({
-              where: { id: linkedThread.id },
+            const movedThread = await tx.appointmentSupportThread.updateMany({
+              where: { id: linkedThread.id, status: { not: "CLOSED" } },
               data: { lastMessageAt: now },
             });
+            if (movedThread.count > 0) {
+              const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
+              await tx.supportMessage.create({
+                data: {
+                  threadId: linkedThread.id,
+                  sender: "AGENT",
+                  body: validatedData.message,
+                  seq: seq + 1,
+                  authorUserId: session.user.id,
+                },
+              });
+            }
           }
         }
 
@@ -128,6 +136,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         timeout: ALLOCATION_TX_TIMEOUT_MS,
       },
     );
+
+    if (!response) {
+      return NextResponse.json(
+        { error: "Cannot send a public reply to a closed ticket" },
+        { status: 409 },
+      );
+    }
 
     // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {

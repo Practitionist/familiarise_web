@@ -386,10 +386,8 @@ async function readTicketWorkspace(
       name: t.user.name,
       role: t.user.role,
       email: grants.showEmail ? t.user.email : null,
-      phone:
-        cb.callbackRequested && cb.phone
-          ? `[Callback Requested: ${cb.phone}]`
-          : t.user.phone,
+      phone: cb.phone ?? t.user.phone,
+      callbackRequested: cb.callbackRequested,
       joinedAt: t.user.createdAt.toISOString(),
     },
     booking,

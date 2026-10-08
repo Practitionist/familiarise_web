@@ -80,6 +80,7 @@ export interface TransactionalEffectResult {
   earningsHeld?: number;
   profilesUnverified?: number;
   reviewRemoved?: boolean;
+  alreadyExcluded?: boolean;
   /** #705 — whose public surfaces need purging once the transaction commits.
    *  A removed review kept rendering on the landing page for up to an hour
    *  because nothing invalidated the cache. */
@@ -325,11 +326,21 @@ async function excludeFeedbackFromAggregate(
   feedbackId: string | null | undefined,
 ): Promise<TransactionalEffectResult> {
   if (!feedbackId) return {};
-  await tx.appointmentFeedback.updateMany({
+  const updated = await tx.appointmentFeedback.updateMany({
     where: { id: feedbackId, excludedFromAggregateAt: null },
     data: { excludedFromAggregateAt: new Date() },
   });
-  return {};
+  if (updated.count === 0) {
+    const existing = await tx.appointmentFeedback.findUnique({
+      where: { id: feedbackId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new Error("Feedback record not found");
+    }
+    return { alreadyExcluded: true };
+  }
+  return { alreadyExcluded: false };
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;

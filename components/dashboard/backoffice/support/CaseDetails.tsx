@@ -64,13 +64,13 @@ function bookingStatusLabel(booking: CaseBooking): string {
 export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
-  const callback = extractCallbackInfo(
-    [...data.timeline.map((m) => ("body" in m ? m.body : null)), person.phone],
+  const cb = extractCallbackInfo(
+    data.timeline.map((m) => ("body" in m ? m.body : null)),
     person.phone,
   );
-  const telHref = callback.phone
-    ? `tel:${callback.phone.replace(/[^\d+]/g, "")}`
-    : null;
+  const callbackRequested =
+    cb.callbackRequested || Boolean(person.callbackRequested);
+  const telHref = cb.phone ? `tel:${cb.phone.replace(/[^\d+]/g, "")}` : null;
   const escalationHref = buildEngineeringEscalationHref({
     key: data.key,
     reference: data.reference,
@@ -93,10 +93,10 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
             ...(person.email
               ? [["Email", person.email] as [string, ReactNode]]
               : []),
-            ...(callback.phone && telHref
+            ...(cb.phone && telHref
               ? [
                   [
-                    callback.callbackRequested ? "Callback" : "Phone",
+                    callbackRequested ? "Callback" : "Phone",
                     <div
                       key="phone-row"
                       className="flex flex-wrap items-center gap-2"
@@ -106,9 +106,9 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
                         className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
                       >
                         <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        <span>{callback.phone}</span>
+                        <span>{cb.phone}</span>
                       </a>
-                      {callback.callbackRequested && (
+                      {callbackRequested && (
                         <Badge variant="destructive" className="text-[11px]">
                           Callback requested
                         </Badge>
