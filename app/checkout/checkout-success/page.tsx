@@ -69,6 +69,7 @@ function CheckoutSuccessContent() {
       const delays = pollRun === 0 ? RETRY_DELAYS_MS : RETRY_NOW_DELAYS_MS;
       const maxAttempts = delays.length + 1;
       let shapeError: ZodError | null = null;
+      let lastFetchError: unknown = null;
       setPhase("loading");
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -134,7 +135,7 @@ function CheckoutSuccessContent() {
             return;
           }
         } catch (error) {
-          reportPaymentsError(error);
+          lastFetchError = lastFetchError ?? error;
           console.error("Payment verification error:", error);
         }
 
@@ -148,7 +149,9 @@ function CheckoutSuccessContent() {
       // reconcile-orphaned-confirmations both re-drive it, so the page keeps
       // showing "confirming" — never "failed".
       if (cancelled) return;
-      if (shapeError) reportPaymentsError(shapeError);
+      if (shapeError ?? lastFetchError) {
+        reportPaymentsError(shapeError ?? lastFetchError);
+      }
       setPhase("confirming");
     }
 

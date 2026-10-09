@@ -39,6 +39,7 @@ export const notSettledElsewhereWhere: Prisma.PaymentWhereInput = {
         AUTO_REFUNDED_PREFIX,
         AUTO_REFUND_STUCK_PREFIX,
         REPLAY_SALE_PREFIX,
+        "REQUIRES_MANUAL_RECOVERY:",
       ].map((prefix) => ({ description: { startsWith: prefix } })),
     },
   ],
@@ -62,8 +63,16 @@ function swapPrefix(pending: string, prefix: string): string {
     : pending;
 }
 
-/** The settled form of a pending marker, keeping its reason. */
+/**
+ * Settled form of a pending marker. Over-capture surpluses transition to
+ * REQUIRES_MANUAL_RECOVERY so operators recover the excess above expectedAmount.
+ */
 export function settledAutoRefundDescription(pending: string): string {
+  if (
+    pending.startsWith(`${AUTO_REFUND_PENDING_PREFIX} Over-capture surplus`)
+  ) {
+    return swapPrefix(pending, "REQUIRES_MANUAL_RECOVERY:");
+  }
   return swapPrefix(pending, AUTO_REFUNDED_PREFIX);
 }
 
