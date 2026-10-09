@@ -147,8 +147,10 @@ export async function DELETE(request: NextRequest) {
     const deleteResult = await deleteProfileDisplayImage(session.user.id);
 
     if (!deleteResult) {
-      console.warn("Failed to delete profile display image from storage");
-      // Continue anyway to clear the database reference
+      return NextResponse.json(
+        { error: "Could not delete the image. Please try again." },
+        { status: 502 },
+      );
     }
 
     // Update user record to remove profile display image URL

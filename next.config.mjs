@@ -36,6 +36,11 @@ const RESOLVED_APP_URL =
  * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
  * `typescript` keys below.
  */
+const PDFKIT_FONT_FILES = [
+  "./node_modules/pdfkit/package.json",
+  "./node_modules/pdfkit/js/standard-fonts/**",
+];
+
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
@@ -363,21 +368,27 @@ const nextConfig = {
   // bundler (lib/pdf/react-runtime/jsx-runtime.ts), which the tracer cannot
   // see, and the only traced import of `react` is the reconciler's, which
   // reaches the package root rather than that entrypoint. Ship the package.
+  //
+  // pdfkit@0.20.1 loads font metrics via `createRequire()('#standard-fonts/*')`,
+  // a package `imports` subpath the tracer cannot follow; ship those files.
   outputFileTracingIncludes: {
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./public/fonts/**", "./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**", ...PDFKIT_FONT_FILES],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
