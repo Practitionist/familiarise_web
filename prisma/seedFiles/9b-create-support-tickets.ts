@@ -298,6 +298,23 @@ export async function createSupportTickets(
   let responsesCreated = 0;
   const highestSeqByYear = new Map<number, number>();
 
+  // Continue from the live counter so seeded references never collide with real ones.
+  const counterStartByYear = new Map<number, number>();
+  const cursorByYear = new Map<number, number>();
+  const nextSeedSeq = async (year: number): Promise<number> => {
+    if (!counterStartByYear.has(year)) {
+      const counter = await prisma.supportTicketCounter.findUnique({
+        where: { year },
+        select: { nextSeq: true },
+      });
+      counterStartByYear.set(year, counter?.nextSeq ?? 1);
+      cursorByYear.set(year, counter?.nextSeq ?? 1);
+    }
+    const seq = cursorByYear.get(year) ?? 1;
+    cursorByYear.set(year, seq + 1);
+    return seq;
+  };
+
   for (let i = 0; i < NUM_TICKETS; i++) {
     try {
       const creator = faker.helpers.arrayElement(ticketCreators);
@@ -318,7 +335,7 @@ export async function createSupportTickets(
 
       const ticketDate = faker.date.recent({ days: 30 });
       const year = ticketDate.getUTCFullYear();
-      const seq = i + 1;
+      const seq = await nextSeedSeq(year);
       const referenceNumber = formatTicketReference(year, seq);
       const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
         priority,
@@ -393,10 +410,11 @@ export async function createSupportTickets(
   }
 
   for (const [year, highestSeq] of highestSeqByYear) {
+    const nextSeq = Math.max(counterStartByYear.get(year) ?? 1, highestSeq + 1);
     await prisma.supportTicketCounter.upsert({
       where: { year },
-      create: { year, nextSeq: highestSeq + 1 },
-      update: { nextSeq: highestSeq + 1 },
+      create: { year, nextSeq },
+      update: { nextSeq },
     });
   }
 
