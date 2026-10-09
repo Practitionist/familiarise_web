@@ -14,9 +14,9 @@ An opt-in, consultant-curated marketplace for **webinar/class replays only**:
 
 ## Non-negotiable invariants
 
-1. **SUPABASE-only listings.** A published recording must have
-   `status=AVAILABLE && storageType=SUPABASE`. Stream S3 URLs die in ≤14 days
-   and are non-revocable — a STREAM_ONLY replay must never be sold. Enforced
+1. **Durable-copy-only listings.** A published recording must have
+   `status=AVAILABLE && storageType=PLATFORM` (our R2 copy). Stream URLs die in
+   ≤14 days and are non-revocable, so an uncopied replay is never sold. Enforced
    by `publicRecordingWhere()` (`lib/data/recordings-explore.ts`) AND again in
    the publish route (defense in depth; the where-clause alone would let an
    already-listed recording lapse silently).
@@ -32,9 +32,8 @@ An opt-in, consultant-curated marketplace for **webinar/class replays only**:
    from the authenticated `/api/stream/recordings/[recordingId]` route after
    entitlement: owner / collaborator / privileged / plan-payment (refund-aware)
    / SUCCEEDED `RecordingPurchase`.
-5. **Manual transfer = premium.** The transfer route resolves the owning
-   plan's `recordingStoragePolicy`; STREAM_ONLY gets `403 UPGRADE_REQUIRED`
-   instead of free permanent storage.
+5. **No manual transfer.** Every recording is copied by the
+   `transfer-recordings` job; there is no per-plan storage tier.
 
 ## Purchase flow
 

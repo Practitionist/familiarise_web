@@ -197,8 +197,7 @@ Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadl
 ### Non-enterprise crons (for completeness)
 
 Disputes (`alert-dispute-deadlines` hourly, `reconcile-disputes` every 6h), appointments, waitlist, Stream recording
-retention (`cleanup-old-stream-recordings`, `mark-expired-recordings`,
-`transfer-expiring-recordings`), discount expiry, and the auth-token /
+retention (`expire-recordings`, `transfer-recordings`), discount expiry, and the auth-token /
 empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the
 enterprise billing/compliance surface this doc owns.

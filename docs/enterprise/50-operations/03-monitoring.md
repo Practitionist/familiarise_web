@@ -131,9 +131,8 @@ as never having run even after being listed.
 | Job id | Summary fields | What a non-zero value means |
 | --- | --- | --- |
 | `stream-sync` | `staleIdentified / usersDeleted / failedDeletions` | Users that exist on Stream but not here were removed. Persistent `failedDeletions` usually means a Stream rate limit. |
-| `mark-expired-recordings` | `expiredCount` | Recordings whose Stream URL has lapsed were tombstoned. |
-| `transfer-expiring-recordings` | `succeeded / failed / expiringStreamOnly` | A non-zero `failed`, or any at-risk count in the job's own warning, means permanent recordings are approaching Stream's fourteen-day deletion with no copy in Supabase. Page on it. |
-| `cleanup-old-stream-recordings` | `scanned / expired` | Recordings past their organization's retention window were erased from Supabase and tombstoned. A run that fails is a DPDP erasure gap, not a tidiness problem. |
+| `transfer-recordings` | `processed / succeeded / failed / exhaustedReported` | `failed` rows stay READY and retry next run; `exhaustedReported` rows hit the attempt cap and will lapse with Stream's fourteen-day copy unless copied by hand. Page on it. |
+| `expire-recordings` | `scanned / lapsed / expired / cleaned / failed` | Recordings past retention (or whose Stream copy lapsed uncopied) were expired and their R2 and preview objects deleted. A non-zero `failed` is a DPDP erasure gap; the next run retries it. |
 | `reconcile-orphaned-recordings` | `scanned / recovered / stillMissing / unrecoverable` | `recovered` is good news about the job and bad news about the webhook: the row exists only because a delivery was lost. `unrecoverable` counts recordings Stream has already deleted, and it only ever grows. |
 | `expire-event-channels` | `frozen / deleted / skippedAlreadyFrozen` | Post-event chat channels moved through the freeze and delete stages. |
 | `reconcile-orphaned-sessions` | `processed / reconciled / streamNotFound` | Meeting sessions whose `call.session_ended` webhook never landed were closed. |

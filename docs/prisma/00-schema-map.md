@@ -462,7 +462,6 @@ erDiagram
         int maxParticipants
         float durationInHours
         boolean certificateProvided
-        RecordingStoragePolicy recordingStoragePolicy
         PlanLevel level
         OrgPlanVisibility visibility
         datetime archivedAt
@@ -723,7 +722,6 @@ erDiagram
         int price
         int maxParticipants
         boolean certificateProvided
-        RecordingStoragePolicy recordingStoragePolicy
     }
     Webinar {
         string id
@@ -1911,8 +1909,7 @@ Every enum in the schema and its values.
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                                                                                                                                         |
 | `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                                                                                                                                         |
 | `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                                                                                                                                     |
-| `RecordingStoragePolicy`       | STREAM_ONLY, SUPABASE_PERMANENT                                                                                                                                                                                                                                                        |
-| `RecordingStorageType`         | STREAM_S3, SUPABASE                                                                                                                                                                                                                                                                    |
+| `RecordingStorageType`         | STREAM_S3, PLATFORM                                                                                                                                                                                                                                                                    |
 | `RecordingStatus`              | RECORDING, PROCESSING, READY, TRANSFERRING, AVAILABLE, FAILED, EXPIRED                                                                                                                                                                                                                 |
 | `PaymentGateway`               | STRIPE, RAZORPAY, DODO_PAYMENTS, CARD                                                                                                                                                                                                                                                  |
 | `PaymentStatus`                | PENDING, SUCCEEDED, FAILED, EXPIRED                                                                                                                                                                                                                                                    |

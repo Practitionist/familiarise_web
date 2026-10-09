@@ -93,7 +93,6 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `maxParticipants`              | Int     | Capacity limit for enrollment                                     |
 | `sessionsPerWeek`              | Int     | Sessions per week (replaces `sessionsPerWeek`)                    |
 | `recordingEnabled`             | Boolean | Whether sessions are recorded                                     |
-| `recordingStoragePolicy`       | Enum    | `STREAM_ONLY` (2-week temp) or `SUPABASE_PERMANENT`               |
 | `certificateProvided`          | Boolean | Whether completers get a certificate                              |
 | `classContents[]`              | Array   | Ordered curriculum items (title, description, hoursAllotted)      |
 | `collaborators`                | Via UI  | Co-instructors invited through CollaboratorsTab                   |
@@ -317,8 +316,7 @@ For a class, the same appointment structure is created during allocation (1 appo
 - Both parties join via `app/meetings/` pages
 - **For classes:** All enrolled consultees + collaborators join the same call
 - **Recording:** If `recordingEnabled = true` on the plan, consultant can start/stop recording
-  - Stored on Stream S3 (2-week temporary)
-  - If `recordingStoragePolicy = SUPABASE_PERMANENT`, auto-transferred to Supabase by cron before Stream expiry
+  - Stored on Stream S3 (14 days), then copied to R2 by the `transfer-recordings` job
 
 ### 5c. After the Session
 
@@ -484,17 +482,17 @@ Existing `refundedShareAmount` field on `ConsultantEarnings` tracks partial refu
 
 Recurring events depend on these automated jobs:
 
-| Job                            | Schedule      | Purpose                                                                        | Source                                               |
-| ------------------------------ | ------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `auto-complete-appointments`   | Hourly        | Mark past sessions COMPLETED/UNVERIFIED                                        | `scripts/appointments/auto-complete-appointments.ts` |
-| `tentative-occurrences`        | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-occurrences/`             |
-| `expire-stale-requests`        | Daily         | Mark PENDING requests as EXPIRED (> 30 days)                                   | `app/api/cleanup/`                                   |
-| `release-earnings`             | Hourly        | PENDING -> READY when hold expires                                             | `jobs/earnings/release-earnings.ts`                  |
-| `create-payout-batch`          | Weekly Mon    | Collect READY earnings into batches                                            | `jobs/payouts/create-payout-batch.ts`                |
-| `process-payouts`              | Weekly Mon    | Send approved payouts to gateways                                              | `jobs/payouts/process-payouts.ts`                    |
-| `appointment-reminders`        | Every 6h      | Send upcoming session reminders                                                | `app/api/cleanup/appointment-reminders/`             |
-| `transfer-expiring-recordings` | Daily         | Move Stream recordings to Supabase                                             | `app/api/cleanup/transfer-expiring-recordings/`      |
-| `mark-expired-recordings`      | Daily         | Clean up expired Stream recordings                                             | `app/api/cleanup/mark-expired-recordings/`           |
+| Job                          | Schedule      | Purpose                                                                        | Source                                               |
+| ---------------------------- | ------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `auto-complete-appointments` | Hourly        | Mark past sessions COMPLETED/UNVERIFIED                                        | `scripts/appointments/auto-complete-appointments.ts` |
+| `tentative-occurrences`      | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-occurrences/`             |
+| `expire-stale-requests`      | Daily         | Mark PENDING requests as EXPIRED (> 30 days)                                   | `app/api/cleanup/`                                   |
+| `release-earnings`           | Hourly        | PENDING -> READY when hold expires                                             | `jobs/earnings/release-earnings.ts`                  |
+| `create-payout-batch`        | Weekly Mon    | Collect READY earnings into batches                                            | `jobs/payouts/create-payout-batch.ts`                |
+| `process-payouts`            | Weekly Mon    | Send approved payouts to gateways                                              | `jobs/payouts/process-payouts.ts`                    |
+| `appointment-reminders`      | Every 6h      | Send upcoming session reminders                                                | `app/api/cleanup/appointment-reminders/`             |
+| `transfer-recordings`        | Every 6h      | Copy READY Stream recordings to R2                                             | `jobs/stream/transfer-recordings.ts`                 |
+| `expire-recordings`          | Daily         | Apply recording retention and delete stored assets                             | `jobs/stream/expire-recordings.ts`                   |
 
 All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/` and hit API endpoints in `app/api/cleanup/` that verify a `CRON_SECRET` header.
 

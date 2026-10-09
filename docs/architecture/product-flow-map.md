@@ -361,10 +361,8 @@ flowchart TD
     CollabRoom --> Session["Group session runs"]
     SoloRoom --> Session
 
-    Session --> RecordingPolicy{Recording policy?}
-    RecordingPolicy -- STREAM_S3 --> TempRecording["Stream S3\n2-week retention, then expired"]
-    RecordingPolicy -- SUPABASE_PERMANENT --> PermRecording["Supabase storage\nPermanent, participant access"]
-    TempRecording --> PostSession
+    Session --> TempRecording["Stream copy\n14 days, playable while READY"]
+    TempRecording --> PermRecording["R2 copy (transfer-recordings)\nparticipant access until retention"]
     PermRecording --> PostSession
 
     PostSession["Post-session"] --> CertCheck{Certificate enabled?}

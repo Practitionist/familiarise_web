@@ -330,7 +330,7 @@ Each section also lists:
 
 ### E.3 Stream video / Meeting — ✅ Wired (C.4)
 
-See A.4. Recording retention sweeps per-org via `Organization.streamRecordingRetentionDays` in [`scripts/cleanup/cleanup-old-stream-recordings.ts`](../../../scripts/cleanup/cleanup-old-stream-recordings.ts).
+See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`](../../../lib/stream/recording-retention.ts); `Organization.streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped recordings.
 
 ---
 

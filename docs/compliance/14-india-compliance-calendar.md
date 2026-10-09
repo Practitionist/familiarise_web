@@ -107,7 +107,7 @@ Source: `.github/workflows/`. Times in **UTC** (add 5h 30m for IST).
 | Daily | 02:00 | `cleanup-abandoned-org-top-ups.yml` | (ops) |
 | Daily | 02:30 | `irp-uploader.yml` | [02](./03-gst-overview.md) |
 | Daily | 03:00 | `expire-contracts.yml` | (ops) |
-| Daily | 03:00 | `mark-expired-recordings.yml` | (ops) |
+| Daily | 03:00 | `cron-daily.yml#expire-recordings` | (ops) |
 | Daily | 03:00 | `cron-daily.yml` → `msme-payment-alerts` | [03](./04-msme-43b-h.md) |
 | Weekly | Mon 20:00 | `create-payout-batch.yml` | (payouts) |
 | Weekly | Mon 21:00 | `process-payouts.yml` | (payouts) |

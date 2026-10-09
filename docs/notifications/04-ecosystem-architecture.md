@@ -377,7 +377,7 @@ flowchart LR
 ```
 
 **Data path for recording notification:**
-`Stream.io call.recording.ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
+`Stream.io call.recording.ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {dashboardUrl, ...})` (no media URL; the link opens the in-app recordings page)
 
 ---
 
