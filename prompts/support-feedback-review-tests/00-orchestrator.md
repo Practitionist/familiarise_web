@@ -66,7 +66,7 @@ Use `AskUserQuestion` for a product decision a lane cannot make. Put a plain-lan
 | Excluding a review from the rating left it unlabelled and told nobody. | The review stays visible with a "Not counted in rating" label, and the expert and the reporter are notified. | SFR-05-06, SFR-05-07 |
 | The live database lacked an earlier schema change, so every dispute read returned 500. | Treat as a P0 environment finding outside the pull request: the owner applies the schema, then the blocked dispute cases are re-run. | SFR-01-01, SFR-05-15 |
 
-Note on the first row: the customer-side behaviour that a customer reply to a resolved ticket reopens it was observed as working and is kept as current behaviour in SFR-02-13. If the owner means that no reply of any kind reopens a resolved ticket, ask before changing that case.
+Note on the first row: the decision covers staff replies only. A customer reply to a resolved ticket reopening it is intended behaviour (SFR-02-13), because the customer is saying the problem is not solved.
 
 ## 6. Synthesis and publication
 
