@@ -35,7 +35,7 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: (...args: unknown[]) => transaction(...args),
     consultantProfile: { findFirst: jest.fn() },
     classPlan: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    class: { findFirst: jest.fn() },
     payment: { count: jest.fn() },
   },
 }));
@@ -201,7 +201,7 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
       durationInMonths: 1,
       sessionDurationInHours: 1,
     });
-    base.class.findUnique.mockResolvedValue({
+    base.class.findFirst.mockResolvedValue({
       id: "class-1",
       schedulingPeriodStartsAt: new Date("2026-03-02T10:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-04-02T10:00:00.000Z"),
@@ -246,5 +246,17 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
     expect(response.status).toBe(409);
     const payload = await response.json();
     expect(payload.error).toMatch(/conflicts with another confirmed session/i);
+  });
+
+  it("loads the classId only within the edited plan and 404s otherwise", async () => {
+    base.class.findFirst.mockResolvedValue(null);
+
+    const response = await PATCH(request(patchBody));
+
+    expect(response.status).toBe(404);
+    expect(base.class.findFirst).toHaveBeenCalledWith({
+      where: { id: "class-1", classPlanId: "plan-1" },
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

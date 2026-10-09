@@ -340,7 +340,10 @@ export async function POST(request: NextRequest) {
 
           // #2010 — also verify the host consultant has no overlapping live
           // hold, co-host commitment, or confirmed session when publishing.
-          if (classStatus === ClassStatus.SCHEDULED && sessionWindows.length > 0) {
+          if (
+            classStatus === ClassStatus.SCHEDULED &&
+            sessionWindows.length > 0
+          ) {
             await assertConsultantAvailableForWindows(tx, {
               consultantProfileId,
               consultantUserId: session.user.id,
@@ -372,7 +375,8 @@ export async function POST(request: NextRequest) {
                               startsAt: slotStart,
                               durationInHours: sessionDurationInHours,
                               consultantProfileId,
-                              isTentative: classStatus !== ClassStatus.SCHEDULED,
+                              isTentative:
+                                classStatus !== ClassStatus.SCHEDULED,
                               ordinal: index + 1,
                             }),
                           ),
@@ -621,14 +625,21 @@ export async function PATCH(request: NextRequest) {
     );
     if (lateJoinRefusal) return lateJoinRefusal;
 
-    // Get the class instance - use the provided classId or the first one associated with the plan
+    // A supplied classId must name an instance of this plan; otherwise use its first.
     const classToUpdate = classId
-      ? await prisma.class.findUnique({
-          where: { id: classId },
+      ? await prisma.class.findFirst({
+          where: { id: classId, classPlanId: id },
         })
       : existingPlan.classes.length > 0
         ? existingPlan.classes[0]
         : null;
+
+    if (classId && !classToUpdate) {
+      return NextResponse.json(
+        { error: `Class ${classId} not found on plan ${id}` },
+        { status: 404 },
+      );
+    }
 
     // Check if trying to update instance fields without an instance (still necessary)
     if (
@@ -948,7 +959,7 @@ export async function PATCH(request: NextRequest) {
             }
             const ownerChanged = Boolean(
               consultantProfileId &&
-                consultantProfileId !== existingPlan.consultantProfileId,
+              consultantProfileId !== existingPlan.consultantProfileId,
             );
 
             // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
