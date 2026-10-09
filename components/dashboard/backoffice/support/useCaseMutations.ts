@@ -71,14 +71,17 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
   const setStatus = useMutation({
     mutationFn: (status: "IN_PROGRESS" | "RESOLVED" | "CLOSED") =>
       ticketUrl
-        ? send(ticketUrl, "PATCH", { status })
-        : send(threadUrl as string, "PATCH", { status }),
+        ? send(ticketUrl, "PATCH", { status, expectedStatus: c?.status })
+        : send(threadUrl ?? "", "PATCH", { status }),
     ...settle("Status updated"),
   });
 
   const update = useMutation({
     mutationFn: (patch: { assignedToId?: string | null; priority?: string }) =>
-      send(ticketUrl as string, "PATCH", patch),
+      send(ticketUrl ?? "", "PATCH", {
+        ...patch,
+        expectedStatus: c?.status,
+      }),
     ...settle("Case updated"),
   });
 

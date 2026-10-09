@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   publicReviewSelect,
   sanitisePublicReview,
@@ -19,10 +19,45 @@ import {
   ModeratedReviewError,
   pickExistingReview,
   recomputeConsultantRating,
+  resolveRatingCausePatch,
   resolveReviewableSession,
 } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { z } from "zod";
+
+async function recordReviewRevisionIfChanged(
+  tx: Tx,
+  existing: {
+    id: string;
+    rating: number;
+    reviewDescription: string | null;
+    repliedAt: Date | null;
+    replyDeletedAt: Date | null;
+  },
+  nextRating: number,
+  nextDescription: string | null | undefined,
+): Promise<void> {
+  const textChanged =
+    existing.rating !== nextRating ||
+    (existing.reviewDescription ?? null) !== (nextDescription ?? null);
+  if (!textChanged) return;
+
+  const bumped = await tx.consultantReview.update({
+    where: { id: existing.id },
+    data: { revisionNo: { increment: 1 }, editedAt: new Date() },
+    select: { revisionNo: true },
+  });
+  await tx.consultantReviewRevision.create({
+    data: {
+      reviewId: existing.id,
+      revisionNo: bumped.revisionNo - 1,
+      rating: existing.rating,
+      reviewDescription: existing.reviewDescription,
+      afterPublicReply:
+        existing.repliedAt !== null && existing.replyDeletedAt === null,
+    },
+  });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -217,47 +252,13 @@ export async function POST(req: NextRequest) {
 
           let created;
           if (existing) {
-            // Only a changed OPINION is an edit. Re-submitting the same stars and
-            // the same words is idempotent, so it must not manufacture a
-            // revision or stamp `editedAt` — otherwise a double-tapped Save reads
-            // as "this person keeps changing their mind".
-            const textChanged =
-              existing.rating !== validatedData.rating ||
-              (existing.reviewDescription ?? null) !==
-                (validatedData.reviewDescription ?? null);
+            await recordReviewRevisionIfChanged(
+              tx,
+              existing,
+              validatedData.rating,
+              validatedData.reviewDescription,
+            );
 
-            if (textChanged) {
-              // The revision number is allocated by an atomic increment on the
-              // review row, never from the `existing` read: two editors who both
-              // read N would otherwise both insert revision N and the loser got a
-              // P2002 that `withSerializableRetry` does not retry. The increment
-              // takes the row lock, so the loser aborts with P2034 and retries.
-              const bumped = await tx.consultantReview.update({
-                where: { id: existing.id },
-                data: { revisionNo: { increment: 1 }, editedAt: new Date() },
-                select: { revisionNo: true },
-              });
-              // The trail stores what the review USED to say.
-              await tx.consultantReviewRevision.create({
-                data: {
-                  reviewId: existing.id,
-                  revisionNo: bumped.revisionNo - 1,
-                  rating: existing.rating,
-                  reviewDescription: existing.reviewDescription,
-                  // Recorded for moderation context. It does NOT decide whether
-                  // the public surface marks the edit — every edit is marked, or
-                  // a consultant could reply to everything and brand every
-                  // subsequent revision.
-                  afterPublicReply:
-                    existing.repliedAt !== null &&
-                    existing.replyDeletedAt === null,
-                },
-              });
-            }
-
-            // Provenance moves as ONE fact — appointment, session clock, track
-            // and event key together. The row is either this (track, event)'s own
-            // or a NULL-track legacy row being adopted into it (#1549).
             created = await tx.consultantReview.update({
               where: { id: existing.id },
               data: {
@@ -266,15 +267,14 @@ export async function POST(req: NextRequest) {
                 appointmentId: reviewable.appointmentId,
                 track: reviewable.track,
                 ratingUnitId: reviewable.ratingUnitId,
-                // `heldAt` is the slot's end, never now(). Kept when unknown (offline).
                 ...(reviewable.heldAt
                   ? { ratedOccurrenceAt: reviewable.heldAt }
                   : {}),
                 isAnonymous: validatedData.isAnonymous ?? undefined,
-                ratingCause:
-                  validatedData.rating > 3
-                    ? null
-                    : (validatedData.ratingCause ?? null),
+                ...resolveRatingCausePatch(
+                  validatedData.rating,
+                  validatedData.ratingCause,
+                ),
                 ...(withdrawnByAuthor
                   ? { deletedAt: null, removedBy: null }
                   : {}),
@@ -290,15 +290,12 @@ export async function POST(req: NextRequest) {
                 consulteeProfileId: sessionConsulteeProfileId,
                 appointmentId: reviewable.appointmentId,
                 isAnonymous: validatedData.isAnonymous ?? false,
-                ratingCause:
-                  validatedData.rating > 3
-                    ? null
-                    : (validatedData.ratingCause ?? null),
+                ...resolveRatingCausePatch(
+                  validatedData.rating,
+                  validatedData.ratingCause ?? null,
+                ),
                 track: reviewable.track,
-                // Group only — see lib/reviews.ts. NULL on a 1:1 review, where
-                // the review is already one data point.
                 ratingUnitId: reviewable.ratingUnitId,
-                // The SESSION's clock: provenance, never refreshed by an edit.
                 ratedOccurrenceAt: reviewable.heldAt,
               },
               select,

@@ -202,6 +202,31 @@ export function responseItems(responses: ResponseRow[]): TimelineItem[] {
   }));
 }
 
+const MIRROR_DEDUPE_WINDOW_MS = 5_000;
+
+/** Pair-deduplicate non-internal user ticket replies mirrored into thread USER messages within 5s. */
+export function dedupeEscalatedResponses(
+  responses: ResponseRow[],
+  messages: MessageRow[],
+): ResponseRow[] {
+  const unmatchedUserMessages = messages.filter((m) => m.sender === "USER");
+  return responses.filter((r) => {
+    if (r.isInternal) return true;
+    if (isOperator(r.user.role)) return false;
+    const matchIdx = unmatchedUserMessages.findIndex(
+      (m) =>
+        m.body === r.message &&
+        Math.abs(r.createdAt.getTime() - m.createdAt.getTime()) <=
+          MIRROR_DEDUPE_WINDOW_MS,
+    );
+    if (matchIdx !== -1) {
+      unmatchedUserMessages.splice(matchIdx, 1);
+      return false;
+    }
+    return true;
+  });
+}
+
 export const byTime = (a: TimelineItem, b: TimelineItem) =>
   a.at.localeCompare(b.at);
 
@@ -336,14 +361,12 @@ async function readTicketWorkspace(
     internal: false,
     at: t.createdAt.toISOString(),
   };
-  // An escalated case's transcript is the thread: public staff replies are
-  // mirrored into it both ways, so only notes and user-side ticket replies
-  // are added from the ticket (else every staff reply shows twice).
+  // Thread transcript holds public turns; append internal notes and unmirrored user ticket replies.
   const timeline = thread
     ? [
-        ...messageItems(thread.messages as MessageRow[]),
+        ...messageItems(thread.messages),
         ...responseItems(
-          t.responses.filter((r) => r.isInternal || !isOperator(r.user.role)),
+          dedupeEscalatedResponses(t.responses, thread.messages),
         ),
       ]
     : [opener, ...responseItems(t.responses)];
@@ -363,7 +386,7 @@ async function readTicketWorkspace(
     findUserIssues({ userId: t.user.id, limit: 5 }),
   ]);
 
-  const cb = extractCallbackInfo([t.description], t.user.phone);
+  const cb = extractCallbackInfo(t.description, t.user.phone);
 
   return {
     key,
@@ -472,7 +495,7 @@ async function readThreadWorkspace(
     organization: t.organization,
     pastCases,
     sentryIssues,
-    timeline: messageItems(t.messages as MessageRow[]),
+    timeline: messageItems(t.messages),
     attachments: [],
   };
 }

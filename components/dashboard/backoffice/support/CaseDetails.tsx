@@ -15,10 +15,7 @@ import {
   paymentStatusBadge,
   trialStatusBadge,
 } from "@/lib/labels/session-labels";
-import {
-  buildEngineeringEscalationHref,
-  extractCallbackInfo,
-} from "@/lib/support/callback-info";
+import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -61,65 +58,93 @@ function bookingStatusLabel(booking: CaseBooking): string {
   return appointmentStatusBadge(booking.status).label;
 }
 
+function SentryIssuesSection({
+  sentryIssues,
+}: Readonly<{ sentryIssues: NonNullable<CaseWorkspace["sentryIssues"]> }>) {
+  if (!sentryIssues.configured) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Error triage is not configured.
+      </p>
+    );
+  }
+  const issues = sentryIssues.issues ?? [];
+  if (issues.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No unresolved errors in the last 14 days.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {issues.map((issue) => (
+        <li key={issue.shortId} className="text-sm">
+          <a
+            href={issue.permalink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <span>
+              {issue.shortId} · {issue.title}
+            </span>
+            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+          </a>
+          <p className="text-xs text-muted-foreground">
+            {[issue.culprit, issue.lastSeen ? day(issue.lastSeen) : null]
+              .filter(Boolean)
+              .join(" · ") || humanizeEnum(issue.level ?? "error")}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
-  const cb = extractCallbackInfo(
-    data.timeline.map((m) => ("body" in m ? m.body : null)),
-    person.phone,
-  );
-  const callbackRequested =
-    cb.callbackRequested || Boolean(person.callbackRequested);
-  const telHref = cb.phone ? `tel:${cb.phone.replace(/[^\d+]/g, "")}` : null;
+  const phone = person.phone;
+  const callbackRequested = Boolean(person.callbackRequested);
+  const telHref = phone ? `tel:${phone.replace(/[^\d+]/g, "")}` : null;
   const escalationHref = buildEngineeringEscalationHref({
     key: data.key,
     reference: data.reference,
-    kind: data.kind,
-    topic: data.topic,
-    priority: data.priority,
-    status: data.status,
-    appointmentId: booking?.appointmentId ?? null,
-    paymentId: payment?.id ?? null,
-    backofficePath: `${basePath}/support/${data.key}`,
   });
+
+  const personItems: [string, ReactNode][] = [
+    ["Name", person.name ?? "—"],
+    ["Role", humanizeEnum(person.role) || "—"],
+  ];
+  if (person.email) {
+    personItems.push(["Email", person.email]);
+  }
+  if (phone && telHref) {
+    personItems.push([
+      callbackRequested ? "Callback" : "Phone",
+      <div key="phone-row" className="flex flex-wrap items-center gap-2">
+        <a
+          href={telHref}
+          className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{phone}</span>
+        </a>
+        {callbackRequested && (
+          <Badge variant="destructive" className="text-[11px]">
+            Callback requested
+          </Badge>
+        )}
+      </div>,
+    ]);
+  }
+  personItems.push(["Joined", day(person.joinedAt)]);
 
   return (
     <div className="space-y-5">
       <Section title="Person">
-        <Facts
-          items={[
-            ["Name", person.name ?? "—"],
-            ["Role", humanizeEnum(person.role) || "—"],
-            ...(person.email
-              ? [["Email", person.email] as [string, ReactNode]]
-              : []),
-            ...(cb.phone && telHref
-              ? [
-                  [
-                    callbackRequested ? "Callback" : "Phone",
-                    <div
-                      key="phone-row"
-                      className="flex flex-wrap items-center gap-2"
-                    >
-                      <a
-                        href={telHref}
-                        className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
-                      >
-                        <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        <span>{cb.phone}</span>
-                      </a>
-                      {callbackRequested && (
-                        <Badge variant="destructive" className="text-[11px]">
-                          Callback requested
-                        </Badge>
-                      )}
-                    </div>,
-                  ] as [string, ReactNode],
-                ]
-              : []),
-            ["Joined", day(person.joinedAt)],
-          ]}
-        />
+        <Facts items={personItems} />
       </Section>
 
       {booking && (
@@ -200,41 +225,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
 
       {data.sentryIssues && (
         <Section title="Recent errors">
-          {!data.sentryIssues.configured ? (
-            <p className="text-sm text-muted-foreground">
-              Error triage is not configured.
-            </p>
-          ) : (data.sentryIssues.issues ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No unresolved errors in the last 14 days.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {(data.sentryIssues.issues ?? []).map((issue) => (
-                <li key={issue.shortId} className="text-sm">
-                  <a
-                    href={issue.permalink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
-                  >
-                    <span>
-                      {issue.shortId} · {issue.title}
-                    </span>
-                    <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-                  </a>
-                  <p className="text-xs text-muted-foreground">
-                    {[
-                      issue.culprit,
-                      issue.lastSeen ? day(issue.lastSeen) : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || humanizeEnum(issue.level ?? "error")}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
+          <SentryIssuesSection sentryIssues={data.sentryIssues} />
         </Section>
       )}
 
@@ -259,20 +250,22 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
         </Section>
       )}
 
-      <Section title="Engineering">
-        <a
-          href={escalationHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
-        >
-          <span>Escalate to Engineering (GitHub Issue)</span>
-          <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        </a>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Opens a pre-filled bug report with case IDs and zero customer PII.
-        </p>
-      </Section>
+      {can("engineering.escalate") && (
+        <Section title="Engineering">
+          <a
+            href={escalationHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <span>Escalate to Engineering (GitHub Issue)</span>
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          </a>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Opens a pre-filled bug report with case IDs and zero customer PII.
+          </p>
+        </Section>
+      )}
     </div>
   );
 }

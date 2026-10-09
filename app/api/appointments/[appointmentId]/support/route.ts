@@ -21,6 +21,7 @@ import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -34,7 +35,11 @@ const turnSchema = z
   .object({
     category: CATEGORY.optional(),
     chosenOptionId: z.string().max(200).optional(),
-    userMessage: z.string().trim().max(2000).optional(),
+    userMessage: z
+      .string()
+      .transform((s) => stripCallbackTags(s).trim())
+      .pipe(z.string().max(2000))
+      .optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",

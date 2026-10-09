@@ -10,10 +10,128 @@ import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { supportError } from "@/lib/api/support-http";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
+import type { z } from "zod";
 
 const TICKETS_ROUTE = "user.support-tickets";
+
+type CreateTicketPayload = z.infer<typeof CreateSupportTicketSchema>;
+
+async function resolveTicketEntityLinks(
+  userId: string,
+  validatedData: CreateTicketPayload,
+): Promise<
+  | {
+      ok: true;
+      consultationId: string | undefined;
+      subscriptionId: string | undefined;
+    }
+  | { ok: false; response: NextResponse }
+> {
+  // When appointmentId is given, client consultationId/subscriptionId are ignored so appointment ownership is authoritative.
+  let resolvedConsultationId = validatedData.appointmentId
+    ? undefined
+    : validatedData.consultationId;
+  let resolvedSubscriptionId = validatedData.appointmentId
+    ? undefined
+    : validatedData.subscriptionId;
+
+  if (validatedData.appointmentId) {
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        id: validatedData.appointmentId,
+        OR: [
+          { consultation: { requestedBy: { userId } } },
+          { subscription: { requestedBy: { userId } } },
+        ],
+      },
+      include: {
+        consultation: true,
+        subscription: true,
+      },
+    });
+
+    if (!appointment) {
+      return {
+        ok: false,
+        response: supportError({
+          status: 400,
+          code: "INVALID_ID",
+          message: "Invalid appointment ID or unauthorized",
+          context: {
+            route: TICKETS_ROUTE,
+            action: "create",
+            appointmentId: validatedData.appointmentId,
+          },
+        }),
+      };
+    }
+
+    if (appointment.consultation) {
+      resolvedConsultationId = appointment.consultation.id;
+    } else if (appointment.subscription) {
+      resolvedSubscriptionId = appointment.subscription.id;
+    }
+  }
+
+  const validations = await Promise.all([
+    resolvedConsultationId && !validatedData.appointmentId
+      ? prisma.consultation
+          .findFirst({
+            where: {
+              id: resolvedConsultationId,
+              requestedBy: { userId },
+            },
+          })
+          .then((c) => ({ type: "consultation", valid: !!c }))
+      : Promise.resolve({ type: "consultation", valid: true }),
+    resolvedSubscriptionId && !validatedData.appointmentId
+      ? prisma.subscription
+          .findFirst({
+            where: {
+              id: resolvedSubscriptionId,
+              requestedBy: { userId },
+            },
+          })
+          .then((s) => ({ type: "subscription", valid: !!s }))
+      : Promise.resolve({ type: "subscription", valid: true }),
+    validatedData.paymentId
+      ? prisma.payment
+          .findFirst({
+            where: {
+              id: validatedData.paymentId,
+              userId,
+            },
+          })
+          .then((p) => ({ type: "payment", valid: !!p }))
+      : Promise.resolve({ type: "payment", valid: true }),
+  ]);
+
+  const invalidEntity = validations.find((v) => !v.valid);
+  if (invalidEntity) {
+    return {
+      ok: false,
+      response: supportError({
+        status: 400,
+        code: "INVALID_ID",
+        message: `Invalid ${invalidEntity.type} ID`,
+        context: {
+          route: TICKETS_ROUTE,
+          action: "create",
+          entity: invalidEntity.type,
+        },
+      }),
+    };
+  }
+
+  return {
+    ok: true,
+    consultationId: resolvedConsultationId,
+    subscriptionId: resolvedSubscriptionId,
+  };
+}
 
 export async function GET() {
   try {
@@ -48,7 +166,6 @@ export async function GET() {
             uploadedAt: "desc",
           },
         },
-        // #1527 — the org chip on a request raised "About" an org.
         organization: { select: { id: true, name: true } },
       },
       orderBy: {
@@ -78,12 +195,11 @@ export async function POST(req: NextRequest) {
     const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
     if (rl) return rl;
 
-    // #831 — cap request body before parsing
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
-    const body = await req.json();
-    const result = CreateSupportTicketSchema.safeParse(body);
+    const rawBody: unknown = await req.json().catch(() => null);
+    const result = CreateSupportTicketSchema.safeParse(rawBody);
     if (!result.success) {
       return supportError({
         status: 400,
@@ -94,11 +210,21 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    // #support-hub — session-scoped issue types don't belong on the platform
-    // queue. "Consultant didn't show up", cancellation help, etc. are
-    // appointment-specific: the user picks the session and the per-appointment
-    // flowchart thread routes it with full context. 422 (well-formed but
-    // semantically misrouted) with guidance instead of a silent accept.
+    const cleanDescription = stripCallbackTags(
+      validatedData.description,
+    ).trim();
+    if (!cleanDescription) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: "Description is required",
+        context: { route: TICKETS_ROUTE, action: "create" },
+      });
+    }
+    const description = validatedData.callbackPhone
+      ? `[Callback Requested: ${validatedData.callbackPhone}]\n\n${cleanDescription}`
+      : cleanDescription;
+
     if (isSessionScopedIssueType(validatedData.issueType)) {
       return NextResponse.json(
         {
@@ -110,110 +236,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Resolve appointmentId to consultationId/subscriptionId if provided.
-    //
-    // When an appointmentId IS given, the client's own consultationId /
-    // subscriptionId are DISCARDED rather than kept as fallbacks. Keeping them
-    // was an ownership hole: the validation block below skips its checks
-    // whenever `appointmentId` is present ("already validated above"), but the
-    // appointment only ever resolves ONE arm — so a caller could pass their own
-    // consultation appointment together with somebody else's subscriptionId and
-    // have it attached to their ticket unchecked. The appointment is the single
-    // source of truth for the link, or there is no link.
-    let resolvedConsultationId = validatedData.appointmentId
-      ? undefined
-      : validatedData.consultationId;
-    let resolvedSubscriptionId = validatedData.appointmentId
-      ? undefined
-      : validatedData.subscriptionId;
+    const links = await resolveTicketEntityLinks(
+      session.user.id,
+      validatedData,
+    );
+    if (!links.ok) return links.response;
 
-    if (validatedData.appointmentId) {
-      const appointment = await prisma.appointment.findFirst({
-        where: {
-          id: validatedData.appointmentId,
-          OR: [
-            { consultation: { requestedBy: { userId: session.user.id } } },
-            { subscription: { requestedBy: { userId: session.user.id } } },
-          ],
-        },
-        include: {
-          consultation: true,
-          subscription: true,
-        },
-      });
-
-      if (!appointment) {
-        return supportError({
-          status: 400,
-          code: "INVALID_ID",
-          message: "Invalid appointment ID or unauthorized",
-          context: {
-            route: TICKETS_ROUTE,
-            action: "create",
-            appointmentId: validatedData.appointmentId,
-          },
-        });
-      }
-
-      // Resolve to actual consultation/subscription IDs
-      if (appointment.consultation) {
-        resolvedConsultationId = appointment.consultation.id;
-      } else if (appointment.subscription) {
-        resolvedSubscriptionId = appointment.subscription.id;
-      }
-    }
-
-    // Validate entity links in parallel - ensure they belong to this user
-    // Skip validation for IDs resolved from appointmentId (already validated above)
-    const validations = await Promise.all([
-      resolvedConsultationId && !validatedData.appointmentId
-        ? prisma.consultation
-            .findFirst({
-              where: {
-                id: resolvedConsultationId,
-                requestedBy: { userId: session.user.id },
-              },
-            })
-            .then((c) => ({ type: "consultation", valid: !!c }))
-        : Promise.resolve({ type: "consultation", valid: true }),
-      resolvedSubscriptionId && !validatedData.appointmentId
-        ? prisma.subscription
-            .findFirst({
-              where: {
-                id: resolvedSubscriptionId,
-                requestedBy: { userId: session.user.id },
-              },
-            })
-            .then((s) => ({ type: "subscription", valid: !!s }))
-        : Promise.resolve({ type: "subscription", valid: true }),
-      validatedData.paymentId
-        ? prisma.payment
-            .findFirst({
-              where: {
-                id: validatedData.paymentId,
-                userId: session.user.id,
-              },
-            })
-            .then((p) => ({ type: "payment", valid: !!p }))
-        : Promise.resolve({ type: "payment", valid: true }),
-    ]);
-
-    const invalidEntity = validations.find((v) => !v.valid);
-    if (invalidEntity) {
-      return supportError({
-        status: 400,
-        code: "INVALID_ID",
-        message: `Invalid ${invalidEntity.type} ID`,
-        context: {
-          route: TICKETS_ROUTE,
-          action: "create",
-          entity: invalidEntity.type,
-        },
-      });
-    }
-
-    // Dedup: a payment-linked ticket reuses any still-open ticket the user
-    // already filed for the same payment (shared factory helper).
     if (validatedData.paymentId) {
       const existing = await findOpenTicketForPayment(
         session.user.id,
@@ -224,10 +252,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // #1527 — "About" names the org, never inferred: #1021 stamped the first
-    // ACTIVE membership, which would list a learner's personal request on that
-    // org's Support page. The caller must be ACTIVE there and read its
-    // support requests (operations.read OR billing.read).
     let organizationId: string | null = null;
     if (validatedData.organizationId) {
       const membership = await prisma.membership.findUnique({
@@ -253,21 +277,16 @@ export async function POST(req: NextRequest) {
       organizationId = validatedData.organizationId;
     }
 
-    // The shared factory owns the write: it stamps lastMessageAt at creation
-    // and notifies staff without letting a notification failure turn a
-    // committed ticket into a 500. It already accepts organizationId, so
-    // #1021's attribution rides THROUGH it rather than around it — keeping one
-    // writer instead of two that drift.
     const ticket = await createSupportTicket({
       userId: session.user.id,
       title: validatedData.title,
-      description: validatedData.description,
+      description,
       priority: validatedData.priority || "MEDIUM",
       category: validatedData.category,
       issueType: validatedData.issueType,
       organizationId,
-      consultationId: resolvedConsultationId,
-      subscriptionId: resolvedSubscriptionId,
+      consultationId: links.consultationId,
+      subscriptionId: links.subscriptionId,
       paymentId: validatedData.paymentId,
     });
 

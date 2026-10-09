@@ -202,11 +202,17 @@ export function SessionRatingRow({
           value={ratingCause}
           disabled={save.isPending}
           onChange={(nextCause) => {
+            const previousCause = ratingCause;
             setRatingCause(nextCause);
-            save.mutate({
-              value: rating,
-              cause: rating > 3 ? null : nextCause,
-            });
+            save.mutate(
+              {
+                value: rating,
+                cause: rating > 3 ? null : nextCause,
+              },
+              {
+                onError: () => setRatingCause(previousCause),
+              },
+            );
           }}
         />
       )}

@@ -21,6 +21,16 @@ const patchReportSchema = z.object({
     ] as const satisfies readonly ModerationReportStatus[])
     .optional(),
   assignedToId: z.string().nullable().optional(),
+  expectedStatus: z
+    .enum([
+      "PENDING",
+      "UNDER_REVIEW",
+      "DISMISSED",
+      "ACTION_TAKEN",
+      "ESCALATED",
+    ] as const satisfies readonly ModerationReportStatus[])
+    .optional(),
+  expectedAssignedToId: z.string().nullable().optional(),
 });
 interface RouteParams {
   params: Promise<{ reportId: string }>;
@@ -70,9 +80,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             },
           },
         },
-        // #1300 — the drawer's audit trail reads top-to-bottom as a history,
-        // so it is oldest first; the card's single "last action" line still
-        // reads the list route's own `desc`-ordered `actions[0]`.
         actions: {
           include: {
             takenBy: {
@@ -194,12 +201,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const updateData = buildReportPatchData(parsed.data, session.user.id);
+    const expectedStatus = parsed.data.expectedStatus ?? existing.status;
+    const expectedAssignedToId =
+      parsed.data.expectedAssignedToId !== undefined
+        ? parsed.data.expectedAssignedToId
+        : existing.assignedToId;
 
     const updated = await prisma.moderationReport.updateMany({
       where: {
         id: reportId,
-        status: existing.status,
-        assignedToId: existing.assignedToId,
+        status: expectedStatus,
+        assignedToId: expectedAssignedToId,
       },
       data: updateData,
     });

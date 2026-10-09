@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
@@ -209,13 +210,94 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
  * PATCH /api/staff/support-tickets/[ticketId]
  * Update ticket status, priority, or assignment
  */
+function buildTicketPatchFields(
+  validatedData: Prisma.SupportTicketUncheckedUpdateManyInput & {
+    status?: "OPEN" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "CLOSED";
+  },
+  existingResolvedAt: Date | null,
+  now: Date,
+): Prisma.SupportTicketUncheckedUpdateManyInput {
+  const updateData: Prisma.SupportTicketUncheckedUpdateManyInput = {};
+
+  if (validatedData.status) {
+    updateData.status = validatedData.status;
+    if (validatedData.status === "RESOLVED") {
+      updateData.resolvedAt = now;
+      updateData.closedAt = null;
+    } else if (validatedData.status === "CLOSED") {
+      updateData.closedAt = now;
+      updateData.resolvedAt = existingResolvedAt ?? now;
+    } else {
+      updateData.resolvedAt = null;
+      updateData.closedAt = null;
+    }
+  }
+
+  if (validatedData.priority) {
+    updateData.priority = validatedData.priority;
+  }
+
+  if (validatedData.assignedToId !== undefined) {
+    updateData.assignedToId = validatedData.assignedToId;
+  }
+
+  if (validatedData.refundId) {
+    updateData.refundId = validatedData.refundId;
+  }
+
+  return updateData;
+}
+
+async function syncLinkedThreadStatus(
+  tx: Tx,
+  ticketId: string,
+  existingStatus: string,
+  nextStatus:
+    "OPEN" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "CLOSED" | undefined,
+  now: Date,
+): Promise<void> {
+  if (existingStatus === "CLOSED" && nextStatus && nextStatus !== "CLOSED") {
+    await tx.appointmentSupportThread.updateMany({
+      where: { supportTicketId: ticketId, status: "CLOSED" },
+      data: { status: "ESCALATED", resolvedAt: null },
+    });
+    return;
+  }
+  if (nextStatus === "OPEN") {
+    await tx.appointmentSupportThread.updateMany({
+      where: {
+        supportTicketId: ticketId,
+        status: { notIn: ["CLOSED"] },
+      },
+      data: {
+        status: "ESCALATED",
+        resolvedAt: null,
+      },
+    });
+    return;
+  }
+  if (nextStatus && nextStatus !== "ON_HOLD") {
+    await tx.appointmentSupportThread.updateMany({
+      where: {
+        supportTicketId: ticketId,
+        status: { notIn: ["CLOSED"] },
+      },
+      data: {
+        status: nextStatus,
+        ...(nextStatus === "RESOLVED" ? { resolvedAt: now } : {}),
+        ...(nextStatus === "IN_PROGRESS" ? { resolvedAt: null } : {}),
+      },
+    });
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
     const { ticketId } = await params;
-    const body = await req.json();
+    const body: unknown = await req.json().catch(() => null);
     const result = UpdateSupportTicketSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
@@ -225,66 +307,48 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
     const validatedData = result.data;
 
-    const existingTicket = await prisma.supportTicket.findUnique({
+    const existing = await prisma.supportTicket.findUnique({
       where: { id: ticketId },
     });
 
-    if (!existingTicket) {
+    if (!existing) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
+    if (
+      validatedData.assignedToId !== undefined &&
+      validatedData.assignedToId !== null
+    ) {
+      const assignee = await prisma.user.findUnique({
+        where: { id: validatedData.assignedToId },
+        select: { role: true },
+      });
+
+      if (
+        !assignee ||
+        (assignee.role !== UserRole.STAFF && assignee.role !== UserRole.ADMIN)
+      ) {
+        return NextResponse.json(
+          { error: "Invalid assignee - must be staff or admin" },
+          { status: 400 },
+        );
+      }
+    }
+
     const now = new Date();
-    const updateData: Prisma.SupportTicketUncheckedUpdateManyInput = {};
-
-    if (validatedData.status) {
-      updateData.status = validatedData.status;
-      if (validatedData.status === "RESOLVED") {
-        updateData.resolvedAt = now;
-        updateData.closedAt = null;
-      } else if (validatedData.status === "CLOSED") {
-        updateData.closedAt = now;
-        updateData.resolvedAt = existingTicket.resolvedAt ?? now;
-      } else {
-        updateData.resolvedAt = null;
-        updateData.closedAt = null;
-      }
-    }
-
-    if (validatedData.priority) {
-      updateData.priority = validatedData.priority;
-    }
-
-    if (validatedData.assignedToId !== undefined) {
-      if (validatedData.assignedToId !== null) {
-        const assignee = await prisma.user.findUnique({
-          where: { id: validatedData.assignedToId },
-          select: { role: true },
-        });
-
-        if (
-          !assignee ||
-          (assignee.role !== UserRole.STAFF && assignee.role !== UserRole.ADMIN)
-        ) {
-          return NextResponse.json(
-            { error: "Invalid assignee - must be staff or admin" },
-            { status: 400 },
-          );
-        }
-      }
-      updateData.assignedToId = validatedData.assignedToId;
-    }
-
-    if (validatedData.refundId) {
-      updateData.refundId = validatedData.refundId;
-    }
+    const updateData = buildTicketPatchFields(
+      validatedData,
+      existing.resolvedAt,
+      now,
+    );
 
     const updatedTicket = await prisma.$transaction(
       async (tx) => {
         const updated = await tx.supportTicket.updateMany({
           where: {
             id: ticketId,
-            status: existingTicket.status,
-            awaitingUserSince: existingTicket.awaitingUserSince,
+            status: validatedData.expectedStatus ?? existing.status,
+            awaitingUserSince: existing.awaitingUserSince,
           },
           data: updateData,
         });
@@ -292,34 +356,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           return null;
         }
 
-        if (validatedData.status === "OPEN") {
-          await tx.appointmentSupportThread.updateMany({
-            where: {
-              supportTicketId: ticketId,
-              status: { notIn: ["CLOSED"] },
-            },
-            data: {
-              status: "ESCALATED",
-              resolvedAt: null,
-            },
-          });
-        } else if (validatedData.status && validatedData.status !== "ON_HOLD") {
-          await tx.appointmentSupportThread.updateMany({
-            where: {
-              supportTicketId: ticketId,
-              status: { notIn: ["CLOSED"] },
-            },
-            data: {
-              status: validatedData.status,
-              ...(validatedData.status === "RESOLVED"
-                ? { resolvedAt: now }
-                : {}),
-              ...(validatedData.status === "IN_PROGRESS"
-                ? { resolvedAt: null }
-                : {}),
-            },
-          });
-        }
+        await syncLinkedThreadStatus(
+          tx,
+          ticketId,
+          existing.status,
+          validatedData.status,
+          now,
+        );
 
         return tx.supportTicket.findUniqueOrThrow({
           where: { id: ticketId },

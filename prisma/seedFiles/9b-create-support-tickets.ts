@@ -1,6 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { SupportPriority, SupportTicketStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { formatTicketReference } from "../../lib/support/reference";
 import { slaDeadlinesFor } from "../../lib/support/sla";
 import { UserWithProfiles } from "./1a-create-users";
 
@@ -198,12 +199,71 @@ import { config } from "./config";
 // Support ticket volume - configurable via SEED_MODE environment variable
 const NUM_TICKETS = config.volumes.supportTickets;
 
+function buildPlannedSeedResponses(
+  status: SupportTicketStatus,
+  ticketDate: Date,
+  creatorId: string,
+  staffAndAdmins: UserWithProfiles[],
+): {
+  responses: {
+    message: string;
+    userId: string;
+    createdAt: Date;
+    isStaff: boolean;
+  }[];
+  lastResponseDate: Date;
+} {
+  const numResponses =
+    status === "OPEN"
+      ? faker.number.int({ min: 0, max: 2 })
+      : faker.number.int({ min: 1, max: 5 });
+
+  const responses: {
+    message: string;
+    userId: string;
+    createdAt: Date;
+    isStaff: boolean;
+  }[] = [];
+  let lastResponseDate = new Date(ticketDate);
+
+  for (let j = 0; j < numResponses; j++) {
+    const isStaff = j % 2 === 0;
+    const responderId = isStaff
+      ? faker.helpers.arrayElement(staffAndAdmins).id
+      : creatorId;
+
+    let message: string;
+    if (!isStaff) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
+    } else if (j === 0) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
+    } else if (status === "RESOLVED" || status === "CLOSED") {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.resolution);
+    } else {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
+    }
+
+    lastResponseDate = faker.date.between({
+      from: lastResponseDate,
+      to: new Date(),
+    });
+
+    responses.push({
+      message,
+      userId: responderId,
+      createdAt: lastResponseDate,
+      isStaff,
+    });
+  }
+
+  return { responses, lastResponseDate };
+}
+
 export async function createSupportTickets(
   users: UserWithProfiles[],
 ): Promise<void> {
   console.log(`Creating ${NUM_TICKETS} support tickets with responses...`);
 
-  // Get users by role
   const consultees = users.filter((user) => user.role === "CONSULTEE");
   const consultants = users.filter((user) => user.role === "CONSULTANT");
   const staffAndAdmins = users.filter(
@@ -224,6 +284,7 @@ export async function createSupportTickets(
 
   let ticketsCreated = 0;
   let responsesCreated = 0;
+  const highestSeqByYear = new Map<number, number>();
 
   for (let i = 0; i < NUM_TICKETS; i++) {
     try {
@@ -238,61 +299,25 @@ export async function createSupportTickets(
       const rawDescription = faker.helpers.arrayElement(templates.descriptions);
       const description =
         priority === "URGENT"
-          ? `[Callback Requested: +91-9876543210]\n\n${rawDescription}`
+          ? `[Callback Requested: +919876543210]\n\n${rawDescription}`
           : rawDescription;
 
       const ticketDate = faker.date.recent({ days: 30 });
-      const referenceNumber = `SUP-2026-${String(i + 1).padStart(4, "0")}`;
+      const year = ticketDate.getUTCFullYear();
+      const seq = i + 1;
+      const referenceNumber = formatTicketReference(year, seq);
       const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
         priority,
         ticketDate,
       );
 
-      // Plan response timeline first so SLA and activity clocks match responses.
-      const numResponses =
-        status === "OPEN"
-          ? faker.number.int({ min: 0, max: 2 })
-          : faker.number.int({ min: 1, max: 5 });
-
-      const plannedResponses: {
-        message: string;
-        userId: string;
-        createdAt: Date;
-        isStaff: boolean;
-      }[] = [];
-      let lastResponseDate = new Date(ticketDate);
-
-      for (let j = 0; j < numResponses; j++) {
-        const isStaffResponse = j % 2 === 0;
-        const responder = isStaffResponse
-          ? faker.helpers.arrayElement(staffAndAdmins)
-          : creator;
-
-        let message: string;
-        if (isStaffResponse) {
-          if (j === 0) {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
-          } else if (status === "RESOLVED" || status === "CLOSED") {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.resolution);
-          } else {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
-          }
-        } else {
-          message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
-        }
-
-        lastResponseDate = faker.date.between({
-          from: lastResponseDate,
-          to: new Date(),
-        });
-
-        plannedResponses.push({
-          message,
-          userId: responder.id,
-          createdAt: lastResponseDate,
-          isStaff: isStaffResponse,
-        });
-      }
+      const { responses: plannedResponses, lastResponseDate } =
+        buildPlannedSeedResponses(
+          status,
+          ticketDate,
+          creator.id,
+          staffAndAdmins,
+        );
 
       const firstStaffReply =
         plannedResponses.find((r) => r.isStaff)?.createdAt ?? null;
@@ -324,6 +349,10 @@ export async function createSupportTickets(
         },
       });
 
+      highestSeqByYear.set(
+        year,
+        Math.max(highestSeqByYear.get(year) ?? 0, seq),
+      );
       ticketsCreated++;
 
       for (const resp of plannedResponses) {
@@ -347,6 +376,14 @@ export async function createSupportTickets(
     } catch (error) {
       console.error(`Failed to create support ticket ${i + 1}:`, error);
     }
+  }
+
+  for (const [year, highestSeq] of highestSeqByYear) {
+    await prisma.supportTicketCounter.upsert({
+      where: { year },
+      create: { year, nextSeq: highestSeq + 1 },
+      update: { nextSeq: highestSeq + 1 },
+    });
   }
 
   console.log(

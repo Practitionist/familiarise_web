@@ -80,14 +80,11 @@ export interface TransactionalEffectResult {
   earningsHeld?: number;
   profilesUnverified?: number;
   reviewRemoved?: boolean;
+  reviewExcludedFromAggregate?: boolean;
   alreadyExcluded?: boolean;
-  /** #705 — whose public surfaces need purging once the transaction commits.
-   *  A removed review kept rendering on the landing page for up to an hour
-   *  because nothing invalidated the cache. */
+  /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
-  /** #1580 C-P0-4 — the plans whose collaborator row the ban moved to REMOVED;
-   *  phase 2 revokes their Stream access. Reinstatement never restores them. */
   collaborationsRemoved?: CollaborationRef[];
 }
 
@@ -306,17 +303,31 @@ async function excludeReviewFromAggregate(
   if (!reviewId) return {};
   const review = await tx.consultantReview.findUnique({
     where: { id: reviewId },
-    select: { consultantProfileId: true, excludedFromAggregateAt: true },
+    select: { consultantProfileId: true },
   });
-  if (!review) return {};
-  if (!review.excludedFromAggregateAt) {
-    await tx.consultantReview.update({
-      where: { id: reviewId },
-      data: { excludedFromAggregateAt: new Date() },
-    });
+  if (!review) {
+    throw Object.assign(
+      new Error("This review is already excluded or removed"),
+      { httpStatus: 409 },
+    );
+  }
+  const updated = await tx.consultantReview.updateMany({
+    where: {
+      id: reviewId,
+      excludedFromAggregateAt: null,
+      deletedAt: null,
+    },
+    data: { excludedFromAggregateAt: new Date() },
+  });
+  if (updated.count === 0) {
+    throw Object.assign(
+      new Error("This review is already excluded or removed"),
+      { httpStatus: 409 },
+    );
   }
   await recomputeConsultantRating(tx, review.consultantProfileId);
   return {
+    reviewExcludedFromAggregate: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
   };
 }
@@ -331,16 +342,12 @@ async function excludeFeedbackFromAggregate(
     data: { excludedFromAggregateAt: new Date() },
   });
   if (updated.count === 0) {
-    const existing = await tx.appointmentFeedback.findUnique({
-      where: { id: feedbackId },
-      select: { id: true },
-    });
-    if (!existing) {
-      throw new Error("Feedback record not found");
-    }
-    return { alreadyExcluded: true };
+    throw Object.assign(
+      new Error("This feedback is already excluded or not found"),
+      { httpStatus: 409 },
+    );
   }
-  return { alreadyExcluded: false };
+  return {};
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;
@@ -612,6 +619,7 @@ async function triggerModerationNotification(
   switch (actionType) {
     case "WARNING_ISSUED":
     case "CONTENT_REMOVED":
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
       return notifyModerationWarning(report.targetUserId, { reason: notes });
     case "USER_SUSPENDED": {
       const bell = await notifyAccountSuspended(report.targetUserId, {
@@ -619,8 +627,6 @@ async function triggerModerationNotification(
         suspendedUntil: transactional.banExpires ?? "",
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
       });
-      // #1653 — a required notice, never gated; the sender never throws and
-      // the bell's outcome is what the summary records.
       await sendAccountSuspendedEmail(
         {
           userId: report.targetUserId,
@@ -637,7 +643,6 @@ async function triggerModerationNotification(
         reason: notes,
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
       });
-      // #1653 — the ban's email twin; same contract as the suspension.
       await sendAccountBannedEmail(
         {
           userId: report.targetUserId,
@@ -652,18 +657,13 @@ async function triggerModerationNotification(
       return notifyVerificationStatusChanged(report.targetUserId, {
         status: "REJECTED",
         reason: notes,
-        // #1527 — PROFILE_UNVERIFIED only ever targets a consultant.
         dashboardUrl: goHref("expert", "settings"),
       });
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
-    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
-      // No Novu workflow exists for a reinstatement, and inventing a
-      // log-and-skip trigger would report "skipped" for one nobody plans to
-      // build. The #1562 acts are never taken through a report.
       return Promise.resolve(null);
   }
 }

@@ -15,7 +15,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
-import { heldOccurrence } from "@/lib/reviews";
+import { heldOccurrence, resolveRatingCausePatch } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { RatingCauseSchema } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
@@ -280,12 +280,10 @@ export async function POST(
         (body.data.comment !== undefined &&
           (previous.comment ?? "") !== body.data.comment));
 
-    const updateRatingCausePatch =
-      body.data.rating > 3
-        ? { ratingCause: null }
-        : body.data.ratingCause !== undefined
-          ? { ratingCause: body.data.ratingCause }
-          : {};
+    const updateRatingCausePatch = resolveRatingCausePatch(
+      body.data.rating,
+      body.data.ratingCause,
+    );
 
     let feedback;
     try {
@@ -310,8 +308,10 @@ export async function POST(
               coPresenterProfileId: presenter?.consultantProfileId ?? null,
               rating: body.data.rating,
               comment: body.data.comment,
-              ratingCause:
-                body.data.rating > 3 ? null : (body.data.ratingCause ?? null),
+              ...resolveRatingCausePatch(
+                body.data.rating,
+                body.data.ratingCause ?? null,
+              ),
               raterRole,
             },
           });

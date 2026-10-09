@@ -5,14 +5,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { ModerationActionType, Prisma } from "@prisma/client";
+import {
+  ModerationActionType,
+  ModerationReportType,
+  Prisma,
+  UserRole,
+} from "@prisma/client";
 import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { parseJsonRequest } from "@/lib/api/parse";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { UserRole } from "@prisma/client";
 import {
   applyTransactionalEffects,
   applyBestEffortEffects,
@@ -59,6 +63,74 @@ const moderationActionPayloadSchema = z.object({
   suspensionDays: z.number().int().min(1).max(365).optional(),
   feedbackId: z.string().min(1).max(64).optional(),
 });
+
+async function validateActionTargetBinding(
+  report: {
+    type: ModerationReportType;
+    targetUserId: string;
+    reviewId: string | null;
+    review: { appointmentId: string | null } | null;
+  },
+  actionType: ModerationActionType,
+  feedbackId: string | undefined,
+): Promise<NextResponse | null> {
+  if (
+    actionType === "CONTENT_REMOVED" &&
+    report.type === "REVIEW" &&
+    !report.reviewId
+  ) {
+    return NextResponse.json(
+      { error: "This review report names no review to remove" },
+      { status: 409 },
+    );
+  }
+  if (actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" && !report.reviewId) {
+    return NextResponse.json(
+      { error: "This report names no review to exclude from aggregate" },
+      { status: 409 },
+    );
+  }
+  if (actionType !== "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
+    return null;
+  }
+  if (report.type !== "REVIEW" || !report.review?.appointmentId) {
+    return NextResponse.json(
+      {
+        error:
+          "Feedback exclusion requires a review report bound to an appointment",
+      },
+      { status: 409 },
+    );
+  }
+  if (!feedbackId) {
+    return NextResponse.json(
+      {
+        error: "A feedbackId is required to exclude feedback from aggregate",
+      },
+      { status: 409 },
+    );
+  }
+  const feedback = await prisma.appointmentFeedback.findUnique({
+    where: { id: feedbackId },
+    select: { id: true, userId: true, appointmentId: true },
+  });
+  if (!feedback) {
+    return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
+  }
+  if (
+    feedback.userId !== report.targetUserId ||
+    feedback.appointmentId !== report.review.appointmentId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Feedback does not belong to the reported review's session and author",
+      },
+      { status: 409 },
+    );
+  }
+  return null;
+}
 
 // Account-state side-effects commit atomically with the action row — the report
 // can never read ACTION_TAKEN while the target kept access.
@@ -154,20 +226,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (bodyError) return bodyError;
     const { actionType, notes, suspensionDays, feedbackId } = body;
 
-    // Moderation is staff's remit (`moderation.manage`), but banning and
-    // suspending an account is not: BACKOFFICE_PERMISSIONS reserves
-    // `users.moderate` for ADMIN because those are irreversible and
-    // account-destroying, and staff are employees with turnover. The gate is
-    // per-ACTION rather than per-route so staff keep the rest of the queue —
-    // warnings, content removal, un-verifying a profile.
+    const parsedRole = z.nativeEnum(UserRole).safeParse(session.user.role);
+    const canModerateUsers =
+      parsedRole.success &&
+      hasBackofficePermission(parsedRole.data, "users.moderate");
+
     const ACCOUNT_DESTRUCTIVE: ModerationActionType[] = [
       "USER_BANNED",
       "USER_SUSPENDED",
     ];
-    if (
-      ACCOUNT_DESTRUCTIVE.includes(actionType) &&
-      !hasBackofficePermission(session.user.role as UserRole, "users.moderate")
-    ) {
+    if (ACCOUNT_DESTRUCTIVE.includes(actionType) && !canModerateUsers) {
       return NextResponse.json(
         {
           error:
@@ -177,10 +245,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // NOTE: suspensionDays stays optional — the side-effect layer defaults a
-    // missing duration to 7 days. The schema only bounds it when present.
-
-    // Check report exists
     const report = await prisma.moderationReport.findUnique({
       where: { id: reportId },
       select: {
@@ -189,9 +253,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         status: true,
         targetUserId: true,
         reviewId: true,
-        // #1270 — CONTENT_REMOVED needs the message identity to delete
-        // anything; without it the action removed nothing at all.
         streamMessageId: true,
+        review: { select: { appointmentId: true } },
       },
     });
 
@@ -199,8 +262,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    // Idempotency: a resolved report never re-runs side-effects (a staff
-    // double-click on BAN must not double-refund).
     if (report.status === "ACTION_TAKEN" || report.status === "DISMISSED") {
       return NextResponse.json(
         { error: "This report has already been resolved" },
@@ -208,52 +269,23 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // A REVIEW report with no review to act on would be resolved and audited
-    // while `softDeleteReview` removed nothing. The sidecar CHECK
-    // `moderation_report_review_has_review` refuses the row; this refuses the act.
     if (
       actionType === "CONTENT_REMOVED" &&
       report.type === "REVIEW" &&
-      !report.reviewId
+      !canModerateUsers
     ) {
       return NextResponse.json(
-        { error: "This review report names no review to remove" },
-        { status: 409 },
+        { error: "Removing public reviews requires administrator permission" },
+        { status: 403 },
       );
     }
-    if (actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" && !report.reviewId) {
-      return NextResponse.json(
-        { error: "This report names no review to exclude from aggregate" },
-        { status: 409 },
-      );
-    }
-    if (actionType === "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
-      if (!feedbackId) {
-        return NextResponse.json(
-          {
-            error:
-              "A feedbackId is required to exclude feedback from aggregate",
-          },
-          { status: 409 },
-        );
-      }
-      const feedback = await prisma.appointmentFeedback.findUnique({
-        where: { id: feedbackId },
-        select: { id: true, userId: true },
-      });
-      if (!feedback) {
-        return NextResponse.json(
-          { error: "Feedback not found" },
-          { status: 404 },
-        );
-      }
-      if (feedback.userId !== report.targetUserId) {
-        return NextResponse.json(
-          { error: "Feedback does not belong to the reported user" },
-          { status: 409 },
-        );
-      }
-    }
+
+    const bindingError = await validateActionTargetBinding(
+      report,
+      actionType,
+      feedbackId,
+    );
+    if (bindingError) return bindingError;
 
     const input = {
       actionType,

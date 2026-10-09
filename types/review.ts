@@ -20,7 +20,9 @@ export type TConsultantReview = Prisma.ConsultantReviewGetPayload<{
  * moderation-removed reply dropped. Components must handle the reviewer being
  * absent rather than be typed as though they are always there.
  */
-export type TPublicConsultantReview = PublicReview<TConsultantReview>;
+export type TPublicConsultantReview = PublicReview<TConsultantReview> & {
+  notCounted?: boolean;
+};
 
 /**
  * Which tracks a consultant has at least one live review in. Answered by its own

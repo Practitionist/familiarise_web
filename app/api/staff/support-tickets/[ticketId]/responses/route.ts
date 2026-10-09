@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -22,6 +23,36 @@ interface RouteParams {
   params: Promise<{ ticketId: string }>;
 }
 
+async function mirrorStaffReplyToThread(
+  tx: Tx,
+  ticketId: string,
+  message: string,
+  staffUserId: string,
+  now: Date,
+): Promise<void> {
+  const linkedThread = await tx.appointmentSupportThread.findUnique({
+    where: { supportTicketId: ticketId },
+    select: { id: true },
+  });
+  if (!linkedThread) return;
+  const movedThread = await tx.appointmentSupportThread.updateMany({
+    where: { id: linkedThread.id, status: { not: "CLOSED" } },
+    data: { lastMessageAt: now },
+  });
+  if (movedThread.count > 0) {
+    const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
+    await tx.supportMessage.create({
+      data: {
+        threadId: linkedThread.id,
+        sender: "AGENT",
+        body: message,
+        seq: seq + 1,
+        authorUserId: staffUserId,
+      },
+    });
+  }
+}
+
 /**
  * POST /api/staff/support-tickets/[ticketId]/responses
  * Staff/Admin can respond to any support ticket
@@ -33,7 +64,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const session = auth.session;
 
     const { ticketId } = await params;
-    const body = await req.json();
+    const body: unknown = await req.json().catch(() => null);
     const result = CreateSupportResponseSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
@@ -65,22 +96,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const response = await prisma.$transaction(
       async (tx) => {
         if (!validatedData.isInternal) {
-          const ticketUpdateData =
+          const picked =
             ticket.status === "OPEN"
-              ? {
-                  status: "IN_PROGRESS" as const,
-                  assignedToId: ticket.assignedToId || session.user.id,
-                  lastMessageAt: now,
-                }
-              : {
-                  lastMessageAt: now,
-                };
-          const touched = await tx.supportTicket.updateMany({
-            where: { id: ticketId, status: { not: "CLOSED" } },
-            data: ticketUpdateData,
-          });
-          if (touched.count === 0) {
-            return null;
+              ? await tx.supportTicket.updateMany({
+                  where: { id: ticketId, status: "OPEN" },
+                  data: {
+                    status: "IN_PROGRESS",
+                    assignedToId: ticket.assignedToId ?? session.user.id,
+                    lastMessageAt: now,
+                  },
+                })
+              : { count: 0 };
+          if (picked.count === 0) {
+            const touched = await tx.supportTicket.updateMany({
+              where: { id: ticketId, status: { not: "CLOSED" } },
+              data: { lastMessageAt: now },
+            });
+            if (touched.count === 0) {
+              return null;
+            }
           }
         }
 
@@ -105,28 +139,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
         if (!validatedData.isInternal) {
           await applyStaffReply(tx, ticketId, now);
-          const linkedThread = await tx.appointmentSupportThread.findUnique({
-            where: { supportTicketId: ticketId },
-            select: { id: true },
-          });
-          if (linkedThread) {
-            const movedThread = await tx.appointmentSupportThread.updateMany({
-              where: { id: linkedThread.id, status: { not: "CLOSED" } },
-              data: { lastMessageAt: now },
-            });
-            if (movedThread.count > 0) {
-              const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
-              await tx.supportMessage.create({
-                data: {
-                  threadId: linkedThread.id,
-                  sender: "AGENT",
-                  body: validatedData.message,
-                  seq: seq + 1,
-                  authorUserId: session.user.id,
-                },
-              });
-            }
-          }
+          await mirrorStaffReplyToThread(
+            tx,
+            ticketId,
+            validatedData.message,
+            session.user.id,
+            now,
+          );
         }
 
         return created;

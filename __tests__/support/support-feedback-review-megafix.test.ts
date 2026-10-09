@@ -4,6 +4,7 @@ import {
   buildEngineeringEscalationHref,
   extractCallbackInfo,
 } from "@/lib/support/callback-info";
+import { callbackPhoneSchema, stripCallbackTags } from "@/lib/validation/phone";
 import { slaStateOf } from "@/lib/support/sla";
 import {
   PlatformFeedbackStatusSchema,
@@ -12,33 +13,35 @@ import {
 import { CreateReviewSchema, UpdateReviewSchema } from "@/schemas/feedbacks";
 
 describe("Support, Feedback & Review Megafix invariants", () => {
-  describe("extractCallbackInfo", () => {
-    it("extracts explicit [Callback Requested: <phone>] header over fallback phone", () => {
+  describe("extractCallbackInfo & phone validation", () => {
+    it("extracts validated [Callback Requested: <phone>] header from line 1 over fallback phone", () => {
       const info = extractCallbackInfo(
-        [
-          "[Callback Requested: +91-9876543210]\n\nUrgent payout failure during settlement.",
-        ],
-        "+91-1111111111",
+        "[Callback Requested: +91-9876543210]\n\nUrgent payout failure during settlement.",
+        "+91-9123456789",
       );
       expect(info).toEqual({
-        phone: "+91-9876543210",
+        phone: "+919876543210",
         callbackRequested: true,
       });
     });
 
-    it("falls back to requester profile phone when no explicit callback tag is present", () => {
-      const info = extractCallbackInfo(
-        ["Regular billing question about invoice PDF."],
-        " +91-9988776655 ",
+    it("ignores spoofed tags on later lines and rejects repeated-digit fake numbers", () => {
+      const spoofed = extractCallbackInfo(
+        "Regular question.\n[Callback Requested: +919876543210]",
+        "+919988776655",
       );
-      expect(info).toEqual({
-        phone: "+91-9988776655",
+      expect(spoofed).toEqual({
+        phone: "+919988776655",
         callbackRequested: false,
       });
+      expect(callbackPhoneSchema.safeParse("9999999999").success).toBe(false);
+      expect(
+        stripCallbackTags("Hi [Callback Requested: +919876543210] help"),
+      ).toBe("Hi  help");
     });
 
     it("returns null when neither explicit callback tag nor profile phone is present", () => {
-      const info = extractCallbackInfo(["No phone mentioned."], null);
+      const info = extractCallbackInfo("No phone mentioned.", null);
       expect(info).toEqual({
         phone: null,
         callbackRequested: false,
@@ -47,51 +50,37 @@ describe("Support, Feedback & Review Megafix invariants", () => {
   });
 
   describe("buildEngineeringEscalationHref", () => {
-    it("builds a GitHub issue URL with diagnostic identifiers and zero PII", () => {
+    it("builds a GitHub issue URL containing only case key and reference with zero PII", () => {
       const href = buildEngineeringEscalationHref({
         key: "t_abc123",
-        reference: "SUP-2026-00042",
-        kind: "ticket",
-        topic: "billing",
-        priority: "URGENT",
-        status: "OPEN",
-        appointmentId: "appt_999",
-        paymentId: "pay_888",
-        backofficePath: "/dashboard/staff/support/t_abc123",
+        reference: "FAM-2026-000042",
       });
       const parsed = new URL(href);
       expect(parsed.origin).toBe("https://github.com");
       expect(parsed.pathname).toBe("/Practitionist/familiarise_web/issues/new");
       expect(parsed.searchParams.get("labels")).toBe("bug,from-support");
       expect(parsed.searchParams.get("title")).toBe(
-        "[Support Escalation] SUP-2026-00042 (billing)",
+        "[Support Escalation] FAM-2026-000042",
       );
       const body = parsed.searchParams.get("body") ?? "";
       expect(body).toContain("t_abc123");
-      expect(body).toContain("SUP-2026-00042");
-      expect(body).toContain("appt_999");
-      expect(body).toContain("pay_888");
+      expect(body).toContain("FAM-2026-000042");
       expect(body).not.toMatch(/@/);
       expect(body).not.toContain("+91");
     });
 
-    it("falls back to case key when optional reference and entity IDs are omitted", () => {
+    it("falls back to case key when reference is null", () => {
       const href = buildEngineeringEscalationHref({
         key: "s_thread_77",
         reference: null,
-        kind: "thread",
-        topic: "session",
-        status: "ESCALATED",
-        backofficePath: "/dashboard/staff/support/s_thread_77",
       });
       const parsed = new URL(href);
       expect(parsed.searchParams.get("title")).toBe(
-        "[Support Escalation] s_thread_77 (session)",
+        "[Support Escalation] s_thread_77",
       );
       const body = parsed.searchParams.get("body") ?? "";
       expect(body).toContain("s_thread_77");
-      expect(body).not.toContain("Appointment ID");
-      expect(body).not.toContain("Payment ID");
+      expect(body).not.toContain("Reference");
     });
   });
 

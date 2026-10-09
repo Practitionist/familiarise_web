@@ -222,9 +222,9 @@ export function DisputeDetailPage({
           <AlertDescription>
             This dispute is due{" "}
             {daysUntilDue === 0 ? "today" : `in ${daysUntilDue} days`}.
-            {allowEvidenceSubmission
-              ? " Submit evidence as soon as possible."
-              : " Please escalate to an admin immediately for evidence submission."}
+            {canSubmitEvidence && " Submit evidence as soon as possible."}
+            {!allowEvidenceSubmission &&
+              " Please escalate to an admin immediately for evidence submission."}
           </AlertDescription>
         </Alert>
       )}

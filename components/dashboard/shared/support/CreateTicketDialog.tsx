@@ -62,6 +62,13 @@ interface OrgMembership {
 /** "About" value for a personal request. */
 const ABOUT_ME = "me";
 
+const PRIORITY_BY_VALUE: Record<string, SupportPriority> = {
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+  URGENT: "URGENT",
+};
+
 export function CreateTicketDialog({
   trigger,
   defaults,
@@ -69,9 +76,9 @@ export function CreateTicketDialog({
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
-  /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
+  /** Pre-fill, e.g. org Billing's "Request an invoice". */
   defaults?: CreateTicketDefaults;
-  /** #1527 — the new request's page; the dialog navigates there on create. */
+  /** The new request's page; the dialog navigates there on create. */
   requestHref?: (ticketId: string) => string;
 }) {
   const router = useRouter();
@@ -101,24 +108,23 @@ export function CreateTicketDialog({
 
   const create = useMutation({
     mutationFn: async () => {
-      const trimmedPhone = callbackPhone.replace(/\]/g, "").trim();
-      const formattedDescription =
-        callbackRequested && trimmedPhone
-          ? `[Callback Requested: ${trimmedPhone}]\n\n${description.trim()}`
-          : description.trim();
       const res = await fetch("/api/user/support-tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           issueType,
           title: title.trim(),
-          description: formattedDescription,
+          description: description.trim(),
           priority,
+          ...(callbackRequested && callbackPhone.trim()
+            ? { callbackPhone: callbackPhone.trim() }
+            : {}),
           ...(about !== ABOUT_ME && { organizationId: about }),
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return (await res.json()) as { id: string };
+      const json: { id: string } = await res.json();
+      return json;
     },
     onSuccess: (ticket) => {
       toast({
@@ -253,7 +259,7 @@ export function CreateTicketDialog({
             <Select
               value={priority}
               onValueChange={(v) => {
-                const nextPriority = v as SupportPriority;
+                const nextPriority = PRIORITY_BY_VALUE[v] ?? "MEDIUM";
                 setPriority(nextPriority);
                 if (nextPriority === "HIGH" || nextPriority === "URGENT") {
                   setCallbackRequested(true);

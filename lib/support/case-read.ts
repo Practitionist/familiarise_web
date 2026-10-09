@@ -92,7 +92,97 @@ function toCaseRequester(
     id: u.id,
     name: u.name,
     email: showEmail ? u.email : null,
-    phone: u.phone,
+    phone: null,
+  };
+}
+
+const USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  phone: true,
+  role: true,
+} as const;
+
+const TICKET_ROW_SELECT = {
+  id: true,
+  referenceNumber: true,
+  title: true,
+  description: true,
+  priority: true,
+  category: true,
+  issueType: true,
+  createdAt: true,
+  lastMessageAt: true,
+  ...SLA_SELECT,
+  user: { select: USER_SELECT },
+  assignedTo: { select: { id: true, name: true } },
+  appointmentSupportThread: { select: { id: true } },
+} as const;
+
+const THREAD_ROW_SELECT = {
+  id: true,
+  status: true,
+  activeChannel: true,
+  category: true,
+  createdAt: true,
+  lastMessageAt: true,
+  user: { select: USER_SELECT },
+  appointment: { select: PLAN_TITLE_SELECT },
+} as const;
+
+type TicketInboxSource = Prisma.SupportTicketGetPayload<{
+  select: typeof TICKET_ROW_SELECT;
+}>;
+type ThreadInboxSource = Prisma.AppointmentSupportThreadGetPayload<{
+  select: typeof THREAD_ROW_SELECT;
+}>;
+
+function ticketToInboxRow(
+  t: TicketInboxSource,
+  showEmail: boolean,
+  now: Date,
+): InboxRow {
+  const callback = extractCallbackInfo(t.description, t.user.phone);
+  return {
+    key: caseKeyOf({ kind: "ticket", id: t.id }),
+    kind: "ticket",
+    scope: t.appointmentSupportThread ? "session" : "platform",
+    requester: {
+      ...toCaseRequester(t.user, showEmail),
+      phone: null,
+      callbackRequested: callback.callbackRequested,
+    },
+    subject: t.title,
+    reference: t.referenceNumber,
+    topic: ticketTopic(t),
+    status: t.status,
+    priority: t.priority,
+    channel: null,
+    sla: slaStateOf(
+      { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
+      now,
+    ),
+    assignee: t.assignedTo,
+    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
+  };
+}
+
+function threadToInboxRow(t: ThreadInboxSource, showEmail: boolean): InboxRow {
+  return {
+    key: caseKeyOf({ kind: "thread", id: t.id }),
+    kind: "thread",
+    scope: "session",
+    requester: toCaseRequester(t.user, showEmail),
+    subject: `Help with ${planTitle(t.appointment)}`,
+    reference: null,
+    topic: threadTopic(t.category),
+    status: t.status,
+    priority: null,
+    channel: t.activeChannel,
+    sla: null,
+    assignee: null,
+    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
   };
 }
 
@@ -167,47 +257,17 @@ export async function readInboxPage(
     .filter((k) => k.key.startsWith("s_"))
     .map((k) => k.id);
 
-  const userSelect = {
-    id: true,
-    name: true,
-    email: true,
-    phone: true,
-    role: true,
-  } as const;
   const [tickets, threads] = await Promise.all([
     ticketIds.length
       ? prisma.supportTicket.findMany({
           where: { id: { in: ticketIds } },
-          select: {
-            id: true,
-            referenceNumber: true,
-            title: true,
-            description: true,
-            priority: true,
-            category: true,
-            issueType: true,
-            createdAt: true,
-            lastMessageAt: true,
-            ...SLA_SELECT,
-            user: { select: userSelect },
-            assignedTo: { select: { id: true, name: true } },
-            appointmentSupportThread: { select: { id: true } },
-          },
+          select: TICKET_ROW_SELECT,
         })
       : [],
     threadIds.length
       ? prisma.appointmentSupportThread.findMany({
           where: { id: { in: threadIds } },
-          select: {
-            id: true,
-            status: true,
-            activeChannel: true,
-            category: true,
-            createdAt: true,
-            lastMessageAt: true,
-            user: { select: userSelect },
-            appointment: { select: PLAN_TITLE_SELECT },
-          },
+          select: THREAD_ROW_SELECT,
         })
       : [],
   ]);
@@ -215,45 +275,16 @@ export async function readInboxPage(
   const now = new Date();
   const byKey = new Map<string, InboxRow>();
   for (const t of tickets) {
-    const callback = extractCallbackInfo([t.description], t.user.phone);
-    byKey.set(caseKeyOf({ kind: "ticket", id: t.id }), {
-      key: caseKeyOf({ kind: "ticket", id: t.id }),
-      kind: "ticket",
-      scope: t.appointmentSupportThread ? "session" : "platform",
-      requester: {
-        ...toCaseRequester(t.user, opts.showEmail),
-        phone: callback.phone,
-      },
-      subject: t.title,
-      reference: t.referenceNumber,
-      topic: ticketTopic(t),
-      status: t.status,
-      priority: t.priority,
-      channel: null,
-      sla: slaStateOf(
-        { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
-        now,
-      ),
-      assignee: t.assignedTo,
-      lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-    });
+    byKey.set(
+      caseKeyOf({ kind: "ticket", id: t.id }),
+      ticketToInboxRow(t, opts.showEmail, now),
+    );
   }
   for (const t of threads) {
-    byKey.set(caseKeyOf({ kind: "thread", id: t.id }), {
-      key: caseKeyOf({ kind: "thread", id: t.id }),
-      kind: "thread",
-      scope: "session",
-      requester: toCaseRequester(t.user, opts.showEmail),
-      subject: `Help with ${planTitle(t.appointment)}`,
-      reference: null,
-      topic: threadTopic(t.category),
-      status: t.status,
-      priority: null,
-      channel: t.activeChannel,
-      sla: null,
-      assignee: null,
-      lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-    });
+    byKey.set(
+      caseKeyOf({ kind: "thread", id: t.id }),
+      threadToInboxRow(t, opts.showEmail),
+    );
   }
 
   const total = ticketTotal + threadTotal;

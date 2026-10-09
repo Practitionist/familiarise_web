@@ -76,6 +76,52 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+async function verifyTicketAttachmentAccess(
+  sessionUserId: string,
+  ticketId: string,
+): Promise<NextResponse | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: sessionUserId },
+    select: { role: true },
+  });
+
+  const isStaffOrAdmin =
+    user?.role === UserRole.STAFF || user?.role === UserRole.ADMIN;
+
+  const ticket = await prisma.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { userId: true, status: true },
+  });
+
+  if (!ticket) {
+    return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  }
+
+  if (ticket.userId !== sessionUserId && !isStaffOrAdmin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (ticket.status === "CLOSED") {
+    return NextResponse.json(
+      { error: "Cannot upload attachments to a closed ticket" },
+      { status: 400 },
+    );
+  }
+
+  const existingCount = await prisma.supportTicketAttachment.count({
+    where: { ticketId },
+  });
+
+  if (existingCount >= 5) {
+    return NextResponse.json(
+      { error: "Maximum 5 attachments allowed per ticket" },
+      { status: 400 },
+    );
+  }
+
+  return null;
+}
+
 /**
  * POST /api/support-tickets/[ticketId]/attachments
  * Upload a new attachment to a support ticket
@@ -87,52 +133,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { ticketId } = await params;
+
+    const accessError = await verifyTicketAttachmentAccess(
+      session.user.id,
+      ticketId,
+    );
+    if (accessError) return accessError;
+
     const rl = await applyRateLimit(
       spamLimiter,
       `ticket-attachment:${session.user.id}`,
     );
     if (rl) return rl;
-
-    const { ticketId } = await params;
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    const isStaffOrAdmin =
-      user?.role === UserRole.STAFF || user?.role === UserRole.ADMIN;
-
-    const ticket = await prisma.supportTicket.findUnique({
-      where: { id: ticketId },
-      select: { userId: true, status: true },
-    });
-
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
-    }
-
-    if (ticket.userId !== session.user.id && !isStaffOrAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    if (ticket.status === "CLOSED") {
-      return NextResponse.json(
-        { error: "Cannot upload attachments to a closed ticket" },
-        { status: 400 },
-      );
-    }
-
-    const existingCount = await prisma.supportTicketAttachment.count({
-      where: { ticketId },
-    });
-
-    if (existingCount >= 5) {
-      return NextResponse.json(
-        { error: "Maximum 5 attachments allowed per ticket" },
-        { status: 400 },
-      );
-    }
 
     let formData;
     try {
@@ -144,18 +157,26 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const file = formData.get("file") as File;
-
-    if (!file || file.size === 0) {
+    const fileEntry = formData.get("file");
+    if (!(fileEntry instanceof File) || fileEntry.size === 0) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
+    const file = fileEntry;
 
     const uploadResult = await uploadSupportTicketAttachment({
       ticketId,
       file,
     });
 
-    if (!uploadResult.success) {
+    const { fileName, fileSize, mimeType, fileUrl, storagePath } = uploadResult;
+    if (
+      !uploadResult.success ||
+      !fileName ||
+      !fileSize ||
+      !mimeType ||
+      !fileUrl ||
+      !storagePath
+    ) {
       const isBucketError =
         uploadResult.error?.includes("bucket") ||
         uploadResult.error?.includes("storage");
@@ -185,24 +206,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         return tx.supportTicketAttachment.create({
           data: {
             ticketId,
-            fileName: uploadResult.fileName!,
+            fileName,
             originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
+            fileSize,
+            mimeType,
+            fileUrl,
+            storagePath,
           },
         });
       });
     } catch (txErr) {
-      await deleteSupportTicketAttachment(uploadResult.storagePath!).catch(
-        () => {},
-      );
+      await deleteSupportTicketAttachment(storagePath).catch(() => {});
       throw txErr;
     }
 
     if (!attachment) {
-      await deleteSupportTicketAttachment(uploadResult.storagePath!);
+      await deleteSupportTicketAttachment(storagePath);
       return NextResponse.json(
         { error: "Maximum 5 attachments allowed per ticket" },
         { status: 400 },
@@ -244,8 +263,17 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (rl) return rl;
 
     const { ticketId } = await params;
-    const body = await req.json();
-    const { attachmentId } = body;
+    const rawBody: unknown = await req.json().catch(() => null);
+    if (!rawBody || typeof rawBody !== "object") {
+      return NextResponse.json(
+        { error: "Invalid JSON payload" },
+        { status: 400 },
+      );
+    }
+    const attachmentId =
+      "attachmentId" in rawBody && typeof rawBody.attachmentId === "string"
+        ? rawBody.attachmentId
+        : null;
 
     if (!attachmentId) {
       return NextResponse.json(

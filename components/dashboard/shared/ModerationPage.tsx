@@ -692,10 +692,12 @@ export function ModerationPage() {
       },
       { key: "WARN", label: "Warn", icon: XCircle, variant: "outline" },
     ];
-    // CONTENT_REMOVED only removes something when the report points at one:
-    // offering it on a report with neither a message nor a review resolves the
-    // report and deletes nothing, which is the defect it was added to fix.
-    if (report.streamMessageId || report.reviewId) {
+    const canRemoveContent =
+      Boolean(report.streamMessageId) ||
+      (report.type === "REVIEW"
+        ? Boolean(report.reviewId) && canModerateUsers
+        : Boolean(report.reviewId));
+    if (canRemoveContent) {
       actions.push({
         key: "REMOVE_CONTENT",
         label: "Remove content",

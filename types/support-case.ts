@@ -27,6 +27,7 @@ export interface InboxRow {
     name: string | null;
     email: string | null;
     phone?: string | null;
+    callbackRequested?: boolean;
   };
   subject: string;
   reference: string | null;

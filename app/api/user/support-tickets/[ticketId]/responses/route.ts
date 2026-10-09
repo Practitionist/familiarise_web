@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import * as Sentry from "@sentry/nextjs";
 import { userRepliedPatch } from "@/lib/support/sla";
@@ -20,6 +22,36 @@ function resolveUserReplyNextStatus(
     return assignedToId ? "IN_PROGRESS" : "OPEN";
   }
   return "IN_PROGRESS";
+}
+
+async function mirrorUserReplyToThread(
+  tx: Tx,
+  thread: { id: string; status: string } | null,
+  cleanMessage: string,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  if (!thread || thread.status === "CLOSED") return;
+  const movedThread = await tx.appointmentSupportThread.updateMany({
+    where: { id: thread.id, status: { not: "CLOSED" } },
+    data: {
+      lastMessageAt: now,
+      status: "ESCALATED",
+      resolvedAt: null,
+    },
+  });
+  if (movedThread.count > 0) {
+    const seq = await allocateMessageSeq(tx, thread.id, 1);
+    await tx.supportMessage.create({
+      data: {
+        threadId: thread.id,
+        seq: seq + 1,
+        sender: "USER",
+        body: cleanMessage,
+        authorUserId: userId,
+      },
+    });
+  }
 }
 
 export async function POST(
@@ -48,14 +80,21 @@ export async function POST(
     if (tooLarge) return tooLarge;
 
     const { ticketId } = resolvedParams;
-    const parsed = CreateSupportResponseSchema.safeParse(await req.json());
+    const rawBody: unknown = await req.json().catch(() => null);
+    const parsed = CreateSupportResponseSchema.safeParse(rawBody);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Validation failed", details: parsed.error.issues },
         { status: 400 },
       );
     }
-    const body = parsed.data;
+    const cleanMessage = stripCallbackTags(parsed.data.message).trim();
+    if (!cleanMessage) {
+      return NextResponse.json(
+        { error: "Validation failed", message: "Message is required" },
+        { status: 400 },
+      );
+    }
 
     const ticket = await prisma.supportTicket.findFirst({
       where: {
@@ -118,7 +157,7 @@ export async function POST(
 
         const created = await tx.supportResponse.create({
           data: {
-            message: body.message,
+            message: cleanMessage,
             supportTicket: { connect: { id: ticketId } },
             user: { connect: { id: session.user.id } },
           },
@@ -132,32 +171,13 @@ export async function POST(
           },
         });
 
-        if (
-          ticket.appointmentSupportThread &&
-          ticket.appointmentSupportThread.status !== "CLOSED"
-        ) {
-          const linkedThread = ticket.appointmentSupportThread;
-          const movedThread = await tx.appointmentSupportThread.updateMany({
-            where: { id: linkedThread.id, status: { not: "CLOSED" } },
-            data: {
-              lastMessageAt: now,
-              status: "ESCALATED",
-              resolvedAt: null,
-            },
-          });
-          if (movedThread.count > 0) {
-            const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
-            await tx.supportMessage.create({
-              data: {
-                threadId: linkedThread.id,
-                seq: seq + 1,
-                sender: "USER",
-                body: body.message,
-                authorUserId: session.user.id,
-              },
-            });
-          }
-        }
+        await mirrorUserReplyToThread(
+          tx,
+          ticket.appointmentSupportThread,
+          cleanMessage,
+          session.user.id,
+          now,
+        );
 
         return created;
       },

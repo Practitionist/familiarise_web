@@ -9,6 +9,7 @@ import {
   MAX_TEXT_LENGTH,
   MAX_TITLE_LENGTH,
 } from "@/lib/validation/limits";
+import { callbackPhoneSchema } from "@/lib/validation/phone";
 
 // #831 — every user-typed string carries a .max()
 export const CreateSupportTicketSchema = z.object({
@@ -17,6 +18,7 @@ export const CreateSupportTicketSchema = z.object({
     .string()
     .min(1, "Description is required")
     .max(MAX_TEXT_LENGTH),
+  callbackPhone: callbackPhoneSchema.optional(),
   priority: SupportPriorityEnum.optional(),
   category: z.string().max(MAX_SHORT_FIELD_LENGTH).optional(),
   issueType: SupportIssueTypeEnum.optional(),
@@ -30,6 +32,7 @@ export const CreateSupportTicketSchema = z.object({
 
 export const UpdateSupportTicketSchema = z.object({
   status: SupportTicketStatusEnum.optional(),
+  expectedStatus: SupportTicketStatusEnum.optional(),
   priority: SupportPriorityEnum.optional(),
   assignedToId: z.string().nullable().optional(),
   refundId: z.string().optional(),

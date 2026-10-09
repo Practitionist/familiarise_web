@@ -143,10 +143,7 @@ export async function GET(req: NextRequest) {
     );
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to list disputes",
-      },
+      { error: "Failed to list disputes" },
       { status: 500 },
     );
   }
