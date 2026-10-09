@@ -32,23 +32,33 @@ const bodySchema = z.object({
   decision: z.nativeEnum(RecordingConsentDecision),
 });
 
+/** Authenticates the caller and resolves their access to the meeting. */
+async function resolveConsentAccess(params: Promise<{ meetingId: string }>) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return { response: authResult.error };
+  const { session } = authResult;
+
+  const { meetingId } = await params;
+  const access = await resolveMeetingAccess(meetingId, session.user.id);
+  if (!access.hasAccess) {
+    return {
+      response: NextResponse.json(
+        { error: access.message },
+        { status: access.reason === "not_found" ? 404 : 403 },
+      ),
+    };
+  }
+  return { response: null, session, access };
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const authResult = await requireApiAuth();
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
-
-    const { meetingId } = await params;
-    const access = await resolveMeetingAccess(meetingId, session.user.id);
-    if (!access.hasAccess) {
-      return NextResponse.json(
-        { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
-      );
-    }
+    const gate = await resolveConsentAccess(params);
+    if (gate.response) return gate.response;
+    const { session, access } = gate;
 
     // Hosts and co-presenters start the recording; only attendees are asked.
     if (access.role === "host") {
@@ -173,18 +183,9 @@ export async function POST(
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const authResult = await requireApiAuth();
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
-
-    const { meetingId } = await params;
-    const access = await resolveMeetingAccess(meetingId, session.user.id);
-    if (!access.hasAccess) {
-      return NextResponse.json(
-        { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
-      );
-    }
+    const gate = await resolveConsentAccess(params);
+    if (gate.response) return gate.response;
+    const { session, access } = gate;
 
     // A host decision would veto their own recording, so none is stored.
     if (access.role === "host") {

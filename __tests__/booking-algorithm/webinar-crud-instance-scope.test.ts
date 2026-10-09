@@ -27,7 +27,7 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 jest.mock("../../utils/contentValidation", () =>
-  jest.requireActual("../helpers/content-validation-stub"),
+  jest.requireActual("../fixtures/content-validation-stub"),
 );
 
 jest.mock("../../lib/topics", () => ({
