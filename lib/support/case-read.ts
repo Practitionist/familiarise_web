@@ -14,7 +14,6 @@ import {
   CASE_ORDER_BY,
   INBOX_MAX_DEPTH,
   INBOX_PAGE_SIZE,
-  SLA_ORDER_BY,
   STATS_WINDOW_DAYS,
   THREAD_OPEN_WHERE,
   TICKET_OPEN_WHERE,
@@ -35,9 +34,6 @@ const STATS_ROW_CAP = 5000;
 
 const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
   ...CASE_ORDER_BY,
-];
-const slaOrderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
-  ...SLA_ORDER_BY,
 ];
 const threadOrderBy: Prisma.AppointmentSupportThreadOrderByWithRelationInput[] =
   [...CASE_ORDER_BY];
@@ -186,6 +182,60 @@ function threadToInboxRow(t: ThreadInboxSource, showEmail: boolean): InboxRow {
   };
 }
 
+const ticketKeySelect = {
+  id: true,
+  lastMessageAt: true,
+  createdAt: true,
+  acknowledgedAt: true,
+  ackDueAt: true,
+  resolutionDueAt: true,
+} as const;
+
+/**
+ * Two reads whose DB orders each agree with `compareCasesBySla`: a single
+ * `ackDueAt` order would rank acknowledged tickets by a deadline the comparator ignores.
+ */
+async function readTicketKeysBySla(
+  ticketWhere: Prisma.SupportTicketWhereInput,
+  depth: number,
+) {
+  const [awaitingAck, rest] = await Promise.all([
+    prisma.supportTicket.findMany({
+      where: {
+        AND: [
+          ticketWhere,
+          { acknowledgedAt: null },
+          { ackDueAt: { not: null } },
+        ],
+      },
+      orderBy: [
+        { ackDueAt: "asc" },
+        { resolutionDueAt: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      take: depth,
+      select: ticketKeySelect,
+    }),
+    prisma.supportTicket.findMany({
+      where: {
+        AND: [
+          ticketWhere,
+          { OR: [{ acknowledgedAt: { not: null } }, { ackDueAt: null }] },
+        ],
+      },
+      orderBy: [
+        { resolutionDueAt: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      take: depth,
+      select: ticketKeySelect,
+    }),
+  ]);
+  return [...awaitingAck, ...rest];
+}
+
 export async function readInboxPage(
   filters: InboxFilters,
   page: number,
@@ -196,14 +246,6 @@ export async function readInboxPage(
   const depth = skip + pageSize;
   const ticketWhere = inboxTicketWhere(filters);
   const threadWhere = inboxThreadWhere(filters);
-  const ticketKeySelect = {
-    id: true,
-    lastMessageAt: true,
-    createdAt: true,
-    acknowledgedAt: true,
-    ackDueAt: true,
-    resolutionDueAt: true,
-  } as const;
   const threadKeySelect = {
     id: true,
     lastMessageAt: true,
@@ -212,12 +254,14 @@ export async function readInboxPage(
 
   const [ticketKeys, threadKeys, ticketTotal, threadTotal] = await Promise.all([
     ticketWhere
-      ? prisma.supportTicket.findMany({
-          where: ticketWhere,
-          orderBy: filters.sort === "sla" ? slaOrderBy : orderBy,
-          take: depth,
-          select: ticketKeySelect,
-        })
+      ? filters.sort === "sla"
+        ? readTicketKeysBySla(ticketWhere, depth)
+        : prisma.supportTicket.findMany({
+            where: ticketWhere,
+            orderBy,
+            take: depth,
+            select: ticketKeySelect,
+          })
       : [],
     threadWhere
       ? prisma.appointmentSupportThread.findMany({
