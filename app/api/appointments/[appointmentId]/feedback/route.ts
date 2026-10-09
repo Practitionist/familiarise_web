@@ -109,21 +109,31 @@ export async function GET(
           id: true,
           appointmentOccurrenceId: true,
           rating: true,
+          // The provider sees the score, never the rater's free-text note.
           comment: !asProvider,
           ratingCause: !asProvider,
           createdAt: true,
         },
         orderBy: { createdAt: "asc" },
       }),
-      prisma.appointmentSupportThread?.findFirst
-        ? prisma.appointmentSupportThread.findFirst({
+      // Only the caller's own case softens their prompt; another attendee's stays private.
+      asProvider
+        ? Promise.resolve(null)
+        : prisma.appointmentSupportThread.findFirst({
             where: {
               appointmentId,
-              status: { notIn: ["RESOLVED", "CLOSED"] },
+              userId: auth.userId,
+              OR: [
+                { status: { notIn: ["RESOLVED", "CLOSED"] } },
+                {
+                  supportTicket: {
+                    status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD"] },
+                  },
+                },
+              ],
             },
             select: { id: true },
-          })
-        : Promise.resolve(null),
+          }),
     ]);
     return NextResponse.json({
       data: feedback,
@@ -144,10 +154,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
-  if (req.headers) {
-    const tooLarge = assertBodySize(req);
-    if (tooLarge) return tooLarge;
-  }
+  const tooLarge = assertBodySize(req);
+  if (tooLarge) return tooLarge;
 
   const id = await parseRouteParams(AppointmentIdParams, params, {
     route: FEEDBACK_ROUTE,

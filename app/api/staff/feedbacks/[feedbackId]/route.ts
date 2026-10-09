@@ -10,9 +10,11 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
 
-const patchFeedbackSchema = z.object({
-  status: PlatformFeedbackStatusSchema,
-});
+const patchFeedbackSchema = z
+  .object({
+    status: PlatformFeedbackStatusSchema,
+  })
+  .strict();
 
 export async function GET(
   req: NextRequest,
@@ -70,7 +72,9 @@ export async function PATCH(
     if (auth.error) return auth.error;
 
     const { feedbackId } = await params;
-    const parsed = patchFeedbackSchema.safeParse(await req.json());
+    const parsed = patchFeedbackSchema.safeParse(
+      await req.json().catch(() => null),
+    );
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
@@ -97,7 +101,7 @@ export async function PATCH(
       }
 
       const stagedBell =
-        existing.status !== nextStatus && tx.notificationOutbox
+        existing.status !== nextStatus
           ? await stageBell(tx, {
               workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,
               recipients: [existing.userId],

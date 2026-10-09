@@ -18,7 +18,7 @@ import { readCaseWorkspace } from "@/lib/support/case-workspace";
 const ROUTE = "staff.support-inbox.case";
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ caseKey: string }> },
 ) {
   const auth = await requireBackofficeSurface("tickets.manage");
@@ -46,16 +46,10 @@ export async function GET(
         context: { route: ROUTE, caseKey },
       });
     }
-    const updatedAtMs = Date.parse(data.updatedAt ?? data.createdAt);
-    const etag = `W/"${data.status}-${updatedAtMs}-${data.timeline.length}"`;
-    const headers = {
-      ETag: etag,
-      "Cache-Control": "private, no-cache",
-    };
-    if (req.headers.get("if-none-match") === etag) {
-      return new NextResponse(null, { status: 304, headers });
-    }
-    return NextResponse.json({ data }, { headers });
+    return NextResponse.json(
+      { data },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

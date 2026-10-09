@@ -567,9 +567,11 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       });
       mockAppointmentOccurrence.findMany.mockResolvedValue([]);
       mockAppointmentFeedback.findMany.mockResolvedValue([]);
-      mockAppointmentSupportThread.findFirst.mockResolvedValue({
-        id: "thread-1",
-      });
+      // Only consultee-1's own thread is open; another attendee's is not visible.
+      mockAppointmentSupportThread.findFirst.mockImplementation(
+        async ({ where }: { where: { userId: string } }) =>
+          where.userId === "consultee-1" ? { id: "thread-1" } : null,
+      );
 
       const req = new NextRequest(
         "http://localhost/api/appointments/550e8400-e29b-41d4-a716-446655440010/feedback",
@@ -582,6 +584,19 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.supportOpen).toBe(true);
+
+      mockAuthorizeAppointment.mockResolvedValue({
+        userId: "attendee-2",
+        detail: {
+          appointment: { id: "550e8400-e29b-41d4-a716-446655440010" },
+        },
+      });
+      const other = await getSessionFeedback(req, {
+        params: Promise.resolve({
+          appointmentId: "550e8400-e29b-41d4-a716-446655440010",
+        }),
+      });
+      expect((await other.json()).supportOpen).toBe(false);
     });
   });
 

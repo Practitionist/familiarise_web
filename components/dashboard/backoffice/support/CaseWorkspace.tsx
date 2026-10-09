@@ -150,33 +150,14 @@ export function CaseWorkspace({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [detailsOpen, setDetailsOpen]);
-  const etagRef = useRef<string | null>(null);
-  const dataRef = useRef<CaseData | null>(null);
-  useEffect(() => {
-    etagRef.current = null;
-    dataRef.current = null;
-  }, [caseKey]);
-
   const query = useQuery({
     queryKey: ["support-case", caseKey],
     queryFn: async (): Promise<CaseData> => {
-      const headers: Record<string, string> = {};
-      if (etagRef.current) {
-        headers["If-None-Match"] = etagRef.current;
-      }
-      const res = await fetch(`/api/staff/support-inbox/${caseKey}`, {
-        headers,
-      });
-      if (res.status === 304 && dataRef.current) {
-        return dataRef.current;
-      }
+      const res = await fetch(`/api/staff/support-inbox/${caseKey}`);
       if (!res.ok) await throwSupportError(res, "support case load");
-      const nextEtag = res.headers?.get?.("etag") ?? null;
-      if (nextEtag) etagRef.current = nextEtag;
-      const body = ((await res.json()) as { data: CaseData }).data;
-      dataRef.current = body;
-      return body;
+      return ((await res.json()) as { data: CaseData }).data;
     },
+    // The customer replies from their side; nothing pushes that here.
     refetchIntervalInBackground: false,
     refetchInterval: (q) =>
       q.state.data && SETTLED.has(q.state.data.status) ? false : 30_000,
@@ -249,6 +230,7 @@ export function CaseWorkspace({
       href: `${basePath}/users/${data.person.id}`,
     });
   }
+  // Opens the payment page's own refund dialog; refunds.manage is admin only.
   const refundHref =
     data.payment && can("refunds.manage") && data.payment.status === "SUCCEEDED"
       ? `${basePath}/payments/${data.payment.id}?refund=1`
