@@ -1,4 +1,4 @@
-import type { Prisma, UserRole } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import type {
@@ -74,30 +74,10 @@ export function planTitle(a: PlanTitled): string {
 
 // ── The list ────────────────────────────────────────────────────────────
 
-function toCaseRequester(
-  u: {
-    id: string;
-    name: string | null;
-    email: string | null;
-    phone: string | null;
-    role: UserRole;
-  },
-  showEmail: boolean,
-): InboxRow["requester"] {
-  return {
-    id: u.id,
-    name: u.name,
-    email: showEmail ? u.email : null,
-    phone: null,
-  };
-}
-
+/** List rows name the requester only; email and phone live on the case detail. */
 const USER_SELECT = {
   id: true,
   name: true,
-  email: true,
-  phone: true,
-  role: true,
 } as const;
 
 const TICKET_ROW_SELECT = {
@@ -134,19 +114,15 @@ type ThreadInboxSource = Prisma.AppointmentSupportThreadGetPayload<{
   select: typeof THREAD_ROW_SELECT;
 }>;
 
-function ticketToInboxRow(
-  t: TicketInboxSource,
-  showEmail: boolean,
-  now: Date,
-): InboxRow {
-  const callback = extractCallbackInfo(t.description, t.user.phone);
+function ticketToInboxRow(t: TicketInboxSource, now: Date): InboxRow {
+  const callback = extractCallbackInfo(t.description, null);
   return {
     key: caseKeyOf({ kind: "ticket", id: t.id }),
     kind: "ticket",
     scope: t.appointmentSupportThread ? "session" : "platform",
     requester: {
-      ...toCaseRequester(t.user, showEmail),
-      phone: null,
+      id: t.user.id,
+      name: t.user.name,
       callbackRequested: callback.callbackRequested,
     },
     subject: t.title,
@@ -164,12 +140,12 @@ function ticketToInboxRow(
   };
 }
 
-function threadToInboxRow(t: ThreadInboxSource, showEmail: boolean): InboxRow {
+function threadToInboxRow(t: ThreadInboxSource): InboxRow {
   return {
     key: caseKeyOf({ kind: "thread", id: t.id }),
     kind: "thread",
     scope: "session",
-    requester: toCaseRequester(t.user, showEmail),
+    requester: { id: t.user.id, name: t.user.name },
     subject: `Help with ${planTitle(t.appointment)}`,
     reference: null,
     topic: threadTopic(t.category),
@@ -239,7 +215,6 @@ async function readTicketKeysBySla(
 export async function readInboxPage(
   filters: InboxFilters,
   page: number,
-  opts: { showEmail: boolean },
 ): Promise<InboxListResponse> {
   const pageSize = INBOX_PAGE_SIZE;
   const skip = Math.min((Math.max(1, page) - 1) * pageSize, INBOX_MAX_DEPTH);
@@ -321,14 +296,11 @@ export async function readInboxPage(
   for (const t of tickets) {
     byKey.set(
       caseKeyOf({ kind: "ticket", id: t.id }),
-      ticketToInboxRow(t, opts.showEmail, now),
+      ticketToInboxRow(t, now),
     );
   }
   for (const t of threads) {
-    byKey.set(
-      caseKeyOf({ kind: "thread", id: t.id }),
-      threadToInboxRow(t, opts.showEmail),
-    );
+    byKey.set(caseKeyOf({ kind: "thread", id: t.id }), threadToInboxRow(t));
   }
 
   const total = ticketTotal + threadTotal;

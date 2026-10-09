@@ -188,9 +188,7 @@ describe("readInboxPage SLA paging", () => {
 
   it("pages are disjoint and together equal the full SLA order", async () => {
     const f = filters({ view: "mine", sort: "sla" });
-    const [p1, p2] = await Promise.all(
-      [1, 2].map((p) => readInboxPage(f, p, { showEmail: false })),
-    );
+    const [p1, p2] = await Promise.all([1, 2].map((p) => readInboxPage(f, p)));
     const k1 = p1.rows.map((r) => r.key);
     const k2 = p2.rows.map((r) => r.key);
     expect(k1.filter((k) => k2.includes(k))).toEqual([]);

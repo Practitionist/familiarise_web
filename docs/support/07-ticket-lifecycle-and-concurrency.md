@@ -37,13 +37,15 @@ Two rules, both decided by the owner, define reopening.
 
 **A customer reply reopens a resolved ticket.** The route `POST /api/user/support-tickets/[ticketId]/responses` computes the next status from the status it read: a `RESOLVED` or `ON_HOLD` ticket becomes `OPEN` when nobody is assigned and `IN_PROGRESS` when someone is, and every other live ticket becomes `IN_PROGRESS`. The same write clears `resolvedAt` and `closedAt`, so a reopened ticket stops reading as finished, and it folds the wait that just ended into `pausedSeconds` through `userRepliedPatch`. A reply to a `CLOSED` ticket is refused with a 400 saying the ticket is closed and can no longer receive replies, and the client then offers a new request. While a ticket is `RESOLVED` the reply box says "This request is marked resolved. Replying reopens it.", so the reopen is never a surprise.
 
-**A staff reply never reopens a resolved ticket.** The staff `POST` on `/api/staff/support-tickets/[ticketId]/responses` moves a ticket only from `OPEN` to `IN_PROGRESS`, with the status read as the expected prior status in the `WHERE` clause, and assigns the replier when nobody was assigned. On any other live status it bumps `lastMessageAt` and nothing else, so a reply that races a Resolve leaves the ticket `RESOLVED` rather than `IN_PROGRESS` with a stale `resolvedAt`. The reply is still saved and sent. An internal note touches neither the status nor the activity clock, and it is the only write allowed on a `CLOSED` ticket.
+**A staff reply never reopens a resolved ticket.** The staff `POST` on `/api/staff/support-tickets/[ticketId]/responses` moves a ticket only from `OPEN` to `IN_PROGRESS`, with the status read as the expected prior status in the `WHERE` clause, and assigns the replier when nobody was assigned. On any other live status it bumps `lastMessageAt` and nothing else, so a reply that races a Resolve leaves the ticket `RESOLVED` rather than `IN_PROGRESS` with a stale `resolvedAt`. The reply is still saved and sent. An internal note touches neither the status nor the activity clock, and it is the only write allowed on a `CLOSED` ticket. The back-office composer follows that rule: on a closed case it disables the reply box and Send, says that the customer can no longer receive replies, and keeps private notes available.
 
 Only staff can take a `CLOSED` ticket out of `CLOSED`, through the staff `PATCH`. That write also moves the booking thread, as described below.
 
 ## The staff PATCH and the stale-view guard
 
 `PATCH /api/staff/support-tickets/[ticketId]` requires the `expectedUpdatedAt` the caller rendered. The `updateMany` matches on `id` and that exact `updatedAt`, and a priority or assignee edit without a status change also requires `status` not to be `CLOSED`. When nothing matches, the route answers 409 with the code `CONFLICT`. A stale tab therefore cannot move a ticket from `RESOLVED` to `CLOSED`, or reprioritise a ticket someone else just closed, without noticing.
+
+The assignee and priority of a ticket that is already `CLOSED` are frozen. The route refuses such an edit before the write, with 400 and the code `TICKET_CLOSED` ("This request is closed, so its assignee and priority can't be changed. Reopen it first."), rather than reporting a conflict that did not happen. The 409 is kept for the case where the ticket closed between the read and the write. A status change, which is how a ticket is reopened, is still accepted.
 
 The client half is `useCaseMutations` in the back-office case workspace. A 409 is recognised by `isStaleCaseError`, which invalidates the case query so the case is refetched, and shows the toast "The case changed — review and retry" instead of a generic failure. The retry then starts from what the database holds now.
 
@@ -83,14 +85,14 @@ The rules the code enforces are these.
 
 Every transition above puts its expected prior state in the `WHERE` clause, as the repository's money-and-state rule requires, and a zero-row result is an answer rather than an error.
 
-| Write                    | Expected state in the `WHERE`                                                  | Zero rows becomes                          |
-| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------ |
-| Staff `PATCH`            | `updatedAt` (and `status` not `CLOSED` when no status is changing)             | 409 `CONFLICT`                             |
-| Customer reply           | `status`, `awaitingUserSince`, `pausedSeconds` as read                         | 409, "updated concurrently, refresh"       |
-| Staff public reply       | `status: OPEN` for the pickup; `status` not `CLOSED` for the touch             | 409 when the ticket closed under the reply |
-| Staff thread reply       | thread `status` not `CLOSED`                                                   | 409 `CONFLICT`                             |
-| Staff thread `PATCH`     | thread `status` not `CLOSED`, and the ticket not `CLOSED`                      | 409 `CONFLICT`                             |
-| `applyStaffReply` stamps | `acknowledgedAt: null`, `firstAgentReplyAt: null`, `awaitingUserSince` as read | the earlier writer keeps the timestamp     |
+| Write                    | Expected state in the `WHERE`                                                  | Zero rows becomes                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| Staff `PATCH`            | `updatedAt` (and `status` not `CLOSED` when no status is changing)             | 409 `CONFLICT` (an already-closed ticket is refused earlier with 400 `TICKET_CLOSED`) |
+| Customer reply           | `status`, `awaitingUserSince`, `pausedSeconds` as read                         | 409, "updated concurrently, refresh"                                                  |
+| Staff public reply       | `status: OPEN` for the pickup; `status` not `CLOSED` for the touch             | 409 when the ticket closed under the reply                                            |
+| Staff thread reply       | thread `status` not `CLOSED`                                                   | 409 `CONFLICT`                                                                        |
+| Staff thread `PATCH`     | thread `status` not `CLOSED`, and the ticket not `CLOSED`                      | 409 `CONFLICT`                                                                        |
+| `applyStaffReply` stamps | `acknowledgedAt: null`, `firstAgentReplyAt: null`, `awaitingUserSince` as read | the earlier writer keeps the timestamp                                                |
 
 ## Deprecated & Superseded Approaches
 

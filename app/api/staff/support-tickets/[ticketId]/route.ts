@@ -333,6 +333,18 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
+    // Assignee and priority are frozen once closed; only a status change (reopen) is accepted.
+    if (existing.status === "CLOSED" && !validatedData.status) {
+      return NextResponse.json(
+        {
+          error:
+            "This request is closed, so its assignee and priority can't be changed. Reopen it first.",
+          code: "TICKET_CLOSED",
+        },
+        { status: 400 },
+      );
+    }
+
     if (
       validatedData.assignedToId !== undefined &&
       validatedData.assignedToId !== null
