@@ -32,7 +32,8 @@ export const CreateSupportTicketSchema = z.object({
 
 export const UpdateSupportTicketSchema = z.object({
   status: SupportTicketStatusEnum.optional(),
-  expectedStatus: SupportTicketStatusEnum.optional(),
+  /** The `updatedAt` the caller rendered; a stale tab answers 409. */
+  expectedUpdatedAt: z.string().datetime(),
   priority: SupportPriorityEnum.optional(),
   assignedToId: z.string().nullable().optional(),
   refundId: z.string().optional(),
