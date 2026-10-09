@@ -261,9 +261,9 @@ export function CreateTicketDialog({
               onValueChange={(v) => {
                 const nextPriority = PRIORITY_BY_VALUE[v] ?? "MEDIUM";
                 setPriority(nextPriority);
-                if (nextPriority === "HIGH" || nextPriority === "URGENT") {
-                  setCallbackRequested(true);
-                }
+                setCallbackRequested(
+                  nextPriority === "HIGH" || nextPriority === "URGENT",
+                );
               }}
             >
               <SelectTrigger id="new-ticket-priority">
@@ -287,19 +287,12 @@ export function CreateTicketDialog({
               />
               <span>Request urgent phone callback</span>
             </label>
-            {(callbackRequested ||
-              priority === "HIGH" ||
-              priority === "URGENT") && (
+            {callbackRequested && (
               <Input
                 id="new-ticket-callback-phone"
                 type="tel"
                 value={callbackPhone}
-                onChange={(e) => {
-                  setCallbackPhone(e.target.value);
-                  if (!callbackRequested && e.target.value.trim()) {
-                    setCallbackRequested(true);
-                  }
-                }}
+                onChange={(e) => setCallbackPhone(e.target.value)}
                 placeholder="+91 98765 43210"
                 maxLength={32}
               />

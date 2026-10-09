@@ -374,6 +374,9 @@ export function CaseWorkspace({
             />
           )}
           {sla && <StatusBadge {...sla} variant="dot" />}
+          {data.person.callbackRequested && (
+            <StatusBadge label="Callback" tone="critical" />
+          )}
           {data.ackDueAt &&
             !data.sla?.ackBreached &&
             data.sla?.msToAckDue !== null && (
