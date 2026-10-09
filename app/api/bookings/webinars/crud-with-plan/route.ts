@@ -5,6 +5,7 @@ import {
   liveParticipant,
   recordParticipants,
 } from "@/lib/booking/participants";
+import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -586,22 +587,12 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // A plan can only move to another profile the caller owns.
-    if (
-      consultantProfileId &&
-      consultantProfileId !== existingPlan.consultantProfileId
-    ) {
-      const target = await prisma.consultantProfile.findUnique({
-        where: { id: consultantProfileId },
-        select: { userId: true },
-      });
-      if (target?.userId !== session.user.id) {
-        return NextResponse.json(
-          { error: "You can only assign this plan to your own profile" },
-          { status: 403 },
-        );
-      }
-    }
+    const reassignmentRefusal = await refuseForeignProfileReassignment(
+      session.user.id,
+      existingPlan.consultantProfileId,
+      consultantProfileId,
+    );
+    if (reassignmentRefusal) return reassignmentRefusal;
 
     // A supplied webinarId must name an instance of this plan; otherwise use its first.
     const webinarToUpdate = webinarId

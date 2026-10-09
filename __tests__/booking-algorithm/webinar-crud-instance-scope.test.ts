@@ -26,17 +26,9 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn().mockResolvedValue({ user: { id: "user-1" } }),
 }));
 
-// schemas/plans loads `bad-words` (ESM-only) through utils/contentValidation.
-jest.mock("../../utils/contentValidation", () => ({
-  __esModule: true,
-  hasDuplicates: () => false,
-  containsGibberish: () => false,
-  containsProfanity: () => false,
-  isProfanityFree: () => true,
-  isMeaningfulText: () => true,
-  validateSensibleContent: () => true,
-  cleanProfanity: (text: string) => text,
-}));
+jest.mock("../../utils/contentValidation", () =>
+  jest.requireActual("../helpers/content-validation-stub"),
+);
 
 jest.mock("../../lib/topics", () => ({
   __esModule: true,

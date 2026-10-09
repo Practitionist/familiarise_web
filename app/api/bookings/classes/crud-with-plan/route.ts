@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import {
   liveParticipant,
   recordParticipants,
@@ -617,22 +618,12 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // A plan can only move to another profile the caller owns.
-    if (
-      consultantProfileId &&
-      consultantProfileId !== existingPlan.consultantProfileId
-    ) {
-      const target = await prisma.consultantProfile.findUnique({
-        where: { id: consultantProfileId },
-        select: { userId: true },
-      });
-      if (target?.userId !== session.user.id) {
-        return NextResponse.json(
-          { error: "You can only assign this plan to your own profile" },
-          { status: 403 },
-        );
-      }
-    }
+    const reassignmentRefusal = await refuseForeignProfileReassignment(
+      session.user.id,
+      existingPlan.consultantProfileId,
+      consultantProfileId,
+    );
+    if (reassignmentRefusal) return reassignmentRefusal;
 
     const lateJoinRefusal = lateJoinCutoffRefusal(
       lateJoinUntilSession,
