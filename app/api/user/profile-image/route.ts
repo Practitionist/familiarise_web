@@ -122,7 +122,10 @@ export async function DELETE() {
     const deleteResult = await deleteProfileImage(session.user.id);
 
     if (!deleteResult) {
-      console.warn("Failed to delete profile image from storage");
+      return NextResponse.json(
+        { error: "Could not delete the image. Please try again." },
+        { status: 502 },
+      );
     }
 
     await prisma.user.update({

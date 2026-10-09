@@ -76,6 +76,7 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     .mockResolvedValue({ creditNoteId: null }),
   mintRefundCreditNote: jest.fn(),
   refundMemberOverageSidePayment: jest.fn(),
+  remainingOrgInvoiceCreditPaise: jest.fn().mockResolvedValue(100_000),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),
@@ -112,6 +113,7 @@ function resetStore() {
 
 function txStub() {
   return {
+    user: { findMany: jest.fn(async () => []) },
     payment: {
       // #1353 — the handler resolves by EITHER id now, so the stub has to be a
       // real matcher rather than a constant: a test that returns the same row
@@ -135,6 +137,7 @@ function txStub() {
     organizationInvoice: {
       findFirst: jest.fn(async () => null),
       update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     ledgerTransaction: { findUnique: jest.fn(async () => null) },
     billingAccount: {
@@ -160,6 +163,22 @@ function txStub() {
         if (row) Object.assign(row, data);
         return row ?? {};
       }),
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status: RefundStatus };
+          data: Partial<RefundRow>;
+        }) => {
+          const row = store.refunds.find(
+            (r) => r.id === where.id && r.status === where.status,
+          );
+          if (!row) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        },
+      ),
     },
   };
 }

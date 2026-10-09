@@ -15,6 +15,7 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 // sweep-stuck-webhook-events — died during module evaluation and none had ever
 // completed a run. Same clients, same helpers, no marker.
 import {
+  adminStorage,
   ensureBucketExists,
   generateStorageFileName,
 } from "@/lib/supabase-storage-core";
@@ -29,7 +30,6 @@ import {
   RECORDINGS_BUCKET,
   RECORDING_MAX_OBJECT_BYTES,
   RECORDING_MIME_TYPES,
-  storageClient,
 } from "./recording-storage";
 
 // #899 — uploads stream (no in-memory buffering), so the pre-flight reject is
@@ -448,7 +448,7 @@ export class RecordingTransferService {
       ? createSizeLimitedStream(response.body, RECORDING_MAX_OBJECT_BYTES)
       : await response.blob();
 
-    const { error: uploadError } = await storageClient.storage
+    const { error: uploadError } = await adminStorage()
       .from(RECORDINGS_BUCKET)
       .upload(storagePath, uploadBody, {
         contentType,

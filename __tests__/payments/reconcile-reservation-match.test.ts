@@ -175,9 +175,9 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     const result = await reconcilePendingRefunds();
 
     expect(result.reconciledCount).toBe(1);
-    expect(refundTable.update).toHaveBeenCalledWith(
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "res_1" },
+        where: { id: "res_1", status: "PENDING" },
         data: expect.objectContaining({
           refundId: "rfnd_exact",
           status: "SUCCEEDED",
