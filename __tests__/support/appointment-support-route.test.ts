@@ -67,10 +67,14 @@ import { authorizeAppointment } from "../../lib/api/appointment-access";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
-import { GET, POST } from "../../app/api/appointments/[appointmentId]/support/route";
+import {
+  GET,
+  POST,
+} from "../../app/api/appointments/[appointmentId]/support/route";
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
-const mockedFindThread = prisma.appointmentSupportThread.findUnique as jest.Mock;
+const mockedFindThread = prisma.appointmentSupportThread
+  .findUnique as jest.Mock;
 const mockedBuildContext = buildSupportContext as jest.Mock;
 const mockedRunTurn = runSupportTurn as jest.Mock;
 
@@ -161,6 +165,21 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       "u1",
       expect.objectContaining({ category: "CANCEL_REFUND", isOrgParty: false }),
     );
+  });
+
+  it("never throttles conversation turns: six consecutive turns all succeed", async () => {
+    mockedRunTurn.mockResolvedValue({
+      messages: [],
+      nextNodeId: null,
+      actions: [],
+    });
+    for (let i = 0; i < 6; i++) {
+      const res = await POST(req("POST", { userMessage: `turn ${i}` }), {
+        params: Promise.resolve({ appointmentId: SLUG }),
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(mockedRunTurn).toHaveBeenCalledTimes(6);
   });
 
   it("VALIDATION_FAILED envelope when the turn has nothing actionable", async () => {

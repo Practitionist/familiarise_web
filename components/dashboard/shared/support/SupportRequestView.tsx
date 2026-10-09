@@ -205,7 +205,7 @@ function SessionRequest({
               onRetry={() => void t.query.refetch()}
             />
           ) : (
-            <SessionConversation t={t} />
+            <SessionConversation t={t} requestsHref={props.requestsHref} />
           )}
         </div>
         <aside>
@@ -232,7 +232,7 @@ function TicketRequest({
       if (!res.ok) await throwSupportError(res, "request load");
       return ((await res.json()) as { data: OwnTicketCase }).data;
     },
-    // Our replies arrive from the ops side; nothing pushes them here.
+    refetchIntervalInBackground: false,
     refetchInterval: (q) =>
       q.state.data?.status === "CLOSED" ? false : 30_000,
   });
@@ -337,8 +337,14 @@ function TicketRequest({
             <div className="border-t border-border p-4">
               {closed ? (
                 <p className="text-sm text-muted-foreground">
-                  This request is closed. Start a new request from Support if
-                  you still need help.
+                  This request is closed.{" "}
+                  <Link
+                    href={props.requestsHref}
+                    className="font-medium text-foreground underline underline-offset-4"
+                  >
+                    Start a new request
+                  </Link>{" "}
+                  if you still need help.
                 </p>
               ) : (
                 <form

@@ -109,6 +109,7 @@ export function effectiveResolutionDueAt(
 export interface SlaState {
   ackBreached: boolean;
   resolutionBreached: boolean;
+  paused?: boolean;
   /** Null once acknowledged, or when the ticket predates the SLA columns. */
   msToAckDue: number | null;
   /** Null once resolved, or when the ticket predates the SLA columns. */
@@ -138,6 +139,7 @@ export function slaStateOf(clock: SlaClock, now: Date = new Date()): SlaState {
       resolutionOutstanding &&
       !!resolutionDue &&
       now.getTime() > resolutionDue.getTime(),
+    paused: !settled && clock.awaitingUserSince !== null,
     msToAckDue:
       ackOutstanding && clock.ackDueAt
         ? clock.ackDueAt.getTime() - now.getTime()

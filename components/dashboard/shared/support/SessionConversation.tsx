@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Send } from "lucide-react";
 
 import { SupportBubble } from "@/components/support/SupportBubble";
@@ -8,13 +9,19 @@ import {
   describeAction,
   type useSupportThread,
 } from "@/components/support/useSupportThread";
+import { isBareHumanRequest } from "@/lib/support/escalation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 type ThreadState = ReturnType<typeof useSupportThread>;
-type Option = { id: string; label: string; escalates?: boolean };
+type Option = {
+  id: string;
+  label: string;
+  escalates?: boolean;
+  isCategory?: boolean;
+};
 
 /** Enough for staff to act on without a round trip back to the user. */
 const MIN_DESCRIPTION = 20;
@@ -58,8 +65,8 @@ function OptionButtons({
 }
 
 /**
- * #1527 — an escalating chip opens a ticket for staff, so it never fires on
- * the click: the user describes the problem first, and only "Send" hands off.
+ * Escalating options and bare human asks collect the problem description before
+ * opening a staff ticket.
  */
 function EscalateStep({
   option,
@@ -115,17 +122,16 @@ function EscalateStep({
   );
 }
 
-/**
- * #1527 — the session conversation on the request page: the guided flow's
- * steps inline (options at the server's cursor), free text, and the hand-off
- * to our team, with the behaviour the old "Get help" drawer had.
- */
-export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
+export function SessionConversation({
+  t,
+  requestsHref = "/dashboard/support",
+}: Readonly<{ t: ThreadState; requestsHref?: string }>) {
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Option | null>(null);
-  // A poll that moves the cursor retires the chip, and the step with it.
   const escalating =
-    picked && t.options.some((o) => o.id === picked.id) ? picked : null;
+    picked && (picked.isCategory || t.options.some((o) => o.id === picked.id))
+      ? picked
+      : null;
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -135,25 +141,33 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
     ? "You're connected with our support team. They'll reply here and by email."
     : "Pick what you need help with, or type a message.";
 
+  const renderEscalateStep = (target: Option) => (
+    <EscalateStep
+      option={target}
+      disabled={t.turnPending}
+      onBack={() => setPicked(null)}
+      onSend={(description) => {
+        const sent = target.isCategory
+          ? t.submitTurn({
+              category: target.id,
+              chosenLabel: target.label,
+              userMessage: description,
+            })
+          : t.submitTurn({
+              chosenOptionId: target.id,
+              chosenLabel: target.label,
+              userMessage: description,
+            });
+        if (sent) setPicked(null);
+      }}
+    />
+  );
+
   const controls = () => {
+    if (escalating) {
+      return renderEscalateStep(escalating);
+    }
     if (t.started) {
-      if (escalating) {
-        return (
-          <EscalateStep
-            option={escalating}
-            disabled={t.turnPending}
-            onBack={() => setPicked(null)}
-            onSend={(description) => {
-              const sent = t.submitTurn({
-                chosenOptionId: escalating.id,
-                chosenLabel: escalating.label,
-                userMessage: description,
-              });
-              if (sent) setPicked(null);
-            }}
-          />
-        );
-      }
       return (
         t.options.length > 0 && (
           <OptionButtons
@@ -198,9 +212,15 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
         options={t.availableIntents.map((i) => ({
           id: i.category,
           label: i.label,
+          escalates: i.escalates,
+          isCategory: true,
         }))}
         disabled={t.turnPending}
-        onPick={(o) => t.submitTurn({ category: o.id, chosenLabel: o.label })}
+        onPick={(o) =>
+          o.escalates
+            ? setPicked(o)
+            : t.submitTurn({ category: o.id, chosenLabel: o.label })
+        }
       />
     );
   };
@@ -248,8 +268,6 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
           />
         ))}
         {t.handoffIndex === t.messages.length && <Handoff />}
-        {/* Only while the flow is answering: an asynchronous hand-off has
-            nobody typing, and dots promising a reply lose people. */}
         {t.turnPending && !t.isHuman && (
           <output
             className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
@@ -282,8 +300,14 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
         {!escalating &&
           (t.isClosed ? (
             <p className="text-sm text-muted-foreground">
-              This conversation is closed. Start a new request from Support if
-              you still need help.
+              This conversation is closed.{" "}
+              <Link
+                href={requestsHref}
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                Start a new request
+              </Link>{" "}
+              if you still need help.
             </p>
           ) : (
             <form
@@ -291,7 +315,18 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
               onSubmit={(e) => {
                 e.preventDefault();
                 const msg = text.trim();
-                if (msg && t.submitTurn({ userMessage: msg })) setText("");
+                if (!msg) return;
+                if (!t.isHuman && isBareHumanRequest(msg)) {
+                  setText("");
+                  setPicked({
+                    id: "OTHER",
+                    label: msg,
+                    escalates: true,
+                    isCategory: true,
+                  });
+                  return;
+                }
+                if (t.submitTurn({ userMessage: msg })) setText("");
               }}
             >
               <Input

@@ -63,6 +63,9 @@ function CaseRow({
           )}
           {slaStatus && <StatusBadge {...slaStatus} size="sm" />}
           {sla && <StatusBadge {...sla} variant="dot" />}
+          {row.requester.callbackRequested && (
+            <StatusBadge label="Callback" tone="critical" size="sm" />
+          )}
         </div>
       </Link>
     </li>
