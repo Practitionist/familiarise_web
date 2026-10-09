@@ -42,7 +42,10 @@ function metadataSelectBody(src: string, constName: string): string {
 
 describe("org-scope payloads never carry session content", () => {
   it("recordings: the metadata select omits every field that reaches the media", () => {
-    const body = metadataSelectBody(read(RECORDINGS), "recordingMetadataSelect");
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingMetadataSelect",
+    );
 
     // Each of these either IS the media or resolves to it.
     for (const field of [
@@ -59,7 +62,10 @@ describe("org-scope payloads never carry session content", () => {
   });
 
   it("recordings: the metadata select still carries what the org table renders", () => {
-    const body = metadataSelectBody(read(RECORDINGS), "recordingMetadataSelect");
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingMetadataSelect",
+    );
 
     // RecordingsClient's own RecordingRow interface. Dropping one of these
     // would blank a column rather than protect anything.
@@ -100,19 +106,29 @@ describe("org-scope payloads never carry session content", () => {
     }
   });
 
-  it.each([
-    [RECORDINGS, "recordingParticipantSelect", "recordingUrl"],
-    [DOCUMENTS, "documentParticipantSelect", "fileUrl"],
-  ])(
-    "%s: the participant select still returns the content (%s)",
-    (rel, constName, field) => {
-      const src = read(rel);
-      const start = src.indexOf(`const ${constName} = {`);
-      expect(start).toBeGreaterThan(-1);
-      const body = src.slice(start, src.indexOf("} satisfies", start));
-      expect(body).toContain(`${field}: true`);
-    },
-  );
+  it("documents: the participant select still returns the file", () => {
+    const body = metadataSelectBody(
+      read(DOCUMENTS),
+      "documentParticipantSelect",
+    );
+    expect(body).toContain("fileUrl: true");
+  });
+
+  it("recordings: even the participant select never ships playable media", () => {
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingParticipantSelect",
+    );
+    for (const field of [
+      "recordingUrl",
+      "storageUrl",
+      "storagePath",
+      "streamRecordingId",
+      "streamCallId",
+    ]) {
+      expect(body).not.toContain(field);
+    }
+  });
 
   it.each([RECORDINGS, DOCUMENTS])(
     "%s: content is gated on participant scope, not on org membership",

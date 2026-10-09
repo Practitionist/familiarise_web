@@ -1,8 +1,9 @@
 /**
  * Enforces least-privilege role grants on `STREAM_CALL_TYPE` (`default`),
  * revoking unguarded join (`join-call`, `join-ended-call`, `update-call-permissions`)
- * from `user`/`guest` and `end-call` plus all 18 billable permissions (including
- * `-owner` and `-any-team` variants) from `user`, `guest`, and `call_member`.
+ * from `user`/`guest`, and `end-call`, `list-recordings` plus every billable
+ * permission (with `-owner` / `-any-team` variants) from `user`, `guest` and
+ * `call_member`. Recordings reach clients only through our API.
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
@@ -28,6 +29,7 @@ const CREATE_CALL = "create-call";
 const JOIN_CALL = "join-call";
 const JOIN_REVOKED_ROLES = ["user", "guest"];
 const END_CALL = "end-call";
+const LIST_RECORDINGS = "list-recordings";
 const NON_MEMBER_REVOKED_PERMISSIONS = [
   JOIN_CALL,
   "join-ended-call",
@@ -37,6 +39,7 @@ export const DEFAULT_CALL_TYPE_REVOKED_PERMISSIONS = [
   ...BILLABLE_PERMISSIONS,
   CREATE_CALL,
   END_CALL,
+  LIST_RECORDINGS,
 ];
 const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, CALL_MEMBER_ROLE];
 

@@ -36,28 +36,28 @@ netlify env:list --json
 The numbered files are meant to be read in order by someone new to the
 subsystem. The unnumbered ones are references.
 
-| Document                                                                   | What it covers                                                    |
-| -------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [00-pricing-overview.md](./00-pricing-overview.md)                         | What Stream costs and which meter each feature runs against.      |
-| [01-architecture.md](./01-architecture.md)                                 | How the pieces fit together, with the meeting-join flow.          |
-| [02-setup-configuration.md](./02-setup-configuration.md)                   | Environment variables, dashboard configuration and the call type. |
-| [03-provider-authentication.md](./03-provider-authentication.md)           | Client connection, the provider, and the initialization sequence. |
-| [04-chat-implementation.md](./04-chat-implementation.md)                   | Channel shapes, and how a direct-message id is derived.           |
-| [05-video-implementation.md](./05-video-implementation.md)                 | Meeting rooms, call lifecycle and the lobby.                      |
-| [06-channel-management.md](./06-channel-management.md)                     | Who may talk to whom, and how membership is reconciled.           |
-| [07-user-management.md](./07-user-management.md)                           | Upserting users into Stream and keeping them in step.             |
-| [08-token-management.md](./08-token-management.md)                         | Minting, scoping and revoking tokens.                             |
-| [09-background-sync.md](./09-background-sync.md)                           | The stale-user sweep and its schedule.                            |
-| [10-api-endpoints.md](./10-api-endpoints.md)                               | The routes this subsystem exposes.                                |
-| [11-hooks-utilities.md](./11-hooks-utilities.md)                           | Client hooks and the shared helpers.                              |
-| [12-error-handling.md](./12-error-handling.md)                             | The circuit breaker, failure modes and what surfaces to users.    |
-| [13-recording-webhooks.md](./13-recording-webhooks.md)                     | Recording lifecycle, storage transfer and the webhook handlers.   |
-| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)             | The cost model in detail, with worked figures.                    |
-| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md) | Plan tiers and what the Maker account includes.                   |
-| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)   | Stream's own product vocabulary and its paid add-ons.             |
-| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                       | Chat channel provisioning, dormancy, and lifecycle transitions.   |
-| [troubleshooting.md](./troubleshooting.md)                                 | Symptoms and their causes, kept current.                          |
-| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                             | A diagram of the whole subsystem.                                 |
+| Document                                                                   | What it covers                                                                    |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [00-pricing-overview.md](./00-pricing-overview.md)                         | What Stream costs and which meter each feature runs against.                      |
+| [01-architecture.md](./01-architecture.md)                                 | How the pieces fit together, with the meeting-join flow.                          |
+| [02-setup-configuration.md](./02-setup-configuration.md)                   | Environment variables, dashboard configuration and the call type.                 |
+| [03-provider-authentication.md](./03-provider-authentication.md)           | Client connection, the provider, and the initialization sequence.                 |
+| [04-chat-implementation.md](./04-chat-implementation.md)                   | Channel shapes, and how a direct-message id is derived.                           |
+| [05-video-implementation.md](./05-video-implementation.md)                 | Meeting rooms, call lifecycle and the lobby.                                      |
+| [06-channel-management.md](./06-channel-management.md)                     | Who may talk to whom, and how membership is reconciled.                           |
+| [07-user-management.md](./07-user-management.md)                           | Upserting users into Stream and keeping them in step.                             |
+| [08-token-management.md](./08-token-management.md)                         | Minting, scoping and revoking tokens.                                             |
+| [09-background-sync.md](./09-background-sync.md)                           | The stale-user sweep and its schedule.                                            |
+| [10-api-endpoints.md](./10-api-endpoints.md)                               | The routes this subsystem exposes.                                                |
+| [11-hooks-utilities.md](./11-hooks-utilities.md)                           | Client hooks and the shared helpers.                                              |
+| [12-error-handling.md](./12-error-handling.md)                             | The circuit breaker, failure modes and what surfaces to users.                    |
+| [13-recording-webhooks.md](./13-recording-webhooks.md)                     | Recording lifecycle, R2 transfer job, visibility, retention and webhook handlers. |
+| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)             | The cost model in detail, with worked figures.                                    |
+| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md) | Plan tiers and what the Maker account includes.                                   |
+| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)   | Stream's own product vocabulary and its paid add-ons.                             |
+| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                       | Chat channel provisioning, dormancy, and lifecycle transitions.                   |
+| [troubleshooting.md](./troubleshooting.md)                                 | Symptoms and their causes, kept current.                                          |
+| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                             | A diagram of the whole subsystem.                                                 |
 
 ## Rules that have been learned the hard way
 

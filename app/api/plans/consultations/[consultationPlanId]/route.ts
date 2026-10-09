@@ -153,7 +153,6 @@ export async function PUT(
         whatsIncluded: validatedData.whatsIncluded,
         faqs: faqReplaceNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
-        recordingStoragePolicy: validatedData.recordingStoragePolicy,
         // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
         status: validatedData.status,
         ...topicsUpdate,

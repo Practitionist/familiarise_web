@@ -29,7 +29,7 @@ export interface CreateWebinarPayload {
   maxParticipants: number;
   certificateProvided?: boolean;
   recordingEnabled?: boolean;
-  recordingStoragePolicy?: "STREAM_ONLY" | "PERMANENT";
+  shareRecordingsWithAllAttendees?: boolean;
   language?: string;
   level?: string;
   prerequisites?: string;
@@ -55,7 +55,6 @@ export interface CreateClassPayload {
   maxParticipants: number;
   certificateProvided?: boolean;
   recordingEnabled?: boolean;
-  recordingStoragePolicy?: "STREAM_ONLY" | "PERMANENT";
   emailSupport?: PlanEmailSupport;
   language?: string;
   level?: string;

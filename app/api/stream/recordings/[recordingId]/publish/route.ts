@@ -28,7 +28,10 @@ const PublishSchema = z.object({
   slug: z
     .string()
     .trim()
-    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "Lowercase letters, digits, dashes")
+    .regex(
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+      "Lowercase letters, digits, dashes",
+    )
     .min(3)
     .max(80)
     .optional(),
@@ -68,16 +71,104 @@ const PublishSchema = z.object({
  * longer than the slice boundary.
  */
 function buildSlug(title: string, id: string): string {
-  const words = title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const words = title
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
   let base = words.join("-").slice(0, 60);
   if (base.endsWith("-")) base = base.slice(0, -1);
   return `${base || "recording"}-${id.slice(-6).toLowerCase()}`;
 }
 
-export async function POST(
+async function parsePublishBody(
   request: NextRequest,
-  { params }: RouteParams,
-) {
+): Promise<z.infer<typeof PublishSchema> | NextResponse> {
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "INVALID_INPUT" },
+      { status: 400 },
+    );
+  }
+  const parsed = PublishSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "Invalid input",
+        details: parsed.error.issues,
+        code: "INVALID_INPUT",
+      },
+      { status: 400 },
+    );
+  }
+  return parsed.data;
+}
+
+type LoadedListing = Extract<
+  Awaited<ReturnType<typeof guardOwnedListingRecording>>,
+  { ok: true }
+>["loaded"];
+
+/** Durability, plan visibility and preview-transcript gates; the refusal response, or the transcript to store. */
+function checkPublishGates(
+  loaded: LoadedListing,
+  previewTranscript: string | undefined,
+): NextResponse | { transcript: string | null } {
+  // A sold replay must outlive any single session: Stream URLs die ≤14d.
+  if (
+    !isDurablyOurs({
+      status: loaded.recordingStatus,
+      storageType: loaded.storageType,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "This recording can be published once it has been copied to our storage.",
+        code: "STORAGE_POLICY",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Org visibility + live-plan gate — same predicate the purchase route
+  // enforces before minting an order.
+  if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
+    return NextResponse.json(
+      {
+        error:
+          "This recording's plan is archived or its organization limits visibility.",
+        code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
+      },
+      { status: 403 },
+    );
+  }
+
+  // #1244 review — a preview clip cannot go public without a text
+  // alternative. Checked here rather than in the Zod schema because only the
+  // loaded recording knows whether a clip exists. An already-stored
+  // transcript satisfies the gate on re-publish.
+  const transcriptGate = resolvePreviewTranscript({
+    previewClipUrl: loaded.previewClipUrl,
+    storedTranscript: loaded.previewTranscript,
+    submittedTranscript: previewTranscript,
+  });
+  if (!transcriptGate.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
+        code: "PREVIEW_TRANSCRIPT_REQUIRED",
+      },
+      { status: 422 },
+    );
+  }
+  return { transcript: transcriptGate.transcript };
+}
+
+export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
@@ -90,83 +181,24 @@ export async function POST(
       );
     }
 
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON body", code: "INVALID_INPUT" },
-        { status: 400 },
-      );
-    }
-    const parsed = PublishSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid input",
-          details: parsed.error.issues,
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
-    }
-    const { listingTitle, listingDescription, listPricePaise, tags, slug, previewTranscript } =
-      parsed.data;
+    const parsed = await parsePublishBody(request);
+    if (parsed instanceof NextResponse) return parsed;
+    const {
+      listingTitle,
+      listingDescription,
+      listPricePaise,
+      tags,
+      slug,
+      previewTranscript,
+    } = parsed;
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
     if (!guard.ok) return guard.response;
     const loaded = guard.loaded;
 
-    // A sold replay must outlive any single session: Stream URLs die ≤14d.
-    if (
-      !isDurablyOurs({
-        status: loaded.recordingStatus,
-        storageType: loaded.storageType,
-      })
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Only permanently stored (premium plan) recordings can be published.",
-          code: "STORAGE_POLICY",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Org visibility + live-plan gate — same predicate the purchase route
-    // enforces before minting an order.
-    if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
-      return NextResponse.json(
-        {
-          error:
-            "This recording's plan is archived or its organization limits visibility.",
-          code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
-        },
-        { status: 403 },
-      );
-    }
-
-    // #1244 review — a preview clip cannot go public without a text
-    // alternative. Checked here rather than in the Zod schema because only the
-    // loaded recording knows whether a clip exists. An already-stored
-    // transcript satisfies the gate on re-publish.
-    const transcriptGate = resolvePreviewTranscript({
-      previewClipUrl: loaded.previewClipUrl,
-      storedTranscript: loaded.previewTranscript,
-      submittedTranscript: previewTranscript,
-    });
-    if (!transcriptGate.ok) {
-      return NextResponse.json(
-        {
-          error:
-            "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
-          code: "PREVIEW_TRANSCRIPT_REQUIRED",
-        },
-        { status: 422 },
-      );
-    }
+    const gate = checkPublishGates(loaded, previewTranscript);
+    if (gate instanceof NextResponse) return gate;
 
     const finalSlug = slug ?? buildSlug(listingTitle, loaded.recordingId);
     const slugClash = await prisma.recording.findUnique({
@@ -195,9 +227,14 @@ export async function POST(
           unpublishedAt: null,
           consentAttestedAt: new Date(),
           consentAttestedById: session.user.id,
-          previewTranscript: transcriptGate.transcript,
+          previewTranscript: gate.transcript,
         },
-        select: { id: true, slug: true, listingStatus: true, publishedAt: true },
+        select: {
+          id: true,
+          slug: true,
+          listingStatus: true,
+          publishedAt: true,
+        },
       });
     } catch (updateError) {
       // Two concurrent publishes can pass the pre-check above; the @unique
@@ -230,10 +267,7 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {

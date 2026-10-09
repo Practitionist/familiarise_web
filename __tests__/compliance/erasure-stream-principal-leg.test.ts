@@ -190,7 +190,6 @@ describe("DPDP erasure Stream principal leg", () => {
       data: {
         status: "EXPIRED",
         recordingUrl: "",
-        storageUrl: null,
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,

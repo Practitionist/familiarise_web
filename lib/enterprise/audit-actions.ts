@@ -222,8 +222,7 @@ export const AUDIT_ACTIONS = {
     // in `details`. Pinned under SYSTEM because the operator is the
     // platform, not a human member.
     AUDIT_PRUNED: "AUDIT_PRUNED",
-    // Emitted by the Stream recording retention cron when it tombstones
-    // a recording older than the org's `streamRecordingRetentionDays`.
+    // Emitted by the expire-recordings job for each run that expires org recordings.
     STREAM_RECORDING_DELETED: "STREAM_RECORDING_DELETED",
     // #1270 — emitted whenever a platform operator (ADMIN or STAFF) reads a
     // recording they have no participation in. The operator path used to be

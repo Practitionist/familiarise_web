@@ -226,3 +226,13 @@ export function getMeetingOwnershipInfo(
     recordingEnabled: isRecordingEnabledForAppointment(appointment),
   };
 }
+
+const STREAM_COPY_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Stream deletes its copy 14 days after the recording ends; webhook and sync share this. */
+export function streamCopyExpiresAt(endTime: Date | string): Date {
+  const endMs = new Date(endTime).getTime();
+  return new Date(
+    (Number.isFinite(endMs) ? endMs : Date.now()) + STREAM_COPY_RETENTION_MS,
+  );
+}

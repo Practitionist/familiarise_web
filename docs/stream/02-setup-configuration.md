@@ -38,11 +38,11 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 # Optional: Background Sync Job Protection
 STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 
-# Cloudflare R2 Permanent Recording Storage
-R2_ACCOUNT_ID=your_cloudflare_account_id
+# Cloudflare R2 recording storage (our copy of every recording)
+R2_S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_BUCKET=familiarise-recordings
 R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
-R2_RECORDINGS_BUCKET=familiarise-recordings
 ```
 
 ### Variable Breakdown
@@ -166,9 +166,9 @@ What the orchestrator enforces:
 
 ### 2. Cloudflare R2 Recording Storage
 
-Permanent recordings (`PERMANENT` policy on Webinars, Classes, and opt-in 1:1 sessions) are streamed server-side from Stream's signed recording URL directly to Cloudflare R2 (`$0` egress, S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, with automatic fallback to Supabase Storage for legacy objects).
+Every READY recording is copied server-side from Stream's signed recording URL into Cloudflare R2 by the `transfer-recordings` job (S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, HEAD-verified after upload). R2 is the only destination; preview clips and thumbnails stay in the public Supabase `recordings-previews` bucket.
 
-Ensure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_RECORDINGS_BUCKET` are set in the deployment environment before enabling permanent recording transfers (`jobs/stream/transfer-expiring-recordings.ts`).
+Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` in Netlify (playback presigning, deletes) and as GitHub Actions secrets (`cron-intra-day.yml` for `transfer-recordings`, `cron-daily.yml` for `expire-recordings`).
 
 ### 3. Live Stream Rate-Limit Ceilings & Batch Pacing Invariant
 

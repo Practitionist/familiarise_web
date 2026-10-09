@@ -211,10 +211,9 @@ export async function GET(
     const lateJoin = await lateJoinRecordingAccess(userId);
 
     // Get paid plan IDs via shared RecordingService method
-    const {
-      webinarPlanIds: paidWebinarPlanIds,
-      classPlanIds: paidClassPlanIds,
-    } = await RecordingService.getPaidPlanIds(userId);
+    const { webinarScope, classPlanIds: paidClassPlanIds } =
+      await RecordingService.getPaidPlanIds(userId);
+    const sharedWebinarPlanIds = webinarScope.sharedPlanIds;
 
     // #1166 ORG-4 — personal surface: participation arms pin the appointment
     // to organizationId: null (ADR 19; mirrors the events read). The
@@ -252,11 +251,11 @@ export async function GET(
                   participants: { some: liveParticipant(userId) },
                 },
               },
-              // Other instances from paid plans that have recordings
-              ...(paidWebinarPlanIds.length > 0
+              // Other runs of paid plans that share recordings across runs
+              ...(sharedWebinarPlanIds.length > 0
                 ? [
                     {
-                      webinarPlanId: { in: paidWebinarPlanIds },
+                      webinarPlanId: { in: sharedWebinarPlanIds },
                       appointment: {
                         occurrences: {
                           some: {

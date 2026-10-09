@@ -270,7 +270,6 @@ export function AppointmentDetailClient({
   const [activeRecording, setActiveRecording] = useState<{
     id: string;
     title: string;
-    url: string | null;
     status: string;
     durationInMinutes: number;
     recordedAt: Date;
@@ -1148,17 +1147,13 @@ export function AppointmentDetailClient({
                               {...recordingStatusBadge(rec.status)}
                               size="sm"
                             />
-                            {(rec.url ||
-                              rec.status === "AVAILABLE" ||
-                              rec.status === "READY") && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setActiveRecording(rec)}
-                              >
-                                Watch
-                              </Button>
-                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setActiveRecording(rec)}
+                            >
+                              Watch
+                            </Button>
                           </div>
                         </div>
                       ))}
@@ -1183,7 +1178,7 @@ export function AppointmentDetailClient({
                 title: activeRecording.title,
                 recordedAt: activeRecording.recordedAt,
                 durationInMinutes: activeRecording.durationInMinutes,
-                playbackUrl: activeRecording.url,
+                playbackUrl: null,
                 previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: vm.title,
               }

@@ -265,7 +265,6 @@ async function purgeSingleUserRecordingOnErasure(
   const expiredData = {
     status: "EXPIRED" as const,
     recordingUrl: "",
-    storageUrl: null,
     storagePath: null,
     previewClipUrl: null,
     previewClipStoragePath: null,
