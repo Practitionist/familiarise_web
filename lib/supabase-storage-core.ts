@@ -28,7 +28,6 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl) {
@@ -36,49 +35,35 @@ if (!supabaseUrl) {
     "NEXT_PUBLIC_SUPABASE_URL is not defined in environment variables.",
   );
 }
-if (!supabaseKey) {
-  throw new Error(
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY is not defined in environment variables.",
-  );
-}
 
-// Regular client for public operations
-let supabaseInstance: SupabaseClient;
-try {
-  supabaseInstance = createClient(supabaseUrl, supabaseKey);
-} catch (error) {
-  console.error("Error creating Supabase client:", error);
-  throw new Error(
-    `Failed to initialize Supabase client: ${error instanceof Error ? error.message : String(error)}`,
-  );
-}
-
-// Admin client for administrative operations (bucket creation, etc.)
+// Every server-side storage call runs on the service-role client.
 let supabaseAdminInstance: SupabaseClient | null = null;
 if (supabaseServiceKey) {
   try {
     supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceKey);
   } catch (error) {
     console.error("Error creating Supabase admin client:", error);
-    // Don't throw error here - some operations might work without admin privileges
   }
 } else {
   console.warn(
-    "⚠️  SUPABASE_SERVICE_ROLE_KEY not found in environment variables",
-  );
-  console.warn(
-    "   Automatic bucket creation will fail - you may need to create buckets manually",
-  );
-  console.warn(
-    "   To fix: Add SUPABASE_SERVICE_ROLE_KEY to your .env.local file",
+    "⚠️  SUPABASE_SERVICE_ROLE_KEY not found in environment variables — storage uploads, signed URLs and deletes will fail.",
   );
   console.warn(
     "   Get it from: Supabase Dashboard → Settings → API → service_role key (⚠️  Keep this secret!)",
   );
 }
 
-export const supabase: SupabaseClient = supabaseInstance;
 export const supabaseAdmin: SupabaseClient | null = supabaseAdminInstance;
+
+/** The service-role storage API; throws when the key is not configured. */
+export function adminStorage(): SupabaseClient["storage"] {
+  if (!supabaseAdmin) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is required for storage operations.",
+    );
+  }
+  return supabaseAdmin.storage;
+}
 
 /**
  * Centralized MIME type to file extension map.
@@ -222,8 +207,9 @@ export const ensureBucketExists = async (
     return true;
   }
   try {
+    const storage = adminStorage();
     // First check if bucket exists by trying to list files
-    const { data: _files, error: listError } = await supabase.storage
+    const { data: _files, error: listError } = await storage
       .from(bucketName)
       .list("", { limit: 1 });
 
@@ -241,17 +227,8 @@ export const ensureBucketExists = async (
     ) {
       console.log(`Creating bucket: ${bucketName}`);
 
-      // Use admin client for bucket creation if available
-      const clientToUse = supabaseAdmin || supabase;
-
-      if (!supabaseAdmin) {
-        console.warn(
-          "Service role key not available - trying with anon key (may fail)",
-        );
-      }
-
       const { data: _createData, error: createError } =
-        await clientToUse.storage.createBucket(bucketName, {
+        await storage.createBucket(bucketName, {
           public: options?.public ?? true,
           allowedMimeTypes: options?.allowedMimeTypes ?? [
             "application/pdf",
@@ -284,61 +261,46 @@ export const ensureBucketExists = async (
   }
 };
 
-async function verifyUnconfirmedPathsAbsent(
-  adminClient: SupabaseClient,
-  bucket: string,
-  unconfirmedPaths: string[],
-): Promise<boolean> {
-  for (const objectPath of unconfirmedPaths) {
-    const { data: exists, error } = await adminClient.storage
-      .from(bucket)
-      .exists(objectPath);
-    if (error || exists !== false) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Remove storage objects via service-role client and confirm idempotent absence on partial responses.
+/**
+ * Remove objects; true only when every path is gone afterwards. Storage's batch
+ * delete answers with just the rows it removed, so each path missing from that
+ * answer is re-checked and counts as removed only if it no longer exists.
+ */
 export const removeObjects = async (
   bucket: string,
   paths: string[],
 ): Promise<boolean> => {
   if (paths.length === 0) return true;
-  if (!supabaseAdmin) {
-    console.error("Supabase admin client unavailable for storage deletion");
-    return false;
-  }
   try {
-    const { data, error } = await supabaseAdmin.storage
-      .from(bucket)
-      .remove(paths);
-    if (error || !data) {
-      console.error("Error deleting from storage:", error);
+    const api = adminStorage().from(bucket);
+    const { data, error } = await api.remove(paths);
+    if (error) {
+      console.error(`Storage remove failed in ${bucket}:`, error.message);
       return false;
     }
-    if (data.length < paths.length) {
-      const removed = new Set(data.map((item) => item.name));
-      const unconfirmed = paths.filter((p) => !removed.has(p));
-      return verifyUnconfirmedPathsAbsent(supabaseAdmin, bucket, unconfirmed);
+    const removed = new Set((data ?? []).map((object) => object.name));
+    for (const path of paths) {
+      if (removed.has(path)) continue;
+      const { data: present } = await api.exists(path);
+      if (present) {
+        console.error(`Storage remove left ${bucket}/${path} in place`);
+        return false;
+      }
     }
     return true;
   } catch (error) {
-    console.error("Error deleting from storage:", error);
+    console.error(`Storage remove failed in ${bucket}:`, error);
     return false;
   }
 };
 
-// Remove a single object. Returns false on any error (never throws).
+/** Remove a single object. Never throws; false means the object may survive. */
 export const deleteAsset = (
   bucket: string,
   storagePath: string,
 ): Promise<boolean> => removeObjects(bucket, [storagePath]);
 
-/**
- * Delete document from Supabase storage.
- */
+/** Delete an appointment document; lives here so bare-Node cron processes can import it. */
 export const deleteAppointmentDocument = (
   storagePath: string,
 ): Promise<boolean> => deleteAsset("documents", storagePath);

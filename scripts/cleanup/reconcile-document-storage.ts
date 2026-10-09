@@ -63,7 +63,8 @@ function getSupabaseAdmin(): SupabaseClient | null {
 }
 
 /**
- * Recursively list all files in a bucket path
+ * Recursively list all files in a bucket path. Throws on any listing error so a
+ * partial listing is never treated as the bucket's full contents.
  */
 async function listAllFilesInBucket(
   supabase: SupabaseClient,
@@ -72,129 +73,83 @@ async function listAllFilesInBucket(
 ): Promise<{ path: string; name: string; createdAt?: Date }[]> {
   const allFiles: { path: string; name: string; createdAt?: Date }[] = [];
 
-  try {
-    const { data: items, error } = await supabase.storage
-      .from(bucket)
-      .list(path, { limit: 1000 });
+  const { data: items, error } = await supabase.storage
+    .from(bucket)
+    .list(path, { limit: 1000 });
+  if (error) {
+    console.error(`Error listing files in ${bucket}/${path}:`, error);
+    throw error;
+  }
 
-    if (error) {
-      console.error(`Error listing files in ${bucket}/${path}:`, error);
-      return allFiles;
+  for (const item of items ?? []) {
+    const itemPath = path ? `${path}/${item.name}` : item.name;
+
+    // If it's a folder (no metadata), recurse into it
+    if (!item.metadata) {
+      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
+      allFiles.push(...subFiles);
+    } else {
+      // It's a file
+      allFiles.push({
+        path: itemPath,
+        name: item.name,
+        createdAt: item.created_at ? new Date(item.created_at) : undefined,
+      });
     }
-
-    if (!items) return allFiles;
-
-    for (const item of items) {
-      const itemPath = path ? `${path}/${item.name}` : item.name;
-
-      // If it's a folder (no metadata), recurse into it
-      if (!item.metadata) {
-        const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
-        allFiles.push(...subFiles);
-      } else {
-        // It's a file
-        allFiles.push({
-          path: itemPath,
-          name: item.name,
-          createdAt: item.created_at ? new Date(item.created_at) : undefined,
-        });
-      }
-    }
-  } catch (error) {
-    console.error(`Error listing bucket ${bucket}:`, error);
   }
 
   return allFiles;
 }
 
-/**
- * Find orphaned appointment document files in the shared documents bucket.
- */
-async function findOrphanedDocuments(
+/** Objects in `bucket` that no DB row points at. */
+async function findOrphanedFiles(
   supabase: SupabaseClient,
+  bucket: string,
+  loadDbPaths: () => Promise<Set<string>>,
 ): Promise<OrphanedFile[]> {
-  const orphanedFiles: OrphanedFile[] = [];
+  console.log(`\n🔍 Checking ${bucket} bucket...`);
 
-  console.log("\n🔍 Checking documents bucket...");
+  const storageFiles = await listAllFilesInBucket(supabase, bucket);
+  console.log(`   Found ${storageFiles.length} files in storage`);
+  if (storageFiles.length === 0) return [];
 
-  const storageFiles = await listAllFilesInBucket(supabase, "documents");
-  const appointmentFiles = storageFiles.filter((file) =>
-    file.path.startsWith("appointments/"),
-  );
-  console.log(
-    `   Found ${appointmentFiles.length} appointment files in storage (${storageFiles.length} total objects)`,
-  );
+  const dbPaths = await loadDbPaths();
+  console.log(`   Found ${dbPaths.size} referenced paths in DB`);
 
-  if (appointmentFiles.length === 0) return orphanedFiles;
-
-  const dbDocuments = await prisma.appointmentDocument.findMany({
-    select: { storagePath: true },
-  });
-  const dbPaths = new Set(dbDocuments.map((d) => d.storagePath));
-  console.log(`   Found ${dbPaths.size} document records in DB`);
-
-  for (const file of appointmentFiles) {
-    if (!dbPaths.has(file.path)) {
-      orphanedFiles.push({
-        bucket: "documents",
-        path: file.path,
-        name: file.name,
-        createdAt: file.createdAt,
-      });
-    }
-  }
-
+  const orphanedFiles = storageFiles
+    .filter((file) => !dbPaths.has(file.path))
+    .map((file) => ({ bucket, ...file }));
   console.log(`   Found ${orphanedFiles.length} orphaned files`);
   return orphanedFiles;
 }
 
-/**
- * Find orphaned files in support-attachments bucket.
- */
-async function findOrphanedSupportAttachments(
-  supabase: SupabaseClient,
-): Promise<OrphanedFile[]> {
-  const orphanedFiles: OrphanedFile[] = [];
-
-  console.log("\n🔍 Checking support-attachments bucket...");
-
-  const storageFiles = await listAllFilesInBucket(
-    supabase,
-    "support-attachments",
+/** The documents bucket holds appointment documents, plan materials and verification documents. */
+async function documentsBucketPaths(): Promise<Set<string>> {
+  const [appointmentDocs, planMaterials, verificationDocs] = await Promise.all([
+    prisma.appointmentDocument.findMany({ select: { storagePath: true } }),
+    prisma.planMaterial.findMany({ select: { storagePath: true } }),
+    prisma.profileVerificationDocument.findMany({
+      select: { storagePath: true },
+    }),
+  ]);
+  return new Set(
+    [...appointmentDocs, ...planMaterials, ...verificationDocs].map(
+      (row) => row.storagePath,
+    ),
   );
-  console.log(
-    `   Found ${storageFiles.length} support attachment files in storage`,
-  );
+}
 
-  if (storageFiles.length === 0) return orphanedFiles;
-
-  const dbAttachments = await prisma.supportTicketAttachment.findMany({
+async function supportAttachmentPaths(): Promise<Set<string>> {
+  const rows = await prisma.supportTicketAttachment.findMany({
     select: { storagePath: true },
   });
-  const dbPaths = new Set(dbAttachments.map((a) => a.storagePath));
-  console.log(`   Found ${dbPaths.size} support attachment records in DB`);
-
-  for (const file of storageFiles) {
-    if (!dbPaths.has(file.path)) {
-      orphanedFiles.push({
-        bucket: "support-attachments",
-        path: file.path,
-        name: file.name,
-        createdAt: file.createdAt,
-      });
-    }
-  }
-
-  console.log(
-    `   Found ${orphanedFiles.length} orphaned support attachment files`,
-  );
-  return orphanedFiles;
+  return new Set(rows.map((row) => row.storagePath));
 }
 
 interface MissingFile {
   id: string;
   storagePath: string;
-  isStorageMissing: boolean;
+  isStorageMissing: boolean; // #694 — prior flag state, to skip redundant updates
 }
 
 /**
@@ -273,11 +228,13 @@ async function persistMissingState(
 }
 
 /**
- * Delete orphaned files older than grace period
+ * Delete orphaned files older than grace period. Counts only what Storage
+ * reports as removed; any shortfall is added to `errors` once per bucket.
  */
 async function deleteOrphanedFiles(
   supabase: SupabaseClient,
   orphanedFiles: OrphanedFile[],
+  errors: string[],
 ): Promise<number> {
   const graceDate = new Date(
     Date.now() - ORPHAN_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
@@ -314,15 +271,20 @@ async function deleteOrphanedFiles(
 
     // Delete in batches
     const batchSize = 100;
+    let notRemoved = 0;
     for (let i = 0; i < paths.length; i += batchSize) {
       const batch = paths.slice(i, i + batchSize);
-      const { error } = await supabase.storage.from(bucket).remove(batch);
+      const { data, error } = await supabase.storage.from(bucket).remove(batch);
 
       if (error) {
         console.error(`   Error deleting batch from ${bucket}:`, error);
-      } else {
-        deleted += batch.length;
       }
+      const removed = error ? 0 : (data?.length ?? 0);
+      deleted += removed;
+      notRemoved += batch.length - removed;
+    }
+    if (notRemoved > 0) {
+      errors.push(`${notRemoved} orphaned files in ${bucket} were not removed`);
     }
   }
 
@@ -370,8 +332,32 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
     };
   }
 
-  const healthy = await probeStorageHealth(supabase, errors);
-  if (!healthy) {
+  // Probe storage health before proceeding — if Supabase Storage is transiently
+  // unreachable (e.g. during migration), the reconciliation would falsely mark
+  // valid files as orphaned and delete them.
+  try {
+    const { error: probeError } = await supabase.storage
+      .from("documents")
+      .list("", { limit: 1 });
+    if (probeError) {
+      const msg = `Storage health probe failed: ${probeError.message}. Aborting to prevent false deletions.`;
+      console.warn(`⚠️ ${msg}`);
+      errors.push(msg);
+      return {
+        success: false,
+        orphanedFilesFound,
+        orphanedFilesDeleted,
+        missingFilesFound,
+        missingFilesMarked,
+        errors,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    console.log("   ✅ Storage health probe passed");
+  } catch (probeErr) {
+    const msg = `Storage unreachable: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}. Aborting to prevent false deletions.`;
+    console.warn(`⚠️ ${msg}`);
+    errors.push(msg);
     return {
       success: false,
       orphanedFilesFound,
@@ -384,36 +370,77 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
   }
 
   try {
-    const [orphanedDocuments, orphanedSupportAttachments] = await Promise.all([
-      findOrphanedDocuments(supabase),
-      findOrphanedSupportAttachments(supabase),
-    ]);
-    const orphanedFiles = [...orphanedDocuments, ...orphanedSupportAttachments];
-    orphanedFilesFound = orphanedFiles.length;
+    const orphanedDocuments = [
+      ...(await findOrphanedFiles(supabase, "documents", documentsBucketPaths)),
+      ...(await findOrphanedFiles(
+        supabase,
+        "support-attachments",
+        supportAttachmentPaths,
+      )),
+    ];
+    orphanedFilesFound = orphanedDocuments.length;
 
-    if (orphanedFiles.length > 0) {
-      orphanedFilesDeleted = await deleteOrphanedFiles(supabase, orphanedFiles);
+    if (orphanedDocuments.length > 0) {
+      console.log("\n📋 Orphaned files:");
+      orphanedDocuments.slice(0, 10).forEach((f) => {
+        console.log(
+          `   - ${f.bucket}/${f.path} (created: ${f.createdAt?.toISOString() || "unknown"})`,
+        );
+      });
+      if (orphanedDocuments.length > 10) {
+        console.log(`   ... and ${orphanedDocuments.length - 10} more`);
+      }
+
+      // Delete orphaned files older than grace period
+      orphanedFilesDeleted = await deleteOrphanedFiles(
+        supabase,
+        orphanedDocuments,
+        errors,
+      );
     }
 
+    // Find missing files (and rows whose file has returned)
     const { missingFiles: missingDocuments, recoveredIds } =
       await findMissingFiles(supabase);
     missingFilesFound = missingDocuments.length;
 
+    // #694 — persist the missing-storage flag instead of only logging it, so
+    // the UI/ops can surface broken downloads; clears the flag on recovery.
     missingFilesMarked = await persistMissingState(
       missingDocuments,
       recoveredIds,
     );
+
+    if (missingDocuments.length > 0) {
+      console.log("\n⚠️ Missing files (in DB but not in storage):");
+      missingDocuments.slice(0, 10).forEach((d) => {
+        console.log(`   - ${d.id}: ${d.storagePath}`);
+      });
+      if (missingDocuments.length > 10) {
+        console.log(`   ... and ${missingDocuments.length - 10} more`);
+      }
+
+      // Note: We don't automatically delete DB records for missing files
+      // This should be handled manually or through a separate cleanup process
+      console.log("\n   ℹ️ Missing file records should be reviewed manually");
+    }
   } catch (error) {
     const msg = `Failed to reconcile document storage: ${error}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
   }
 
+  // Summary
   console.log("\n📊 Document Storage Reconciliation Summary:");
   console.log(`   Orphaned files found: ${orphanedFilesFound}`);
   console.log(`   Orphaned files deleted: ${orphanedFilesDeleted}`);
   console.log(`   Missing files found: ${missingFilesFound}`);
   console.log(`   Missing files newly marked: ${missingFilesMarked}`);
+
+  if (missingFilesFound > 0) {
+    console.log("\n⚠️ ACTION REQUIRED:");
+    console.log("   Some DB records reference missing files!");
+  }
 
   return {
     success: errors.length === 0,
@@ -424,30 +451,6 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
     errors,
     timestamp: new Date().toISOString(),
   };
-}
-
-async function probeStorageHealth(
-  supabase: SupabaseClient,
-  errors: string[],
-): Promise<boolean> {
-  try {
-    const { error: probeError } = await supabase.storage
-      .from("documents")
-      .list("", { limit: 1 });
-    if (probeError) {
-      const msg = `Storage health probe failed: ${probeError.message}. Aborting to prevent false deletions.`;
-      console.warn(`⚠️ ${msg}`);
-      errors.push(msg);
-      return false;
-    }
-    console.log("   ✅ Storage health probe passed");
-    return true;
-  } catch (probeErr) {
-    const msg = `Storage unreachable: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}. Aborting to prevent false deletions.`;
-    console.warn(`⚠️ ${msg}`);
-    errors.push(msg);
-    return false;
-  }
 }
 
 /**

@@ -45,17 +45,15 @@ interface AssetUploadResult {
   error?: string;
 }
 
-// #1270 — the clients and the two storage primitives now live in a leaf module
-// with NO `server-only` marker, so a cron process can reach them. Re-exported
-// below so `@/lib/supabase` keeps exactly the surface it had.
+// Clients and primitives live in the marker-free leaf module so cron processes can import them.
 import {
-  supabase,
   supabaseAdmin,
+  adminStorage,
   ensureBucketExists,
   generateStorageFileName,
-  removeObjects,
   deleteAsset,
   deleteAppointmentDocument,
+  removeObjects,
   type BucketOptions,
 } from "./supabase-storage-core";
 
@@ -73,7 +71,7 @@ const listAssets = (
   bucket: string,
   folder: string,
   opts?: StorageSearchOptions,
-) => supabase.storage.from(bucket).list(folder, opts);
+) => adminStorage().from(bucket).list(folder, opts);
 
 // Public CDN URL for an object, optionally transformed.
 const getPublicAssetUrl = (
@@ -81,22 +79,17 @@ const getPublicAssetUrl = (
   path: string,
   transform?: TransformOptions,
 ): string => {
-  const { data } = supabase.storage
+  const { data } = adminStorage()
     .from(bucket)
     .getPublicUrl(path, transform ? { transform } : undefined);
   return data.publicUrl;
 };
 
-// Signed URL for a private object. Defaults to the admin client (RLS bypass).
-const getSignedAssetUrl = (
-  bucket: string,
-  path: string,
-  ttl = 3600,
-  client: SupabaseClient = supabaseAdmin ?? supabase,
-) => client.storage.from(bucket).createSignedUrl(path, ttl);
+// Signed URL for a private object.
+const getSignedAssetUrl = (bucket: string, path: string, ttl = 3600) =>
+  adminStorage().from(bucket).createSignedUrl(path, ttl);
 
-// Remove every object under a folder. Returns false on list/remove error,
-// true when the folder is already empty or fully cleared.
+// Remove every object under a folder; true only when the folder is empty afterwards.
 const deleteAssetFolder = async (
   bucket: string,
   folder: string,
@@ -107,18 +100,10 @@ const deleteAssetFolder = async (
       console.error("Error listing storage folder:", listError);
       return false;
     }
-    if (!files || files.length === 0) {
-      return true;
-    }
-    const filesToDelete = files.map((f) => `${folder}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
-      .from(bucket)
-      .remove(filesToDelete);
-    if (deleteError) {
-      console.error("Error deleting storage folder:", deleteError);
-      return false;
-    }
-    return true;
+    return removeObjects(
+      bucket,
+      (files ?? []).map((f) => `${folder}/${f.name}`),
+    );
   } catch (error) {
     console.error("Error deleting storage folder:", error);
     return false;
@@ -140,6 +125,7 @@ interface UploadAssetOptions {
   file: File;
   maxBytes: number;
   allowedMime: string[];
+  /** "private" stores the object without minting any URL; readers sign on demand. */
   access: "public" | "signed" | "private";
   signedTtl?: number;
   upsert?: boolean;
@@ -147,40 +133,7 @@ interface UploadAssetOptions {
   cacheControl?: string;
   ensureBucket?: BucketOptions;
   fileNameFor?: (mimeType: string) => string;
-  signWith?: SupabaseClient;
   errors?: UploadAssetErrors;
-}
-
-async function resolveUploadedAssetUrl(params: {
-  bucket: string;
-  storagePath: string;
-  access: "public" | "signed" | "private";
-  signedTtl: number;
-  signWith?: SupabaseClient;
-  signFailedError?: string;
-}): Promise<{ fileUrl?: string; error?: string }> {
-  const { bucket, storagePath, access, signedTtl, signWith, signFailedError } =
-    params;
-  if (access === "private") {
-    return {};
-  }
-  if (access === "public") {
-    return { fileUrl: getPublicAssetUrl(bucket, storagePath) };
-  }
-  const { data: signedUrlData, error: signedUrlError } =
-    await getSignedAssetUrl(bucket, storagePath, signedTtl, signWith);
-  if (signedUrlError || !signedUrlData?.signedUrl) {
-    console.error("Failed to create signed URL:", signedUrlError);
-    await deleteAsset(bucket, storagePath);
-    Sentry.captureException(
-      signedUrlError instanceof Error
-        ? signedUrlError
-        : new Error("Failed to create signed URL"),
-      { tags: { subsystem: "storage" } },
-    );
-    return { error: signFailedError ?? "Failed to generate document URL" };
-  }
-  return { fileUrl: signedUrlData.signedUrl };
 }
 
 /**
@@ -203,7 +156,6 @@ const uploadAsset = async (
     cacheControl = "3600",
     ensureBucket,
     fileNameFor = generateStorageFileName,
-    signWith,
     errors,
   } = opts;
 
@@ -250,18 +202,16 @@ const uploadAsset = async (
     if (replaceFolder) {
       try {
         const { data: existingFiles } = await listAssets(bucket, folder);
-        if (existingFiles && existingFiles.length > 0) {
-          const filesToDelete = existingFiles.map((f) => `${folder}/${f.name}`);
-          await supabase.storage.from(bucket).remove(filesToDelete);
-        }
+        await removeObjects(
+          bucket,
+          (existingFiles ?? []).map((f) => `${folder}/${f.name}`),
+        );
       } catch {
         // Ignore errors when cleaning up old files
       }
     }
 
-    const uploadClient =
-      access === "private" && supabaseAdmin ? supabaseAdmin : supabase;
-    const { error: uploadError } = await uploadClient.storage
+    const { error: uploadError } = await adminStorage()
       .from(bucket)
       .upload(storagePath, file, { cacheControl, upsert });
 
@@ -273,21 +223,34 @@ const uploadAsset = async (
       return { success: false, error: uploadError.message };
     }
 
-    const urlResolution = await resolveUploadedAssetUrl({
-      bucket,
-      storagePath,
-      access,
-      signedTtl,
-      signWith,
-      signFailedError: errors?.signFailed,
-    });
-    if (urlResolution.error) {
-      return { success: false, error: urlResolution.error };
+    let fileUrl: string | undefined;
+    if (access === "signed") {
+      const { data: signedUrlData, error: signedUrlError } =
+        await getSignedAssetUrl(bucket, storagePath, signedTtl);
+      if (signedUrlError || !signedUrlData?.signedUrl) {
+        console.error("Failed to create signed URL:", signedUrlError);
+        // Upload succeeded but signing failed — best-effort remove the now-orphaned
+        // object so a failed upload doesn't leave a dangling file. (#945 review)
+        await deleteAsset(bucket, storagePath);
+        Sentry.captureException(
+          signedUrlError instanceof Error
+            ? signedUrlError
+            : new Error("Failed to create signed URL"),
+          { tags: { subsystem: "storage" } },
+        );
+        return {
+          success: false,
+          error: errors?.signFailed ?? "Failed to generate document URL",
+        };
+      }
+      fileUrl = signedUrlData.signedUrl;
+    } else if (access === "public") {
+      fileUrl = getPublicAssetUrl(bucket, storagePath);
     }
 
     return {
       success: true,
-      fileUrl: urlResolution.fileUrl,
+      fileUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -322,7 +285,8 @@ const fetchImagesFromSupabaseStorage = async (
   transformOptions?: TransformOptions,
 ): Promise<SupabaseImageFile[]> => {
   try {
-    const { data: files, error: listError } = await supabase.storage
+    const storage = adminStorage();
+    const { data: files, error: listError } = await storage
       .from(bucket)
       .list(path, {
         limit: 10, // Consider making limit and offset parameters if more flexibility is needed
@@ -343,7 +307,7 @@ const fetchImagesFromSupabaseStorage = async (
     }
 
     return files.map((file) => {
-      const { data: originalUrlData } = supabase.storage
+      const { data: originalUrlData } = storage
         .from(bucket)
         .getPublicUrl(`${path}/${file.name}`);
 
@@ -351,7 +315,7 @@ const fetchImagesFromSupabaseStorage = async (
 
       // Apply transformations if options are provided
       if (transformOptions && Object.keys(transformOptions).length > 0) {
-        const { data: tUrlData } = supabase.storage
+        const { data: tUrlData } = storage
           .from(bucket)
           .getPublicUrl(`${path}/${file.name}`, {
             transform: transformOptions,
@@ -407,7 +371,6 @@ interface DocumentUploadOptions {
 /**
  * Upload document to Supabase storage with organized folder structure.
  * Structure: appointments/{appointmentId}/consultee-{consulteeId}/{filename}
- * Signed URL via admin client (falls back to anon).
  */
 const uploadAppointmentDocument = (
   options: DocumentUploadOptions,
@@ -458,7 +421,6 @@ interface ConsultantDocumentUploadOptions {
 /**
  * Upload plan material to Supabase storage.
  * Structure: plans/{planType}-plans/{planId}/{filename}
- * Signed URL via anon client only.
  */
 const uploadPlanMaterial = (
   options: PlanMaterialUploadOptions,
@@ -471,7 +433,6 @@ const uploadPlanMaterial = (
     maxBytes: 10 * 1024 * 1024,
     allowedMime: ALLOWED_DOCUMENT_TYPES,
     access: "signed",
-    signWith: supabase, // anon-only signing (preserve)
     ensureBucket: { public: false },
     errors: {
       type: documentTypeError,
@@ -490,7 +451,6 @@ const deletePlanMaterial = (storagePath: string): Promise<boolean> =>
 /**
  * Upload consultant document (response document) to Supabase storage.
  * Structure: appointments/{appointmentId}/consultant-{consultantId}/{filename}
- * Signed URL via anon client only.
  */
 const uploadConsultantDocument = (
   options: ConsultantDocumentUploadOptions,
@@ -503,7 +463,6 @@ const uploadConsultantDocument = (
     maxBytes: 10 * 1024 * 1024,
     allowedMime: ALLOWED_DOCUMENT_TYPES,
     access: "signed",
-    signWith: supabase, // anon-only signing (preserve)
     ensureBucket: { public: false },
     errors: {
       type: documentTypeError,
@@ -519,15 +478,20 @@ interface SupportAttachmentUploadOptions {
   file: File;
 }
 
+const SUPPORT_ATTACHMENTS_BUCKET = "support-attachments";
+// Signed URLs cannot be revoked early, so keep them just long enough for a click-through.
+const SUPPORT_ATTACHMENT_URL_TTL_SECONDS = 60;
+
 /**
- * Upload support ticket attachment to private Supabase storage.
+ * Upload a support ticket attachment to the private bucket; no URL is minted
+ * here because readers sign one per request.
  */
 const uploadSupportTicketAttachment = (
   options: SupportAttachmentUploadOptions,
 ): Promise<DocumentUploadResult> => {
   const { ticketId, file } = options;
   return uploadAsset({
-    bucket: "support-attachments",
+    bucket: SUPPORT_ATTACHMENTS_BUCKET,
     folder: `support-tickets/${ticketId}`,
     file,
     maxBytes: 10 * 1024 * 1024,
@@ -550,39 +514,33 @@ const uploadSupportTicketAttachment = (
   });
 };
 
-/**
- * Create short-lived signed download URL for a private support attachment.
- */
-const createSupportAttachmentSignedUrl = async (
+/** Short-lived signed URL for a support attachment, or null when signing fails. */
+const signSupportTicketAttachment = async (
   storagePath: string,
-  expiresInSeconds = 60,
 ): Promise<string | null> => {
-  if (!supabaseAdmin) {
+  try {
+    const { data, error } = await getSignedAssetUrl(
+      SUPPORT_ATTACHMENTS_BUCKET,
+      storagePath,
+      SUPPORT_ATTACHMENT_URL_TTL_SECONDS,
+    );
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
     return null;
   }
-  const { data, error } = await supabaseAdmin.storage
-    .from("support-attachments")
-    .createSignedUrl(storagePath, expiresInSeconds);
-  if (error || !data?.signedUrl) {
-    return null;
-  }
-  return data.signedUrl;
 };
 
 /**
  * Delete support ticket attachment from Supabase storage
  */
 const deleteSupportTicketAttachment = (storagePath: string): Promise<boolean> =>
-  deleteAsset("support-attachments", storagePath);
+  deleteAsset(SUPPORT_ATTACHMENTS_BUCKET, storagePath);
 
 /**
  * Get manual bucket creation instructions
  */
 const getManualBucketInstructions = (bucketName: string): string => {
-  const visibilityHint =
-    bucketName === "support-attachments" || bucketName === "documents"
-      ? 'Keep "Public bucket" disabled (private bucket)'
-      : 'Enable "Public bucket" option';
   return `
 To manually create the '${bucketName}' bucket:
 
@@ -591,7 +549,7 @@ To manually create the '${bucketName}' bucket:
 3. Navigate to Storage > Buckets
 4. Click "Create Bucket"
 5. Set bucket name: "${bucketName}"
-6. ${visibilityHint}
+6. Leave the "Public bucket" option off
 7. Click "Create bucket"
 
 OR
@@ -609,7 +567,10 @@ You can find this key in: Dashboard > Settings > API > service_role key
 // adding a type needs no bucket provisioning — only ownership verification,
 // which lives in app/api/plans/image/route.ts.
 export type TPlanImageType =
-  "webinar-plans" | "class-plans" | "consultation-plans" | "subscription-plans";
+  | "webinar-plans"
+  | "class-plans"
+  | "consultation-plans"
+  | "subscription-plans";
 
 interface IPlanImageUploadOptions {
   planType: TPlanImageType;
@@ -863,7 +824,7 @@ const uploadToSupabase = async (
     }
 
     // Upload file
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await adminStorage()
       .from(bucketName)
       .upload(storagePath, buffer, {
         contentType: mimeType,
@@ -919,33 +880,10 @@ const uploadToSupabase = async (
 /**
  * Generic delete from Supabase storage
  */
-const deleteFromSupabase = async (
+const deleteFromSupabase = (
   storagePath: string,
   bucketName: string = "documents",
-): Promise<boolean> => {
-  try {
-    const { error } = await supabase.storage
-      .from(bucketName)
-      .remove([storagePath]);
-
-    if (error) {
-      console.error("Error deleting from Supabase:", error);
-      Sentry.captureException(new Error(error.message), {
-        tags: { subsystem: "storage" },
-      });
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error in deleteFromSupabase:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "storage" } },
-    );
-    return false;
-  }
-};
+): Promise<boolean> => deleteAsset(bucketName, storagePath);
 
 // ============================================================================
 // Recording marketplace preview assets (#366)
@@ -1025,25 +963,12 @@ const uploadRecordingPreviewAsset = async (
   });
 };
 
-/** Best-effort removal of a recording's whole public-preview folder. */
-const deleteRecordingPreviewAssets = async (
-  recordingId: string,
-): Promise<void> => {
-  try {
-    await deleteAssetFolder(RECORDING_PREVIEWS_BUCKET, recordingId);
-  } catch (error) {
-    console.error("Failed to delete recording preview assets:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "storage" } },
-    );
-  }
-};
+/** Remove a recording's whole public-preview folder; false means objects may survive. */
+const deleteRecordingPreviewAssets = (recordingId: string): Promise<boolean> =>
+  deleteAssetFolder(RECORDING_PREVIEWS_BUCKET, recordingId);
 
-export default supabase;
 export {
   generateStorageFileName,
-  removeObjects,
   fetchImagesFromSupabaseStorage,
   uploadAppointmentDocument,
   deleteAppointmentDocument,
@@ -1054,7 +979,7 @@ export {
   uploadConsultantDocument,
   // Support ticket attachments
   uploadSupportTicketAttachment,
-  createSupportAttachmentSignedUrl,
+  signSupportTicketAttachment,
   deleteSupportTicketAttachment,
   // Plan images
   uploadPlanImage,

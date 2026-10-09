@@ -1,18 +1,19 @@
+/**
+ * GET /api/support-tickets/[ticketId]/attachments/[attachmentId]
+ * Redirects the ticket owner or staff/admin to a short-lived signed URL for the file.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
+import { UserRole } from "@prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import { createSupportAttachmentSignedUrl } from "@/lib/supabase";
-import { reportSentryError } from "@/lib/observability/report";
+import { signSupportTicketAttachment } from "@/lib/supabase";
 
 interface RouteParams {
   params: Promise<{ ticketId: string; attachmentId: string }>;
 }
 
-/**
- * GET /api/support-tickets/[ticketId]/attachments/[attachmentId]
- * Verify ticket ownership or operator permission and redirect to a short-lived signed storage URL.
- */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
@@ -21,7 +22,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
 
     const { ticketId, attachmentId } = await params;
-
     const [user, attachment] = await Promise.all([
       prisma.user.findUnique({
         where: { id: session.user.id },
@@ -44,44 +44,31 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const isOwner = attachment.ticket.userId === session.user.id;
-    const isStaffOrAdmin = Boolean(
-      user?.role && hasBackofficePermission(user.role, "tickets.manage"),
-    );
-
-    if (!isOwner && !isStaffOrAdmin) {
+    const isStaffOrAdmin =
+      user?.role === UserRole.STAFF || user?.role === UserRole.ADMIN;
+    if (attachment.ticket.userId !== session.user.id && !isStaffOrAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const signedUrl = await createSupportAttachmentSignedUrl(
-      attachment.storagePath,
-      60,
-    );
+    const signedUrl = await signSupportTicketAttachment(attachment.storagePath);
     if (!signedUrl) {
-      reportSentryError(
-        new Error("Failed to sign support attachment download URL"),
-        {
-          subsystem: "support",
-          op: "sign_support_attachment",
-          extra: { ticketId, attachmentId },
-        },
-      );
       return NextResponse.json(
-        { error: "Failed to generate attachment download URL" },
-        { status: 502 },
+        { error: "Attachment file is unavailable" },
+        { status: 404 },
       );
     }
 
     const response = NextResponse.redirect(signedUrl, 302);
     response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("X-Content-Type-Options", "nosniff");
     return response;
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "support",
-      op: "get_support_attachment_redirect",
-    });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     return NextResponse.json(
-      { error: "Failed to access attachment" },
+      { error: "Failed to open attachment" },
       { status: 500 },
     );
   }

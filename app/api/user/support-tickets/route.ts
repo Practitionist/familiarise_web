@@ -14,6 +14,7 @@ import { stripCallbackTags } from "@/lib/validation/phone";
 import { supportError } from "@/lib/api/support-http";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
 import type { z } from "zod";
+import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
 
 const TICKETS_ROUTE = "user.support-tickets";
 
@@ -173,7 +174,12 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(
+      tickets.map((ticket) => ({
+        ...ticket,
+        attachments: withSupportAttachmentHrefs(ticket.attachments),
+      })),
+    );
   } catch (cause) {
     return supportError({
       status: 500,
@@ -210,10 +216,7 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    const cleanDescription = stripCallbackTags(
-      validatedData.description,
-    ).trim();
-    if (!cleanDescription) {
+    if (!stripCallbackTags(validatedData.description).trim()) {
       return supportError({
         status: 400,
         code: "VALIDATION_FAILED",
@@ -221,10 +224,6 @@ export async function POST(req: NextRequest) {
         context: { route: TICKETS_ROUTE, action: "create" },
       });
     }
-    const description = validatedData.callbackPhone
-      ? `[Callback Requested: ${validatedData.callbackPhone}]\n\n${cleanDescription}`
-      : cleanDescription;
-
     if (isSessionScopedIssueType(validatedData.issueType)) {
       return NextResponse.json(
         {
@@ -280,7 +279,8 @@ export async function POST(req: NextRequest) {
     const ticket = await createSupportTicket({
       userId: session.user.id,
       title: validatedData.title,
-      description,
+      description: validatedData.description,
+      callbackPhone: validatedData.callbackPhone,
       priority: validatedData.priority || "MEDIUM",
       category: validatedData.category,
       issueType: validatedData.issueType,
