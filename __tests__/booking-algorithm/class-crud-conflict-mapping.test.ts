@@ -33,9 +33,9 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: (...args: unknown[]) => transaction(...args),
-    consultantProfile: { findFirst: jest.fn() },
+    consultantProfile: { findFirst: jest.fn(), findUnique: jest.fn() },
     classPlan: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    class: { findFirst: jest.fn() },
     payment: { count: jest.fn() },
   },
 }));
@@ -193,6 +193,7 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
   beforeEach(() => {
     base.classPlan.findUnique.mockResolvedValue({
       id: "plan-1",
+      consultantProfileId: "cp-1",
       consultantProfile: { id: "cp-1", userId: "user-1" },
       topics: [],
       classContents: [],
@@ -201,7 +202,7 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
       durationInMonths: 1,
       sessionDurationInHours: 1,
     });
-    base.class.findUnique.mockResolvedValue({
+    base.class.findFirst.mockResolvedValue({
       id: "class-1",
       schedulingPeriodStartsAt: new Date("2026-03-02T10:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-04-02T10:00:00.000Z"),
@@ -246,5 +247,50 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
     expect(response.status).toBe(409);
     const payload = await response.json();
     expect(payload.error).toMatch(/conflicts with another confirmed session/i);
+  });
+
+  it("loads the classId only within the edited plan and 404s otherwise", async () => {
+    base.class.findFirst.mockResolvedValue(null);
+
+    const response = await PATCH(request(patchBody));
+
+    expect(response.status).toBe(404);
+    expect(base.class.findFirst).toHaveBeenCalledWith({
+      where: { id: "class-1", classPlanId: "plan-1" },
+    });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("403s a move to a profile owned by another user without writing", async () => {
+    base.consultantProfile.findUnique.mockResolvedValue({ userId: "user-2" });
+
+    const response = await PATCH(
+      request({ ...patchBody, consultantProfileId: "cp-other" }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows a move to another profile the caller owns", async () => {
+    base.consultantProfile.findUnique.mockResolvedValue({ userId: "user-1" });
+
+    const response = await PATCH(
+      request({ ...patchBody, consultantProfileId: "cp-2" }),
+    );
+
+    expect(response.status).not.toBe(403);
+    expect(transaction).toHaveBeenCalled();
+  });
+
+  it("skips the ownership lookup when the profile is unchanged", async () => {
+    base.consultantProfile.findUnique.mockClear();
+
+    const response = await PATCH(
+      request({ ...patchBody, consultantProfileId: "cp-1" }),
+    );
+
+    expect(response.status).not.toBe(403);
+    expect(base.consultantProfile.findUnique).not.toHaveBeenCalled();
   });
 });
