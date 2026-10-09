@@ -51,7 +51,11 @@ describe("released seats lose document and recording listings", () => {
   it("liveParticipant admits live seats and excludes released ones", () => {
     const { status } = liveParticipant(USER);
     expect(status).toEqual({
-      in: expect.arrayContaining([ParticipantStatus.CONFIRMED]),
+      in: expect.arrayContaining([
+        ParticipantStatus.HELD,
+        ParticipantStatus.CONFIRMED,
+        ParticipantStatus.ATTENDED,
+      ]),
     });
     for (const released of [
       ParticipantStatus.REFUNDED,
