@@ -136,13 +136,9 @@ const priceSchema = z
   .min(0, "Price must be non-negative")
   .max(100000000, "Price cannot exceed ₹10,00,000");
 
-// #1134 P1-6 — recording is an explicit per-plan opt-in on all four types,
-// defaulting off with stream-only storage.
+// Recording is an explicit per-plan opt-in on all four types, defaulting off.
 const recordingShape = {
   recordingEnabled: z.boolean().default(false),
-  recordingStoragePolicy: z
-    .enum(["STREAM_ONLY", "PERMANENT"])
-    .default("STREAM_ONLY"),
 };
 
 export const PlanFaqSchema = z.object({
@@ -419,6 +415,7 @@ const BaseEventPlanSchema = z.object({
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   certificateProvided: z.boolean().default(false),
   ...recordingShape,
+  shareRecordingsWithAllAttendees: z.boolean().default(false),
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")

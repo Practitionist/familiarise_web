@@ -62,7 +62,6 @@ const recordingMetadataSelect = {
 const recordingParticipantSelect = {
   ...recordingMetadataSelect,
   recordingUrl: true,
-  storageUrl: true,
   storagePath: true,
   thumbnailUrl: true,
   previewClipUrl: true,
@@ -101,9 +100,32 @@ export interface ListRecordingsResult {
 
 import { buildUserAppointmentAccessOr } from "./list-documents";
 
-function buildWhere(
-  params: ListRecordingsParams,
-): Prisma.RecordingWhereInput {
+/** Own appointments, plus every run of a webinar plan that shares recordings with its attendees. */
+function recordingAppointmentAccessOr(
+  userId: string,
+): Prisma.AppointmentWhereInput[] {
+  return [
+    ...buildUserAppointmentAccessOr(userId),
+    {
+      webinar: {
+        webinarPlan: {
+          shareRecordingsWithAllAttendees: true,
+          webinars: {
+            some: {
+              appointment: {
+                participants: {
+                  some: { userId, status: { not: "CANCELLED" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  ];
+}
+
+function buildWhere(params: ListRecordingsParams): Prisma.RecordingWhereInput {
   const base: Prisma.RecordingWhereInput = {
     ...(params.status && { status: params.status }),
   };
@@ -114,7 +136,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: buildUserAppointmentAccessOr(params.userId),
+            OR: recordingAppointmentAccessOr(params.userId),
           },
         },
       },
@@ -152,7 +174,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: buildUserAppointmentAccessOr(params.scope.userId),
+            OR: recordingAppointmentAccessOr(params.scope.userId),
           },
         },
       },
