@@ -60,6 +60,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const response = NextResponse.redirect(signedUrl, 302);
     response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("X-Content-Type-Options", "nosniff");
     return response;
   } catch (error) {
     Sentry.captureException(

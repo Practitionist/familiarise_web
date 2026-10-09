@@ -92,6 +92,7 @@ describe("support attachment storage", () => {
       "https://storage.test/signed?token=x",
     );
     expect(mockedSign).toHaveBeenCalledWith("support-tickets/t1/file.png");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   it("refuses a caller who neither owns the ticket nor is staff", async () => {

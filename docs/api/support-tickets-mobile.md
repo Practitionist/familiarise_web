@@ -215,8 +215,11 @@ file: <binary file data>
     "originalName": "screenshot.png",
     "fileSize": 102400,
     "mimeType": "image/png",
-    "fileUrl": "/api/support-tickets/{ticketId}/attachments/{id}"
-  }
+    "fileUrl": "/api/support-tickets/{ticketId}/attachments/{id}",
+    "ticketId": "uuid-...",
+    "uploadedAt": "2025-12-31T12:00:00Z"
+  },
+  "message": "Attachment uploaded successfully"
 }
 ```
 

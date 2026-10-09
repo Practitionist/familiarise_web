@@ -63,7 +63,8 @@ function getSupabaseAdmin(): SupabaseClient | null {
 }
 
 /**
- * Recursively list all files in a bucket path
+ * Recursively list all files in a bucket path. Throws on any listing error so a
+ * partial listing is never treated as the bucket's full contents.
  */
 async function listAllFilesInBucket(
   supabase: SupabaseClient,
@@ -72,36 +73,29 @@ async function listAllFilesInBucket(
 ): Promise<{ path: string; name: string; createdAt?: Date }[]> {
   const allFiles: { path: string; name: string; createdAt?: Date }[] = [];
 
-  try {
-    const { data: items, error } = await supabase.storage
-      .from(bucket)
-      .list(path, { limit: 1000 });
+  const { data: items, error } = await supabase.storage
+    .from(bucket)
+    .list(path, { limit: 1000 });
+  if (error) {
+    console.error(`Error listing files in ${bucket}/${path}:`, error);
+    throw error;
+  }
 
-    if (error) {
-      console.error(`Error listing files in ${bucket}/${path}:`, error);
-      return allFiles;
+  for (const item of items ?? []) {
+    const itemPath = path ? `${path}/${item.name}` : item.name;
+
+    // If it's a folder (no metadata), recurse into it
+    if (!item.metadata) {
+      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
+      allFiles.push(...subFiles);
+    } else {
+      // It's a file
+      allFiles.push({
+        path: itemPath,
+        name: item.name,
+        createdAt: item.created_at ? new Date(item.created_at) : undefined,
+      });
     }
-
-    if (!items) return allFiles;
-
-    for (const item of items) {
-      const itemPath = path ? `${path}/${item.name}` : item.name;
-
-      // If it's a folder (no metadata), recurse into it
-      if (!item.metadata) {
-        const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
-        allFiles.push(...subFiles);
-      } else {
-        // It's a file
-        allFiles.push({
-          path: itemPath,
-          name: item.name,
-          createdAt: item.created_at ? new Date(item.created_at) : undefined,
-        });
-      }
-    }
-  } catch (error) {
-    console.error(`Error listing bucket ${bucket}:`, error);
   }
 
   return allFiles;
@@ -304,8 +298,10 @@ async function deleteOrphanedFiles(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileDocumentStorage(): Promise<DocumentReconciliationResult> {
-  return withCronLock("reconcile-document-storage", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcileDocumentStorageUnlocked(),
+  return withCronLock(
+    "reconcile-document-storage",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcileDocumentStorageUnlocked(),
   );
 }
 

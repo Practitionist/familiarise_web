@@ -69,7 +69,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       attachments: withSupportAttachmentHrefs(attachments),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error fetching attachments:", error);
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
@@ -180,6 +183,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         fileUrl: supportAttachmentHref(ticketId, attachmentId),
         storagePath: uploadResult.storagePath!,
       },
+      omit: { storagePath: true },
     });
 
     return NextResponse.json(
@@ -187,7 +191,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       { status: 201 },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error uploading attachment:", error);
     return NextResponse.json(
       { error: "Failed to upload attachment" },
@@ -266,7 +273,10 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ message: "Attachment deleted successfully" });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error deleting attachment:", error);
     return NextResponse.json(
       { error: "Failed to delete attachment" },

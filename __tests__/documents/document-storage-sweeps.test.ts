@@ -12,6 +12,7 @@ const bucketFiles: Record<string, string[]> = {
   ],
   "support-attachments": ["support-tickets/t1/orphan.png"],
 };
+const listFailures = new Set<string>();
 const remove = jest.fn(async (bucket: string, paths: string[]) => ({
   // Support-attachment removals are dropped, as an unconfirmed delete would be.
   data: bucket === "documents" ? paths.map((name) => ({ name })) : [],
@@ -22,16 +23,19 @@ jest.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     storage: {
       from: (bucket: string) => ({
-        list: async (path: string) => ({
-          data: path
-            ? []
-            : (bucketFiles[bucket] ?? []).map((name) => ({
-                name,
-                metadata: {},
-                created_at: OLD,
-              })),
-          error: null,
-        }),
+        list: async (path: string) =>
+          listFailures.has(`${bucket}/${path}`)
+            ? { data: null, error: new Error("listing failed") }
+            : {
+                data: path
+                  ? []
+                  : (bucketFiles[bucket] ?? []).map((name) => ({
+                      name,
+                      metadata: {},
+                      created_at: OLD,
+                    })),
+                error: null,
+              },
         remove: (paths: string[]) => remove(bucket, paths),
       }),
     },
@@ -74,6 +78,7 @@ import { purgeExpiredDeletedDocuments } from "../../lib/documents/document-purge
 
 beforeEach(() => {
   jest.clearAllMocks();
+  listFailures.clear();
   jest.spyOn(console, "log").mockImplementation(() => undefined);
   jest.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -104,6 +109,19 @@ describe("reconcile-document-storage orphan sweep", () => {
     expect(result.errors).toEqual([
       "1 orphaned files in support-attachments were not removed",
     ]);
+  });
+});
+
+describe("reconcile-document-storage listing failure", () => {
+  it("aborts without deleting or flagging anything when a bucket listing fails", async () => {
+    listFailures.add("support-attachments/");
+
+    const result = await reconcileDocumentStorage();
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.errors).toHaveLength(1);
   });
 });
 
