@@ -275,18 +275,23 @@ export function reminderSpec(
   return {
     emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
     category: "appointments",
-    entityRef: appointmentReminderEntityRef(
-      args.occurrenceId ?? args.appointmentId,
-      args.windowLabel,
-    ),
+    entityRef: args.occurrenceId
+      ? appointmentReminderEntityRef(args.occurrenceId, args.windowLabel)
+      : legacyAppointmentReminderEntityRef(
+          args.appointmentId,
+          args.windowLabel,
+        ),
     subject: () => `Reminder: your ${type} is coming up`,
     render: (r) => {
       const startsAtText = whenText(args.startsAt, r.zone);
       if (isHostOrCollaborator(r)) {
-        return React.createElement(EmailLayout, {
-          preview: `Upcoming ${type} to host: ${args.planTitle} (${startsAtText})`,
-          unsubscribeUrl: r.unsubscribeUrl,
-          children: React.createElement(
+        return React.createElement(
+          EmailLayout,
+          {
+            preview: `Upcoming ${type} to host: ${args.planTitle} (${startsAtText})`,
+            unsubscribeUrl: r.unsubscribeUrl,
+          },
+          React.createElement(
             React.Fragment,
             null,
             React.createElement(
@@ -324,7 +329,7 @@ export function reminderSpec(
               ),
             ),
           ),
-        });
+        );
       }
       return React.createElement(AppointmentReminderEmail, {
         recipientName: greet(r),

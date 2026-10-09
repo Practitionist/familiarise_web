@@ -76,18 +76,298 @@ const CLASS_ROLES = [
 
 const PRESENTER_ROLES = new Set(["CO_HOST", "CO_INSTRUCTOR"]);
 
+type HostedCollaborator = HostedPlanEntry["collaborators"][number];
+
+interface HostedCollaboratorItemProps {
+  collab: HostedCollaborator;
+  planId: string | undefined;
+  isEditing: boolean;
+  isBusy: boolean;
+  editRole: string;
+  editSharePct: number;
+  maxEditShare: number;
+  otherSharesPct: number;
+  otherHasPresenter: boolean;
+  roleOptions: typeof WEBINAR_ROLES;
+  onStartEdit: (collab: HostedCollaborator) => void;
+  onCancelEdit: () => void;
+  onRoleChange: (value: string) => void;
+  onShareChange: (value: number) => void;
+  onSaveEdit: (collabId: string) => void;
+  onRemove: (collabId: string) => void;
+}
+
+function HostedCollaboratorItem({
+  collab,
+  planId,
+  isEditing,
+  isBusy,
+  editRole,
+  editSharePct,
+  maxEditShare,
+  otherSharesPct,
+  otherHasPresenter,
+  roleOptions,
+  onStartEdit,
+  onCancelEdit,
+  onRoleChange,
+  onShareChange,
+  onSaveEdit,
+  onRemove,
+}: Readonly<HostedCollaboratorItemProps>) {
+  const canEdit = Boolean(planId && collab.status === "PENDING" && !isEditing);
+  const roleFieldId = `hosted-edit-role-${collab.id}`;
+  const shareFieldId = `hosted-edit-share-${collab.id}`;
+  const isSaveDisabled =
+    isBusy ||
+    !editRole ||
+    maxEditShare < 1 ||
+    editSharePct < 1 ||
+    editSharePct > maxEditShare;
+
+  return (
+    <div className="rounded-xl border border-zinc-100 bg-white px-2.5 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Avatar className="h-8 w-8 ring-1 ring-zinc-100">
+            <AvatarImage
+              src={collab.consultantProfile.user.image ?? undefined}
+            />
+            <AvatarFallback className="bg-zinc-100 text-[11px] text-zinc-600">
+              {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-zinc-900">
+              {collab.consultantProfile.user.name ?? "Unknown"}
+            </p>
+            {!isEditing && (
+              <p className="truncate text-xs text-zinc-500">
+                {formatRole(collab.role)} · {collab.revenueShareBps / 100}%
+                share
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <StatusBadge
+            size="sm"
+            {...COLLABORATOR_STATUS_BADGE[collab.status]}
+          />
+          {canEdit && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Edit collaborator"
+              disabled={isBusy}
+              className="h-7 w-7 text-zinc-400 hover:text-zinc-700"
+              onClick={() => onStartEdit(collab)}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {planId && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Remove collaborator"
+                  disabled={isBusy}
+                  className="h-7 w-7 text-zinc-400 hover:text-red-600"
+                >
+                  {isBusy && !isEditing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove collaborator?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Removing{" "}
+                    {collab.consultantProfile.user.name ?? "this collaborator"}{" "}
+                    revokes their live call and channel access and releases
+                    their {collab.revenueShareBps / 100}% share on future sales.
+                    Already settled earnings remain intact.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isBusy}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => onRemove(collab.id)}
+                    disabled={isBusy}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Remove
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
+      </div>
+
+      {isEditing && (
+        <div className="mt-2.5 space-y-2 border-t border-zinc-100 pt-2.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[140px] flex-1">
+              <label
+                htmlFor={roleFieldId}
+                className="text-[11px] font-medium text-zinc-600"
+              >
+                Role
+              </label>
+              <Select value={editRole} onValueChange={onRoleChange}>
+                <SelectTrigger id={roleFieldId} className="mt-1 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {roleOptions.map((opt) => (
+                    <SelectItem
+                      key={opt.value}
+                      value={opt.value}
+                      disabled={opt.isPresenter && otherHasPresenter}
+                    >
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-24">
+              <label
+                htmlFor={shareFieldId}
+                className="text-[11px] font-medium text-zinc-600"
+              >
+                Share (%)
+              </label>
+              <Input
+                id={shareFieldId}
+                type="number"
+                min={1}
+                max={maxEditShare}
+                value={editSharePct}
+                onChange={(e) => onShareChange(Number(e.target.value))}
+                className="mt-1 h-8 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 px-2.5"
+                disabled={isSaveDisabled}
+                onClick={() => onSaveEdit(collab.id)}
+              >
+                {isBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2"
+                disabled={isBusy}
+                onClick={onCancelEdit}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {maxEditShare < 1 && (
+            <p className="text-xs text-amber-600">
+              Other active collaborators already hold {otherSharesPct}% of
+              revenue (maximum 90% combined). Reduce another collaborator&apos;s
+              share before increasing this invitation.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HostedPlanScheduleSection({
+  plan,
+  eventsExpanded,
+  hasExpandableDetails,
+  onToggleExpanded,
+}: Readonly<{
+  plan: HostedPlanEntry;
+  eventsExpanded: boolean;
+  hasExpandableDetails: boolean;
+  onToggleExpanded: () => void;
+}>) {
+  let summaryNode = (
+    <p className="text-xs italic text-zinc-400">No schedule data available</p>
+  );
+  if (plan.planType === "webinar" && plan.webinarPlan) {
+    summaryNode = <WebinarScheduleSummary plan={plan.webinarPlan} />;
+  } else if (plan.planType === "class" && plan.classPlan) {
+    summaryNode = <ClassScheduleSummary plan={plan.classPlan} />;
+  }
+
+  let detailsNode: React.ReactNode = null;
+  if (eventsExpanded) {
+    if (plan.planType === "webinar" && plan.webinarPlan) {
+      detailsNode = <WebinarEventList plan={plan.webinarPlan} />;
+    } else if (plan.planType === "class" && plan.classPlan) {
+      detailsNode = <ClassEventList plan={plan.classPlan} />;
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-zinc-100 bg-zinc-50/50 px-3 py-3">
+      <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+        Schedule
+      </p>
+      {summaryNode}
+
+      {hasExpandableDetails && (
+        <div className="mt-2.5 border-t border-zinc-100 pt-2.5">
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="flex items-center gap-1 text-[11px] text-zinc-500 transition-colors hover:text-zinc-800"
+          >
+            {eventsExpanded ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+            {eventsExpanded ? "Hide" : "Show"} all events
+          </button>
+          {detailsNode && <div className="mt-2">{detailsNode}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function HostedPlanCard({
   plan,
   hostUser,
   hostLabel = "You",
   onRefresh,
-}: {
+}: Readonly<{
   plan: HostedPlanEntry;
   hostUser?: { name: string | null; image: string | null };
   /** Whose share the host segment is — the viewer's unless an org reads it. */
   hostLabel?: string;
   onRefresh?: () => void;
-}) {
+}>) {
   const [eventsExpanded, setEventsExpanded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRole, setEditRole] = useState("");
@@ -117,13 +397,14 @@ export function HostedPlanCard({
     (c) => c.status === "ACCEPTED",
   );
 
-  const hasExpandableDetails =
+  const hasExpandableDetails = Boolean(
     (plan.planType === "webinar" &&
       plan.webinarPlan &&
       plan.webinarPlan.webinars.length > 1) ||
     (plan.planType === "class" &&
       plan.classPlan &&
-      plan.classPlan.classes.length > 1);
+      plan.classPlan.classes.length > 1),
+  );
 
   const planTypeLabel = plan.planType === "webinar" ? "Webinar" : "Class";
 
@@ -258,14 +539,15 @@ export function HostedPlanCard({
           </p>
           <div className="space-y-1.5">
             {[...acceptedCollabs, ...pendingCollabs].map((collab) => {
-              const isEditing = editingId === collab.id;
-              const isBusy = busyId === collab.id;
-              const otherSharesPct =
-                activeCollabs
-                  .filter((c) => c.id !== collab.id)
-                  .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-              const maxAllowedShare = Math.max(
-                1,
+              const otherSharesPct = Number(
+                (
+                  activeCollabs
+                    .filter((c) => c.id !== collab.id)
+                    .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100
+                ).toFixed(2),
+              );
+              const maxEditShare = Math.max(
+                0,
                 Number((90 - otherSharesPct).toFixed(2)),
               );
               const otherHasPresenter = activeCollabs.some(
@@ -273,225 +555,41 @@ export function HostedPlanCard({
               );
 
               return (
-                <div
+                <HostedCollaboratorItem
                   key={collab.id}
-                  className="rounded-xl border border-zinc-100 bg-white px-2.5 py-2"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <Avatar className="h-8 w-8 ring-1 ring-zinc-100">
-                        <AvatarImage
-                          src={collab.consultantProfile.user.image ?? undefined}
-                        />
-                        <AvatarFallback className="bg-zinc-100 text-[11px] text-zinc-600">
-                          {(collab.consultantProfile.user.name ?? "?").charAt(
-                            0,
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-zinc-900">
-                          {collab.consultantProfile.user.name ?? "Unknown"}
-                        </p>
-                        {!isEditing && (
-                          <p className="truncate text-xs text-zinc-500">
-                            {formatRole(collab.role)} ·{" "}
-                            {collab.revenueShareBps / 100}% share
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-1">
-                      <StatusBadge
-                        size="sm"
-                        {...COLLABORATOR_STATUS_BADGE[collab.status]}
-                      />
-                      {planId && collab.status === "PENDING" && !isEditing && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Edit collaborator"
-                          disabled={isBusy}
-                          className="h-7 w-7 text-zinc-400 hover:text-zinc-700"
-                          onClick={() => {
-                            setEditingId(collab.id);
-                            setEditRole(collab.role);
-                            setEditSharePct(collab.revenueShareBps / 100);
-                          }}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {planId && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Remove collaborator"
-                              disabled={isBusy}
-                              className="h-7 w-7 text-zinc-400 hover:text-red-600"
-                            >
-                              {isBusy && !isEditing ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Remove collaborator?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Removing{" "}
-                                {collab.consultantProfile.user.name ??
-                                  "this collaborator"}{" "}
-                                revokes their live call and channel access and
-                                releases their {collab.revenueShareBps / 100}%
-                                share on future sales. Already settled earnings
-                                remain intact.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel disabled={isBusy}>
-                                Cancel
-                              </AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => handleRemove(collab.id)}
-                                disabled={isBusy}
-                                className="bg-red-600 text-white hover:bg-red-700"
-                              >
-                                Remove
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      )}
-                    </div>
-                  </div>
-
-                  {isEditing && (
-                    <div className="mt-2.5 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-2.5">
-                      <div className="min-w-[140px] flex-1">
-                        <label className="text-[11px] font-medium text-zinc-600">
-                          Role
-                        </label>
-                        <Select value={editRole} onValueChange={setEditRole}>
-                          <SelectTrigger className="mt-1 h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {roleOptions.map((opt) => (
-                              <SelectItem
-                                key={opt.value}
-                                value={opt.value}
-                                disabled={opt.isPresenter && otherHasPresenter}
-                              >
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="w-24">
-                        <label className="text-[11px] font-medium text-zinc-600">
-                          Share (%)
-                        </label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={maxAllowedShare}
-                          value={editSharePct}
-                          onChange={(e) =>
-                            setEditSharePct(Number(e.target.value))
-                          }
-                          className="mt-1 h-8 text-xs"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 px-2.5"
-                          disabled={
-                            isBusy ||
-                            !editRole ||
-                            editSharePct < 1 ||
-                            editSharePct > maxAllowedShare
-                          }
-                          onClick={() => handleSaveEdit(collab.id)}
-                        >
-                          {isBusy ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Check className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 px-2"
-                          disabled={isBusy}
-                          onClick={() => setEditingId(null)}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  collab={collab}
+                  planId={planId}
+                  isEditing={editingId === collab.id}
+                  isBusy={busyId === collab.id}
+                  editRole={editRole}
+                  editSharePct={editSharePct}
+                  maxEditShare={maxEditShare}
+                  otherSharesPct={otherSharesPct}
+                  otherHasPresenter={otherHasPresenter}
+                  roleOptions={roleOptions}
+                  onStartEdit={(c) => {
+                    setEditingId(c.id);
+                    setEditRole(c.role);
+                    setEditSharePct(c.revenueShareBps / 100);
+                  }}
+                  onCancelEdit={() => setEditingId(null)}
+                  onRoleChange={setEditRole}
+                  onShareChange={setEditSharePct}
+                  onSaveEdit={handleSaveEdit}
+                  onRemove={handleRemove}
+                />
               );
             })}
           </div>
         </div>
 
         {/* Schedule summary */}
-        <div className="mt-4 rounded-xl border border-zinc-100 bg-zinc-50/50 px-3 py-3">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-            Schedule
-          </p>
-          {plan.planType === "webinar" && plan.webinarPlan ? (
-            <WebinarScheduleSummary plan={plan.webinarPlan} />
-          ) : plan.planType === "class" && plan.classPlan ? (
-            <ClassScheduleSummary plan={plan.classPlan} />
-          ) : (
-            <p className="text-xs italic text-zinc-400">
-              No schedule data available
-            </p>
-          )}
-
-          {hasExpandableDetails && (
-            <div className="mt-2.5 border-t border-zinc-100 pt-2.5">
-              <button
-                type="button"
-                onClick={() => setEventsExpanded((prev) => !prev)}
-                className="flex items-center gap-1 text-[11px] text-zinc-500 transition-colors hover:text-zinc-800"
-              >
-                {eventsExpanded ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-                {eventsExpanded ? "Hide" : "Show"} all events
-              </button>
-              {eventsExpanded && (
-                <div className="mt-2">
-                  {plan.planType === "webinar" && plan.webinarPlan ? (
-                    <WebinarEventList plan={plan.webinarPlan} />
-                  ) : plan.planType === "class" && plan.classPlan ? (
-                    <ClassEventList plan={plan.classPlan} />
-                  ) : null}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <HostedPlanScheduleSection
+          plan={plan}
+          eventsExpanded={eventsExpanded}
+          hasExpandableDetails={hasExpandableDetails}
+          onToggleExpanded={() => setEventsExpanded((prev) => !prev)}
+        />
       </div>
     </Card>
   );

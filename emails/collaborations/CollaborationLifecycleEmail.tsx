@@ -23,12 +23,14 @@ export interface CollaborationLifecycleEmailProps {
   dashboardUrl: string;
 }
 
-export function collaborationLifecycleSubject(args: {
-  event: CollaborationLifecycleEvent;
-  planTitle: string;
-  collaboratorName?: string;
-  roleLabel: string;
-}): string {
+export function collaborationLifecycleSubject(
+  args: Readonly<{
+    event: CollaborationLifecycleEvent;
+    planTitle: string;
+    collaboratorName?: string;
+    roleLabel: string;
+  }>,
+): string {
   switch (args.event) {
     case "INVITED":
       return `Invitation to collaborate as ${args.roleLabel}: ${args.planTitle}`;
@@ -55,7 +57,7 @@ export default function CollaborationLifecycleEmail({
   roleLabel,
   revenueSharePct,
   dashboardUrl,
-}: CollaborationLifecycleEmailProps) {
+}: Readonly<CollaborationLifecycleEmailProps>) {
   const subject = collaborationLifecycleSubject({
     event,
     planTitle,

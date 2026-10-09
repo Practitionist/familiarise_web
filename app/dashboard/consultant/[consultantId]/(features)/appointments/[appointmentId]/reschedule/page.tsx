@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
-import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
+import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
@@ -27,23 +27,15 @@ type PageProps = {
 // React.cache so generateMetadata() and the page body share one query per request.
 const loadDetail = cache(readAppointmentDetail);
 
-/**
- * Names the booking, not the task. A consultant moving sessions for several
- * clients has identical "Reschedule" tabs otherwise (#1064).
- */
 export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consultantId, appointmentId } = await params;
   const detail = await loadDetail(appointmentId).catch(() => null);
-  // Metadata runs BEFORE the body's guards and is not covered by them, so the
-  // same ownership check runs here — otherwise the tab title named the
-  // offering and the client for any appointment id a signed-in consultant
-  // cared to try.
   const owned =
     Boolean(consultantId) &&
-    !!detail &&
-    resolvePlanOwnerIds(detail.appointment).includes(consultantId);
+    detail !== null &&
+    resolvePrimaryPlanOwnerIds(detail.appointment).includes(consultantId);
   const resolved = owned && detail ? buildRescheduleSubject(detail) : null;
   if (!resolved) return { title: "Reschedule — Familiarise" };
 
@@ -55,18 +47,15 @@ export default async function ConsultantReschedulePage({
   params,
 }: Readonly<PageProps>) {
   const { consultantId, appointmentId } = await params;
-  // Enforced here rather than in the layout: the layout is a client component,
-  // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultant", consultantId);
 
   const detail = await loadDetail(appointmentId);
   if (!detail) notFound();
 
-  // Only the primary plan owner (never a collaborator) may reschedule.
   const { appointment } = detail;
   if (
     !consultantId ||
-    !resolvePlanOwnerIds(appointment).includes(consultantId)
+    !resolvePrimaryPlanOwnerIds(appointment).includes(consultantId)
   ) {
     notFound();
   }

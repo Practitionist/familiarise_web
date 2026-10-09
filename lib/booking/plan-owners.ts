@@ -38,7 +38,7 @@ export interface AppointmentPlanOwnership {
   trial?: { subscriptionPlan?: PlanOwner | null } | null;
 }
 
-export function resolvePlanOwnerIds(
+export function resolvePrimaryPlanOwnerIds(
   appointment: AppointmentPlanOwnership,
 ): string[] {
   return [
@@ -47,6 +47,26 @@ export function resolvePlanOwnerIds(
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
     appointment.class?.classPlan?.consultantProfile?.id,
     appointment.trial?.subscriptionPlan?.consultantProfile?.id,
+  ].filter((id): id is string => Boolean(id));
+}
+
+function isAcceptedCollaborator(collaborator: PlanCollaboratorEntry): boolean {
+  return (
+    collaborator.status === undefined || collaborator.status === "ACCEPTED"
+  );
+}
+
+export function resolvePlanOwnerIds(
+  appointment: AppointmentPlanOwnership,
+): string[] {
+  return [
+    ...resolvePrimaryPlanOwnerIds(appointment),
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? [])
+      .filter(isAcceptedCollaborator)
+      .map((collaborator) => collaborator.consultantProfile?.id),
+    ...(appointment.class?.classPlan?.collaborators ?? [])
+      .filter(isAcceptedCollaborator)
+      .map((collaborator) => collaborator.consultantProfile?.id),
   ].filter((id): id is string => Boolean(id));
 }
 
@@ -63,7 +83,7 @@ export function resolvePlanPresenterIds(
   appointment: AppointmentPlanOwnership,
 ): string[] {
   return [
-    ...resolvePlanOwnerIds(appointment),
+    ...resolvePrimaryPlanOwnerIds(appointment),
     ...(appointment.webinar?.webinarPlan?.collaborators ?? [])
       .filter(isPresenterCollaborator)
       .map((collaborator) => collaborator.consultantProfile?.id),

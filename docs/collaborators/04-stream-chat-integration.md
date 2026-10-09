@@ -4,13 +4,13 @@ Stream Chat connects collaborators across three distinct surfaces: private plan-
 
 ## Channel Taxonomy & Role Assignment
 
-| Channel Purpose               | Channel ID Pattern               | Channel Type | Members                                                     | Moderator Role (`channel_moderator`)                  |
-| ----------------------------- | -------------------------------- | ------------ | ----------------------------------------------------------- | ----------------------------------------------------- |
-| **Collaborator Coordination** | `collab-webinar-{webinarPlanId}` | `messaging`  | Primary Host + all `ACCEPTED` collaborators                 | Primary Host                                          |
-| **Collaborator Coordination** | `collab-class-{classPlanId}`     | `messaging`  | Primary Host + all `ACCEPTED` collaborators                 | Primary Host                                          |
-| **Webinar Session Channel**   | `webinar-{webinarId}`            | `team`       | Primary Host + `ACCEPTED` collaborators + enrolled learners | Primary Host + accepted `PRESENTER` (`CO_HOST`)       |
-| **Class Session Channel**     | `class-{classId}`                | `team`       | Primary Host + `ACCEPTED` collaborators + enrolled learners | Primary Host + accepted `PRESENTER` (`CO_INSTRUCTOR`) |
-| **1:1 Student DM**            | `dm-{sortedUserIds}`             | `messaging`  | Enrolled learner + Primary Host **or** accepted `PRESENTER` | Channel creator                                       |
+| Channel Purpose               | Channel ID Pattern               | Channel Type | Members                                                     | Moderator Role (`channel_moderator`)              |
+| ----------------------------- | -------------------------------- | ------------ | ----------------------------------------------------------- | ------------------------------------------------- |
+| **Collaborator Coordination** | `collab-webinar-{webinarPlanId}` | `messaging`  | Primary Host + all `ACCEPTED` collaborators                 | Primary Host                                      |
+| **Collaborator Coordination** | `collab-class-{classPlanId}`     | `messaging`  | Primary Host + all `ACCEPTED` collaborators                 | Primary Host                                      |
+| **Webinar Session Channel**   | `webinar-{webinarId}`            | `team`       | Primary Host + `ACCEPTED` collaborators + enrolled learners | Primary Host + accepted `CO_HOST` and `MODERATOR` |
+| **Class Session Channel**     | `class-{classId}`                | `team`       | Primary Host + `ACCEPTED` collaborators + enrolled learners | Primary Host + accepted `CO_INSTRUCTOR`           |
+| **1:1 Student DM**            | `dm-{sortedUserIds}`             | `messaging`  | Enrolled learner + Primary Host **or** accepted `PRESENTER` | Channel creator                                   |
 
 ---
 
@@ -28,7 +28,7 @@ sequenceDiagram
     CHAT->>STREAM: Diff expected DB members vs current channel members
     CHAT->>STREAM: Add new ACCEPTED members / remove stale members
     INV->>EV: Sync live event channels ("webinar-*" / "class-*")
-    EV->>STREAM: Add collaborator (role: channel_moderator if PRESENTER, else channel_member)
+    EV->>STREAM: Add collaborator (role: channel_moderator if CO_HOST / CO_INSTRUCTOR / MODERATOR, else channel_member)
 ```
 
 ### 1. Plan Coordination Channel (`createCollaboratorChannel`)
@@ -41,8 +41,8 @@ sequenceDiagram
 ### 2. Event Session Channels & `channel_moderator` Rights
 
 - When an event channel (`webinar-{id}` or `class-{id}`) is created or synced, all `ACCEPTED` collaborators on the parent plan are automatically added as channel members.
-- Accepted collaborators with `tier === "PRESENTER"` (`CO_HOST` / `CO_INSTRUCTOR`) are granted Stream's `channel_moderator` role alongside the Primary Host so they can pin announcements, mute disruptive attendees, and delete spam messages in real time.
-- Accepted `CREW` collaborators (`MODERATOR`, `TEACHING_ASSISTANT`, `GUEST_SPEAKER`, `GUEST_LECTURER`, `TECHNICAL_SUPPORT`, `CONTENT_CREATOR`) join as regular members.
+- Accepted collaborators with `CO_HOST`, `CO_INSTRUCTOR`, or `MODERATOR` roles receive Stream's `channel_moderator` role alongside the Primary Host so they can pin announcements, mute disruptive attendees, and delete spam messages in real time.
+- Remaining accepted `CREW` collaborators (`TEACHING_ASSISTANT`, `GUEST_SPEAKER`, `GUEST_LECTURER`, `TECHNICAL_SUPPORT`, `CONTENT_CREATOR`) join as regular members.
 
 ### 3. 1:1 Student DM Eligibility
 

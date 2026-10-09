@@ -17,6 +17,7 @@ export interface ExpireStaleCollaboratorInvitesResult {
 export async function expireStaleCollaboratorInvites(
   limit = 25,
 ): Promise<ExpireStaleCollaboratorInvitesResult> {
+  const effectiveLimit = Math.min(Math.max(1, limit), 25);
   return withCronLock(
     "expire-stale-collaborator-invites",
     { failMode: "open" },
@@ -29,7 +30,7 @@ export async function expireStaleCollaboratorInvites(
           status: "PENDING",
           updatedAt: { lt: cutoff },
         },
-        take: Math.max(1, Math.min(limit, 500)),
+        take: effectiveLimit,
         orderBy: { updatedAt: "asc" },
         select: {
           id: true,

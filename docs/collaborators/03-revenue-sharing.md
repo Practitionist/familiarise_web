@@ -87,12 +87,12 @@ Ledger check: `100,000 DEBIT = 15,000 PLATFORM_REVENUE + 22,000 ORG_PAYABLE + 63
 
 ---
 
-### Scenario C: Ownerless Org Catalog Plan (`consultantProfileId = null`, `orgId = "org_1"`) + Accepted Solo Collaborator (`3000 bps`)
+### Scenario C: Ownerless Org Catalog Plan (`consultantProfileId = null`, `orgId = "org_1"`, `10%` Org Rate Card) + Accepted Solo Collaborator (`3000 bps`, `20%` Marketplace Fee)
 
 - **Gross Payment**: `₹1,000.00` (`100,000` paise)
-- **Owner Slice (`70,000` paise)**: Credited directly to `OrganizationEarnings` (`organizationId: "org_1"`, `role: OWNER`): `platformFee = 14,000` (or `org_1` rate card fee), `orgShare = 56,000`, `consultantShare = 0`.
-- **Collaborator Slice (`30,000` paise)**: Credited to `ConsultantEarnings` (`role: COLLABORATOR`): `platformFee = 6,000`, `consultantShare = 24,000`.
-- Ledger check: `100,000 DEBIT = 20,000 PLATFORM_REVENUE + 56,000 ORG_PAYABLE + 24,000 CONSULTANT_PAYABLE`.
+- **Owner Slice (`70,000` paise)**: Credited directly to `OrganizationEarnings` (`organizationId: "org_1"`, `role: OWNER` at `org_1`'s `10%` rate card schedule): `platformFee = 7,000`, `orgShare = 63,000`, `consultantShare = 0`.
+- **Collaborator Slice (`30,000` paise)**: Credited to `ConsultantEarnings` (`role: COLLABORATOR` at `20%` solo schedule): `platformFee = 6,000`, `consultantShare = 24,000`.
+- Ledger check: `100,000 DEBIT = 13,000 PLATFORM_REVENUE (7,000 + 6,000) + 63,000 ORG_PAYABLE + 24,000 CONSULTANT_PAYABLE`.
 
 ---
 

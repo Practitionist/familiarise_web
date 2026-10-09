@@ -92,6 +92,7 @@ interface ResolvedPurchasePlanInfo {
   webinarPlanId: string | null;
   classPlanId: string | null;
   hostOrganizationId: string | null;
+  visibility?: string | null;
 }
 
 function resolvePurchasePlanInfo(purchase: {
@@ -107,6 +108,7 @@ function resolvePurchasePlanInfo(purchase: {
               id: string;
               consultantProfileId: string | null;
               organizationId?: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           class?: {
@@ -115,18 +117,21 @@ function resolvePurchasePlanInfo(purchase: {
               id: string;
               consultantProfileId: string | null;
               organizationId?: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           consultation?: {
             consultationPlan?: {
               id: string;
               consultantProfileId: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           subscription?: {
             subscriptionPlan?: {
               id: string;
               consultantProfileId: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
         } | null;
@@ -149,6 +154,7 @@ function resolvePurchasePlanInfo(purchase: {
       webinarPlanId: appointment.webinar?.webinarPlanId ?? webinarPlan.id,
       classPlanId: null,
       hostOrganizationId: webinarPlan.organizationId ?? fallbackOrgId,
+      visibility: webinarPlan.visibility ?? null,
     };
   }
 
@@ -160,6 +166,7 @@ function resolvePurchasePlanInfo(purchase: {
       webinarPlanId: null,
       classPlanId: appointment.class?.classPlanId ?? classPlan.id,
       hostOrganizationId: classPlan.organizationId ?? fallbackOrgId,
+      visibility: classPlan.visibility ?? null,
     };
   }
 
@@ -171,6 +178,7 @@ function resolvePurchasePlanInfo(purchase: {
       webinarPlanId: null,
       classPlanId: null,
       hostOrganizationId: fallbackOrgId,
+      visibility: appointment.consultation.consultationPlan.visibility ?? null,
     };
   }
 
@@ -182,6 +190,7 @@ function resolvePurchasePlanInfo(purchase: {
       webinarPlanId: null,
       classPlanId: null,
       hostOrganizationId: fallbackOrgId,
+      visibility: appointment.subscription.subscriptionPlan.visibility ?? null,
     };
   }
 
@@ -512,7 +521,8 @@ async function settleReplaySale(
           paymentStatus: "SUCCEEDED",
           capturedAt: new Date(),
           description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
-          organizationId: null,
+          organizationId:
+            planInfo.visibility === "PUBLIC" ? null : hostOrganizationId,
           legs: cardLeg(chargedPaise, orderId),
           ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
         },
@@ -616,6 +626,7 @@ export async function handleRecordingPurchaseSuccess(
                                   id: true,
                                   consultantProfileId: true,
                                   organizationId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -628,6 +639,7 @@ export async function handleRecordingPurchaseSuccess(
                                   id: true,
                                   consultantProfileId: true,
                                   organizationId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -638,6 +650,7 @@ export async function handleRecordingPurchaseSuccess(
                                 select: {
                                   id: true,
                                   consultantProfileId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -648,6 +661,7 @@ export async function handleRecordingPurchaseSuccess(
                                 select: {
                                   id: true,
                                   consultantProfileId: true,
+                                  visibility: true,
                                 },
                               },
                             },

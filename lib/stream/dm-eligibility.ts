@@ -98,6 +98,83 @@ export interface PairBookingContexts {
   organizations: string[];
 }
 
+function fetchDirectBookings(directions: Direction[]) {
+  if (directions.length === 0) {
+    return Promise.all([Promise.resolve([]), Promise.resolve([])]);
+  }
+  return Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        status: dmEligibleStatusFilter(),
+        OR: directions.map((d) => ({
+          consultationPlan: { consultantProfileId: d.consultantProfileId },
+          requestedById: d.requestedById,
+        })),
+      },
+      select: {
+        consultationPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        status: dmEligibleStatusFilter(),
+        OR: directions.map((d) => ({
+          subscriptionPlan: { consultantProfileId: d.consultantProfileId },
+          requestedById: d.requestedById,
+        })),
+      },
+      select: {
+        subscriptionPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+}
+
+function fetchGroupBookings(eventDirections: EventDirection[]) {
+  if (eventDirections.length === 0) {
+    return Promise.all([Promise.resolve([]), Promise.resolve([])]);
+  }
+  const appointmentWhere = (participantUserId: string) => ({
+    deletedAt: null,
+    participants: {
+      some: {
+        ...liveParticipant(participantUserId),
+        role: "CONSULTEE" as const,
+      },
+    },
+  });
+  return Promise.all([
+    prisma.webinar.findMany({
+      where: {
+        status: { in: [...OPENABLE_EVENT_STATUSES] },
+        OR: eventDirections.map((d) => ({
+          webinarPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
+          appointment: appointmentWhere(d.participantUserId),
+        })),
+      },
+      select: {
+        webinarPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.class.findMany({
+      where: {
+        status: { in: [...OPENABLE_EVENT_STATUSES] },
+        OR: eventDirections.map((d) => ({
+          classPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
+          appointment: appointmentWhere(d.participantUserId),
+        })),
+      },
+      select: {
+        classPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+}
+
 export async function pairBookingContexts(
   userIdA: string,
   userIdB: string,
@@ -124,86 +201,11 @@ export async function pairBookingContexts(
   const eventDirections = buildEventDirections(a, b, userIdA, userIdB);
   if (directions.length === 0 && eventDirections.length === 0) return empty;
 
-  const [consultations, subscriptions, webinars, classes] = await Promise.all([
-    directions.length > 0
-      ? prisma.consultation.findMany({
-          where: {
-            status: dmEligibleStatusFilter(),
-            OR: directions.map((d) => ({
-              consultationPlan: { consultantProfileId: d.consultantProfileId },
-              requestedById: d.requestedById,
-            })),
-          },
-          select: {
-            consultationPlan: { select: { organizationId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-    directions.length > 0
-      ? prisma.subscription.findMany({
-          where: {
-            status: dmEligibleStatusFilter(),
-            OR: directions.map((d) => ({
-              subscriptionPlan: { consultantProfileId: d.consultantProfileId },
-              requestedById: d.requestedById,
-            })),
-          },
-          select: {
-            subscriptionPlan: { select: { organizationId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-    eventDirections.length > 0
-      ? prisma.webinar.findMany({
-          where: {
-            status: { in: [...OPENABLE_EVENT_STATUSES] },
-            OR: eventDirections.map((d) => ({
-              webinarPlan: eventHostOrPresenterPlanFilter(
-                d.consultantProfileId,
-              ),
-              appointment: {
-                deletedAt: null,
-                participants: {
-                  some: {
-                    ...liveParticipant(d.participantUserId),
-                    role: "CONSULTEE",
-                  },
-                },
-              },
-            })),
-          },
-          select: {
-            webinarPlan: { select: { organizationId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-    eventDirections.length > 0
-      ? prisma.class.findMany({
-          where: {
-            status: { in: [...OPENABLE_EVENT_STATUSES] },
-            OR: eventDirections.map((d) => ({
-              classPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
-              appointment: {
-                deletedAt: null,
-                participants: {
-                  some: {
-                    ...liveParticipant(d.participantUserId),
-                    role: "CONSULTEE",
-                  },
-                },
-              },
-            })),
-          },
-          select: {
-            classPlan: { select: { organizationId: true } },
-            appointment: { select: { organizationId: true } },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+  const [[consultations, subscriptions], [webinars, classes]] =
+    await Promise.all([
+      fetchDirectBookings(directions),
+      fetchGroupBookings(eventDirections),
+    ]);
 
   let personalAllowed = false;
   const organizations = new Set<string>();
@@ -327,38 +329,80 @@ function isMatchingPresenterAndLearner(
   );
 }
 
+function resolveDirectBookingTitle(
+  status: string,
+  planTitle: string | undefined,
+  fallbackTitle: string,
+  consultantUserId: string | undefined,
+  consulteeUserId: string | undefined,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (!ELIGIBLE_STATUS_SET.has(status)) return null;
+  if (
+    !isMatchingUserPair(
+      userId,
+      counterpartyUserId,
+      consultantUserId,
+      consulteeUserId,
+    )
+  ) {
+    return null;
+  }
+  return planTitle ?? fallbackTitle;
+}
+
+function resolveGroupBookingTitle(
+  status: string,
+  planTitle: string | undefined,
+  fallbackTitle: string,
+  hostUserId: string | undefined,
+  collaborators: ContextAppointmentCollaboratorRow[] | null | undefined,
+  learnerIds: Set<string>,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (!EVENT_ELIGIBLE_STATUS_SET.has(status)) return null;
+  const presenterIds = resolveEventPresenterIds(hostUserId, collaborators);
+  if (
+    !isMatchingPresenterAndLearner(
+      userId,
+      counterpartyUserId,
+      presenterIds,
+      learnerIds,
+    )
+  ) {
+    return null;
+  }
+  return planTitle ?? fallbackTitle;
+}
+
 export function resolveVerifiedBookingContextTitle(
   appt: ContextAppointmentRow,
   userId: string,
   counterpartyUserId: string,
 ): string | null {
   if (appt.consultation) {
-    if (!ELIGIBLE_STATUS_SET.has(appt.consultation.status)) return null;
-    if (
-      !isMatchingUserPair(
-        userId,
-        counterpartyUserId,
-        appt.consultation.consultationPlan?.consultantProfile?.userId,
-        appt.consultation.requestedBy?.userId,
-      )
-    ) {
-      return null;
-    }
-    return appt.consultation.consultationPlan?.title ?? "Consultation";
+    return resolveDirectBookingTitle(
+      appt.consultation.status,
+      appt.consultation.consultationPlan?.title,
+      "Consultation",
+      appt.consultation.consultationPlan?.consultantProfile?.userId,
+      appt.consultation.requestedBy?.userId,
+      userId,
+      counterpartyUserId,
+    );
   }
   if (appt.subscription) {
-    if (!ELIGIBLE_STATUS_SET.has(appt.subscription.status)) return null;
-    if (
-      !isMatchingUserPair(
-        userId,
-        counterpartyUserId,
-        appt.subscription.subscriptionPlan?.consultantProfile?.userId,
-        appt.subscription.requestedBy?.userId,
-      )
-    ) {
-      return null;
-    }
-    return appt.subscription.subscriptionPlan?.title ?? "Subscription";
+    return resolveDirectBookingTitle(
+      appt.subscription.status,
+      appt.subscription.subscriptionPlan?.title,
+      "Subscription",
+      appt.subscription.subscriptionPlan?.consultantProfile?.userId,
+      appt.subscription.requestedBy?.userId,
+      userId,
+      counterpartyUserId,
+    );
   }
 
   const learnerIds = new Set(
@@ -368,41 +412,29 @@ export function resolveVerifiedBookingContextTitle(
   );
 
   if (appt.webinar) {
-    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.webinar.status)) return null;
-    const presenterIds = resolveEventPresenterIds(
+    return resolveGroupBookingTitle(
+      appt.webinar.status,
+      appt.webinar.webinarPlan?.title,
+      "Webinar",
       appt.webinar.webinarPlan?.consultantProfile?.userId,
       appt.webinar.webinarPlan?.collaborators,
+      learnerIds,
+      userId,
+      counterpartyUserId,
     );
-    if (
-      !isMatchingPresenterAndLearner(
-        userId,
-        counterpartyUserId,
-        presenterIds,
-        learnerIds,
-      )
-    ) {
-      return null;
-    }
-    return appt.webinar.webinarPlan?.title ?? "Webinar";
   }
 
   if (appt.class) {
-    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.class.status)) return null;
-    const presenterIds = resolveEventPresenterIds(
+    return resolveGroupBookingTitle(
+      appt.class.status,
+      appt.class.classPlan?.title,
+      "Class",
       appt.class.classPlan?.consultantProfile?.userId,
       appt.class.classPlan?.collaborators,
+      learnerIds,
+      userId,
+      counterpartyUserId,
     );
-    if (
-      !isMatchingPresenterAndLearner(
-        userId,
-        counterpartyUserId,
-        presenterIds,
-        learnerIds,
-      )
-    ) {
-      return null;
-    }
-    return appt.class.classPlan?.title ?? "Class";
   }
 
   return null;

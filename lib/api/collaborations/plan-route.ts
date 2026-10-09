@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 import {
+  calculateRevenueSplit,
   CollaboratorCapError,
   CollaboratorIneligibleError,
   getCollaboratorsForUser,
@@ -37,6 +39,55 @@ interface PlanRouteConfig {
   ) => Promise<unknown>;
 }
 
+const revenueSplitAmountSchema = z.coerce
+  .number()
+  .int()
+  .min(0)
+  .max(1_000_000_000);
+
+async function isOrgCatalogAdmin(
+  userId: string,
+  organizationId: string | null | undefined,
+): Promise<boolean> {
+  if (!organizationId) return false;
+  const membership = await prisma.membership.findUnique({
+    where: {
+      userId_organizationId: {
+        userId,
+        organizationId,
+      },
+    },
+    select: {
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
+  });
+  return Boolean(
+    membership?.status === "ACTIVE" &&
+    membership.organization.status !== "DEACTIVATED" &&
+    hasOrgPermission(membership.role, "catalog.manage"),
+  );
+}
+
+async function authorizePlanInviteCaller(
+  userId: string,
+  plan: PlanRecord,
+): Promise<{
+  allowed: boolean;
+  ownerProfileId: string | null;
+}> {
+  const ownerProfile = await prisma.consultantProfile.findFirst({
+    where: { userId },
+  });
+  const ownerProfileId = ownerProfile?.id ?? null;
+  const isOwner =
+    Boolean(ownerProfileId) && plan.consultantProfileId === ownerProfileId;
+  const isOrgAdmin =
+    !isOwner && (await isOrgCatalogAdmin(userId, plan.organizationId));
+  return { allowed: isOwner || isOrgAdmin, ownerProfileId };
+}
+
 export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
   const { planKind, schema, fetchLogLabel, inviteLogLabel } = config;
 
@@ -57,10 +108,12 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
         session.user.id,
       );
 
-      if (result.status === "not_found")
+      if (result.status === "not_found") {
         return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-      if (result.status === "forbidden")
+      }
+      if (result.status === "forbidden") {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
 
       return NextResponse.json({ data: result.data });
     } catch (error) {
@@ -93,38 +146,11 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
         return NextResponse.json({ error: "Plan not found" }, { status: 404 });
       }
 
-      const ownerProfile = await prisma.consultantProfile.findFirst({
-        where: { userId: session.user.id },
-      });
-
-      const isOwner =
-        Boolean(ownerProfile?.id) &&
-        plan.consultantProfileId === ownerProfile?.id;
-
-      let isOrgAdmin = false;
-      if (!isOwner && plan.organizationId) {
-        const membership = await prisma.membership.findUnique({
-          where: {
-            userId_organizationId: {
-              userId: session.user.id,
-              organizationId: plan.organizationId,
-            },
-          },
-          select: {
-            status: true,
-            role: true,
-            organization: { select: { status: true } },
-          },
-        });
-        isOrgAdmin = Boolean(
-          membership &&
-          membership.status === "ACTIVE" &&
-          membership.organization.status !== "DEACTIVATED" &&
-          hasOrgPermission(membership.role, "catalog.manage"),
-        );
-      }
-
-      if (!isOwner && !isOrgAdmin) {
+      const { allowed, ownerProfileId } = await authorizePlanInviteCaller(
+        session.user.id,
+        plan,
+      );
+      if (!allowed) {
         return NextResponse.json(
           { error: "Only the plan owner can invite collaborators" },
           { status: 403 },
@@ -133,7 +159,6 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
 
       const body = await req.json();
       const parsed = schema.safeParse(body);
-
       if (!parsed.success) {
         return NextResponse.json(
           { error: parsed.error.errors.map((e) => e.message).join(", ") },
@@ -142,11 +167,9 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
       }
 
       const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
-
       if (
-        (ownerProfile && consultantProfileId === ownerProfile.id) ||
-        (plan.consultantProfileId &&
-          consultantProfileId === plan.consultantProfileId)
+        consultantProfileId === ownerProfileId ||
+        consultantProfileId === plan.consultantProfileId
       ) {
         return NextResponse.json(
           { error: "You cannot invite yourself as a collaborator" },
@@ -174,7 +197,7 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
         consultantProfileId,
         role,
         revenueSharePercentage,
-        ownerProfile?.id ?? null,
+        ownerProfileId,
       );
 
       if (!collab) {
@@ -211,4 +234,103 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
   }
 
   return { GET, POST };
+}
+
+async function authorizeRevenueSplitReader(
+  planType: PlanCollaborationKind,
+  planId: string,
+  userId: string,
+  consultantProfileId: string | null | undefined,
+): Promise<NextResponse | null> {
+  const plan =
+    planType === "webinar"
+      ? await prisma.webinarPlan.findUnique({
+          where: { id: planId },
+          select: { consultantProfileId: true, organizationId: true },
+        })
+      : await prisma.classPlan.findUnique({
+          where: { id: planId },
+          select: { consultantProfileId: true, organizationId: true },
+        });
+  if (!plan) {
+    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+  }
+
+  const isOwner =
+    Boolean(consultantProfileId) &&
+    consultantProfileId === plan.consultantProfileId;
+  if (isOwner) return null;
+
+  if (await isOrgCatalogAdmin(userId, plan.organizationId)) {
+    return null;
+  }
+
+  const collab = consultantProfileId
+    ? await prisma.collaborator.findFirst({
+        where: {
+          ...(planType === "webinar"
+            ? { webinarPlanId: planId }
+            : { classPlanId: planId }),
+          consultantProfileId,
+          status: "ACCEPTED",
+        },
+      })
+    : null;
+
+  if (!collab) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  return null;
+}
+
+export async function handlePlanRevenueSplitGet(
+  planType: PlanCollaborationKind,
+  planId: string,
+  req?: NextRequest,
+): Promise<NextResponse> {
+  try {
+    const session = await getSession(true);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!isPrivileged(session.user.role)) {
+      const denied = await authorizeRevenueSplitReader(
+        planType,
+        planId,
+        session.user.id,
+        session.user.consultantProfileId,
+      );
+      if (denied) return denied;
+    }
+
+    const rawAmount = req?.nextUrl.searchParams.get("amount");
+    const amountParsed = revenueSplitAmountSchema.safeParse(
+      rawAmount || "10000",
+    );
+    if (!amountParsed.success) {
+      return NextResponse.json(
+        { error: "amount must be an integer between 0 and 1,000,000,000" },
+        { status: 400 },
+      );
+    }
+
+    const splits = await calculateRevenueSplit(
+      planType,
+      planId,
+      amountParsed.data,
+    );
+    return NextResponse.json({ data: splits });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
+    console.error("Error calculating revenue split:", error);
+    return NextResponse.json(
+      { error: "Failed to calculate revenue split" },
+      { status: 500 },
+    );
+  }
 }

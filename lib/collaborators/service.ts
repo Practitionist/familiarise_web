@@ -484,18 +484,23 @@ async function syncOpenCallPresenterRole(
     const video = getStreamVideoClient().video;
 
     const results = await Promise.allSettled(
-      occurrences.flatMap(({ meeting }) =>
-        meeting
-          ? [
-              video.call(STREAM_CALL_TYPE, meeting.streamCallId).getOrCreate({
-                data: {
-                  created_by_id: hostUserId,
-                  members: [{ user_id: userId, role: callRole }],
-                },
-              }),
-            ]
-          : [],
-      ),
+      occurrences.flatMap(({ meeting }) => {
+        if (!meeting) return [];
+        const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
+        return [
+          (async () => {
+            await call.getOrCreate({
+              data: {
+                created_by_id: hostUserId,
+                members: [{ user_id: userId, role: callRole }],
+              },
+            });
+            await call.updateCallMembers({
+              update_members: [{ user_id: userId, role: callRole }],
+            });
+          })(),
+        ];
+      }),
     );
     const failures = results.filter(
       (r): r is PromiseRejectedResult =>
@@ -1189,23 +1194,44 @@ async function revokeOpenCallPresenterRole(
       occurrences.flatMap(({ appointmentId, meeting }) => {
         if (!meeting) return [];
         const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
+        const isSeated = seated.has(appointmentId);
         return [
           (async () => {
-            await call.updateCallMembers(
-              seated.has(appointmentId)
-                ? {
-                    update_members: [
-                      { user_id: userId, role: CALL_MEMBER_ROLE },
-                    ],
-                  }
-                : { remove_members: [userId] },
-            );
-            if (!seated.has(appointmentId)) {
-              await call.updateUserPermissions({
-                user_id: userId,
-                revoke_permissions: ["send-audio", "send-video", "screenshare"],
-              });
-              await call.kickUser({ user_id: userId });
+            const callErrors: unknown[] = [];
+            try {
+              await call.updateCallMembers(
+                isSeated
+                  ? {
+                      update_members: [
+                        { user_id: userId, role: CALL_MEMBER_ROLE },
+                      ],
+                    }
+                  : { remove_members: [userId] },
+              );
+            } catch (err) {
+              if (!isExpectedStreamError(err)) callErrors.push(err);
+            }
+            if (!isSeated) {
+              try {
+                await call.updateUserPermissions({
+                  user_id: userId,
+                  revoke_permissions: [
+                    "send-audio",
+                    "send-video",
+                    "screenshare",
+                  ],
+                });
+              } catch (err) {
+                if (!isExpectedStreamError(err)) callErrors.push(err);
+              }
+              try {
+                await call.kickUser({ user_id: userId });
+              } catch (err) {
+                if (!isExpectedStreamError(err)) callErrors.push(err);
+              }
+            }
+            if (callErrors.length > 0) {
+              throw callErrors[0];
             }
           })(),
         ];

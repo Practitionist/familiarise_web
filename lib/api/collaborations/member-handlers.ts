@@ -77,8 +77,7 @@ async function resolveParties(
       },
     });
     isOrgAdmin = Boolean(
-      membership &&
-      membership.status === "ACTIVE" &&
+      membership?.status === "ACTIVE" &&
       membership.organization.status !== "DEACTIVATED" &&
       hasOrgPermission(membership.role, "catalog.manage"),
     );
@@ -167,13 +166,14 @@ export async function deleteCollaborator(
       return NextResponse.json({ error: NOT_A_PARTY }, { status: 403 });
     }
 
-    const collab = parties.canManagePlan
-      ? await removeCollaborator(planType, id, planId)
-      : parties.callerProfileId
-        ? await removeCollaborator(planType, id, planId, {
-            withdrawnByProfileId: parties.callerProfileId,
-          })
-        : null;
+    let collab = null;
+    if (parties.canManagePlan) {
+      collab = await removeCollaborator(planType, id, planId);
+    } else if (parties.callerProfileId) {
+      collab = await removeCollaborator(planType, id, planId, {
+        withdrawnByProfileId: parties.callerProfileId,
+      });
+    }
     if (!collab) {
       return parties.canManagePlan
         ? NextResponse.json(

@@ -20,7 +20,7 @@ flowchart TD
         GL["GUEST_LECTURER"]
         CC["CONTENT_CREATOR"]
     end
-    CH --> PRES["CollaboratorTier.PRESENTER\n(Max 1 active per plan)"]
+    CH --> PRES["CollaboratorTier.PRESENTER\n(At most one active PRESENTER-tier collaborator)"]
     CI --> PRES
     MOD --> CREW["CollaboratorTier.CREW\n(Up to 3 active total per plan)"]
     GS --> CREW
@@ -34,23 +34,23 @@ flowchart TD
 
 ## End-to-End Capability Matrix
 
-| Capability / Surface                                 | Primary Host (`OWNER`)     | Org Admin (`catalog.manage`)                   | `PRESENTER` (`CO_HOST` / `CO_INSTRUCTOR`) | `CREW` Collaborator             | Pending Invitee | Learner (`CONSULTEE`)       |
-| ---------------------------------------------------- | -------------------------- | ---------------------------------------------- | ----------------------------------------- | ------------------------------- | --------------- | --------------------------- |
-| **Edit plan metadata & pricing**                     | Yes                        | Yes (org plans)                                | No                                        | No                              | No              | No                          |
-| **Invite / edit (`PENDING`) / remove collaborators** | Yes                        | Yes (org plans)                                | No                                        | No                              | No              | No                          |
-| **Create / reschedule / cancel sessions**            | Yes                        | Yes (org plans)                                | No (protected by overlap guard)           | No (protected by overlap guard) | No              | No                          |
-| **Protected by co-host overlap guard**               | Yes (Postgres GiST)        | —                                              | Yes (`ACCEPTED`)                          | Yes (`ACCEPTED`)                | No              | —                           |
-| **View full attendee roster**                        | Yes                        | Yes (org plans)                                | Yes (`ACCEPTED`)                          | No (`404`)                      | No (`404`)      | No (`404`)                  |
-| **View collaborator team list**                      | All `PENDING` + `ACCEPTED` | All `PENDING` + `ACCEPTED`                     | `ACCEPTED` only                           | `ACCEPTED` only                 | Own row only    | No (`403`)                  |
-| **View revenue split preview**                       | Yes                        | Yes (org plans)                                | Yes (`ACCEPTED`)                          | Yes (`ACCEPTED`)                | No              | No                          |
-| **Stream `collab-*` coordination chat**              | `channel_moderator`        | —                                              | Member (`ACCEPTED`)                       | Member (`ACCEPTED`)             | No              | No                          |
-| **Stream event channel (`webinar-*` / `class-*`)**   | `channel_moderator`        | —                                              | `channel_moderator` (`ACCEPTED`)          | Member (`ACCEPTED`)             | No              | Member                      |
-| **1:1 Student DM target eligibility**                | Yes                        | —                                              | Yes (`ACCEPTED`)                          | No                              | No              | —                           |
-| **Stream Video SFU role**                            | `host` / `co_presenter`    | —                                              | `co_presenter` (`ACCEPTED`)               | `call_member` (`ACCEPTED`)      | No              | `call_member`               |
-| **End call for everyone & start/stop recording**     | Yes                        | —                                              | Yes (`ACCEPTED`)                          | No                              | No              | No                          |
-| **Receive settled revenue share**                    | Residual gross slice       | Org share (`OWNER` on ownerless catalog plans) | Configured `revenueShareBps`              | Configured `revenueShareBps`    | No (`0`)        | —                           |
-| **Withdraw own collaboration (`DELETE`)**            | —                          | —                                              | Yes (`PENDING` / `ACCEPTED`)              | Yes (`PENDING` / `ACCEPTED`)    | Yes (`PENDING`) | No                          |
-| **Consumes learner seat capacity**                   | No                         | No                                             | No (`role: COLLABORATOR`)                 | No (`role: COLLABORATOR`)       | No              | **Yes (`role: CONSULTEE`)** |
+| Capability / Surface                                 | Primary Host (`OWNER`)     | Org Admin (`catalog.manage`)                   | `PRESENTER` (`CO_HOST` / `CO_INSTRUCTOR`) | `CREW` Collaborator                                           | Pending Invitee | Learner (`CONSULTEE`)       |
+| ---------------------------------------------------- | -------------------------- | ---------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------- | --------------- | --------------------------- |
+| **Edit plan metadata & pricing**                     | Yes                        | Yes (org plans)                                | No                                        | No                                                            | No              | No                          |
+| **Invite / edit (`PENDING`) / remove collaborators** | Yes                        | Yes (org plans)                                | No                                        | No                                                            | No              | No                          |
+| **Create / reschedule / cancel sessions**            | Yes                        | Yes (org plans)                                | No (protected by overlap guard)           | No (protected by overlap guard)                               | No              | No                          |
+| **Protected by co-host overlap guard**               | Yes (Postgres GiST)        | —                                              | Yes (`ACCEPTED`)                          | Yes (`ACCEPTED`)                                              | No              | —                           |
+| **View full attendee roster**                        | Yes                        | Yes (org plans)                                | Yes (`ACCEPTED`)                          | No (`404`)                                                    | No (`404`)      | No (`404`)                  |
+| **View collaborator team list**                      | All `PENDING` + `ACCEPTED` | All `PENDING` + `ACCEPTED`                     | `ACCEPTED` only                           | `ACCEPTED` only                                               | Own row only    | No (`403`)                  |
+| **View revenue split preview**                       | Yes                        | Yes (org plans)                                | Yes (`ACCEPTED`)                          | Yes (`ACCEPTED`)                                              | No              | No                          |
+| **Stream `collab-*` coordination chat**              | `channel_moderator`        | —                                              | Member (`ACCEPTED`)                       | Member (`ACCEPTED`)                                           | No              | No                          |
+| **Stream event channel (`webinar-*` / `class-*`)**   | `channel_moderator`        | —                                              | `channel_moderator` (`ACCEPTED`)          | `channel_moderator` (`MODERATOR`) / Member (other `ACCEPTED`) | No              | Member                      |
+| **1:1 Student DM target eligibility**                | Yes                        | —                                              | Yes (`ACCEPTED`)                          | No                                                            | No              | —                           |
+| **Stream Video SFU role**                            | `host` / `co_presenter`    | —                                              | `co_presenter` (`ACCEPTED`)               | `call_member` (`ACCEPTED`)                                    | No              | `call_member`               |
+| **End call for everyone & start/stop recording**     | Yes                        | —                                              | Yes (`ACCEPTED`)                          | No                                                            | No              | No                          |
+| **Receive settled revenue share**                    | Residual gross slice       | Org share (`OWNER` on ownerless catalog plans) | Configured `revenueShareBps`              | Configured `revenueShareBps`                                  | No (`0`)        | —                           |
+| **Withdraw own collaboration (`DELETE`)**            | —                          | —                                              | Yes (`PENDING` / `ACCEPTED`)              | Yes (`PENDING` / `ACCEPTED`)                                  | Yes (`PENDING`) | No                          |
+| **Consumes learner seat capacity**                   | No                         | No                                             | No (`role: COLLABORATOR`)                 | No (`role: COLLABORATOR`)                                     | No              | **Yes (`role: CONSULTEE`)** |
 
 ---
 

@@ -903,6 +903,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
             id: "pay-rec-1",
             appointment: {
               consultantProfile: { id: "cp-host-1" },
+              organizationId: "org-host-1",
               webinar: { webinarPlanId: "wplan-100" },
               class: null,
             },

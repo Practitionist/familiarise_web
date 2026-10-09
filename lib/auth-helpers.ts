@@ -180,12 +180,108 @@ async function hasOrgEventAccess(
       organization: { select: { status: true } },
     },
   });
-  if (!member || member.status !== "ACTIVE") return false;
+  if (member?.status !== "ACTIVE") return false;
   if (member.organization.status === "DEACTIVATED") return false;
   return hasAnyOrgPermission(member.role, [
     "catalog.manage",
     "appointments.actForOrg.reschedule",
   ]);
+}
+
+async function authorizeOneToOneEvent(
+  userId: string,
+  consultantProfileId: string | undefined,
+  consulteeProfileId: string | undefined,
+  eventType: "consultation" | "subscription",
+  eventId: string,
+): Promise<boolean> {
+  const row =
+    eventType === "consultation"
+      ? await prisma.consultation.findUnique({
+          where: { id: eventId },
+          select: {
+            requestedById: true,
+            consultationPlan: {
+              select: { consultantProfileId: true, organizationId: true },
+            },
+          },
+        })
+      : await prisma.subscription.findUnique({
+          where: { id: eventId },
+          select: {
+            requestedById: true,
+            subscriptionPlan: {
+              select: { consultantProfileId: true, organizationId: true },
+            },
+          },
+        });
+  if (!row) return false;
+
+  const plan =
+    "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
+  return (
+    (Boolean(consultantProfileId) &&
+      consultantProfileId === plan.consultantProfileId) ||
+    (Boolean(consulteeProfileId) && consulteeProfileId === row.requestedById) ||
+    (await hasOrgEventAccess(userId, plan.organizationId))
+  );
+}
+
+async function authorizeGroupEvent(
+  userId: string,
+  consultantProfileId: string | undefined,
+  isReadOnly: boolean,
+  eventType: "webinar" | "class",
+  eventId: string,
+): Promise<boolean> {
+  const row =
+    eventType === "webinar"
+      ? await prisma.webinar.findUnique({
+          where: { id: eventId },
+          select: {
+            webinarPlan: {
+              select: {
+                id: true,
+                consultantProfileId: true,
+                organizationId: true,
+              },
+            },
+          },
+        })
+      : await prisma.class.findUnique({
+          where: { id: eventId },
+          select: {
+            classPlan: {
+              select: {
+                id: true,
+                consultantProfileId: true,
+                organizationId: true,
+              },
+            },
+          },
+        });
+  if (!row) return false;
+
+  const plan = "webinarPlan" in row ? row.webinarPlan : row.classPlan;
+  if (
+    (Boolean(consultantProfileId) &&
+      consultantProfileId === plan.consultantProfileId) ||
+    (await hasOrgEventAccess(userId, plan.organizationId))
+  ) {
+    return true;
+  }
+
+  if (!isReadOnly || !consultantProfileId) return false;
+  const collab = await prisma.collaborator.findFirst({
+    where: {
+      ...(eventType === "webinar"
+        ? { webinarPlanId: plan.id }
+        : { classPlanId: plan.id }),
+      consultantProfileId,
+      status: "ACCEPTED",
+    },
+  });
+  return Boolean(collab);
 }
 
 /**
@@ -201,125 +297,26 @@ export async function authorizeEventAccess(
 ): Promise<NextResponse | null> {
   if (isPrivileged(session.user.role)) return null;
 
-  const consultantProfileId = session.user.consultantProfileId;
-  const consulteeProfileId = session.user.consulteeProfileId;
-  const isReadOnly = method.toUpperCase() === "GET";
-
-  let isAuthorized = false;
-
-  if (eventType === "consultation") {
-    const event = await prisma.consultation.findUnique({
-      where: { id: eventId },
-      select: {
-        requestedById: true,
-        consultationPlan: {
-          select: { consultantProfileId: true, organizationId: true },
-        },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === event.consultationPlan.consultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === event.requestedById) ||
-        (await hasOrgEventAccess(
+  const isAuthorized =
+    eventType === "consultation" || eventType === "subscription"
+      ? await authorizeOneToOneEvent(
           session.user.id,
-          event.consultationPlan.organizationId,
-        ));
-    }
-  } else if (eventType === "subscription") {
-    const event = await prisma.subscription.findUnique({
-      where: { id: eventId },
-      select: {
-        requestedById: true,
-        subscriptionPlan: {
-          select: { consultantProfileId: true, organizationId: true },
-        },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === event.subscriptionPlan.consultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === event.requestedById) ||
-        (await hasOrgEventAccess(
+          session.user.consultantProfileId,
+          session.user.consulteeProfileId,
+          eventType,
+          eventId,
+        )
+      : await authorizeGroupEvent(
           session.user.id,
-          event.subscriptionPlan.organizationId,
-        ));
-    }
-  } else if (eventType === "webinar") {
-    const event = await prisma.webinar.findUnique({
-      where: { id: eventId },
-      select: {
-        webinarPlan: {
-          select: {
-            id: true,
-            consultantProfileId: true,
-            organizationId: true,
-          },
-        },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === event.webinarPlan.consultantProfileId) ||
-        (await hasOrgEventAccess(
-          session.user.id,
-          event.webinarPlan.organizationId,
-        ));
-      if (!isAuthorized && isReadOnly && consultantProfileId) {
-        const collab = await prisma.collaborator.findFirst({
-          where: {
-            webinarPlanId: event.webinarPlan.id,
-            consultantProfileId,
-            status: "ACCEPTED",
-          },
-        });
-        isAuthorized = !!collab;
-      }
-    }
-  } else if (eventType === "class") {
-    const event = await prisma.class.findUnique({
-      where: { id: eventId },
-      select: {
-        classPlan: {
-          select: {
-            id: true,
-            consultantProfileId: true,
-            organizationId: true,
-          },
-        },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === event.classPlan.consultantProfileId) ||
-        (await hasOrgEventAccess(
-          session.user.id,
-          event.classPlan.organizationId,
-        ));
-      if (!isAuthorized && isReadOnly && consultantProfileId) {
-        const collab = await prisma.collaborator.findFirst({
-          where: {
-            classPlanId: event.classPlan.id,
-            consultantProfileId,
-            status: "ACCEPTED",
-          },
-        });
-        isAuthorized = !!collab;
-      }
-    }
-  }
+          session.user.consultantProfileId,
+          method.toUpperCase() === "GET",
+          eventType,
+          eventId,
+        );
 
-  if (!isAuthorized) {
-    return forbiddenResponse("You are not authorized to access this event");
-  }
-
-  return null;
+  return isAuthorized
+    ? null
+    : forbiddenResponse("You are not authorized to access this event");
 }
 
 export type OrgAccessGrant = {
@@ -337,30 +334,9 @@ export type OrgCapabilityGate = {
   allowSuspended?: true;
 };
 
-/**
- * Require that the session user is an active Membership of the specified
- * organization, holding `opts.permission` when set, and enforce capability
- * and funding-source gates.
- */
-export async function requireOrgAccess(
-  organizationId: string,
-  opts: OrgCapabilityGate = {},
-): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  const {
-    permission,
-    canSponsor,
-    canHost,
-    fundingSource,
-    requireActive,
-    allowSuspended,
-  } = opts;
-
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-
-  let org;
+async function fetchOrganizationWithBilling(organizationId: string) {
   try {
-    org = await prisma.organization.findUnique({
+    const org = await prisma.organization.findUnique({
       where: { id: organizationId },
       include: {
         billingAccount: {
@@ -368,6 +344,15 @@ export async function requireOrgAccess(
         },
       },
     });
+    if (!org) {
+      return {
+        error: NextResponse.json(
+          { error: "Organization not found" },
+          { status: 404 },
+        ),
+      };
+    }
+    return { org };
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -387,70 +372,117 @@ export async function requireOrgAccess(
     }
     throw error;
   }
-  if (!org) {
-    return {
-      error: NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 },
-      ),
-    };
+}
+
+function checkOrgCapabilityGates(
+  org: Organization & {
+    billingAccount: { id: string; fundingSource: FundingSource } | null;
+  },
+  opts: OrgCapabilityGate,
+): NextResponse | null {
+  if (org.status === "DEACTIVATED") {
+    return NextResponse.json(
+      { error: "Organization has been deactivated" },
+      { status: 403 },
+    );
   }
+  if (opts.requireActive && org.status !== "ACTIVE") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_VERIFIED",
+        message:
+          "This action is paused until a platform admin verifies your organization.",
+        status: org.status,
+      },
+      { status: 409 },
+    );
+  }
+  if (opts.canSponsor === true && !org.canSponsor) {
+    return NextResponse.json(
+      { error: "This organization does not sponsor bookings" },
+      { status: 404 },
+    );
+  }
+  if (opts.canHost === true && !org.canHost) {
+    return NextResponse.json(
+      { error: "This organization does not host consultants" },
+      { status: 404 },
+    );
+  }
+  if (
+    opts.fundingSource &&
+    org.billingAccount?.fundingSource !== opts.fundingSource
+  ) {
+    return NextResponse.json(
+      {
+        error: `This endpoint requires ${opts.fundingSource} funding`,
+        currentFundingSource: org.billingAccount?.fundingSource ?? null,
+      },
+      { status: 404 },
+    );
+  }
+  return null;
+}
+
+function checkMemberPermissionGate(
+  member: Membership | null,
+  opts: OrgCapabilityGate,
+): NextResponse | null {
+  if (!member) {
+    return NextResponse.json(
+      { error: "Not a member of this organization" },
+      { status: 403 },
+    );
+  }
+
+  const suspendedAdmitted =
+    opts.allowSuspended === true && member.status === "SUSPENDED";
+  if (
+    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
+    (suspendedAdmitted && opts.permission)
+  ) {
+    return NextResponse.json(
+      { error: `Membership is ${member.status.toLowerCase()}` },
+      { status: 403 },
+    );
+  }
+
+  if (opts.permission && !hasAnyOrgPermission(member.role, opts.permission)) {
+    const named =
+      typeof opts.permission === "string"
+        ? opts.permission
+        : opts.permission.join(" or ");
+    return NextResponse.json(
+      { error: `Forbidden — your role does not grant ${named}` },
+      { status: 403 },
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Require that the session user is an active Membership of the specified
+ * organization, holding `opts.permission` when set, and enforce capability
+ * and funding-source gates.
+ */
+export async function requireOrgAccess(
+  organizationId: string,
+  opts: OrgCapabilityGate = {},
+): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+
+  const orgLookup = await fetchOrganizationWithBilling(organizationId);
+  if (orgLookup.error) return { error: orgLookup.error };
+  const { org } = orgLookup;
 
   setSentryOrgContext({ orgId: org.id });
 
-  if (org.status === "DEACTIVATED") {
-    return {
-      error: NextResponse.json(
-        { error: "Organization has been deactivated" },
-        { status: 403 },
-      ),
-    };
-  }
-
-  if (requireActive && org.status !== "ACTIVE") {
-    return {
-      error: NextResponse.json(
-        {
-          error: "ORG_NOT_VERIFIED",
-          message:
-            "This action is paused until a platform admin verifies your organization.",
-          status: org.status,
-        },
-        { status: 409 },
-      ),
-    };
-  }
-
-  if (canSponsor === true && !org.canSponsor) {
-    return {
-      error: NextResponse.json(
-        { error: "This organization does not sponsor bookings" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (canHost === true && !org.canHost) {
-    return {
-      error: NextResponse.json(
-        { error: "This organization does not host consultants" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (fundingSource && org.billingAccount?.fundingSource !== fundingSource) {
-    return {
-      error: NextResponse.json(
-        {
-          error: `This endpoint requires ${fundingSource} funding`,
-          currentFundingSource: org.billingAccount?.fundingSource ?? null,
-        },
-        { status: 404 },
-      ),
-    };
-  }
+  const gateError = checkOrgCapabilityGates(org, opts);
+  if (gateError) return { error: gateError };
 
   const userId = auth.session.user.id;
-
   if (auth.session.user.role === "ADMIN") {
     setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
@@ -475,47 +507,16 @@ export async function requireOrgAccess(
     where: { userId_organizationId: { userId, organizationId: org.id } },
   });
 
-  if (!member) {
-    return {
-      error: NextResponse.json(
-        { error: "Not a member of this organization" },
-        { status: 403 },
-      ),
-    };
-  }
-
-  const suspendedAdmitted =
-    allowSuspended === true && member.status === "SUSPENDED";
-  if (
-    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
-    (suspendedAdmitted && permission)
-  ) {
-    return {
-      error: NextResponse.json(
-        { error: `Membership is ${member.status.toLowerCase()}` },
-        { status: 403 },
-      ),
-    };
-  }
-
-  if (permission && !hasAnyOrgPermission(member.role, permission)) {
-    const named =
-      typeof permission === "string" ? permission : permission.join(" or ");
-    return {
-      error: NextResponse.json(
-        { error: `Forbidden — your role does not grant ${named}` },
-        { status: 403 },
-      ),
-    };
-  }
+  const memberError = checkMemberPermissionGate(member, opts);
+  if (memberError) return { error: memberError };
 
   setSentryOrgContext({
     orgId: org.id,
-    orgRole: member.role,
-    membershipId: member.id,
+    orgRole: member!.role,
+    membershipId: member!.id,
   });
 
-  return { session: auth.session, member, org };
+  return { session: auth.session, member: member!, org };
 }
 
 /**

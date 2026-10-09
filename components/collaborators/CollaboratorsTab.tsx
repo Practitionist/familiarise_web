@@ -89,12 +89,340 @@ const statusConfig: Record<
   WITHDRAWN: { label: "Withdrawn", variant: "outline" },
 };
 
+interface CollaboratorRowProps {
+  collab: Collaborator;
+  isOwner: boolean;
+  isEditing: boolean;
+  editRole: string;
+  editShare: number;
+  maxEditShare: number;
+  otherSharesPct: number;
+  otherHasPresenter: boolean;
+  roles: typeof WEBINAR_ROLES;
+  isUpdating: boolean;
+  isRemoving: boolean;
+  onStartEdit: (collab: Collaborator) => void;
+  onCancelEdit: () => void;
+  onRoleChange: (value: string) => void;
+  onShareChange: (value: number) => void;
+  onSaveEdit: (collabId: string) => void;
+  onRemove: (collabId: string) => void;
+}
+
+function CollaboratorRow({
+  collab,
+  isOwner,
+  isEditing,
+  editRole,
+  editShare,
+  maxEditShare,
+  otherSharesPct,
+  otherHasPresenter,
+  roles,
+  isUpdating,
+  isRemoving,
+  onStartEdit,
+  onCancelEdit,
+  onRoleChange,
+  onShareChange,
+  onSaveEdit,
+  onRemove,
+}: Readonly<CollaboratorRowProps>) {
+  const config = statusConfig[collab.status] ?? statusConfig.PENDING;
+  const roleLabel =
+    roles.find((r) => r.value === collab.role)?.label ?? collab.role;
+  const canEdit = isOwner && collab.status === "PENDING" && !isEditing;
+  const canRemove =
+    isOwner && collab.status !== "REMOVED" && collab.status !== "WITHDRAWN";
+  const roleFieldId = `collab-edit-role-${collab.id}`;
+  const shareFieldId = `collab-edit-share-${collab.id}`;
+  const isSaveDisabled =
+    isUpdating ||
+    !editRole ||
+    maxEditShare < 1 ||
+    editShare < 1 ||
+    editShare > maxEditShare;
+
+  return (
+    <div className="p-3 bg-white border border-zinc-200 rounded-lg space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <Avatar className="w-8 h-8">
+            <AvatarImage
+              src={collab.consultantProfile.user.image ?? undefined}
+            />
+            <AvatarFallback>
+              {(collab.consultantProfile.user.name ?? "?").charAt(0)}
+            </AvatarFallback>
+          </Avatar>
+          <div>
+            <p className="text-sm font-medium text-zinc-800">
+              {collab.consultantProfile.user.name ?? "Unknown"}
+            </p>
+            {!isEditing && (
+              <p className="text-xs text-zinc-500">
+                {roleLabel} &middot; {collab.revenueShareBps / 100}% share
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Badge variant={config.variant}>{config.label}</Badge>
+          {canEdit && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Edit collaborator"
+              className="h-7 w-7 text-zinc-400 hover:text-zinc-700"
+              onClick={() => onStartEdit(collab)}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
+          {canRemove && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Remove collaborator"
+              className="h-7 w-7 text-zinc-400 hover:text-red-500"
+              onClick={() => onRemove(collab.id)}
+              disabled={isRemoving}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {isEditing && (
+        <div className="space-y-2 pt-2 border-t border-zinc-100">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_110px_auto] sm:items-end">
+            <div>
+              <label
+                htmlFor={roleFieldId}
+                className="text-xs font-medium text-zinc-600"
+              >
+                Role
+              </label>
+              <Select value={editRole} onValueChange={onRoleChange}>
+                <SelectTrigger id={roleFieldId} className="mt-1 h-8 text-xs">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem
+                      key={role.value}
+                      value={role.value}
+                      disabled={role.isPresenter && otherHasPresenter}
+                    >
+                      {role.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label
+                htmlFor={shareFieldId}
+                className="text-xs font-medium text-zinc-600"
+              >
+                Share (%)
+              </label>
+              <Input
+                id={shareFieldId}
+                type="number"
+                min={1}
+                max={maxEditShare}
+                value={editShare}
+                onChange={(e) => onShareChange(Number(e.target.value))}
+                className="mt-1 h-8 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 px-2.5"
+                disabled={isSaveDisabled}
+                onClick={() => onSaveEdit(collab.id)}
+              >
+                {isUpdating ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2"
+                disabled={isUpdating}
+                onClick={onCancelEdit}
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {maxEditShare < 1 && (
+            <p className="text-xs text-amber-600">
+              Other active collaborators already hold {otherSharesPct}% of
+              revenue (maximum 90% combined). Reduce another collaborator&apos;s
+              share before increasing this invitation.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface InviteCollaboratorPanelProps {
+  planId: string;
+  excludeId?: string;
+  roles: typeof WEBINAR_ROLES;
+  hasActivePresenter: boolean;
+  isAtMaxCollaborators: boolean;
+  maxInviteShare: number;
+  inviteProfileId: string;
+  inviteRole: string;
+  inviteShare: number;
+  isPending: boolean;
+  onClose: () => void;
+  onSelectProfile: (id: string) => void;
+  onRoleChange: (role: string) => void;
+  onShareChange: (share: number) => void;
+  onSubmit: () => void;
+}
+
+function InviteCollaboratorPanel({
+  planId,
+  excludeId,
+  roles,
+  hasActivePresenter,
+  isAtMaxCollaborators,
+  maxInviteShare,
+  inviteProfileId,
+  inviteRole,
+  inviteShare,
+  isPending,
+  onClose,
+  onSelectProfile,
+  onRoleChange,
+  onShareChange,
+  onSubmit,
+}: Readonly<InviteCollaboratorPanelProps>) {
+  const inviteRoleId = `collab-invite-role-${planId}`;
+  const inviteShareId = `collab-invite-share-${planId}`;
+  const isSubmitDisabled =
+    isAtMaxCollaborators ||
+    !inviteProfileId ||
+    !inviteRole ||
+    inviteShare < 1 ||
+    inviteShare > maxInviteShare ||
+    isPending;
+
+  return (
+    <div className="border border-zinc-200 rounded-lg p-4 space-y-3 bg-zinc-50/50">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-zinc-700">Invite Collaborator</p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-zinc-400"
+          onClick={onClose}
+        >
+          <ChevronUp className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-zinc-600">Search Consultant</p>
+        <div className="mt-1">
+          <ConsultantSearchInput
+            excludeId={excludeId}
+            onSelect={onSelectProfile}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label
+            htmlFor={inviteRoleId}
+            className="text-xs font-medium text-zinc-600"
+          >
+            Role
+          </label>
+          <Select value={inviteRole} onValueChange={onRoleChange}>
+            <SelectTrigger id={inviteRoleId} className="mt-1 h-9">
+              <SelectValue placeholder="Select role" />
+            </SelectTrigger>
+            <SelectContent>
+              {roles.map((role) => (
+                <SelectItem
+                  key={role.value}
+                  value={role.value}
+                  disabled={role.isPresenter && hasActivePresenter}
+                >
+                  {role.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <label
+            htmlFor={inviteShareId}
+            className="text-xs font-medium text-zinc-600"
+          >
+            Revenue Share (%)
+          </label>
+          <Input
+            id={inviteShareId}
+            type="number"
+            min={1}
+            max={maxInviteShare}
+            value={inviteShare}
+            onChange={(e) => onShareChange(Number(e.target.value))}
+            className="mt-1 h-9"
+          />
+          <p className="text-[10px] text-zinc-400 mt-0.5">
+            Max {maxInviteShare}% available
+          </p>
+        </div>
+      </div>
+
+      <Button
+        type="button"
+        className="w-full"
+        onClick={onSubmit}
+        disabled={isSubmitDisabled}
+      >
+        {isPending ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : (
+          <UserPlus className="w-4 h-4 mr-2" />
+        )}
+        Send Invitation
+      </Button>
+    </div>
+  );
+}
+
 export function CollaboratorsTab({
   planType,
   planId,
   isOwner,
   excludeId,
-}: CollaboratorsTabProps) {
+}: Readonly<CollaboratorsTabProps>) {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteProfileId, setInviteProfileId] = useState("");
   const [inviteRole, setInviteRole] = useState("");
@@ -219,11 +547,13 @@ export function CollaboratorsTab({
     (c) => c.status === "PENDING" || c.status === "ACCEPTED",
   );
 
-  const totalShare =
-    activeCollaborators.reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-
-  const ownerShare = 100 - totalShare;
-  const maxInviteShare = Math.max(0, 90 - totalShare);
+  const sharesPct = Number(
+    (
+      activeCollaborators.reduce((sum, c) => sum + c.revenueShareBps, 0) / 100
+    ).toFixed(2),
+  );
+  const ownerShare = Number((100 - sharesPct).toFixed(2));
+  const maxInviteShare = Math.max(0, Number((90 - sharesPct).toFixed(2)));
   const isAtMaxCollaborators =
     activeCollaborators.length >= MAX_COLLABORATORS_PER_PLAN;
   const hasActivePresenter = activeCollaborators.some((c) =>
@@ -248,7 +578,7 @@ export function CollaboratorsTab({
         <div className="text-sm">
           <span className="font-medium text-zinc-800">Revenue Split:</span>{" "}
           <span className="text-zinc-600">
-            Host {ownerShare}% | Collaborators {totalShare}%
+            Host {ownerShare}% | Collaborators {sharesPct}%
           </span>
         </div>
       </div>
@@ -280,159 +610,52 @@ export function CollaboratorsTab({
       ) : (
         <div className="space-y-2">
           {collaborators.map((collab) => {
-            const config = statusConfig[collab.status] ?? statusConfig.PENDING;
-            const roleLabel =
-              roles.find((r) => r.value === collab.role)?.label ?? collab.role;
-            const isEditing = editingId === collab.id;
-            const currentOtherSharesPct =
-              activeCollaborators
-                .filter((c) => c.id !== collab.id)
-                .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-            const maxEditShare = Math.max(0, 90 - currentOtherSharesPct);
+            const otherSharesPct = Number(
+              (
+                activeCollaborators
+                  .filter((c) => c.id !== collab.id)
+                  .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100
+              ).toFixed(2),
+            );
+            const maxEditShare = Math.max(
+              0,
+              Number((90 - otherSharesPct).toFixed(2)),
+            );
             const otherHasPresenter = activeCollaborators.some(
               (c) => c.id !== collab.id && PRESENTER_ROLES.has(c.role),
             );
 
             return (
-              <div
+              <CollaboratorRow
                 key={collab.id}
-                className="p-3 bg-white border border-zinc-200 rounded-lg space-y-2.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="w-8 h-8">
-                      <AvatarImage
-                        src={collab.consultantProfile.user.image ?? undefined}
-                      />
-                      <AvatarFallback>
-                        {(collab.consultantProfile.user.name ?? "?").charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="text-sm font-medium text-zinc-800">
-                        {collab.consultantProfile.user.name ?? "Unknown"}
-                      </p>
-                      {!isEditing && (
-                        <p className="text-xs text-zinc-500">
-                          {roleLabel} &middot; {collab.revenueShareBps / 100}%
-                          share
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant={config.variant}>{config.label}</Badge>
-                    {isOwner && collab.status === "PENDING" && !isEditing && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Edit collaborator"
-                        className="h-7 w-7 text-zinc-400 hover:text-zinc-700"
-                        onClick={() => {
-                          setEditingId(collab.id);
-                          setEditRole(collab.role);
-                          setEditShare(collab.revenueShareBps / 100);
-                        }}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                    {isOwner &&
-                      collab.status !== "REMOVED" &&
-                      collab.status !== "WITHDRAWN" && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Remove collaborator"
-                          className="h-7 w-7 text-zinc-400 hover:text-red-500"
-                          onClick={() => removeMutation.mutate(collab.id)}
-                          disabled={removeMutation.isPending}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                  </div>
-                </div>
-
-                {isEditing && (
-                  <div className="grid grid-cols-1 gap-2 pt-2 border-t border-zinc-100 sm:grid-cols-[1fr_110px_auto] sm:items-end">
-                    <div>
-                      <label className="text-xs font-medium text-zinc-600">
-                        Role
-                      </label>
-                      <Select value={editRole} onValueChange={setEditRole}>
-                        <SelectTrigger className="mt-1 h-8 text-xs">
-                          <SelectValue placeholder="Select role" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {roles.map((role) => (
-                            <SelectItem
-                              key={role.value}
-                              value={role.value}
-                              disabled={role.isPresenter && otherHasPresenter}
-                            >
-                              {role.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-medium text-zinc-600">
-                        Share (%)
-                      </label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={maxEditShare}
-                        value={editShare}
-                        onChange={(e) => setEditShare(Number(e.target.value))}
-                        className="mt-1 h-8 text-xs"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-8 px-2.5"
-                        disabled={
-                          updateMutation.isPending ||
-                          !editRole ||
-                          editShare < 1 ||
-                          editShare > maxEditShare
-                        }
-                        onClick={() =>
-                          updateMutation.mutate({
-                            collaboratorId: collab.id,
-                            role: editRole,
-                            revenueSharePercentage: editShare,
-                          })
-                        }
-                      >
-                        {updateMutation.isPending ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Check className="w-3.5 h-3.5" />
-                        )}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 px-2"
-                        disabled={updateMutation.isPending}
-                        onClick={() => setEditingId(null)}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
+                collab={collab}
+                isOwner={isOwner}
+                isEditing={editingId === collab.id}
+                editRole={editRole}
+                editShare={editShare}
+                maxEditShare={maxEditShare}
+                otherSharesPct={otherSharesPct}
+                otherHasPresenter={otherHasPresenter}
+                roles={roles}
+                isUpdating={updateMutation.isPending}
+                isRemoving={removeMutation.isPending}
+                onStartEdit={(c) => {
+                  setEditingId(c.id);
+                  setEditRole(c.role);
+                  setEditShare(c.revenueShareBps / 100);
+                }}
+                onCancelEdit={() => setEditingId(null)}
+                onRoleChange={setEditRole}
+                onShareChange={setEditShare}
+                onSaveEdit={(collabId) =>
+                  updateMutation.mutate({
+                    collaboratorId: collabId,
+                    role: editRole,
+                    revenueSharePercentage: editShare,
+                  })
+                }
+                onRemove={(collabId) => removeMutation.mutate(collabId)}
+              />
             );
           })}
         </div>
@@ -458,99 +681,28 @@ export function CollaboratorsTab({
       )}
 
       {isOwner && isInviteOpen && (
-        <div className="border border-zinc-200 rounded-lg p-4 space-y-3 bg-zinc-50/50">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-700">
-              Invite Collaborator
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-zinc-400"
-              onClick={() => {
-                setIsInviteOpen(false);
-                setInviteProfileId("");
-                setInviteRole("");
-                setInviteShare(10);
-              }}
-            >
-              <ChevronUp className="w-4 h-4" />
-            </Button>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-zinc-600">
-              Search Consultant
-            </label>
-            <div className="mt-1">
-              <ConsultantSearchInput
-                excludeId={excludeId}
-                onSelect={(id) => setInviteProfileId(id)}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="text-xs font-medium text-zinc-600">Role</label>
-              <Select value={inviteRole} onValueChange={setInviteRole}>
-                <SelectTrigger className="mt-1 h-9">
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  {roles.map((role) => (
-                    <SelectItem
-                      key={role.value}
-                      value={role.value}
-                      disabled={role.isPresenter && hasActivePresenter}
-                    >
-                      {role.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-zinc-600">
-                Revenue Share (%)
-              </label>
-              <Input
-                type="number"
-                min={1}
-                max={maxInviteShare}
-                value={inviteShare}
-                onChange={(e) => setInviteShare(Number(e.target.value))}
-                className="mt-1 h-9"
-              />
-              <p className="text-[10px] text-zinc-400 mt-0.5">
-                Max {maxInviteShare}% available
-              </p>
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            className="w-full"
-            onClick={() => inviteMutation.mutate()}
-            disabled={
-              isAtMaxCollaborators ||
-              !inviteProfileId ||
-              !inviteRole ||
-              inviteShare < 1 ||
-              inviteShare > maxInviteShare ||
-              inviteMutation.isPending
-            }
-          >
-            {inviteMutation.isPending ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <UserPlus className="w-4 h-4 mr-2" />
-            )}
-            Send Invitation
-          </Button>
-        </div>
+        <InviteCollaboratorPanel
+          planId={planId}
+          excludeId={excludeId}
+          roles={roles}
+          hasActivePresenter={hasActivePresenter}
+          isAtMaxCollaborators={isAtMaxCollaborators}
+          maxInviteShare={maxInviteShare}
+          inviteProfileId={inviteProfileId}
+          inviteRole={inviteRole}
+          inviteShare={inviteShare}
+          isPending={inviteMutation.isPending}
+          onClose={() => {
+            setIsInviteOpen(false);
+            setInviteProfileId("");
+            setInviteRole("");
+            setInviteShare(10);
+          }}
+          onSelectProfile={setInviteProfileId}
+          onRoleChange={setInviteRole}
+          onShareChange={setInviteShare}
+          onSubmit={() => inviteMutation.mutate()}
+        />
       )}
     </div>
   );

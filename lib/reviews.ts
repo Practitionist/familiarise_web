@@ -2,6 +2,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
+  ReviewActor,
   ReviewTrack,
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
@@ -262,6 +263,130 @@ function isFullTx(tx: ScoringTx | Tx): tx is Tx {
   );
 }
 
+function collectPresentersByAppointment(
+  appointments: Array<{
+    id: string;
+    webinar: {
+      webinarPlan: {
+        consultantProfileId: string | null;
+        collaborators: Array<{ consultantProfileId: string }>;
+      };
+    } | null;
+    class: {
+      classPlan: {
+        consultantProfileId: string | null;
+        collaborators: Array<{ consultantProfileId: string }>;
+      };
+    } | null;
+  }>,
+  primaryConsultantProfileId: string,
+): {
+  presentersByAppointment: Map<string, string[]>;
+  targetPresenterIds: string[];
+} {
+  const presentersByAppointment = new Map<string, string[]>();
+  const allPresenterIds = new Set<string>();
+
+  for (const appt of appointments) {
+    const plan = appt.webinar?.webinarPlan ?? appt.class?.classPlan;
+    if (plan?.consultantProfileId !== primaryConsultantProfileId) {
+      continue;
+    }
+    const presenterIds = [
+      ...new Set(
+        plan.collaborators
+          .map((c) => c.consultantProfileId)
+          .filter((id) => id !== primaryConsultantProfileId),
+      ),
+    ];
+    if (presenterIds.length > 0) {
+      presentersByAppointment.set(appt.id, presenterIds);
+      for (const id of presenterIds) allPresenterIds.add(id);
+    }
+  }
+
+  return {
+    presentersByAppointment,
+    targetPresenterIds: [...allPresenterIds],
+  };
+}
+
+async function syncPresenterReviewCopy(
+  tx: Tx,
+  presenterId: string,
+  source: {
+    appointmentId: string;
+    consulteeProfileId: string;
+    ratingUnitId: string;
+    rating: number;
+    reviewDescription: string | null;
+    isAnonymous: boolean;
+    ratedOccurrenceAt: Date | null;
+    deletedAt: Date | null;
+    removedBy: ReviewActor | null;
+    excludedFromAggregateAt: Date | null;
+  },
+  existing:
+    | {
+        id: string;
+        rating: number;
+        reviewDescription: string | null;
+        isAnonymous: boolean;
+        deletedAt: Date | null;
+        removedBy: ReviewActor | null;
+        excludedFromAggregateAt: Date | null;
+      }
+    | undefined,
+): Promise<boolean> {
+  if (!existing) {
+    if (source.deletedAt !== null) return false;
+    await tx.consultantReview.create({
+      data: {
+        rating: source.rating,
+        reviewDescription: source.reviewDescription,
+        consultantProfileId: presenterId,
+        consulteeProfileId: source.consulteeProfileId,
+        appointmentId: source.appointmentId,
+        isAnonymous: source.isAnonymous,
+        track: "GROUP",
+        ratingUnitId: source.ratingUnitId,
+        ratedOccurrenceAt: source.ratedOccurrenceAt,
+        excludedFromAggregateAt: source.excludedFromAggregateAt,
+      },
+    });
+    return true;
+  }
+
+  const copyModeratedIndependently =
+    existing.removedBy !== null && existing.removedBy !== source.removedBy;
+  if (copyModeratedIndependently) return false;
+
+  const contentChanged =
+    existing.rating !== source.rating ||
+    existing.reviewDescription !== source.reviewDescription ||
+    existing.isAnonymous !== source.isAnonymous;
+  const moderationChanged =
+    existing.deletedAt?.getTime() !== source.deletedAt?.getTime() ||
+    existing.removedBy !== source.removedBy ||
+    existing.excludedFromAggregateAt?.getTime() !==
+      source.excludedFromAggregateAt?.getTime();
+
+  if (!contentChanged && !moderationChanged) return false;
+
+  await tx.consultantReview.update({
+    where: { id: existing.id },
+    data: {
+      rating: source.rating,
+      reviewDescription: source.reviewDescription,
+      isAnonymous: source.isAnonymous,
+      deletedAt: source.deletedAt,
+      removedBy: source.removedBy,
+      excludedFromAggregateAt: source.excludedFromAggregateAt,
+    },
+  });
+  return true;
+}
+
 /**
  * Attribute GROUP session reviews (and any subsequent edits, withdrawals, or
  * moderation changes) on a primary host's profile to accepted PRESENTER
@@ -335,28 +460,10 @@ async function fanOutGroupSessionReviews(
     },
   });
 
-  const presentersByAppointment = new Map<string, string[]>();
-  const allPresenterIds = new Set<string>();
-  for (const appt of appointments) {
-    const plan = appt.webinar?.webinarPlan ?? appt.class?.classPlan;
-    if (!plan || plan.consultantProfileId !== primaryConsultantProfileId) {
-      continue;
-    }
-    const presenterIds = [
-      ...new Set(
-        plan.collaborators
-          .map((c) => c.consultantProfileId)
-          .filter((id) => id !== primaryConsultantProfileId),
-      ),
-    ];
-    if (presenterIds.length > 0) {
-      presentersByAppointment.set(appt.id, presenterIds);
-      for (const id of presenterIds) allPresenterIds.add(id);
-    }
-  }
-  if (allPresenterIds.size === 0) return;
+  const { presentersByAppointment, targetPresenterIds } =
+    collectPresentersByAppointment(appointments, primaryConsultantProfileId);
+  if (targetPresenterIds.length === 0) return;
 
-  const targetPresenterIds = [...allPresenterIds];
   const consulteeIds = [
     ...new Set(groupReviews.map((r) => r.consulteeProfileId)),
   ];
@@ -411,52 +518,17 @@ async function fanOutGroupSessionReviews(
       const existing = existingMap.get(
         keyOf(presenterId, source.consulteeProfileId, source.ratingUnitId),
       );
-      if (!existing) {
-        if (source.deletedAt !== null) continue;
-        await tx.consultantReview.create({
-          data: {
-            rating: source.rating,
-            reviewDescription: source.reviewDescription,
-            consultantProfileId: presenterId,
-            consulteeProfileId: source.consulteeProfileId,
-            appointmentId: source.appointmentId,
-            isAnonymous: source.isAnonymous,
-            track: "GROUP",
-            ratingUnitId: source.ratingUnitId,
-            ratedOccurrenceAt: source.ratedOccurrenceAt,
-            excludedFromAggregateAt: source.excludedFromAggregateAt,
-          },
-        });
-        dirtyPresenterIds.add(presenterId);
-        continue;
-      }
-
-      const copyModeratedIndependently =
-        existing.removedBy !== null && existing.removedBy !== source.removedBy;
-      const contentChanged =
-        existing.rating !== source.rating ||
-        existing.reviewDescription !== source.reviewDescription ||
-        existing.isAnonymous !== source.isAnonymous;
-      const moderationChanged =
-        !copyModeratedIndependently &&
-        (existing.deletedAt?.getTime() !== source.deletedAt?.getTime() ||
-          existing.removedBy !== source.removedBy ||
-          existing.excludedFromAggregateAt?.getTime() !==
-            source.excludedFromAggregateAt?.getTime());
-      if (contentChanged || moderationChanged) {
-        await tx.consultantReview.update({
-          where: { id: existing.id },
-          data: {
-            rating: source.rating,
-            reviewDescription: source.reviewDescription,
-            isAnonymous: source.isAnonymous,
-            ...(!copyModeratedIndependently && {
-              deletedAt: source.deletedAt,
-              removedBy: source.removedBy,
-              excludedFromAggregateAt: source.excludedFromAggregateAt,
-            }),
-          },
-        });
+      const updated = await syncPresenterReviewCopy(
+        tx,
+        presenterId,
+        {
+          ...source,
+          appointmentId: source.appointmentId,
+          ratingUnitId: source.ratingUnitId,
+        },
+        existing,
+      );
+      if (updated) {
         dirtyPresenterIds.add(presenterId);
       }
     }
@@ -687,6 +759,15 @@ type ExistingReview = {
 /** The columns that key a review inside one (consultant, consultee) pair. */
 type ReviewKey = { track: ReviewTrack | null; ratingUnitId: string | null };
 
+function ratingUnitIdForRow(row: {
+  webinarId: string | null;
+  classId: string | null;
+}): string | null {
+  if (row.webinarId) return `webinar:${row.webinarId}`;
+  if (row.classId) return `class:${row.classId}`;
+  return null;
+}
+
 function describe(
   row: AppointmentRow,
   reviewByConsultant: Map<string, (ExistingReview & ReviewKey)[]>,
@@ -704,11 +785,7 @@ function describe(
   const track = trackForAppointment(row);
   // Group only. A 1:1 review is one data point by construction now, so a bucket
   // key for it would be a column that always holds exactly one row.
-  const ratingUnitId = row.webinarId
-    ? `webinar:${row.webinarId}`
-    : row.classId
-      ? `class:${row.classId}`
-      : null;
+  const ratingUnitId = ratingUnitIdForRow(row);
 
   return {
     appointmentId: row.id,

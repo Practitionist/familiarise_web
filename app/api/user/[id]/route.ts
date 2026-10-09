@@ -23,6 +23,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -453,28 +454,32 @@ async function executeUserHardDeleteOrFallbackScrub(
   for (const c of removedCollaborations) {
     await revokeCollaboratorAccess(c.planType, c.planId, id, { notify: false });
     if (c.hostUserId) {
+      const hostUserId = c.hostUserId;
       const planTitle = c.planTitle ?? "Untitled offering";
       const collaboratorName = c.collaboratorName ?? "A collaborator";
       const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
-      void notifyCollaboratorWithdrawn(c.hostUserId, {
-        collaboratorName,
-        planTitle,
-        planType: c.planType,
-        dashboardUrl,
-      }).catch((e) => Sentry.captureException(e));
-      void sendCollaboratorWithdrawnEmail(
-        {
-          recipientUserId: c.hostUserId,
-          actorName: collaboratorName,
+      scheduleAfter(async () => {
+        await notifyCollaboratorWithdrawn(hostUserId, {
           collaboratorName,
           planTitle,
           planType: c.planType,
-          role: c.role ?? "CO_HOST",
-          revenueShareBps: c.revenueShareBps,
-          collaboratorId: c.collaboratorId ?? `${c.planType}-${c.planId}-${id}`,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+          dashboardUrl,
+        }).catch((e) => Sentry.captureException(e));
+        await sendCollaboratorWithdrawnEmail(
+          {
+            recipientUserId: hostUserId,
+            actorName: collaboratorName,
+            collaboratorName,
+            planTitle,
+            planType: c.planType,
+            role: c.role ?? "CO_HOST",
+            revenueShareBps: c.revenueShareBps,
+            collaboratorId:
+              c.collaboratorId ?? `${c.planType}-${c.planId}-${id}`,
+          },
+          EMAIL_BUDGET_MS.REQUEST,
+        ).catch((e) => Sentry.captureException(e));
+      }, "user.delete.collaborator-withdrawn");
     }
   }
 

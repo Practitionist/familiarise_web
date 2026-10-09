@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
-import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
+import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { toOccurrenceLike } from "@/lib/appointments/view-model";
 import {
   isOccurrenceOver,
@@ -33,10 +33,8 @@ const collaboratorsInclude = {
 
 export interface ManageTimingsTarget {
   appointment: ManageTimingsAppointmentLike;
-  /** Plan owner + ACCEPTED collaborators — the page's ownership check. */
+  /** Primary plan owner profile IDs permitted to manage slot timings. */
   planOwnerIds: string[];
-  /** Program progress; only set when this wrapper carries several sessions
-   *  (subscription/class, #1554). */
   completedSessions?: number;
   groupTotalSessions?: number;
 }
@@ -68,10 +66,7 @@ export async function readManageTimingsTarget(
           classPlan: classRow.classPlan,
         },
       },
-      planOwnerIds: ownerIds(
-        classRow.classPlan.consultantProfileId,
-        ...classRow.classPlan.collaborators.map((c) => c.consultantProfileId),
-      ),
+      planOwnerIds: ownerIds(classRow.classPlan.consultantProfileId),
     });
   }
 
@@ -90,25 +85,15 @@ export async function readManageTimingsTarget(
         appointmentType: "WEBINAR",
         webinar: { id: webinarRow.id, webinarPlan: webinarRow.webinarPlan },
       },
-      planOwnerIds: ownerIds(
-        webinarRow.webinarPlan.consultantProfileId,
-        ...webinarRow.webinarPlan.collaborators.map(
-          (c) => c.consultantProfileId,
-        ),
-      ),
+      planOwnerIds: ownerIds(webinarRow.webinarPlan.consultantProfileId),
     });
   }
 
-  // A real Appointment row: same read the reschedule/detail pages already
-  // use, so eligibility and the ownership shape stay in one place.
   const detail = await readAppointmentDetail(targetId);
   if (!detail) return null;
   const { appointment } = detail;
   const now = new Date();
 
-  // TRIAL sessions never open this surface — the appointments list never
-  // renders a "Timings" action for one — but the type is wider than the
-  // four this route understands, so guard rather than assume.
   if (
     appointment.appointmentType !== "CONSULTATION" &&
     appointment.appointmentType !== "SUBSCRIPTION" &&
@@ -118,7 +103,7 @@ export async function readManageTimingsTarget(
     return null;
   }
 
-  const planOwnerIds = resolvePlanOwnerIds(appointment);
+  const planOwnerIds = resolvePrimaryPlanOwnerIds(appointment);
 
   // #1554 — a subscription/class is one Appointment whose occurrence rows are
   // its sessions; progress is counted over those rows, same as the consultant
@@ -147,10 +132,7 @@ export async function readManageTimingsTarget(
     // never reads.
     appointment: {
       appointmentType: appointment.appointmentType as
-        | "CONSULTATION"
-        | "SUBSCRIPTION"
-        | "WEBINAR"
-        | "CLASS",
+        "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
       // Program-wide, past sessions included: the picker opens on the earliest
       // session still awaiting a time, and falls back to the last one that
       // ran when everything is over (#1073).

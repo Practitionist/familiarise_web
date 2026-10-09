@@ -42,7 +42,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import {
   CLASS_PREFIX,
   collabChannelId,
@@ -67,7 +67,6 @@ import {
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
-import { isPrivileged } from "@/lib/auth-helpers";
 
 const bodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -296,6 +295,156 @@ async function postBookingContextCardIfAbsent(
   }
 }
 
+async function handleCollabChannelOpen(
+  userId: string,
+  userRole: string | undefined,
+  body: Extract<z.infer<typeof bodySchema>, { kind: "collab" }>,
+): Promise<NextResponse> {
+  if (Boolean(body.webinarPlanId) === Boolean(body.classPlanId)) {
+    return NextResponse.json(
+      { error: "Specify either webinarPlanId or classPlanId" },
+      { status: 400 },
+    );
+  }
+  const planType = body.webinarPlanId ? "webinar" : "class";
+  const planId = (body.webinarPlanId ?? body.classPlanId)!;
+
+  const authorized = await isAuthorizedForCollabChannel(
+    userId,
+    userRole,
+    planType,
+    planId,
+  );
+  if (authorized === null) {
+    return NextResponse.json({ error: "Plan not found." }, { status: 404 });
+  }
+  if (!authorized) {
+    return NextResponse.json(
+      { error: "You do not have access to this collaborator channel." },
+      { status: 403 },
+    );
+  }
+
+  const reconciled = await createCollaboratorChannel(planType, planId);
+  if (!reconciled) {
+    return NextResponse.json(
+      { error: "Collaborator channel not available" },
+      { status: 404 },
+    );
+  }
+
+  const channelId = collabChannelId(planType, planId);
+  return NextResponse.json({ channelType: "messaging", channelId });
+}
+
+function resolveDmOrganizationId(
+  requestedOrgId: string | null,
+  contexts: Awaited<ReturnType<typeof pairBookingContexts>>,
+): { organizationId: string | null } | { error: NextResponse } {
+  if (requestedOrgId !== null) {
+    if (!contexts.organizations.includes(requestedOrgId)) {
+      return {
+        error: NextResponse.json(
+          {
+            error: "No booking ties this conversation to that organization.",
+          },
+          { status: 403 },
+        ),
+      };
+    }
+    return { organizationId: requestedOrgId };
+  }
+  if (contexts.personalAllowed) {
+    return { organizationId: null };
+  }
+  if (contexts.organizations.length === 1) {
+    return { organizationId: contexts.organizations[0] };
+  }
+  return {
+    error: NextResponse.json(
+      {
+        error:
+          "This conversation exists in multiple organizations — specify which one.",
+      },
+      { status: 400 },
+    ),
+  };
+}
+
+async function handleDmChannelOpen(
+  userId: string,
+  body: Extract<z.infer<typeof bodySchema>, { kind: "dm" }>,
+): Promise<NextResponse> {
+  const { counterpartyUserId, contextAppointmentId } = body;
+  const requestedOrgId = body.organizationId ?? null;
+
+  if (!(await canDirectMessage(userId, counterpartyUserId))) {
+    streamLogger.warn("Refused DM open — no booking link", {
+      userId,
+      counterpartyUserId,
+    });
+    return NextResponse.json(
+      {
+        error:
+          "Direct messages are only available between people who share a booking.",
+        eligibleStatuses: DM_ELIGIBLE_STATUSES,
+      },
+      { status: 403 },
+    );
+  }
+
+  const contexts = await pairBookingContexts(userId, counterpartyUserId);
+  const resolvedOrg = resolveDmOrganizationId(requestedOrgId, contexts);
+  if ("error" in resolvedOrg) return resolvedOrg.error;
+
+  const { channelId } = await createDirectMessageChannel(
+    userId,
+    counterpartyUserId,
+    resolvedOrg.organizationId,
+  );
+
+  if (contextAppointmentId) {
+    await postBookingContextCardIfAbsent(
+      channelId,
+      userId,
+      counterpartyUserId,
+      contextAppointmentId,
+    );
+  }
+
+  return NextResponse.json({ channelType: "messaging", channelId });
+}
+
+async function handleEventChannelOpen(
+  userId: string,
+  body: Extract<z.infer<typeof bodySchema>, { kind: "event" }>,
+): Promise<NextResponse> {
+  const { eventType, eventId } = body;
+  if (!(await isEventParticipant(eventType, eventId, userId))) {
+    return NextResponse.json(
+      { error: "You are not a participant in this event." },
+      { status: 403 },
+    );
+  }
+
+  const admission = await addUserToEventChannel(eventType, eventId, userId);
+  if (!admission.success) {
+    return NextResponse.json(
+      {
+        error:
+          "Chat is unavailable because data-processing consent for messaging has not been granted.",
+      },
+      { status: 403 },
+    );
+  }
+
+  const channelId =
+    eventType === "webinar"
+      ? `${WEBINAR_PREFIX}${eventId}`
+      : `${CLASS_PREFIX}${eventId}`;
+  return NextResponse.json({ channelType: "team", channelId });
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
@@ -316,130 +465,16 @@ export async function POST(request: NextRequest) {
 
   try {
     if (body.kind === "collab") {
-      if (Boolean(body.webinarPlanId) === Boolean(body.classPlanId)) {
-        return NextResponse.json(
-          { error: "Specify either webinarPlanId or classPlanId" },
-          { status: 400 },
-        );
-      }
-      const planType = body.webinarPlanId ? "webinar" : "class";
-      const planId = (body.webinarPlanId ?? body.classPlanId)!;
-
-      const authorized = await isAuthorizedForCollabChannel(
+      return await handleCollabChannelOpen(
         userId,
         auth.session.user.role,
-        planType,
-        planId,
+        body,
       );
-      if (authorized === null) {
-        return NextResponse.json({ error: "Plan not found." }, { status: 404 });
-      }
-      if (!authorized) {
-        return NextResponse.json(
-          { error: "You do not have access to this collaborator channel." },
-          { status: 403 },
-        );
-      }
-
-      const reconciled = await createCollaboratorChannel(planType, planId);
-      if (!reconciled) {
-        return NextResponse.json(
-          { error: "Collaborator channel not available" },
-          { status: 404 },
-        );
-      }
-
-      const channelId = collabChannelId(planType, planId);
-      return NextResponse.json({ channelType: "messaging", channelId });
     }
-
     if (body.kind === "dm") {
-      const { counterpartyUserId, contextAppointmentId } = body;
-      const requestedOrgId = body.organizationId ?? null;
-
-      if (!(await canDirectMessage(userId, counterpartyUserId))) {
-        streamLogger.warn("Refused DM open — no booking link", {
-          userId,
-          counterpartyUserId,
-        });
-        return NextResponse.json(
-          {
-            error:
-              "Direct messages are only available between people who share a booking.",
-            eligibleStatuses: DM_ELIGIBLE_STATUSES,
-          },
-          { status: 403 },
-        );
-      }
-
-      const contexts = await pairBookingContexts(userId, counterpartyUserId);
-      let organizationId: string | null;
-      if (requestedOrgId !== null) {
-        if (!contexts.organizations.includes(requestedOrgId)) {
-          return NextResponse.json(
-            {
-              error: "No booking ties this conversation to that organization.",
-            },
-            { status: 403 },
-          );
-        }
-        organizationId = requestedOrgId;
-      } else if (contexts.personalAllowed) {
-        organizationId = null;
-      } else if (contexts.organizations.length === 1) {
-        organizationId = contexts.organizations[0];
-      } else {
-        return NextResponse.json(
-          {
-            error:
-              "This conversation exists in multiple organizations — specify which one.",
-          },
-          { status: 400 },
-        );
-      }
-
-      const { channelId } = await createDirectMessageChannel(
-        userId,
-        counterpartyUserId,
-        organizationId,
-      );
-
-      if (contextAppointmentId) {
-        await postBookingContextCardIfAbsent(
-          channelId,
-          userId,
-          counterpartyUserId,
-          contextAppointmentId,
-        );
-      }
-
-      return NextResponse.json({ channelType: "messaging", channelId });
+      return await handleDmChannelOpen(userId, body);
     }
-
-    const { eventType, eventId } = body;
-    if (!(await isEventParticipant(eventType, eventId, userId))) {
-      return NextResponse.json(
-        { error: "You are not a participant in this event." },
-        { status: 403 },
-      );
-    }
-
-    const admission = await addUserToEventChannel(eventType, eventId, userId);
-    if (!admission.success) {
-      return NextResponse.json(
-        {
-          error:
-            "Chat is unavailable because data-processing consent for messaging has not been granted.",
-        },
-        { status: 403 },
-      );
-    }
-
-    const channelId =
-      eventType === "webinar"
-        ? `${WEBINAR_PREFIX}${eventId}`
-        : `${CLASS_PREFIX}${eventId}`;
-    return NextResponse.json({ channelType: "team", channelId });
+    return await handleEventChannelOpen(userId, body);
   } catch (error) {
     if (error instanceof DmNotPermittedError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
