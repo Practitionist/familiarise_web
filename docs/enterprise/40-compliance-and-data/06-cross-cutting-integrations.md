@@ -330,7 +330,7 @@ Each section also lists:
 
 ### E.3 Stream video / Meeting — ✅ Wired (C.4)
 
-See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`](../../../lib/stream/recording-retention.ts); `Organization.streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped recordings.
+See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`](../../../lib/stream/recording-retention.ts); `Organization.streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped recordings. See [Stream Recording & Webhooks](../../stream/13-recording-webhooks.md#retention) and the [ADR](../../decisions/2026-10-09-recording-storage-retention-visibility.md).
 
 ---
 

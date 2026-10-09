@@ -1,6 +1,7 @@
 # ADR: A mid-session recording decline stops the recording and discards it
 
 - **Status**: Accepted
+- **Implementation**: the discard runs in the `recording_ready` webhook handler and the sync path through `discardDeclinedRecording` (`lib/stream/recording-decline.ts`); see the [storage, retention and visibility ADR](2026-10-09-recording-storage-retention-visibility.md).
 - **Date**: 2026-08-13
 - **Author**: teetangh
 - **Part of**: #1134, #1146

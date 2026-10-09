@@ -491,6 +491,10 @@ if (existingRecording) {
 
 ## Recording Transfer
 
+### Why the file is pulled instead of pushed
+
+Stream can push recordings into a customer bucket itself, but it does not document what happens when that push fails: there are no retry or fallback semantics, `call.recording_failed` carries no reason, and the GetStream/protocol discussion #371 reports problems. Twilio's analogous feature deletes recordings after exhausted retries. Pulling from Stream's own 14-day copy means our side can fail and retry without ever losing the recording. Stream external storage is to be revisited after a bad-credentials canary test; the full reasoning is in the [storage, retention and visibility ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
+
 ### Transfer Architecture
 
 `call.recording_ready` only upserts the `READY` row; it never copies. The
@@ -560,7 +564,7 @@ subscription and trial recordings 90 days after the subscription ends, webinars
 recordings with a PENDING or SUCCEEDED purchase are exempt. An org's
 `streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped
 recordings only. Expiry deletes the R2 object and the preview clip and
-thumbnail, and writes a `STREAM_RECORDING_DELETED` org audit row.
+thumbnail, and writes a `STREAM_RECORDING_DELETED` org audit row. The reasoning behind the windows is in the [ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
 
 ---
 
@@ -808,12 +812,12 @@ Receives webhook events from Stream.
 
 ### Recording Operations
 
-| Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Transfer | Delete |
-| -------------- | :---: | :--: | :------: | :------------: | :--------: | :------: | :----: |
-| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   Yes    |   No   |
-| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |    No    |   No   |
-| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |    No    |   No   |
-| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |    No    |   No   |
+| Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Delete |
+| -------------- | :---: | :--: | :------: | :------------: | :--------: | :----: |
+| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   No   |
+| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |   No   |
+| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |   No   |
+| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |   No   |
 
 \*Consultees can only view recordings for webinars/classes they have a live paid enrollment for. As of #689 (STR-1), a successful payment alone is no longer sufficient — the entitlement nets any refunds, so a fully-refunded buyer loses access while a partially-refunded buyer keeps it.
 
@@ -879,10 +883,10 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 
 ### Recording Visibility Rules
 
-1. **Consultants** see all their own recordings (webinars + classes)
-2. **Consultees** see recordings only for paid enrollments that have not been fully refunded (as of #689, access nets refunds — a full refund revokes it, a partial refund retains it)
-3. **Admins** can view all recordings for oversight
-4. **Recording must not be FAILED or EXPIRED** to be visible
+Recordings are private by default. The playback route is the only place a viewer is admitted, and it evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
+
+| Session type | Who may play |
+|
 
 ---
 

@@ -62,9 +62,9 @@ graph TB
     end
 
     subgraph "Storage"
-        D --> O[Supabase Storage - Files & Recordings]
-        G --> P[Stream S3 - Temporary Recording Storage]
-        P -->|Transfer after 2 weeks| O
+        D --> O[Supabase Storage - Files and Previews]
+        G --> P[Stream Storage - 14 days]
+        P -->|transfer-recordings| R2N[Cloudflare R2 - Recordings]
     end
 
     subgraph "Hosting"
@@ -88,12 +88,12 @@ graph TB
     STAFF --> CONSULTEE
 ```
 
-| Role | Who They Are | What They Can Do |
-|------|-------------|------------------|
-| **Consultee** | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals |
-| **Consultant** | A professional offering expertise | Create services, set availability, conduct sessions, earn money, manage payouts |
-| **Staff** | Operations team member | Manage payments, refunds, disputes, moderation, support tickets, system jobs |
-| **Admin** | Platform owner/super admin | Everything staff can do + analytics, configuration, maintenance mode, tax management |
+| Role           | Who They Are                       | What They Can Do                                                                     |
+| -------------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
+| **Consultee**  | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals     |
+| **Consultant** | A professional offering expertise  | Create services, set availability, conduct sessions, earn money, manage payouts      |
+| **Staff**      | Operations team member             | Manage payments, refunds, disputes, moderation, support tickets, system jobs         |
+| **Admin**      | Platform owner/super admin         | Everything staff can do + analytics, configuration, maintenance mode, tax management |
 
 ## The 4 Service Types
 
@@ -107,18 +107,18 @@ graph LR
     end
 ```
 
-| Feature | Consultation | Subscription | Webinar | Class |
-|---------|-------------|-------------|---------|-------|
-| **Format** | 1-on-1 | 1-on-1 recurring | 1-to-many | Group, multi-session |
-| **Duration** | Single session | Monthly (1-12 months) | Single event | 4-16 weeks |
-| **Participants** | 2 (consultant + consultee) | 2 | Up to 100+ | Up to N (configurable) |
-| **Pricing** | Per session | Monthly subscription | Per attendee | Per enrollment |
-| **Trial** | No | Yes (30 or 60 min) | No | No |
-| **Collaborators** | No | No | Yes (co-hosts, moderators) | Yes (co-instructors, TAs) |
-| **Recording** | Optional | Optional | Optional | Optional |
-| **Materials** | Yes | Yes + curriculum | Yes | Yes + curriculum |
-| **Waitlist** | No | No | Yes | Yes |
-| **Request Approval** | Yes | Yes | No (direct checkout) | No (direct checkout) |
+| Feature              | Consultation               | Subscription          | Webinar                    | Class                     |
+| -------------------- | -------------------------- | --------------------- | -------------------------- | ------------------------- |
+| **Format**           | 1-on-1                     | 1-on-1 recurring      | 1-to-many                  | Group, multi-session      |
+| **Duration**         | Single session             | Monthly (1-12 months) | Single event               | 4-16 weeks                |
+| **Participants**     | 2 (consultant + consultee) | 2                     | Up to 100+                 | Up to N (configurable)    |
+| **Pricing**          | Per session                | Monthly subscription  | Per attendee               | Per enrollment            |
+| **Trial**            | No                         | Yes (30 or 60 min)    | No                         | No                        |
+| **Collaborators**    | No                         | No                    | Yes (co-hosts, moderators) | Yes (co-instructors, TAs) |
+| **Recording**        | Optional                   | Optional              | Optional                   | Optional                  |
+| **Materials**        | Yes                        | Yes + curriculum      | Yes                        | Yes + curriculum          |
+| **Waitlist**         | No                         | No                    | Yes                        | Yes                       |
+| **Request Approval** | Yes                        | Yes                   | No (direct checkout)       | No (direct checkout)      |
 
 ---
 
@@ -127,6 +127,7 @@ graph LR
 ## Setting Up Your Development Environment
 
 ### Prerequisites
+
 - Node.js 18+
 - npm or pnpm
 - Git
@@ -135,12 +136,14 @@ graph LR
 ### Steps
 
 1. **Clone the repository:**
+
    ```bash
    git clone <repo-url>
    cd familiarise_web
    ```
 
 2. **Install dependencies:**
+
    ```bash
    npm install
    ```
@@ -150,19 +153,20 @@ graph LR
    - Ask the team lead for the actual values
    - Key variables you need to know about (don't worry about the values yet):
 
-   | Variable | What It Does |
-   |----------|-------------|
-   | `DATABASE_URL` | Connects to Supabase PostgreSQL database |
-   | `NEXT_PUBLIC_STREAM_API_KEY` | Stream.io video/chat (public key) |
-   | `STREAM_API_SECRET` | Stream.io server-side key |
-   | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Razorpay payment gateway |
-   | `STRIPE_SECRET_KEY` | Stripe payment gateway |
-   | `RESEND_API_KEY` | Email sending |
-   | `NOVU_API_KEY` | In-app notifications |
-   | `UPSTASH_REDIS_*` | Redis for caching and rate limiting |
-   | `BETTER_AUTH_SECRET` | Authentication encryption key |
+   | Variable                                  | What It Does                             |
+   | ----------------------------------------- | ---------------------------------------- |
+   | `DATABASE_URL`                            | Connects to Supabase PostgreSQL database |
+   | `NEXT_PUBLIC_STREAM_API_KEY`              | Stream.io video/chat (public key)        |
+   | `STREAM_API_SECRET`                       | Stream.io server-side key                |
+   | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Razorpay payment gateway                 |
+   | `STRIPE_SECRET_KEY`                       | Stripe payment gateway                   |
+   | `RESEND_API_KEY`                          | Email sending                            |
+   | `NOVU_API_KEY`                            | In-app notifications                     |
+   | `UPSTASH_REDIS_*`                         | Redis for caching and rate limiting      |
+   | `BETTER_AUTH_SECRET`                      | Authentication encryption key            |
 
 4. **Run the development server:**
+
    ```bash
    npm run dev
    ```
@@ -195,6 +199,7 @@ You'll need accounts for each role to test features:
 **Who:** Anyone (public)
 
 **How to test:**
+
 1. Go to `/auth/signup`
 2. Enter email, password, and name
 3. Choose a role (Consultant or Consultee)
@@ -213,6 +218,7 @@ You'll need accounts for each role to test features:
 **Where:** `/auth/signin`
 
 **How to test:**
+
 1. Go to `/auth/signin`
 2. Enter your credentials
 3. You should be redirected to your role's dashboard
@@ -222,6 +228,7 @@ You'll need accounts for each role to test features:
 **Where:** `/auth/forgot-password` → email with reset link → `/auth/reset-password`
 
 **How to test:**
+
 1. Go to `/auth/forgot-password`
 2. Enter your email
 3. Check email for reset link
@@ -252,6 +259,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Sign up as a consultant
 2. Walk through each step — try both filling everything and skipping optional fields
 3. After completion, check that:
@@ -272,6 +280,7 @@ graph TD
 **Who:** Consultant
 
 **How to test:**
+
 1. Go to Settings in your consultant dashboard
 2. Update your bio, headline, expertise areas
 3. Upload a profile image
@@ -306,6 +315,7 @@ graph TD
 **How to test each service type:**
 
 **Consultation:**
+
 1. Go to Planner → Create Consultation
 2. Fill in: title, description, price (e.g., 999 = ₹999), duration (1 hour)
 3. Add topics and learning outcomes
@@ -313,6 +323,7 @@ graph TD
 5. Save and verify it appears in your planner list
 
 **Subscription:**
+
 1. Go to Planner → Create Subscription
 2. Fill in: title, monthly price, calls per week, session duration
 3. Enable a trial (30 min or 60 min) — this lets consultees try the service first (free or paid, per the plan's trial price)
@@ -321,6 +332,7 @@ graph TD
 6. Save
 
 **Webinar:**
+
 1. Go to Planner → Create Webinar
 2. Fill in: title, description, price per attendee, max participants
 3. Set the date and time
@@ -329,6 +341,7 @@ graph TD
 6. Save
 
 **Class:**
+
 1. Go to Planner → Create Class
 2. Fill in: title, duration (months), meetings per week, price
 3. Set max participants
@@ -345,6 +358,7 @@ graph TD
 **Who:** Consultant
 
 **How to test:**
+
 1. Go to Planner → Schedule
 2. **Weekly mode:** Set recurring slots (e.g., Monday 10:00-11:00 AM, Wednesday 2:00-3:00 PM)
 3. **Custom mode:** Set specific date/time ranges for one-off availability
@@ -352,6 +366,7 @@ graph TD
 5. Try creating an overnight slot (e.g., 11:00 PM - 1:00 AM next day) — this tests UTC handling
 
 **What to look for:**
+
 - Overlap detection (can't create conflicting slots)
 - Slots appear correctly on your public profile for consultees to book
 - Timezone conversion is accurate
@@ -365,6 +380,7 @@ graph TD
 **Who:** Consultant
 
 **How to test:**
+
 1. Navigate to Appointments
 2. You'll see tabs for each service type: Consultations, Subscriptions, Webinars, Classes
 3. Click on any appointment to see details:
@@ -405,6 +421,7 @@ sequenceDiagram
 ```
 
 **How to test:**
+
 1. From a consultee account, request a consultation with your consultant account
 2. Switch to consultant account → go to Requests
 3. You should see the pending request
@@ -421,6 +438,7 @@ sequenceDiagram
 **Who:** Consultant
 
 **How to test:**
+
 1. After completing a paid session, check the Earnings page
 2. You should see the breakdown:
    - Gross amount (what the consultee paid)
@@ -439,6 +457,7 @@ sequenceDiagram
 **Who:** Consultant
 
 **How to test:**
+
 1. Go to Settings → Payout
 2. Add a bank account (account number, IFSC) OR UPI ID OR Stripe Connect
 3. Set one as default
@@ -453,6 +472,7 @@ sequenceDiagram
 **Who:** Consultant (India only)
 
 **How to test:**
+
 1. Go to Settings → Tax Information
 2. Enter PAN number (encrypted with AES-256-GCM before storage)
 3. Optionally enter GSTIN
@@ -460,17 +480,18 @@ sequenceDiagram
 
 ### Recordings
 
-**What:** Session recordings are automatically saved when enabled. They live on Stream.io S3 for 2 weeks, then get transferred to permanent Supabase storage.
+**What:** Session recordings are automatically saved when enabled. Stream holds the file for 14 days; the `transfer-recordings` job (every 6 hours) copies it to Cloudflare R2, where it stays until the platform retention window ends.
 
 **Where:** `/dashboard/consultant/[id]/recordings`
 
 **Who:** Consultant
 
 **How to test:**
+
 1. Enable recording on a service plan
 2. Conduct a session
 3. After the session, check Recordings page
-4. You should see the recording with status: RECORDING → PROCESSING → READY → (after 2 weeks) TRANSFERRING → AVAILABLE
+4. The host starts and stops recording manually. You should see the recording with status: PROCESSING → READY (playable from Stream) → TRANSFERRING → AVAILABLE (after the next transfer run)
 
 ### Chat
 
@@ -481,6 +502,7 @@ sequenceDiagram
 **Who:** Consultant
 
 **How to test:**
+
 1. Go to Chats
 2. Select a conversation with a consultee
 3. Send a text message
@@ -506,6 +528,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Create a webinar or class
 2. Go to the plan → Add Collaborator
 3. Search for another consultant, assign a role (Co-Host, Moderator, Guest Speaker, etc.)
@@ -515,6 +538,7 @@ graph TD
 7. After a paid session, check that earnings split correctly
 
 **Collaborator roles:**
+
 - Webinar: CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT
 - Class: CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR
 
@@ -527,6 +551,7 @@ graph TD
 **Who:** Consultant
 
 **How to test:**
+
 1. Go to Referrals
 2. Copy your auto-generated referral code
 3. Optionally, customize the code
@@ -543,6 +568,7 @@ graph TD
 **Who:** Consultant
 
 **How to test:**
+
 1. Enable a trial on a subscription plan (30 or 60 minutes)
 2. From a consultee account, request a trial
 3. From consultant account, go to Trials → approve the trial
@@ -562,6 +588,7 @@ graph TD
 **Who:** Anyone (public, no login required)
 
 **How to test:**
+
 1. Go to `/explore/experts`
 2. Browse the expert directory
 3. Use filters: domain (tech, business, etc.), subdomain, tags
@@ -575,6 +602,7 @@ graph TD
 **Who:** Anyone (public)
 
 **How to test:**
+
 1. Click on any consultant from the directory
 2. Check that you see:
    - Bio, headline, experience
@@ -615,6 +643,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Log in as consultee
 2. Go to `/explore/experts` → select a consultant
 3. Click on a consultation plan
@@ -638,6 +667,7 @@ graph TD
 **Who:** Consultee (and Consultant)
 
 **How to test:**
+
 1. Find your upcoming appointment in the dashboard
 2. Click "Join Session" when it's time
 3. You'll enter the Stream.io video call interface
@@ -656,6 +686,7 @@ graph TD
 **Who:** Consultee
 
 **How to test:**
+
 1. After completing a session, you should see a review prompt
 2. Rate 1-5 stars
 3. Write a review comment
@@ -684,6 +715,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Find a full webinar or class
 2. Click "Join Waitlist"
 3. Check your waitlist dashboard — you should see your position
@@ -694,6 +726,7 @@ graph TD
 **Where:** `/dashboard/consultee/[id]/payments`
 
 **How to test:**
+
 1. After making a payment, go to Payments
 2. You should see all transactions with: amount, date, status, gateway
 3. Download an invoice (PDF format with GST details if applicable)
@@ -703,6 +736,7 @@ graph TD
 **Where:** `/dashboard/consultee/[id]/referrals`
 
 **How to test:**
+
 1. Use someone's referral code during signup (via `/r/[code]`)
 2. Both you and the referrer should receive credits
 3. Check your available credit balance
@@ -713,6 +747,7 @@ graph TD
 **Where:** `/dashboard/consultee/[id]/resources`
 
 **How to test:**
+
 1. Book a session with a consultant who has uploaded materials
 2. After booking, check Resources
 3. You should see downloadable files (PDFs, documents, etc.)
@@ -747,14 +782,14 @@ graph LR
 
 ### Video Call Features
 
-| Feature | Description | How to Test |
-|---------|-------------|------------|
-| **HD Video** | Multi-participant video calling | Join a session, check video quality |
-| **Audio** | Full-duplex audio | Speak during a call, check for echo/delay |
-| **Screen Sharing** | Share your screen or a specific window | Click screen share icon during a call |
-| **Recording** | Auto-records session (if enabled on the plan) | Start a session with recording enabled, check recordings page after |
-| **In-Call Chat** | Text chat during video sessions | Send messages while in a call |
-| **Participant Controls** | Mute/unmute, camera on/off | Toggle your mic and camera during a call |
+| Feature                  | Description                                   | How to Test                                                         |
+| ------------------------ | --------------------------------------------- | ------------------------------------------------------------------- |
+| **HD Video**             | Multi-participant video calling               | Join a session, check video quality                                 |
+| **Audio**                | Full-duplex audio                             | Speak during a call, check for echo/delay                           |
+| **Screen Sharing**       | Share your screen or a specific window        | Click screen share icon during a call                               |
+| **Recording**            | Auto-records session (if enabled on the plan) | Start a session with recording enabled, check recordings page after |
+| **In-Call Chat**         | Text chat during video sessions               | Send messages while in a call                                       |
+| **Participant Controls** | Mute/unmute, camera on/off                    | Toggle your mic and camera during a call                            |
 
 ### Chat Messaging
 
@@ -763,6 +798,7 @@ graph LR
 **Where:** `/dashboard/consultant/[id]/chats` or `/dashboard/consultee/[id]/messages`
 
 **Features:**
+
 - 1:1 direct messaging
 - Group channels for webinars/classes
 - File sharing (images, documents)
@@ -772,6 +808,7 @@ graph LR
 - Real-time sync
 
 **How to test:**
+
 1. As a consultee, book a session with a consultant
 2. Go to Messages/Chats
 3. Find the conversation channel
@@ -811,10 +848,10 @@ graph TD
 
 ### Payment Gateways
 
-| Gateway | Region | Payment Methods | When Used |
-|---------|--------|----------------|-----------|
-| **Razorpay** | India | UPI, debit/credit cards, netbanking, wallets | Indian consultees paying in INR |
-| **Stripe** | International | Credit/debit cards, ACH, SEPA | Non-Indian consultees |
+| Gateway      | Region        | Payment Methods                              | When Used                       |
+| ------------ | ------------- | -------------------------------------------- | ------------------------------- |
+| **Razorpay** | India         | UPI, debit/credit cards, netbanking, wallets | Indian consultees paying in INR |
+| **Stripe**   | International | Credit/debit cards, ACH, SEPA                | Non-Indian consultees           |
 
 ### Payment States
 
@@ -848,6 +885,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Create a paid booking
 2. From staff dashboard → Refunds → initiate a refund
 3. Check that:
@@ -862,10 +900,12 @@ graph TD
 **Where:** Staff/Admin dashboard → Disputes
 
 **Dispute states:**
+
 - `WARNING_NEEDS_RESPONSE` → `WARNING_UNDER_REVIEW` → `WARNING_CLOSED`
 - `NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON` or `LOST` or `CHARGE_REFUNDED`
 
 **How to test:**
+
 1. From staff dashboard, view any disputes
 2. Check the evidence submission flow
 3. Track the dispute lifecycle through its states
@@ -877,10 +917,12 @@ graph TD
 **Where:** Created by admin; applied at checkout
 
 **Types:**
+
 - `PERCENTAGE` — e.g., 20% off
 - `FIXED_AMOUNT` — e.g., ₹200 off
 
 **How to test:**
+
 1. Create a discount code (via admin/API)
 2. At checkout, enter the code
 3. Verify the price reduction
@@ -905,13 +947,14 @@ stateDiagram-v2
 ```
 
 **Earnings breakdown for a ₹1,000 session:**
-| Line Item | Amount |
-|-----------|--------|
-| Consultee pays | ₹1,000 |
-| Platform commission (10-20%) | ₹100-200 |
-| Consultant gross earnings | ₹800-900 |
-| TDS deduction (10% with PAN, 20% without) | ₹80-180 |
-| Net payout to consultant | ₹720-820 |
+
+| Line Item                                 | Amount   |
+| ----------------------------------------- | -------- |
+| Consultee pays                            | ₹1,000   |
+| Platform commission (10-20%)              | ₹100-200 |
+| Consultant gross earnings                 | ₹800-900 |
+| TDS deduction (10% with PAN, 20% without) | ₹80-180  |
+| Net payout to consultant                  | ₹720-820 |
 
 ### Payout Process
 
@@ -932,6 +975,7 @@ graph TD
 ```
 
 **How to test:**
+
 1. Complete a paid session as a consultant
 2. Wait for earnings to appear (PENDING)
 3. From staff dashboard → Payouts:
@@ -947,27 +991,35 @@ graph TD
 The staff dashboard is the operations control center. Here's everything staff can do:
 
 ### Payment Management
+
 **Where:** `/dashboard/staff/[id]/payments`
+
 - View all payments across the platform
 - Filter by status (PENDING, SUCCEEDED, FAILED, EXPIRED)
 - Filter by gateway (Razorpay, Stripe)
 - View payment details and associated bookings
 
 ### Refund Management
+
 **Where:** `/dashboard/staff/[id]/refunds`
+
 - Process refund requests
 - Track refund status
 - View refund history
 
 ### Dispute Resolution
+
 **Where:** `/dashboard/staff/[id]/disputes`
+
 - Monitor active disputes
 - Submit evidence to payment gateways
 - Track dispute outcomes (WON/LOST)
 - Manage deadline alerts (45-day window)
 
 ### Payout Management
+
 **Where:** `/dashboard/staff/[id]/payouts`
+
 - View pending payouts
 - Create payout batches
 - Approve payouts
@@ -992,13 +1044,16 @@ graph TD
 ```
 
 **Sub-features:**
+
 - **Profile Verification:** Review consultant profiles for legitimacy. Approve/reject with notes.
 - **Report Management:** Handle user reports (review, profile, message, document issues).
 - **Review Moderation:** Check reviews for spam/abuse. Remove if needed.
 - **Stats:** See moderation trends and action history.
 
 ### Support Tickets
+
 **Where:** `/dashboard/staff/[id]/tickets`
+
 - View all support tickets
 - Assign tickets to staff members
 - Respond to tickets (responses visible to the user)
@@ -1007,29 +1062,34 @@ graph TD
 - Resolve/close tickets
 
 ### System Jobs (Cron/Maintenance)
+
 **Where:** `/dashboard/staff/[id]/system-jobs`
 
 The platform runs 25+ automated jobs. Staff can monitor them and trigger manual runs.
 
-| Category | Jobs | What They Do |
-|----------|------|-------------|
-| **Appointments** | auto-complete, cleanup invalid, expire stale, send reminders, reconcile slots | Keep appointments lifecycle clean |
-| **Payments** | abandoned cleanup, reconcile status, sync earnings | Ensure payment records match gateway state |
-| **Refunds** | reconcile refunds, cascade to earnings | Track refund completion, reverse earnings |
-| **Payouts** | create batch, process, handle stuck, reconcile status, release earnings | Automate the payout pipeline |
-| **Recordings** | mark expired, transfer to Supabase, stream sync | Move recordings from temp to permanent storage |
-| **Disputes** | alert deadlines, handle lost, reconcile | Track dispute windows and outcomes |
-| **Other** | auth token cleanup, webhook archival, discount expiration, document reconciliation | General platform hygiene |
+| Category         | Jobs                                                                               | What They Do                                               |
+| ---------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| **Appointments** | auto-complete, cleanup invalid, expire stale, send reminders, reconcile slots      | Keep appointments lifecycle clean                          |
+| **Payments**     | abandoned cleanup, reconcile status, sync earnings                                 | Ensure payment records match gateway state                 |
+| **Refunds**      | reconcile refunds, cascade to earnings                                             | Track refund completion, reverse earnings                  |
+| **Payouts**      | create batch, process, handle stuck, reconcile status, release earnings            | Automate the payout pipeline                               |
+| **Recordings**   | transfer-recordings, expire-recordings, reconcile-orphaned-recordings              | Copy recordings from Stream to R2, delete them on schedule |
+| **Disputes**     | alert deadlines, handle lost, reconcile                                            | Track dispute windows and outcomes                         |
+| **Other**        | auth token cleanup, webhook archival, discount expiration, document reconciliation | General platform hygiene                                   |
 
 ### Announcements & Newsletters
+
 **Where:** `/dashboard/staff/[id]/announcements`
+
 - Create platform-wide announcements
 - Send newsletters to users
 - Schedule announcements
 - Track engagement
 
 ### User Management
+
 **Where:** `/dashboard/staff/[id]/users`
+
 - View all users by role
 - Search by name/email
 - View user details
@@ -1042,7 +1102,9 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 Admins have everything staff has, plus:
 
 ### Platform Analytics
+
 **Where:** `/dashboard/admin/analytics`
+
 - Revenue trends
 - User growth
 - Booking conversion rates
@@ -1050,19 +1112,25 @@ Admins have everything staff has, plus:
 - Service type distribution
 
 ### Approval Payments
+
 **Where:** `/dashboard/admin/approval-payments`
+
 - Manual payment approvals for special cases
 - Override payment flows when needed
 
 ### Maintenance Mode
+
 **Where:** `/dashboard/admin/maintenance`
+
 - Switch platform to DEGRADED or OFFLINE mode
 - Set estimated restoration time
 - Bypass secret for internal staff to still access during maintenance
 - All users see a maintenance page
 
 ### Tax & TDS Management
+
 **Where:** `/dashboard/admin` → Tax section
+
 - View TDS records
 - Manage tax configurations
 - Financial year settings
@@ -1073,23 +1141,23 @@ Admins have everything staff has, plus:
 
 These pages are accessible without logging in:
 
-| Page | URL | Purpose |
-|------|-----|---------|
-| Landing page | `/` | Homepage with hero, features, experts, testimonials, FAQ |
-| Expert directory | `/explore/experts` | Browse all consultants |
-| Expert profile | `/explore/experts/[id]` | View individual consultant |
-| Programs | `/explore/programs` | Browse webinars and classes |
-| Webinar detail | `/explore/programs/plans/webinars/[id]` | View webinar details |
-| Class detail | `/explore/programs/plans/classes/[id]` | View class details |
-| Blog | `/blog` | Platform blog |
-| About | `/about` | About the platform |
-| Pricing | `/pricing` | Pricing information |
-| Contact | `/contactus` | Contact form |
-| Terms | `/terms` | Terms of service |
-| Privacy | `/privacy` | Privacy policy |
-| Refund policy | `/refund` | Refund policy |
-| Use cases | `/use-cases/*` | Career switchers, students, mentorship |
-| Referral link | `/r/[code]` | Apply referral code |
+| Page             | URL                                     | Purpose                                                  |
+| ---------------- | --------------------------------------- | -------------------------------------------------------- |
+| Landing page     | `/`                                     | Homepage with hero, features, experts, testimonials, FAQ |
+| Expert directory | `/explore/experts`                      | Browse all consultants                                   |
+| Expert profile   | `/explore/experts/[id]`                 | View individual consultant                               |
+| Programs         | `/explore/programs`                     | Browse webinars and classes                              |
+| Webinar detail   | `/explore/programs/plans/webinars/[id]` | View webinar details                                     |
+| Class detail     | `/explore/programs/plans/classes/[id]`  | View class details                                       |
+| Blog             | `/blog`                                 | Platform blog                                            |
+| About            | `/about`                                | About the platform                                       |
+| Pricing          | `/pricing`                              | Pricing information                                      |
+| Contact          | `/contactus`                            | Contact form                                             |
+| Terms            | `/terms`                                | Terms of service                                         |
+| Privacy          | `/privacy`                              | Privacy policy                                           |
+| Refund policy    | `/refund`                               | Refund policy                                            |
+| Use cases        | `/use-cases/*`                          | Career switchers, students, mentorship                   |
+| Referral link    | `/r/[code]`                             | Apply referral code                                      |
 
 ---
 
@@ -1277,7 +1345,7 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Consultee reports a review → Staff reviews report → Takes action → Reporter notified
 - [ ] Payment fails → Error page shown → No booking created → Consultee can retry
 - [ ] Refund processed → Consultant earnings reversed → Consultee receives money back
-- [ ] Recording auto-transfers from Stream S3 to Supabase after 2 weeks
+- [ ] Recording is copied from Stream to R2 by the next `transfer-recordings` run and plays through the in-app player
 
 ---
 
@@ -1329,58 +1397,58 @@ erDiagram
 
 ## Key Status Enums Reference
 
-| Entity | Statuses | Meaning |
-|--------|----------|---------|
-| **Payment** | PENDING → SUCCEEDED / FAILED / EXPIRED | Payment processing lifecycle |
-| **Refund** | PENDING → SUCCEEDED / FAILED / CANCELLED | Refund processing |
-| **Dispute** | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED | Chargeback lifecycle |
-| **Earnings** | PENDING → HELD → READY → PAID / REFUNDED | Consultant money lifecycle |
-| **Payout** | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED | Money transfer to bank |
-| **Request** | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED | Booking request lifecycle |
-| **Trial** | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED | Trial lifecycle |
-| **Waitlist** | WAITING → NOTIFIED → BOOKED / EXPIRED / CANCELLED / SKIPPED | Queue management |
-| **Document Review** | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION | Document review workflow |
-| **Recording** | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED | Recording storage lifecycle |
-| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO | Consultant verification |
-| **Moderation Report** | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED | Content moderation |
-| **Support Ticket** | OPEN → IN_PROGRESS → RESOLVED / CLOSED | Support workflow |
-| **Collaborator** | PENDING → ACCEPTED / DECLINED / REMOVED | Collaboration invitation |
+| Entity                   | Statuses                                                                     | Meaning                      |
+| ------------------------ | ---------------------------------------------------------------------------- | ---------------------------- |
+| **Payment**              | PENDING → SUCCEEDED / FAILED / EXPIRED                                       | Payment processing lifecycle |
+| **Refund**               | PENDING → SUCCEEDED / FAILED / CANCELLED                                     | Refund processing            |
+| **Dispute**              | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED                 | Chargeback lifecycle         |
+| **Earnings**             | PENDING → HELD → READY → PAID / REFUNDED                                     | Consultant money lifecycle   |
+| **Payout**               | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED                         | Money transfer to bank       |
+| **Request**              | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED  | Booking request lifecycle    |
+| **Trial**                | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED           | Trial lifecycle              |
+| **Waitlist**             | WAITING → NOTIFIED → BOOKED / EXPIRED / CANCELLED / SKIPPED                  | Queue management             |
+| **Document Review**      | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION                   | Document review workflow     |
+| **Recording**            | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED | Recording storage lifecycle  |
+| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO                                   | Consultant verification      |
+| **Moderation Report**    | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED                | Content moderation           |
+| **Support Ticket**       | OPEN → IN_PROGRESS → RESOLVED / CLOSED                                       | Support workflow             |
+| **Collaborator**         | PENDING → ACCEPTED / DECLINED / REMOVED                                      | Collaboration invitation     |
 
 ---
 
 # Part 7: Glossary
 
-| Term | Meaning |
-|------|---------|
-| **GMV** | Gross Merchandise Value — total value of all transactions on the platform |
-| **MAC** | Monthly Active Consultants — consultants who complete at least 1 session per month |
-| **MRR** | Monthly Recurring Revenue — revenue from subscriptions that recur each month |
-| **Commission** | Platform fee (10-20% of each transaction) |
-| **TDS** | Tax Deducted at Source — Indian tax law requiring 10% deduction on consultant payouts (Section 194J) |
-| **PAN** | Permanent Account Number — Indian tax ID required for TDS compliance |
-| **GST** | Goods and Services Tax — 18% tax on services in India |
-| **UPI** | Unified Payments Interface — instant payment system in India (0% gateway fee!) |
-| **Stream.io** | Third-party service providing video calling and chat functionality |
-| **Razorpay** | Indian payment gateway (UPI, cards, netbanking) |
-| **Stripe** | International payment gateway (cards, ACH, SEPA) |
-| **Supabase** | Open-source Firebase alternative providing database (PostgreSQL) and file storage |
-| **BetterAuth** | Authentication library used for login/signup |
-| **Novu** | Notification infrastructure for in-app notifications |
-| **Resend** | Email delivery service for transactional emails |
-| **Upstash Redis** | Serverless Redis used for caching and rate limiting |
-| **Webhook** | HTTP callback — payment gateways send these to confirm payment status |
-| **Cron Job** | Scheduled task that runs periodically (e.g., every hour) to maintain platform health |
-| **Idempotency Key** | Unique identifier ensuring an operation only executes once (prevents double payments/payouts) |
-| **Cold Storage** | Long-term storage (Supabase) vs temporary storage (Stream S3 for 2 weeks) |
-| **RBAC** | Role-Based Access Control — different features visible based on user role |
-| **UTC** | Coordinated Universal Time — all time slots stored in UTC, converted to local time for display |
-| **Hold Period** | Time between payment and payout eligibility (dispute protection window) |
-| **Consultee** | A user who books sessions (the buyer/client) |
-| **Consultant** | A user who provides sessions (the expert/seller) |
-| **Plan** | A service offering created by a consultant (has pricing, description, etc.) |
-| **Slot** | A time window when a consultant is available for booking |
-| **Appointment** | A confirmed booking between consultant and consultee |
-| **Payout Batch** | A group of payouts processed together (usually monthly) |
+| Term                | Meaning                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| **GMV**             | Gross Merchandise Value — total value of all transactions on the platform                            |
+| **MAC**             | Monthly Active Consultants — consultants who complete at least 1 session per month                   |
+| **MRR**             | Monthly Recurring Revenue — revenue from subscriptions that recur each month                         |
+| **Commission**      | Platform fee (10-20% of each transaction)                                                            |
+| **TDS**             | Tax Deducted at Source — Indian tax law requiring 10% deduction on consultant payouts (Section 194J) |
+| **PAN**             | Permanent Account Number — Indian tax ID required for TDS compliance                                 |
+| **GST**             | Goods and Services Tax — 18% tax on services in India                                                |
+| **UPI**             | Unified Payments Interface — instant payment system in India (0% gateway fee!)                       |
+| **Stream.io**       | Third-party service providing video calling and chat functionality                                   |
+| **Razorpay**        | Indian payment gateway (UPI, cards, netbanking)                                                      |
+| **Stripe**          | International payment gateway (cards, ACH, SEPA)                                                     |
+| **Supabase**        | Open-source Firebase alternative providing database (PostgreSQL) and file storage                    |
+| **BetterAuth**      | Authentication library used for login/signup                                                         |
+| **Novu**            | Notification infrastructure for in-app notifications                                                 |
+| **Resend**          | Email delivery service for transactional emails                                                      |
+| **Upstash Redis**   | Serverless Redis used for caching and rate limiting                                                  |
+| **Webhook**         | HTTP callback — payment gateways send these to confirm payment status                                |
+| **Cron Job**        | Scheduled task that runs periodically (e.g., every hour) to maintain platform health                 |
+| **Idempotency Key** | Unique identifier ensuring an operation only executes once (prevents double payments/payouts)        |
+| **Cold Storage**    | Long-term storage (Supabase) vs temporary storage (Stream S3 for 2 weeks)                            |
+| **RBAC**            | Role-Based Access Control — different features visible based on user role                            |
+| **UTC**             | Coordinated Universal Time — all time slots stored in UTC, converted to local time for display       |
+| **Hold Period**     | Time between payment and payout eligibility (dispute protection window)                              |
+| **Consultee**       | A user who books sessions (the buyer/client)                                                         |
+| **Consultant**      | A user who provides sessions (the expert/seller)                                                     |
+| **Plan**            | A service offering created by a consultant (has pricing, description, etc.)                          |
+| **Slot**            | A time window when a consultant is available for booking                                             |
+| **Appointment**     | A confirmed booking between consultant and consultee                                                 |
+| **Payout Batch**    | A group of payouts processed together (usually monthly)                                              |
 
 ---
 
