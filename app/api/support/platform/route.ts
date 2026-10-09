@@ -38,7 +38,7 @@ import {
   createSupportTicket,
   findRecentOpenEscalation,
 } from "@/lib/support/create-ticket";
-import { priorityForReason } from "@/lib/support/priority";
+import { escalationPriority } from "@/lib/support/priority";
 import { recordFlowOutcome } from "@/lib/support/deflection";
 import { mentionsHumanKeyword } from "@/lib/support/escalation";
 
@@ -51,6 +51,8 @@ const turnSchema = z
     userMessage: z.string().trim().max(2000).optional(),
     /** Org attribution for operator flows — validated against membership. */
     orgId: z.string().max(64).optional(),
+    /** The customer flagged the hand-off as urgent. */
+    urgent: z.boolean().optional(),
   })
   // Only BOTH is invalid. An entry turn (nodeId null/omitted) legitimately
   // carries neither — startFlow sends {flowId} alone, and the XOR refinement
@@ -221,7 +223,7 @@ export async function POST(req: NextRequest) {
 
     const reason = turn.reason ?? "platform_escalated";
     const issueType = issueTypeForFlow(flow, reason);
-    const priority = priorityForReason(reason);
+    const priority = escalationPriority(reason, input.urgent);
 
     const walkedPath = input.nodeId
       ? `Flow ${flow.id} at node ${input.nodeId}`
@@ -265,6 +267,7 @@ export async function POST(req: NextRequest) {
       priority,
       issueType,
       organizationId,
+      filedBy: "requester",
     });
 
     await recordFlowOutcome({

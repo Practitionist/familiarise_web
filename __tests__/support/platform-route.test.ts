@@ -74,9 +74,16 @@ jest.mock("../../lib/novu", () => ({
 
 import { NextRequest } from "next/server";
 import { getSession } from "../../lib/auth-server";
+import prisma from "../../lib/prisma";
+import { applyRateLimit, spamLimiter } from "../../lib/rate-limit";
 import { GET, POST } from "../../app/api/support/platform/route";
 
 const mockedGetSession = getSession as jest.Mock;
+
+beforeEach(() => {
+  (applyRateLimit as jest.Mock).mockClear();
+  (prisma.supportTicket.create as jest.Mock).mockClear();
+});
 
 function postReq(body: unknown): NextRequest {
   return new NextRequest("https://x.test/api/support/platform", {
@@ -107,7 +114,9 @@ describe("POST /api/support/platform", () => {
 
   it("REGRESSION: a bare entry turn {flowId} passes validation (the XOR refine used to 400 it)", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
-    const res = await POST(postReq({ flowId: "PAYMENTS_BILLING", nodeId: null }));
+    const res = await POST(
+      postReq({ flowId: "PAYMENTS_BILLING", nodeId: null }),
+    );
     // Reaches the engine and answers with the entry prompt — NOT a
     // VALIDATION_FAILED 400.
     expect(res.status).toBe(200);
@@ -119,7 +128,11 @@ describe("POST /api/support/platform", () => {
   it("VALIDATION_FAILED envelope when a turn carries BOTH an option and a message", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
     const res = await POST(
-      postReq({ flowId: "PAYMENTS_BILLING", chosenOptionId: "twice", userMessage: "both" }),
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        chosenOptionId: "twice",
+        userMessage: "both",
+      }),
     );
     expect(res.status).toBe(400);
     const json = await res.json();
@@ -149,6 +162,25 @@ describe("asking for a person, in the scope that had no way to", () => {
     const json = await res.json();
     expect(json.data.escalated).toBe(true);
     expect(json.data.supportTicketId).toBeTruthy();
+    // Filing the ticket spends the ticket budget; walking the flow does not.
+    expect(applyRateLimit).toHaveBeenCalledWith(spamLimiter, "tickets:u1");
+  });
+
+  it("files an urgent hand-off at HIGH, not a silent MEDIUM", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "Speak to someone: the refund never arrived",
+        urgent: true,
+      }),
+    );
+    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priority: "HIGH" }),
+      }),
+    );
   });
 
   it("leaves an ordinary message to the flow", async () => {
@@ -162,6 +194,7 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.escalated).toBe(false);
+    expect(applyRateLimit).not.toHaveBeenCalled();
   });
 });
 

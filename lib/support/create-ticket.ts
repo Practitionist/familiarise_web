@@ -73,6 +73,8 @@ export interface CreateSupportTicketInput {
   paymentId?: string | null;
   /** Org attribution (operator intake / escalated org threads). Null = B2C. */
   organizationId?: string | null;
+  /** Only a ticket the requester filed themselves earns them a "request received" receipt. */
+  filedBy: "requester" | "system";
 }
 
 /**
@@ -325,12 +327,14 @@ export async function createSupportTicket(
         error,
       });
     }),
-    notifyRequesterOfTicket(ticket).catch((error) => {
-      console.error("support: requester receipt failed", {
-        ticketId: ticket.id,
-        error,
-      });
-    }),
+    input.filedBy === "requester"
+      ? notifyRequesterOfTicket(ticket).catch((error) => {
+          console.error("support: requester receipt failed", {
+            ticketId: ticket.id,
+            error,
+          });
+        })
+      : undefined,
   ]);
   return ticket;
 }
@@ -445,6 +449,8 @@ export async function createOutboundStaffSupportTicket(
   const resolvedOrganizationId = validMembership?.organizationId ?? null;
   const resolvedPaymentId = validPayment?.id ?? null;
   const priority = input.priority ?? "MEDIUM";
+  // The callback marker is server-written from a validated phone only; staff free text never carries one.
+  const description = stripCallbackTags(input.description).trim();
 
   const ticket = await prisma.$transaction(
     async (tx) => {
@@ -458,7 +464,7 @@ export async function createOutboundStaffSupportTicket(
           assignedToId: input.staffUserId,
           status: "IN_PROGRESS",
           title: input.title,
-          description: input.description,
+          description,
           priority,
           referenceNumber,
           ackDueAt,
@@ -476,7 +482,7 @@ export async function createOutboundStaffSupportTicket(
 
       await tx.supportResponse.create({
         data: {
-          message: input.description,
+          message: description,
           isInternal: false,
           supportTicket: { connect: { id: created.id } },
           user: { connect: { id: input.staffUserId } },
@@ -495,7 +501,7 @@ export async function createOutboundStaffSupportTicket(
     ticketId: ticket.id,
     reference: ticket.referenceNumber ?? undefined,
     ticketTitle: ticket.title || "Support Ticket",
-    message: input.description,
+    message: description,
     respondedBy: input.staffUserName ?? "Support",
     dashboardUrl: supportRequestHref(
       caseKeyOf({ kind: "ticket", id: ticket.id }),
