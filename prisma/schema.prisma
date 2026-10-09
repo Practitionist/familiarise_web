@@ -145,6 +145,7 @@ model User {
 
   invitations                   Invitation[]
   twoFactor                     TwoFactor?
+  passkeys                      Passkey[]
   ssoproviders                  SsoProvider[]
   erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
@@ -248,6 +249,11 @@ model OnboardingDraft {
   /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
   /// promote that key to a real column instead of querying the blob.
   payload Json
+
+  /// Optimistic-concurrency counter: a save names the version it read and
+  /// increments it, so a stale tab or device gets a conflict, not a silent
+  /// overwrite.
+  version Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -897,6 +903,10 @@ model Session {
   // Required by the BetterAuth admin plugin's generated queries; impersonation
   // itself is not enabled (#693).
   impersonatedBy String?
+
+  // Last successful re-authentication (password, TOTP or passkey) in this
+  // session; sensitive actions require it, or createdAt, within 15 minutes.
+  reauthenticatedAt DateTime? @db.Timestamptz
 
   // Device list (newest first per user) and the expired-row sweep.
   @@index([userId, createdAt])
@@ -7129,6 +7139,10 @@ model SsoProvider {
   // app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval
   // sets it, after re-checking the org's verified OrgDomainClaim.
   domainVerified Boolean       @default(false)
+  // First successful SSO sign-in through this provider by an org OWNER.
+  // Turning enforceSSO on requires it, so a broken IdP cannot lock the org out.
+  provenAt       DateTime?     @db.Timestamptz
+  provenByUserId String?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -7376,6 +7390,27 @@ enum EmailSuppressionReason {
 //
 // Physical table name is lowercase to match the rest of the auth cluster
 // (`sessions`, `accounts`, `verifications`, `ssoProvider`).
+/// WebAuthn credentials (@better-auth/passkey). Operators only for now: a
+/// passkey sign-in satisfies the operator second-factor gate.
+model Passkey {
+  id           String    @id @default(cuid())
+  name         String?
+  publicKey    String
+  userId       String
+  credentialID String    @unique
+  counter      Int
+  deviceType   String
+  backedUp     Boolean
+  transports   String?
+  aaguid       String?
+  createdAt    DateTime? @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkey")
+}
+
 model TwoFactor {
   id     String @id @default(cuid())
   // One row per user: the plugin looks the row up by userId, and an admin
@@ -7384,8 +7419,8 @@ model TwoFactor {
 
   // AES-encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
   secret      String
-  // Comma-separated, hashed (or encrypted) by the plugin per
-  // `backupCodeOptions.storeBackupCodes`. Never selected.
+  // JSON array, AES-encrypted by the plugin (`storeBackupCodes:
+  // "encrypted"`). Never selected.
   backupCodes String
 
   // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first
