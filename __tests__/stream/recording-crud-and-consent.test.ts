@@ -13,7 +13,7 @@ const mockGetRecordingById = jest.fn();
 const mockRecordingUpdate = jest.fn();
 const mockRecordingPurchaseFindFirst = jest.fn();
 const mockMeetingUpdate = jest.fn();
-const mockDeleteRecordingObject = jest.fn();
+const mockDeleteRecordingAssets = jest.fn();
 const mockStopRecording = jest.fn();
 
 jest.mock("../../lib/auth-server", () => ({
@@ -53,8 +53,8 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/stream/recording-storage", () => ({
   getBestRecordingUrl: jest.fn(),
-  deleteRecordingObject: (...args: unknown[]) =>
-    mockDeleteRecordingObject(...args),
+  deleteRecordingAssets: (...args: unknown[]) =>
+    mockDeleteRecordingAssets(...args),
 }));
 
 jest.mock("../../lib/stream/recording-service", () => ({
@@ -116,7 +116,6 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         title: "New Session Title",
         recordingUrl: "https://internal.example/raw.mp4",
         storagePath: "recordings/rec-1.mp4",
-        storageUrl: "familiarise-recordings",
         previewClipStoragePath: "previews/rec-1.mp4",
         updatedAt: new Date("2026-03-10T10:00:00Z"),
       });
@@ -137,7 +136,6 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       const data = await res.json();
       expect(data.recording.title).toBe("New Session Title");
       expect(data.recording.storagePath).toBeUndefined();
-      expect(data.recording.storageUrl).toBeUndefined();
       expect(data.recording.recordingUrl).toBeUndefined();
       expect(data.recording.previewClipStoragePath).toBeUndefined();
     });
@@ -225,7 +223,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         params: Promise.resolve({ recordingId: "rec-published" }),
       });
       expect(res.status).toBe(409);
-      expect(mockDeleteRecordingObject).not.toHaveBeenCalled();
+      expect(mockDeleteRecordingAssets).not.toHaveBeenCalled();
     });
 
     it("deletes storage objects and marks recording EXPIRED + UNPUBLISHED when authorized", async () => {
@@ -256,7 +254,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
           },
         },
       });
-      mockDeleteRecordingObject.mockResolvedValue({ success: true });
+      mockDeleteRecordingAssets.mockResolvedValue({ success: true });
       mockRecordingUpdate.mockResolvedValue({ id: "rec-del" });
 
       const req = new NextRequest(
@@ -268,11 +266,11 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         params: Promise.resolve({ recordingId: "rec-del" }),
       });
       expect(res.status).toBe(200);
-      expect(mockDeleteRecordingObject).toHaveBeenCalledWith(
-        "recordings/rec-del.mp4",
-      );
-      expect(mockDeleteRecordingObject).toHaveBeenCalledWith(
-        "previews/rec-del.mp4",
+      expect(mockDeleteRecordingAssets).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "rec-del",
+          storagePath: "recordings/rec-del.mp4",
+        }),
       );
       expect(mockRecordingUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -280,8 +278,8 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
           data: expect.objectContaining({
             status: "EXPIRED",
             recordingUrl: "",
-            storageUrl: null,
             storagePath: null,
+            thumbnailUrl: null,
             listingStatus: "UNPUBLISHED",
           }),
         }),
