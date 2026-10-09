@@ -15,6 +15,11 @@ The rules below are the ones the support code has to keep, each with the failure
 9. **Org triage is metadata-only, by design.** The select allowlist is pinned by `__tests__/security/org-scope-payload-allowlist.test.ts`. Do not add content fields to `THREAD_METADATA_SELECT`.
 10. **`SupportMessage` is ordered by `seq`, never by `createdAt` alone.** The user's turn and the bot's reply are written in one transaction and Postgres `CURRENT_TIMESTAMP` is transaction start time, so both rows can carry a byte-identical timestamp. Every read uses `MESSAGE_ORDER` (`lib/support/message-seq.ts`), and every write allocates its numbers from `AppointmentSupportThread.messageSeq` inside the same transaction.
 11. **The intent list has one definition**: `SupportThreadCategoryEnum` and `SupportThreadStatusEnum` in `schemas/enums.ts`. Three routes previously transcribed the category list by hand and every copy had lost `DOCUMENTS`, so the `GET` offered a chip the `POST` rejected. Which intents are _offered_ is the flow registry's decision; these schemas only have to accept whatever it can emit.
+12. **A staff reply never reopens a resolved ticket, and a customer reply does.** The staff reply moves `OPEN` to `IN_PROGRESS` by compare-and-set and otherwise bumps only the activity clock; the customer reply reopens `RESOLVED` to `OPEN` or `IN_PROGRESS`. `CLOSED` refuses customer replies and public staff replies. See [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md).
+13. **Staff ticket edits carry `expectedUpdatedAt`**, and a stale write is a 409 the client answers by refetching. `ON_HOLD` is refused on write.
+14. **Only the server writes the callback marker**, and every customer string passes `stripCallbackTags` first. See [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md).
+15. **Attachments are private, served by access-checked 60-second signed redirects, and a delete is successful only when the object is verifiably gone.** A failed storage delete keeps the row and answers 502.
+16. **Navigating a flowchart never spends the ticket budget.** The platform bot charges `tickets:<userId>` only on an escalating terminal, and the booking bot charges no limiter.
 
 ## Testing
 
@@ -25,7 +30,18 @@ The suites below are where the rules above are pinned.
 - `__tests__/support/sla-and-reference.test.ts` pins that the per-priority targets stay inside the statutory ceilings, the pause arithmetic, and the reference format and its allocator.
 - `__tests__/security/org-scope-payload-allowlist.test.ts` pins the org triage select against content leakage.
 
+### The end-to-end QA suite
+
+The reusable agent-run suite in [`prompts/support-feedback-review-tests/`](../../prompts/support-feedback-review-tests/README.md) exercises the whole customer-trust subsystem (support, tickets and the staff inbox, session ratings, public reviews, moderation, platform feedback and disputes) against a Netlify deploy preview of one pull request, or against `dev` after a merge. It holds 149 cases in six lanes, each case tagged `[PR-specific]` or `[SUBSYSTEM]` so a standing regression is distinguishable from behaviour a pull request introduced.
+
+To run it, an orchestrator reads [`00-orchestrator.md`](../../prompts/support-feedback-review-tests/00-orchestrator.md), fills the run parameters in `_shared/shared-setup.md` (pull request number, preview URL, head SHA, run tag, audit directory), and launches the lanes strictly one after another, because they share a database, rate-limit budgets and fixture rows: preflight and fixture discovery, the customer journey, staff operations, reviews and session feedback, moderation, platform feedback and disputes, and finally cleanup with a Sentry check. The orchestrator re-checks every failure at the pull request head before accepting it. The preview shares the production database, so every lane writes tagged fixtures and the last lane sweeps the whole database for the tag; the lanes never run `next dev`, `next build` or any `db:*` script. The remaining pre-conditions are that operators must be enrolled in two-factor authentication by hand until the seed pre-enrols them (see [operator two-factor authentication](../authentication/staff-onboarding.md)).
+
 ## Related
 
 - [01-architecture.md](01-architecture.md) names the modules these rules live in.
-- [07-engineering-log-2026-08-29.md](07-engineering-log-2026-08-29.md) records the defects several of these rules were written against.
+- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) and [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md) expand rules 12 to 16.
+
+## Deprecated & Superseded Approaches
+
+- **Hand-written, per-lane manual QA scripts**: superseded by the prompt suite above, which keeps every case from the 2026-10-09 campaign and adds a permanent regression case for each defect it found. Add cases to the suite rather than writing a one-off script.
+- **The engineering log of the support-drawer turn loss** was removed with the drawer; the rules it motivated now live in this page and in [the architecture](01-architecture.md).

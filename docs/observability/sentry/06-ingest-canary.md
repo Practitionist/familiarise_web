@@ -122,6 +122,21 @@ The question "should we merge or group them" has three different answers dependi
 
 **A repetition is throttled, a set is aggregated.** The rule and the reasoning are on the conventions page (`02`), because it is a decision rule rather than a fact about this deployment. The short version: throttle when one failure is happening again and again, because the evidence is one real stack trace and a count you would have to invent; aggregate when one run found many distinct things, because the set is the fact and the ids are the evidence. Aggregating a repetition is the mistake — it replaces a real trace with a number the code computed by discarding events, and that number under-reports exactly when you are trying to size the incident.
 
+## A quota drops every error, whatever its level
+
+Once the period allowance is spent, Sentry rejects the whole `error` category at ingest. Raising an event to `fatal`, fingerprinting it, or routing it around the process-local throttle does nothing, because the throttle and the level decide only which events the SDK sends; the quota decides which of those Sentry stores. During the 2026-09 exhaustion, `error` events were rate-limited with reason `error_usage_exceeded` every day while transactions, spans and logs continued to be accepted, so the dashboard looked alive while every error issue was frozen. The practical consequences are these.
+
+- **Absence of an error is not evidence of health while the quota is exhausted.** A Prisma `P2022` (column missing) 500 that should have appeared in Sentry produced no event for exactly this reason. Before treating silence as good news, check the organisation stats for the `error` category: `accepted` must be non-zero and `rate_limited` should be near zero (`GET /api/0/organizations/<org>/stats_v2/` with `category=error`, grouped by `outcome` and `reason`).
+- **An alert whose only sink is Sentry fails with the quota.** `scripts/ci/notify-ops-failure.sh` posts to Slack first and falls back to a Sentry envelope. Sentry answers 2xx to that envelope even when it then drops the event, and the script treats any 2xx as delivered, so with no Slack webhook the script reports "recorded" for an alert nobody will ever see.
+
+## The scheduled drift check needs a sink outside Sentry
+
+`db-live-drift.yml` runs a read-only `prisma migrate diff` of the shared live database against the schema every morning, and calls the notify script on failure. In the incident that motivated this section it was red on every run for a week, and no page reached anyone: the Slack webhook had never been provisioned, the Sentry fallback was being dropped by the exhausted quota, and a permanently red check carries no new information. The standing rules are therefore these.
+
+- **Provision `SLACK_OPS_WEBHOOK_URL` as an Actions secret.** It is the one out-of-band channel that also repairs every other scheduled-workflow alert, and no new workflow, scheduler or in-app assertion is needed.
+- **Keep the check green so that red means something.** After any schema push, run the workflow once by hand and confirm it passes; a red run is then a real drift. The daily schedule is delayed by GitHub under load, so detection latency is up to about a day plus the delay.
+- **The canary is the monitor for the quota, not for drift.** It emails when ingest stops accepting errors, so it is the first thing to check when a drift alert appears to have gone missing.
+
 ## The standing risk
 
 The canary is wired, but the underlying fragility is unchanged: a 5,000-error monthly allowance is smaller than a single 24-hour dependency outage, and the whole system depends on that allowance never being exhausted. The throttle in `sentry.shared.config.ts` bounds the damage from a _known_ pattern and does so deliberately: `INFRA_THROTTLE_MS` is ten minutes, keyed by error **class** and not by route, and process-local rather than Redis-backed, because Redis _is_ the outage being guarded — a shared limiter needs the downed dependency to answer, and must then either fail open (restoring the firehose) or fail closed (dropping legitimate errors). The resulting bound is warm instances × 6 events/hour/class, against ~3,000/hour unthrottled, and that ~144/day is the **admitted** count, not the number of occurrences: the other 143 may or may not have happened, and the throttle deliberately declines to claim otherwise. Two limits follow from that design and are worth stating plainly. A flood that is _diverse_ rather than repetitive is bounded per class, so the ceiling scales with the number of distinct classes. And a server-side dashboard filter — dropping at ingest, before quota is spent — is the acknowledged follow-up and is not yet built.
@@ -129,3 +144,9 @@ The canary is wired, but the underlying fragility is unchanged: a 5,000-error mo
 Two things would close this further and neither is done: a Sentry alert on the canary's own issue (which fails silently for the same reason everything else did, so it needs an external channel too), and routing error events to a second sink — `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` already has an out-of-band path that is currently disabled.
 
 The alert email's routing, sender and Slack mirror are described in [Email at Familiarise](../../email/README.md).
+
+## Deprecated & Superseded Approaches
+
+- **Treating a 2xx envelope response as delivery**: Sentry accepts and then drops events for an exhausted quota or a dead project, so a 2xx proves nothing. The canary asserts on the body and the rate-limit header, and alert paths must not depend on Sentry alone.
+- **A five-minute canary cadence**: it alone consumed more than the Developer plan's monthly error allowance; it runs every 30 minutes.
+- **Hardcoding the ingest host**: the endpoint is derived from the DSN verbatim.

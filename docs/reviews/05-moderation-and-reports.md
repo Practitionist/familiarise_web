@@ -10,7 +10,27 @@ The route now refuses a review report without a `reviewId` (400) and one whose r
 
 `ModerationReport.reviewId` became a real relation at the same time. It was an unconstrained, unindexed, unvalidated string, so "every report about this review" was not a query anyone could write. The relation is `SetNull` rather than `Cascade`: reviews are no longer hard-deleted, so the cascade is belt and braces, and a report is a record of what someone objected to even if the row it named is gone. It was safe to add as a foreign key because the table was empty.
 
-No UI reaches that endpoint for a review. Both `fetch("/api/report")` call sites are Stream chat components, so `ModerationReportType.REVIEW` still describes a queue nothing can enqueue into. The API is what makes the control buildable, and the control is part of #1547.
+The expert's reviews page (`ReviewsInbox`) files the report. The response carries a `reportReference` of the form `RPT-XXXXXXXX` (the first eight characters of the report id, upper-cased, from `formatReportReference`), and the page toasts "Report RPT-… received" with the promise that the outcome will arrive in the app and by email. The same page lists the expert's own reports from `GET /api/user/reports`, which returns each report's reference, status and a coarse public outcome (`PENDING_REVIEW`, `NO_ACTION_TAKEN`, `CONTENT_REMOVED`, `EXCLUDED_FROM_AGGREGATE` or `POLICY_ACTION_TAKEN`) derived from the latest action, never the staff notes. Reporting spends the `report:<userId>` bucket of the shared five-per-hour limiter.
+
+## Who may do what with a report
+
+The gates are enforced in the route before any side effect runs.
+
+| Action on a report                               | Who may take it               | Refusal                                 |
+| ------------------------------------------------ | ----------------------------- | --------------------------------------- |
+| Warn, dismiss (`NO_ACTION`), exclude from rating | Staff or admin                | none                                    |
+| `CONTENT_REMOVED` on a `REVIEW` report           | Admin only (`users.moderate`) | 403 "requires administrator permission" |
+| `USER_BANNED`, `USER_SUSPENDED`                  | Admin only                    | 403                                     |
+| Any action on a resolved report                  | Nobody                        | 409 "already been resolved"             |
+| Reassign or re-status a resolved report          | Nobody                        | 409 "already resolved"                  |
+
+Removal of a review is admin-only everywhere: the direct `DELETE /api/staff/moderation/reviews/[reviewId]` already refused staff, and the report action's `CONTENT_REMOVED` path now applies the same gate, so a staff member cannot soft-delete a review by routing it through a report. Staff keep the narrower tools, which are excluding the review from the rating and escalating the report.
+
+A report is resolved exactly once. The action route moves the report out of `PENDING`, `UNDER_REVIEW` or `ESCALATED` with a conditional update and throws a 409 when zero rows match, inside the same transaction as the action row and its side effects, so two staff acting at once produce one action and one 409. The report `PATCH` refuses a `DISMISSED` or `ACTION_TAKEN` report and matches on the status and assignee the caller last saw, so a resolved report can only be changed through the audited action route and a stale edit gets a 409.
+
+## What the reporter and the expert are told
+
+Every disposition notifies the reporter through an outbox-staged bell, `MODERATION_REPORT_OUTCOME`, carrying the report reference and plain-language outcome copy ("decided: no action needed" or "decided: action taken", with a one-line reason), and an email twin sent after commit. When the action excludes a review from the rating, the reviewed expert additionally receives the "Not counted in rating" bell; if the reporter is that same expert they receive only that one message. The detail of the exclusion flow is in [rating cause and aggregate exclusion](04-rating-cause-and-aggregate-exclusion.md).
 
 ## Soft-delete on `CONTENT_REMOVED`
 
@@ -28,5 +48,12 @@ Staff may read, moderate and remove a reply. Staff may not hard-delete, may not 
 
 ## Related
 
+- [04-rating-cause-and-aggregate-exclusion.md](04-rating-cause-and-aggregate-exclusion.md) — the exclusion action and its notices.
 - [06-schema-reference.md](06-schema-reference.md) — the `reviewId` relation and its index on `ModerationReport`.
 - [03-edit-trail-and-disclosure.md](03-edit-trail-and-disclosure.md) — how a staff rewrite is recorded.
+
+## Deprecated & Superseded Approaches
+
+- **No UI for reporting a review**: once the API existed without a control, so `ModerationReportType.REVIEW` described a queue nothing could fill. The expert's reviews page now files and lists reports.
+- **Staff `CONTENT_REMOVED` on a review report**: it used to soft-delete the review while the direct delete refused staff, bypassing the admin-only rule. Superseded by the admin gate above.
+- **Silent report outcomes**: reporters used to see "Our moderation team will review it shortly" and never hear a result. Superseded by the `RPT-` reference, the own-reports list and the outcome bell and email.
