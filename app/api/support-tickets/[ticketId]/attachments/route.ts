@@ -12,6 +12,10 @@ import {
   getManualBucketInstructions,
 } from "@/lib/supabase";
 import { UserRole } from "@prisma/client";
+import {
+  supportAttachmentHref,
+  withSupportAttachmentHrefs,
+} from "@/lib/support/attachment-href";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -61,9 +65,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       orderBy: { uploadedAt: "desc" },
     });
 
-    return NextResponse.json({ attachments });
+    return NextResponse.json({
+      attachments: withSupportAttachmentHrefs(attachments),
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error fetching attachments:", error);
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
@@ -162,16 +171,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // Save attachment record
+    const attachmentId = globalThis.crypto.randomUUID();
     const attachment = await prisma.supportTicketAttachment.create({
       data: {
+        id: attachmentId,
         ticketId,
         fileName: uploadResult.fileName!,
         originalName: file.name,
         fileSize: uploadResult.fileSize!,
         mimeType: uploadResult.mimeType!,
-        fileUrl: uploadResult.fileUrl!,
+        fileUrl: supportAttachmentHref(ticketId, attachmentId),
         storagePath: uploadResult.storagePath!,
       },
+      omit: { storagePath: true },
     });
 
     return NextResponse.json(
@@ -179,7 +191,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       { status: 201 },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error uploading attachment:", error);
     return NextResponse.json(
       { error: "Failed to upload attachment" },
@@ -239,8 +254,17 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Delete from storage
-    await deleteSupportTicketAttachment(attachment.storagePath);
+    // Storage first: on failure the row survives so the delete can be retried.
+    if (!(await deleteSupportTicketAttachment(attachment.storagePath))) {
+      Sentry.captureException(
+        new Error("Support attachment storage delete failed"),
+        { tags: { subsystem: "support" }, extra: { attachmentId } },
+      );
+      return NextResponse.json(
+        { error: "Could not delete the file. Please try again." },
+        { status: 502 },
+      );
+    }
 
     // Delete from database
     await prisma.supportTicketAttachment.delete({
@@ -249,7 +273,10 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ message: "Attachment deleted successfully" });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error deleting attachment:", error);
     return NextResponse.json(
       { error: "Failed to delete attachment" },

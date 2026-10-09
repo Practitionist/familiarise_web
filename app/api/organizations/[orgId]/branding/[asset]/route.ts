@@ -225,17 +225,15 @@ export async function DELETE(
     });
   }
 
-  // Storage delete first; the audit row + DB null happen in a single tx.
-  // If storage deletion fails we still null the column so the UI doesn't
-  // keep pointing at a URL that may have been partially purged. The
-  // helpers log their own errors.
+  // Storage delete first; on failure the column keeps its URL so the delete can be retried.
   const storageDeleted =
     asset === "logo"
       ? await deleteOrganizationLogo(orgId)
       : await deleteOrganizationBanner(orgId);
   if (!storageDeleted) {
-    console.warn(
-      `Storage delete for organization ${asset} (${orgId}) reported failure — continuing to null the column`,
+    return NextResponse.json(
+      { error: "Could not delete the image. Please try again." },
+      { status: 502 },
     );
   }
 
