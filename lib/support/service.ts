@@ -16,7 +16,6 @@ import prisma, {
 } from "@/lib/prisma";
 import type {
   SupportChannel,
-  SupportPriority,
   SupportThreadCategory,
   SupportThreadStatus,
 } from "@prisma/client";
@@ -599,7 +598,8 @@ async function escalate(
     organizationId: string | null;
     referenceNumber: string | null;
     userId: string;
-    priority: SupportPriority;
+    ackDueAt: Date | null;
+    createdAt: Date;
   } | null = null;
 
   // The first stored message of this turn — the stable id the ops bell is
@@ -711,7 +711,8 @@ async function escalate(
             organizationId: true,
             referenceNumber: true,
             userId: true,
-            priority: true,
+            ackDueAt: true,
+            createdAt: true,
           },
         });
         linkedTicketId = ticket.id;
@@ -769,7 +770,8 @@ async function escalate(
       organizationId: string | null;
       referenceNumber: string | null;
       userId: string;
-      priority: SupportPriority;
+      ackDueAt: Date | null;
+      createdAt: Date;
     } = createdTicket;
     await Promise.all([
       notifySupportStaff(minted).catch((error) => {
@@ -782,9 +784,10 @@ async function escalate(
         id: minted.id,
         title: minted.title,
         referenceNumber: minted.referenceNumber,
-        userId: minted.userId ?? ctx.userId,
-        priority: minted.priority ?? priority,
-        organizationId: minted.organizationId ?? ctx.organizationId,
+        userId: minted.userId,
+        ackDueAt: minted.ackDueAt,
+        createdAt: minted.createdAt,
+        organizationId: minted.organizationId,
       }).catch((error) => {
         console.error("support: requester receipt failed for escalation", {
           ticketId: minted.id,

@@ -199,29 +199,35 @@ export async function notifyStaffOfTicketActivity(
   );
 }
 
-function slaWindowForPriority(priority?: SupportPriority | null): string {
-  switch (priority) {
-    case "URGENT":
-      return "2 hours";
-    case "HIGH":
-      return "8 hours";
-    default:
-      return "24 hours";
-  }
+/** The acknowledgement window the ticket was actually given, in whole hours. */
+function slaWindowOf(createdAt: Date, ackDueAt: Date | null): string | null {
+  if (!ackDueAt) return null;
+  const hours = Math.ceil(
+    (ackDueAt.getTime() - createdAt.getTime()) / 3_600_000,
+  );
+  return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
 /** Send statutory intake receipt (in-app bell + email) without setting acknowledgedAt. */
 export async function notifyRequesterOfTicket(
-  ticket: Pick<SupportTicket, "id" | "title" | "referenceNumber" | "userId"> & {
-    priority?: SupportPriority | null;
-    organizationId?: string | null;
-  },
+  ticket: Pick<
+    SupportTicket,
+    | "id"
+    | "title"
+    | "referenceNumber"
+    | "userId"
+    | "ackDueAt"
+    | "createdAt"
+    | "organizationId"
+  >,
 ): Promise<void> {
-  if (!ticket.userId) return;
   const reference = ticket.referenceNumber ?? ticket.id;
   const title = ticket.title || "Support Ticket";
-  const slaWindow = slaWindowForPriority(ticket.priority);
-  const ticketUrl = await supportRequestHref(ticket.userId, ticket.id);
+  const slaWindow = slaWindowOf(ticket.createdAt, ticket.ackDueAt);
+  const ticketUrl = supportRequestHref(
+    caseKeyOf({ kind: "ticket", id: ticket.id }),
+    ticket.organizationId,
+  );
 
   const novuOutbox = await stageTrigger({
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
@@ -231,12 +237,19 @@ export async function notifyRequesterOfTicket(
       ticketId: ticket.id,
       reference,
       ticketTitle: title,
-      slaWindow,
+      ...(slaWindow ? { slaWindow } : {}),
       dashboardUrl: ticketUrl,
-      ...notificationScope(ticket.organizationId ?? null),
+      ...notificationScope(ticket.organizationId),
     },
     dedupeKey: `ticket-received:${ticket.id}`,
-  }).catch(() => null);
+  }).catch((error) => {
+    reportSentryError(error, {
+      subsystem: "support",
+      op: "ticket-receipt",
+      extra: { ticketId: ticket.id },
+    });
+    return null;
+  });
 
   await Promise.all([
     novuOutbox ? attemptTrigger(novuOutbox).catch(() => undefined) : undefined,

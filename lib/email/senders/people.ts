@@ -48,7 +48,7 @@ export interface SupportTicketReceivedEmailArgs {
   ownerUserId: string;
   reference: string;
   title: string;
-  slaWindow: string;
+  slaWindow: string | null;
   ticketUrl: string;
 }
 
@@ -78,7 +78,9 @@ export const sendSupportTicketReceivedEmail =
                 { style: paragraph, key: "body" },
                 `We received your support request `,
                 React.createElement("strong", null, args.reference),
-                ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`,
+                args.slaWindow
+                  ? ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`
+                  : ` (${args.title}).`,
               ),
               React.createElement(
                 Section,
