@@ -16,6 +16,7 @@ import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
+import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
 
@@ -180,6 +181,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       ...ticket,
+      attachments: withSupportAttachmentHrefs(ticket.attachments),
+      // Transcript was fetched newest-50 for the bound; hand it back oldest-
+      // first, the ascending shape the page has always rendered.
       ...(ticket.appointmentSupportThread
         ? {
             appointmentSupportThread: {

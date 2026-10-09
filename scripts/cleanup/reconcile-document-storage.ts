@@ -63,7 +63,8 @@ function getSupabaseAdmin(): SupabaseClient | null {
 }
 
 /**
- * Recursively list all files in a bucket path
+ * Recursively list all files in a bucket path. Throws on any listing error so a
+ * partial listing is never treated as the bucket's full contents.
  */
 async function listAllFilesInBucket(
   supabase: SupabaseClient,
@@ -72,78 +73,77 @@ async function listAllFilesInBucket(
 ): Promise<{ path: string; name: string; createdAt?: Date }[]> {
   const allFiles: { path: string; name: string; createdAt?: Date }[] = [];
 
-  try {
-    const { data: items, error } = await supabase.storage
-      .from(bucket)
-      .list(path, { limit: 1000 });
+  const { data: items, error } = await supabase.storage
+    .from(bucket)
+    .list(path, { limit: 1000 });
+  if (error) {
+    console.error(`Error listing files in ${bucket}/${path}:`, error);
+    throw error;
+  }
 
-    if (error) {
-      console.error(`Error listing files in ${bucket}/${path}:`, error);
-      return allFiles;
+  for (const item of items ?? []) {
+    const itemPath = path ? `${path}/${item.name}` : item.name;
+
+    // If it's a folder (no metadata), recurse into it
+    if (!item.metadata) {
+      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
+      allFiles.push(...subFiles);
+    } else {
+      // It's a file
+      allFiles.push({
+        path: itemPath,
+        name: item.name,
+        createdAt: item.created_at ? new Date(item.created_at) : undefined,
+      });
     }
-
-    if (!items) return allFiles;
-
-    for (const item of items) {
-      const itemPath = path ? `${path}/${item.name}` : item.name;
-
-      // If it's a folder (no metadata), recurse into it
-      if (!item.metadata) {
-        const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
-        allFiles.push(...subFiles);
-      } else {
-        // It's a file
-        allFiles.push({
-          path: itemPath,
-          name: item.name,
-          createdAt: item.created_at ? new Date(item.created_at) : undefined,
-        });
-      }
-    }
-  } catch (error) {
-    console.error(`Error listing bucket ${bucket}:`, error);
   }
 
   return allFiles;
 }
 
-/**
- * Find orphaned files in documents bucket
- */
-async function findOrphanedDocuments(
+/** Objects in `bucket` that no DB row points at. */
+async function findOrphanedFiles(
   supabase: SupabaseClient,
+  bucket: string,
+  loadDbPaths: () => Promise<Set<string>>,
 ): Promise<OrphanedFile[]> {
-  const orphanedFiles: OrphanedFile[] = [];
+  console.log(`\n🔍 Checking ${bucket} bucket...`);
 
-  console.log("\n🔍 Checking documents bucket...");
-
-  // List all files in storage
-  const storageFiles = await listAllFilesInBucket(supabase, "documents");
+  const storageFiles = await listAllFilesInBucket(supabase, bucket);
   console.log(`   Found ${storageFiles.length} files in storage`);
+  if (storageFiles.length === 0) return [];
 
-  if (storageFiles.length === 0) return orphanedFiles;
+  const dbPaths = await loadDbPaths();
+  console.log(`   Found ${dbPaths.size} referenced paths in DB`);
 
-  // Get all document records from DB
-  const dbDocuments = await prisma.appointmentDocument.findMany({
-    select: { storagePath: true },
-  });
-  const dbPaths = new Set(dbDocuments.map((d) => d.storagePath));
-  console.log(`   Found ${dbPaths.size} document records in DB`);
-
-  // Find files not in DB
-  for (const file of storageFiles) {
-    if (!dbPaths.has(file.path)) {
-      orphanedFiles.push({
-        bucket: "documents",
-        path: file.path,
-        name: file.name,
-        createdAt: file.createdAt,
-      });
-    }
-  }
-
+  const orphanedFiles = storageFiles
+    .filter((file) => !dbPaths.has(file.path))
+    .map((file) => ({ bucket, ...file }));
   console.log(`   Found ${orphanedFiles.length} orphaned files`);
   return orphanedFiles;
+}
+
+/** The documents bucket holds appointment documents, plan materials and verification documents. */
+async function documentsBucketPaths(): Promise<Set<string>> {
+  const [appointmentDocs, planMaterials, verificationDocs] = await Promise.all([
+    prisma.appointmentDocument.findMany({ select: { storagePath: true } }),
+    prisma.planMaterial.findMany({ select: { storagePath: true } }),
+    prisma.profileVerificationDocument.findMany({
+      select: { storagePath: true },
+    }),
+  ]);
+  return new Set(
+    [...appointmentDocs, ...planMaterials, ...verificationDocs].map(
+      (row) => row.storagePath,
+    ),
+  );
+}
+
+async function supportAttachmentPaths(): Promise<Set<string>> {
+  const rows = await prisma.supportTicketAttachment.findMany({
+    select: { storagePath: true },
+  });
+  return new Set(rows.map((row) => row.storagePath));
 }
 
 interface MissingFile {
@@ -228,11 +228,13 @@ async function persistMissingState(
 }
 
 /**
- * Delete orphaned files older than grace period
+ * Delete orphaned files older than grace period. Counts only what Storage
+ * reports as removed; any shortfall is added to `errors` once per bucket.
  */
 async function deleteOrphanedFiles(
   supabase: SupabaseClient,
   orphanedFiles: OrphanedFile[],
+  errors: string[],
 ): Promise<number> {
   const graceDate = new Date(
     Date.now() - ORPHAN_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
@@ -269,15 +271,20 @@ async function deleteOrphanedFiles(
 
     // Delete in batches
     const batchSize = 100;
+    let notRemoved = 0;
     for (let i = 0; i < paths.length; i += batchSize) {
       const batch = paths.slice(i, i + batchSize);
-      const { error } = await supabase.storage.from(bucket).remove(batch);
+      const { data, error } = await supabase.storage.from(bucket).remove(batch);
 
       if (error) {
         console.error(`   Error deleting batch from ${bucket}:`, error);
-      } else {
-        deleted += batch.length;
       }
+      const removed = error ? 0 : (data?.length ?? 0);
+      deleted += removed;
+      notRemoved += batch.length - removed;
+    }
+    if (notRemoved > 0) {
+      errors.push(`${notRemoved} orphaned files in ${bucket} were not removed`);
     }
   }
 
@@ -291,8 +298,10 @@ async function deleteOrphanedFiles(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileDocumentStorage(): Promise<DocumentReconciliationResult> {
-  return withCronLock("reconcile-document-storage", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcileDocumentStorageUnlocked(),
+  return withCronLock(
+    "reconcile-document-storage",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcileDocumentStorageUnlocked(),
   );
 }
 
@@ -361,8 +370,14 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
   }
 
   try {
-    // Find orphaned files in documents bucket
-    const orphanedDocuments = await findOrphanedDocuments(supabase);
+    const orphanedDocuments = [
+      ...(await findOrphanedFiles(supabase, "documents", documentsBucketPaths)),
+      ...(await findOrphanedFiles(
+        supabase,
+        "support-attachments",
+        supportAttachmentPaths,
+      )),
+    ];
     orphanedFilesFound = orphanedDocuments.length;
 
     if (orphanedDocuments.length > 0) {
@@ -380,6 +395,7 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
       orphanedFilesDeleted = await deleteOrphanedFiles(
         supabase,
         orphanedDocuments,
+        errors,
       );
     }
 

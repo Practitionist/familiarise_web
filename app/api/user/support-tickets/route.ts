@@ -14,6 +14,7 @@ import { stripCallbackTags } from "@/lib/validation/phone";
 import { supportError } from "@/lib/api/support-http";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
 import type { z } from "zod";
+import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
 
 const TICKETS_ROUTE = "user.support-tickets";
 
@@ -173,7 +174,12 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(
+      tickets.map((ticket) => ({
+        ...ticket,
+        attachments: withSupportAttachmentHrefs(ticket.attachments),
+      })),
+    );
   } catch (cause) {
     return supportError({
       status: 500,

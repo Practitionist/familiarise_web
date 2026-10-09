@@ -13,11 +13,9 @@
  * and retried on a later run instead of aborting the sweep.
  */
 import prisma from "@/lib/prisma";
-// #1270 — the leaf module, not `@/lib/supabase`. That one carries an
-// `import "server-only"` marker whose main entry throws outside Next's
-// `react-server` resolution condition, so the purge-deleted-documents cron
-// died during module evaluation and had never completed a run.
+// The marker-free leaf module, so this cron can import it from a bare Node process.
 import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 const BATCH_SIZE = 50;
 /** Hard ceiling so a pathological run cannot sweep unbounded. */
@@ -92,6 +90,16 @@ export async function purgeExpiredDeletedDocuments(
         }
       }
     }
+  }
+
+  if (failedStorage + failedRows > 0) {
+    reportSentryMessage("purge-deleted-documents left rows for the next run", {
+      subsystem: "documents",
+      op: "purge-deleted-documents",
+      level: "warning",
+      extra: { purged, failedStorage, failedRows },
+      fingerprint: ["purge-deleted-documents", "failures"],
+    });
   }
 
   return { purged, failedStorage, failedRows };

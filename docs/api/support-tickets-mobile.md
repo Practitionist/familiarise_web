@@ -88,7 +88,7 @@ model SupportTicketAttachment {
   originalName String
   fileSize     Int
   mimeType     String
-  fileUrl      String      // Supabase Storage URL
+  fileUrl      String      // App route: /api/support-tickets/{ticketId}/attachments/{id}
   storagePath  String
   ticketId     String
   uploadedAt   DateTime
@@ -211,14 +211,38 @@ file: <binary file data>
 {
   "attachment": {
     "id": "uuid-...",
-    "fileName": "1735645200000_screenshot.png",
+    "fileName": "3f2b9c1e-....png",
     "originalName": "screenshot.png",
     "fileSize": 102400,
     "mimeType": "image/png",
-    "fileUrl": "https://xxx.supabase.co/storage/v1/object/public/..."
-  }
+    "fileUrl": "/api/support-tickets/{ticketId}/attachments/{id}",
+    "ticketId": "uuid-...",
+    "uploadedAt": "2025-12-31T12:00:00Z"
+  },
+  "message": "Attachment uploaded successfully"
 }
 ```
+
+### Open Attachment
+
+```http
+GET /api/support-tickets/{ticketId}/attachments/{attachmentId}
+Authorization: Bearer <token>
+```
+
+The ticket owner or a staff member receives a `302` redirect to a signed URL that expires after 60 seconds. Every `fileUrl` the API returns points at this route, so a client should request it when the user opens the file rather than store the redirect target.
+
+### Delete Attachment
+
+```http
+DELETE /api/support-tickets/{ticketId}/attachments
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "attachmentId": "uuid-..." }
+```
+
+The file is removed from storage before the record is deleted. When storage does not confirm the removal, the API answers `502` and keeps the record, so the client can retry.
 
 **Limits:**
 
@@ -290,19 +314,14 @@ SupportIssueType parseIssueType(String? value) {
 
 ### 4. Attachment Uploads
 
-Use the same Supabase bucket pattern as web:
-
-- Bucket: `support-attachments`
-- Path: `support-tickets/{ticketId}/{timestamp}_{filename}`
+Upload, open and delete attachments through the web API endpoints above. The app never talks to Supabase Storage directly: storage calls run on the server's service-role client, and the `support-attachments` bucket is private, so files are reachable only through the signed URLs that the open-attachment route mints.
 
 ```dart
-// Example using Supabase Dart client
-final fileBytes = await file.readAsBytes();
-final path = 'support-tickets/$ticketId/${DateTime.now().millisecondsSinceEpoch}_${file.name}';
-
-await supabase.storage
-  .from('support-attachments')
-  .uploadBinary(path, fileBytes);
+// Example using Dio
+final form = FormData.fromMap({
+  'file': await MultipartFile.fromFile(file.path, filename: file.name),
+});
+await dio.post('/api/support-tickets/$ticketId/attachments', data: form);
 ```
 
 ---
@@ -316,6 +335,7 @@ await supabase.storage
 | 400         | Invalid consultation ID | Linked consultation doesn't exist or doesn't belong to user |
 | 404         | Ticket not found        | Ticket ID doesn't exist                                     |
 | 500         | Server error            | Something went wrong                                        |
+| 502         | Storage not confirmed   | An attachment delete was not confirmed by storage; retry    |
 
 ---
 

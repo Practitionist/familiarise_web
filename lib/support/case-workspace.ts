@@ -9,6 +9,7 @@ import type {
 } from "@/types/support-case";
 
 import { extractCallbackInfo } from "./callback-info";
+import { supportAttachmentHref } from "./attachment-href";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { PLAN_TITLE_SELECT, SLA_SELECT, planTitle } from "./case-read";
 import { threadTopic, ticketTopic } from "./case-topic";
@@ -337,7 +338,7 @@ async function readTicketWorkspace(
       organization: { select: { id: true, name: true } },
       attachments: {
         orderBy: { uploadedAt: "desc" },
-        select: { id: true, originalName: true, fileUrl: true, fileSize: true },
+        select: { id: true, originalName: true, fileSize: true },
       },
       responses: {
         orderBy: { createdAt: "desc" },
@@ -422,7 +423,7 @@ async function readTicketWorkspace(
     attachments: t.attachments.map((a) => ({
       id: a.id,
       name: a.originalName,
-      url: a.fileUrl,
+      url: supportAttachmentHref(t.id, a.id),
       size: a.fileSize,
     })),
   };

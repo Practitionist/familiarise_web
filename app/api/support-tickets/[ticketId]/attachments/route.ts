@@ -12,6 +12,10 @@ import {
   getManualBucketInstructions,
 } from "@/lib/supabase";
 import { UserRole } from "@prisma/client";
+import {
+  supportAttachmentHref,
+  withSupportAttachmentHrefs,
+} from "@/lib/support/attachment-href";
 
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -62,7 +66,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       orderBy: { uploadedAt: "desc" },
     });
 
-    return NextResponse.json({ attachments });
+    return NextResponse.json({
+      attachments: withSupportAttachmentHrefs(attachments),
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -168,13 +174,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       file,
     });
 
-    const { fileName, fileSize, mimeType, fileUrl, storagePath } = uploadResult;
+    const { fileName, fileSize, mimeType, storagePath } = uploadResult;
     if (
       !uploadResult.success ||
       !fileName ||
       !fileSize ||
       !mimeType ||
-      !fileUrl ||
       !storagePath
     ) {
       const isBucketError =
@@ -193,8 +198,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const attachmentId = globalThis.crypto.randomUUID();
     let attachment;
     try {
+      // Row lock serialises concurrent uploads so the cap holds under races.
       attachment = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${ticketId} FOR UPDATE`;
         const currentCount = await tx.supportTicketAttachment.count({
@@ -205,18 +212,20 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         }
         return tx.supportTicketAttachment.create({
           data: {
+            id: attachmentId,
             ticketId,
             fileName,
             originalName: file.name,
             fileSize,
             mimeType,
-            fileUrl,
+            fileUrl: supportAttachmentHref(ticketId, attachmentId),
             storagePath,
           },
+          omit: { storagePath: true },
         });
       });
     } catch (txErr) {
-      await deleteSupportTicketAttachment(storagePath).catch(() => {});
+      await deleteSupportTicketAttachment(storagePath);
       throw txErr;
     }
 
@@ -315,7 +324,17 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    await deleteSupportTicketAttachment(attachment.storagePath);
+    // Storage first: on failure the row survives so the delete can be retried.
+    if (!(await deleteSupportTicketAttachment(attachment.storagePath))) {
+      Sentry.captureException(
+        new Error("Support attachment storage delete failed"),
+        { tags: { subsystem: "support" }, extra: { attachmentId } },
+      );
+      return NextResponse.json(
+        { error: "Could not delete the file. Please try again." },
+        { status: 502 },
+      );
+    }
 
     await prisma.supportTicketAttachment.delete({
       where: { id: attachmentId },
