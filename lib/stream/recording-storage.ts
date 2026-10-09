@@ -47,11 +47,16 @@ const MAX_PLAYBACK_URL_TTL_S = 24 * 3600;
 export function playbackUrlTtlSeconds(
   durationInMinutes: number | null | undefined,
 ): number {
-  const minutes = durationInMinutes ?? 0;
-  if (!Number.isFinite(minutes) || minutes <= 0) return MIN_PLAYBACK_URL_TTL_S;
+  if (
+    typeof durationInMinutes !== "number" ||
+    !Number.isFinite(durationInMinutes) ||
+    durationInMinutes <= 0
+  ) {
+    return MIN_PLAYBACK_URL_TTL_S;
+  }
   return Math.min(
     MAX_PLAYBACK_URL_TTL_S,
-    MIN_PLAYBACK_URL_TTL_S + Math.ceil(minutes) * 2 * 60,
+    MIN_PLAYBACK_URL_TTL_S + Math.ceil(durationInMinutes) * 2 * 60,
   );
 }
 

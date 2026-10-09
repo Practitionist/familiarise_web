@@ -590,9 +590,9 @@ function RecordingRetentionCard({
           </p>
         )}
         {saved && (
-          <p role="status" className="text-sm text-emerald-600">
+          <output className="block text-sm text-emerald-600">
             Retention saved.
-          </p>
+          </output>
         )}
       </CardFooter>
     </Card>
