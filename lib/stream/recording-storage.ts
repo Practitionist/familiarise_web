@@ -209,10 +209,7 @@ export async function deleteRecordingObject(
         );
         return { success: false, error: r2Result.error };
       }
-      if (r2Result.notFound) {
-        await removeObjects(bucket, [storagePath]);
-      }
-      return { success: true };
+      if (!r2Result.notFound) return { success: true };
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to delete from R2";
@@ -223,6 +220,7 @@ export async function deleteRecordingObject(
     }
   }
 
+  // Not in R2 (or R2 unset): the object may still sit in the original bucket.
   if (!(await removeObjects(bucket, [storagePath]))) {
     const error = new Error("Recording object was not removed from storage");
     streamLogger.error("Failed to delete recording object", error, {
