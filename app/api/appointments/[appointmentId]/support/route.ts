@@ -19,7 +19,6 @@ import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
-import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import {
@@ -154,9 +153,6 @@ export async function POST(
         route: SUPPORT_ROUTE,
         appointmentId,
       });
-
-    const rl = await applyRateLimit(spamLimiter, `appt-support:${auth.userId}`);
-    if (rl) return rl;
 
     const body = turnSchema.safeParse(await req.json().catch(() => ({})));
     if (!body.success) {
