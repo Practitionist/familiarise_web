@@ -171,7 +171,8 @@ jobs:
     timeout-minutes: 30
     services:
       redis:
-        image: redis
+        # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
+        image: public.ecr.aws/docker/library/redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -211,7 +212,7 @@ jobs:
 
     services:
       redis:
-        image: redis
+        image: public.ecr.aws/docker/library/redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -270,7 +271,7 @@ jobs:
     services:
       postgres:
         # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        image: postgres:17
+        image: public.ecr.aws/docker/library/postgres:17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: ci
