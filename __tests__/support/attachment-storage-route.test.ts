@@ -20,6 +20,12 @@ jest.mock("../../lib/supabase", () => ({
   getManualBucketInstructions: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  documentUploadLimiter: {},
+  applyRateLimit: jest.fn(async () => null),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -44,6 +50,7 @@ import {
   signSupportTicketAttachment,
 } from "../../lib/supabase";
 import { getSession } from "../../lib/auth-server";
+import { applyRateLimit } from "../../lib/rate-limit";
 import { DELETE } from "../../app/api/support-tickets/[ticketId]/attachments/route";
 import { GET } from "../../app/api/support-tickets/[ticketId]/attachments/[attachmentId]/route";
 
@@ -77,6 +84,27 @@ describe("support attachment storage", () => {
     });
     expect(res.status).toBe(200);
     expect(rowDelete).toHaveBeenCalledWith({ where: { id: "att-1" } });
+  });
+
+  it("throttles a customer per ticket and never throttles staff", async () => {
+    mockedDelete.mockResolvedValue(true);
+    await DELETE(deleteRequest(), {
+      params: Promise.resolve({ ticketId: "t1" }),
+    });
+    expect(applyRateLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      "ticket-attachment-delete:owner:t1",
+    );
+
+    (applyRateLimit as jest.Mock).mockClear();
+    (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      role: "STAFF",
+    });
+    const res = await DELETE(deleteRequest(), {
+      params: Promise.resolve({ ticketId: "t1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(applyRateLimit).not.toHaveBeenCalled();
   });
 
   it("redirects the owner to a signed URL minted from the stored path", async () => {

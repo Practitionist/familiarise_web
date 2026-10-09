@@ -7,6 +7,8 @@ const mockUpdateMany = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  flush: jest.fn(async () => true),
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,

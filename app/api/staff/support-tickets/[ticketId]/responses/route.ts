@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { supportError } from "@/lib/api/support-http";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
@@ -67,10 +68,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const body: unknown = await req.json().catch(() => null);
     const result = CreateSupportResponseSchema.safeParse(body);
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: result.error.flatten(),
+        context: { route: "staff.support-tickets.responses", action: "reply" },
+      });
     }
     const validatedData = result.data;
 
