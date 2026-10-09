@@ -3,7 +3,8 @@
  */
 
 export interface RevenueSplit {
-  consultantProfileId: string;
+  consultantProfileId: string | null;
+  organizationId?: string | null;
   share: number;
   role: string;
 }

@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { bookingOrgId } from "@/lib/stream-utils";
 import {
+  DM_ELIGIBLE_STATUSES,
   dmEligibleStatusFilter,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
@@ -33,6 +34,24 @@ export class DmNotPermittedError extends Error {
     this.userIdA = userIdA;
     this.userIdB = userIdB;
   }
+}
+
+function eventHostOrPresenterPlanFilter(consultantProfileId: string) {
+  return {
+    OR: [
+      { consultantProfileId },
+      {
+        collaborators: {
+          some: {
+            consultantProfileId,
+            status: "ACCEPTED" as const,
+            tier: "PRESENTER" as const,
+            consultantProfile: { deletedAt: null },
+          },
+        },
+      },
+    ],
+  };
 }
 
 export async function canDirectMessage(
@@ -141,10 +160,17 @@ export async function pairBookingContexts(
           where: {
             status: { in: [...OPENABLE_EVENT_STATUSES] },
             OR: eventDirections.map((d) => ({
-              webinarPlan: { consultantProfileId: d.consultantProfileId },
+              webinarPlan: eventHostOrPresenterPlanFilter(
+                d.consultantProfileId,
+              ),
               appointment: {
                 deletedAt: null,
-                participants: { some: liveParticipant(d.participantUserId) },
+                participants: {
+                  some: {
+                    ...liveParticipant(d.participantUserId),
+                    role: "CONSULTEE",
+                  },
+                },
               },
             })),
           },
@@ -159,10 +185,15 @@ export async function pairBookingContexts(
           where: {
             status: { in: [...OPENABLE_EVENT_STATUSES] },
             OR: eventDirections.map((d) => ({
-              classPlan: { consultantProfileId: d.consultantProfileId },
+              classPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
               appointment: {
                 deletedAt: null,
-                participants: { some: liveParticipant(d.participantUserId) },
+                participants: {
+                  some: {
+                    ...liveParticipant(d.participantUserId),
+                    role: "CONSULTEE",
+                  },
+                },
               },
             })),
           },
@@ -202,6 +233,179 @@ export async function pairBookingContexts(
   }
 
   return { personalAllowed, organizations: Array.from(organizations) };
+}
+
+export type ContextAppointmentCollaboratorRow = {
+  status?: string;
+  tier?: string;
+  consultantProfile?: { userId?: string | null } | null;
+};
+
+export type ContextAppointmentRow = {
+  id: string;
+  appointmentType: string;
+  occurrences?: { startsAt: Date; endsAt: Date }[];
+  participants?: { userId: string; role?: string }[];
+  consultation?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    consultationPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  subscription?: {
+    status: string;
+    requestedBy?: { userId: string } | null;
+    subscriptionPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+    } | null;
+  } | null;
+  webinar?: {
+    status: string;
+    webinarPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+      collaborators?: ContextAppointmentCollaboratorRow[] | null;
+    } | null;
+  } | null;
+  class?: {
+    status: string;
+    classPlan?: {
+      title: string;
+      consultantProfile?: { userId: string } | null;
+      collaborators?: ContextAppointmentCollaboratorRow[] | null;
+    } | null;
+  } | null;
+};
+
+const ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const EVENT_ELIGIBLE_STATUS_SET = new Set<string>([
+  ...DM_ELIGIBLE_STATUSES,
+  "IN_PROGRESS",
+]);
+
+function isMatchingUserPair(
+  userId: string,
+  counterpartyUserId: string,
+  a?: string | null,
+  b?: string | null,
+): boolean {
+  if (!a || !b) return false;
+  return (
+    (a === userId && b === counterpartyUserId) ||
+    (a === counterpartyUserId && b === userId)
+  );
+}
+
+function resolveEventPresenterIds(
+  hostId: string | undefined,
+  collaborators?: ContextAppointmentCollaboratorRow[] | null,
+): Set<string> {
+  const ids = new Set<string>();
+  if (hostId) ids.add(hostId);
+  for (const collab of collaborators ?? []) {
+    const uid = collab.consultantProfile?.userId;
+    if (!uid) continue;
+    if (collab.status && collab.status !== "ACCEPTED") continue;
+    if (collab.tier && collab.tier !== "PRESENTER") continue;
+    ids.add(uid);
+  }
+  return ids;
+}
+
+function isMatchingPresenterAndLearner(
+  userId: string,
+  counterpartyUserId: string,
+  presenterIds: Set<string>,
+  learnerIds: Set<string>,
+): boolean {
+  return (
+    (presenterIds.has(userId) && learnerIds.has(counterpartyUserId)) ||
+    (presenterIds.has(counterpartyUserId) && learnerIds.has(userId))
+  );
+}
+
+export function resolveVerifiedBookingContextTitle(
+  appt: ContextAppointmentRow,
+  userId: string,
+  counterpartyUserId: string,
+): string | null {
+  if (appt.consultation) {
+    if (!ELIGIBLE_STATUS_SET.has(appt.consultation.status)) return null;
+    if (
+      !isMatchingUserPair(
+        userId,
+        counterpartyUserId,
+        appt.consultation.consultationPlan?.consultantProfile?.userId,
+        appt.consultation.requestedBy?.userId,
+      )
+    ) {
+      return null;
+    }
+    return appt.consultation.consultationPlan?.title ?? "Consultation";
+  }
+  if (appt.subscription) {
+    if (!ELIGIBLE_STATUS_SET.has(appt.subscription.status)) return null;
+    if (
+      !isMatchingUserPair(
+        userId,
+        counterpartyUserId,
+        appt.subscription.subscriptionPlan?.consultantProfile?.userId,
+        appt.subscription.requestedBy?.userId,
+      )
+    ) {
+      return null;
+    }
+    return appt.subscription.subscriptionPlan?.title ?? "Subscription";
+  }
+
+  const learnerIds = new Set(
+    (appt.participants ?? [])
+      .filter((p) => !p.role || p.role === "CONSULTEE")
+      .map((p) => p.userId),
+  );
+
+  if (appt.webinar) {
+    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.webinar.status)) return null;
+    const presenterIds = resolveEventPresenterIds(
+      appt.webinar.webinarPlan?.consultantProfile?.userId,
+      appt.webinar.webinarPlan?.collaborators,
+    );
+    if (
+      !isMatchingPresenterAndLearner(
+        userId,
+        counterpartyUserId,
+        presenterIds,
+        learnerIds,
+      )
+    ) {
+      return null;
+    }
+    return appt.webinar.webinarPlan?.title ?? "Webinar";
+  }
+
+  if (appt.class) {
+    if (!EVENT_ELIGIBLE_STATUS_SET.has(appt.class.status)) return null;
+    const presenterIds = resolveEventPresenterIds(
+      appt.class.classPlan?.consultantProfile?.userId,
+      appt.class.classPlan?.collaborators,
+    );
+    if (
+      !isMatchingPresenterAndLearner(
+        userId,
+        counterpartyUserId,
+        presenterIds,
+        learnerIds,
+      )
+    ) {
+      return null;
+    }
+    return appt.class.classPlan?.title ?? "Class";
+  }
+
+  return null;
 }
 
 function buildDirections(a: ProfilePair, b: ProfilePair): Direction[] {
@@ -298,10 +502,15 @@ async function hasWebinarLink(
     where: {
       status: { in: [...OPENABLE_EVENT_STATUSES] },
       OR: directions.map((d) => ({
-        webinarPlan: { consultantProfileId: d.consultantProfileId },
+        webinarPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
         appointment: {
           deletedAt: null,
-          participants: { some: liveParticipant(d.participantUserId) },
+          participants: {
+            some: {
+              ...liveParticipant(d.participantUserId),
+              role: "CONSULTEE",
+            },
+          },
         },
       })),
     },
@@ -324,10 +533,15 @@ async function hasClassLink(
     where: {
       status: { in: [...OPENABLE_EVENT_STATUSES] },
       OR: directions.map((d) => ({
-        classPlan: { consultantProfileId: d.consultantProfileId },
+        classPlan: eventHostOrPresenterPlanFilter(d.consultantProfileId),
         appointment: {
           deletedAt: null,
-          participants: { some: liveParticipant(d.participantUserId) },
+          participants: {
+            some: {
+              ...liveParticipant(d.participantUserId),
+              role: "CONSULTEE",
+            },
+          },
         },
       })),
     },

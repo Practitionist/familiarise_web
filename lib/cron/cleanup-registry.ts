@@ -5,49 +5,12 @@ import {
   parseLimitParamOrDefault,
   statusFor,
 } from "@/lib/cron/cleanup-route";
-import { goHref } from "@/lib/dashboard/go";
-import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
-import { getAppUrl } from "@/lib/url";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
   POST: (req: NextRequest) => Promise<NextResponse>;
 };
-
-type ExpiringStreamOnly = {
-  recordingId: string;
-  title: string;
-  consultantUserId: string;
-  expiresAt: Date;
-};
-
-async function notifyConsultantsOfExpiringRecordings(
-  expiring: ExpiringStreamOnly[],
-): Promise<void> {
-  const byConsultant = new Map<string, ExpiringStreamOnly[]>();
-  for (const rec of expiring) {
-    if (!rec.consultantUserId) continue;
-    const list = byConsultant.get(rec.consultantUserId) ?? [];
-    list.push(rec);
-    byConsultant.set(rec.consultantUserId, list);
-  }
-
-  const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
-  await Promise.allSettled(
-    Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {
-      const soonest = recs.reduce(
-        (min, r) => (r.expiresAt < min ? r.expiresAt : min),
-        recs[0].expiresAt,
-      );
-      return notifyRecordingExpiring(consultantUserId, {
-        recordingCount: recs.length,
-        expiresAt: soonest.toISOString(),
-        dashboardUrl,
-      });
-    }),
-  );
-}
 
 // Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
 // overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
@@ -430,6 +393,21 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
+      }),
+
+    // @cleanup-twin expire-stale-collaborator-invites
+    "expire-stale-collaborator-invites": () =>
+      cleanupRoute({
+        job: "expire-stale-collaborator-invites",
+        run: async (req) => {
+          const { expireStaleCollaboratorInvites } =
+            await import("@/lib/collaborators/cleanup");
+          return expireStaleCollaboratorInvites(
+            parseLimitParamOrDefault(req, 200),
+          );
+        },
+        summarize: (r) => ({ expired: r.expired, scanned: r.scanned }),
+        failureMessage: "Failed to expire stale collaborator invites",
       }),
 
     // @cleanup-twin gst-outward-register-export
@@ -1153,6 +1131,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/lib/stream/recording-transfer-service");
           const { streamLogger } = await import("@/lib/stream-logger");
           const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { notifyConsultantsOfExpiringRecordings } =
+            await import("@/jobs/stream/transfer-expiring-recordings");
           const { transferResult, expiringStreamOnly } = await withCronLock(
             "transfer-expiring-recordings",
             { failMode: "open" },

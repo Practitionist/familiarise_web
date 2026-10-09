@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
@@ -20,25 +21,52 @@ export async function GET(
 
     const { planId } = await params;
 
-    // Only the plan owner, accepted collaborators, or admin/staff may view revenue splits
     if (!isPrivileged(session.user.role)) {
       const plan = await prisma.classPlan.findUnique({
         where: { id: planId },
-        select: { consultantProfileId: true },
+        select: { consultantProfileId: true, organizationId: true },
       });
       if (!plan) {
         return NextResponse.json({ error: "Plan not found" }, { status: 404 });
       }
+      const consultantProfileId = session.user.consultantProfileId;
       const isOwner =
-        session.user.consultantProfileId === plan.consultantProfileId;
-      if (!isOwner) {
-        const collab = await prisma.collaborator.findFirst({
+        Boolean(consultantProfileId) &&
+        consultantProfileId === plan.consultantProfileId;
+
+      let isOrgAdmin = false;
+      if (!isOwner && plan.organizationId) {
+        const membership = await prisma.membership.findUnique({
           where: {
-            classPlanId: planId,
-            consultantProfileId: session.user.consultantProfileId ?? "__none__",
-            status: "ACCEPTED",
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId: plan.organizationId,
+            },
+          },
+          select: {
+            status: true,
+            role: true,
+            organization: { select: { status: true } },
           },
         });
+        isOrgAdmin = Boolean(
+          membership &&
+          membership.status === "ACTIVE" &&
+          membership.organization.status !== "DEACTIVATED" &&
+          hasOrgPermission(membership.role, "catalog.manage"),
+        );
+      }
+
+      if (!isOwner && !isOrgAdmin) {
+        const collab = consultantProfileId
+          ? await prisma.collaborator.findFirst({
+              where: {
+                classPlanId: planId,
+                consultantProfileId,
+                status: "ACCEPTED",
+              },
+            })
+          : null;
         if (!collab) {
           return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }

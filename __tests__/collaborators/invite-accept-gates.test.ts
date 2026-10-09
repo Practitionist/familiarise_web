@@ -23,6 +23,18 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorDeclined: jest.fn(),
   notifyCollaboratorWithdrawn: jest.fn(),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
+  sendCollaboratorAcceptedEmail: jest.fn(async () => undefined),
+  sendCollaboratorDeclinedEmail: jest.fn(async () => undefined),
+  sendCollaboratorRemovedEmail: jest.fn(async () => undefined),
+  sendCollaboratorWithdrawnEmail: jest.fn(async () => undefined),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 type Invitee = {
   userId: string;
@@ -57,7 +69,20 @@ const collaboratorUpdate = jest.fn(async (..._args: unknown[]) => ({
 }));
 let lastWrite: { id: string; role: string; status: string } | null = null;
 const tx = {
+  consultantProfile: { findUnique: jest.fn(async () => invitee) },
+  webinarPlan: { findUnique: jest.fn(async () => plan) },
+  classPlan: { findUnique: jest.fn(async () => plan) },
+  appointment: {
+    findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
+  },
   collaborator: {
+    findUnique: jest.fn(async () => ({
+      id: "c-1",
+      consultantProfileId: "cp-new",
+      webinarPlanId: "plan-1",
+      classPlanId: null,
+      status: "PENDING",
+    })),
     findMany: jest.fn(async () => []),
     findFirst: jest.fn(async () => null),
     create: jest.fn(async (args: { data: unknown }) => ({
@@ -72,6 +97,7 @@ const tx = {
     findUniqueOrThrow: async () => lastWrite,
   },
   appointmentParticipant: {
+    findFirst: jest.fn(async () => seat),
     createMany: jest.fn(async () => ({ count: 1 })),
     updateMany: jest.fn(async () => ({ count: 0 })),
   },
@@ -82,7 +108,13 @@ jest.mock("../../lib/prisma", () => ({
     consultantProfile: { findUnique: jest.fn(async () => invitee) },
     webinarPlan: { findUnique: jest.fn(async () => plan) },
     classPlan: { findUnique: jest.fn(async () => plan) },
-    appointmentParticipant: { findFirst: jest.fn(async () => seat) },
+    appointmentParticipant: {
+      findFirst: jest.fn(async () => seat),
+      createMany: () => tx.appointmentParticipant.createMany(),
+      updateMany: () => tx.appointmentParticipant.updateMany(),
+    },
+    webinar: { findMany: jest.fn(async () => []) },
+    appointmentOccurrence: { findMany: jest.fn(async () => []) },
     appointment: {
       findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
     },
@@ -94,7 +126,6 @@ jest.mock("../../lib/prisma", () => ({
         classPlanId: null,
         status: "PENDING",
       })),
-      // Referenced lazily: the factory is hoisted above the const.
       updateMany: async (...args: unknown[]) => {
         lastWrite = (await collaboratorUpdate(...args)) as typeof lastWrite;
         return { count: 1 };

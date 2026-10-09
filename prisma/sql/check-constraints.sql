@@ -229,7 +229,10 @@ ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_fy_format"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
-  CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));
+  CHECK (
+    ("collaboratorType" = 'WEBINAR' AND "webinarPlanId" IS NOT NULL AND "classPlanId" IS NULL)
+    OR ("collaboratorType" = 'CLASS' AND "classPlanId" IS NOT NULL AND "webinarPlanId" IS NULL)
+  );
 
 -- SPLIT
 -- ============================================================================
@@ -319,7 +322,29 @@ ALTER TABLE "RateCard" ADD CONSTRAINT "rate_card_bps_sum_is_whole"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_share_bps_in_range";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
-  CHECK ("revenueShareBps" >= 0 AND "revenueShareBps" <= 10000);
+  CHECK (1 <= "revenueShareBps" AND "revenueShareBps" <= 9000);
+-- SPLIT
+DO $$
+BEGIN
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_role_matches_plan_type"
+    CHECK (
+      ("collaboratorType" = 'WEBINAR' AND "role" IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT'))
+      OR ("collaboratorType" = 'CLASS' AND "role" IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR'))
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+-- SPLIT
+DO $$
+BEGIN
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_tier_matches_role"
+    CHECK (
+      ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'PRESENTER')
+      OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'CREW')
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- SPLIT
 -- The journal's direction column carries the sign, so an entry amount is

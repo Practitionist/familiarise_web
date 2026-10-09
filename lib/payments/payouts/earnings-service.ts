@@ -31,7 +31,7 @@ import {
   Prisma,
   type CoveredPlanType,
 } from "@prisma/client";
-import { AppointmentType } from "./constants";
+import { AppointmentType, PAYOUT_CONSTANTS } from "./constants";
 import {
   computeHoldUntil,
   holdHoursFor,
@@ -117,20 +117,31 @@ export interface CreateEarningsParams {
     appointment?: {
       consultantProfile?: {
         id: string;
-      };
+      } | null;
+      organizationId?: string | null;
       webinar?: {
         webinarPlanId: string;
       } | null;
       class?: {
         classPlanId: string;
       } | null;
-      /** #1775 C-9 — a trial's earning waits for delivery (holdUntil null). */
       trial?: { id: string } | null;
     } | null;
   };
   appointmentType: AppointmentType;
   tx?: Tx;
   preplanned?: PreplannedEarningsContext | null;
+}
+
+export interface PartySettlement {
+  role: EarningRole;
+  consultantProfileId: string | null;
+  organizationId: string | null;
+  grossSlicePaise: number;
+  platformFeePaise: number;
+  orgSharePaise: number;
+  consultantSharePaise: number;
+  orgSplit: OrgEarningsSplit | null;
 }
 
 export interface PreplannedEarningsContext {
@@ -142,6 +153,7 @@ export interface PreplannedEarningsContext {
   orgSplit: OrgEarningsSplit | null;
   parkForTrust: boolean;
   splits: RevenueSplit[];
+  partySettlements: PartySettlement[];
   collabSettlements: Map<
     string,
     { sharePaise: number; orgSplit: OrgEarningsSplit }
@@ -483,18 +495,127 @@ const rawEarningsAppointmentTypeSchema = z
 export interface ResolvedEarningsPayment {
   paymentForEarnings: CreateEarningsParams["payment"];
   earningsAppointmentType: AppointmentType;
-  consultantProfileId: string;
+  consultantProfileId: string | null;
 }
 
-/**
- * #1439 — the webhook success path and the checkout mock/zero/sponsored path
- * both create earnings straight after confirming a payment, and both need
- * the same appointment -> consultantProfile resolution across the four plan
- * kinds. Shared here so the include and the profile-selection precedence
- * can't drift between the two call sites. Returns null when there is no
- * appointment or no resolvable consultant profile — the caller skips
- * earnings creation in that case, same as before this was extracted.
- */
+async function resolveScopeOrganizationId(
+  db: Tx | typeof prisma,
+  scope: { id: string; kind: "webinar" | "class" } | null,
+  explicitOrgId?: string | null,
+): Promise<string | null> {
+  if (explicitOrgId) return explicitOrgId;
+  if (!scope) return null;
+  if (scope.kind === "webinar") {
+    return (
+      (
+        await db.webinarPlan.findUnique({
+          where: { id: scope.id },
+          select: { organizationId: true },
+        })
+      )?.organizationId ?? null
+    );
+  }
+  return (
+    (
+      await db.classPlan.findUnique({
+        where: { id: scope.id },
+        select: { organizationId: true },
+      })
+    )?.organizationId ?? null
+  );
+}
+
+async function resolveOwnerlessOrgSplit(
+  tx: Tx | typeof prisma,
+  orgId: string,
+  grossSlice: number,
+  at: Date = new Date(),
+  plan: { id: string; kind: "webinar" | "class" } | null = null,
+  booking: {
+    paymentId: string;
+    appointmentType: AppointmentType;
+    isB2b?: boolean;
+  } | null = null,
+): Promise<OrgEarningsSplit> {
+  const defaultPlatformBps = booking?.isB2b
+    ? 0
+    : PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE * 100;
+
+  if (!ENABLE_HOST_ORGS) {
+    const platformFeePaise = Math.floor(
+      (grossSlice * defaultPlatformBps) / 10_000,
+    );
+    return {
+      organizationId: orgId,
+      rateCardIdApplied: null,
+      platformBps: defaultPlatformBps,
+      orgBps: 10_000 - defaultPlatformBps,
+      consultantBps: 0,
+      platformFeePaise,
+      orgShare: grossSlice - platformFeePaise,
+      consultantSharePaise: 0,
+      payoutRecipient: "ORGANIZATION",
+    };
+  }
+
+  const { resolveEffectiveRateCard, isScopedRateCardResolutionEnabled } =
+    await import("@/lib/api/organizations/rate-card");
+
+  const scoped =
+    booking && isScopedRateCardResolutionEnabled()
+      ? {
+          contractId: await resolveSettlementContractId(
+            tx,
+            booking.paymentId,
+            orgId,
+          ),
+          planType: RATE_CARD_PLAN_TYPE[booking.appointmentType],
+          planId: plan?.id ?? null,
+        }
+      : {};
+
+  const resolved = await resolveEffectiveRateCard(tx, {
+    orgId,
+    membershipOverrideId: null,
+    at,
+    ...scoped,
+  });
+
+  if (!resolved.rateCardId) {
+    const platformFeePaise = Math.floor(
+      (grossSlice * defaultPlatformBps) / 10_000,
+    );
+    return {
+      organizationId: orgId,
+      rateCardIdApplied: null,
+      platformBps: defaultPlatformBps,
+      orgBps: 10_000 - defaultPlatformBps,
+      consultantBps: 0,
+      platformFeePaise,
+      orgShare: grossSlice - platformFeePaise,
+      consultantSharePaise: 0,
+      payoutRecipient: "ORGANIZATION",
+    };
+  }
+
+  const platformFeePaise = Math.floor(
+    (grossSlice * resolved.platformBps) / 10_000,
+  );
+  const orgShare = grossSlice - platformFeePaise;
+
+  return {
+    organizationId: orgId,
+    rateCardIdApplied: resolved.rateCardId,
+    platformBps: resolved.platformBps,
+    orgBps: resolved.orgBps + resolved.consultantBps,
+    consultantBps: 0,
+    platformFeePaise,
+    orgShare,
+    consultantSharePaise: 0,
+    payoutRecipient: "ORGANIZATION",
+  };
+}
+
 export async function resolvePaymentForEarnings(
   where: Prisma.PaymentWhereUniqueInput,
   rawAppointmentType: string,
@@ -537,7 +658,6 @@ export async function resolvePaymentForEarnings(
               },
             },
           },
-          // #1775 C-9 — a paid trial has no consultation/subscription row.
           trial: {
             select: {
               id: true,
@@ -562,7 +682,13 @@ export async function resolvePaymentForEarnings(
     paymentWithAppointment.appointment.trial?.subscriptionPlan
       ?.consultantProfile;
 
-  if (!consultantProfile) return null;
+  const ownerOrganizationId =
+    paymentWithAppointment.appointment.webinar?.webinarPlan?.organizationId ??
+    paymentWithAppointment.appointment.class?.classPlan?.organizationId ??
+    paymentWithAppointment.appointment.organizationId ??
+    null;
+
+  if (!consultantProfile && !ownerOrganizationId) return null;
 
   const earningsAppointmentType =
     rawEarningsAppointmentTypeSchema.parse(rawAppointmentType);
@@ -570,7 +696,10 @@ export async function resolvePaymentForEarnings(
   const paymentForEarnings: CreateEarningsParams["payment"] = {
     ...paymentWithAppointment,
     appointment: {
-      consultantProfile: { id: consultantProfile.id },
+      ...(consultantProfile
+        ? { consultantProfile: { id: consultantProfile.id } }
+        : {}),
+      organizationId: ownerOrganizationId,
       webinar: paymentWithAppointment.appointment.webinar
         ? {
             webinarPlanId:
@@ -591,7 +720,7 @@ export async function resolvePaymentForEarnings(
   return {
     paymentForEarnings,
     earningsAppointmentType,
-    consultantProfileId: consultantProfile.id,
+    consultantProfileId: consultantProfile?.id ?? null,
   };
 }
 
@@ -689,35 +818,138 @@ async function resolveInTxTrustPark(
   return preplanned?.parkForTrust ?? false;
 }
 
-async function planCollaboratorSettlements(
+async function resolvePartySettlements(
   db: Tx | typeof prisma,
-  splits: RevenueSplit[],
-  _primaryOrgSplit: OrgEarningsSplit | null,
-  createdAt: Date,
-  _logCollisionPaymentId?: string,
-): Promise<Map<string, { sharePaise: number; orgSplit: OrgEarningsSplit }>> {
+  params: {
+    payment: CreateEarningsParams["payment"];
+    appointmentType: AppointmentType;
+    scope: { id: string; kind: "webinar" | "class" } | null;
+    splits: RevenueSplit[];
+    settleFeeStamp: boolean;
+  },
+): Promise<{
+  partySettlements: PartySettlement[];
+  collabSettlements: Map<
+    string,
+    { sharePaise: number; orgSplit: OrgEarningsSplit }
+  >;
+}> {
+  const { payment, appointmentType, scope, splits, settleFeeStamp } = params;
+  const partySettlements: PartySettlement[] = [];
   const collabSettlements = new Map<
     string,
     { sharePaise: number; orgSplit: OrgEarningsSplit }
   >();
-  const collabSplits = splits.filter((s) => s.role !== "OWNER" && s.share > 0);
-  if (collabSplits.length === 0) return collabSettlements;
+  let feeStampSettled = false;
 
-  for (const split of collabSplits) {
-    const collabOrgSplit = await resolveOrgSplit(
-      // NOSONAR
-      db,
-      split.consultantProfileId,
-      split.share,
-      createdAt,
-    );
-    if (!collabOrgSplit) continue;
-    collabSettlements.set(split.consultantProfileId, {
-      sharePaise: split.share,
-      orgSplit: collabOrgSplit,
-    });
+  for (const split of splits) {
+    const isOwner = split.role === "OWNER";
+    const role = isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR;
+
+    // Ownerless org catalog plan (`OWNER` with null `consultantProfileId`).
+    if (isOwner && !split.consultantProfileId) {
+      const ownerOrgId =
+        split.organizationId ??
+        (await resolveScopeOrganizationId(
+          db,
+          scope,
+          payment.appointment?.organizationId,
+        ));
+      if (!ownerOrgId) continue;
+
+      const isB2b = Boolean(
+        payment.organizationId ||
+        payment.billingAccountId ||
+        payment.platformFeeBps === 0,
+      );
+      const orgSplit = await resolveOwnerlessOrgSplit(
+        db,
+        ownerOrgId,
+        split.share,
+        payment.createdAt,
+        scope,
+        { paymentId: payment.id, appointmentType, isB2b },
+      );
+      partySettlements.push({
+        role: EarningRole.OWNER,
+        consultantProfileId: null,
+        organizationId: ownerOrgId,
+        grossSlicePaise: split.share,
+        platformFeePaise: orgSplit.platformFeePaise,
+        orgSharePaise: orgSplit.orgShare,
+        consultantSharePaise: 0,
+        orgSplit,
+      });
+      continue;
+    }
+
+    if (!split.consultantProfileId) continue;
+
+    // Consultant party (`OWNER` or `COLLABORATOR`) settled on its pre-fee gross slice.
+    const partyOrgSplit =
+      split.share > 0
+        ? await resolveOrgSplit(
+            db,
+            split.consultantProfileId,
+            split.share,
+            payment.createdAt,
+            isOwner ? scope : null,
+            isOwner ? { paymentId: payment.id, appointmentType } : null,
+          )
+        : null;
+
+    if (partyOrgSplit) {
+      if (!isOwner) {
+        collabSettlements.set(split.consultantProfileId, {
+          sharePaise: split.share,
+          orgSplit: partyOrgSplit,
+        });
+      }
+      partySettlements.push({
+        role,
+        consultantProfileId: split.consultantProfileId,
+        organizationId: partyOrgSplit.organizationId,
+        grossSlicePaise: split.share,
+        platformFeePaise: partyOrgSplit.platformFeePaise,
+        orgSharePaise: partyOrgSplit.orgShare,
+        consultantSharePaise: partyOrgSplit.consultantSharePaise,
+        orgSplit: partyOrgSplit,
+      });
+    } else {
+      let partyPlatformFee = 0;
+      if (split.share > 0) {
+        if (settleFeeStamp && !feeStampSettled) {
+          partyPlatformFee = await settleB2cPlatformFeePaise(
+            db as Tx,
+            payment,
+            split.consultantProfileId,
+            split.share,
+            { allowWaiver: false },
+          );
+          feeStampSettled = true;
+        } else {
+          partyPlatformFee = await planB2cPlatformFeePaise(
+            db,
+            payment,
+            split.consultantProfileId,
+            split.share,
+          );
+        }
+      }
+      partySettlements.push({
+        role,
+        consultantProfileId: split.consultantProfileId,
+        organizationId: null,
+        grossSlicePaise: split.share,
+        platformFeePaise: partyPlatformFee,
+        orgSharePaise: 0,
+        consultantSharePaise: split.share - partyPlatformFee,
+        orgSplit: null,
+      });
+    }
   }
-  return collabSettlements;
+
+  return { partySettlements, collabSettlements };
 }
 
 async function resolvePlannedWalletAndOverage(
@@ -803,42 +1035,61 @@ export async function planEarningsForPayment(
     appointmentType,
   );
 
-  const orgSplit = await resolveOrgSplit(
-    db,
-    consultantProfileId,
-    grossAmount,
-    payment.createdAt,
-    scope,
-    { paymentId: payment.id, appointmentType },
-  );
-
   const parkForTrust = await checkSponsorTrustPark(db, payment);
 
-  const platformFeePaise = orgSplit
-    ? orgSplit.platformFeePaise
-    : await planB2cPlatformFeePaise(
-        db,
-        payment,
-        consultantProfileId,
-        grossAmount,
-      );
-  const totalConsultantPool = orgSplit
-    ? orgSplit.consultantSharePaise
-    : grossAmount - platformFeePaise;
-
-  const splits =
+  let splits: RevenueSplit[] =
     planType && planId
-      ? await calculateRevenueSplit(planType, planId, totalConsultantPool, db, {
+      ? await calculateRevenueSplit(planType, planId, grossAmount, db, {
           excludeBuyerUserId: payment.userId,
         })
       : [];
 
-  const collabSettlements = await planCollaboratorSettlements(
-    db,
-    splits,
-    orgSplit,
-    payment.createdAt,
-  );
+  if (!consultantProfileId && splits.length === 0) {
+    const ownerOrgId = await resolveScopeOrganizationId(
+      db,
+      scope,
+      payment.appointment?.organizationId,
+    );
+    if (ownerOrgId) {
+      splits = [
+        {
+          consultantProfileId: null,
+          organizationId: ownerOrgId,
+          share: grossAmount,
+          role: "OWNER",
+        },
+      ];
+    }
+  }
+
+  const orgSplit =
+    splits.length === 0 && consultantProfileId
+      ? await resolveOrgSplit(
+          db,
+          consultantProfileId,
+          grossAmount,
+          payment.createdAt,
+          scope,
+          { paymentId: payment.id, appointmentType },
+        )
+      : null;
+
+  const { partySettlements, collabSettlements } =
+    splits.length > 0
+      ? await resolvePartySettlements(db, {
+          payment,
+          appointmentType,
+          scope,
+          splits,
+          settleFeeStamp: false,
+        })
+      : {
+          partySettlements: [],
+          collabSettlements: new Map<
+            string,
+            { sharePaise: number; orgSplit: OrgEarningsSplit }
+          >(),
+        };
 
   const tranches =
     splits.length === 0 && appointmentType === "SUBSCRIPTION"
@@ -859,6 +1110,7 @@ export async function planEarningsForPayment(
     orgSplit,
     parkForTrust,
     splits,
+    partySettlements,
     collabSettlements,
     tranches,
     legs,
@@ -869,16 +1121,14 @@ export async function planEarningsForPayment(
 
 function computeShareBpsList(
   splits: RevenueSplit[],
-  totalConsultantPool: number,
+  totalPool: number,
 ): number[] {
   const shareBpsList = splits.map((s) =>
-    totalConsultantPool > 0
-      ? Math.floor((s.share / totalConsultantPool) * 10_000)
-      : 0,
+    totalPool > 0 ? Math.floor((s.share / totalPool) * 10_000) : 0,
   );
-  if (totalConsultantPool > 0 && shareBpsList.length > 0) {
+  if (totalPool > 0 && shareBpsList.length > 0) {
     const assigned = shareBpsList.reduce((a, b) => a + b, 0);
-    shareBpsList[shareBpsList.length - 1] += 10_000 - assigned;
+    shareBpsList[0] += 10_000 - assigned;
   }
   return shareBpsList;
 }
@@ -887,58 +1137,41 @@ async function createMultiPartyConsultantEarnings(
   tx: Tx,
   params: {
     splits: RevenueSplit[];
-    totalConsultantPool: number;
-    collabSettlements: Map<
-      string,
-      { sharePaise: number; orgSplit: OrgEarningsSplit }
-    >;
+    partySettlements: PartySettlement[];
     paymentId: string;
     grossAmount: number;
-    platformFeePaise: number;
     appointmentOccurrenceId: string | null;
     initialEarningStatus: EarningStatus;
     holdUntil: Date | null;
-    orgSplit: OrgEarningsSplit | null;
   },
 ): Promise<string | null> {
   const {
     splits,
-    totalConsultantPool,
-    collabSettlements,
+    partySettlements,
     paymentId,
     grossAmount,
-    platformFeePaise,
     appointmentOccurrenceId,
     initialEarningStatus,
     holdUntil,
-    orgSplit,
   } = params;
 
-  const shareBpsList = computeShareBpsList(splits, totalConsultantPool);
-  const hostSplitNote = orgSplit ? " [HOST 3-way split]" : "";
+  const shareBpsList = computeShareBpsList(splits, grossAmount);
   let ownerId: string | null = null;
 
-  for (let i = 0; i < splits.length; i++) {
-    const split = splits[i];
-    const isOwner = split.role === "OWNER";
-    const settlement = isOwner
-      ? undefined
-      : collabSettlements.get(split.consultantProfileId);
-    const creditedShare = settlement
-      ? settlement.orgSplit.consultantSharePaise
-      : split.share;
-    const splitPlatformFee = isOwner
-      ? platformFeePaise
-      : (settlement?.orgSplit.platformFeePaise ?? 0);
+  for (let i = 0; i < partySettlements.length; i++) {
+    const p = partySettlements[i];
+    if (!p.consultantProfileId) continue;
+
+    const isOwner = p.role === EarningRole.OWNER;
     const earnings = await tx.consultantEarnings.create({
       data: {
-        consultantProfileId: split.consultantProfileId,
+        consultantProfileId: p.consultantProfileId,
         paymentId,
-        grossAmount: isOwner ? grossAmount : 0,
-        platformFeePaise: splitPlatformFee,
-        consultantSharePaise: creditedShare,
-        role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-        shareBps: shareBpsList[i],
+        grossAmount: p.grossSlicePaise,
+        platformFeePaise: p.platformFeePaise,
+        consultantSharePaise: p.consultantSharePaise,
+        role: p.role,
+        shareBps: shareBpsList[i] ?? 0,
         appointmentOccurrenceId,
         status: initialEarningStatus,
         holdUntil,
@@ -948,9 +1181,9 @@ async function createMultiPartyConsultantEarnings(
     if (isOwner) {
       ownerId = earnings.id;
     }
-    const collabSettledNote = settlement ? " [collab org-settled]" : "";
+    const orgNote = p.orgSplit ? " [org-settled]" : "";
     console.log(
-      `Earnings created for ${split.role} (${split.consultantProfileId}): ${creditedShare / 100} from payment ${paymentId}${hostSplitNote}${collabSettledNote}`,
+      `Earnings created for ${p.role} (${p.consultantProfileId}): ${p.consultantSharePaise / 100} from payment ${paymentId}${orgNote}`,
     );
   }
   return ownerId;
@@ -1065,12 +1298,9 @@ async function createSingleOwnerConsultantEarnings(
 async function createPrimaryAndCollabOrgEarnings(
   tx: Tx,
   params: {
-    consultantProfileId: string;
+    consultantProfileId: string | null;
     orgSplit: OrgEarningsSplit | null;
-    collabSettlements: Map<
-      string,
-      { sharePaise: number; orgSplit: OrgEarningsSplit }
-    >;
+    partySettlements: PartySettlement[];
     paymentId: string;
     grossAmount: number;
     initialEarningStatus: EarningStatus;
@@ -1080,12 +1310,48 @@ async function createPrimaryAndCollabOrgEarnings(
   const {
     consultantProfileId,
     orgSplit,
-    collabSettlements,
+    partySettlements,
     paymentId,
     grossAmount,
     initialEarningStatus,
     holdUntil,
   } = params;
+
+  if (partySettlements.length > 0) {
+    for (const p of partySettlements) {
+      if (!p.orgSplit) continue;
+      if (p.orgSplit.orgShare <= 0) {
+        console.log(
+          `Platform-only mode for ${p.orgSplit.organizationId}: skipping 0-value org earnings for payment ${paymentId}`,
+        );
+        continue;
+      }
+      await tx.organizationEarnings.create({
+        data: {
+          organizationId: p.orgSplit.organizationId,
+          paymentId,
+          consultantProfileId: p.consultantProfileId,
+          role: p.role,
+          grossAmountPaise: p.grossSlicePaise,
+          platformFeePaise: p.orgSplit.platformFeePaise,
+          orgSharePaise: p.orgSplit.orgShare,
+          consultantSharePaise: p.orgSplit.consultantSharePaise,
+          refundedAmountPaise: 0,
+          status: initialEarningStatus,
+          holdUntil,
+          currency: "INR",
+          rateCardIdApplied: p.orgSplit.rateCardIdApplied,
+          platformBpsApplied: p.orgSplit.platformBps,
+          orgBpsApplied: p.orgSplit.orgBps,
+          consultantBpsApplied: p.orgSplit.consultantBps,
+        },
+      });
+      console.log(
+        `Org earnings created for ${p.orgSplit.organizationId} (${p.role}): org=${p.orgSplit.orgShare / 100} consultant=${p.orgSplit.consultantSharePaise / 100} from payment ${paymentId}`,
+      );
+    }
+    return;
+  }
 
   if (orgSplit && orgSplit.orgShare > 0) {
     await tx.organizationEarnings.create({
@@ -1114,38 +1380,6 @@ async function createPrimaryAndCollabOrgEarnings(
   } else if (orgSplit?.orgShare === 0) {
     console.log(
       `Platform-only mode for ${orgSplit.organizationId}: skipping 0-value org earnings for payment ${paymentId}`,
-    );
-  }
-
-  for (const [collabProfileId, s] of Array.from(collabSettlements.entries())) {
-    if (s.orgSplit.orgShare <= 0) {
-      console.log(
-        `Platform-only mode for collaborator org ${s.orgSplit.organizationId}: skipping 0-value org earnings for payment ${paymentId}`,
-      );
-      continue;
-    }
-    await tx.organizationEarnings.create({
-      data: {
-        organizationId: s.orgSplit.organizationId,
-        paymentId,
-        consultantProfileId: collabProfileId,
-        role: EarningRole.COLLABORATOR,
-        grossAmountPaise: s.sharePaise,
-        platformFeePaise: s.orgSplit.platformFeePaise,
-        orgSharePaise: s.orgSplit.orgShare,
-        consultantSharePaise: s.orgSplit.consultantSharePaise,
-        refundedAmountPaise: 0,
-        status: initialEarningStatus,
-        holdUntil,
-        currency: "INR",
-        rateCardIdApplied: s.orgSplit.rateCardIdApplied,
-        platformBpsApplied: s.orgSplit.platformBps,
-        orgBpsApplied: s.orgSplit.orgBps,
-        consultantBpsApplied: s.orgSplit.consultantBps,
-      },
-    });
-    console.log(
-      `Collaborator org earnings created for ${s.orgSplit.organizationId} (collab ${collabProfileId}): org=${s.orgSplit.orgShare / 100} consultant=${s.orgSplit.consultantSharePaise / 100} from payment ${paymentId}`,
     );
   }
 }
@@ -1281,15 +1515,11 @@ async function resolveBookingJournalCredits(
   tx: Tx,
   params: {
     payment: CreateEarningsParams["payment"];
-    consultantProfileId: string;
+    consultantProfileId: string | null;
     platformFeePaise: number;
     totalConsultantPool: number;
     orgSplit: OrgEarningsSplit | null;
-    splits: RevenueSplit[];
-    collabSettlements: Map<
-      string,
-      { sharePaise: number; orgSplit: OrgEarningsSplit }
-    >;
+    partySettlements: PartySettlement[];
     overageAccrualPaise: number;
     hasWalletSurcharge: boolean;
     preplanned?: PreplannedEarningsContext | null;
@@ -1301,8 +1531,7 @@ async function resolveBookingJournalCredits(
     platformFeePaise,
     totalConsultantPool,
     orgSplit,
-    splits,
-    collabSettlements,
+    partySettlements,
     overageAccrualPaise,
     hasWalletSurcharge,
     preplanned,
@@ -1315,58 +1544,60 @@ async function resolveBookingJournalCredits(
     }
   };
 
-  let platformFeeCreditPaise = platformFeePaise;
-  for (const s of Array.from(collabSettlements.values())) {
-    platformFeeCreditPaise += s.orgSplit.platformFeePaise;
-  }
-  platformFeeCreditPaise += await resolveOverageSurchargeForCredits(
+  const overageSurcharge = await resolveOverageSurchargeForCredits(
     tx,
     payment.id,
     overageAccrualPaise,
     hasWalletSurcharge,
     preplanned,
   );
-  pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
 
-  if (splits.length > 0) {
-    for (const split of splits) {
-      const settlement =
-        split.role === "OWNER"
-          ? undefined
-          : collabSettlements.get(split.consultantProfileId);
-      pushCredit(
-        {
-          kind: "CONSULTANT_PAYABLE",
-          consultantProfileId: split.consultantProfileId,
-        },
-        settlement ? settlement.orgSplit.consultantSharePaise : split.share,
-      );
+  if (partySettlements.length > 0) {
+    const totalPlatformFee = partySettlements.reduce(
+      (sum, p) => sum + p.platformFeePaise,
+      0,
+    );
+    pushCredit({ kind: "PLATFORM_FEE" }, totalPlatformFee + overageSurcharge);
+
+    for (const p of partySettlements) {
+      if (p.consultantProfileId) {
+        pushCredit(
+          {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: p.consultantProfileId,
+          },
+          p.consultantSharePaise,
+        );
+      }
+      if (p.orgSplit && p.orgSplit.orgShare > 0) {
+        pushCredit(
+          {
+            kind: "ORG_PAYABLE",
+            organizationId: p.orgSplit.organizationId,
+          },
+          p.orgSplit.orgShare,
+        );
+      }
     }
   } else {
-    pushCredit(
-      { kind: "CONSULTANT_PAYABLE", consultantProfileId },
-      totalConsultantPool,
-    );
+    pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise + overageSurcharge);
+    if (consultantProfileId) {
+      pushCredit(
+        { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+        totalConsultantPool,
+      );
+    }
+    if (orgSplit && orgSplit.orgShare > 0) {
+      pushCredit(
+        {
+          kind: "ORG_PAYABLE",
+          organizationId: orgSplit.organizationId,
+        },
+        orgSplit.orgShare,
+      );
+    }
   }
 
-  if (orgSplit && orgSplit.orgShare > 0) {
-    pushCredit(
-      {
-        kind: "ORG_PAYABLE",
-        organizationId: orgSplit.organizationId,
-      },
-      orgSplit.orgShare,
-    );
-  }
-  for (const s of Array.from(collabSettlements.values())) {
-    pushCredit(
-      {
-        kind: "ORG_PAYABLE",
-        organizationId: s.orgSplit.organizationId,
-      },
-      s.orgSplit.orgShare,
-    );
-  }
   pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount ?? 0);
   return credits;
 }
@@ -1375,15 +1606,11 @@ async function postBookingLedgerJournal(
   tx: Tx,
   params: {
     payment: CreateEarningsParams["payment"];
-    consultantProfileId: string;
+    consultantProfileId: string | null;
     platformFeePaise: number;
     totalConsultantPool: number;
     orgSplit: OrgEarningsSplit | null;
-    splits: RevenueSplit[];
-    collabSettlements: Map<
-      string,
-      { sharePaise: number; orgSplit: OrgEarningsSplit }
-    >;
+    partySettlements: PartySettlement[];
     preplanned?: PreplannedEarningsContext | null;
   },
 ): Promise<void> {
@@ -1468,8 +1695,13 @@ export async function createEarningsFromPayment(
   const { payment, appointmentType, tx: outerTx, preplanned } = normalized;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
-  const consultantProfileId = payment.appointment?.consultantProfile?.id;
-  if (!consultantProfileId) {
+  const consultantProfileId =
+    payment.appointment?.consultantProfile?.id ?? null;
+  const { planType, planId, scope } = resolvePlanScope(
+    appointmentType,
+    payment.appointment,
+  );
+  if (!consultantProfileId && !planType) {
     console.warn(
       `No consultant profile found for payment ${payment.id}. Skipping earnings creation.`,
     );
@@ -1492,101 +1724,156 @@ export async function createEarningsFromPayment(
         holdHours: holdHoursFor(appointmentType),
       });
 
-  const { planType, planId, scope } = resolvePlanScope(
-    appointmentType,
-    payment.appointment,
-  );
-
   const runInTx = async (tx: Tx): Promise<string | null> => {
     if (await hasUnappliedReceipt(tx, payment.id)) {
       throw new ParkedCaptureEarningsError(payment.id);
     }
-    const existingEarnings = await tx.consultantEarnings.findFirst({
-      where: { paymentId: payment.id, consultantProfileId },
-    });
-    if (existingEarnings) {
-      console.warn(
-        `Earnings already exist for payment ${payment.id}. Skipping.`,
-      );
-      return existingEarnings.id;
-    }
-
-    const orgSplit = hasPreplanned
-      ? preplanned.orgSplit
-      : await resolveOrgSplit(
-          tx,
-          consultantProfileId,
-          grossAmount,
-          payment.createdAt,
-          scope,
-          { paymentId: payment.id, appointmentType },
+    if (consultantProfileId) {
+      const existingEarnings = await tx.consultantEarnings.findFirst({
+        where: { paymentId: payment.id, consultantProfileId },
+      });
+      if (existingEarnings) {
+        console.warn(
+          `Earnings already exist for payment ${payment.id}. Skipping.`,
         );
+        return existingEarnings.id;
+      }
+    } else {
+      const [existingOrgEarnings, existingConsultantEarnings] =
+        await Promise.all([
+          tx.organizationEarnings.findFirst({
+            where: { paymentId: payment.id, role: EarningRole.OWNER },
+          }),
+          tx.consultantEarnings.findFirst({
+            where: { paymentId: payment.id },
+          }),
+        ]);
+      if (existingOrgEarnings || existingConsultantEarnings) {
+        console.warn(
+          `Earnings already exist for payment ${payment.id}. Skipping.`,
+        );
+        return existingConsultantEarnings?.id ?? null;
+      }
+    }
 
     const parkForTrust = await resolveInTxTrustPark(tx, payment, preplanned);
     const initialEarningStatus: EarningStatus = parkForTrust
       ? EarningStatus.PENDING_TRUST
       : EarningStatus.PENDING;
 
-    const splitsFor = (pool: number): Promise<RevenueSplit[]> =>
-      planType && planId
-        ? calculateRevenueSplit(planType, planId, pool, tx, {
+    let splits: RevenueSplit[] = hasPreplanned
+      ? preplanned.splits
+      : planType && planId
+        ? await calculateRevenueSplit(planType, planId, grossAmount, tx, {
             excludeBuyerUserId: payment.userId,
           })
-        : Promise.resolve([]);
-    // A multi-party sale never takes a fee waiver, on either path; the split count is pool-independent.
-    const multiParty = hasPreplanned
-      ? preplanned.splits.length > 0
-      : (await splitsFor(0)).length > 0;
-    const platformFeePaise = orgSplit
-      ? orgSplit.platformFeePaise
-      : await settleB2cPlatformFeePaise(
-          tx,
-          payment,
-          consultantProfileId,
-          grossAmount,
-          { allowWaiver: !multiParty },
-        );
-    const totalConsultantPool = orgSplit
-      ? orgSplit.consultantSharePaise
-      : grossAmount - platformFeePaise;
+        : [];
 
-    let splits: RevenueSplit[] = hasPreplanned ? preplanned.splits : [];
-    if (!hasPreplanned && multiParty) {
-      splits = await splitsFor(totalConsultantPool);
+    if (!consultantProfileId && splits.length === 0) {
+      const ownerOrgId = await resolveScopeOrganizationId(
+        tx,
+        scope,
+        payment.appointment?.organizationId,
+      );
+      if (!ownerOrgId) {
+        console.warn(
+          `No consultant profile or owner organization found for payment ${payment.id}. Skipping earnings creation.`,
+        );
+        return null;
+      }
+      splits = [
+        {
+          consultantProfileId: null,
+          organizationId: ownerOrgId,
+          share: grossAmount,
+          role: "OWNER",
+        },
+      ];
     }
 
-    const collabSettlements = hasPreplanned
-      ? new Map(preplanned.collabSettlements)
-      : await planCollaboratorSettlements(
-          tx,
-          splits,
-          orgSplit,
-          payment.createdAt,
-          payment.id,
-        );
-
-    const tranches = await resolveEffectiveTranches(
-      tx,
-      appointmentType,
-      payment.appointmentId,
-      preplanned,
-    );
-
+    let orgSplit: OrgEarningsSplit | null = null;
+    let platformFeePaise = 0;
+    let totalConsultantPool = 0;
+    let partySettlements: PartySettlement[] = [];
     let ownerId: string | null = null;
+
     if (splits.length > 0) {
+      if (hasPreplanned) {
+        let feeStampSettled = false;
+        for (const p of preplanned.partySettlements) {
+          if (
+            !feeStampSettled &&
+            !p.orgSplit &&
+            p.consultantProfileId &&
+            p.grossSlicePaise > 0
+          ) {
+            const settledFee = await settleB2cPlatformFeePaise(
+              tx,
+              payment,
+              p.consultantProfileId,
+              p.grossSlicePaise,
+              { allowWaiver: false },
+            );
+            feeStampSettled = true;
+            partySettlements.push({
+              ...p,
+              platformFeePaise: settledFee,
+              consultantSharePaise: p.grossSlicePaise - settledFee,
+            });
+          } else {
+            partySettlements.push(p);
+          }
+        }
+      } else {
+        ({ partySettlements } = await resolvePartySettlements(tx, {
+          payment,
+          appointmentType,
+          scope,
+          splits,
+          settleFeeStamp: true,
+        }));
+      }
+
       ownerId = await createMultiPartyConsultantEarnings(tx, {
         splits,
-        totalConsultantPool,
-        collabSettlements,
+        partySettlements,
         paymentId: payment.id,
         grossAmount,
-        platformFeePaise,
         appointmentOccurrenceId: anchor.appointmentOccurrenceId,
         initialEarningStatus,
         holdUntil,
-        orgSplit,
       });
-    } else {
+    } else if (consultantProfileId) {
+      orgSplit = hasPreplanned
+        ? preplanned.orgSplit
+        : await resolveOrgSplit(
+            tx,
+            consultantProfileId,
+            grossAmount,
+            payment.createdAt,
+            scope,
+            { paymentId: payment.id, appointmentType },
+          );
+      platformFeePaise = orgSplit
+        ? orgSplit.platformFeePaise
+        : await settleB2cPlatformFeePaise(
+            tx,
+            payment,
+            consultantProfileId,
+            grossAmount,
+            { allowWaiver: true },
+          );
+      totalConsultantPool = orgSplit
+        ? orgSplit.consultantSharePaise
+        : grossAmount - platformFeePaise;
+
+      const tranches = await resolveEffectiveTranches(
+        tx,
+        appointmentType,
+        payment.appointmentId,
+        preplanned,
+      );
+
       ownerId = await createSingleOwnerConsultantEarnings(tx, {
         consultantProfileId,
         paymentId: payment.id,
@@ -1598,26 +1885,47 @@ export async function createEarningsFromPayment(
         holdUntil,
         tranches,
       });
+
+      await createPrimaryAndCollabOrgEarnings(tx, {
+        consultantProfileId,
+        orgSplit,
+        partySettlements: [],
+        paymentId: payment.id,
+        grossAmount,
+        initialEarningStatus,
+        holdUntil: tranches ? null : holdUntil,
+      });
+
+      await postBookingLedgerJournal(tx, {
+        payment,
+        consultantProfileId,
+        platformFeePaise,
+        totalConsultantPool,
+        orgSplit,
+        partySettlements: [],
+        preplanned,
+      });
+
+      return ownerId;
     }
 
     await createPrimaryAndCollabOrgEarnings(tx, {
       consultantProfileId,
-      orgSplit,
-      collabSettlements,
+      orgSplit: null,
+      partySettlements,
       paymentId: payment.id,
       grossAmount,
       initialEarningStatus,
-      holdUntil: tranches ? null : holdUntil,
+      holdUntil,
     });
 
     await postBookingLedgerJournal(tx, {
       payment,
       consultantProfileId,
-      platformFeePaise,
-      totalConsultantPool,
-      orgSplit,
-      splits,
-      collabSettlements,
+      platformFeePaise: 0,
+      totalConsultantPool: 0,
+      orgSplit: null,
+      partySettlements,
       preplanned,
     });
 
@@ -1666,7 +1974,6 @@ export async function createEarningsFromPayment(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      // Unique constraint violation — earnings already created by a concurrent call
       console.warn(
         `[Earnings] Duplicate earnings creation for payment ${payment.id} (P2002). Treating as idempotent success.`,
       );
@@ -1676,7 +1983,9 @@ export async function createEarningsFromPayment(
         extra: { paymentId: payment.id, consultantProfileId },
       });
       const existing = await (outerTx ?? prisma).consultantEarnings.findFirst({
-        where: { paymentId: payment.id, consultantProfileId },
+        where: consultantProfileId
+          ? { paymentId: payment.id, consultantProfileId }
+          : { paymentId: payment.id },
       });
       return existing?.id ?? null;
     }

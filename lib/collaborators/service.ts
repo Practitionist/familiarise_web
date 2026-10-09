@@ -27,6 +27,15 @@ import {
   notifyCollaboratorRemoved,
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
+import {
+  sendCollaboratorInvitedEmail,
+  sendCollaboratorAcceptedEmail,
+  sendCollaboratorDeclinedEmail,
+  sendCollaboratorRemovedEmail,
+  sendCollaboratorWithdrawnEmail,
+} from "@/lib/email/senders/collaborators";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { getAppUrl } from "@/lib/url";
 import {
   appointmentTypeLabel,
@@ -54,7 +63,7 @@ export {
   collaboratorUserIdsForEvent,
 } from "@/lib/collaborators/recipients";
 
-type PlanType = "webinar" | "class";
+export type PlanType = "webinar" | "class";
 
 const MIN_HOST_SHARE = 10; // Host must keep at least 10%
 
@@ -208,13 +217,12 @@ async function assertNotAttendee(
   userId: string,
   db: PrismaLike = prisma,
 ): Promise<void> {
-  // Typed up front: Prisma's XOR relation filter rejects a spread literal.
   const appointment: Prisma.AppointmentWhereInput = livePlanAppointmentsWhere(
     planType,
     planId,
   );
   const seat = await db.appointmentParticipant.findFirst({
-    where: { ...liveParticipant(userId), appointment },
+    where: { ...liveParticipant(userId), role: "CONSULTEE", appointment },
     select: { id: true },
   });
   if (seat) {
@@ -249,11 +257,6 @@ async function assertPlanOpen(
   }
 }
 
-/**
- * #2010 — When accepting a collaboration on a plan that already has scheduled
- * sessions, reject if the invitee has an overlapping commitment on their
- * calendar (closes the reverse order where scheduling ran before acceptance).
- */
 async function assertInviteeAvailableForPlanEvents(
   planType: PlanType,
   planId: string,
@@ -266,7 +269,7 @@ async function assertInviteeAvailableForPlanEvents(
   const planOccurrences = await db.appointmentOccurrence.findMany({
     where: {
       deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
       appointment: livePlanAppointmentsWhere(planType, planId),
     },
     select: {
@@ -306,29 +309,23 @@ export async function inviteCollaborator(
   consultantProfileId: string,
   role: string,
   revenueSharePercentage: number,
-  invitedById: string,
+  invitedById: string | null = null,
 ): Promise<Collaborator | null> {
-  // Validate percentage range
-  if (revenueSharePercentage <= 0 || revenueSharePercentage > 90) {
+  if (pctToBps(revenueSharePercentage) < 1 || revenueSharePercentage > 90) {
     return null;
   }
 
   const planRole = asPlanRole(planType, role);
   if (!planRole) return null;
 
-  // #1580 C-P1-9 — the plan must be open and the invitee in good standing,
-  // and they must not already sit in the audience of this plan's events.
-  await assertPlanOpen(planType, planId);
-  const invitee = await assertInviteeEligible(consultantProfileId);
-  if (!invitee) return null;
-  await assertNotAttendee(planType, planId, invitee.userId);
-
-  // FIX B1: Wrap validation + creation in a serializable transaction
-  // to prevent concurrent invites from exceeding the 90% cap.
   const txResult = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        // Validate revenue share total <= 90% INSIDE transaction
+        await assertPlanOpen(planType, planId, tx);
+        const invitee = await assertInviteeEligible(consultantProfileId, tx);
+        if (!invitee) return null;
+        await assertNotAttendee(planType, planId, invitee.userId, tx);
+
         const valid = await validateRevenueSharesTx(
           tx,
           planType,
@@ -337,23 +334,16 @@ export async function inviteCollaborator(
         );
         if (!valid) return null;
 
-        // FIX #6: Check for ANY existing collaboration (including a retired one).
-        // A REMOVED / DECLINED / WITHDRAWN row is re-activated instead of
-        // created, to respect the unique constraint.
         const existing = await tx.collaborator.findFirst({
           where: { ...planWhere(planType, planId), consultantProfileId },
         });
         if (existing && !RETIRED_STATUSES.includes(existing.status)) {
-          // PENDING or ACCEPTED — already active
           return null;
         }
 
-        // #1580 §6 — the cap, inside the Serializable tx so two concurrent
-        // invites cannot jointly break it. A re-activation counts as a new invite.
         await assertCollaboratorCapTx(tx, planType, planId, planRole);
 
         if (existing) {
-          // REMOVED or DECLINED — re-activate with new parameters
           return tx.collaborator.update({
             where: { id: existing.id },
             data: {
@@ -386,12 +376,11 @@ export async function inviteCollaborator(
     ),
   );
 
-  // Fire-and-forget: notify invited collaborator
   if (txResult) {
     try {
       const invitedProfile = await prisma.consultantProfile.findUnique({
         where: { id: consultantProfileId },
-        select: { userId: true },
+        select: { userId: true, user: { select: { name: true } } },
       });
       const planTitle =
         planType === "webinar"
@@ -408,24 +397,39 @@ export async function inviteCollaborator(
               })
             )?.title;
 
-      const inviterProfile = await prisma.consultantProfile.findUnique({
-        where: { id: invitedById },
-        select: { user: { select: { name: true } } },
-      });
+      const inviterProfile = invitedById
+        ? await prisma.consultantProfile.findUnique({
+            where: { id: invitedById },
+            select: { user: { select: { name: true } } },
+          })
+        : null;
 
       if (invitedProfile) {
-        await notifyCollaboratorInvited(invitedProfile.userId, {
-          // A missing title still names the kind of plan ("Class"), never
-          // a developer placeholder; the role is Title Case with real
-          // hyphens because the template only downcases ("Co-host").
-          planTitle: planTitle ?? planKindLabel(planType),
-          planType,
-          role: collaboratorRoleLabel(role),
-          revenueSharePercentage,
-          ownerName: inviterProfile?.user?.name ?? "Plan Owner",
-          // #1527 — the recipient is always a consultant collaborator.
-          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-        });
+        const ownerName = inviterProfile?.user?.name ?? "Plan Owner";
+        const resolvedTitle = planTitle ?? planKindLabel(planType);
+        await Promise.allSettled([
+          notifyCollaboratorInvited(invitedProfile.userId, {
+            planTitle: resolvedTitle,
+            planType,
+            role: collaboratorRoleLabel(role),
+            revenueSharePercentage,
+            ownerName,
+            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+          }),
+          sendCollaboratorInvitedEmail(
+            {
+              recipientUserId: invitedProfile.userId,
+              actorName: ownerName,
+              collaboratorName: invitedProfile.user?.name ?? "Collaborator",
+              planTitle: resolvedTitle,
+              planType,
+              role: txResult.role,
+              revenueShareBps: txResult.revenueShareBps,
+              collaboratorId: txResult.id,
+            },
+            EMAIL_BUDGET_MS.REQUEST,
+          ),
+        ]);
       }
     } catch (error) {
       Sentry.captureException(
@@ -442,16 +446,111 @@ export async function inviteCollaborator(
   return txResult;
 }
 
+async function syncOpenCallPresenterRole(
+  planType: PlanType,
+  planId: string,
+  userId: string,
+  role: CollaboratorRole,
+): Promise<void> {
+  try {
+    const [occurrences, plan] = await Promise.all([
+      prisma.appointmentOccurrence.findMany({
+        where: {
+          deletedAt: null,
+          endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+          appointment: livePlanAppointmentsWhere(planType, planId),
+          meeting: { is: { endedAt: null } },
+        },
+        select: {
+          meeting: { select: { streamCallId: true } },
+        },
+      }),
+      planType === "webinar"
+        ? prisma.webinarPlan.findUnique({
+            where: { id: planId },
+            select: { consultantProfile: { select: { userId: true } } },
+          })
+        : prisma.classPlan.findUnique({
+            where: { id: planId },
+            select: { consultantProfile: { select: { userId: true } } },
+          }),
+    ]);
+    if (occurrences.length === 0) return;
+
+    const hostUserId = plan?.consultantProfile?.userId ?? userId;
+    const callRole = PRESENTER_ROLES.includes(role)
+      ? "co_presenter"
+      : CALL_MEMBER_ROLE;
+    const video = getStreamVideoClient().video;
+
+    const results = await Promise.allSettled(
+      occurrences.flatMap(({ meeting }) =>
+        meeting
+          ? [
+              video.call(STREAM_CALL_TYPE, meeting.streamCallId).getOrCreate({
+                data: {
+                  created_by_id: hostUserId,
+                  members: [{ user_id: userId, role: callRole }],
+                },
+              }),
+            ]
+          : [],
+      ),
+    );
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult =>
+        r.status === "rejected" && !isExpectedStreamError(r.reason),
+    );
+    if (failures.length > 0) {
+      reportSentryError(failures[0].reason, {
+        subsystem: "stream",
+        op: "respondToInvitation.syncOpenCallRole",
+        extra: {
+          planId,
+          planType,
+          failed: failures.length,
+          total: results.length,
+        },
+      });
+    }
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "respondToInvitation.syncOpenCallRole",
+      extra: { planId, planType },
+    });
+  }
+}
+
 async function runAcceptedInvitationSideEffects(
   planType: PlanType,
   planId: string,
   consultantProfileId: string,
   acceptedUserId: string | null,
+  role: CollaboratorRole,
 ): Promise<void> {
   try {
+    const plan =
+      planType === "webinar"
+        ? await prisma.webinarPlan.findUnique({
+            where: { id: planId },
+            select: { organizationId: true },
+          })
+        : await prisma.classPlan.findUnique({
+            where: { id: planId },
+            select: { organizationId: true },
+          });
     const { createCollaboratorChannel } =
       await import("@/actions/stream/chat/channel.action");
     await createCollaboratorChannel(planType, planId);
+    if (plan?.organizationId) {
+      const customSet: Record<string, unknown> = {
+        organization_id: plan.organizationId,
+      };
+      await getStreamChatClient()
+        .channel("messaging", `collab-${planType}-${planId}`)
+        .updatePartial({ set: customSet });
+    }
   } catch (err) {
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
@@ -460,16 +559,13 @@ async function runAcceptedInvitationSideEffects(
     console.error("Failed to create collaborator channel:", err);
   }
 
-  // #1580 — the shadow participant edge on every live appointment of the
-  // plan, so the roster reader flip (#1319 A9) finds the collaborator too.
   await syncCollaboratorParticipants(planType, planId, consultantProfileId);
 
   if (acceptedUserId) {
-    await syncAcceptedCollaboratorEventChannels(
-      planType,
-      planId,
-      acceptedUserId,
-    );
+    await Promise.all([
+      syncAcceptedCollaboratorEventChannels(planType, planId, acceptedUserId),
+      syncOpenCallPresenterRole(planType, planId, acceptedUserId, role),
+    ]);
   }
 }
 
@@ -488,41 +584,29 @@ export async function respondToInvitation(
   });
   if (!collab || collab.consultantProfileId !== consultantProfileId)
     return null;
-  // #784 — merged table: a planType that doesn't match the record is the old
-  // wrong-table lookup, which returned null.
   const planId =
     planType === "webinar" ? collab.webinarPlanId : collab.classPlanId;
   if (!planId || collab.status !== "PENDING") return null;
 
-  // #1580 C-P1-9 — standing can change between invite and accept (a ban, an
-  // erasure, an archive, a seat bought meanwhile), so the gates run again.
   let acceptedUserId: string | null = null;
-  if (response === "ACCEPTED") {
-    await assertPlanOpen(planType, planId);
-    const invitee = await assertInviteeEligible(consultantProfileId);
-    if (!invitee) return null;
-    await assertNotAttendee(planType, planId, invitee.userId);
-    acceptedUserId = invitee.userId;
-  }
-
-  // #2010 — Wrap the plan-occurrence conflict check and PENDING -> ACCEPTED CAS
-  // inside a Serializable transaction so concurrent scheduling or acceptance on
-  // another plan cannot bypass the overlap check.
   const updated = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        if (response === "ACCEPTED" && acceptedUserId) {
+        if (response === "ACCEPTED") {
+          await assertPlanOpen(planType, planId, tx);
+          const invitee = await assertInviteeEligible(consultantProfileId, tx);
+          if (!invitee) return null;
+          await assertNotAttendee(planType, planId, invitee.userId, tx);
           await assertInviteeAvailableForPlanEvents(
             planType,
             planId,
             consultantProfileId,
-            acceptedUserId,
+            invitee.userId,
             tx,
           );
+          acceptedUserId = invitee.userId;
         }
 
-        // CAS in the WHERE: an owner's removal landing between the read and this
-        // write must not be overwritten back to ACCEPTED and reach the split (#1580).
         const moved = await tx.collaborator.updateMany({
           where: { id: collaborationId, status: "PENDING" },
           data: { status: response, respondedAt: new Date() },
@@ -546,10 +630,10 @@ export async function respondToInvitation(
       planId,
       consultantProfileId,
       acceptedUserId,
+      updated.role,
     );
   }
 
-  // The host hears either answer (#1580 C-P1-5 added the decline).
   await notifyHostOfResponse(planType, planId, consultantProfileId, updated);
 
   return updated;
@@ -718,26 +802,52 @@ async function notifyHostOfResponse(
               consultantProfile: { select: { userId: true } },
             },
           });
-    const collabProfile = await prisma.consultantProfile.findUnique({
-      where: { id: consultantProfileId },
-      select: { user: { select: { name: true } } },
-    });
-    if (!plan?.consultantProfile?.userId) return;
+    const [collabProfile, inviterProfile] = await Promise.all([
+      prisma.consultantProfile.findUnique({
+        where: { id: consultantProfileId },
+        select: { user: { select: { name: true } } },
+      }),
+      updated.invitedById
+        ? prisma.consultantProfile.findUnique({
+            where: { id: updated.invitedById },
+            select: { userId: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    const hostUserId =
+      plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
+    if (!hostUserId) return;
+    const planTitle = plan?.title ?? planKindLabel(planType);
+    const collaboratorName = collabProfile?.user?.name ?? "A collaborator";
     const payload = {
-      planTitle: plan.title,
+      planTitle,
       planType,
-      collaboratorName: collabProfile?.user?.name ?? "A collaborator",
+      collaboratorName,
       role: collaboratorRoleLabel(updated.role),
-      // #1527 — the recipient is always a consultant collaborator.
       dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
     };
+    const emailPayload = {
+      recipientUserId: hostUserId,
+      actorName: collaboratorName,
+      collaboratorName,
+      planTitle,
+      planType,
+      role: updated.role,
+      revenueShareBps: updated.revenueShareBps,
+      collaboratorId: updated.id,
+    };
     if (updated.status === "ACCEPTED") {
-      await notifyCollaboratorAccepted(plan.consultantProfile.userId, payload);
+      await Promise.allSettled([
+        notifyCollaboratorAccepted(hostUserId, payload),
+        sendCollaboratorAcceptedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
+      ]);
     } else {
-      await notifyCollaboratorDeclined(plan.consultantProfile.userId, payload);
+      await Promise.allSettled([
+        notifyCollaboratorDeclined(hostUserId, payload),
+        sendCollaboratorDeclinedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
+      ]);
     }
   } catch (error) {
-    // A Novu miss, not a Stream one (#1593).
     reportSentryError(error, {
       subsystem: "collaborators",
       op: "respondToInvitation.notifyHost",
@@ -751,17 +861,6 @@ async function notifyHostOfResponse(
   }
 }
 
-/**
- * Remove a collaborator (soft-delete: set status to REMOVED).
- * Requires planId to prevent IDOR — ensures the collaborator belongs to the specified plan.
- *
- * #1580 C-P1-7 — with `withdrawnByProfileId` the same path serves the
- * collaborator withdrawing their own PENDING/ACCEPTED row: the row must be
- * theirs (else null), the removal notice goes to the HOST instead of to them.
- * Earnings already settled to the collaborator are untouched either way:
- * `calculateRevenueSplit` only reads ACCEPTED rows for future payments.
- */
-/** The removed row plus whether every Stream membership went with it. */
 export type RemovedCollaborator = Collaborator & { accessRevoked: boolean };
 
 export async function removeCollaborator(
@@ -784,9 +883,6 @@ export async function removeCollaborator(
   });
   if (!collab) return null;
 
-  // CAS in the WHERE: a lost race (already retired) writes nothing and, for a
-  // withdrawal, sends no notice to the host. #1580 — the collaborator's own
-  // exit is WITHDRAWN; REMOVED stays the host's act.
   const moved = await prisma.collaborator.updateMany({
     where: { id: collaborationId, status: { in: ["PENDING", "ACCEPTED"] } },
     data: { status: opts.withdrawnByProfileId ? "WITHDRAWN" : "REMOVED" },
@@ -796,17 +892,12 @@ export async function removeCollaborator(
     where: { id: collaborationId },
   });
 
-  // Fire-and-forget: notification and Stream removal are independent.
-  // Separate try/catch so a Novu outage doesn't block Stream revocation.
   const profile = await prisma.consultantProfile
     .findUnique({
       where: { id: collab.consultantProfileId },
       select: { userId: true, user: { select: { name: true } } },
     })
     .catch((error) => {
-      // A null here skips BOTH the removal notification and the Stream
-      // chat-access revocation below, leaving a removed collaborator with
-      // chat access. The update already succeeded and must not be undone (#1125).
       reportSentryError(error, {
         subsystem: "collaborators",
         op: "removeCollaborator.profileLookup",
@@ -817,8 +908,6 @@ export async function removeCollaborator(
 
   const withdrawn = Boolean(opts.withdrawnByProfileId);
 
-  // The row is REMOVED either way; whether Stream access actually went with it
-  // is reported to the caller rather than swallowed (#1580).
   let accessRevoked = false;
   if (profile?.userId) {
     accessRevoked = (
@@ -828,22 +917,68 @@ export async function removeCollaborator(
     ).success;
   }
 
+  if (!withdrawn && profile?.userId) {
+    try {
+      const plan =
+        planType === "webinar"
+          ? await prisma.webinarPlan.findUnique({
+              where: { id: planId },
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
+              },
+            })
+          : await prisma.classPlan.findUnique({
+              where: { id: planId },
+              select: {
+                title: true,
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
+              },
+            });
+      await sendCollaboratorRemovedEmail(
+        {
+          recipientUserId: profile.userId,
+          actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
+          collaboratorName: profile.user?.name ?? "Collaborator",
+          planTitle: plan?.title ?? planKindLabel(planType),
+          planType,
+          role: result.role,
+          revenueShareBps: result.revenueShareBps,
+          collaboratorId: result.id,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "collaborators",
+        op: "removeCollaborator.sendEmail",
+        level: "warning",
+        extra: { planId, planType },
+      });
+    }
+  }
+
   if (withdrawn) {
     await notifyHostOfWithdrawal(
       planType,
       planId,
       profile?.user?.name ?? "A collaborator",
+      result,
     );
   }
 
   return { ...result, accessRevoked };
 }
 
-/** #1580 C-P1-7 — the host's notice; a Novu miss is logged, never thrown. */
 async function notifyHostOfWithdrawal(
   planType: PlanType,
   planId: string,
   collaboratorName: string,
+  collaborator: Collaborator,
 ): Promise<void> {
   try {
     const plan =
@@ -862,14 +997,37 @@ async function notifyHostOfWithdrawal(
               consultantProfile: { select: { userId: true } },
             },
           });
-    if (!plan?.consultantProfile?.userId) return;
-    await notifyCollaboratorWithdrawn(plan.consultantProfile.userId, {
-      planTitle: plan.title,
-      planType,
-      collaboratorName,
-      // #1527 — the recipient is always a consultant collaborator.
-      dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-    });
+    const inviterProfile = collaborator.invitedById
+      ? await prisma.consultantProfile.findUnique({
+          where: { id: collaborator.invitedById },
+          select: { userId: true },
+        })
+      : null;
+    const hostUserId =
+      plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
+    if (!hostUserId) return;
+    const planTitle = plan?.title ?? planKindLabel(planType);
+    await Promise.allSettled([
+      notifyCollaboratorWithdrawn(hostUserId, {
+        planTitle,
+        planType,
+        collaboratorName,
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+      }),
+      sendCollaboratorWithdrawnEmail(
+        {
+          recipientUserId: hostUserId,
+          actorName: collaboratorName,
+          collaboratorName,
+          planTitle,
+          planType,
+          role: collaborator.role,
+          revenueShareBps: collaborator.revenueShareBps,
+          collaboratorId: collaborator.id,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      ),
+    ]);
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -879,13 +1037,6 @@ async function notifyHostOfWithdrawal(
   }
 }
 
-/**
- * Everything a collaborator loses after their row leaves PENDING/ACCEPTED:
- * the removal notification, membership of every event channel on the plan
- * and of the `collab-<planType>-<planId>` coordination channel. Shared by
- * `removeCollaborator` and the moderation ban side-effect (#1580 C-P0-4).
- * Never throws; `success` is false when any Stream revocation did not land.
- */
 export async function revokeCollaboratorAccess(
   planType: PlanType,
   planId: string,
@@ -895,7 +1046,6 @@ export async function revokeCollaboratorAccess(
   let success = true;
 
   if (opts.notify ?? true) {
-    // Notification — independent failure
     try {
       const plan =
         planType === "webinar"
@@ -910,7 +1060,6 @@ export async function revokeCollaboratorAccess(
       await notifyCollaboratorRemoved(userId, {
         planTitle: plan?.title ?? planKindLabel(planType),
         planType,
-        // #1527 — the recipient is always a consultant collaborator.
         dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
       });
     } catch (error) {
@@ -925,8 +1074,6 @@ export async function revokeCollaboratorAccess(
     }
   }
 
-  // #1580 — the shadow participant rows leave with the standing. Idempotent
-  // updateMany, so the ban, the erasure and the retry sweep can all run it.
   try {
     await transitionParticipant(
       prisma,
@@ -947,7 +1094,6 @@ export async function revokeCollaboratorAccess(
     });
   }
 
-  // Stream channel revocation — independent failure
   try {
     const events =
       planType === "webinar"
@@ -959,11 +1105,6 @@ export async function revokeCollaboratorAccess(
             where: { classPlanId: planId },
             select: { id: true },
           });
-    // `removeUserFromEventChannel` REPORTS its own failures by returning
-    // { success: false } — it does not throw — so awaiting it without reading
-    // the result meant a failed revocation looked identical to a successful
-    // one, and the outer catch never fired. A collaborator removed from the
-    // plan kept chat access on every event, silently. (#1125)
     const revocations = await Promise.all(
       events.map((event) =>
         removeUserFromEventChannel(planType, event.id, userId),
@@ -989,12 +1130,8 @@ export async function revokeCollaboratorAccess(
       .channel("messaging", `collab-${planType}-${planId}`)
       .removeMembers([userId])
       .catch((error) => {
-        // A channel that never existed (rows accepted before the create was
-        // fixed, FAMILIARISE_WEB-38) holds no access to revoke: not a failure.
         if (isExpectedStreamError(error)) return;
         success = false;
-        // Separate from the event channels above: this is the collaborator
-        // coordination channel, and losing it is not the same access grant.
         reportSentryError(error, {
           subsystem: "stream",
           op: "removeCollaborator.revokeCollabChannel",
@@ -1017,10 +1154,6 @@ export async function revokeCollaboratorAccess(
   return { success };
 }
 
-/**
- * Drops a removed collaborator's `co_presenter` membership on the plan's open calls: downgraded to
- * `call_member` where they still hold a seat, removed otherwise. Failures are reported once.
- */
 async function revokeOpenCallPresenterRole(
   planType: PlanType,
   planId: string,
@@ -1030,7 +1163,6 @@ async function revokeOpenCallPresenterRole(
     const occurrences = await prisma.appointmentOccurrence.findMany({
       where: {
         deletedAt: null,
-        // Bounded by the longest possible call, so overruns and rejoin grace stay covered.
         endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
         appointment: livePlanAppointmentsWhere(planType, planId),
         meeting: { is: { endedAt: null } },
@@ -1054,23 +1186,30 @@ async function revokeOpenCallPresenterRole(
 
     const video = getStreamVideoClient().video;
     const results = await Promise.allSettled(
-      occurrences.flatMap(({ appointmentId, meeting }) =>
-        meeting
-          ? [
-              video
-                .call(STREAM_CALL_TYPE, meeting.streamCallId)
-                .updateCallMembers(
-                  seated.has(appointmentId)
-                    ? {
-                        update_members: [
-                          { user_id: userId, role: CALL_MEMBER_ROLE },
-                        ],
-                      }
-                    : { remove_members: [userId] },
-                ),
-            ]
-          : [],
-      ),
+      occurrences.flatMap(({ appointmentId, meeting }) => {
+        if (!meeting) return [];
+        const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
+        return [
+          (async () => {
+            await call.updateCallMembers(
+              seated.has(appointmentId)
+                ? {
+                    update_members: [
+                      { user_id: userId, role: CALL_MEMBER_ROLE },
+                    ],
+                  }
+                : { remove_members: [userId] },
+            );
+            if (!seated.has(appointmentId)) {
+              await call.updateUserPermissions({
+                user_id: userId,
+                revoke_permissions: ["send-audio", "send-video", "screenshare"],
+              });
+              await call.kickUser({ user_id: userId });
+            }
+          })(),
+        ];
+      }),
     );
     const failures = results.filter(
       (r): r is PromiseRejectedResult =>
@@ -1137,7 +1276,7 @@ export async function updateCollaborator(
   // Validate percentage range if updating
   if (updates.revenueSharePercentage !== undefined) {
     if (
-      updates.revenueSharePercentage <= 0 ||
+      pctToBps(updates.revenueSharePercentage) < 1 ||
       updates.revenueSharePercentage > 90
     ) {
       return null;
@@ -1253,11 +1392,11 @@ export async function getCollaboratorsForUser(
     planType === "webinar"
       ? prisma.webinarPlan.findUnique({
           where: { id: planId },
-          select: { consultantProfileId: true },
+          select: { consultantProfileId: true, organizationId: true },
         })
       : prisma.classPlan.findUnique({
           where: { id: planId },
-          select: { consultantProfileId: true },
+          select: { consultantProfileId: true, organizationId: true },
         });
 
   const [plan, requesterProfile] = await Promise.all([
@@ -1271,16 +1410,36 @@ export async function getCollaboratorsForUser(
   if (!plan) return { status: "not_found" };
 
   const requesterProfileId = requesterProfile?.id;
+  const isOwner =
+    Boolean(requesterProfileId) &&
+    plan.consultantProfileId === requesterProfileId;
 
-  // Short-circuit: no consultant profile means cannot be owner or collaborator.
-  // Avoids an unnecessary getCollaborators DB call for consultee / unauthenticated requests.
-  if (!requesterProfileId) return { status: "forbidden" };
+  let isOrgCatalogManager = false;
+  if (!isOwner && plan.organizationId) {
+    const row = await prisma.membership.findFirst({
+      where: {
+        userId,
+        organizationId: plan.organizationId,
+        status: "ACTIVE",
+      },
+      select: { role: true, organization: { select: { status: true } } },
+    });
+    if (
+      row &&
+      row.organization.status !== "DEACTIVATED" &&
+      hasOrgPermission(row.role, "catalog.manage")
+    ) {
+      isOrgCatalogManager = true;
+    }
+  }
 
-  const isOwner = plan.consultantProfileId === requesterProfileId;
+  if (!requesterProfileId && !isOrgCatalogManager) {
+    return { status: "forbidden" };
+  }
 
   const collaborators = await getCollaborators(planType, planId);
 
-  if (isOwner) {
+  if (isOwner || isOrgCatalogManager) {
     return { status: "ok", data: collaborators };
   }
 
@@ -1291,7 +1450,15 @@ export async function getCollaboratorsForUser(
   if (ownRecord?.status === "ACCEPTED") {
     return {
       status: "ok",
-      data: collaborators.filter((c) => c.status === "ACCEPTED"),
+      data: collaborators
+        .filter((c) => c.status === "ACCEPTED")
+        .map((c) => ({
+          ...c,
+          revenueShareBps:
+            c.consultantProfileId === requesterProfileId
+              ? c.revenueShareBps
+              : 0,
+        })),
     };
   }
 
@@ -1302,174 +1469,227 @@ export async function getCollaboratorsForUser(
   return { status: "forbidden" };
 }
 
-/**
- * Get all collaborations for a consultant.
- */
 export async function getMyCollaborations(consultantProfileId: string) {
-  const [webinarCollabs, classCollabs] = await Promise.all([
-    prisma.collaborator.findMany({
-      where: {
-        consultantProfileId,
-        collaboratorType: "WEBINAR",
-        status: { in: ["PENDING", "ACCEPTED"] },
-        // #1580 C-P2-4 — an archived plan leaves the collaboration lists.
-        webinarPlan: { archivedAt: null },
-      },
-      include: {
-        webinarPlan: {
-          select: {
-            id: true,
-            title: true,
-            price: true,
-            durationInHours: true,
-            maxParticipants: true,
-            language: true,
-            level: true,
-            consultantProfile: {
-              select: {
-                id: true,
-                user: { select: { name: true, image: true } },
-              },
-            },
-            collaborators: {
-              where: { status: { in: ["PENDING", "ACCEPTED"] } },
-              select: {
-                id: true,
-                role: true,
-                revenueShareBps: true,
-                status: true,
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    user: { select: { name: true, image: true } },
-                  },
+  const [webinarCollabs, classCollabs, verifiedPayoutAccount] =
+    await Promise.all([
+      prisma.collaborator.findMany({
+        where: {
+          consultantProfileId,
+          collaboratorType: "WEBINAR",
+          status: { in: ["PENDING", "ACCEPTED"] },
+          webinarPlan: { archivedAt: null },
+        },
+        include: {
+          webinarPlan: {
+            select: {
+              id: true,
+              title: true,
+              price: true,
+              durationInHours: true,
+              maxParticipants: true,
+              language: true,
+              level: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: { select: { name: true, image: true } },
                 },
               },
-              orderBy: { createdAt: "asc" },
-            },
-            webinars: {
-              where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
-              include: {
-                appointment: {
-                  include: {
-                    // #1554 — enrolment is the live participant count on the appointment.
-                    _count: {
-                      select: { participants: { where: liveParticipant() } },
+              collaborators: {
+                where: { status: { in: ["PENDING", "ACCEPTED"] } },
+                select: {
+                  id: true,
+                  role: true,
+                  revenueShareBps: true,
+                  status: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: { select: { name: true, image: true } },
                     },
-                    occurrences: {
-                      select: {
-                        startsAt: true,
-                        endsAt: true,
-                        isTentative: true,
+                  },
+                },
+                orderBy: { createdAt: "asc" },
+              },
+              webinars: {
+                where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+                include: {
+                  appointment: {
+                    include: {
+                      _count: {
+                        select: {
+                          participants: {
+                            where: { ...liveParticipant(), role: "CONSULTEE" },
+                          },
+                        },
+                      },
+                      occurrences: {
+                        select: {
+                          startsAt: true,
+                          endsAt: true,
+                          isTentative: true,
+                        },
                       },
                     },
                   },
                 },
+                orderBy: { createdAt: "desc" },
+                take: 5,
               },
-              orderBy: { createdAt: "desc" },
-              take: 5,
             },
           },
+          invitedBy: {
+            include: { user: { select: { name: true } } },
+          },
         },
-        invitedBy: {
-          include: { user: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.collaborator.findMany({
+        where: {
+          consultantProfileId,
+          collaboratorType: "CLASS",
+          status: { in: ["PENDING", "ACCEPTED"] },
+          classPlan: { archivedAt: null },
         },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.collaborator.findMany({
-      where: {
-        consultantProfileId,
-        collaboratorType: "CLASS",
-        status: { in: ["PENDING", "ACCEPTED"] },
-        classPlan: { archivedAt: null },
-      },
-      include: {
-        classPlan: {
-          select: {
-            id: true,
-            title: true,
-            price: true,
-            sessionDurationInHours: true,
-            maxParticipants: true,
-            sessionsPerWeek: true,
-            durationInMonths: true,
-            totalSessions: true,
-            lateJoinUntilSession: true,
-            consultantProfile: {
-              select: {
-                id: true,
-                user: { select: { name: true, image: true } },
-              },
-            },
-            collaborators: {
-              where: { status: { in: ["PENDING", "ACCEPTED"] } },
-              select: {
-                id: true,
-                role: true,
-                revenueShareBps: true,
-                status: true,
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    user: { select: { name: true, image: true } },
-                  },
+        include: {
+          classPlan: {
+            select: {
+              id: true,
+              title: true,
+              price: true,
+              sessionDurationInHours: true,
+              maxParticipants: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+              totalSessions: true,
+              lateJoinUntilSession: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: { select: { name: true, image: true } },
                 },
               },
-              orderBy: { createdAt: "asc" },
-            },
-            classes: {
-              where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
-              include: {
-                appointment: {
-                  include: {
-                    // #1554 — enrolment is the live participant count on the appointment.
-                    _count: {
-                      select: { participants: { where: liveParticipant() } },
+              collaborators: {
+                where: { status: { in: ["PENDING", "ACCEPTED"] } },
+                select: {
+                  id: true,
+                  role: true,
+                  revenueShareBps: true,
+                  status: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: { select: { name: true, image: true } },
                     },
-                    occurrences: {
-                      select: {
-                        startsAt: true,
-                        endsAt: true,
-                        isTentative: true,
-                        // #1819 — read by the batch card derivation.
-                        ordinal: true,
-                        completionStatus: true,
-                        deletedAt: true,
+                  },
+                },
+                orderBy: { createdAt: "asc" },
+              },
+              classes: {
+                where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+                include: {
+                  appointment: {
+                    include: {
+                      _count: {
+                        select: {
+                          participants: {
+                            where: { ...liveParticipant(), role: "CONSULTEE" },
+                          },
+                        },
                       },
-                      orderBy: { startsAt: "asc" },
+                      occurrences: {
+                        select: {
+                          startsAt: true,
+                          endsAt: true,
+                          isTentative: true,
+                          ordinal: true,
+                          completionStatus: true,
+                          deletedAt: true,
+                        },
+                        orderBy: { startsAt: "asc" },
+                      },
                     },
                   },
                 },
+                orderBy: { createdAt: "desc" },
+                take: 5,
               },
-              orderBy: { createdAt: "desc" },
-              take: 5,
             },
           },
+          invitedBy: {
+            include: { user: { select: { name: true } } },
+          },
         },
-        invitedBy: {
-          include: { user: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.payoutAccount.findFirst({
+        where: { consultantProfileId, isVerified: true },
+        select: { id: true },
+      }),
+    ]);
+
+  const payoutAccountReady = Boolean(verifiedPayoutAccount);
 
   return {
-    webinarCollaborations: webinarCollabs,
-    classCollaborations: classCollabs,
+    webinarCollaborations: webinarCollabs.map((collab) => {
+      const isPlanOwner =
+        collab.webinarPlan?.consultantProfile?.id === consultantProfileId;
+      return {
+        ...collab,
+        payoutAccountReady,
+        webinarPlan: collab.webinarPlan
+          ? {
+              ...collab.webinarPlan,
+              collaborators: collab.webinarPlan.collaborators
+                .filter(
+                  (peer) =>
+                    isPlanOwner ||
+                    peer.status === "ACCEPTED" ||
+                    peer.consultantProfile.id === consultantProfileId,
+                )
+                .map((peer) => ({
+                  ...peer,
+                  revenueShareBps:
+                    isPlanOwner ||
+                    peer.consultantProfile.id === consultantProfileId
+                      ? peer.revenueShareBps
+                      : 0,
+                })),
+            }
+          : null,
+      };
+    }),
+    classCollaborations: classCollabs.map((collab) => {
+      const isPlanOwner =
+        collab.classPlan?.consultantProfile?.id === consultantProfileId;
+      return {
+        ...collab,
+        payoutAccountReady,
+        classPlan: collab.classPlan
+          ? {
+              ...collab.classPlan,
+              collaborators: collab.classPlan.collaborators
+                .filter(
+                  (peer) =>
+                    isPlanOwner ||
+                    peer.status === "ACCEPTED" ||
+                    peer.consultantProfile.id === consultantProfileId,
+                )
+                .map((peer) => ({
+                  ...peer,
+                  revenueShareBps:
+                    isPlanOwner ||
+                    peer.consultantProfile.id === consultantProfileId
+                      ? peer.revenueShareBps
+                      : 0,
+                })),
+            }
+          : null,
+      };
+    }),
   };
 }
 
-/**
- * Get all plans owned by this consultant that have collaborators.
- * Returns plans with their collaborator lists and schedule data (host perspective).
- *
- * #org-appts / #1025 — split by the PLAN's org-ness, not the consultant's:
- * `personal` (default) surfaces only B2C plans (organizationId: null), an
- * `org` scope surfaces only that org's plans. Received invitations
- * (getMyCollaborations) are unaffected — those still aggregate personally.
- */
 export async function getHostedCollaborations(
   consultantProfileId: string,
   scope: Scope = { kind: "personal" },
@@ -1480,11 +1700,6 @@ export async function getHostedCollaborations(
   });
 }
 
-/**
- * #1527 P1-8 — every plan this org hosts that has collaborators, whoever
- * delivers it: Catalog › Collaborators for operators holding
- * `catalog.manage` (read-only; each plan names its host).
- */
 export async function getOrgHostedCollaborations(organizationId: string) {
   return hostedCollaborationsWhere({ organizationId });
 }
@@ -1511,7 +1726,6 @@ async function hostedCollaborationsWhere(
         maxParticipants: true,
         language: true,
         level: true,
-        // #1527 P1-8 — the org-wide read names each plan's host.
         consultantProfile: {
           select: { user: { select: { name: true, image: true } } },
         },
@@ -1529,9 +1743,12 @@ async function hostedCollaborationsWhere(
           include: {
             appointment: {
               include: {
-                // #1554 — enrolment is the live participant count on the appointment.
                 _count: {
-                  select: { participants: { where: liveParticipant() } },
+                  select: {
+                    participants: {
+                      where: { ...liveParticipant(), role: "CONSULTEE" },
+                    },
+                  },
                 },
                 occurrences: {
                   select: {
@@ -1567,7 +1784,6 @@ async function hostedCollaborationsWhere(
         durationInMonths: true,
         totalSessions: true,
         lateJoinUntilSession: true,
-        // #1527 P1-8 — the org-wide read names each plan's host.
         consultantProfile: {
           select: { user: { select: { name: true, image: true } } },
         },
@@ -1585,16 +1801,18 @@ async function hostedCollaborationsWhere(
           include: {
             appointment: {
               include: {
-                // #1554 — enrolment is the live participant count on the appointment.
                 _count: {
-                  select: { participants: { where: liveParticipant() } },
+                  select: {
+                    participants: {
+                      where: { ...liveParticipant(), role: "CONSULTEE" },
+                    },
+                  },
                 },
                 occurrences: {
                   select: {
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
-                    // #1819 — read by the batch card derivation.
                     ordinal: true,
                     completionStatus: true,
                     deletedAt: true,
@@ -1615,16 +1833,11 @@ async function hostedCollaborationsWhere(
   return { webinarPlans, classPlans };
 }
 
-/**
- * #1580 §6 — refuse the fourth PENDING + ACCEPTED row on a plan, and a second
- * presenter (CO_HOST / CO_INSTRUCTOR) while one is already pending or accepted.
- */
 async function assertCollaboratorCapTx(
   db: PrismaLike,
   planType: PlanType,
   planId: string,
   role: CollaboratorRole,
-  /** The row being re-roled, which already counts and must not block itself. */
   excludeId?: string,
 ): Promise<void> {
   const active = await db.collaborator.findMany({
@@ -1651,10 +1864,6 @@ async function assertCollaboratorCapTx(
   }
 }
 
-/**
- * Validate that total revenue shares don't exceed 90% (host keeps min 10%).
- * Transaction-safe version that accepts a Prisma transaction client.
- */
 async function validateRevenueSharesTx(
   db: Tx | typeof prisma,
   planType: PlanType,
@@ -1676,20 +1885,14 @@ async function validateRevenueSharesTx(
   return currentTotal + pctToBps(newShare) <= MAX_COLLAB_BPS;
 }
 
-/**
- * Calculate revenue split for a payment (owner gets remainder).
- */
 export async function calculateRevenueSplit(
   planType: PlanType,
   planId: string,
   totalAmount: number,
   db: PrismaLike = prisma,
-  /** The buyer of the seat being settled: a collaborator is never paid a share of their own purchase (#1580 C-P0-2). */
   opts: { excludeBuyerUserId?: string } = {},
 ): Promise<RevenueSplit[]> {
   const collabs = await getCollaborators(planType, planId, db);
-  // Closes the window in which an acceptance lands between the checkout guard
-  // and settlement: the exclusion is at the money boundary, not the read.
   const acceptedCollabs = collabs.filter(
     (c) =>
       c.status === "ACCEPTED" &&
@@ -1697,17 +1900,11 @@ export async function calculateRevenueSplit(
   );
 
   if (acceptedCollabs.length === 0) {
-    return []; // No collaborators - regular single-owner flow
+    return [];
   }
 
   const splits: RevenueSplit[] = [];
 
-  // #778 §C-2 — floor each collaborator share (Math.round could overshoot the
-  // total and push the owner's remainder NEGATIVE); the owner absorbs every
-  // floored paisa as the pool's designated residual party. Σbps > 10000 is a
-  // mis-configured plan: refuse rather than mint money.
-  // #1584 P1-EC05 — the same 90 % ceiling invite/update enforce: a legacy
-  // 9001–10000 bps set would otherwise settle with the owner under 10 %.
   const bpsSum = acceptedCollabs.reduce((a, c) => a + c.revenueShareBps, 0);
   if (bpsSum > MAX_COLLAB_BPS) {
     throw new Error(
@@ -1725,28 +1922,30 @@ export async function calculateRevenueSplit(
     });
   }
 
-  // Owner gets the remainder (≥ 0 by the floors + bps guard above)
   const ownerShare = totalAmount - collaboratorTotal;
 
-  // Get plan's owner consultant profile
   let ownerConsultantProfileId: string | null = null;
+  let ownerOrganizationId: string | null = null;
   if (planType === "webinar") {
     const plan = await db.webinarPlan.findUnique({
       where: { id: planId },
-      select: { consultantProfileId: true },
+      select: { consultantProfileId: true, organizationId: true },
     });
     ownerConsultantProfileId = plan?.consultantProfileId ?? null;
+    ownerOrganizationId = plan?.organizationId ?? null;
   } else {
     const plan = await db.classPlan.findUnique({
       where: { id: planId },
-      select: { consultantProfileId: true },
+      select: { consultantProfileId: true, organizationId: true },
     });
     ownerConsultantProfileId = plan?.consultantProfileId ?? null;
+    ownerOrganizationId = plan?.organizationId ?? null;
   }
 
-  if (ownerConsultantProfileId) {
+  if (ownerConsultantProfileId || ownerOrganizationId) {
     splits.unshift({
       consultantProfileId: ownerConsultantProfileId,
+      organizationId: ownerOrganizationId,
       share: ownerShare,
       role: "OWNER",
     });

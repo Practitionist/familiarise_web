@@ -12,12 +12,22 @@
  * the set here would grant access the other surfaces do not.
  */
 
+import type { CollaboratorRole } from "@prisma/client";
+import { PRESENTER_ROLES } from "@/lib/collaborators/roles";
+
 interface PlanOwner {
   consultantProfile?: { id: string } | null;
 }
 
+interface PlanCollaboratorEntry {
+  status?: string;
+  role?: string;
+  tier?: string;
+  consultantProfile?: { id: string } | null;
+}
+
 interface PlanWithCollaborators extends PlanOwner {
-  collaborators?: { consultantProfile?: { id: string } | null }[] | null;
+  collaborators?: PlanCollaboratorEntry[] | null;
 }
 
 export interface AppointmentPlanOwnership {
@@ -37,11 +47,28 @@ export function resolvePlanOwnerIds(
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
     appointment.class?.classPlan?.consultantProfile?.id,
     appointment.trial?.subscriptionPlan?.consultantProfile?.id,
-    ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
-      (collaborator) => collaborator.consultantProfile?.id,
-    ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
-      (collaborator) => collaborator.consultantProfile?.id,
-    ),
+  ].filter((id): id is string => Boolean(id));
+}
+
+function isPresenterCollaborator(collaborator: PlanCollaboratorEntry): boolean {
+  if (collaborator.status && collaborator.status !== "ACCEPTED") return false;
+  if (collaborator.tier) return collaborator.tier === "PRESENTER";
+  if (collaborator.role) {
+    return PRESENTER_ROLES.includes(collaborator.role as CollaboratorRole);
+  }
+  return true;
+}
+
+export function resolvePlanPresenterIds(
+  appointment: AppointmentPlanOwnership,
+): string[] {
+  return [
+    ...resolvePlanOwnerIds(appointment),
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? [])
+      .filter(isPresenterCollaborator)
+      .map((collaborator) => collaborator.consultantProfile?.id),
+    ...(appointment.class?.classPlan?.collaborators ?? [])
+      .filter(isPresenterCollaborator)
+      .map((collaborator) => collaborator.consultantProfile?.id),
   ].filter((id): id is string => Boolean(id));
 }

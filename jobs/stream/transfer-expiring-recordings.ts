@@ -7,6 +7,7 @@
  * Runs every 6 hours via scheduled workflow.
  */
 
+import prisma from "../../lib/prisma";
 import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
@@ -18,8 +19,6 @@ import { pathToFileURL } from "node:url";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
-// STR-3 — one expiry warning per consultant (count + soonest deadline), so a
-// consultant with several expiring STREAM_ONLY recordings isn't spammed.
 type ExpiringStreamOnly = {
   recordingId: string;
   title: string;
@@ -27,18 +26,102 @@ type ExpiringStreamOnly = {
   expiresAt: Date;
 };
 
-async function notifyConsultantsOfExpiringRecordings(
-  expiring: ExpiringStreamOnly[],
-): Promise<void> {
-  const byConsultant = new Map<string, ExpiringStreamOnly[]>();
-  for (const rec of expiring) {
-    if (!rec.consultantUserId) continue;
-    const list = byConsultant.get(rec.consultantUserId) ?? [];
-    list.push(rec);
-    byConsultant.set(rec.consultantUserId, list);
+async function loadPresenterUserIdsByRecordingId(
+  recordingIds: string[],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (recordingIds.length === 0 || !prisma.recording?.findMany) return result;
+
+  const presenterCollaboratorSelect = {
+    where: {
+      status: "ACCEPTED" as const,
+      tier: "PRESENTER" as const,
+      consultantProfile: { deletedAt: null },
+    },
+    select: {
+      consultantProfile: {
+        select: {
+          user: { select: { id: true, email: true } },
+        },
+      },
+    },
+  };
+
+  const rows = await prisma.recording.findMany({
+    where: { id: { in: recordingIds } },
+    select: {
+      id: true,
+      meeting: {
+        select: {
+          occurrence: {
+            select: {
+              appointment: {
+                select: {
+                  webinar: {
+                    select: {
+                      webinarPlan: {
+                        select: { collaborators: presenterCollaboratorSelect },
+                      },
+                    },
+                  },
+                  class: {
+                    select: {
+                      classPlan: {
+                        select: { collaborators: presenterCollaboratorSelect },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  for (const row of rows) {
+    const appt = row.meeting?.occurrence?.appointment;
+    const collabs =
+      appt?.webinar?.webinarPlan?.collaborators ??
+      appt?.class?.classPlan?.collaborators ??
+      [];
+    const userIds = collabs
+      .map((c) => c.consultantProfile?.user?.id)
+      .filter((id): id is string => Boolean(id));
+    if (userIds.length > 0) {
+      result.set(row.id, userIds);
+    }
   }
 
-  // #1527 — every recipient here is a consultant.
+  return result;
+}
+
+export async function notifyConsultantsOfExpiringRecordings(
+  expiring: ExpiringStreamOnly[],
+): Promise<void> {
+  const presenterByRecording = await loadPresenterUserIdsByRecordingId(
+    expiring.map((rec) => rec.recordingId),
+  );
+  const byConsultant = new Map<string, ExpiringStreamOnly[]>();
+
+  const addRecipient = (userId: string, rec: ExpiringStreamOnly) => {
+    const list = byConsultant.get(userId) ?? [];
+    list.push(rec);
+    byConsultant.set(userId, list);
+  };
+
+  for (const rec of expiring) {
+    const recipientIds = new Set<string>();
+    if (rec.consultantUserId) recipientIds.add(rec.consultantUserId);
+    for (const presenterId of presenterByRecording.get(rec.recordingId) ?? []) {
+      recipientIds.add(presenterId);
+    }
+    for (const userId of recipientIds) {
+      addRecipient(userId, rec);
+    }
+  }
+
   const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
   await Promise.allSettled(
     Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {

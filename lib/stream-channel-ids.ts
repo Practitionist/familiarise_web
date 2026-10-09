@@ -90,10 +90,19 @@ export function isLegacyEventChannel(channelId: string | undefined): boolean {
 export const MANAGED_CHANNEL_PREFIXES = [
   WEBINAR_PREFIX,
   CLASS_PREFIX,
+  COLLAB_PREFIX,
   DM_PREFIX,
   DM_ORG_PREFIX,
   DM_HASHED_PREFIX,
 ] as const;
+
+/** Build the collaborator channel ID for a webinar or class plan */
+export function collabChannelId(
+  planType: "webinar" | "class",
+  planId: string,
+): string {
+  return `${COLLAB_PREFIX}${planType}-${planId}`;
+}
 
 /** Check if channel is a webinar or class event channel (group/team) */
 export function isEventChannel(channelId: string | undefined): boolean {

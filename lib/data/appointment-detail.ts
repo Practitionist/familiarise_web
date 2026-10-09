@@ -108,6 +108,7 @@ const collaboratorsInclude = {
   where: { status: "ACCEPTED" as const },
   select: {
     role: true,
+    tier: true,
     consultantProfile: consultantProfileSelect,
   },
 } as const;
@@ -291,27 +292,50 @@ export function canAccessAppointment(
  * group event stays attributed to its payer until the AppointmentParticipant
  * reader flip (#1319 A9), which carries the seat→payment edge.
  */
+function canSeeFullGroupRoster(
+  userId: string,
+  detail: TAppointmentDetail,
+): boolean {
+  const { appointment } = detail;
+  const primaryOwnerUserIds = [
+    appointment.consultation?.consultationPlan?.consultantProfile?.userId,
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
+    appointment.webinar?.webinarPlan?.consultantProfile?.userId,
+    appointment.class?.classPlan?.consultantProfile?.userId,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
+  ];
+  if (primaryOwnerUserIds.includes(userId)) return true;
+
+  const presenterCollaboratorUserIds = [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ]
+    .filter((c) => c.tier === "PRESENTER")
+    .map((c) => c.consultantProfile?.userId);
+
+  return presenterCollaboratorUserIds.includes(userId);
+}
+
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
   viewerUserId: string,
   privileged = false,
 ): T {
-  const { webinarId, classId, payment } = detail.appointment;
+  const { webinarId, classId, payment, participants } = detail.appointment;
   const isGroup = !!webinarId || !!classId;
   const everySeat =
-    !isGroup ||
-    privileged ||
-    appointmentRaterRole(viewerUserId, detail) === "PROVIDER";
+    !isGroup || privileged || canSeeFullGroupRoster(viewerUserId, detail);
   const rows = everySeat
     ? payment
     : payment.filter((p) => p.userId === viewerUserId);
+  const scopedParticipants = everySeat
+    ? participants
+    : participants.filter((p) => p.userId === viewerUserId);
   return {
     ...detail,
     appointment: {
       ...detail.appointment,
-      // A receipt is the buyer's document. The host may read a seat's status
-      // and amount; staff may fetch the invoice for a support case; nobody
-      // else carries a pointer to a document they cannot open.
+      participants: scopedParticipants,
       payment: rows.map((p) =>
         privileged || p.userId === viewerUserId ? p : withoutReceipt(p),
       ),

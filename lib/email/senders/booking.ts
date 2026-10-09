@@ -4,6 +4,7 @@
  */
 
 import * as React from "react";
+import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
 import AppointmentBookedEmail from "@/emails/booking/AppointmentBookedEmail";
 import AppointmentCancelledEmail from "@/emails/booking/AppointmentCancelledEmail";
@@ -14,6 +15,13 @@ import AppointmentReminderEmail from "@/emails/booking/AppointmentReminderEmail"
 import NewBookingRequestEmail from "@/emails/booking/NewBookingRequestEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
 import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
+import { EmailLayout } from "@/emails/components/EmailLayout";
+import {
+  button,
+  buttonContainer,
+  heading,
+  paragraph,
+} from "@/emails/components/styles";
 import type { EmailRecipient } from "../preferences";
 import {
   attemptStaged,
@@ -51,6 +59,7 @@ export interface AppointmentBookedEmailArgs {
   appointmentId: string;
   consulteeUserId: string;
   consultantUserId?: string | null;
+  collaboratorUserIds?: string[];
   consulteeName: string;
   consultantName: string;
   planTitle: string;
@@ -92,8 +101,14 @@ export async function stageAppointmentBookedEmail(
   tx: Tx,
   args: AppointmentBookedEmailArgs,
 ): Promise<StagedRecipientEmail[]> {
-  const userIds = [args.consulteeUserId, args.consultantUserId].filter(
-    (id): id is string => !!id,
+  const userIds = Array.from(
+    new Set(
+      [
+        args.consulteeUserId,
+        args.consultantUserId,
+        ...(args.collaboratorUserIds ?? []),
+      ].filter((id): id is string => !!id),
+    ),
   );
   return stageSpecGuarded(bookedSpec(args), userIds, tx);
 }
@@ -210,8 +225,16 @@ export type ReminderWindowLabel = "24h" | "1h";
  */
 export const APPOINTMENT_REMINDER_EMAIL_TYPE = "APPOINTMENT_REMINDER";
 
-/** The `FailedEmail.entityRef` for one appointment+window's reminder email. */
+/** The `FailedEmail.entityRef` for one occurrence+window's reminder email. */
 export function appointmentReminderEntityRef(
+  occurrenceId: string,
+  windowLabel: ReminderWindowLabel,
+): string {
+  return `occurrence:${occurrenceId}:${windowLabel}`;
+}
+
+/** Legacy appointment-scoped reminder entityRef retained for single-slot transition checks. */
+export function legacyAppointmentReminderEntityRef(
   appointmentId: string,
   windowLabel: ReminderWindowLabel,
 ): string {
@@ -225,7 +248,9 @@ const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
 
 export interface AppointmentReminderEmailArgs {
   appointmentId: string;
+  occurrenceId?: string;
   userIds: string[];
+  collaboratorUserIds?: string[];
   windowLabel: ReminderWindowLabel;
   consultantUserId?: string | null;
   consultantName: string;
@@ -237,37 +262,90 @@ export interface AppointmentReminderEmailArgs {
   dashboardUrl: string;
 }
 
+export function reminderSpec(
+  args: AppointmentReminderEmailArgs,
+): RecipientEmailSpec {
+  const type = humanType(args.appointmentType);
+  const collabSet = new Set(args.collaboratorUserIds ?? []);
+  const isHostOrCollaborator = (r: EmailRecipient) =>
+    r.userId === args.consultantUserId || collabSet.has(r.userId);
+  const resolvedJoinUrl = args.joinUrl ? absolute(args.joinUrl) : undefined;
+  const resolvedDashboardUrl = absolute(args.dashboardUrl);
+  const windowText = WINDOW_WORDS[args.windowLabel];
+  return {
+    emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: appointmentReminderEntityRef(
+      args.occurrenceId ?? args.appointmentId,
+      args.windowLabel,
+    ),
+    subject: () => `Reminder: your ${type} is coming up`,
+    render: (r) => {
+      const startsAtText = whenText(args.startsAt, r.zone);
+      if (isHostOrCollaborator(r)) {
+        return React.createElement(EmailLayout, {
+          preview: `Upcoming ${type} to host: ${args.planTitle} (${startsAtText})`,
+          unsubscribeUrl: r.unsubscribeUrl,
+          children: React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+              Text,
+              { style: heading },
+              "You have an upcoming session to host",
+            ),
+            React.createElement(Text, { style: paragraph }, `Hi ${greet(r)},`),
+            React.createElement(
+              Text,
+              { style: paragraph },
+              `Your ${type} session for `,
+              React.createElement("strong", null, args.planTitle),
+              ` starts ${windowText}, on `,
+              React.createElement("strong", null, startsAtText),
+              ".",
+            ),
+            React.createElement(
+              Text,
+              { style: paragraph },
+              resolvedJoinUrl
+                ? "The meeting room is open from your dashboard and from the button below."
+                : "The join link appears on your dashboard shortly before the session starts.",
+            ),
+            React.createElement(
+              Section,
+              { style: buttonContainer },
+              React.createElement(
+                Button,
+                {
+                  style: button,
+                  href: resolvedJoinUrl ?? resolvedDashboardUrl,
+                },
+                resolvedJoinUrl ? "Join session" : "View session",
+              ),
+            ),
+          ),
+        });
+      }
+      return React.createElement(AppointmentReminderEmail, {
+        recipientName: greet(r),
+        otherPartyName: args.consultantName,
+        planTitle: args.planTitle,
+        appointmentType: type,
+        startsAtText,
+        windowLabel: windowText,
+        joinUrl: resolvedJoinUrl,
+        dashboardUrl: resolvedDashboardUrl,
+        unsubscribeUrl: r.unsubscribeUrl,
+      });
+    },
+  };
+}
+
 export const sendAppointmentReminderEmail =
-  defineBudgetedEmailSender<AppointmentReminderEmailArgs>((args) => {
-    const type = humanType(args.appointmentType);
-    return {
-      userIds: args.userIds,
-      spec: {
-        emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
-        category: "appointments",
-        entityRef: appointmentReminderEntityRef(
-          args.appointmentId,
-          args.windowLabel,
-        ),
-        subject: () => `Reminder: your ${type} is coming up`,
-        render: (r) =>
-          React.createElement(AppointmentReminderEmail, {
-            recipientName: greet(r),
-            otherPartyName:
-              r.userId === args.consultantUserId
-                ? args.consulteeName
-                : args.consultantName,
-            planTitle: args.planTitle,
-            appointmentType: type,
-            startsAtText: whenText(args.startsAt, r.zone),
-            windowLabel: WINDOW_WORDS[args.windowLabel],
-            joinUrl: args.joinUrl ? absolute(args.joinUrl) : undefined,
-            dashboardUrl: absolute(args.dashboardUrl),
-            unsubscribeUrl: r.unsubscribeUrl,
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<AppointmentReminderEmailArgs>((args) => ({
+    userIds: args.userIds,
+    spec: reminderSpec(args),
+  }));
 
 // ── New booking request ─────────────────────────────────────────────────────
 
@@ -395,7 +473,9 @@ export const sendTrialScheduledEmail =
             role: role(r),
             recipientName: greet(r),
             otherPartyName:
-              role(r) === "consultee" ? args.consultantName : args.consulteeName,
+              role(r) === "consultee"
+                ? args.consultantName
+                : args.consulteeName,
             planTitle: args.planTitle,
             startsAtText: whenText(args.startsAt, r.zone),
             awaitingPayment: args.awaitingPayment,

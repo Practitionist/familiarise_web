@@ -43,21 +43,31 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
+import {
+  CLASS_PREFIX,
+  collabChannelId,
+  WEBINAR_PREFIX,
+} from "@/lib/stream-channel-ids";
 import {
   canDirectMessage,
   DmNotPermittedError,
   pairBookingContexts,
+  resolveVerifiedBookingContextTitle,
 } from "@/lib/stream/dm-eligibility";
 import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
-import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import {
+  createCollaboratorChannel,
+  createDirectMessageChannel,
+} from "@/actions/stream/chat/channel.action";
 import {
   addUserToEventChannel,
   isEventParticipant,
 } from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
+import { isPrivileged } from "@/lib/auth-helpers";
 
 const bodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -73,170 +83,12 @@ const bodySchema = z.discriminatedUnion("kind", [
     eventType: z.enum(["webinar", "class"]),
     eventId: z.string().min(1),
   }),
+  z.object({
+    kind: z.literal("collab"),
+    webinarPlanId: z.string().min(1).optional(),
+    classPlanId: z.string().min(1).optional(),
+  }),
 ]);
-
-const ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
-const EVENT_ELIGIBLE_STATUS_SET = new Set<string>([
-  ...DM_ELIGIBLE_STATUSES,
-  "IN_PROGRESS",
-]);
-
-function isMatchingUserPair(
-  userId: string,
-  counterpartyUserId: string,
-  a?: string | null,
-  b?: string | null,
-): boolean {
-  if (!a || !b) return false;
-  return (
-    (a === userId && b === counterpartyUserId) ||
-    (a === counterpartyUserId && b === userId)
-  );
-}
-
-function isMatchingHostAndAttendee(
-  userId: string,
-  counterpartyUserId: string,
-  hostId: string | null | undefined,
-  participantIds: Set<string>,
-): boolean {
-  if (!hostId || (hostId !== userId && hostId !== counterpartyUserId)) {
-    return false;
-  }
-  const attendeeId = hostId === userId ? counterpartyUserId : userId;
-  return participantIds.has(attendeeId);
-}
-
-type ContextAppointmentRow = {
-  id: string;
-  appointmentType: string;
-  occurrences?: { startsAt: Date; endsAt: Date }[];
-  participants?: { userId: string }[];
-  consultation?: {
-    status: string;
-    requestedBy?: { userId: string } | null;
-    consultationPlan?: {
-      title: string;
-      consultantProfile?: { userId: string } | null;
-    } | null;
-  } | null;
-  subscription?: {
-    status: string;
-    requestedBy?: { userId: string } | null;
-    subscriptionPlan?: {
-      title: string;
-      consultantProfile?: { userId: string } | null;
-    } | null;
-  } | null;
-  webinar?: {
-    status: string;
-    webinarPlan?: {
-      title: string;
-      consultantProfile?: { userId: string } | null;
-    } | null;
-  } | null;
-  class?: {
-    status: string;
-    classPlan?: {
-      title: string;
-      consultantProfile?: { userId: string } | null;
-    } | null;
-  } | null;
-};
-
-function resolveDirectAppointmentTitle(
-  status: string,
-  hostId: string | undefined,
-  clientId: string | undefined,
-  title: string | undefined,
-  fallbackTitle: string,
-  userId: string,
-  counterpartyUserId: string,
-): string | null {
-  if (!ELIGIBLE_STATUS_SET.has(status)) return null;
-  if (!isMatchingUserPair(userId, counterpartyUserId, hostId, clientId)) {
-    return null;
-  }
-  return title ?? fallbackTitle;
-}
-
-function resolveEventAppointmentTitle(
-  status: string,
-  hostId: string | undefined,
-  title: string | undefined,
-  fallbackTitle: string,
-  userId: string,
-  counterpartyUserId: string,
-  participantIds: Set<string>,
-): string | null {
-  if (!EVENT_ELIGIBLE_STATUS_SET.has(status)) return null;
-  if (
-    !isMatchingHostAndAttendee(
-      userId,
-      counterpartyUserId,
-      hostId,
-      participantIds,
-    )
-  ) {
-    return null;
-  }
-  return title ?? fallbackTitle;
-}
-
-function resolveVerifiedBookingContextTitle(
-  appt: ContextAppointmentRow,
-  userId: string,
-  counterpartyUserId: string,
-): string | null {
-  if (appt.consultation) {
-    return resolveDirectAppointmentTitle(
-      appt.consultation.status,
-      appt.consultation.consultationPlan?.consultantProfile?.userId,
-      appt.consultation.requestedBy?.userId,
-      appt.consultation.consultationPlan?.title,
-      "Consultation",
-      userId,
-      counterpartyUserId,
-    );
-  }
-  if (appt.subscription) {
-    return resolveDirectAppointmentTitle(
-      appt.subscription.status,
-      appt.subscription.subscriptionPlan?.consultantProfile?.userId,
-      appt.subscription.requestedBy?.userId,
-      appt.subscription.subscriptionPlan?.title,
-      "Subscription",
-      userId,
-      counterpartyUserId,
-    );
-  }
-  const participantIds = new Set(
-    (appt.participants ?? []).map((p) => p.userId),
-  );
-  if (appt.webinar) {
-    return resolveEventAppointmentTitle(
-      appt.webinar.status,
-      appt.webinar.webinarPlan?.consultantProfile?.userId,
-      appt.webinar.webinarPlan?.title,
-      "Webinar",
-      userId,
-      counterpartyUserId,
-      participantIds,
-    );
-  }
-  if (appt.class) {
-    return resolveEventAppointmentTitle(
-      appt.class.status,
-      appt.class.classPlan?.consultantProfile?.userId,
-      appt.class.classPlan?.title,
-      "Class",
-      userId,
-      counterpartyUserId,
-      participantIds,
-    );
-  }
-  return null;
-}
 
 function buildBookingContextMessageId(
   channelId: string,
@@ -249,6 +101,71 @@ function buildBookingContextMessageId(
   return `booking-ctx-${digest}`;
 }
 
+async function isAuthorizedForCollabChannel(
+  userId: string,
+  userRole: string | undefined,
+  planType: "webinar" | "class",
+  planId: string,
+): Promise<boolean | null> {
+  const collaboratorWhere = {
+    status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
+  };
+  const plan =
+    planType === "webinar"
+      ? await prisma.webinarPlan.findUnique({
+          where: { id: planId },
+          select: {
+            id: true,
+            organizationId: true,
+            consultantProfile: { select: { userId: true } },
+            collaborators: {
+              where: collaboratorWhere,
+              select: { consultantProfile: { select: { userId: true } } },
+            },
+          },
+        })
+      : await prisma.classPlan.findUnique({
+          where: { id: planId },
+          select: {
+            id: true,
+            organizationId: true,
+            consultantProfile: { select: { userId: true } },
+            collaborators: {
+              where: collaboratorWhere,
+              select: { consultantProfile: { select: { userId: true } } },
+            },
+          },
+        });
+
+  if (!plan) return null;
+
+  if (plan.consultantProfile?.userId === userId) return true;
+  if (plan.collaborators.some((c) => c.consultantProfile.userId === userId)) {
+    return true;
+  }
+  if (userRole && isPrivileged(userRole)) return true;
+
+  if (plan.organizationId && prisma.membership?.findFirst) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        organizationId: plan.organizationId,
+        userId,
+        status: "ACTIVE",
+      },
+      select: { role: true },
+    });
+    if (
+      membership &&
+      hasAnyOrgPermission(membership.role, ["messaging.read", "catalog.manage"])
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function postBookingContextCardIfAbsent(
   channelId: string,
   userId: string,
@@ -258,6 +175,16 @@ async function postBookingContextCardIfAbsent(
   if (!prisma.appointment?.findFirst) return;
 
   try {
+    const collaboratorSelect = {
+      where: {
+        status: "ACCEPTED" as const,
+        consultantProfile: { deletedAt: null },
+      },
+      select: {
+        tier: true,
+        consultantProfile: { select: { userId: true } },
+      },
+    };
     const appt = await prisma.appointment.findFirst({
       where: { id: contextAppointmentId, deletedAt: null },
       select: {
@@ -271,7 +198,7 @@ async function postBookingContextCardIfAbsent(
         },
         participants: {
           where: liveParticipant(),
-          select: { userId: true },
+          select: { userId: true, role: true },
         },
         consultation: {
           select: {
@@ -307,6 +234,7 @@ async function postBookingContextCardIfAbsent(
               select: {
                 title: true,
                 consultantProfile: { select: { userId: true } },
+                collaborators: collaboratorSelect,
               },
             },
           },
@@ -319,6 +247,7 @@ async function postBookingContextCardIfAbsent(
               select: {
                 title: true,
                 consultantProfile: { select: { userId: true } },
+                collaborators: collaboratorSelect,
               },
             },
           },
@@ -372,10 +301,6 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
   const userId = auth.session.user.id;
 
-  // Keyed on the user, after auth, before any Prisma or Stream work. This route
-  // is cheap to call and expensive to serve — an eligibility check plus a Stream
-  // create — and `streamApiLimiter` already existed for exactly this and had no
-  // callers. Route-slugged, per the helper's own guidance on sharing a limiter.
   const limited = await applyRateLimit(streamApiLimiter, `open:${userId}`);
   if (limited) return limited;
 
@@ -390,12 +315,48 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (body.kind === "collab") {
+      if (Boolean(body.webinarPlanId) === Boolean(body.classPlanId)) {
+        return NextResponse.json(
+          { error: "Specify either webinarPlanId or classPlanId" },
+          { status: 400 },
+        );
+      }
+      const planType = body.webinarPlanId ? "webinar" : "class";
+      const planId = (body.webinarPlanId ?? body.classPlanId)!;
+
+      const authorized = await isAuthorizedForCollabChannel(
+        userId,
+        auth.session.user.role,
+        planType,
+        planId,
+      );
+      if (authorized === null) {
+        return NextResponse.json({ error: "Plan not found." }, { status: 404 });
+      }
+      if (!authorized) {
+        return NextResponse.json(
+          { error: "You do not have access to this collaborator channel." },
+          { status: 403 },
+        );
+      }
+
+      const reconciled = await createCollaboratorChannel(planType, planId);
+      if (!reconciled) {
+        return NextResponse.json(
+          { error: "Collaborator channel not available" },
+          { status: 404 },
+        );
+      }
+
+      const channelId = collabChannelId(planType, planId);
+      return NextResponse.json({ channelType: "messaging", channelId });
+    }
+
     if (body.kind === "dm") {
       const { counterpartyUserId, contextAppointmentId } = body;
       const requestedOrgId = body.organizationId ?? null;
 
-      // Covers the self case too — `canDirectMessage` returns false for
-      // `a === b` before it touches the database.
       if (!(await canDirectMessage(userId, counterpartyUserId))) {
         streamLogger.warn("Refused DM open — no booking link", {
           userId,
@@ -411,14 +372,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Funding-context forgery guard. The channel id is re-derived
-      // server-side, but it is a function of the pair AND the funding context —
-      // so an org id accepted unchecked would let anyone mint
-      // `dmo-<digest(arbitrary)>-…` channels tagged to an organization they
-      // have no relation to, and omitting it for an org-funded booking would
-      // mint a personal-id channel the reconciler immediately classifies stale.
-      // The allowed contexts come from the same rows (and the same
-      // `bookingOrgId` precedence) the reconciler's expected-set is built from.
       const contexts = await pairBookingContexts(userId, counterpartyUserId);
       let organizationId: string | null;
       if (requestedOrgId !== null) {
@@ -434,9 +387,6 @@ export async function POST(request: NextRequest) {
       } else if (contexts.personalAllowed) {
         organizationId = null;
       } else if (contexts.organizations.length === 1) {
-        // Personal context requested, but every eligible booking is org-funded:
-        // deriving the single real context here instead of minting a channel
-        // the reconciler would evict on the next sync.
         organizationId = contexts.organizations[0];
       } else {
         return NextResponse.json(
@@ -448,15 +398,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Idempotent: Stream's create is an upsert for an existing id, and the
-      // member list is passed atomically so the pair is always both members —
-      // which is the whole difference from what `watch()` was doing.
-      //
-      // The returned `channelId` is used rather than re-deriving it with
-      // `getDmChannelId`. Same inputs, same helper, so the two agreed — but
-      // deriving an id twice is two chances to derive it differently, and this
-      // codebase has already lost conversation history once to exactly that
-      // (#1134 P0-3, the `localeCompare` re-keying). One derivation, one source.
       const { channelId } = await createDirectMessageChannel(
         userId,
         counterpartyUserId,
@@ -483,13 +424,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Creates the channel with the full roster if absent, adds the caller if
-    // present. Also idempotent.
-    //
-    // #1270 — the result is load-bearing now that a DPDP consent refusal is a
-    // skip rather than a throw. Returning 200 here would hand the client a
-    // channel id it is not a member of, and the failure would surface later as
-    // an empty, un-postable thread.
     const admission = await addUserToEventChannel(eventType, eventId, userId);
     if (!admission.success) {
       return NextResponse.json(
@@ -507,11 +441,6 @@ export async function POST(request: NextRequest) {
         : `${CLASS_PREFIX}${eventId}`;
     return NextResponse.json({ channelType: "team", channelId });
   } catch (error) {
-    // A refusal is an answer, not an incident. This is currently unreachable —
-    // the DM branch checks `canDirectMessage` before calling — but
-    // `createDirectMessageChannel` asserts eligibility itself, so a future
-    // caller, or a booking cancelled between the check and the create, would
-    // otherwise page someone at 3am for a gate doing its job.
     if (error instanceof DmNotPermittedError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }

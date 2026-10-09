@@ -19,10 +19,11 @@ import {
   eventMutationLimiter,
   participantReadLimiter,
 } from "@/lib/rate-limit";
+import {
+  hasOrgPermission,
+  rolesWithOrgPermission,
+} from "@/lib/auth/org-permissions";
 
-// Display fields only — the old `user: true` shipped every User scalar
-// (role, verification state, timestamps…) for every participant on every
-// poll of the roster page.
 const PARTICIPANT_USER_SELECT = {
   id: true,
   name: true,
@@ -43,8 +44,6 @@ export async function GET(
 
   try {
     const { webinarId } = await params;
-    // Non-privileged users can view the roster if they own the plan OR are an
-    // accepted PRESENTER collaborator (#1580). Everyone else 404s.
     const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
@@ -53,9 +52,29 @@ export async function GET(
           : {
               webinarPlan: {
                 OR: [
+                  ...(session.user.consultantProfileId
+                    ? [
+                        {
+                          consultantProfileId: session.user.consultantProfileId,
+                        },
+                      ]
+                    : []),
                   {
-                    consultantProfileId:
-                      session.user.consultantProfileId ?? "__none__",
+                    organization: {
+                      status: { not: "DEACTIVATED" },
+                      memberships: {
+                        some: {
+                          userId: session.user.id,
+                          status: "ACTIVE",
+                          role: {
+                            in: [
+                              ...rolesWithOrgPermission("catalog.manage"),
+                              ...rolesWithOrgPermission("operations.read"),
+                            ],
+                          },
+                        },
+                      },
+                    },
                   },
                   {
                     collaborators: {
@@ -73,12 +92,33 @@ export async function GET(
             }),
       },
       include: {
-        webinarPlan: true,
+        webinarPlan: {
+          include: {
+            collaborators: {
+              where: {
+                status: "ACCEPTED",
+                consultantProfile: { deletedAt: null },
+              },
+              select: {
+                id: true,
+                role: true,
+                tier: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: { select: PARTICIPANT_USER_SELECT },
+                  },
+                },
+              },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
         appointment: {
           select: {
             id: true,
             participants: {
-              where: liveParticipant(),
+              where: { ...liveParticipant(), role: "CONSULTEE" },
               select: {
                 status: true,
                 role: true,
@@ -94,9 +134,6 @@ export async function GET(
       return new NextResponse("Webinar not found", { status: 404 });
     }
 
-    // Get unique participants by user ID. The seat's own status rides along
-    // additively on the user object — see the class route for why the row's
-    // status cannot be reconstructed anywhere else.
     const participants = Array.from(
       new Map(
         webinarEvent.appointment?.participants.map((participant) => [
@@ -118,6 +155,7 @@ export async function GET(
     return NextResponse.json({
       webinarEvent,
       participants,
+      collaborators: webinarEvent.webinarPlan.collaborators,
       seatPayments,
     });
   } catch (error) {
@@ -156,19 +194,30 @@ export async function DELETE(
     }
     const userId = parsedUserId.data;
 
-    // #1005 — consultees may remove themselves (self-leave). Organisers and
-    // privileged roles may remove anyone on their event.
     const isSelfLeave = userId === session.user.id;
-    const isOrganiser =
+    let isOrganiser =
       isPrivileged(session.user.role) || !!session.user.consultantProfileId;
+    if (!isSelfLeave && !isOrganiser) {
+      const memberships = await prisma.membership.findMany({
+        where: {
+          userId: session.user.id,
+          status: "ACTIVE",
+          organization: { status: { not: "DEACTIVATED" } },
+        },
+        select: { role: true },
+      });
+      isOrganiser = memberships.some(
+        (m) =>
+          hasOrgPermission(m.role, "catalog.manage") ||
+          hasOrgPermission(m.role, "appointments.actForOrg.cancel"),
+      );
+    }
     if (!isSelfLeave && !isOrganiser) {
       return forbiddenResponse(
         "Only consultants can remove other participants",
       );
     }
 
-    // Ownership check for organiser removals; self-leave only needs the event
-    // to exist and the caller to be on the roster (the seat release below matches zero rows otherwise).
     const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
@@ -176,8 +225,34 @@ export async function DELETE(
           ? {}
           : {
               webinarPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
+                OR: [
+                  ...(session.user.consultantProfileId
+                    ? [
+                        {
+                          consultantProfileId: session.user.consultantProfileId,
+                        },
+                      ]
+                    : []),
+                  {
+                    organization: {
+                      status: { not: "DEACTIVATED" },
+                      memberships: {
+                        some: {
+                          userId: session.user.id,
+                          status: "ACTIVE",
+                          role: {
+                            in: [
+                              ...rolesWithOrgPermission("catalog.manage"),
+                              ...rolesWithOrgPermission(
+                                "appointments.actForOrg.cancel",
+                              ),
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
               },
             }),
       },

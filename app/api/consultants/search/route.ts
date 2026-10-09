@@ -3,16 +3,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { searchLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limit";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+
+function maskEmail(email: string | null | undefined): string {
+  if (!email) return "";
+  const atIdx = email.indexOf("@");
+  if (atIdx <= 0) return "***";
+  return `${email.slice(0, 1)}***@${email.slice(atIdx + 1)}`;
+}
 
 export async function GET(req: NextRequest) {
   try {
-    // Rate limit: 60 requests per minute per IP
     const rl = await applyRateLimit(searchLimiter, getClientIp(req));
     if (rl) return rl;
 
     const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let canSearch = Boolean(session.user.consultantProfileId);
+    if (!canSearch) {
+      const memberships = await prisma.membership.findMany({
+        where: {
+          userId: session.user.id,
+          status: "ACTIVE",
+          organization: { status: { not: "DEACTIVATED" } },
+        },
+        select: { role: true },
+      });
+      canSearch = memberships.some((m) =>
+        hasOrgPermission(m.role, "catalog.manage"),
+      );
+    }
+
+    if (!canSearch) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -25,6 +51,8 @@ export async function GET(req: NextRequest) {
 
     const consultants = await prisma.consultantProfile.findMany({
       where: {
+        deletedAt: null,
+        verificationStatus: "VERIFIED",
         ...(excludeId && { id: { not: excludeId } }),
         user: {
           OR: [
@@ -47,9 +75,20 @@ export async function GET(req: NextRequest) {
       orderBy: { user: { name: "asc" } },
     });
 
-    return NextResponse.json({ data: consultants });
+    return NextResponse.json({
+      data: consultants.map((c) => ({
+        ...c,
+        user: {
+          ...c.user,
+          email: maskEmail(c.user.email),
+        },
+      })),
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultants" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultants" } },
+    );
     console.error("Error searching consultants:", error);
     return NextResponse.json(
       { error: "Failed to search consultants" },

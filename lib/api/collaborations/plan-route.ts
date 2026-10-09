@@ -9,6 +9,7 @@ import {
   getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 export type PlanCollaborationKind = "webinar" | "class";
 
@@ -20,6 +21,7 @@ interface CollaboratorInviteShape {
 
 interface PlanRecord {
   consultantProfileId: string | null;
+  organizationId?: string | null;
   consultantProfile: unknown;
 }
 
@@ -35,13 +37,6 @@ interface PlanRouteConfig {
   ) => Promise<unknown>;
 }
 
-/**
- * Shared GET (list) + POST (invite) handlers for the webinar/class
- * plan-collaboration routes, which were near-identical files differing only
- * in the plan model, the invite-role subset, the id field, and log labels
- * (Sonar clone group surfaced by #1813). Behavior — statuses, messages,
- * owner/duplicate/cap checks — is preserved exactly.
- */
 export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
   const { planKind, schema, fetchLogLabel, inviteLogLabel } = config;
 
@@ -93,10 +88,8 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
 
       const { planId } = await params;
 
-      // Verify the requester is the plan owner
       const plan = await config.findPlan(planId);
-
-      if (!plan?.consultantProfile) {
+      if (!plan) {
         return NextResponse.json({ error: "Plan not found" }, { status: 404 });
       }
 
@@ -104,7 +97,34 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
         where: { userId: session.user.id },
       });
 
-      if (plan.consultantProfileId !== ownerProfile?.id) {
+      const isOwner =
+        Boolean(ownerProfile?.id) &&
+        plan.consultantProfileId === ownerProfile?.id;
+
+      let isOrgAdmin = false;
+      if (!isOwner && plan.organizationId) {
+        const membership = await prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId: plan.organizationId,
+            },
+          },
+          select: {
+            status: true,
+            role: true,
+            organization: { select: { status: true } },
+          },
+        });
+        isOrgAdmin = Boolean(
+          membership &&
+          membership.status === "ACTIVE" &&
+          membership.organization.status !== "DEACTIVATED" &&
+          hasOrgPermission(membership.role, "catalog.manage"),
+        );
+      }
+
+      if (!isOwner && !isOrgAdmin) {
         return NextResponse.json(
           { error: "Only the plan owner can invite collaborators" },
           { status: 403 },
@@ -123,7 +143,11 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
 
       const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
 
-      if (consultantProfileId === ownerProfile.id) {
+      if (
+        (ownerProfile && consultantProfileId === ownerProfile.id) ||
+        (plan.consultantProfileId &&
+          consultantProfileId === plan.consultantProfileId)
+      ) {
         return NextResponse.json(
           { error: "You cannot invite yourself as a collaborator" },
           { status: 400 },
@@ -150,7 +174,7 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
         consultantProfileId,
         role,
         revenueSharePercentage,
-        ownerProfile.id,
+        ownerProfile?.id ?? null,
       );
 
       if (!collab) {

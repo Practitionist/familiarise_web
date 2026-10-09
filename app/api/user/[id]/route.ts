@@ -16,6 +16,13 @@ import {
 } from "@/lib/compliance/erasure/scrub-user";
 import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
+import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
+import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { notifyCollaboratorWithdrawn } from "@/lib/novu/service";
+import { goHref } from "@/lib/dashboard/go";
+import { getAppUrl } from "@/lib/url";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -427,8 +434,9 @@ async function executeUserHardDeleteOrFallbackScrub(
   const now = new Date();
   const auditRetainedUntil = new Date(now);
   auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
-  await prisma.$transaction([
-    prisma.consentArtifact.updateMany({
+  const removedCollaborations = await prisma.$transaction(async (tx) => {
+    const removed = await removeCollaboratorStanding(tx, id);
+    await tx.consentArtifact.updateMany({
       where: { userId: id },
       data: {
         userId: null,
@@ -436,10 +444,40 @@ async function executeUserHardDeleteOrFallbackScrub(
         withdrawnAt: now,
         auditRetainedUntil,
       },
-    }),
-    prisma.session.deleteMany({ where: { userId: id } }),
-    prisma.user.delete({ where: { id } }),
-  ]);
+    });
+    await tx.session.deleteMany({ where: { userId: id } });
+    await tx.user.delete({ where: { id } });
+    return removed;
+  });
+
+  for (const c of removedCollaborations) {
+    await revokeCollaboratorAccess(c.planType, c.planId, id, { notify: false });
+    if (c.hostUserId) {
+      const planTitle = c.planTitle ?? "Untitled offering";
+      const collaboratorName = c.collaboratorName ?? "A collaborator";
+      const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
+      void notifyCollaboratorWithdrawn(c.hostUserId, {
+        collaboratorName,
+        planTitle,
+        planType: c.planType,
+        dashboardUrl,
+      }).catch((e) => Sentry.captureException(e));
+      void sendCollaboratorWithdrawnEmail(
+        {
+          recipientUserId: c.hostUserId,
+          actorName: collaboratorName,
+          collaboratorName,
+          planTitle,
+          planType: c.planType,
+          role: c.role ?? "CO_HOST",
+          revenueShareBps: c.revenueShareBps,
+          collaboratorId: c.collaboratorId ?? `${c.planType}-${c.planId}-${id}`,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+    }
+  }
+
   const novuErased = await deleteSubscriber(id);
 
   return NextResponse.json(

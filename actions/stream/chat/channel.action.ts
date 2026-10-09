@@ -40,6 +40,7 @@ import {
   createMemberChunk,
   forEachChunk,
 } from "@/lib/stream/batch";
+import { collabChannelId } from "@/lib/stream-channel-ids";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -95,6 +96,7 @@ export async function createChannel(input: {
   channelName?: string;
   members: string[];
   createdById: string;
+  moderatorIds?: string[];
   additionalData?: Record<string, unknown>;
   /**
    * Optional enterprise organization stamp. When non-null, written to the
@@ -202,21 +204,20 @@ export async function createChannel(input: {
   // idempotent for anyone already in.
   await addRemainingMembers(channel, syncedMembers);
 
-  // Channel-scoped moderation replaces the old global-admin Stream role
-  // (#899). Only the channel HOST may moderate — never an arbitrary creator:
-  //  - team channels (webinar/class): the creator IS the consultant host.
-  //  - messaging channels: only consultation/subscription DMs carry a
-  //    `dm_consultant_user_id`; grant moderation to that consultant. Peer DMs
-  //    (createDirectMessageChannel) have no host, so `moderatorId` is
-  //    undefined and no grant is issued — this prevents a consultee who
-  //    opens a 1:1 DM from being able to mute/remove the consultant (#981).
   const moderatorId =
     validated.channelType === "team"
       ? validated.createdById
       : (mergedAdditionalData.dm_consultant_user_id as string | undefined);
 
-  if (moderatorId) {
-    await grantChannelModerator(channel, moderatorId, validated.channelId);
+  const moderatorsToGrant = Array.from(
+    new Set([
+      ...(moderatorId ? [moderatorId] : []),
+      ...(input.moderatorIds ?? []).filter((id) => syncedMembers.includes(id)),
+    ]),
+  );
+
+  for (const modId of moderatorsToGrant) {
+    await grantChannelModerator(channel, modId, validated.channelId);
   }
 
   // Cache the channel existence
@@ -279,13 +280,21 @@ export async function createDirectMessageChannel(
   });
 }
 
+const MODERATOR_COLLABORATOR_ROLES = new Set([
+  "CO_HOST",
+  "CO_INSTRUCTOR",
+  "MODERATOR",
+]);
+
 const ACCEPTED_COLLABORATORS_INCLUDE = {
-  // A soft-deleted profile keeps its ACCEPTED row (#1593).
   where: {
     status: "ACCEPTED" as const,
     consultantProfile: { deletedAt: null },
   },
-  select: { consultantProfile: { select: { userId: true } } },
+  select: {
+    role: true,
+    consultantProfile: { select: { userId: true } },
+  },
 };
 
 export type EventChannelType =
@@ -335,16 +344,19 @@ async function loadEventChannelData(
         throw new Error(`Consultant not found for webinar: ${eventId}`);
       }
 
+      const collaborators = webinar.webinarPlan.collaborators ?? [];
       const members = [
-        ...(webinar.webinarPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
+        ...collaborators.map((c) => c.consultantProfile.userId),
         ...(webinar.appointment?.participants.map((p) => p.userId) || []),
       ];
+      const moderatorIds = collaborators
+        .filter((c) => MODERATOR_COLLABORATOR_ROLES.has(c.role))
+        .map((c) => c.consultantProfile.userId);
 
       return {
         consultantId,
         members,
+        moderatorIds,
         name: webinar.webinarPlan.title,
         organizationId: bookingOrgId({
           webinarPlan: webinar.webinarPlan,
@@ -392,16 +404,19 @@ async function loadEventChannelData(
         throw new Error(`Consultant not found for class: ${eventId}`);
       }
 
+      const collaborators = classData.classPlan.collaborators ?? [];
       const members = [
-        ...(classData.classPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
+        ...collaborators.map((c) => c.consultantProfile.userId),
         ...(classData.appointment?.participants.map((p) => p.userId) || []),
       ];
+      const moderatorIds = collaborators
+        .filter((c) => MODERATOR_COLLABORATOR_ROLES.has(c.role))
+        .map((c) => c.consultantProfile.userId);
 
       return {
         consultantId,
         members,
+        moderatorIds,
         name: classData.classPlan.title,
         organizationId: bookingOrgId({
           classPlan: classData.classPlan,
@@ -546,6 +561,7 @@ export async function createWebinarChannel(
     channelName: data.name,
     members: allMembers,
     createdById: data.consultantId,
+    moderatorIds: data.moderatorIds,
     additionalData: { webinar_id: webinarId },
     organizationId: resolvedOrgId,
   });
@@ -577,6 +593,7 @@ export async function createClassChannel(
     channelName: data.name,
     members: allMembers,
     createdById: data.consultantId,
+    moderatorIds: data.moderatorIds,
     additionalData: { class_id: classId },
     organizationId: resolvedOrgId,
   });
@@ -701,7 +718,7 @@ export async function createCollaboratorChannel(
     title = plan.title;
     organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
-    collaboratorUserIds = plan.collaborators
+    collaboratorUserIds = (plan.collaborators ?? [])
       .map((c) => c.consultantProfile.user.id)
       .filter(Boolean);
   } else {
@@ -722,18 +739,18 @@ export async function createCollaboratorChannel(
     title = plan.title;
     organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
-    collaboratorUserIds = plan.collaborators
+    collaboratorUserIds = (plan.collaborators ?? [])
       .map((c) => c.consultantProfile.user.id)
       .filter(Boolean);
   }
 
-  if (!hostUserId) {
+  const creatorUserId = hostUserId ?? collaboratorUserIds[0];
+  if (!creatorUserId) {
     throw new Error(`Host not found for ${planType} plan: ${planId}`);
   }
 
-  // Deduplicated expected member set: host + all accepted collaborators
   const expectedMemberIds = Array.from(
-    new Set([hostUserId, ...collaboratorUserIds]),
+    new Set([...(hostUserId ? [hostUserId] : []), ...collaboratorUserIds]),
   );
 
   if (expectedMemberIds.length < 2) {
@@ -744,19 +761,15 @@ export async function createCollaboratorChannel(
     return null;
   }
 
-  const channelId = `collab-${planType}-${planId}`;
+  const channelId = collabChannelId(planType, planId);
   const client = getStreamChatClient();
 
-  // Stream refuses a channel whose members it has never seen; every other
-  // creator here upserts first, and this one did not (FAMILIARISE_WEB-37, #1580).
-  // The roster is whoever the upsert could sync: a member without
-  // STREAM_DATA_PROCESSING consent is left out of create, add and remove alike.
   const upsertResult = await upsertUsersToStream(expectedMemberIds, {
     serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
   });
   const droppedIds = upsertResult?.droppedIds ?? [];
   const roster = expectedMemberIds.filter((id) => !droppedIds.includes(id));
-  if (roster.length < 2 || !roster.includes(hostUserId)) {
+  if (roster.length < 2 || (hostUserId && !roster.includes(hostUserId))) {
     streamLogger.warn("Skipping collaborator channel - roster not syncable", {
       planType,
       planId,
@@ -767,21 +780,18 @@ export async function createCollaboratorChannel(
 
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
-    created_by_id: hostUserId,
+    created_by_id: creatorUserId,
     members: createMemberChunk(roster),
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
     ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
-  // Idempotent create — no-op if channel already exists
   await channel.create();
   await addRemainingMembers(channel, roster);
   markChannelExists("messaging", channelId);
 
-  // Host moderates their own collab channel — this path bypasses
-  // createChannel, so the #899 channel-scoped grant is repeated here.
-  await grantChannelModerator(channel, hostUserId, channelId);
+  await grantChannelModerator(channel, creatorUserId, channelId);
 
   // Query current channel membership for diffing
   const channelData = await channel.query();

@@ -19,6 +19,10 @@ import {
   buildCohostCommitmentFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  assertConsultantAvailableForWindows,
+  ConsultantScheduleConflictError,
+} from "@/lib/collaborators/availability";
 
 const EXTENSION_SECONDS = 15 * 60;
 const EXTENSION_MS = EXTENSION_SECONDS * 1000;
@@ -48,9 +52,7 @@ function buildConflictScope(
           userId: { in: participantUserIds },
           status: {
             in: ["HELD", "CONFIRMED", "ATTENDED"] as (
-              | "HELD"
-              | "CONFIRMED"
-              | "ATTENDED"
+              "HELD" | "CONFIRMED" | "ATTENDED"
             )[],
           },
         },
@@ -79,6 +81,18 @@ function buildConflictScope(
   }
   return participantClause;
 }
+
+const PRESENTER_COLLABORATORS_SELECT = {
+  where: {
+    status: "ACCEPTED" as const,
+    tier: "PRESENTER" as const,
+    consultantProfile: { deletedAt: null },
+  },
+  select: {
+    consultantProfileId: true,
+    consultantProfile: { select: { userId: true } },
+  },
+};
 
 /**
  * POST /api/meetings/[meetingId]/extend
@@ -126,6 +140,24 @@ export async function POST(
                 participants: {
                   where: { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
                   select: { userId: true },
+                },
+                webinar: {
+                  select: {
+                    webinarPlan: {
+                      select: {
+                        collaborators: PRESENTER_COLLABORATORS_SELECT,
+                      },
+                    },
+                  },
+                },
+                class: {
+                  select: {
+                    classPlan: {
+                      select: {
+                        collaborators: PRESENTER_COLLABORATORS_SELECT,
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -192,6 +224,34 @@ export async function POST(
           },
           { status: 409 },
         );
+      }
+    }
+
+    const presenterCollaborators =
+      occurrence.appointment?.webinar?.webinarPlan?.collaborators ??
+      occurrence.appointment?.class?.classPlan?.collaborators ??
+      [];
+    for (const collab of presenterCollaborators) {
+      try {
+        await assertConsultantAvailableForWindows(prisma, {
+          consultantProfileId: collab.consultantProfileId,
+          consultantUserId: collab.consultantProfile?.userId,
+          windows: [{ startsAt: slotStartsAt, endsAt: conflictHorizon }],
+          excludeAppointmentIds: [occurrence.appointmentId],
+        });
+      } catch (err) {
+        if (err instanceof ConsultantScheduleConflictError) {
+          return NextResponse.json(
+            {
+              extended: false,
+              hasConflictingNextBooking: true,
+              error:
+                "Cannot extend because another confirmed session starts within 15 minutes.",
+            },
+            { status: 409 },
+          );
+        }
+        throw err;
       }
     }
 

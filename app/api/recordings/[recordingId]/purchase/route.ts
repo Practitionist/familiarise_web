@@ -183,6 +183,29 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const acceptedCollaborator = prisma.collaborator
+      ? await prisma.collaborator.findFirst({
+          where: {
+            status: "ACCEPTED",
+            tier: "PRESENTER",
+            consultantProfile: { userId: session.user.id },
+            ...(loaded.plan.kind === "WEBINAR"
+              ? { webinarPlanId: loaded.plan.plan.id }
+              : { classPlanId: loaded.plan.plan.id }),
+          },
+          select: { id: true },
+        })
+      : null;
+    if (acceptedCollaborator) {
+      return NextResponse.json(
+        {
+          error: "Collaborators already have access to this recording",
+          code: "ALREADY_ENTITLED",
+        },
+        { status: 400 },
+      );
+    }
+
     const buyerId = session.user.id;
     // #1771 row 1 — resolved before the lock so a slow Customer call holds nothing.
     const [customerId, buyer] = await Promise.all([

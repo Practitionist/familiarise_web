@@ -29,11 +29,11 @@ import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
 } from "@/lib/stream/recording-operator-access";
+import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 
-/** #366 — a captured standalone replay purchase grants playback. */
 async function hasReplayPurchase(
   userId: string,
   recordingId: string,
@@ -53,7 +53,6 @@ type RouteParams = {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    // Check authentication
     const session = await getSession(true);
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -61,7 +60,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     const { recordingId } = await params;
 
-    // Get recording with related data
     const recording = await RecordingService.getRecordingById(recordingId);
 
     if (!recording) {
@@ -71,15 +69,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Check access permissions
     const baseAppointment = recording.meeting.occurrence.appointment;
     type ExtendedAppointment = typeof baseAppointment & {
+      organizationId?: string | null;
       participants?: Array<{ userId: string; role?: string }> | null;
       consultation?: {
         requestedById?: string | null;
         consultationPlan?: {
           id?: string;
           consultantProfileId?: string | null;
+          organizationId?: string | null;
         } | null;
       } | null;
       subscription?: {
@@ -87,6 +86,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         subscriptionPlan?: {
           id?: string;
           consultantProfileId?: string | null;
+          organizationId?: string | null;
         } | null;
       } | null;
       trial?: {
@@ -95,6 +95,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         subscriptionPlan?: {
           id?: string;
           consultantProfileId?: string | null;
+          organizationId?: string | null;
         } | null;
       } | null;
     };
@@ -127,21 +128,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     let hasAccess = false;
-    // True when the ONLY thing letting this caller through is their platform
-    // role. Drives the audit write and the metadata-only downgrade below.
     let viaOperatorGrant = false;
 
     const operator = resolveOperatorRecordingAccess(session.user.role);
 
-    // #1270 — ADMIN holds `recordings.play`, the widest grant there is, so the
-    // ownership walk below cannot add anything for them. Short-circuit.
     if (operator.canPlay) {
       hasAccess = true;
       viaOperatorGrant = true;
     }
 
-    // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
-    // Provider path: gate on owning a consultant profile, not on role.
     if (!hasAccess && session.user.consultantProfileId) {
       const consultantProfileId = session.user.consultantProfileId;
 
@@ -155,6 +150,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               webinarPlanId: appointment.webinar.webinarPlan.id,
               consultantProfileId,
               status: "ACCEPTED",
+              tier: "PRESENTER",
             },
           });
           hasAccess = !!collab;
@@ -169,6 +165,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               classPlanId: appointment.class.classPlan.id,
               consultantProfileId,
               status: "ACCEPTED",
+              tier: "PRESENTER",
             },
           });
           hasAccess = !!collab;
@@ -188,7 +185,34 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Attendee path: consultee entitlement, gated on capability not role.
+    const resolvedOrgId =
+      recording.organizationId ??
+      recording.meeting?.organizationId ??
+      appointment?.organizationId ??
+      appointment?.webinar?.webinarPlan?.organizationId ??
+      appointment?.class?.classPlan?.organizationId ??
+      null;
+
+    if (!hasAccess && resolvedOrgId && prisma.membership?.findFirst) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          organizationId: resolvedOrgId,
+          userId: session.user.id,
+          status: "ACTIVE",
+        },
+        select: { role: true },
+      });
+      if (
+        membership &&
+        hasAnyOrgPermission(membership.role, [
+          "operations.read",
+          "catalog.manage",
+        ])
+      ) {
+        hasAccess = true;
+      }
+    }
+
     if (!hasAccess) {
       const planFilter = appointment?.webinar?.webinarPlan?.id
         ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
@@ -212,6 +236,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           const seat = await prisma.appointmentParticipant.findFirst({
             where: {
               userId: session.user.id,
+              role: "CONSULTEE",
               ...liveParticipant(),
               appointment: planFilter,
             },
@@ -238,13 +263,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         hasAccess = payments.some(isPaymentEntitled);
         if (!hasAccess) {
           hasAccess = Boolean(
-            appointment.participants?.some((p) => p.userId === session.user.id),
+            appointment.participants?.some(
+              (p) =>
+                p.userId === session.user.id &&
+                (!p.role || p.role === "CONSULTEE"),
+            ),
           );
         }
         if (!hasAccess && prisma.appointmentParticipant) {
           const seat = await prisma.appointmentParticipant.findFirst({
             where: {
               userId: session.user.id,
+              role: "CONSULTEE",
               appointmentId: appointment.id,
               ...liveParticipant(),
             },
@@ -272,10 +302,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // #1270 — STAFF land here only after every ownership and entitlement path
-    // above has failed. A staff member who actually delivered or bought the
-    // session already passed one of those and keeps full playback; this branch
-    // is the operator with no relationship to the session at all.
     if (!hasAccess && operator.canRead) {
       hasAccess = true;
       viaOperatorGrant = true;
@@ -288,13 +314,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Only an operator reaching in on their role alone is capped; anyone who
-    // arrived through participation or purchase plays as before.
     const mayPlay = !viaOperatorGrant || operator.canPlay;
 
-    // Written before the URL is minted, so the trail cannot lag the access it
-    // describes. A failure here fails the request rather than serving an
-    // unaudited read.
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
         actorUserId: session.user.id,
@@ -308,8 +329,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Everything an operator needs to answer "where is my replay" — and
-    // nothing that renders the session.
     const metadata = {
       id: recording.id,
       title: recording.title,
@@ -324,11 +343,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     };
 
     if (!mayPlay) {
-      // Every media URL is withheld, not only `playbackUrl`. A thumbnail is a
-      // frame of the session and the preview clip is a cut of it, so handing
-      // either over is still handing over the content the cap exists to
-      // protect. `access.level` is what a consumer branches on — a null URL
-      // alone cannot distinguish "not permitted" from "not ready yet".
       return NextResponse.json({
         recording: {
           ...metadata,
@@ -345,7 +359,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Check if Stream URL has expired
     if (
       recording.storageType === "STREAM_S3" &&
       recording.streamUrlExpiresAt &&
@@ -361,7 +374,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Get the best available URL (async — generates presigned URL for Supabase)
     const playbackUrl = await getBestRecordingUrl(recording);
 
     return NextResponse.json({
@@ -403,55 +415,12 @@ function sanitizeRecordingMutationResponse(recording: unknown) {
   return safeRecording;
 }
 
-type PlanWithCollaborators = {
+type OwnedPlan = {
   id?: string;
+  organizationId?: string | null;
   consultantProfileId?: string | null;
   consultantProfile?: { userId?: string | null } | null;
-  collaborators?: Array<{ consultantProfileId: string }> | null;
 } | null;
-
-async function hasAcceptedCollaboratorAccess(
-  consultantProfileId: string,
-  webinarPlan?: PlanWithCollaborators,
-  classPlan?: PlanWithCollaborators,
-): Promise<boolean> {
-  if (
-    webinarPlan?.collaborators?.some(
-      (c) => c.consultantProfileId === consultantProfileId,
-    ) ||
-    classPlan?.collaborators?.some(
-      (c) => c.consultantProfileId === consultantProfileId,
-    )
-  ) {
-    return true;
-  }
-
-  if (webinarPlan?.id && prisma.collaborator?.findFirst) {
-    const collab = await prisma.collaborator.findFirst({
-      where: {
-        webinarPlanId: webinarPlan.id,
-        consultantProfileId,
-        status: "ACCEPTED",
-      },
-      select: { id: true },
-    });
-    if (collab) return true;
-  }
-
-  if (classPlan?.id && prisma.collaborator?.findFirst) {
-    const collab = await prisma.collaborator.findFirst({
-      where: {
-        classPlanId: classPlan.id,
-        consultantProfileId,
-        status: "ACCEPTED",
-      },
-      select: { id: true },
-    });
-    if (collab) return true;
-  }
-
-  return false;
-}
 
 async function resolveRecordingWriteAccess(
   user: {
@@ -488,11 +457,12 @@ async function resolveRecordingWriteAccess(
 
   const appointment = occurrence?.appointment as
     | {
-        webinar?: { webinarPlan?: PlanWithCollaborators } | null;
-        class?: { classPlan?: PlanWithCollaborators } | null;
-        consultation?: { consultationPlan?: PlanWithCollaborators } | null;
-        subscription?: { subscriptionPlan?: PlanWithCollaborators } | null;
-        trial?: { subscriptionPlan?: PlanWithCollaborators } | null;
+        organizationId?: string | null;
+        webinar?: { webinarPlan?: OwnedPlan } | null;
+        class?: { classPlan?: OwnedPlan } | null;
+        consultation?: { consultationPlan?: OwnedPlan } | null;
+        subscription?: { subscriptionPlan?: OwnedPlan } | null;
+        trial?: { subscriptionPlan?: OwnedPlan } | null;
       }
     | undefined;
 
@@ -515,15 +485,29 @@ async function resolveRecordingWriteAccess(
     return { allowed: true, viaOperatorGrant: false };
   }
 
-  if (
-    consultantProfileId &&
-    (await hasAcceptedCollaboratorAccess(
-      consultantProfileId,
-      appointment?.webinar?.webinarPlan,
-      appointment?.class?.classPlan,
-    ))
-  ) {
-    return { allowed: true, viaOperatorGrant: false };
+  const orgId =
+    recording.organizationId ??
+    recording.meeting?.organizationId ??
+    appointment?.organizationId ??
+    appointment?.webinar?.webinarPlan?.organizationId ??
+    appointment?.class?.classPlan?.organizationId ??
+    null;
+
+  if (orgId && prisma.membership?.findFirst) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        organizationId: orgId,
+        userId: user.id,
+        status: "ACTIVE",
+      },
+      select: { role: true },
+    });
+    if (
+      membership &&
+      hasAnyOrgPermission(membership.role, ["catalog.manage"])
+    ) {
+      return { allowed: true, viaOperatorGrant: false };
+    }
   }
 
   const operator = resolveOperatorRecordingAccess(user.role);

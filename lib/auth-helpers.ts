@@ -167,19 +167,43 @@ export function forbiddenResponse(message = "Forbidden"): NextResponse {
   return NextResponse.json({ error: message }, { status: 403 });
 }
 
+async function hasOrgEventAccess(
+  userId: string,
+  organizationId: string | null | undefined,
+): Promise<boolean> {
+  if (!organizationId) return false;
+  const member = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId } },
+    select: {
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
+  });
+  if (!member || member.status !== "ACTIVE") return false;
+  if (member.organization.status === "DEACTIVATED") return false;
+  return hasAnyOrgPermission(member.role, [
+    "catalog.manage",
+    "appointments.actForOrg.reschedule",
+  ]);
+}
+
 /**
  * Authorize access to an event (consultation/subscription/webinar/class).
- * Checks if the session user is the consultant, consultee, or privileged (ADMIN/STAFF).
+ * Mutating methods require primary plan owner or authorized org admin; accepted
+ * collaborators are permitted on read-only GET requests only.
  */
 export async function authorizeEventAccess(
   session: Session,
   eventType: "consultation" | "subscription" | "webinar" | "class",
   eventId: string,
+  method: string,
 ): Promise<NextResponse | null> {
   if (isPrivileged(session.user.role)) return null;
 
   const consultantProfileId = session.user.consultantProfileId;
   const consulteeProfileId = session.user.consulteeProfileId;
+  const isReadOnly = method.toUpperCase() === "GET";
 
   let isAuthorized = false;
 
@@ -188,38 +212,65 @@ export async function authorizeEventAccess(
       where: { id: eventId },
       select: {
         requestedById: true,
-        consultationPlan: { select: { consultantProfileId: true } },
+        consultationPlan: {
+          select: { consultantProfileId: true, organizationId: true },
+        },
       },
     });
     if (event) {
       isAuthorized =
-        consultantProfileId === event.consultationPlan.consultantProfileId ||
-        consulteeProfileId === event.requestedById;
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === event.consultationPlan.consultantProfileId) ||
+        (Boolean(consulteeProfileId) &&
+          consulteeProfileId === event.requestedById) ||
+        (await hasOrgEventAccess(
+          session.user.id,
+          event.consultationPlan.organizationId,
+        ));
     }
   } else if (eventType === "subscription") {
     const event = await prisma.subscription.findUnique({
       where: { id: eventId },
       select: {
         requestedById: true,
-        subscriptionPlan: { select: { consultantProfileId: true } },
+        subscriptionPlan: {
+          select: { consultantProfileId: true, organizationId: true },
+        },
       },
     });
     if (event) {
       isAuthorized =
-        consultantProfileId === event.subscriptionPlan.consultantProfileId ||
-        consulteeProfileId === event.requestedById;
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === event.subscriptionPlan.consultantProfileId) ||
+        (Boolean(consulteeProfileId) &&
+          consulteeProfileId === event.requestedById) ||
+        (await hasOrgEventAccess(
+          session.user.id,
+          event.subscriptionPlan.organizationId,
+        ));
     }
   } else if (eventType === "webinar") {
     const event = await prisma.webinar.findUnique({
       where: { id: eventId },
       select: {
-        webinarPlan: { select: { id: true, consultantProfileId: true } },
+        webinarPlan: {
+          select: {
+            id: true,
+            consultantProfileId: true,
+            organizationId: true,
+          },
+        },
       },
     });
     if (event) {
       isAuthorized =
-        consultantProfileId === event.webinarPlan.consultantProfileId;
-      if (!isAuthorized && consultantProfileId) {
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === event.webinarPlan.consultantProfileId) ||
+        (await hasOrgEventAccess(
+          session.user.id,
+          event.webinarPlan.organizationId,
+        ));
+      if (!isAuthorized && isReadOnly && consultantProfileId) {
         const collab = await prisma.collaborator.findFirst({
           where: {
             webinarPlanId: event.webinarPlan.id,
@@ -234,13 +285,24 @@ export async function authorizeEventAccess(
     const event = await prisma.class.findUnique({
       where: { id: eventId },
       select: {
-        classPlan: { select: { id: true, consultantProfileId: true } },
+        classPlan: {
+          select: {
+            id: true,
+            consultantProfileId: true,
+            organizationId: true,
+          },
+        },
       },
     });
     if (event) {
       isAuthorized =
-        consultantProfileId === event.classPlan.consultantProfileId;
-      if (!isAuthorized && consultantProfileId) {
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === event.classPlan.consultantProfileId) ||
+        (await hasOrgEventAccess(
+          session.user.id,
+          event.classPlan.organizationId,
+        ));
+      if (!isAuthorized && isReadOnly && consultantProfileId) {
         const collab = await prisma.collaborator.findFirst({
           where: {
             classPlanId: event.classPlan.id,

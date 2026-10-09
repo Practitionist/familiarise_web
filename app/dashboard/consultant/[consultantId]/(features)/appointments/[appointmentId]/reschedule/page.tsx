@@ -41,7 +41,9 @@ export async function generateMetadata({
   // offering and the client for any appointment id a signed-in consultant
   // cared to try.
   const owned =
-    !!detail && resolvePlanOwnerIds(detail.appointment).includes(consultantId);
+    Boolean(consultantId) &&
+    !!detail &&
+    resolvePlanOwnerIds(detail.appointment).includes(consultantId);
   const resolved = owned && detail ? buildRescheduleSubject(detail) : null;
   if (!resolved) return { title: "Reschedule — Familiarise" };
 
@@ -60,11 +62,14 @@ export default async function ConsultantReschedulePage({
   const detail = await loadDetail(appointmentId);
   if (!detail) notFound();
 
-  // The route's consultant must own the plan or be an ACCEPTED collaborator.
-  // Mirrors the detail page: this binds the appointment to the URL's
-  // consultant, the guard above binds that consultant to the session.
+  // Only the primary plan owner (never a collaborator) may reschedule.
   const { appointment } = detail;
-  if (!resolvePlanOwnerIds(appointment).includes(consultantId)) notFound();
+  if (
+    !consultantId ||
+    !resolvePlanOwnerIds(appointment).includes(consultantId)
+  ) {
+    notFound();
+  }
 
   const resolved = buildRescheduleSubject(detail);
   if (!resolved) notFound();
