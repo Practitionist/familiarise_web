@@ -5,6 +5,7 @@
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: jest.fn(),
+  captureMessage: jest.fn(),
 }));
 
 jest.mock("../../lib/auth-server", () => ({
@@ -30,6 +31,9 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     user: { findUnique: jest.fn(async () => ({ role: "CONSULTEE" })) },
+    supportTicket: {
+      findUnique: jest.fn(async () => ({ userId: "owner", status: "OPEN" })),
+    },
     supportTicketAttachment: {
       findUnique: jest.fn(async () => ({
         id: "att-1",
@@ -38,6 +42,7 @@ jest.mock("../../lib/prisma", () => ({
         ticket: { userId: "owner" },
       })),
       delete: jest.fn(async () => ({})),
+      count: jest.fn(async () => 0),
     },
   },
 }));
@@ -46,12 +51,16 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
 import {
+  uploadSupportTicketAttachment,
   deleteSupportTicketAttachment,
   signSupportTicketAttachment,
 } from "../../lib/supabase";
 import { getSession } from "../../lib/auth-server";
 import { applyRateLimit } from "../../lib/rate-limit";
-import { DELETE } from "../../app/api/support-tickets/[ticketId]/attachments/route";
+import {
+  DELETE,
+  POST,
+} from "../../app/api/support-tickets/[ticketId]/attachments/route";
 import { GET } from "../../app/api/support-tickets/[ticketId]/attachments/[attachmentId]/route";
 
 const mockedDelete = deleteSupportTicketAttachment as jest.Mock;
@@ -133,5 +142,27 @@ describe("support attachment storage", () => {
     );
     expect(res.status).toBe(403);
     expect(mockedSign).not.toHaveBeenCalled();
+  });
+
+  it("answers an upload failure with generic copy and reports the vendor message once", async () => {
+    (uploadSupportTicketAttachment as jest.Mock).mockResolvedValue({
+      success: false,
+      error: "bucket 'support-attachments' not found",
+    });
+    const form = new FormData();
+    form.set("file", new File(["x"], "a.png", { type: "image/png" }));
+    const res = await POST(
+      new NextRequest("http://localhost/api/support-tickets/t1/attachments", {
+        method: "POST",
+        body: form,
+      }),
+      { params: Promise.resolve({ ticketId: "t1" }) },
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(JSON.stringify(json)).not.toMatch(/bucket|storage/i);
+    expect(json).not.toHaveProperty("message");
+    expect(json).not.toHaveProperty("instructions");
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
   });
 });

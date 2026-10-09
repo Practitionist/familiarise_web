@@ -609,7 +609,7 @@ sequenceDiagram
 
 ### 2. Data Protection
 
-- **Private Buckets**: The `documents`, `support-attachments`, `recordings` and `org-invoices` buckets are private (`public: false`) and are served only through signed URLs. `support-attachments` is set private on the first upload by `reconcileBucketOptions`. Its API rows expose `/api/support-tickets/{ticketId}/attachments/{id}`, which checks the caller and redirects to a 60-second signed URL. The image and preview buckets (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) stay public, so their public URLs work without any storage policy.
+- **Private Buckets**: The `documents`, `support-attachments`, `recordings` and `org-invoices` buckets are private (`public: false`) and are served only through signed URLs. `support-attachments` is set private on the first upload by `reconcileBucketOptions`. Its API rows expose `/api/support-tickets/{ticketId}/attachments/{id}`, which checks the caller and redirects to a 60-second signed URL. The image and preview buckets (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) stay public, so their public URLs resolve directly.
 - **Signed URLs**: All document access uses time-limited signed URLs generated via `supabaseAdmin.storage.from('documents').createSignedUrl()`. The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is required.
 - **Download Proxy**: The download API endpoint uses `supabaseAdmin` to generate signed URLs. If the service role key is not configured, the endpoint returns an explicit error rather than silently failing.
 - **File Scanning**: Virus scanning for uploaded files (future)

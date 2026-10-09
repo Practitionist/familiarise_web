@@ -9,7 +9,6 @@ import prisma from "@/lib/prisma";
 import {
   uploadSupportTicketAttachment,
   deleteSupportTicketAttachment,
-  getManualBucketInstructions,
 } from "@/lib/supabase";
 import { UserRole } from "@prisma/client";
 import {
@@ -207,17 +206,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       !mimeType ||
       !storagePath
     ) {
-      const isBucketError =
-        uploadResult.error?.includes("bucket") ||
-        uploadResult.error?.includes("storage");
-
+      Sentry.captureMessage("Support attachment upload failed", {
+        level: "warning",
+        tags: { subsystem: "support" },
+        extra: { ticketId, reason: uploadResult.error },
+      });
       return NextResponse.json(
         {
-          error: "Upload failed",
-          message: uploadResult.error,
-          ...(isBucketError && {
-            instructions: getManualBucketInstructions("support-attachments"),
-          }),
+          error:
+            "We couldn't upload that file. Use a PDF, Word document, image or text file under 10 MB and try again.",
         },
         { status: 400 },
       );
