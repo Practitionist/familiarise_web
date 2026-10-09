@@ -58,15 +58,22 @@ export function PendingCheckoutClient({
   const [error, setError] = useState<string | null>(null);
   const [checks, setChecks] = useState(0);
 
-  useEffect(() => {
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   const money = (paise: number) =>
     formatCurrencyAmount(paise, pending.currency);
   const lapsed = pending.status === "EXPIRED" || pending.status === "FAILED";
+
+  useEffect(() => {
+    if (lapsed) return;
+    const initial = Date.now();
+    setNow(initial);
+    if (expiresAtMs === null || initial >= expiresAtMs) return;
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= expiresAtMs) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lapsed, expiresAtMs]);
   // The timer only says the window ended; the server decides what happened.
   const checking =
     !lapsed && expiresAtMs !== null && now !== null && now >= expiresAtMs;
@@ -207,7 +214,33 @@ export function PendingCheckoutClient({
             <div className="border-t border-border pt-2">
               <Row label="Total" value={money(pending.totalPaise)} strong />
             </div>
+            {pending.currentTotalPaise !== null &&
+              pending.currentTotalPaise !== pending.totalPaise && (
+                <Row
+                  label="Current total"
+                  value={money(pending.currentTotalPaise)}
+                  strong
+                />
+              )}
           </div>
+          {pending.quoteStaleReason !== null && (
+            <p className="text-center text-sm text-muted-foreground">
+              {pending.quoteStaleReason === "COUPON_EXHAUSTED" &&
+                (pending.currentTotalPaise !== null &&
+                pending.currentTotalPaise !== pending.totalPaise
+                  ? "Your coupon ran out of uses — active holds honor Total, while re-quoted checkouts apply Current total."
+                  : "Your coupon ran out of uses — active holds honor Total; a re-quoted checkout will be priced without it.")}
+              {pending.quoteStaleReason === "COUPON_INVALID" &&
+                (pending.currentTotalPaise !== null &&
+                pending.currentTotalPaise !== pending.totalPaise
+                  ? "Your coupon is no longer valid — active holds honor Total, while re-quoted checkouts apply Current total."
+                  : "Your coupon is no longer valid — active holds honor Total; a re-quoted checkout will be priced without it.")}
+              {pending.quoteStaleReason === "CREDITS_SHORT" &&
+                "Your credit balance changed — active holds honor Total, while re-quoted checkouts reflect remaining credits."}
+              {pending.quoteStaleReason === "TAX_CHANGED" &&
+                "Applicable tax changed — active holds honor Total, while re-quoted checkouts apply Current total."}
+            </p>
+          )}
           {expiresAtMs !== null && now !== null && (
             <p className="text-center text-sm text-muted-foreground">
               Your hold expires in{" "}
