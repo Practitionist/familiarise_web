@@ -30,6 +30,8 @@ const pending: PendingCheckout = {
   taxPaise: 1800,
   creditsPaise: 0,
   totalPaise: 11800,
+  currentTotalPaise: 11800,
+  quoteStaleReason: null,
   expiresAt: null,
   appointmentId: "appt-1",
   consulteeProfileId: "cp-1",
