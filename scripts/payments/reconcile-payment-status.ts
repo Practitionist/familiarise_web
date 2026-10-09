@@ -270,6 +270,7 @@ async function reconcilePaymentStatusUnlocked(
   const stalePendingPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.PENDING,
+      paymentGateway: PaymentGateway.RAZORPAY,
       createdAt: {
         lt: minAge,
         gte: maxAge,
@@ -293,7 +294,6 @@ async function reconcilePaymentStatusUnlocked(
     where: {
       paymentStatus: PaymentStatus.PENDING,
       createdAt: { lt: orphanCutoff },
-      paymentGateway: PaymentGateway.RAZORPAY,
       NOT: { paymentIntent: "" },
     },
     include: {
@@ -359,6 +359,11 @@ async function reconcilePaymentStatusUnlocked(
       }
       // For Razorpay, paymentIntent might be orderId
       lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
+    } else if (payment.createdAt < orphanCutoff) {
+      lookup = {
+        kind: "unknown_id",
+        detail: `unsupported legacy gateway ${payment.paymentGateway}`,
+      };
     } else {
       console.log(
         `   Skipping - unsupported gateway: ${payment.paymentGateway}`,

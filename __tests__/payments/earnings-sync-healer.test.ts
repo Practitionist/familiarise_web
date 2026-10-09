@@ -283,8 +283,11 @@ describe("a refund that lands after the cohort read", () => {
     expect(result.createdCount).toBe(0);
     expect(result.skippedCount).toBe(1);
     expect(mockReportSentryMessage).toHaveBeenCalledWith(
-      expect.stringContaining("EARNINGS_SKIPPED_REFUNDED: payment pay-late"),
-      expect.objectContaining({ expected: true }),
+      "EARNINGS_SKIPPED_REFUNDED: payment(s) refunded or charged back after the cohort read; not accrued",
+      expect.objectContaining({
+        expected: true,
+        extra: { paymentIds: ["pay-late"] },
+      }),
     );
   });
 });

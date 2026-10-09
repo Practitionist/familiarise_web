@@ -616,7 +616,7 @@ export async function POST(
               includeConfirmed: true,
             });
           }
-          await transitionOccurrenceCompletion(tx, {
+          const slotsCancelled = await transitionOccurrenceCompletion(tx, {
             ...auditMeta,
             where: sweepScope,
             to: "CANCELLED",
@@ -646,6 +646,8 @@ export async function POST(
             success: true,
             cancellationReason: validatedData.reason,
             cancelledAt: cancellationData.cancelledAt,
+            // Slots actually cancelled; terminal history stays live by contract.
+            slotsCancelled,
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
             bookingCtx,

@@ -79,12 +79,10 @@ function resolveReplayCharge(
       buyerCountry: parsed.data.buyerCountry.toUpperCase(),
     };
   }
-  if (notes?.taxAmountPaise !== undefined) {
-    Sentry.captureMessage(
-      `[recording-purchase] order notes do not sum to the charge: ${orderId}`,
-      { level: "error", tags: { subsystem: "payments" } },
-    );
-  }
+  Sentry.captureMessage(
+    `[recording-purchase] order notes missing or invalid tax split: ${orderId}`,
+    { level: "error", tags: { subsystem: "payments" } },
+  );
   return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
 }
 
@@ -212,6 +210,92 @@ function cardLeg(amountPaise: number, paymentIntent: string) {
  * auto-refund marker. A row already staged for the intent is re-driven only
  * while its marker is still pending.
  */
+async function stageExistingCaptureRefund(
+  tx: Tx,
+  existing: {
+    id: string;
+    description: string | null;
+    amount: number;
+    paymentStatus: string;
+    gatewayPaymentId: string | null;
+  },
+  input: {
+    paymentIntent: string;
+    buyerId: string;
+    chargedPaise: number;
+    charge: ReplayCharge;
+    organizationId: string | null;
+    gatewayPaymentId: string | undefined;
+    reason: string;
+  },
+  marker: string,
+): Promise<CaptureOutcome | null> {
+  if (
+    existing.gatewayPaymentId &&
+    input.gatewayPaymentId &&
+    existing.gatewayPaymentId !== input.gatewayPaymentId &&
+    input.paymentIntent !== input.gatewayPaymentId
+  ) {
+    return stageCaptureRefund(tx, {
+      ...input,
+      paymentIntent: input.gatewayPaymentId,
+    });
+  }
+  if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
+    if (existing.paymentStatus !== "PENDING") {
+      return null;
+    }
+    const claimed = await tx.payment.updateMany({
+      where: { id: existing.id, paymentStatus: "PENDING" },
+      data: {
+        amount: input.chargedPaise,
+        originalAmount: input.charge.originalAmount,
+        taxAmount: input.charge.taxAmount,
+        paymentStatus: "SUCCEEDED",
+        gatewayPaymentId: input.gatewayPaymentId,
+        capturedAt: new Date(),
+        description: marker,
+      },
+    });
+    if (claimed.count === 0) return null;
+    // Ensure CARD leg matches amount so deferred payment_legs_sum_to_amount trigger passes at COMMIT.
+    const updatedLegs = await tx.paymentLeg.updateMany({
+      where: { paymentId: existing.id, source: "CARD" },
+      data: { amountPaise: input.chargedPaise },
+    });
+    if (updatedLegs.count === 0) {
+      await tx.paymentLeg.create({
+        data: {
+          paymentId: existing.id,
+          source: "CARD",
+          amountPaise: input.chargedPaise,
+          sourceRef: input.paymentIntent,
+        },
+      });
+    }
+    await postUnappliedReceipt(tx, {
+      paymentId: existing.id,
+      capturedPaise: input.chargedPaise,
+    });
+    return {
+      kind: "refund",
+      paymentId: existing.id,
+      reason: input.reason,
+      marker,
+    };
+  }
+  await postUnappliedReceipt(tx, {
+    paymentId: existing.id,
+    capturedPaise: existing.amount,
+  });
+  return {
+    kind: "refund",
+    paymentId: existing.id,
+    reason: input.reason,
+    marker: existing.description,
+  };
+}
+
 async function stageCaptureRefund(
   tx: Tx,
   input: {
@@ -227,22 +311,16 @@ async function stageCaptureRefund(
   const marker = `${AUTO_REFUND_PENDING_PREFIX} ${input.reason}. Replay NOT granted.`;
   const existing = await tx.payment.findUnique({
     where: { paymentIntent: input.paymentIntent },
-    select: { id: true, description: true, amount: true },
+    select: {
+      id: true,
+      description: true,
+      amount: true,
+      paymentStatus: true,
+      gatewayPaymentId: true,
+    },
   });
   if (existing) {
-    if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
-      return null;
-    }
-    await postUnappliedReceipt(tx, {
-      paymentId: existing.id,
-      capturedPaise: existing.amount,
-    });
-    return {
-      kind: "refund",
-      paymentId: existing.id,
-      reason: input.reason,
-      marker: existing.description,
-    };
+    return stageExistingCaptureRefund(tx, existing, input, marker);
   }
   const created = await tx.payment.create({
     data: {
@@ -367,7 +445,7 @@ async function settleReplaySale(
     chargedPaise: number;
     charge: ReplayCharge;
     organizationId: string | null;
-    planInfo: ResolvedPurchasePlanInfo | null;
+    planInfo: ResolvedPurchasePlanInfo;
   },
 ): Promise<CaptureOutcome> {
   const {
@@ -379,41 +457,66 @@ async function settleReplaySale(
     organizationId,
     planInfo,
   } = input;
-  const payment =
-    orderPayment ??
-    (await tx.payment.create({
-      data: {
-        userId: input.buyerId,
-        appointmentId: null,
-        amount: chargedPaise,
-        originalAmount: charge.originalAmount,
-        taxAmount: charge.taxAmount,
-        ...(charge.buyerCountry
-          ? {
-              buyerCountry: charge.buyerCountry,
-              isInternational: charge.buyerCountry !== "IN",
-            }
-          : {}),
-        currency: "INR",
-        paymentMethod: "CARD",
-        paymentIntent: orderId,
-        paymentGateway: "RAZORPAY",
-        paymentStatus: "SUCCEEDED",
-        capturedAt: new Date(),
-        description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
-        organizationId,
-        legs: cardLeg(chargedPaise, orderId),
-        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-      },
-    }));
-
-  if (!planInfo) {
-    Sentry.captureMessage(
-      `[recording-purchase] settled without earnings owner: ${orderId}`,
-      { level: "error", tags: { subsystem: "payments" } },
-    );
-    return { kind: "settled", paymentId: payment.id };
-  }
+  const payment = orderPayment
+    ? await (async () => {
+        const updatedLegs = await tx.paymentLeg.updateMany({
+          where: { paymentId: orderPayment.id, source: "CARD" },
+          data: { amountPaise: chargedPaise },
+        });
+        if (updatedLegs.count === 0) {
+          await tx.paymentLeg.create({
+            data: {
+              paymentId: orderPayment.id,
+              source: "CARD",
+              amountPaise: chargedPaise,
+              sourceRef: orderId,
+            },
+          });
+        }
+        return tx.payment.update({
+          where: { id: orderPayment.id },
+          data: {
+            amount: chargedPaise,
+            originalAmount: charge.originalAmount,
+            taxAmount: charge.taxAmount,
+            ...(charge.buyerCountry
+              ? {
+                  buyerCountry: charge.buyerCountry,
+                  isInternational: charge.buyerCountry !== "IN",
+                }
+              : {}),
+            paymentStatus: "SUCCEEDED",
+            capturedAt: new Date(),
+            description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+            ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+          },
+        });
+      })()
+    : await tx.payment.create({
+        data: {
+          userId: input.buyerId,
+          appointmentId: null,
+          amount: chargedPaise,
+          originalAmount: charge.originalAmount,
+          taxAmount: charge.taxAmount,
+          ...(charge.buyerCountry
+            ? {
+                buyerCountry: charge.buyerCountry,
+                isInternational: charge.buyerCountry !== "IN",
+              }
+            : {}),
+          currency: "INR",
+          paymentMethod: "CARD",
+          paymentIntent: orderId,
+          paymentGateway: "RAZORPAY",
+          paymentStatus: "SUCCEEDED",
+          capturedAt: new Date(),
+          description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+          organizationId,
+          legs: cardLeg(chargedPaise, orderId),
+          ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+        },
+      });
 
   await createEarningsFromPayment({
     payment: {
@@ -432,6 +535,42 @@ async function settleReplaySale(
     tx,
   });
   return { kind: "settled", paymentId: payment.id };
+}
+
+function evaluateReplayRejection(input: {
+  purchase: {
+    status: string;
+    recording: {
+      listingStatus: string | null;
+      status: string;
+      storageType: string;
+    } | null;
+  };
+  orderPayment: { description: string | null } | null;
+  orderId: string;
+  gatewayPaymentId?: string;
+}): { paymentIntent: string; reason: string } | null {
+  if (
+    AUTO_REFUND_MARKERS.some((prefix) =>
+      input.orderPayment?.description?.startsWith(prefix),
+    )
+  ) {
+    return {
+      paymentIntent: input.gatewayPaymentId ?? input.orderId,
+      reason: `late capture on replay order ${input.orderId}`,
+    };
+  }
+  const recording = input.purchase.recording;
+  if (
+    input.purchase.status === "FAILED" &&
+    (recording?.listingStatus !== "PUBLISHED" || !isDurablyOurs(recording))
+  ) {
+    return {
+      paymentIntent: input.orderId,
+      reason: `late capture on replay order ${input.orderId}; the replay is no longer purchasable`,
+    };
+  }
+  return null;
 }
 
 export async function handleRecordingPurchaseSuccess(
@@ -587,26 +726,23 @@ export async function handleRecordingPurchaseSuccess(
       const orderPayment = await tx.payment.findUnique({
         where: { paymentIntent: orderId },
       });
-      // A refund already staged for this order is final; never grant over it.
-      if (
-        AUTO_REFUND_MARKERS.some((prefix) =>
-          orderPayment?.description?.startsWith(prefix),
-        )
-      ) {
-        return refundCapture(
-          orderId,
-          `late capture on replay order ${orderId}`,
-        );
+      const rejection = evaluateReplayRejection({
+        purchase,
+        orderPayment,
+        orderId,
+        gatewayPaymentId,
+      });
+      if (rejection) {
+        return refundCapture(rejection.paymentIntent, rejection.reason);
       }
-
-      const recording = purchase.recording;
-      if (
-        purchase.status === "FAILED" &&
-        (recording?.listingStatus !== "PUBLISHED" || !isDurablyOurs(recording))
-      ) {
+      if (!planInfo) {
+        Sentry.captureMessage(
+          `[recording-purchase] capture without earnings owner: ${orderId}`,
+          { level: "error", tags: { subsystem: "payments" } },
+        );
         return refundCapture(
           orderId,
-          `late capture on replay order ${orderId}; the replay is no longer purchasable`,
+          `capture on replay order ${orderId}; recording plan owner is missing`,
         );
       }
 
@@ -657,16 +793,18 @@ export async function handleRecordingPurchaseSuccess(
     return;
   }
   try {
-    await refundBookingPayment({
+    const refundOutcome = await refundBookingPayment({
       paymentId: outcome.paymentId,
       reason: outcome.reason,
       initiatedByUserId: null,
       dedupeKey: `replay-capture:${outcome.paymentId}`,
     });
-    await prisma.payment.updateMany({
-      where: { id: outcome.paymentId, description: outcome.marker },
-      data: { description: settledAutoRefundDescription(outcome.marker) },
-    });
+    if (refundOutcome?.status !== "PENDING") {
+      await prisma.payment.updateMany({
+        where: { id: outcome.paymentId, description: outcome.marker },
+        data: { description: settledAutoRefundDescription(outcome.marker) },
+      });
+    }
   } catch (refundError) {
     // The marker stays pending, so retry-auto-refunds re-drives the refund.
     reportSentryError(refundError, {
