@@ -316,7 +316,7 @@ For a class, the same appointment structure is created during allocation (1 appo
 - Both parties join via `app/meetings/` pages
 - **For classes:** All enrolled consultees + collaborators join the same call
 - **Recording:** If `recordingEnabled = true` on the plan, consultant can start/stop recording
-  - Stored on Stream S3 (14 days), then copied to R2 by the `transfer-recordings` job
+  - Played from Stream S3 while READY; the `transfer-recordings` job copies it to R2 before the 14-day Stream URL expires
 
 ### 5c. After the Session
 
@@ -494,7 +494,7 @@ Recurring events depend on these automated jobs:
 | `transfer-recordings`        | Every 6h      | Copy READY Stream recordings to R2                                             | `jobs/stream/transfer-recordings.ts`                 |
 | `expire-recordings`          | Daily         | Apply recording retention and delete stored assets                             | `jobs/stream/expire-recordings.ts`                   |
 
-All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/` and hit API endpoints in `app/api/cleanup/` that verify a `CRON_SECRET` header.
+All cron jobs are triggered by GitHub Actions workflows in `.github/workflows/`. Rows whose path is under `jobs/` run that script with `npx tsx`; rows under `app/api/cleanup/` call that endpoint with a `CRON_SECRET` header.
 
 ---
 

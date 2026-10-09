@@ -119,10 +119,9 @@ stateDiagram-v2
     TRANSFERRING --> READY: Transfer Error (revert + record attempt)
     TRANSFERRING --> READY: Transfer Cancelled
 
-    READY --> EXPIRED: URL Expired (14 days)
-    EXPIRED --> [*]: Data Lost
-
-    AVAILABLE --> [*]: Permanent Storage
+    READY --> EXPIRED: Stream URL lapsed before the R2 copy (14 days)
+    AVAILABLE --> EXPIRED: Platform retention deadline (expire-recordings)
+    EXPIRED --> [*]: Stored assets deleted
     FAILED --> [*]: Error State
 ```
 
@@ -819,7 +818,7 @@ Receives webhook events from Stream.
 | **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |   No   |
 | **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |   No   |
 
-\*Consultees can only view recordings for webinars/classes they have a live paid enrollment for. As of #689 (STR-1), a successful payment alone is no longer sufficient — the entitlement nets any refunds, so a fully-refunded buyer loses access while a partially-refunded buyer keeps it.
+\*Consultees can play recordings of 1:1, subscription and trial appointments they took part in, and of webinar and class sessions they hold a live seat or entitled payment for (see [Recording Visibility Rules](#recording-visibility-rules)). Entitlement nets refunds: a fully refunded buyer loses access, a partially refunded buyer keeps it.
 
 ### Operator access (ADMIN / STAFF)
 
@@ -885,8 +884,13 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 
 Recordings are private by default. The playback route is the only place a viewer is admitted, and it evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
 
-| Session type | Who may play |
-|
+| Session type                          | Who may play                                                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1:1 consultation, subscription, trial | Only that appointment's participants (consultant, payer, participants, requester). Never plan-wide, never sellable.           |
+| Webinar                               | Attendees (paid or seated) of that run. `WebinarPlan.shareRecordingsWithAllAttendees` extends this to attendees of every run. |
+| Class                                 | Enrolled members. `ClassPlan.lateJoinersGetPastRecordings` shares earlier sessions with late joiners.                         |
+
+The owner and accepted co-presenters always have access, a platform ADMIN has full access, STAFF and organization roles see metadata only, and buyers of a published replay may play it.
 
 ---
 

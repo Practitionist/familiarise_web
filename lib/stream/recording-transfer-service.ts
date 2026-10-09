@@ -285,8 +285,35 @@ async function reportExhaustedTransfers(): Promise<number> {
   return exhausted.length;
 }
 
+async function transferChunked(
+  candidates: { id: string }[],
+  startedAt: number,
+  result: TransferRunResult,
+): Promise<void> {
+  for (let i = 0; i < candidates.length; i += TRANSFER_CONCURRENCY) {
+    if (Date.now() - startedAt > RUN_BUDGET_MS) return;
+    const chunk = candidates.slice(i, i + TRANSFER_CONCURRENCY);
+    const outcomes = await Promise.all(
+      chunk.map(async ({ id }) => ({
+        id,
+        outcome: await transferRecording(id),
+      })),
+    );
+    for (const { id, outcome } of outcomes) {
+      if (outcome.status === "skipped") continue;
+      result.processed++;
+      if (outcome.status === "copied") {
+        result.succeeded++;
+      } else {
+        result.failed++;
+        result.errors.push(`Recording ${id}: ${outcome.error}`);
+      }
+    }
+  }
+}
+
 async function transferRecordingsUnlocked(
-  limit: number,
+  maxRows: number,
 ): Promise<TransferRunResult> {
   const startedAt = Date.now();
   const result: TransferRunResult = {
@@ -307,37 +334,27 @@ async function transferRecordingsUnlocked(
     data: { status: RecordingStatus.READY },
   });
 
-  const candidates = await prisma.recording.findMany({
-    where: {
-      status: RecordingStatus.READY,
-      storageType: RecordingStorageType.STREAM_S3,
-      transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
-      streamUrlExpiresAt: { gt: new Date(startedAt) },
-    },
-    orderBy: { streamUrlExpiresAt: "asc" },
-    take: limit,
-    select: { id: true },
-  });
-
-  for (let i = 0; i < candidates.length; i += TRANSFER_CONCURRENCY) {
-    if (Date.now() - startedAt > RUN_BUDGET_MS) break;
-    const chunk = candidates.slice(i, i + TRANSFER_CONCURRENCY);
-    const outcomes = await Promise.all(
-      chunk.map(async ({ id }) => ({
-        id,
-        outcome: await transferRecording(id),
-      })),
-    );
-    for (const { id, outcome } of outcomes) {
-      if (outcome.status === "skipped") continue;
-      result.processed++;
-      if (outcome.status === "copied") {
-        result.succeeded++;
-      } else {
-        result.failed++;
-        result.errors.push(`Recording ${id}: ${outcome.error}`);
-      }
-    }
+  // Batches repeat until the budget or the backlog runs out; a row already tried this run is not retried.
+  const attempted: string[] = [];
+  while (
+    attempted.length < maxRows &&
+    Date.now() - startedAt <= RUN_BUDGET_MS
+  ) {
+    const candidates = await prisma.recording.findMany({
+      where: {
+        status: RecordingStatus.READY,
+        storageType: RecordingStorageType.STREAM_S3,
+        transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
+        streamUrlExpiresAt: { gt: new Date() },
+        ...(attempted.length > 0 && { id: { notIn: [...attempted] } }),
+      },
+      orderBy: { streamUrlExpiresAt: "asc" },
+      take: Math.min(TRANSFER_BATCH_SIZE, maxRows - attempted.length),
+      select: { id: true },
+    });
+    if (candidates.length === 0) break;
+    attempted.push(...candidates.map((c) => c.id));
+    await transferChunked(candidates, startedAt, result);
   }
 
   result.exhaustedReported = await reportExhaustedTransfers();
@@ -350,13 +367,13 @@ async function transferRecordingsUnlocked(
   return result;
 }
 
-/** Copy the oldest READY recordings whose Stream URL is still live, in a bounded batch. */
+/** Copy READY recordings soonest-expiring first until the run budget, or `limit` rows, is spent. */
 export async function transferRecordings(
   opts: { limit?: number } = {},
 ): Promise<TransferRunResult> {
   return withCronLock(
     "transfer-recordings",
     { failMode: "open", ttlMs: TRANSFER_LOCK_TTL_MS },
-    () => transferRecordingsUnlocked(opts.limit ?? TRANSFER_BATCH_SIZE),
+    () => transferRecordingsUnlocked(opts.limit ?? Number.POSITIVE_INFINITY),
   );
 }

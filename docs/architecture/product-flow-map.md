@@ -23,12 +23,12 @@ flowchart TD
     CL --> CL1["Multi-session curriculum\nTeaching assistants\nAsync content + live sessions"]
 ```
 
-| Product | Who buys | Who delivers | Sessions | Key Mechanic |
-|---|---|---|---|---|
-| **Consultation** | Individual or Org | Solo expert | 1 | Approval gate + doc review |
-| **Subscription** | Individual or Org | Solo expert | 4–32 over weeks | 3 allocation modes + trial funnel |
-| **Webinar** | Many individuals or Org | Expert + co-hosts | 1 | Capacity + waitlist queue |
-| **Class** | Many individuals or Org | Expert + TAs | 6–20 | Curriculum + collaborator splits |
+| Product          | Who buys                | Who delivers      | Sessions        | Key Mechanic                      |
+| ---------------- | ----------------------- | ----------------- | --------------- | --------------------------------- |
+| **Consultation** | Individual or Org       | Solo expert       | 1               | Approval gate + doc review        |
+| **Subscription** | Individual or Org       | Solo expert       | 4–32 over weeks | 3 allocation modes + trial funnel |
+| **Webinar**      | Many individuals or Org | Expert + co-hosts | 1               | Capacity + waitlist queue         |
+| **Class**        | Many individuals or Org | Expert + TAs      | 6–20            | Curriculum + collaborator splits  |
 
 ---
 
@@ -362,7 +362,7 @@ flowchart TD
     SoloRoom --> Session
 
     Session --> TempRecording["Stream copy\n14 days, playable while READY"]
-    TempRecording --> PermRecording["R2 copy (transfer-recordings)\nparticipant access until retention"]
+    TempRecording --> PermRecording["R2 copy (transfer-recordings,\nwithin the 14-day Stream window)\nparticipant access until retention"]
     PermRecording --> PostSession
 
     PostSession["Post-session"] --> CertCheck{Certificate enabled?}
@@ -587,18 +587,18 @@ flowchart LR
 
 Every journey is a combination of these axes:
 
-| Axis | Options |
-|---|---|
-| **Service type** | Consultation · Subscription · Webinar · Class |
-| **Approval mode** | Direct · Requires approval |
-| **Allocation mode** (subscription only) | Auto · Manual · Requested slots |
-| **Trial** (subscription only) | None · Trial no-convert · Trial converts |
-| **Payment source** | Personal card · Org wallet · Org invoice · Org license · Credits+card · Wallet+card |
-| **Capacity** | Available · Waitlist→enrolls · Waitlist→expires |
-| **Collaboration** | Solo consultant · With co-host/TA (revenue split) |
-| **Document review** | None · Consultee uploads · Consultant responds |
-| **Recording** | None · Stream 2-week · Supabase permanent |
-| **Org program cap** | None · Under cap · Overage BLOCK · Overage CHARGE\_MEMBER · Overage CHARGE\_ORG |
+| Axis                                    | Options                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Service type**                        | Consultation · Subscription · Webinar · Class                                       |
+| **Approval mode**                       | Direct · Requires approval                                                          |
+| **Allocation mode** (subscription only) | Auto · Manual · Requested slots                                                     |
+| **Trial** (subscription only)           | None · Trial no-convert · Trial converts                                            |
+| **Payment source**                      | Personal card · Org wallet · Org invoice · Org license · Credits+card · Wallet+card |
+| **Capacity**                            | Available · Waitlist→enrolls · Waitlist→expires                                     |
+| **Collaboration**                       | Solo consultant · With co-host/TA (revenue split)                                   |
+| **Document review**                     | None · Consultee uploads · Consultant responds                                      |
+| **Recording**                           | None · Stream 2-week · Supabase permanent                                           |
+| **Org program cap**                     | None · Under cap · Overage BLOCK · Overage CHARGE\_MEMBER · Overage CHARGE\_ORG     |
 
 **~3,000+ distinct end-to-end paths.** ~15–20 primary journeys cover 90% of real usage. The rest are edge cases handled automatically by the state machine + cron jobs.
 
@@ -625,23 +625,23 @@ flowchart TD
 
 ## Key Files Reference
 
-| Area | Path |
-|---|---|
-| Schema | `prisma/schema.prisma` |
-| Booking architecture | `docs/booking/01-architecture.md` |
-| Booking lifecycle | `docs/booking/06-booking-lifecycle.md` |
-| Slot math | `docs/booking/03-interval-math-and-calculations.md` |
-| Trial sessions | `docs/booking/09-trials.md` |
-| Waitlist system | `docs/booking/11-waitlist-system.md` |
-| Checkout + payment | `docs/booking/10-checkout-payment-integration.md` |
-| Enterprise overview | `docs/enterprise/00-foundations/01-overview.md` |
-| Enterprise scenarios | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
-| Funding & programs | `docs/enterprise/00-foundations/03-funding-and-programs.md` |
-| Enterprise readiness | `docs/enterprise/90-audits/01-readiness-audit.md` |
-| Slot allocation engine | `utils/scheduling-engine/SchedulingService.ts` |
-| Checkout orchestration | `lib/payments/operations/checkout.ts` |
-| Webhook handlers | `lib/payments/webhooks/handlers.ts` |
-| Explore pages | `app/explore/` |
-| Checkout pages | `app/checkout/plans/` |
-| Consultant dashboard | `app/dashboard/consultant/[consultantId]/` |
-| Org dashboard | `app/dashboard/organization/` |
+| Area                   | Path                                                                     |
+| ---------------------- | ------------------------------------------------------------------------ |
+| Schema                 | `prisma/schema.prisma`                                                   |
+| Booking architecture   | `docs/booking/01-architecture.md`                                        |
+| Booking lifecycle      | `docs/booking/06-booking-lifecycle.md`                                   |
+| Slot math              | `docs/booking/03-interval-math-and-calculations.md`                      |
+| Trial sessions         | `docs/booking/09-trials.md`                                              |
+| Waitlist system        | `docs/booking/11-waitlist-system.md`                                     |
+| Checkout + payment     | `docs/booking/10-checkout-payment-integration.md`                        |
+| Enterprise overview    | `docs/enterprise/00-foundations/01-overview.md`                          |
+| Enterprise scenarios   | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
+| Funding & programs     | `docs/enterprise/00-foundations/03-funding-and-programs.md`              |
+| Enterprise readiness   | `docs/enterprise/90-audits/01-readiness-audit.md`                        |
+| Slot allocation engine | `utils/scheduling-engine/SchedulingService.ts`                           |
+| Checkout orchestration | `lib/payments/operations/checkout.ts`                                    |
+| Webhook handlers       | `lib/payments/webhooks/handlers.ts`                                      |
+| Explore pages          | `app/explore/`                                                           |
+| Checkout pages         | `app/checkout/plans/`                                                    |
+| Consultant dashboard   | `app/dashboard/consultant/[consultantId]/`                               |
+| Org dashboard          | `app/dashboard/organization/`                                            |

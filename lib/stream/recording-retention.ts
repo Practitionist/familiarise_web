@@ -222,34 +222,61 @@ async function expireLapsedCopies(now: Date): Promise<number> {
   return lapsed.count;
 }
 
+/** Rows that can be due by age alone; personal group sessions are never due inside 365 days. */
+function dueScanWhere(now: Date): Prisma.RecordingWhereInput {
+  const olderThan = (days: number) => ({
+    lt: new Date(now.getTime() - days * DAY_MS),
+  });
+  return {
+    ...retainableWhere,
+    OR: [
+      { organizationId: null, recordedAt: olderThan(GROUP_RETENTION_DAYS) },
+      {
+        organizationId: null,
+        recordedAt: olderThan(ONE_TO_ONE_RETENTION_DAYS),
+        meeting: {
+          occurrence: {
+            appointment: { webinar: { is: null }, class: { is: null } },
+          },
+        },
+      },
+      {
+        organizationId: { not: null },
+        recordedAt: olderThan(MIN_ORG_RETENTION_DAYS),
+      },
+    ],
+  };
+}
+
+async function isDue(candidate: Candidate, now: Date): Promise<boolean> {
+  // Published and purchased rows are already excluded by retainableWhere.
+  const deadline = recordingRetentionDeadline({
+    now,
+    recordedAt: candidate.recordedAt,
+    session: await resolveSession(candidate),
+    published: false,
+    hasLivePurchase: false,
+    orgRetentionDays: candidate.organizationId
+      ? (candidate.organization?.streamRecordingRetentionDays ?? null)
+      : null,
+  });
+  return deadline !== null && deadline <= now;
+}
+
+/** Oldest first, so rows that are due sort ahead of the not-yet-due ones the scan cap would otherwise spend itself on. */
 async function findDueRecordings(
   now: Date,
   limit: number,
   result: ExpireRecordingsResult,
 ): Promise<Candidate[]> {
   const due: Candidate[] = [];
+  const where = dueScanWhere(now);
   let cursor: string | undefined;
   while (due.length < limit && result.scanned < MAX_SCANNED_PER_RUN) {
     const page = await prisma.recording.findMany({
-      where: {
-        ...retainableWhere,
-        OR: [
-          {
-            organizationId: null,
-            recordedAt: {
-              lt: new Date(now.getTime() - ONE_TO_ONE_RETENTION_DAYS * DAY_MS),
-            },
-          },
-          {
-            organizationId: { not: null },
-            recordedAt: {
-              lt: new Date(now.getTime() - MIN_ORG_RETENTION_DAYS * DAY_MS),
-            },
-          },
-        ],
-      },
+      where,
       select: candidateSelect,
-      orderBy: { id: "asc" },
+      orderBy: [{ recordedAt: "asc" }, { id: "asc" }],
       take: SCAN_PAGE_SIZE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
@@ -258,18 +285,7 @@ async function findDueRecordings(
     cursor = page[page.length - 1].id;
 
     for (const candidate of page) {
-      // Published and purchased rows are already excluded by retainableWhere.
-      const deadline = recordingRetentionDeadline({
-        now,
-        recordedAt: candidate.recordedAt,
-        session: await resolveSession(candidate),
-        published: false,
-        hasLivePurchase: false,
-        orgRetentionDays: candidate.organizationId
-          ? (candidate.organization?.streamRecordingRetentionDays ?? null)
-          : null,
-      });
-      if (deadline && deadline <= now) due.push(candidate);
+      if (await isDue(candidate, now)) due.push(candidate);
       if (due.length >= limit) break;
     }
     if (page.length < SCAN_PAGE_SIZE) break;

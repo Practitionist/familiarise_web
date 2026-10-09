@@ -53,6 +53,33 @@ type RouteParams = {
   }>;
 };
 
+function recordingGoneResponse() {
+  return NextResponse.json(
+    { error: "This recording is no longer available.", expired: true },
+    { status: 410 },
+  );
+}
+
+/**
+ * Every media URL is withheld, not only `playbackUrl`: a thumbnail is a frame of the session and the
+ * preview clip a cut of it. `access.level` is what a consumer branches on, since a null URL alone is ambiguous.
+ */
+function metadataOnlyResponse(
+  metadata: Record<string, unknown>,
+  reason: string,
+) {
+  return NextResponse.json({
+    recording: {
+      ...metadata,
+      playbackUrl: null,
+      thumbnailUrl: null,
+      previewClipUrl: null,
+      previewTranscript: null,
+    },
+    access: { level: "METADATA_ONLY" as const, reason },
+  });
+}
+
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     // Check authentication
@@ -324,26 +351,20 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       createdAt: recording.createdAt,
     };
 
+    // An expired recording is gone for everyone except an operator reading its metadata.
+    if (recording.status === RecordingStatus.EXPIRED) {
+      if (!viaOperatorGrant) return recordingGoneResponse();
+      return metadataOnlyResponse(
+        metadata,
+        "This recording has expired; only its metadata remains.",
+      );
+    }
+
     if (!mayPlay) {
-      // Every media URL is withheld, not only `playbackUrl`. A thumbnail is a
-      // frame of the session and the preview clip is a cut of it, so handing
-      // either over is still handing over the content the cap exists to
-      // protect. `access.level` is what a consumer branches on — a null URL
-      // alone cannot distinguish "not permitted" from "not ready yet".
-      return NextResponse.json({
-        recording: {
-          ...metadata,
-          playbackUrl: null,
-          thumbnailUrl: null,
-          previewClipUrl: null,
-          previewTranscript: null,
-        },
-        access: {
-          level: "METADATA_ONLY" as const,
-          reason:
-            "Playback requires the recordings.play permission; staff receive metadata only.",
-        },
-      });
+      return metadataOnlyResponse(
+        metadata,
+        "Playback requires the recordings.play permission; staff receive metadata only.",
+      );
     }
 
     // Check if Stream URL has expired
@@ -352,13 +373,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       recording.streamUrlExpiresAt &&
       new Date(recording.streamUrlExpiresAt) < new Date()
     ) {
-      return NextResponse.json(
-        {
-          error: "This recording is no longer available.",
-          expired: true,
-        },
-        { status: 410 },
-      );
+      return recordingGoneResponse();
     }
 
     // Get the best available URL (async — generates presigned URL for Supabase)

@@ -155,6 +155,42 @@ describe("transferRecording", () => {
 });
 
 describe("transferRecordings", () => {
+  type CandidateQuery = {
+    where: { id?: { notIn: string[] } };
+    take: number;
+    orderBy?: unknown;
+  };
+  const candidateQueries = () =>
+    recording.findMany.mock.calls
+      .map((c) => c[0] as CandidateQuery)
+      .filter((q) => q.orderBy !== undefined);
+
+  it("keeps fetching batches until the backlog is empty, never retrying a row", async () => {
+    recording.updateMany.mockResolvedValue({ count: 0 });
+    recording.findMany
+      .mockResolvedValueOnce([{ id: "x" }])
+      .mockResolvedValueOnce([{ id: "y" }]);
+
+    await transferRecordings();
+
+    const queries = candidateQueries();
+    expect(queries).toHaveLength(3);
+    expect(queries[0].where.id).toBeUndefined();
+    expect(queries[1].where.id).toEqual({ notIn: ["x"] });
+    expect(queries[2].where.id).toEqual({ notIn: ["x", "y"] });
+  });
+
+  it("stops at an explicit row limit", async () => {
+    recording.updateMany.mockResolvedValue({ count: 0 });
+    recording.findMany.mockResolvedValueOnce([{ id: "x" }]);
+
+    await transferRecordings({ limit: 1 });
+
+    const queries = candidateQueries();
+    expect(queries).toHaveLength(1);
+    expect(queries[0].take).toBe(1);
+  });
+
   it("reports exhausted rows to Sentry once per run and stamps them", async () => {
     recording.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
       { id: "a", lastTransferError: "x" },

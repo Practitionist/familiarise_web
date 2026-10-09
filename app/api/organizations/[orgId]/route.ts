@@ -657,19 +657,30 @@ export async function PATCH(
               category: "SETTINGS",
               action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
               description: "Organization record updated",
-              details: {
-                patch: body,
-                ...(body.streamRecordingRetentionDays !== undefined &&
-                  body.streamRecordingRetentionDays !==
-                    current.streamRecordingRetentionDays && {
-                    streamRecordingRetentionDays: {
-                      previous: current.streamRecordingRetentionDays,
-                      next: body.streamRecordingRetentionDays,
-                    },
-                  }),
-              },
+              details: { patch: body },
             },
           });
+
+          // Retention drives automatic deletion, so it gets its own filterable row.
+          if (
+            body.streamRecordingRetentionDays !== undefined &&
+            body.streamRecordingRetentionDays !==
+              current.streamRecordingRetentionDays
+          ) {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                category: "SYSTEM",
+                action: AUDIT_ACTIONS.SYSTEM.STREAM_RETENTION_CHANGED,
+                description: "Recording retention window changed",
+                details: {
+                  previous: current.streamRecordingRetentionDays,
+                  next: body.streamRecordingRetentionDays,
+                },
+              },
+            });
+          }
 
           return next;
         },

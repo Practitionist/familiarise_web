@@ -206,9 +206,27 @@ describe("expireRecordings", () => {
       listingStatus: { not: "PUBLISHED" },
       purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     });
-    expect(scanWhere.OR[1].recordedAt.lt.getTime()).toBeLessThanOrEqual(
+    const orgArm = scanWhere.OR.find(
+      (arm: { organizationId: unknown }) => arm.organizationId !== null,
+    );
+    expect(orgArm.recordedAt.lt.getTime()).toBeLessThanOrEqual(
       Date.now() - 7 * 24 * 60 * 60 * 1000,
     );
+    // Personal webinar/class rows younger than 365 days can never be due, so they stay out of the scan window.
+    expect(scanWhere.OR).toContainEqual(
+      expect.objectContaining({
+        organizationId: null,
+        meeting: {
+          occurrence: {
+            appointment: { webinar: { is: null }, class: { is: null } },
+          },
+        },
+      }),
+    );
+    expect(mockRecording.findMany.mock.calls[0][0].orderBy).toEqual([
+      { recordedAt: "asc" },
+      { id: "asc" },
+    ]);
     expect(mockAuditCreate.mock.calls[0][0].data.details).toEqual({
       recordingIds: ["r1"],
       count: 1,

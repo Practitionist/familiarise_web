@@ -1215,11 +1215,11 @@ graph TD
     A[Session starts with<br/>recording enabled] --> B[Status: RECORDING<br/>Stored on Stream S3]
     B --> C[Session ends<br/>Status: PROCESSING]
     C --> D[Processing complete<br/>Status: READY]
-    D --> E[Available on Stream S3<br/>for 2 weeks]
-    E --> F[Approaching expiry<br/>Cron job marks EXPIRED]
-    F --> G[Transfer job runs<br/>Status: TRANSFERRING]
-    G --> H[Uploaded to Supabase<br/>Status: AVAILABLE]
-    H --> I[Permanently accessible<br/>from consultant/consultee dashboard]
+    D --> E[Playable from Stream S3<br/>for 14 days]
+    E --> G[transfer-recordings copies it<br/>Status: TRANSFERRING]
+    G --> H[Stored in Cloudflare R2<br/>Status: AVAILABLE]
+    E --> X[Stream URL lapses uncopied<br/>Status: EXPIRED]
+    H --> I[Retention deadline passes<br/>expire-recordings marks EXPIRED]
 ```
 
 ---
@@ -1439,7 +1439,7 @@ erDiagram
 | **Webhook**         | HTTP callback — payment gateways send these to confirm payment status                                |
 | **Cron Job**        | Scheduled task that runs periodically (e.g., every hour) to maintain platform health                 |
 | **Idempotency Key** | Unique identifier ensuring an operation only executes once (prevents double payments/payouts)        |
-| **Cold Storage**    | Long-term storage (Supabase) vs temporary storage (Stream S3 for 2 weeks)                            |
+| **Cold Storage**    | Recording storage in Cloudflare R2 until the retention deadline vs temporary Stream S3 (14 days)     |
 | **RBAC**            | Role-Based Access Control — different features visible based on user role                            |
 | **UTC**             | Coordinated Universal Time — all time slots stored in UTC, converted to local time for display       |
 | **Hold Period**     | Time between payment and payout eligibility (dispute protection window)                              |

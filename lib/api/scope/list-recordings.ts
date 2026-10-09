@@ -62,16 +62,15 @@ const recordingMetadataSelect = {
   organization: { select: { id: true, name: true, slug: true } },
 } satisfies Prisma.RecordingSelect;
 
-/** Participant arms only. Everything here reaches, or resolves to, the media. */
+/**
+ * Participant arms only. Never select `recordingUrl`, `storagePath` or Stream ids:
+ * playback goes through `GET /api/stream/recordings/[id]`, which applies the access rules.
+ */
 const recordingParticipantSelect = {
   ...recordingMetadataSelect,
-  recordingUrl: true,
-  storagePath: true,
   thumbnailUrl: true,
   previewClipUrl: true,
   previewClipDuration: true,
-  streamRecordingId: true,
-  streamCallId: true,
   streamUrlExpiresAt: true,
   storageType: true,
   fileSize: true,

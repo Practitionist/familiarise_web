@@ -551,7 +551,19 @@ function RecordingRetentionCard({
           onChange={(e) => setDays(e.target.value)}
           placeholder="Platform schedule"
           className="max-w-[12rem]"
+          aria-invalid={!valid}
+          aria-describedby="recording-retention-hint"
         />
+        {valid ? (
+          <p id="recording-retention-hint" className="text-xs text-zinc-500">
+            Between 7 and 3650 days. Leave empty to follow the platform
+            schedule.
+          </p>
+        ) : (
+          <p id="recording-retention-hint" className="text-xs text-red-600">
+            Enter a whole number of days between 7 and 3650, or leave it empty.
+          </p>
+        )}
       </CardContent>
       <CardFooter>
         <Button onClick={() => void save()} disabled={saving || !valid}>

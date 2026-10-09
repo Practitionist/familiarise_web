@@ -80,6 +80,32 @@ function buildSlug(title: string, id: string): string {
   return `${base || "recording"}-${id.slice(-6).toLowerCase()}`;
 }
 
+async function parsePublishBody(
+  request: NextRequest,
+): Promise<z.infer<typeof PublishSchema> | NextResponse> {
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "INVALID_INPUT" },
+      { status: 400 },
+    );
+  }
+  const parsed = PublishSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "Invalid input",
+        details: parsed.error.issues,
+        code: "INVALID_INPUT",
+      },
+      { status: 400 },
+    );
+  }
+  return parsed.data;
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
@@ -93,26 +119,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON body", code: "INVALID_INPUT" },
-        { status: 400 },
-      );
-    }
-    const parsed = PublishSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid input",
-          details: parsed.error.issues,
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
-    }
+    const parsed = await parsePublishBody(request);
+    if (parsed instanceof NextResponse) return parsed;
     const {
       listingTitle,
       listingDescription,
@@ -120,7 +128,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       tags,
       slug,
       previewTranscript,
-    } = parsed.data;
+    } = parsed;
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
