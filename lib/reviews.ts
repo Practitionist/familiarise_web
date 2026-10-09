@@ -2,10 +2,21 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
+  RatingCause,
   ReviewTrack,
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
 } from "@prisma/client";
+
+/** Clears `ratingCause` on 4–5 star ratings; preserves stored cause when omitted on <=3 star updates. */
+export function resolveRatingCausePatch(
+  rating: number,
+  ratingCause?: RatingCause | null,
+): { ratingCause?: RatingCause | null } {
+  if (rating > 3) return { ratingCause: null };
+  if (ratingCause !== undefined) return { ratingCause };
+  return {};
+}
 
 /**
  * #705 / #1300 — the publication gates are code constants, not columns and not
@@ -278,6 +289,7 @@ export interface ReviewableSession {
     id: string;
     rating: number;
     reviewDescription: string | null;
+    ratingCause: RatingCause | null;
   } | null;
 }
 
@@ -461,6 +473,7 @@ type ExistingReview = {
   id: string;
   rating: number;
   reviewDescription: string | null;
+  ratingCause: RatingCause | null;
   isAnonymous: boolean;
 };
 
@@ -553,6 +566,7 @@ async function reviewsByConsultant(
       id: true,
       rating: true,
       reviewDescription: true,
+      ratingCause: true,
       isAnonymous: true,
       consultantProfileId: true,
       track: true,

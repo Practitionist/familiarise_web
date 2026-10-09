@@ -37,7 +37,13 @@ const getStatusColor = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "CHARGE_REFUNDED":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
     default:
       return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
   }
@@ -46,6 +52,7 @@ const getStatusColor = (status: string) => {
 const getStatusIcon = (status: string) => {
   switch (status.toUpperCase()) {
     case "WON":
+    case "CHARGE_REFUNDED":
       return <CheckCircle className="h-4 w-4" />;
     case "LOST":
       return <XCircle className="h-4 w-4" />;
@@ -53,7 +60,11 @@ const getStatusIcon = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return <AlertTriangle className="h-4 w-4" />;
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return <Clock className="h-4 w-4" />;
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return <AlertCircle className="h-4 w-4" />;
     default:
       return null;
   }
@@ -161,13 +172,11 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
-  // Only Razorpay disputes have an evidence form.
+  // Only Razorpay disputes awaiting response accept evidence submissions.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
     dispute.paymentGateway === "RAZORPAY" &&
-    ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
-      dispute.status,
-    );
+    dispute.status === "NEEDS_RESPONSE";
 
   return (
     <div className="space-y-6">
@@ -213,9 +222,9 @@ export function DisputeDetailPage({
           <AlertDescription>
             This dispute is due{" "}
             {daysUntilDue === 0 ? "today" : `in ${daysUntilDue} days`}.
-            {allowEvidenceSubmission
-              ? " Submit evidence as soon as possible."
-              : " Please escalate to an admin immediately for evidence submission."}
+            {canSubmitEvidence && " Submit evidence as soon as possible."}
+            {!allowEvidenceSubmission &&
+              " Please escalate to an admin immediately for evidence submission."}
           </AlertDescription>
         </Alert>
       )}
@@ -421,6 +430,16 @@ export function DisputeDetailPage({
                     : String(dispute.evidence)}
                 </pre>
               </div>
+            </div>
+          ) : dispute.evidenceSubmittedAt ? (
+            // Evidence is withheld from viewers without disputes.manage; its submission is not.
+            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
+              <FileText className="h-12 w-12 mb-4 text-zinc-300" />
+              <p className="font-medium">
+                Evidence was submitted on{" "}
+                {formatDate(dispute.evidenceSubmittedAt)}. Only admins can view
+                it.
+              </p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-zinc-500">

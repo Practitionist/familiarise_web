@@ -20,12 +20,18 @@ import type {
   SupportThreadStatus,
 } from "@prisma/client";
 import { seatOrganizationId } from "@/lib/booking/participants";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
-import { decideEscalation } from "./escalation";
+import {
+  decideEscalation,
+  escalationBrief,
+  isBareHumanRequest,
+} from "./escalation";
 import { issueTypeForReason, priorityForReason } from "./priority";
 import {
+  notifyRequesterOfTicket,
   notifySupportStaff,
   notifyStaffOfTicketActivity,
 } from "./create-ticket";
@@ -592,6 +598,8 @@ async function escalate(
     organizationId: string | null;
     referenceNumber: string | null;
     userId: string;
+    ackDueAt: Date | null;
+    createdAt: Date;
   } | null = null;
 
   // The first stored message of this turn — the stable id the ops bell is
@@ -599,16 +607,7 @@ async function escalate(
   let turnMessageId: string | undefined;
   const ticketId = await prisma.$transaction(
     async (tx) => {
-      // Claim the thread FIRST, compare-and-set on CLOSED, before anything is
-      // written. This was the third write door and the only one left unguarded:
-      // the self-serve turn and `persistHumanTurn` both refuse a settled
-      // thread, while this one flipped `status` unconditionally, so any intent
-      // chip silently reopened a conversation staff had closed. It was also the
-      // worst place for the gap, because closing a thread clears
-      // `supportTicketId` — so the reopen minted a SECOND ticket, with its own
-      // reference and its own SLA clock, while the first sat resolved in the
-      // queue. `supportTicketId` is set by a second update below, once the
-      // ticket exists; both share this transaction.
+      // Claim first, CAS on not-CLOSED: a settled thread is never reopened or given a second ticket.
       const claimed = await tx.appointmentSupportThread.updateMany({
         where: { id: threadId, status: { not: "CLOSED" } },
         data: {
@@ -620,9 +619,15 @@ async function escalate(
         },
       });
       if (claimed.count === 0) return null;
-      // Same rule as the self-serve turn: record the chip the user pressed, so
-      // the escalated transcript staff read contains both halves. An escalating
-      // chip arrives WITH the user's description (#1527), so both are kept.
+
+      const priorTurns = (
+        await tx.supportMessage.findMany({
+          where: { threadId },
+          orderBy: { seq: "desc" },
+          take: 6,
+        })
+      ).reverse();
+
       const userSaid = [turn.chosenLabel, userMessage].filter(
         (s): s is string => !!s,
       );
@@ -649,44 +654,55 @@ async function escalate(
 
       let linkedTicketId = existingTicketId;
       if (linkedTicketId) {
-        // A RESOLVED thread re-escalating on a new intent reuses its ticket;
-        // the queue must see it again (same CAS as persistHumanTurn).
         await tx.supportTicket.updateMany({
           where: { id: linkedTicketId, status: "RESOLVED" },
           data: { status: "OPEN", resolvedAt: null },
         });
       } else {
-        // Both inside the ticket's own transaction: a rolled-back escalation must
-        // not leave a live reference behind, and must not start an SLA clock for
-        // a ticket that does not exist.
         const openedAt = new Date();
         const referenceNumber = await allocateTicketReference(tx, openedAt);
         const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
           priority,
           openedAt,
         );
+        const priorUserSteps = priorTurns
+          .filter((t) => t.sender === "USER")
+          .map((t) => t.body);
+        const pathSteps = [
+          ...priorUserSteps,
+          ...(turn.chosenLabel ? [turn.chosenLabel] : []),
+        ].filter(Boolean);
+        const lastBotMessage =
+          turn.messages.find((m) => m.sender === "BOT")?.body ??
+          priorTurns.filter((t) => t.sender === "BOT").at(-1)?.body;
+        const typed = userMessage?.trim();
+        const customerAsk =
+          typed && !isBareHumanRequest(typed)
+            ? typed
+            : (priorUserSteps.filter((b) => !isBareHumanRequest(b)).at(-1) ??
+              (turn.chosenLabel?.trim() || null));
+
         const ticket = await tx.supportTicket.create({
           data: {
             userId: ctx.userId,
             title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
-            // #1527: the user's own words lead, so staff aren't handed a blank ticket.
-            description: [
-              userMessage,
-              `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
+            description: stripCallbackTags(
+              escalationBrief({
+                customerAsk,
+                path: pathSteps.join(" → ") || null,
+                botSaid: lastBotMessage ?? null,
+                reason: effectiveReason,
+                topic: category,
+              }),
+            ),
             priority,
             referenceNumber,
+            lastMessageAt: openedAt,
             ackDueAt,
             resolutionDueAt,
             category,
-            // The machine-readable half of the terminal reason. Without it every
-            // session escalation reached ops as an untyped row and none of the
-            // session-scoped issue types was reachable anywhere in the product.
             issueType: issueType ?? undefined,
             paymentId: ctx.paymentId,
-            // Org attribution for the ops queue's org filter (null = B2C).
             organizationId: ctx.organizationId,
           },
           select: {
@@ -695,31 +711,24 @@ async function escalate(
             organizationId: true,
             referenceNumber: true,
             userId: true,
+            ackDueAt: true,
+            createdAt: true,
           },
         });
         linkedTicketId = ticket.id;
         createdTicket = ticket;
       }
 
-      // The link, now that the ticket exists. Unconditional by design: the
-      // claim above already proved this thread is ours for the length of the
-      // transaction.
       await tx.appointmentSupportThread.update({
         where: { id: threadId },
         data: { supportTicketId: linkedTicketId },
       });
       return linkedTicketId;
     },
-    // Allocation budget: this transaction also queues on the reference counter.
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
   );
 
   if (ticketId === null) {
-    // The claim lost, so the whole transaction wrote nothing: no messages, no
-    // ticket, no link. Report where the thread actually is and that the turn
-    // was not stored — the same `accepted: false` contract the self-serve path
-    // uses, which is what the drawer's "your message wasn't sent" recovery
-    // reads. No deflection row either: a refused escalation is not one.
     const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
       where: { id: threadId },
       select: {
@@ -754,19 +763,39 @@ async function escalate(
     organizationId: ctx.organizationId,
   });
 
-  // Committed — now it is safe to page the queue. Fire-and-forget for the same
-  // reason the factory does it: a notification failure must not turn a
-  // successful escalation into a 500 and have the user retry into a duplicate.
   if (createdTicket) {
-    await notifySupportStaff(createdTicket).catch((error) => {
-      console.error("support: staff notification failed for escalation", {
-        ticketId: (createdTicket as { id: string }).id,
-        error,
-      });
-    });
+    const minted: {
+      id: string;
+      title: string;
+      organizationId: string | null;
+      referenceNumber: string | null;
+      userId: string;
+      ackDueAt: Date | null;
+      createdAt: Date;
+    } = createdTicket;
+    await Promise.all([
+      notifySupportStaff(minted).catch((error) => {
+        console.error("support: staff notification failed for escalation", {
+          ticketId: minted.id,
+          error,
+        });
+      }),
+      notifyRequesterOfTicket({
+        id: minted.id,
+        title: minted.title,
+        referenceNumber: minted.referenceNumber,
+        userId: minted.userId,
+        ackDueAt: minted.ackDueAt,
+        createdAt: minted.createdAt,
+        organizationId: minted.organizationId,
+      }).catch((error) => {
+        console.error("support: requester receipt failed for escalation", {
+          ticketId: minted.id,
+          error,
+        });
+      }),
+    ]);
   } else {
-    // Reused ticket: the ball is back with us, so the clock and the queue's
-    // activity feed move exactly as they do for a plain reply.
     await resumeTicketClock(ticketId).catch((error) => {
       console.error("support: SLA resume failed", { ticketId, error });
     });

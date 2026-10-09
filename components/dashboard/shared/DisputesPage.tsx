@@ -50,7 +50,13 @@ const getStatusColor = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "CHARGE_REFUNDED":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
     default:
       return "bg-muted text-muted-foreground";
   }
@@ -59,6 +65,7 @@ const getStatusColor = (status: string) => {
 const getStatusIcon = (status: string) => {
   switch (status.toUpperCase()) {
     case "WON":
+    case "CHARGE_REFUNDED":
       return <CheckCircle className="h-3 w-3" />;
     case "LOST":
       return <XCircle className="h-3 w-3" />;
@@ -66,7 +73,11 @@ const getStatusIcon = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return <AlertTriangle className="h-3 w-3" />;
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return <Clock className="h-3 w-3" />;
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return <AlertCircle className="h-3 w-3" />;
     default:
       return null;
   }
@@ -379,8 +390,14 @@ export function DisputesPage({
                   Warning - Needs Response
                 </SelectItem>
                 <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
+                <SelectItem value="WARNING_UNDER_REVIEW">
+                  Warning - Under Review
+                </SelectItem>
+                <SelectItem value="CHARGE_REFUNDED">Charge Refunded</SelectItem>
                 <SelectItem value="WON">Won</SelectItem>
                 <SelectItem value="LOST">Lost</SelectItem>
+                <SelectItem value="CLOSED">Closed</SelectItem>
+                <SelectItem value="WARNING_CLOSED">Warning - Closed</SelectItem>
               </SelectContent>
             </Select>
             <Select

@@ -1,13 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   publicReviewSelect,
   sanitisePublicReview,
   sanitisePublicReviews,
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
-import { notifyNewReview } from "@/lib/novu";
+import { attemptTrigger, notifyNewReview } from "@/lib/novu";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
@@ -19,10 +19,47 @@ import {
   ModeratedReviewError,
   pickExistingReview,
   recomputeConsultantRating,
+  resolveRatingCausePatch,
   resolveReviewableSession,
 } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { z } from "zod";
+
+async function recordReviewRevisionIfChanged(
+  tx: Tx,
+  existing: {
+    id: string;
+    rating: number;
+    reviewDescription: string | null;
+    repliedAt: Date | null;
+    replyDeletedAt: Date | null;
+  },
+  nextRating: number,
+  nextDescription: string | null | undefined,
+): Promise<void> {
+  // Only a changed opinion is an edit; an identical re-submit is idempotent.
+  const textChanged =
+    existing.rating !== nextRating ||
+    (existing.reviewDescription ?? null) !== (nextDescription ?? null);
+  if (!textChanged) return;
+
+  // Allocated by an atomic increment (row lock), never from the earlier read.
+  const bumped = await tx.consultantReview.update({
+    where: { id: existing.id },
+    data: { revisionNo: { increment: 1 }, editedAt: new Date() },
+    select: { revisionNo: true },
+  });
+  await tx.consultantReviewRevision.create({
+    data: {
+      reviewId: existing.id,
+      revisionNo: bumped.revisionNo - 1,
+      rating: existing.rating,
+      reviewDescription: existing.reviewDescription,
+      afterPublicReply:
+        existing.repliedAt !== null && existing.replyDeletedAt === null,
+    },
+  });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -207,6 +244,7 @@ export async function POST(req: NextRequest) {
           // documented order. Only what the notification below reads.
           const select = {
             ...publicReviewSelect,
+            updatedAt: true,
             consultantProfile: {
               select: { userId: true, user: { select: { name: true } } },
             },
@@ -217,47 +255,13 @@ export async function POST(req: NextRequest) {
 
           let created;
           if (existing) {
-            // Only a changed OPINION is an edit. Re-submitting the same stars and
-            // the same words is idempotent, so it must not manufacture a
-            // revision or stamp `editedAt` — otherwise a double-tapped Save reads
-            // as "this person keeps changing their mind".
-            const textChanged =
-              existing.rating !== validatedData.rating ||
-              (existing.reviewDescription ?? null) !==
-                (validatedData.reviewDescription ?? null);
+            await recordReviewRevisionIfChanged(
+              tx,
+              existing,
+              validatedData.rating,
+              validatedData.reviewDescription,
+            );
 
-            if (textChanged) {
-              // The revision number is allocated by an atomic increment on the
-              // review row, never from the `existing` read: two editors who both
-              // read N would otherwise both insert revision N and the loser got a
-              // P2002 that `withSerializableRetry` does not retry. The increment
-              // takes the row lock, so the loser aborts with P2034 and retries.
-              const bumped = await tx.consultantReview.update({
-                where: { id: existing.id },
-                data: { revisionNo: { increment: 1 }, editedAt: new Date() },
-                select: { revisionNo: true },
-              });
-              // The trail stores what the review USED to say.
-              await tx.consultantReviewRevision.create({
-                data: {
-                  reviewId: existing.id,
-                  revisionNo: bumped.revisionNo - 1,
-                  rating: existing.rating,
-                  reviewDescription: existing.reviewDescription,
-                  // Recorded for moderation context. It does NOT decide whether
-                  // the public surface marks the edit — every edit is marked, or
-                  // a consultant could reply to everything and brand every
-                  // subsequent revision.
-                  afterPublicReply:
-                    existing.repliedAt !== null &&
-                    existing.replyDeletedAt === null,
-                },
-              });
-            }
-
-            // Provenance moves as ONE fact — appointment, session clock, track
-            // and event key together. The row is either this (track, event)'s own
-            // or a NULL-track legacy row being adopted into it (#1549).
             created = await tx.consultantReview.update({
               where: { id: existing.id },
               data: {
@@ -266,11 +270,14 @@ export async function POST(req: NextRequest) {
                 appointmentId: reviewable.appointmentId,
                 track: reviewable.track,
                 ratingUnitId: reviewable.ratingUnitId,
-                // `heldAt` is the slot's end, never now(). Kept when unknown (offline).
                 ...(reviewable.heldAt
                   ? { ratedOccurrenceAt: reviewable.heldAt }
                   : {}),
                 isAnonymous: validatedData.isAnonymous ?? undefined,
+                ...resolveRatingCausePatch(
+                  validatedData.rating,
+                  validatedData.ratingCause,
+                ),
                 ...(withdrawnByAuthor
                   ? { deletedAt: null, removedBy: null }
                   : {}),
@@ -286,11 +293,12 @@ export async function POST(req: NextRequest) {
                 consulteeProfileId: sessionConsulteeProfileId,
                 appointmentId: reviewable.appointmentId,
                 isAnonymous: validatedData.isAnonymous ?? false,
+                ...resolveRatingCausePatch(
+                  validatedData.rating,
+                  validatedData.ratingCause ?? null,
+                ),
                 track: reviewable.track,
-                // Group only — see lib/reviews.ts. NULL on a 1:1 review, where
-                // the review is already one data point.
                 ratingUnitId: reviewable.ratingUnitId,
-                // The SESSION's clock: provenance, never refreshed by an edit.
                 ratedOccurrenceAt: reviewable.heldAt,
               },
               select,
@@ -299,33 +307,46 @@ export async function POST(req: NextRequest) {
 
           await recomputeConsultantRating(tx, created.consultantProfileId);
 
-          // A revived withdrawal is news to the consultant just as a first
-          // review is: the profile regains a review they were not told about.
-          return { review: created, isNew: !existing || withdrawnByAuthor };
+          // Only a new or revived review is news; an edit must not re-notify.
+          const isNew = !existing || withdrawnByAuthor;
+          let stagedBell = null;
+          if (isNew) {
+            // An anonymous reviewer's name is never sent to the consultant.
+            const reviewerName = created.isAnonymous
+              ? "A verified client"
+              : created.consulteeProfile?.user?.name || "User";
+            const reviewsInboxHref = goHref("expert", "reviews");
+            const triggerResult = await notifyNewReview(
+              created.consultantProfile.userId,
+              {
+                reviewerName,
+                rating: created.rating,
+                comment: created.reviewDescription || undefined,
+                planTitle: reviewable.title,
+                dashboardUrl: reviewsInboxHref,
+              },
+              `review-published:${created.id}:${created.updatedAt.getTime()}`,
+              { tx },
+            );
+            stagedBell = triggerResult.staged ?? null;
+          }
+
+          return { review: created, isNew, stagedBell };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    const { review: newReview, isNew } = writeResult;
+    const { review: newReview, isNew, stagedBell } = writeResult;
 
-    // Only a NEW (or revived) review is news; an edit must not re-notify.
     if (isNew) {
-      // The reviewer withheld their name from the public page; sending it to
-      // the consultant in a notification would hand back exactly what the
-      // flag exists to withhold, and to the one person it is kept from.
+      if (stagedBell) {
+        await attemptTrigger(stagedBell);
+      }
       const reviewerName = newReview.isAnonymous
         ? "A verified client"
         : newReview.consulteeProfile?.user?.name || "User";
       const reviewsInboxHref = goHref("expert", "reviews");
-      await notifyNewReview(newReview.consultantProfile.userId, {
-        reviewerName,
-        rating: newReview.rating,
-        comment: newReview.reviewDescription || undefined,
-        planTitle: reviewable.title,
-        dashboardUrl: reviewsInboxHref,
-      });
-      // #1653 — the email twin of the bell; the sender never throws.
       await sendNewReviewEmail(
         {
           reviewId: newReview.id,
@@ -339,14 +360,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Reviews are the landing page's testimonials and they move the expert's
-    // denormalized rating, which orders the directory — both surfaces are stale
-    // until purged, and the landing page's window is an hour.
     purgeReviewSurfaces(newReview.consultantProfileId);
 
-    // The public shape, exactly as a reader would get it: a removed reply is
-    // stripped and the consultant's user id (notification-only) does not travel.
-    const { consultantProfile, ...publicRow } = newReview;
+    const {
+      consultantProfile,
+      updatedAt: _updatedAt,
+      ...publicRow
+    } = newReview;
     return NextResponse.json(
       sanitisePublicReview({
         ...publicRow,
