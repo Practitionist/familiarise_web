@@ -98,7 +98,11 @@ export function PayoutsBoard() {
     }
   };
 
-  const { data: trendData, isLoading: trendLoading } = useQuery({
+  const {
+    data: trendData,
+    isLoading: trendLoading,
+    isError: trendError,
+  } = useQuery({
     queryKey: ["admin-payout-trend"],
     queryFn: fetchPayoutTrend,
     staleTime: 60 * 1000,
@@ -118,10 +122,16 @@ export function PayoutsBoard() {
   const hasAnyTrendData = chartData.some((d) => d.total > 0);
   let trendBody = (
     <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
-      Analytics coming soon
+      No payouts in the last 7 days
     </div>
   );
   if (trendLoading) trendBody = <Skeleton className="h-[200px] w-full" />;
+  else if (trendError)
+    trendBody = (
+      <div className="flex h-[200px] items-center justify-center text-sm text-destructive">
+        Failed to load payout trend data
+      </div>
+    );
   else if (hasAnyTrendData) trendBody = <PayoutsChart data={chartData} />;
 
   return (

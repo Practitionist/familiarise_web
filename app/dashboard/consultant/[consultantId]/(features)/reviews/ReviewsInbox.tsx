@@ -8,7 +8,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { MessageSquareQuote, Star } from "lucide-react";
+import { Flag, MessageSquareQuote, Share2, Star } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -19,13 +19,40 @@ import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useListParams } from "@/hooks/useListParams";
 import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
+import { SocialShareDialog } from "./SocialShareDialog";
+
+function formatShareReviewerName(rawName: string | null | undefined): string {
+  const trimmed = rawName?.trim();
+  if (!trimmed || trimmed.includes("@")) return "a verified learner";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "a verified learner";
+  if (parts.length === 1) return parts[0];
+  const lastInitial = parts.at(-1)?.[0] ?? "";
+  return `${parts[0]} ${lastInitial}.`;
+}
 
 const reviewsKey = (consultantId: string) => ["own-reviews", consultantId];
 
@@ -44,6 +71,19 @@ const RATING_OPTIONS = [5, 4, 3, 2, 1].map((n) => ({
   value: String(n),
   label: `${n}★`,
 }));
+
+const TRACK_OPTIONS = [
+  { value: null, label: "All tracks" },
+  { value: "ONE_TO_ONE", label: "1:1" },
+  { value: "GROUP", label: "Group" },
+] as const;
+
+const REPORT_REASONS = [
+  { value: "SPAM_OR_FAKE", label: "Spam or unverified claim" },
+  { value: "HARASSMENT_OR_ABUSE", label: "Harassment or abusive language" },
+  { value: "OFF_TOPIC", label: "Irrelevant or off-topic" },
+  { value: "OTHER", label: "Other policy concern" },
+] as const;
 
 function Stars({ rating }: Readonly<{ rating: number }>) {
   return (
@@ -71,7 +111,6 @@ function Stars({ rating }: Readonly<{ rating: number }>) {
 const onDay = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
 
-/** #1300 — two published scores, 1:1 and group, never one blended number. */
 function ScoreRow({
   summary,
 }: Readonly<{ summary: NonNullable<OwnReviewsPage["summary"]> }>) {
@@ -146,11 +185,23 @@ function ReplyEditor({
 function ReviewCard({
   review,
   consultantId,
-}: Readonly<{ review: OwnReviewRow; consultantId: string }>) {
+  shareHref,
+}: Readonly<{
+  review: OwnReviewRow;
+  consultantId: string;
+  shareHref: string;
+}>) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<string>(
+    REPORT_REASONS[0].value,
+  );
+  const [reportDetails, setReportDetails] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+
   const replyUrl = `/api/user/reviews/${review.id}/reply`;
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: reviewsKey(consultantId) });
@@ -178,6 +229,38 @@ function ReviewCard({
       }),
   });
 
+  const reportMutation = useMutation({
+    mutationFn: async () =>
+      requireJsonResponse(
+        await fetch("/api/report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "REVIEW",
+            reviewId: review.id,
+            reason: reportReason,
+            description: reportDetails.trim() || undefined,
+          }),
+        }),
+        "Couldn't submit report",
+      ),
+    onSuccess: () => {
+      setReportOpen(false);
+      setReportReason(REPORT_REASONS[0].value);
+      setReportDetails("");
+      toast({
+        title: "Review reported",
+        description: "Our moderation team will review it shortly.",
+      });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Couldn't submit report",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+
   const remove = async () => {
     await requireJsonResponse(
       await fetch(replyUrl, { method: "DELETE" }),
@@ -186,6 +269,16 @@ function ReviewCard({
     toast({ title: "Reply deleted" });
     await refresh();
   };
+
+  const isEdited = review.editCount > 0;
+  const fullShareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${shareHref}`
+      : shareHref;
+  const displayReviewer = formatShareReviewerName(review.reviewer?.name);
+  const shareText = review.body
+    ? `"${review.body}" — ${displayReviewer} (${review.rating}★)\n\nBook a session with me on Familiarise: ${fullShareUrl}`
+    : `${review.rating}★ review from ${displayReviewer} on Familiarise!\n\nBook a session with me: ${fullShareUrl}`;
 
   return (
     <li className="px-4 py-4 sm:px-5">
@@ -201,9 +294,9 @@ function ReviewCard({
             size="sm"
           />
         )}
+        {isEdited && <StatusBadge label="Edited" tone="neutral" size="sm" />}
         <span className="text-xs text-muted-foreground">
           {onDay(review.createdAt)}
-          {review.editedAt ? " · edited" : ""}
         </span>
       </div>
       {review.offeringTitle && (
@@ -248,16 +341,37 @@ function ReviewCard({
           reply again.
         </p>
       )}
-      {!review.reply && !review.replyRemovedByModeration && !editing && (
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {!review.reply && !review.replyRemovedByModeration && !editing && (
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            Reply
+          </Button>
+        )}
+        {!review.isOrgSponsored && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setShareOpen(true)}
+            className="gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Share2 className="h-3.5 w-3.5" aria-hidden />
+            Share review
+          </Button>
+        )}
         <Button
+          type="button"
           size="sm"
-          variant="outline"
-          className="mt-3"
-          onClick={() => setEditing(true)}
+          variant="ghost"
+          onClick={() => setReportOpen(true)}
+          className="gap-1.5 text-muted-foreground hover:text-foreground"
         >
-          Reply
+          <Flag className="h-3.5 w-3.5" aria-hidden />
+          Report review
         </Button>
-      )}
+      </div>
+
       {editing && (
         <ReplyEditor
           initial={review.reply?.body ?? ""}
@@ -276,6 +390,87 @@ function ReviewCard({
         tone="destructive"
         onConfirm={remove}
       />
+
+      {!review.isOrgSponsored && (
+        <SocialShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share this review"
+          description="Includes your signed personal link (?via=) so buyers who first book through it use your personal-link platform fee rate."
+          postText={shareText}
+          shareUrl={fullShareUrl}
+          textareaAriaLabel="Review share post"
+          copyLabel="Copy quote & link"
+          copiedLabel="Copied"
+        />
+      )}
+
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Report this review</DialogTitle>
+            <DialogDescription>
+              Flag a review that violates community guidelines.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label
+                htmlFor={`report-reason-${review.id}`}
+                className="text-xs font-medium text-foreground"
+              >
+                Reason
+              </label>
+              <Select value={reportReason} onValueChange={setReportReason}>
+                <SelectTrigger id={`report-reason-${review.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {REPORT_REASONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label
+                htmlFor={`report-details-${review.id}`}
+                className="text-xs font-medium text-foreground"
+              >
+                Additional context (optional)
+              </label>
+              <Textarea
+                id={`report-details-${review.id}`}
+                value={reportDetails}
+                onChange={(e) => setReportDetails(e.target.value)}
+                rows={3}
+                placeholder="Share details for our moderation team..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setReportOpen(false)}
+              disabled={reportMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => reportMutation.mutate()}
+              disabled={reportMutation.isPending}
+            >
+              {reportMutation.isPending ? "Submitting…" : "Submit report"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </li>
   );
 }
@@ -284,19 +479,24 @@ function ReviewList({
   consultantId,
   needsReply,
   rating,
+  track,
+  shareHref,
 }: Readonly<{
   consultantId: string;
   needsReply: boolean;
   rating: string | null;
+  track: string | null;
+  shareHref: string;
 }>) {
   const query = useInfiniteQuery({
-    queryKey: [...reviewsKey(consultantId), { needsReply, rating }],
+    queryKey: [...reviewsKey(consultantId), { needsReply, rating, track }],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams();
       if (pageParam) params.set("cursor", pageParam);
       if (needsReply) params.set("needsReply", "1");
       if (rating) params.set("rating", rating);
+      if (track) params.set("track", track);
       return fetchReviews(params);
     },
     getNextPageParam: (last) => last.nextCursor,
@@ -327,12 +527,12 @@ function ReviewList({
   const rows = query.data?.pages.flatMap((p) => p.rows) ?? [];
   if (rows.length === 0) {
     // A filtered-empty list is not the never-reviewed state.
-    if (rating && !needsReply) {
+    if ((rating || track) && !needsReply) {
       return (
         <EmptyState
           icon={MessageSquareQuote}
-          title={`No ${rating}★ reviews`}
-          description="Try another rating, or clear the filter."
+          title={rating ? `No ${rating}★ reviews` : "No matching reviews"}
+          description="Try another rating or track, or clear the filters."
         />
       );
     }
@@ -356,6 +556,7 @@ function ReviewList({
             key={review.id}
             review={review}
             consultantId={consultantId}
+            shareHref={shareHref}
           />
         ))}
       </ul>
@@ -373,17 +574,19 @@ function ReviewList({
   );
 }
 
-/** #1527 Q5 — All · Needs reply, a rating filter, and the two scores. */
+/** #1527 Q5 — All · Needs reply, rating + track filters, and the two scores. */
 export function ReviewsInbox({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  const list = useListParams({ filterKeys: ["rating"] as const });
+  const list = useListParams({ filterKeys: ["rating", "track"] as const });
+  const shareHref = useExpertShareHref(consultantId);
   const summary = useQuery({
     queryKey: [...reviewsKey(consultantId), "summary"],
     queryFn: () => fetchReviews(new URLSearchParams({ limit: "1" })),
     select: (page) => page.summary,
   });
   const rating = list.filters.rating;
+  const track = list.filters.track;
 
   return (
     <DashboardContent>
@@ -396,8 +599,32 @@ export function ReviewsInbox({
           onChange: (value) => list.setFilter("rating", value),
           clearable: true,
         }}
+        canClear={Boolean(rating || track)}
         onClear={list.clear}
-      />
+      >
+        <fieldset className="inline-flex rounded-lg border-0 bg-muted p-1">
+          <legend className="sr-only">Track</legend>
+          {TRACK_OPTIONS.map((opt) => {
+            const pressed = (track ?? null) === opt.value;
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                aria-pressed={pressed}
+                onClick={() => list.setFilter("track", opt.value)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                  pressed
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </fieldset>
+      </FilterBar>
       <UrlTabs
         tabs={[
           {
@@ -408,6 +635,8 @@ export function ReviewsInbox({
                 consultantId={consultantId}
                 needsReply={false}
                 rating={rating}
+                track={track}
+                shareHref={shareHref}
               />
             ),
           },
@@ -419,6 +648,8 @@ export function ReviewsInbox({
                 consultantId={consultantId}
                 needsReply
                 rating={rating}
+                track={track}
+                shareHref={shareHref}
               />
             ),
           },

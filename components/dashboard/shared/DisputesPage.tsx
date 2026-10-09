@@ -92,6 +92,96 @@ const getDaysUntilDue = (dueBy: string | null) => {
   return diffDays;
 };
 
+function DisputeDueCell({ dueBy }: Readonly<{ dueBy: string | null }>) {
+  if (!dueBy) return <>-</>;
+  const daysUntilDue = getDaysUntilDue(dueBy);
+  const hoursUntilDue =
+    (new Date(dueBy).getTime() - Date.now()) / (1000 * 60 * 60);
+  const isCritical48h = hoursUntilDue <= 48 && hoursUntilDue >= 0;
+  const isUrgent =
+    isCritical48h ||
+    (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
+
+  return (
+    <div
+      className={
+        isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
+      }
+    >
+      <div className="flex items-center gap-1.5">
+        <span>{formatDate(dueBy)}</span>
+        {isCritical48h && (
+          <Badge variant="destructive" className="text-[10px]">
+            Due &lt; 48h
+          </Badge>
+        )}
+      </div>
+      {daysUntilDue !== null && daysUntilDue >= 0 && (
+        <p className="text-xs">
+          {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
+  {
+    key: "disputeId",
+    header: "Dispute ID",
+    primary: true,
+    cell: (dispute) => (
+      <div>
+        <p className="font-mono text-sm">
+          {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+        </p>
+        {dispute.payment && (
+          <p className="text-xs text-muted-foreground/70">
+            Payment: {dispute.payment.paymentIntent.slice(-12)}
+          </p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    className: "font-medium",
+    cell: (dispute) =>
+      formatCurrencyAmount(dispute.amountPaise, dispute.currency),
+  },
+  {
+    key: "gateway",
+    header: "Gateway",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => gatewayLabel(dispute.paymentGateway),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (dispute) => (
+      <Badge
+        className={`${getStatusColor(dispute.status)} gap-1`}
+        variant="secondary"
+      >
+        {getStatusIcon(dispute.status)}
+        {dispute.status.toLowerCase().replace(/_/g, " ")}
+      </Badge>
+    ),
+  },
+  {
+    key: "dueBy",
+    header: "Evidence Due By",
+    cell: (dispute) => <DisputeDueCell dueBy={dispute.dueBy} />,
+  },
+  {
+    key: "created",
+    header: "Created",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => formatDate(dispute.createdAt),
+  },
+];
+
 export interface DisputesPageProps {
   /** API endpoint for fetching disputes */
   apiEndpoint?: string;
@@ -144,7 +234,6 @@ export function DisputesPage({
       if (!response.ok) throw new Error("Failed to fetch disputes");
       return response.json();
     },
-    // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,
   });
 
@@ -152,8 +241,6 @@ export function DisputesPage({
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
-  // #997 secondary findings — server-computed, dashboard-wide (not the
-  // current page's rows via .filter()).
   const underReviewCount = data?.stats?.underReviewCount ?? 0;
   const wonCount = data?.stats?.wonCount ?? 0;
 
@@ -161,11 +248,6 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
-  // NOTE: the row itself still navigates via onRowClick below —
-  // ResponsiveTable renders plain <tr>/<Card> click targets with no href
-  // support, so making the row a prefetching Link would mean editing that
-  // shared component. The eye action IS a real Link (prefetched), and the
-  // table's own cell wrapper keeps its stopPropagation behavior.
   const renderRowActions = (dispute: Dispute) => (
     <Button asChild variant="ghost" size="icon" className="h-8 w-8">
       <Link
@@ -179,86 +261,6 @@ export function DisputesPage({
       </Link>
     </Button>
   );
-
-  const columns: ResponsiveColumn<Dispute>[] = [
-    {
-      key: "disputeId",
-      header: "Dispute ID",
-      primary: true,
-      cell: (dispute) => (
-        <div>
-          <p className="font-mono text-sm">
-            {dispute.disputeId?.slice(-12) ||
-              dispute.id.slice(-8).toUpperCase()}
-          </p>
-          {dispute.payment && (
-            <p className="text-xs text-muted-foreground/70">
-              Payment: {dispute.payment.paymentIntent.slice(-12)}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      className: "font-medium",
-      cell: (dispute) =>
-        formatCurrencyAmount(dispute.amountPaise, dispute.currency),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => gatewayLabel(dispute.paymentGateway),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (dispute) => (
-        <Badge
-          className={`${getStatusColor(dispute.status)} gap-1`}
-          variant="secondary"
-        >
-          {getStatusIcon(dispute.status)}
-          {dispute.status.toLowerCase().replace(/_/g, " ")}
-        </Badge>
-      ),
-    },
-    {
-      key: "dueBy",
-      header: "Due By",
-      cell: (dispute) => {
-        const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-        const isUrgent =
-          daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
-        return dispute.dueBy ? (
-          <div
-            className={
-              isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
-            }
-          >
-            {formatDate(dispute.dueBy)}
-            {daysUntilDue !== null && daysUntilDue >= 0 && (
-              <p className="text-xs">
-                {daysUntilDue === 0
-                  ? "Due today!"
-                  : `${daysUntilDue} days left`}
-              </p>
-            )}
-          </div>
-        ) : (
-          "-"
-        );
-      },
-    },
-    {
-      key: "created",
-      header: "Created",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => formatDate(dispute.createdAt),
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -410,7 +412,7 @@ export function DisputesPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {isError && !data ? (
+          {isError && !data && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
               <div className="flex items-center gap-2 text-destructive">
                 <AlertTriangle className="h-5 w-5" />
@@ -426,13 +428,15 @@ export function DisputesPage({
                 Retry
               </Button>
             </div>
-          ) : isPending ? (
+          )}
+          {(!isError || Boolean(data)) && isPending && (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
-          ) : (
+          )}
+          {(!isError || Boolean(data)) && !isPending && (
             <ResponsiveTable<Dispute>
-              columns={columns}
+              columns={DISPUTE_COLUMNS}
               rows={disputes}
               getRowId={(d) => d.id}
               onRowClick={(d) => handleViewDispute(d.id)}

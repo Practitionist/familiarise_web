@@ -35,7 +35,10 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
-import type { NeedsActionReason } from "@/lib/appointments/view-model";
+import {
+  toOccurrenceVM,
+  type NeedsActionReason,
+} from "@/lib/appointments/view-model";
 import {
   formatForViewer,
   formatInViewerZone,
@@ -64,6 +67,8 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
   getOccurrenceJoinState,
+  isDeadOccurrence,
+  isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
@@ -72,6 +77,7 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
 import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
+import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
@@ -403,6 +409,85 @@ function proposalsAwaiting(
   });
 }
 
+function hasLiveRenewal(
+  renewal:
+    | {
+        id?: string;
+        status?: string;
+        deletedAt?: Date | string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!renewal?.id || renewal.deletedAt) return false;
+  const st = renewal.status?.toUpperCase();
+  return st !== "CANCELLED" && st !== "REJECTED" && st !== "EXPIRED";
+}
+
+function readSubscriptionRenewal(sub: object): {
+  id?: string;
+  status?: string;
+  deletedAt?: Date | string | null;
+} | null {
+  if (!("renewal" in sub) || !sub.renewal || typeof sub.renewal !== "object") {
+    return null;
+  }
+  const r = sub.renewal;
+  const id = "id" in r && typeof r.id === "string" ? r.id : undefined;
+  const status =
+    "status" in r && typeof r.status === "string" ? r.status : undefined;
+  const deletedAt =
+    "deletedAt" in r &&
+    (typeof r.deletedAt === "string" ||
+      r.deletedAt instanceof Date ||
+      r.deletedAt === null)
+      ? r.deletedAt
+      : undefined;
+  return { id, status, deletedAt };
+}
+
+function lowSessionSubscriptions(
+  eventsData: TConsulteeEventsResponse,
+  now: Date,
+) {
+  return (eventsData.subscriptions ?? []).flatMap((sub) => {
+    const status = sub.status.toUpperCase();
+    if (status !== "APPROVED" && status !== "COMPLETED") return [];
+
+    if (hasLiveRenewal(readSubscriptionRenewal(sub))) return [];
+
+    const planId = sub.subscriptionPlan.id ?? sub.subscriptionPlanId;
+    if (!planId) return [];
+
+    const planTotal = sub.sessionsTotal ?? sub.subscriptionPlan.totalSessions;
+    if (!planTotal || planTotal <= 0) return [];
+
+    const occurrences = sub.appointment?.occurrences ?? [];
+    const completedOrPast = occurrences.filter(
+      (o) => !isDeadOccurrence(o) && isOccurrenceOver(toOccurrenceVM(o), now),
+    ).length;
+    const remaining = Math.max(0, planTotal - completedOrPast);
+
+    if (remaining > 1) return [];
+    const title = sub.subscriptionPlan.title || "Subscription";
+    const consultantName =
+      sub.subscriptionPlan.consultantProfile?.user?.name ?? "your expert";
+    return [
+      {
+        key: `renew-subscription:${sub.id}`,
+        severity: "info" as const,
+        title:
+          remaining === 1
+            ? `1 session left in ${title}`
+            : `All sessions completed in ${title}`,
+        body: `Continue working with ${consultantName} by renewing your subscription.`,
+        ctaLabel: "Renew subscription",
+        ctaHref: `/checkout/plans/subscription/${planId}?renewsSubscriptionId=${sub.id}`,
+      },
+    ];
+  });
+}
+
 interface ReviewableSessionRow {
   appointmentId: string;
   consultantProfileId: string;
@@ -561,8 +646,8 @@ export default function HomeTab({
 
   const pendingPayments = money?.pendingPayments;
   const actionItems = useMemo(
-    () =>
-      deriveConsulteeActionItems({
+    () => [
+      ...deriveConsulteeActionItems({
         pendingPaymentCount: pendingPayments?.length ?? 0,
         pendingPaymentTotalPaise: (pendingPayments ?? []).reduce(
           (sum, p) => sum + (p.amount ?? 0),
@@ -610,6 +695,8 @@ export default function HomeTab({
         })),
         now,
       }),
+      ...lowSessionSubscriptions(eventsData, now),
+    ],
     [
       pendingPayments,
       money,
@@ -644,6 +731,8 @@ export default function HomeTab({
         }
         description="What needs you, and what's next."
       />
+
+      <WaitlistOfferBanner viewerZone={viewerZone} />
 
       <ActionRequiredPanel
         items={actionItems}

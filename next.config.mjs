@@ -534,18 +534,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // container RSS — not heap — is the constraint. The widened client upload
   // holds the full client source-map set in memory during the finalize phase;
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
+  sourcemaps: {
+    disable:
+      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+  },
   widenClientFileUpload: process.env.NETLIFY !== "true",
 
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
   webpack: {
-    // Tree-shaking options for reducing bundle size
     treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
       removeDebugLogging: true,
     },
   },

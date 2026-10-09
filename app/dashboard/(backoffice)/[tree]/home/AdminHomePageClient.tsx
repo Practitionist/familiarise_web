@@ -119,6 +119,21 @@ const QUEUES: Array<{
 function NeedsAttention() {
   const { basePath, can } = useBackofficeCapability();
   const counts = useBackofficeNavCounts();
+  const supportStats = useQuery({
+    queryKey: ["support-inbox-stats"],
+    queryFn: async (): Promise<{
+      openCases: number;
+      slaBreaches: number;
+      avgFirstResponseMs: number | null;
+      windowDays: number;
+    }> => {
+      const res = await fetch("/api/staff/support-inbox/stats");
+      if (!res.ok) throw new Error("Failed to load support SLA stats");
+      return res.json();
+    },
+    enabled: can("tickets.manage"),
+    staleTime: 60_000,
+  });
   const queues = QUEUES.filter((q) => can(q.surface));
 
   if (counts.isError && !counts.data) {
@@ -129,23 +144,42 @@ function NeedsAttention() {
       />
     );
   }
+  const breachedSupport = supportStats.data?.slaBreaches ?? 0;
+  const openSupport = supportStats.data?.openCases ?? 0;
+
   return (
     <StatRow>
-      {queues.map((q) =>
-        counts.data ? (
+      {queues.map((q) => {
+        if (!counts.data) {
+          return <StatSkeleton key={q.key} />;
+        }
+        const value = counts.data[q.key] ?? 0;
+        const isSupportBreached = q.key === "support" && breachedSupport > 0;
+        const hint = isSupportBreached
+          ? `${breachedSupport} SLA breached (${openSupport || value} open)`
+          : q.hint;
+        const href = isSupportBreached
+          ? `${basePath}/support?view=sla-at-risk`
+          : `${basePath}/${q.path}`;
+        let tone: "critical" | "warning" | "neutral" = "neutral";
+        if (isSupportBreached) {
+          tone = "critical";
+        } else if (value > 0) {
+          tone = "warning";
+        }
+
+        return (
           <Stat
             key={q.key}
             label={q.label}
-            value={counts.data[q.key] ?? 0}
-            hint={q.hint}
-            href={`${basePath}/${q.path}`}
+            value={value}
+            hint={hint}
+            href={href}
             icon={q.icon}
-            tone={(counts.data[q.key] ?? 0) > 0 ? "warning" : "neutral"}
+            tone={tone}
           />
-        ) : (
-          <StatSkeleton key={q.key} />
-        ),
-      )}
+        );
+      })}
     </StatRow>
   );
 }

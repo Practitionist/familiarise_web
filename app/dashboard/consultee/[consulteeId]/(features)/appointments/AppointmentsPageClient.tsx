@@ -12,14 +12,13 @@ import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
+import { WaitlistOfferBanner } from "./WaitlistOfferBanner";
 
 export default function AppointmentsPageClient({
   consulteeId,
   viewerZone,
 }: Readonly<{ consulteeId: string; viewerZone: ViewerZone }>) {
   const eventsQuery = createConsulteeQueries(consulteeId).events;
-  // keepPreviousData: refetches show the previous list while the new one
-  // loads instead of a skeleton flash (documents-page idiom, #346).
   const {
     data: eventsData,
     isLoading,
@@ -40,6 +39,7 @@ export default function AppointmentsPageClient({
         title="Appointments"
         description="Your consultations, subscriptions, webinars, and classes"
       />
+      <WaitlistOfferBanner viewerZone={viewerZone} />
       <div>
         {isLoading && !eventsData ? (
           <AppointmentsPageSkeleton />
@@ -50,7 +50,6 @@ export default function AppointmentsPageClient({
             onRetry={() => void refetch()}
           />
         ) : (
-          // The row sheet's session times follow the same zone (#418).
           <DisplayZoneProvider zone={viewerZone.zone}>
             <AppointmentsShell
               vms={vms}

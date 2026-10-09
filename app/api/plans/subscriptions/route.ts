@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
     const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
 
     // Compute derived metrics
-    const sessionDurationInHours = planData.sessionDurationInHours || 1.0;
+    const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
     // Use accurate week counting instead of fixed * 4 approximation
     const metricStartDate = new Date();
     metricStartDate.setHours(0, 0, 0, 0);

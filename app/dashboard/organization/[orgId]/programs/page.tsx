@@ -391,6 +391,7 @@ async function fetchProgram(
 interface MemberListItem {
   id: string;
   role: string;
+  status?: string;
   user: { id: string; name: string | null; email: string };
 }
 
@@ -399,6 +400,8 @@ interface AssignmentListItem {
   status: string;
   periodStart: string;
   periodEnd: string;
+  engagementsUsed?: number;
+  consumedPaise?: number;
   membership: {
     id: string;
     role: string;
@@ -409,7 +412,9 @@ interface AssignmentListItem {
 async function fetchMembers(
   orgId: string,
 ): Promise<{ data: MemberListItem[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/members?perPage=100`);
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?status=ACTIVE&perPage=100`,
+  );
   if (!res.ok) throw new Error("Failed to load members");
   return res.json();
 }
@@ -464,7 +469,12 @@ function ProgramStatusBadge({ status }: Readonly<{ status: string }>) {
 async function createAssignment(
   orgId: string,
   programId: string,
-  body: { membershipId: string; periodStart: string; periodEnd: string },
+  body: {
+    membershipId?: string;
+    membershipIds?: string[];
+    periodStart: string;
+    periodEnd: string;
+  },
 ) {
   const res = await fetch(
     `/api/organizations/${orgId}/programs/${programId}/assignments`,
@@ -533,7 +543,9 @@ function validateProgramCommercialFields(params: {
   ratePerSeatRupees: string;
   coveredEngagementsPerCycle: string;
   creditBudgetPerCycle: string;
-}): { ok: true; value: ValidatedCommercialFields } | { ok: false; error: string } {
+}):
+  | { ok: true; value: ValidatedCommercialFields }
+  | { ok: false; error: string } {
   let priceCapPerEngagementPaise: number | null = null;
   if (params.priceCapPerEngagementRupees.trim() !== "") {
     const parsedCap = rupeesToPaise(params.priceCapPerEngagementRupees);
@@ -615,11 +627,7 @@ function validateProgramCommercialFields(params: {
   }
 
   const credits = Number(params.creditBudgetPerCycle.trim());
-  if (
-    !Number.isFinite(credits) ||
-    credits < 1 ||
-    !Number.isInteger(credits)
-  ) {
+  if (!Number.isFinite(credits) || credits < 1 || !Number.isInteger(credits)) {
     return {
       ok: false,
       error: "Credits per cycle must be a positive integer.",
@@ -914,11 +922,7 @@ function ProgramCommercialFieldsSection({
           value={overageBehavior}
           disabled={locked}
           onValueChange={(v) => {
-            if (
-              v === "BLOCK" ||
-              v === "CHARGE_MEMBER" ||
-              v === "CHARGE_ORG"
-            ) {
+            if (v === "BLOCK" || v === "CHARGE_MEMBER" || v === "CHARGE_ORG") {
               onOverageBehaviorChange(v);
             }
           }}
@@ -1048,7 +1052,8 @@ function CreateProgramDialog({
   }, [contracts, contractId]);
 
   const reachableTypes = useMemo<Array<"LICENSED_SEAT" | "CREDIT_POOL">>(() => {
-    if (!capability || !selectedFunding) return ["LICENSED_SEAT", "CREDIT_POOL"];
+    if (!capability || !selectedFunding)
+      return ["LICENSED_SEAT", "CREDIT_POOL"];
     return ["LICENSED_SEAT", "CREDIT_POOL"];
   }, [capability, selectedFunding]);
 
@@ -1057,7 +1062,10 @@ function CreateProgramDialog({
     : defaultOverageBehaviorForFunding(selectedFunding);
 
   const parsedSurchargeBps = useMemo<number | null>(() => {
-    if (effectiveOverageBehavior === "BLOCK" || overageSurchargePct.trim() === "") {
+    if (
+      effectiveOverageBehavior === "BLOCK" ||
+      overageSurchargePct.trim() === ""
+    ) {
       return null;
     }
     const n = parseFloat(overageSurchargePct);
@@ -1072,7 +1080,12 @@ function CreateProgramDialog({
         overageBehavior: effectiveOverageBehavior,
         overageSurchargeBps: parsedSurchargeBps,
       }),
-    [selectedFunding, programType, effectiveOverageBehavior, parsedSurchargeBps],
+    [
+      selectedFunding,
+      programType,
+      effectiveOverageBehavior,
+      parsedSurchargeBps,
+    ],
   );
 
   const applyGoldenPath = () => {
@@ -1459,9 +1472,7 @@ function useProgramCommercialFormState(
       sourceProgram.creditPoolConfig?.priceCapPerEngagementPaise ??
       null;
     setPriceCapPerEngagementRupees(
-      priceCap === null || priceCap === undefined
-        ? ""
-        : String(priceCap / 100),
+      priceCap === null || priceCap === undefined ? "" : String(priceCap / 100),
     );
     const maxOverage =
       sourceProgram.licensedSeatConfig?.maxOveragePerCyclePaise ??
@@ -1883,10 +1894,9 @@ function SupersedeProgramDialog({
         <div className="space-y-4">
           <p className="text-xs text-zinc-600 rounded-md border bg-zinc-50 p-3">
             Creates an amended successor program under the same contract,
-            permanently cancels and archives{" "}
-            <strong>{program.name}</strong> to preserve historical audit trails,
-            and optionally migrates all live member assignments to the new
-            program in one atomic step.
+            permanently cancels and archives <strong>{program.name}</strong> to
+            preserve historical audit trails, and optionally migrates all live
+            member assignments to the new program in one atomic step.
           </p>
 
           <MotivationBanner
@@ -1998,6 +2008,179 @@ function AssignmentStateBadge({
   return <StatusBadge label="Active" tone="success" size="sm" />;
 }
 
+function UnassignedMembersChecklist({
+  isLoading,
+  isError,
+  assignableMembers,
+  selectedMembershipIds,
+  onToggleMember,
+}: Readonly<{
+  isLoading: boolean;
+  isError: boolean;
+  assignableMembers: MemberListItem[];
+  selectedMembershipIds: string[];
+  onToggleMember: (id: string, checked: boolean) => void;
+}>) {
+  if (isLoading) {
+    return <p className="text-xs text-muted-foreground">Loading members…</p>;
+  }
+  if (isError) {
+    return <p className="text-xs text-destructive">Failed to load members</p>;
+  }
+  if (assignableMembers.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        All eligible members are already assigned to this program.
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-40 overflow-y-auto rounded-md border p-2 space-y-1.5">
+      {assignableMembers.map((m) => {
+        const checked = selectedMembershipIds.includes(m.id);
+        return (
+          <label
+            key={m.id}
+            className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/50 cursor-pointer"
+          >
+            <span className="flex items-center gap-2">
+              <Checkbox
+                checked={checked}
+                onCheckedChange={(next) => onToggleMember(m.id, Boolean(next))}
+              />
+              <span>{m.user.name ?? m.user.email}</span>
+            </span>
+            <Badge variant="secondary" className="text-[10px]">
+              {MEMBER_ROLE_LABEL[m.role as keyof typeof MEMBER_ROLE_LABEL] ??
+                humanizeEnum(m.role)}
+            </Badge>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProgramAssignmentsTable({
+  orgId,
+  program,
+  isLoading,
+  assignmentList,
+  canAssign,
+}: Readonly<{
+  orgId: string;
+  program: ProgramListItem;
+  isLoading: boolean;
+  assignmentList: AssignmentListItem[];
+  canAssign: boolean;
+}>) {
+  const queryClient = useQueryClient();
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (assignmentList.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500">
+        No members assigned yet. Use the form above to assign learners.
+      </p>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Member</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Period</TableHead>
+          <TableHead>Usage</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="w-24" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {assignmentList.map((a) => {
+          const engagementsUsed = a.engagementsUsed ?? 0;
+          const consumedPaise = a.consumedPaise ?? 0;
+          const isDormant =
+            isLiveAssignment(a) && engagementsUsed === 0 && consumedPaise === 0;
+          return (
+            <TableRow key={a.id}>
+              <TableCell className="text-sm">
+                {a.membership.user.name ?? a.membership.user.email}
+              </TableCell>
+              <TableCell>
+                <Badge variant="secondary" className="text-xs">
+                  {MEMBER_ROLE_LABEL[
+                    a.membership.role as keyof typeof MEMBER_ROLE_LABEL
+                  ] ?? humanizeEnum(a.membership.role)}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-xs text-zinc-600">
+                {new Date(a.periodStart).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  timeZone: "UTC",
+                })}
+                {" → "}
+                {new Date(a.periodEnd).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                  timeZone: "UTC",
+                })}
+              </TableCell>
+              <TableCell className="text-xs tabular-nums">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span>
+                    {engagementsUsed} sessions ·{" "}
+                    {formatCurrencyAmount(consumedPaise, "INR")}
+                  </span>
+                  {isDormant && (
+                    <Badge variant="outline" className="text-[10px]">
+                      Dormant
+                    </Badge>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                <AssignmentStateBadge assignment={a} />
+              </TableCell>
+              <TableCell className="text-right">
+                {canAssign && isLiveAssignment(a) && (
+                  <ConfirmDialog
+                    title="End this assignment?"
+                    description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
+                    confirmLabel="End assignment"
+                    tone="destructive"
+                    onConfirm={async () => {
+                      await endAssignment(orgId, program.id, a.id);
+                      void queryClient.invalidateQueries({
+                        queryKey: ["program-assignments", orgId, program.id],
+                      });
+                      void queryClient.invalidateQueries({
+                        queryKey: ["org-programs", orgId],
+                      });
+                    }}
+                    trigger={
+                      <Button variant="ghost" size="sm">
+                        Unassign
+                      </Button>
+                    }
+                  />
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 function ManageProgramDialog({
   orgId,
   program,
@@ -2016,7 +2199,9 @@ function ManageProgramDialog({
   onOpenSupersede: (program: ProgramListItem) => void;
 }) {
   const queryClient = useQueryClient();
-  const [membershipId, setMembershipId] = useState("");
+  const [selectedMembershipIds, setSelectedMembershipIds] = useState<string[]>(
+    [],
+  );
   const [periodStart, setPeriodStart] = useState(() =>
     new Date().toLocaleDateString("en-CA"),
   );
@@ -2029,7 +2214,7 @@ function ManageProgramDialog({
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   const members = useQuery({
-    queryKey: ["org-members", orgId],
+    queryKey: ["org-members", orgId, "ACTIVE"],
     queryFn: () => fetchMembers(orgId),
     enabled: open && canAssign,
   });
@@ -2042,7 +2227,7 @@ function ManageProgramDialog({
 
   const assignMutation = useMutation({
     mutationFn: (body: {
-      membershipId: string;
+      membershipIds: string[];
       periodStart: string;
       periodEnd: string;
     }) => createAssignment(orgId, program.id, body),
@@ -2051,7 +2236,7 @@ function ManageProgramDialog({
         queryKey: ["program-assignments", orgId, program.id],
       });
       queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
-      setMembershipId("");
+      setSelectedMembershipIds([]);
       setAssignError(null);
     },
     onError: (err: Error) => setAssignError(err.message),
@@ -2087,8 +2272,8 @@ function ManageProgramDialog({
 
   const handleAssign = () => {
     setAssignError(null);
-    if (!membershipId) {
-      setAssignError("Select a member to assign.");
+    if (selectedMembershipIds.length === 0) {
+      setAssignError("Select at least one member to assign.");
       return;
     }
     if (!periodStart || !periodEnd) {
@@ -2099,14 +2284,39 @@ function ManageProgramDialog({
       setAssignError("Period end must be after period start.");
       return;
     }
-    assignMutation.mutate({ membershipId, periodStart, periodEnd });
+    assignMutation.mutate({
+      membershipIds: selectedMembershipIds,
+      periodStart,
+      periodEnd,
+    });
   };
 
   const memberList = members.data?.data ?? [];
   const assignmentList = assignments.data?.data ?? [];
-  const assignableMembers = memberList.filter((m) =>
-    ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role),
+  const activeAssignedMemberIds = new Set(
+    assignmentList.filter(isLiveAssignment).map((a) => a.membership.id),
   );
+  const assignableMembers = memberList.filter(
+    (m) =>
+      (!m.status || m.status === "ACTIVE") &&
+      ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role) &&
+      !activeAssignedMemberIds.has(m.id),
+  );
+  const allUnassignedSelected =
+    assignableMembers.length > 0 &&
+    assignableMembers.every((m) => selectedMembershipIds.includes(m.id));
+
+  const toggleMember = (id: string, checked: boolean) => {
+    setSelectedMembershipIds((prev) =>
+      checked
+        ? [...new Set([...prev, id])]
+        : prev.filter((item) => item !== id),
+    );
+  };
+
+  const toggleSelectAllUnassigned = (checked: boolean) => {
+    setSelectedMembershipIds(checked ? assignableMembers.map((m) => m.id) : []);
+  };
 
   return (
     <ResponsiveModal open={open} onOpenChange={onOpenChange}>
@@ -2214,37 +2424,31 @@ function ManageProgramDialog({
         {/* Assign learner form */}
         {canAssign && program.status === "ACTIVE" && (
           <div className="space-y-3 rounded-md border p-4">
-            <h4 className="text-sm font-semibold flex items-center gap-1.5">
-              <Users className="h-4 w-4" /> Assign a member
-            </h4>
-            <div className="space-y-2">
-              <Label>Member</Label>
-              <Select value={membershipId} onValueChange={setMembershipId}>
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={
-                      members.isLoading
-                        ? "Loading members…"
-                        : members.isError
-                          ? "Failed to load members"
-                          : assignableMembers.length === 0
-                            ? "No assignable members"
-                            : "Pick a member"
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                <Users className="h-4 w-4" /> Assign members
+              </h4>
+              {assignableMembers.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                  <Checkbox
+                    checked={allUnassignedSelected}
+                    onCheckedChange={(checked) =>
+                      toggleSelectAllUnassigned(Boolean(checked))
                     }
                   />
-                </SelectTrigger>
-                <SelectContent>
-                  {assignableMembers.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.user.name ?? m.user.email} (
-                      {MEMBER_ROLE_LABEL[
-                        m.role as keyof typeof MEMBER_ROLE_LABEL
-                      ] ?? humanizeEnum(m.role)}
-                      )
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  Select all unassigned ({assignableMembers.length})
+                </label>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Unassigned members</Label>
+              <UnassignedMembersChecklist
+                isLoading={members.isLoading}
+                isError={members.isError}
+                assignableMembers={assignableMembers}
+                selectedMembershipIds={selectedMembershipIds}
+                onToggleMember={toggleMember}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -2272,7 +2476,9 @@ function ManageProgramDialog({
             <Button
               size="sm"
               onClick={handleAssign}
-              disabled={assignMutation.isPending}
+              disabled={
+                assignMutation.isPending || selectedMembershipIds.length === 0
+              }
             >
               {assignMutation.isPending ? (
                 <>
@@ -2281,6 +2487,9 @@ function ManageProgramDialog({
               ) : (
                 <>
                   <Plus className="h-4 w-4 mr-1" /> Assign
+                  {selectedMembershipIds.length > 0
+                    ? ` (${selectedMembershipIds.length})`
+                    : ""}
                 </>
               )}
             </Button>
@@ -2292,88 +2501,13 @@ function ManageProgramDialog({
           <h4 className="text-sm font-semibold">
             Assignments ({assignmentList.length})
           </h4>
-          {assignments.isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-zinc-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
-          ) : assignmentList.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              No members assigned yet. Use the form above to assign a learner.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-24" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assignmentList.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="text-sm">
-                      {a.membership.user.name ?? a.membership.user.email}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-xs">
-                        {MEMBER_ROLE_LABEL[
-                          a.membership.role as keyof typeof MEMBER_ROLE_LABEL
-                        ] ?? humanizeEnum(a.membership.role)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-zinc-600">
-                      {new Date(a.periodStart).toLocaleDateString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        timeZone: "UTC",
-                      })}
-                      {" → "}
-                      {new Date(a.periodEnd).toLocaleDateString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                        timeZone: "UTC",
-                      })}
-                    </TableCell>
-                    <TableCell>
-                      <AssignmentStateBadge assignment={a} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canAssign && isLiveAssignment(a) && (
-                        <ConfirmDialog
-                          title="End this assignment?"
-                          description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
-                          confirmLabel="End assignment"
-                          tone="destructive"
-                          onConfirm={async () => {
-                            await endAssignment(orgId, program.id, a.id);
-                            void queryClient.invalidateQueries({
-                              queryKey: [
-                                "program-assignments",
-                                orgId,
-                                program.id,
-                              ],
-                            });
-                            void queryClient.invalidateQueries({
-                              queryKey: ["org-programs", orgId],
-                            });
-                          }}
-                          trigger={
-                            <Button variant="ghost" size="sm">
-                              Unassign
-                            </Button>
-                          }
-                        />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ProgramAssignmentsTable
+            orgId={orgId}
+            program={program}
+            isLoading={assignments.isLoading}
+            assignmentList={assignmentList}
+            canAssign={canAssign}
+          />
         </div>
 
         {canManage && assignments.isSuccess && assignmentList.length === 0 && (

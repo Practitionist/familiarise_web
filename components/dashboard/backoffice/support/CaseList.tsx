@@ -17,7 +17,7 @@ import { shortAge } from "@/lib/support/case-format";
 import { CASE_TOPIC_LABEL } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { INBOX_FILTER_KEYS, INBOX_PAGE_SIZE } from "@/lib/support/inbox-query";
-import { slaHint } from "@/lib/support/sla-hint";
+import { slaHint, slaStatusBadge } from "@/lib/support/sla-hint";
 import type { InboxListResponse, InboxRow } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
 
@@ -26,6 +26,7 @@ function CaseRow({
   href,
   active,
 }: Readonly<{ row: InboxRow; href: string; active: boolean }>) {
+  const slaStatus = slaStatusBadge(row.sla);
   const sla = slaHint(row.sla);
   const selfServe = row.kind === "thread" && row.channel !== "HUMAN";
   return (
@@ -60,6 +61,7 @@ function CaseRow({
           {selfServe && (
             <StatusBadge label="Self-serve" tone="neutral" variant="dot" />
           )}
+          {slaStatus && <StatusBadge {...slaStatus} size="sm" />}
           {sla && <StatusBadge {...sla} variant="dot" />}
         </div>
       </Link>
