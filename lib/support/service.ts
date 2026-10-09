@@ -34,6 +34,7 @@ import {
   notifyRequesterOfTicket,
   notifySupportStaff,
   notifyStaffOfTicketActivity,
+  raiseReusedTicketToHigh,
 } from "./create-ticket";
 import { allocateMessageSeq } from "./message-seq";
 import { recordFlowOutcome } from "./deflection";
@@ -664,6 +665,7 @@ async function escalate(
           where: { id: linkedTicketId, status: "RESOLVED" },
           data: { status: "OPEN", resolvedAt: null },
         });
+        if (urgent) await raiseReusedTicketToHigh(tx, linkedTicketId);
       } else {
         const openedAt = new Date();
         const referenceNumber = await allocateTicketReference(tx, openedAt);

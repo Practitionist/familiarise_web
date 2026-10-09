@@ -37,6 +37,7 @@ import {
 import {
   createSupportTicket,
   findRecentOpenEscalation,
+  raiseReusedTicketToHigh,
 } from "@/lib/support/create-ticket";
 import { escalationPriority } from "@/lib/support/priority";
 import { recordFlowOutcome } from "@/lib/support/deflection";
@@ -245,6 +246,7 @@ export async function POST(req: NextRequest) {
       organizationId,
     );
     if (recent) {
+      if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
       return NextResponse.json({
         data: {
           flowId: flow.id,

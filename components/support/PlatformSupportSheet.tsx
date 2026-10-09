@@ -550,13 +550,16 @@ export function PlatformSupportSheet({
                         size="sm"
                         disabled={turn.isPending}
                         onClick={() =>
-                          turn.mutate({
-                            flowId: flowId!,
-                            nodeId,
-                            chosenOptionId: o.id,
-                            chosenLabel: o.label,
-                            epoch: sittingRef.current,
-                          })
+                          // A flow's own human option opens the same details + urgency form as the exit.
+                          o.label === HUMAN_EXIT_LABEL
+                            ? setBareHumanLabel(o.label)
+                            : turn.mutate({
+                                flowId: flowId!,
+                                nodeId,
+                                chosenOptionId: o.id,
+                                chosenLabel: o.label,
+                                epoch: sittingRef.current,
+                              })
                         }
                       >
                         {o.label}

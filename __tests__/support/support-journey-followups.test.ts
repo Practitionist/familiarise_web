@@ -20,6 +20,13 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: { id: "u1" } })),
 }));
 
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  requireBackofficeSurface: jest.fn(async () => ({
+    session: { user: { id: "staff-1", name: "S" } },
+  })),
+}));
+
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   spamLimiter: {},
@@ -91,6 +98,7 @@ import {
 } from "../../lib/support/create-ticket";
 import { fieldErrorsOf } from "../../lib/support/error-copy";
 import { POST as postReply } from "../../app/api/user/support-tickets/[ticketId]/responses/route";
+import { POST as postStaffTicket } from "../../app/api/support/tickets/route";
 
 const ticketCreate = prisma.supportTicket.create as jest.Mock;
 
@@ -132,6 +140,26 @@ describe("staff create-for-user path", () => {
         data: expect.objectContaining({ message: "Checking in" }),
       }),
     );
+  });
+});
+
+describe("staff create-for-user entrypoint", () => {
+  it("refuses a description that is only a callback marker, creating nothing", async () => {
+    const res = await postStaffTicket(
+      new NextRequest("https://x.test/api/support/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUserId: "customer",
+          title: "Follow-up",
+          description: "  [Callback Requested: +919876543210]  ",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_FAILED");
+    expect(ticketCreate).not.toHaveBeenCalled();
+    expect(prisma.supportResponse.create).not.toHaveBeenCalled();
   });
 });
 

@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => {
     // staff fan-out both live on the same client.
     supportTicket: {
       findFirst: jest.fn(async () => null),
+      updateMany: jest.fn(async () => ({ count: 1 })),
       create: jest.fn(async () => ({
         id: "t1",
         title: "T",
@@ -83,6 +84,7 @@ const mockedGetSession = getSession as jest.Mock;
 beforeEach(() => {
   (applyRateLimit as jest.Mock).mockClear();
   (prisma.supportTicket.create as jest.Mock).mockClear();
+  (prisma.supportTicket.updateMany as jest.Mock).mockClear();
 });
 
 function postReq(body: unknown): NextRequest {
@@ -181,6 +183,71 @@ describe("asking for a person, in the scope that had no way to", () => {
         data: expect.objectContaining({ priority: "HIGH" }),
       }),
     );
+  });
+
+  it("files the General flow's own human option, sent through the details form, as an urgent general ticket", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    const res = await POST(
+      postReq({
+        flowId: "GENERAL",
+        nodeId: "start",
+        userMessage: "Speak to someone: my account page will not load at all",
+        urgent: true,
+      }),
+    );
+    const json = await res.json();
+    expect(json.data.escalated).toBe(true);
+    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          priority: "HIGH",
+          issueType: "GENERAL_INQUIRY",
+        }),
+      }),
+    );
+  });
+
+  it("raises a reused open ticket to HIGH when the replayed hand-off is urgent", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "t-recent",
+      referenceNumber: "FAM-2026-000009",
+    });
+    const res = await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "Speak to someone: the refund never arrived",
+        urgent: true,
+      }),
+    );
+    const json = await res.json();
+    expect(json.data.deduped).toBe(true);
+    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "t-recent",
+        status: { not: "CLOSED" },
+        priority: { in: ["LOW", "MEDIUM"] },
+      },
+      data: { priority: "HIGH" },
+    });
+  });
+
+  it("leaves a reused ticket's priority alone when the replay is not urgent", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "t-recent",
+      referenceNumber: "FAM-2026-000009",
+    });
+    await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "just get me an agent please",
+      }),
+    );
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves an ordinary message to the flow", async () => {

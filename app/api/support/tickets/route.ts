@@ -6,6 +6,7 @@ import { CreateSupportTicketSchema } from "@/schemas/support";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import { createOutboundStaffSupportTicket } from "@/lib/support/create-ticket";
+import { stripCallbackTags } from "@/lib/validation/phone";
 export { GET } from "@/app/api/user/support-tickets/route";
 import { POST as postUserSupportTicket } from "@/app/api/user/support-tickets/route";
 
@@ -43,6 +44,15 @@ export async function POST(req: NextRequest) {
       });
     }
     const validatedData = result.data;
+
+    if (!stripCallbackTags(validatedData.description).trim()) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: "Description is required",
+        context: { route: STAFF_OUTBOUND_ROUTE, action: "create" },
+      });
+    }
 
     const ticket = await createOutboundStaffSupportTicket({
       staffUserId: session.user.id,

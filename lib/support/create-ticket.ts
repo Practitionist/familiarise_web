@@ -9,6 +9,7 @@
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type PrismaLike,
 } from "@/lib/prisma";
 import type {
   SupportIssueType,
@@ -364,6 +365,18 @@ export async function findRecentOpenEscalation(
       createdAt: { gte: dedupeWindow },
     },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+/** An urgent hand-off onto a reused ticket raises it to HIGH: never lowers it, never touches a CLOSED one. */
+export function raiseReusedTicketToHigh(db: PrismaLike, ticketId: string) {
+  return db.supportTicket.updateMany({
+    where: {
+      id: ticketId,
+      status: { not: "CLOSED" },
+      priority: { in: ["LOW", "MEDIUM"] },
+    },
+    data: { priority: "HIGH" },
   });
 }
 
