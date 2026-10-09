@@ -58,15 +58,22 @@ export function PendingCheckoutClient({
   const [error, setError] = useState<string | null>(null);
   const [checks, setChecks] = useState(0);
 
-  useEffect(() => {
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   const money = (paise: number) =>
     formatCurrencyAmount(paise, pending.currency);
   const lapsed = pending.status === "EXPIRED" || pending.status === "FAILED";
+
+  useEffect(() => {
+    if (lapsed) return;
+    const initial = Date.now();
+    setNow(initial);
+    if (expiresAtMs === null || initial >= expiresAtMs) return;
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= expiresAtMs) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lapsed, expiresAtMs]);
   // The timer only says the window ended; the server decides what happened.
   const checking =
     !lapsed && expiresAtMs !== null && now !== null && now >= expiresAtMs;
