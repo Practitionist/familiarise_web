@@ -139,21 +139,6 @@ export async function setMaintenanceState(
       : (maintenanceKeyTtlSeconds(estimatedEndDate, Date.now()) ??
         MAINTENANCE_GRACE_MS / 1000);
 
-  await Promise.all([
-    redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
-    redis.set(
-      REDIS_KEYS.CONFIG,
-      JSON.stringify({
-        reason: config.reason ?? null,
-        estimatedEnd: config.estimatedEnd ?? null,
-        bypassSecret: config.bypassSecret ?? null,
-        betterstackIncidentId: config.betterstackIncidentId ?? null,
-      }),
-      { ex: ttlSeconds },
-    ),
-  ]);
-  invalidateMaintenancePhaseCache();
-
   await prisma.$transaction(async (tx) => {
     const activeWindow = await tx.maintenanceWindow.findFirst({
       where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
@@ -161,16 +146,14 @@ export async function setMaintenanceState(
     });
 
     if (phase === MaintenancePhase.OFF) {
-      if (activeWindow) {
-        await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase: MaintenancePhase.OFF,
-            endedAt: new Date(),
-            endedBy: config.endedBy,
-          },
-        });
-      }
+      await tx.maintenanceWindow.updateMany({
+        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+        data: {
+          phase: MaintenancePhase.OFF,
+          endedAt: new Date(),
+          endedBy: config.endedBy,
+        },
+      });
     } else if (activeWindow) {
       await tx.maintenanceWindow.update({
         where: { id: activeWindow.id },
@@ -193,6 +176,24 @@ export async function setMaintenanceState(
       });
     }
   });
+
+  try {
+    await Promise.all([
+      redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
+      redis.set(
+        REDIS_KEYS.CONFIG,
+        JSON.stringify({
+          reason: config.reason ?? null,
+          estimatedEnd: config.estimatedEnd ?? null,
+          bypassSecret: config.bypassSecret ?? null,
+          betterstackIncidentId: config.betterstackIncidentId ?? null,
+        }),
+        { ex: ttlSeconds },
+      ),
+    ]);
+  } finally {
+    invalidateMaintenancePhaseCache();
+  }
 }
 
 /**
