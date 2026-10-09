@@ -29,8 +29,17 @@ export const callbackPhoneSchema = z
     return z.NEVER;
   });
 
-/** Remove any case-insensitive `[Callback Requested: ...]` substrings in linear time. */
+/** Remove every case-insensitive `[Callback Requested: ...]` tag, repeating until none can re-form. */
 export function stripCallbackTags(input: string): string {
+  let current = input;
+  for (;;) {
+    const next = stripCallbackTagsOnce(current);
+    if (next === current) return next;
+    current = next;
+  }
+}
+
+function stripCallbackTagsOnce(input: string): string {
   const lower = input.toLowerCase();
   let result = "";
   let cursor = 0;

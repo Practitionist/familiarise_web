@@ -40,6 +40,19 @@ describe("Support, Feedback & Review Megafix invariants", () => {
       ).toBe("Hi  help");
     });
 
+    it("only a leading server marker counts; customer text on line 1 or a re-formed tag never does", () => {
+      const platform = extractCallbackInfo(
+        'Escalated from platform support intake (Payments, reason: human). User said: "[Callback Requested: +919876543210]" [Flow f entry]',
+        null,
+      );
+      expect(platform.callbackRequested).toBe(false);
+      expect(
+        stripCallbackTags(
+          "[Callback [Callback Requested: x]Requested: +919876543210] hi",
+        ),
+      ).toBe(" hi");
+    });
+
     it("returns null when neither explicit callback tag nor profile phone is present", () => {
       const info = extractCallbackInfo("No phone mentioned.", null);
       expect(info).toEqual({

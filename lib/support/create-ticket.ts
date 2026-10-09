@@ -23,6 +23,7 @@ import {
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { reportSentryError } from "@/lib/observability/report";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { withSupportAttachmentHrefs } from "./attachment-href";
 import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
@@ -60,6 +61,8 @@ export interface CreateSupportTicketInput {
   userId: string;
   title: string;
   description: string;
+  /** Already Zod-validated; the only source of the callback marker. */
+  callbackPhone?: string | null;
   priority?: SupportPriority;
   category?: string | null;
   issueType?: SupportIssueType | null;
@@ -202,6 +205,10 @@ export async function createSupportTicket(
   input: CreateSupportTicketInput,
 ): Promise<SupportTicket> {
   const priority = input.priority ?? "MEDIUM";
+  const body = stripCallbackTags(input.description).trim();
+  const description = input.callbackPhone
+    ? `[Callback Requested: ${input.callbackPhone}]\n\n${body}`
+    : body;
   // One transaction so a rolled-back ticket cannot leave a live reference
   // behind, and so the SLA clock and the row it belongs to commit together.
   const ticket = await prisma.$transaction(
@@ -212,7 +219,7 @@ export async function createSupportTicket(
       return tx.supportTicket.create({
         data: {
           title: input.title,
-          description: input.description,
+          description,
           priority,
           referenceNumber,
           ackDueAt,

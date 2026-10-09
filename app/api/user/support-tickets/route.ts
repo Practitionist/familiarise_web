@@ -216,10 +216,7 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    const cleanDescription = stripCallbackTags(
-      validatedData.description,
-    ).trim();
-    if (!cleanDescription) {
+    if (!stripCallbackTags(validatedData.description).trim()) {
       return supportError({
         status: 400,
         code: "VALIDATION_FAILED",
@@ -227,10 +224,6 @@ export async function POST(req: NextRequest) {
         context: { route: TICKETS_ROUTE, action: "create" },
       });
     }
-    const description = validatedData.callbackPhone
-      ? `[Callback Requested: ${validatedData.callbackPhone}]\n\n${cleanDescription}`
-      : cleanDescription;
-
     if (isSessionScopedIssueType(validatedData.issueType)) {
       return NextResponse.json(
         {
@@ -286,7 +279,8 @@ export async function POST(req: NextRequest) {
     const ticket = await createSupportTicket({
       userId: session.user.id,
       title: validatedData.title,
-      description,
+      description: validatedData.description,
+      callbackPhone: validatedData.callbackPhone,
       priority: validatedData.priority || "MEDIUM",
       category: validatedData.category,
       issueType: validatedData.issueType,
