@@ -65,6 +65,42 @@ interface QuoteFreshnessInput {
   now: Date;
 }
 
+/** Evaluates live coupon validity while discounting this PENDING payment's own held slot. */
+function resolveLiveCoupon(
+  paymentStatus: PaymentStatus,
+  liveCode: QuoteFreshnessInput["discountCode"],
+  now: Date,
+): {
+  liveDiscount: CheckoutDiscountInput | null;
+  staleReason: PendingCheckout["quoteStaleReason"];
+} {
+  if (!liveCode) {
+    return { liveDiscount: null, staleReason: null };
+  }
+  const codeDead =
+    !liveCode.isActive ||
+    (liveCode.expiresAt !== null && now > liveCode.expiresAt);
+  if (codeDead) {
+    return { liveDiscount: null, staleReason: "COUPON_INVALID" };
+  }
+  const effectiveOtherUses =
+    paymentStatus === "PENDING"
+      ? liveCode.currentUses - 1
+      : liveCode.currentUses;
+  if (liveCode.maxUses !== null && effectiveOtherUses >= liveCode.maxUses) {
+    return { liveDiscount: null, staleReason: "COUPON_EXHAUSTED" };
+  }
+  return {
+    liveDiscount: {
+      discountType: liveCode.discountType,
+      discountValue: Number(liveCode.discountValue),
+      maxDiscount:
+        liveCode.maxDiscount !== null ? Number(liveCode.maxDiscount) : null,
+    },
+    staleReason: null,
+  };
+}
+
 /**
  * Revalidates the held quote against live coupon, held+available wallet credits,
  * and current GST/LUT rules.
@@ -73,35 +109,12 @@ async function resolveQuoteFreshness(input: QuoteFreshnessInput): Promise<{
   currentTotalPaise: number | null;
   quoteStaleReason: PendingCheckout["quoteStaleReason"];
 }> {
-  let quoteStaleReason: PendingCheckout["quoteStaleReason"] = null;
-  let liveDiscount: CheckoutDiscountInput | null = null;
-  const { discountCode: liveCode } = input;
-
-  if (liveCode) {
-    const codeDead =
-      !liveCode.isActive ||
-      (liveCode.expiresAt !== null && input.now > liveCode.expiresAt);
-    // Subtract this PENDING payment's own slot so single-use/final-slot coupons do not self-exhaust.
-    const effectiveOtherUses =
-      input.paymentStatus === "PENDING"
-        ? liveCode.currentUses - 1
-        : liveCode.currentUses;
-    const codeExhausted =
-      liveCode.maxUses !== null && effectiveOtherUses >= liveCode.maxUses;
-
-    if (codeDead) {
-      quoteStaleReason = "COUPON_INVALID";
-    } else if (codeExhausted) {
-      quoteStaleReason = "COUPON_EXHAUSTED";
-    } else {
-      liveDiscount = {
-        discountType: liveCode.discountType,
-        discountValue: Number(liveCode.discountValue),
-        maxDiscount:
-          liveCode.maxDiscount !== null ? Number(liveCode.maxDiscount) : null,
-      };
-    }
-  }
+  const coupon = resolveLiveCoupon(
+    input.paymentStatus,
+    input.discountCode,
+    input.now,
+  );
+  let quoteStaleReason = coupon.staleReason;
 
   // Only query remaining wallet balance when non-expired VESTED credits held on this order fall short.
   if (
@@ -114,21 +127,22 @@ async function resolveQuoteFreshness(input: QuoteFreshnessInput): Promise<{
     }
   }
 
-  let currentTotalPaise: number | null = null;
-  if (input.creditsPaise === 0 && input.welcomeDiscountPaise === null) {
-    const rederived = await deriveCheckoutAmount({
-      basePaise: input.originalAmount,
-      buyerCountry: input.buyerCountry ?? "IN",
-      serviceType: input.appointmentType
-        ? appointmentTypeToServiceType(input.appointmentType)
-        : "CONSULTING",
-      discount: liveDiscount,
-      welcomeDiscount: null,
-    });
-    currentTotalPaise = rederived.amount;
-    if (currentTotalPaise !== input.amount) {
-      quoteStaleReason ??= "TAX_CHANGED";
-    }
+  if (input.creditsPaise > 0 || input.welcomeDiscountPaise !== null) {
+    return { currentTotalPaise: null, quoteStaleReason };
+  }
+
+  const rederived = await deriveCheckoutAmount({
+    basePaise: input.originalAmount,
+    buyerCountry: input.buyerCountry ?? "IN",
+    serviceType: input.appointmentType
+      ? appointmentTypeToServiceType(input.appointmentType)
+      : "CONSULTING",
+    discount: coupon.liveDiscount,
+    welcomeDiscount: null,
+  });
+  const currentTotalPaise = rederived.amount;
+  if (currentTotalPaise !== input.amount) {
+    quoteStaleReason ??= "TAX_CHANGED";
   }
 
   return { currentTotalPaise, quoteStaleReason };
