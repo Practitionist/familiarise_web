@@ -322,16 +322,18 @@ export function ResourcesTab({
             <SelectItem value="completed">Completed only</SelectItem>
           </SelectContent>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            setInternalSortDir((d) => (d === "desc" ? "asc" : "desc"))
-          }
-        >
-          <ArrowUpDown className="h-4 w-4 mr-2" />
-          {sortDir === "desc" ? "Newest first" : "Oldest first"}
-        </Button>
+        {externalSortDir === undefined && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setInternalSortDir((d) => (d === "desc" ? "asc" : "desc"))
+            }
+          >
+            <ArrowUpDown className="h-4 w-4 mr-2" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        )}
       </div>
 
       <UrlTabs

@@ -39,10 +39,12 @@ export function UrlTabs({
   tabs,
   paramName = "tab",
   className,
+  onTabChange,
 }: {
   tabs: UrlTab[];
   paramName?: string;
   className?: string;
+  onTabChange?: (value: string) => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -63,6 +65,12 @@ export function UrlTabs({
   useEffect(() => {
     setLocalActive(null);
   }, [requested]);
+
+  useEffect(() => {
+    if (active) {
+      onTabChange?.(active);
+    }
+  }, [active, onTabChange]);
 
   const onValueChange = useCallback(
     (value: string) => {
