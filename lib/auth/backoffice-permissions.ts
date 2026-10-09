@@ -48,9 +48,13 @@ export type BackofficeSurface =
   | "users.read"
   | "users.verify"
   | "users.moderate"
+  // Operator roster: split from users.read because 2FA state and live sessions
+  // are reconnaissance; its mutations deliberately reuse users.moderate.
   | "team.read"
+  // Recordings: metadata and playback are different acts with different blast radii.
   | "recordings.read"
   | "recordings.play"
+  // Money: staff read, admin executes; .read grants keep billing tickets resolvable.
   | "payments.read"
   | "payments.manage"
   | "refunds.read"
@@ -67,20 +71,26 @@ export type BackofficeSurface =
   | "referrals.manage"
   | "approvalPayments.manage"
   | "tds.read"
+  // Class-series doors: support moves vs money moves.
   | "classSeries.support"
   | "classSeries.money"
+  // The console's audit log; staff read only their own rows.
   | "opsLog.read"
+  // Platform: org lifecycle, comms, and system control.
   | "organizations.manage"
   | "announcements.manage"
   | "analytics.read"
   | "systemJobs.manage"
   | "maintenance.manage"
+  // Erasure requests, data breaches and failed emails.
   | "compliance.manage"
+  // The newsletter mass send, split from triaging the list.
   | "newsletter.send";
 
 const roles = (...list: UserRole[]): ReadonlySet<UserRole> =>
   new Set<UserRole>(list);
 
+// Named tiers so the matrix reads as policy, not repetition.
 const OPERATORS = roles("ADMIN", "STAFF");
 const ADMIN_ONLY = roles("ADMIN");
 
@@ -88,7 +98,9 @@ export const BACKOFFICE_PERMISSIONS: Record<
   BackofficeSurface,
   ReadonlySet<UserRole>
 > = {
+  // Support: staff's core job; only the engineering escalation is admin-only.
   "tickets.manage": OPERATORS,
+  // The per-appointment conversation inbox, same remit as the ticket queue.
   "threads.manage": OPERATORS,
   "feedback.manage": OPERATORS,
   "moderation.manage": OPERATORS,

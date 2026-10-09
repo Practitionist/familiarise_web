@@ -37,11 +37,13 @@ async function recordReviewRevisionIfChanged(
   nextRating: number,
   nextDescription: string | null | undefined,
 ): Promise<void> {
+  // Only a changed opinion is an edit; an identical re-submit is idempotent.
   const textChanged =
     existing.rating !== nextRating ||
     (existing.reviewDescription ?? null) !== (nextDescription ?? null);
   if (!textChanged) return;
 
+  // Allocated by an atomic increment (row lock), never from the earlier read.
   const bumped = await tx.consultantReview.update({
     where: { id: existing.id },
     data: { revisionNo: { increment: 1 }, editedAt: new Date() },
@@ -305,9 +307,11 @@ export async function POST(req: NextRequest) {
 
           await recomputeConsultantRating(tx, created.consultantProfileId);
 
+          // Only a new or revived review is news; an edit must not re-notify.
           const isNew = !existing || withdrawnByAuthor;
           let stagedBell = null;
           if (isNew) {
+            // An anonymous reviewer's name is never sent to the consultant.
             const reviewerName = created.isAnonymous
               ? "A verified client"
               : created.consulteeProfile?.user?.name || "User";
