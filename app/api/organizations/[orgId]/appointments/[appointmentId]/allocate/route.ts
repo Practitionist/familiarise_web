@@ -42,7 +42,8 @@ const AllocateOrgBookingBodySchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["slots"],
-        message: "At least one slot ISO timestamp is required for manual allocation.",
+        message:
+          "At least one slot ISO timestamp is required for manual allocation.",
       });
     }
   });
@@ -63,10 +64,7 @@ export async function POST(
   });
   if (access.error) return access.error;
 
-  const rl = await applyRateLimit(
-    eventMutationLimiter,
-    access.session.user.id,
-  );
+  const rl = await applyRateLimit(eventMutationLimiter, access.session.user.id);
   if (rl) return rl;
 
   const raw = await req.json().catch(() => null);
@@ -105,7 +103,8 @@ export async function POST(
     if (!appointment || !isActForOrgBooking(appointment)) {
       return NextResponse.json(
         {
-          error: "Appointment not found or not eligible for organization slot allocation.",
+          error:
+            "Appointment not found or not eligible for organization slot allocation.",
           code: "APPOINTMENT_NOT_FOUND",
         },
         { status: 404 },

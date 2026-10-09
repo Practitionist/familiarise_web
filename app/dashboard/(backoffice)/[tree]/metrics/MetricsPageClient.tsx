@@ -1,25 +1,35 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AnalyticsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
+  Activity,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
   RefreshCw,
-  BarChart3,
+  ShieldCheck,
   Ticket,
   Users,
-  Clock,
-  CheckCircle,
-  UserPlus,
-  Activity,
-  Calendar,
-  TrendingUp,
-  Info,
 } from "lucide-react";
+
+import {
+  DashboardContent,
+  PageHeader,
+} from "@/components/dashboard/PageScaffold";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { Section } from "@/components/dashboard/Section";
+import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { durationLabel } from "@/lib/support/case-format";
+import type { InboxStats } from "@/types/support-case";
 
 interface StaffMetrics {
   supportMetrics: {
@@ -41,320 +51,282 @@ interface StaffMetrics {
   };
 }
 
+const DEFAULT_METRICS: StaffMetrics = {
+  supportMetrics: {
+    ticketsResolvedToday: 0,
+    ticketsResolvedThisWeek: 0,
+    ticketsResolvedThisMonth: 0,
+    openTickets: 0,
+    avgResponseTimeHours: 0,
+  },
+  userMetrics: {
+    usersHelpedThisWeek: 0,
+    activeUsers: 0,
+    newSignupsThisMonth: 0,
+    totalUsers: 0,
+  },
+  platformMetrics: {
+    totalAppointments: 0,
+    pendingPayments: 0,
+  },
+};
+
+const PERIOD_LABELS: Record<string, string> = {
+  today: "Today",
+  week: "This Week",
+  month: "This Month",
+};
+
+function getResolvedTicketsForPeriod(
+  supportMetrics: StaffMetrics["supportMetrics"],
+  period: string,
+): number {
+  if (period === "today") return supportMetrics.ticketsResolvedToday;
+  if (period === "month") return supportMetrics.ticketsResolvedThisMonth;
+  return supportMetrics.ticketsResolvedThisWeek;
+}
+
+function getSlaAttainmentTone(
+  slaBreaches: number,
+  slaAttainmentPct: number,
+): "critical" | "warning" | "success" {
+  if (slaBreaches > 0) return "critical";
+  if (slaAttainmentPct < 95) return "warning";
+  return "success";
+}
+
+function formatFirstResponseValue(
+  avgFirstResponseMs: number | null | undefined,
+  avgResponseTimeHours: number,
+): string {
+  if (avgFirstResponseMs !== null && avgFirstResponseMs !== undefined) {
+    return durationLabel(avgFirstResponseMs);
+  }
+  if (avgResponseTimeHours > 0) {
+    return `${avgResponseTimeHours}h`;
+  }
+  return "N/A";
+}
+
 export default function StaffMetricsPage() {
-  const { data, isPending, isFetching, isError, refetch } =
-    useQuery<StaffMetrics>({
-      queryKey: ["staff-metrics"],
-      queryFn: async (): Promise<StaffMetrics> => {
-        try {
-          const response = await fetch("/api/staff/metrics");
-          if (!response.ok) throw new Error("Failed to fetch metrics");
-          return response.json();
-        } catch (error) {
-          Sentry.captureException(
-            error instanceof Error ? error : new Error(String(error)),
-            { tags: { subsystem: "client" } },
-          );
-          throw error;
-        }
-      },
-    });
+  const [period, setPeriod] = useState("week");
 
-  const metrics = data;
+  const {
+    data: rawMetrics,
+    isLoading: loading,
+    isError,
+    refetch,
+  } = useQuery<StaffMetrics>({
+    queryKey: ["staff-metrics"],
+    queryFn: async () => {
+      const response = await fetch("/api/staff/metrics");
+      if (!response.ok) throw new Error("Failed to fetch metrics");
+      return response.json();
+    },
+    staleTime: 2 * 60 * 1000,
+  });
 
-  if (isPending) {
-    return <AnalyticsSkeleton />;
-  }
+  const slaStats = useQuery<InboxStats>({
+    queryKey: ["support-inbox-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/staff/support-inbox/stats");
+      if (!res.ok) throw new Error("Failed to fetch support SLA stats");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
 
-  if (isError && !metrics) {
-    return (
-      <div className="space-y-6">
-        <DashboardHeader
-          title="Metrics"
-          subtitle="Operational metrics and insights"
-        />
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-            <BarChart3 className="h-12 w-12 mb-4 text-muted-foreground/40" />
-            <p>Unable to load metrics</p>
-            <Button
-              variant="outline"
-              onClick={() => refetch()}
-              className="mt-4"
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const supportMetrics =
+    rawMetrics?.supportMetrics ?? DEFAULT_METRICS.supportMetrics;
+  const userMetrics = rawMetrics?.userMetrics ?? DEFAULT_METRICS.userMetrics;
+  const platformMetrics =
+    rawMetrics?.platformMetrics ?? DEFAULT_METRICS.platformMetrics;
 
-  if (!metrics) {
-    return null;
-  }
+  const periodLabel = PERIOD_LABELS[period] ?? "This Week";
+  const resolvedInPeriod = getResolvedTicketsForPeriod(supportMetrics, period);
+  const openCases = slaStats.data?.openCases ?? supportMetrics.openTickets;
+  const slaBreaches = slaStats.data?.slaBreaches ?? 0;
+  const slaAttainmentPct =
+    openCases > 0
+      ? Math.max(0, Math.round(((openCases - slaBreaches) / openCases) * 100))
+      : 100;
+  const totalHandledInPeriod = resolvedInPeriod + supportMetrics.openTickets;
+  const resolutionRate =
+    totalHandledInPeriod > 0
+      ? Math.round((resolvedInPeriod / totalHandledInPeriod) * 100)
+      : 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <DashboardHeader
-        title="Metrics"
-        subtitle="Operational metrics and insights"
+    <>
+      <PageHeader
+        title="Performance Metrics"
+        description="Support queue health, statutory SLA attainment, and platform operations"
         actions={
-          <Button
-            variant="outline"
-            onClick={() => refetch()}
-            disabled={isFetching}
-          >
-            <RefreshCw
-              className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Select value={period} onValueChange={setPeriod}>
+              <SelectTrigger aria-label="Select period" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="week">This Week</SelectItem>
+                <SelectItem value="month">This Month</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                void refetch();
+                void slaStats.refetch();
+              }}
+              aria-label="Refresh metrics"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         }
       />
 
-      {/* Staff Access Notice */}
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertTitle>Staff Metrics View</AlertTitle>
-        <AlertDescription>
-          This dashboard shows operational metrics relevant to staff activities.
-          Revenue and financial data are available in the admin dashboard.
-        </AlertDescription>
-      </Alert>
+      <DashboardContent>
+        {isError ? (
+          <ErrorState
+            title="Metrics could not be loaded"
+            onRetry={() => void refetch()}
+          />
+        ) : (
+          <>
+            <Section
+              title="Support Queue Health & Statutory SLA Attainment"
+              description="Live acknowledgement and resolution SLA compliance across active cases"
+            >
+              {slaStats.isError ? (
+                <ErrorState
+                  title="SLA compliance metrics could not be loaded"
+                  onRetry={() => void slaStats.refetch()}
+                />
+              ) : (
+                <StatRow>
+                  {loading || slaStats.isLoading ? (
+                    [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                  ) : (
+                    <>
+                      <Stat
+                        label="SLA Attainment"
+                        value={`${slaAttainmentPct}%`}
+                        hint={
+                          slaBreaches === 0
+                            ? "All open cases within statutory ceiling"
+                            : `${slaBreaches} active case(s) breached`
+                        }
+                        icon={ShieldCheck}
+                        tone={getSlaAttainmentTone(
+                          slaBreaches,
+                          slaAttainmentPct,
+                        )}
+                      />
+                      <Stat
+                        label="SLA Breaches"
+                        value={slaBreaches}
+                        hint="Acknowledgement or resolution overdue"
+                        icon={AlertTriangle}
+                        tone={slaBreaches > 0 ? "critical" : "neutral"}
+                      />
+                      <Stat
+                        label="Avg First Response"
+                        value={formatFirstResponseValue(
+                          slaStats.data?.avgFirstResponseMs,
+                          supportMetrics.avgResponseTimeHours,
+                        )}
+                        hint={`${slaStats.data?.windowDays ?? 7}-day rolling window`}
+                        icon={Clock}
+                      />
+                      <Stat
+                        label="Resolution Rate"
+                        value={`${resolutionRate}%`}
+                        hint={`${resolvedInPeriod} resolved (${periodLabel})`}
+                        icon={CheckCircle}
+                        tone={resolutionRate >= 80 ? "success" : "neutral"}
+                      />
+                    </>
+                  )}
+                </StatRow>
+              )}
+            </Section>
 
-      {/* Support Performance */}
-      <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
-          <Ticket className="h-5 w-5 text-muted-foreground" />
-          Support Performance
-        </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Resolved Today
-                  </p>
-                  <p className="text-3xl font-bold text-green-600 dark:text-green-400">
-                    {metrics.supportMetrics.ticketsResolvedToday}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-green-50 dark:bg-green-950">
-                  <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            <Section title={`Queue Volume (${periodLabel})`}>
+              <StatRow>
+                {loading ? (
+                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                ) : (
+                  <>
+                    <Stat
+                      label="Tickets Resolved"
+                      value={resolvedInPeriod}
+                      hint={periodLabel}
+                      icon={CheckCircle}
+                      tone="success"
+                    />
+                    <Stat
+                      label="Open Cases"
+                      value={openCases}
+                      hint={`${supportMetrics.openTickets} open support tickets`}
+                      icon={Ticket}
+                      tone={openCases > 0 ? "warning" : "neutral"}
+                    />
+                    <Stat
+                      label="Users Helped"
+                      value={userMetrics.usersHelpedThisWeek}
+                      hint="Distinct users this week"
+                      icon={Users}
+                    />
+                    <Stat
+                      label="Active Users"
+                      value={userMetrics.activeUsers}
+                      hint="With payments this month"
+                      icon={Activity}
+                    />
+                  </>
+                )}
+              </StatRow>
+            </Section>
 
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Resolved This Week
-                  </p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.supportMetrics.ticketsResolvedThisWeek}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <TrendingUp className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Open Tickets</p>
-                  <p
-                    className={`text-3xl font-bold ${metrics.supportMetrics.openTickets > 10 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
-                  >
-                    {metrics.supportMetrics.openTickets}
-                  </p>
-                </div>
-                <div
-                  className={`p-3 rounded-full ${metrics.supportMetrics.openTickets > 10 ? "bg-red-50 dark:bg-red-950" : "bg-muted"}`}
-                >
-                  <Ticket
-                    className={`h-6 w-6 ${metrics.supportMetrics.openTickets > 10 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Avg Response Time
-                  </p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.supportMetrics.avgResponseTimeHours}h
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <Clock className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* User Metrics */}
-      <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
-          <Users className="h-5 w-5 text-muted-foreground" />
-          User Metrics
-        </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Users Helped This Week
-                  </p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.userMetrics.usersHelpedThisWeek}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <Users className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Active Users</p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.userMetrics.activeUsers}
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">This month</p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <Activity className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">New Signups</p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.userMetrics.newSignupsThisMonth}
-                  </p>
-                  <p className="text-xs text-muted-foreground/70">This month</p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <UserPlus className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Users</p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.userMetrics.totalUsers.toLocaleString()}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <Users className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Platform Health */}
-      <div>
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-foreground">
-          <Calendar className="h-5 w-5 text-muted-foreground" />
-          Platform Activity
-        </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Total Appointments
-                  </p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.platformMetrics.totalAppointments.toLocaleString()}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <Calendar className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Pending Payments
-                  </p>
-                  <p
-                    className={`text-3xl font-bold ${metrics.platformMetrics.pendingPayments > 20 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}
-                  >
-                    {metrics.platformMetrics.pendingPayments}
-                  </p>
-                </div>
-                <div
-                  className={`p-3 rounded-full ${metrics.platformMetrics.pendingPayments > 20 ? "bg-amber-50 dark:bg-amber-950" : "bg-muted"}`}
-                >
-                  <Clock
-                    className={`h-6 w-6 ${metrics.platformMetrics.pendingPayments > 20 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Monthly Resolved
-                  </p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {metrics.supportMetrics.ticketsResolvedThisMonth}
-                  </p>
-                </div>
-                <div className="p-3 rounded-full bg-muted">
-                  <BarChart3 className="h-6 w-6 text-foreground" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
+            <Section title="Platform Overview">
+              <StatRow>
+                {loading ? (
+                  [1, 2, 3].map((i) => <StatSkeleton key={i} />)
+                ) : (
+                  <>
+                    <Stat
+                      label="Total Users"
+                      value={userMetrics.totalUsers.toLocaleString()}
+                      hint={`+${userMetrics.newSignupsThisMonth} new this month`}
+                      icon={Users}
+                    />
+                    <Stat
+                      label="Total Appointments"
+                      value={platformMetrics.totalAppointments.toLocaleString()}
+                      hint="All-time sessions"
+                      icon={Activity}
+                    />
+                    <Stat
+                      label="Pending Payments"
+                      value={platformMetrics.pendingPayments}
+                      hint="Awaiting settlement"
+                      icon={Clock}
+                      tone={
+                        platformMetrics.pendingPayments > 0
+                          ? "warning"
+                          : "neutral"
+                      }
+                    />
+                  </>
+                )}
+              </StatRow>
+            </Section>
+          </>
+        )}
+      </DashboardContent>
+    </>
   );
 }

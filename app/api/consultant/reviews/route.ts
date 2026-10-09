@@ -6,12 +6,12 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { apiError } from "@/lib/errors/api-error";
-import {
-  REVIEWS_PAGE_SIZE,
-  readOwnReviews,
-} from "@/lib/reviews-inbox";
+import { REVIEWS_PAGE_SIZE, readOwnReviews } from "@/lib/reviews-inbox";
+
+const TrackParamSchema = z.enum(["ONE_TO_ONE", "GROUP"]);
 
 function ratingParam(raw: string | null): number | null {
   const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
@@ -23,11 +23,24 @@ export async function GET(request: NextRequest) {
     const { profileId, error } = await requireOwnConsultantProfile();
     if (error) return error;
     const params = request.nextUrl.searchParams;
+    const rawTrack = params.get("track");
+    let track: z.infer<typeof TrackParamSchema> | null = null;
+    if (rawTrack !== null && rawTrack !== "") {
+      const parsedTrack = TrackParamSchema.safeParse(rawTrack);
+      if (!parsedTrack.success) {
+        return NextResponse.json(
+          { error: "Invalid track filter" },
+          { status: 400 },
+        );
+      }
+      track = parsedTrack.data;
+    }
     const limitRaw = Number.parseInt(params.get("limit") ?? "", 10);
     const data = await readOwnReviews({
       consultantProfileId: profileId,
       cursor: params.get("cursor"),
       rating: ratingParam(params.get("rating")),
+      track,
       needsReply: params.get("needsReply") === "1",
       limit: limitRaw > 0 ? Math.min(limitRaw, 50) : REVIEWS_PAGE_SIZE,
     });

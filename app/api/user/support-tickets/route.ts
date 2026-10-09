@@ -12,6 +12,7 @@ import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
+import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
 
 const TICKETS_ROUTE = "user.support-tickets";
 
@@ -56,7 +57,12 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(
+      tickets.map((ticket) => ({
+        ...ticket,
+        attachments: withSupportAttachmentHrefs(ticket.attachments),
+      })),
+    );
   } catch (cause) {
     return supportError({
       status: 500,

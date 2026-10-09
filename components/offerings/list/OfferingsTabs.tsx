@@ -5,11 +5,6 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/utils/tailwind";
 
-/**
- * #1527 §13b — Offerings · Collaborations. Link tabs rather than panels: each
- * is its own URL (`offerings`, `offerings/collaborations`), so the old
- * `collaborations` route 308s straight to a tab.
- */
 export function OfferingsTabs({
   consultantId,
 }: Readonly<{ consultantId: string }>) {

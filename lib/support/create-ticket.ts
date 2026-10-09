@@ -18,8 +18,12 @@ import type {
 import {
   notifySupportTicketActivity,
   notifySupportTicketCreated,
+  notifySupportTicketResponse,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { reportSentryError } from "@/lib/observability/report";
+import { withSupportAttachmentHrefs } from "./attachment-href";
 import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
@@ -282,8 +286,8 @@ export async function findRecentOpenEscalation(
 export async function findOpenTicketForPayment(
   userId: string,
   paymentId: string,
-): Promise<SupportTicket | null> {
-  return prisma.supportTicket.findFirst({
+) {
+  const ticket = await prisma.supportTicket.findFirst({
     where: {
       paymentId,
       userId,
@@ -298,4 +302,128 @@ export async function findOpenTicketForPayment(
       attachments: { orderBy: { uploadedAt: "desc" } },
     },
   });
+  return ticket
+    ? { ...ticket, attachments: withSupportAttachmentHrefs(ticket.attachments) }
+    : null;
+}
+
+export interface CreateOutboundStaffSupportTicketInput {
+  staffUserId: string;
+  staffUserName: string | null | undefined;
+  targetLookup: string;
+  title: string;
+  description: string;
+  priority?: SupportPriority;
+  category?: string | null;
+  issueType?: SupportIssueType | null;
+  organizationId?: string | null;
+  paymentId?: string | null;
+}
+
+export async function createOutboundStaffSupportTicket(
+  input: CreateOutboundStaffSupportTicketInput,
+): Promise<SupportTicket | null> {
+  const targetUser = input.targetLookup.includes("@")
+    ? await prisma.user.findFirst({
+        where: { email: { equals: input.targetLookup, mode: "insensitive" } },
+        select: { id: true },
+      })
+    : await prisma.user.findUnique({
+        where: { id: input.targetLookup },
+        select: { id: true },
+      });
+  if (!targetUser) return null;
+
+  const ticketUserId = targetUser.id;
+  const [validMembership, validPayment] = await Promise.all([
+    input.organizationId
+      ? prisma.membership.findFirst({
+          where: {
+            organizationId: input.organizationId,
+            userId: ticketUserId,
+            status: "ACTIVE",
+          },
+          select: { organizationId: true },
+        })
+      : null,
+    input.paymentId
+      ? prisma.payment.findFirst({
+          where: {
+            id: input.paymentId,
+            userId: ticketUserId,
+          },
+          select: { id: true },
+        })
+      : null,
+  ]);
+
+  const resolvedOrganizationId = validMembership?.organizationId ?? null;
+  const resolvedPaymentId = validPayment?.id ?? null;
+  const priority = input.priority ?? "MEDIUM";
+
+  const ticket = await prisma.$transaction(
+    async (tx) => {
+      const now = new Date();
+      const referenceNumber = await allocateTicketReference(tx, now);
+      const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(priority, now);
+
+      const created = await tx.supportTicket.create({
+        data: {
+          userId: ticketUserId,
+          assignedToId: input.staffUserId,
+          status: "IN_PROGRESS",
+          title: input.title,
+          description: input.description,
+          priority,
+          referenceNumber,
+          ackDueAt,
+          resolutionDueAt,
+          acknowledgedAt: now,
+          firstAgentReplyAt: now,
+          awaitingUserSince: now,
+          lastMessageAt: now,
+          category: input.category ?? undefined,
+          issueType: input.issueType ?? "GENERAL_INQUIRY",
+          organizationId: resolvedOrganizationId ?? undefined,
+          paymentId: resolvedPaymentId ?? undefined,
+        },
+      });
+
+      await tx.supportResponse.create({
+        data: {
+          message: input.description,
+          isInternal: false,
+          supportTicket: { connect: { id: created.id } },
+          user: { connect: { id: input.staffUserId } },
+        },
+      });
+
+      return created;
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+
+  await notifySupportTicketResponse(ticket.userId, {
+    ticketId: ticket.id,
+    reference: ticket.referenceNumber ?? undefined,
+    ticketTitle: ticket.title || "Support Ticket",
+    message: input.description,
+    respondedBy: input.staffUserName ?? "Support",
+    dashboardUrl: supportRequestHref(
+      caseKeyOf({ kind: "ticket", id: ticket.id }),
+      resolvedOrganizationId,
+    ),
+    ...notificationScope(resolvedOrganizationId),
+  }).catch((err) => {
+    reportSentryError(err, {
+      subsystem: "support",
+      op: "outbound.notifyUser",
+      extra: { ticketId: ticket.id },
+    });
+  });
+
+  return ticket;
 }

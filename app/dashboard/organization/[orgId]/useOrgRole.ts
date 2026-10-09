@@ -116,9 +116,13 @@ export function useRequireOrgAccess(
 
   useEffect(() => {
     if (!isLoading && !passes) {
-      router.replace(`/dashboard/organization/${orgId}/home`);
+      router.replace(
+        suspended
+          ? `/dashboard/organization/${orgId}/appointments`
+          : `/dashboard/organization/${orgId}/home`,
+      );
     }
-  }, [isLoading, passes, orgId, router]);
+  }, [isLoading, passes, suspended, orgId, router]);
 
   // Suppress unused-variable warning for `role` — kept in the hook's
   // return value for callers that want to branch on it directly.

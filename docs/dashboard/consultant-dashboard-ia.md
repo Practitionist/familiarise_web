@@ -8,14 +8,14 @@ This page records how the consultant (Expert) dashboard is organised after the 2
 
 The consultant dashboard now shares one `DashboardShell` with every other dashboard tree (personal, organization, workspace and back office), rather than carrying its own chrome. The shell's sidebar begins with the `ContextSwitcher`, which lets a signed-in person move between their Expert dashboard, their Learner dashboard (if they have also bought a session), every organization they belong to, and — for admins and staff — the back office. Below the switcher, the sidebar is a static, unfiltered list of groups, because every surface on a personal dashboard belongs to the one person who owns it. `buildConsultantNav()` in `lib/dashboard/nav/consultant.ts` builds it as:
 
-| Group    | Entries                                        |
-| -------- | ----------------------------------------------- |
+| Group    | Entries                                                             |
+| -------- | ------------------------------------------------------------------- |
 | Work     | Home, Requests (count badge), Appointments, Messages (unread badge) |
-| Business | **Offerings**, Availability, Earnings, **Reviews** |
-| Library  | Documents, Recordings                           |
-| Grow     | Invite & earn                                   |
+| Business | **Offerings**, Availability, Earnings, **Reviews**                  |
+| Library  | Documents, Recordings                                               |
+| Grow     | Invite & earn                                                       |
 
-"Offerings" is the renamed Event Planner; the old `planner` route now 308-redirects to `offerings`, and Collaborations moved from its own sidebar entry into an Offerings tab. Reviews is a new destination (owner decision Q5) where an expert reads and replies to what learners say. Two rules still shape this list, carried over from the 2026-09-21 review: a sidebar entry must be a distinct destination, and a daily work surface is not a preference, which is why Availability stays in Business rather than moving into Settings.
+"Offerings" is the renamed Event Planner; the old `planner` route now 308-redirects to `offerings`, and Collaborations moved from its own sidebar entry into an Offerings tab. Offering cards copy the expert's signed personal share link (`?via=<token>` / `?ref=<code>`, locking the 10% own-link platform fee), display subscription cadence and topic/module counts, and hydrate full plan metadata (`deliverables`, `prerequisite`, `material`, `sessionDurationInHours`) in the edit drawer alongside a net take-home preview. Earnings surfaces active `ConsultantFeeWaiver` banners, `Own link (10%)` and `Fee waived` badges on ledger rows, a Tax & TDS (`Form 16A`) quarterly summary with 1-click FY CSV export, and Own-Link vs Marketplace revenue split + repeat learner rate on the Analytics tab. Reviews is a dedicated destination where an expert filters by track (`1:1` vs `Group`) or star rating, replies to learners, reports abusive reviews, and shares sanitised review cards or session milestones to LinkedIn/X. Two rules shape this list: a sidebar entry must be a distinct destination, and a daily work surface is not a preference, which is why Availability stays in Business rather than moving into Settings.
 
 Settings is no longer a sidebar row. It is one entry in the header's avatar menu (name, email, role, Settings, Sign out) alongside a header **Help ▾** menu (Help Center · Support requests · Send feedback) — both are part of the shared `DashboardShell` header, not this tree's own nav. The pinned footer action is "View public page".
 
@@ -23,36 +23,40 @@ The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointmen
 
 ## The Availability page
 
-`/dashboard/consultant/[consultantId]/availability` is unchanged by this PR: it still renders `AvailabilitySection` and `AvailabilityGrid` over the same data, and the save contract is still the strict whole-profile `PUT /api/user/consultants/[id]`. That logic lives once, in `settings/use-consultant-settings-form.ts`, shared with the Profile and Booking requests settings sections. The retired `settings?tab=availability` deep link still answers a 308 to this page.
+`/dashboard/consultant/[consultantId]/availability` renders `AvailabilitySection` and `AvailabilityGrid` over the same data, and the save contract is the strict whole-profile `PUT /api/user/consultants/[id]`. That logic lives once, in `settings/use-consultant-settings-form.ts`, shared with the Profile and Booking requests settings sections. The retired `settings?tab=availability` deep link still answers a 308 to this page.
 
 ## The Settings hub
 
 Settings still renders through the shared `SettingsLayout` primitive (a titled left nav at `md`+, a scrollable segmented strip below it, one URL per section), now shared with the consultee, org and back-office trees rather than being consultant-specific. `SETTINGS_SECTIONS` in `settings/settings.ts` reads:
 
-| Group           | Section               | URL                        |
-| --------------- | ---------------------- | --------------------------- |
-| Account         | Account                | `/settings/account`         |
-| Account         | Notifications           | `/settings/notifications`   |
-| Public profile  | Profile                | `/settings/profile`         |
-| Public profile  | Experience & education | `/settings/experience`      |
-| Public profile  | Verification            | `/settings/verification`    |
-| Business        | Booking requests        | `/settings/booking`         |
-| Business        | Get paid                | `/settings/get-paid`        |
+| Group          | Section                | URL                       |
+| -------------- | ---------------------- | ------------------------- |
+| Account        | Account                | `/settings/account`       |
+| Account        | Notifications          | `/settings/notifications` |
+| Public profile | Profile                | `/settings/profile`       |
+| Public profile | Experience & education | `/settings/experience`    |
+| Public profile | Verification           | `/settings/verification`  |
+| Business       | Booking requests       | `/settings/booking`       |
+| Business       | Get paid               | `/settings/get-paid`      |
 
-Account is new since the 2026-09-21 version: it absorbed `/profile`, `/settings/change-password` and the old Security tab, so a consultant's name, photo, phone, password, active sessions, connected accounts and account deletion now live in one place shared with the consultee dashboard. `SETTINGS_SECTION_ALIASES` maps the retired `security` key to `account`, and `/profile` now redirects per viewer (a consultant or consultee lands on their own Account section; ADMIN/STAFF land on the back-office "My profile" page; ORG_WORKSPACE lands on workspace settings) rather than to a single fixed page. Experience & education is also new: it lets an expert edit work history and education after onboarding, which previously had no dashboard entry point.
+Account absorbed `/profile`, `/settings/change-password` and the old Security tab, so a consultant's name, photo, phone, password, active sessions, connected accounts and account deletion live in one place shared with the consultee, workspace, and back-office dashboards. `SETTINGS_SECTION_ALIASES` maps the retired `security` key to `account`, and `/profile` redirects per viewer (a consultant or consultee lands on their own Account section; ADMIN/STAFF land on the back-office Settings page; ORG_WORKSPACE lands on `/settings/account`) rather than to a single fixed page. Experience & education lets an expert edit work history and education after onboarding.
 
-The hub root `/settings` and every `?tab=<key>` link still answer a 308 to a section, and `/settings/payouts` still 308s to `/settings/get-paid`. A jest pin (`__tests__/dashboards/settings-hub.test.tsx`) still asserts that every section has a unique URL and that every legacy key lands on exactly one of them.
+The hub root `/settings` and every `?tab=<key>` link answer a 308 to a section, and `/settings/payouts` 308-redirects to `/settings/get-paid` via `[...legacy]/page.tsx` (`GetPaidClient.tsx` lives directly inside `settings/get-paid/`). A jest pin (`__tests__/dashboards/settings-hub.test.tsx`) asserts that every section has a unique URL and that every legacy key lands on exactly one of them.
 
-The consultee (Learner) Settings hub now also uses `SettingsLayout` rather than its own three-tab page: its sections are Account, Notifications and Learning profile (`CONSULTEE_SETTINGS_SECTIONS` in the consultee tree's own `settings.ts`), following the same one-URL-per-section pattern this document previously said was consultant-only.
+The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections are Account, Notifications and Learning profile (`CONSULTEE_SETTINGS_SECTIONS` in the consultee tree's own `settings.ts`), following the same one-URL-per-section pattern.
 
 ## Where things are
 
-| Concern                                   | File                                                                                          |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/layout.tsx`         |
-| Shared shell, switcher, header menus      | `components/dashboard/DashboardShell.tsx`, `components/dashboard/ContextSwitcher.tsx`           |
-| Availability page                         | `app/dashboard/consultant/[consultantId]/(features)/availability/page.tsx`                      |
-| Section registry and redirects            | `app/dashboard/consultant/[consultantId]/(features)/settings/settings.ts`                       |
-| Hub nav                                   | `components/dashboard/SettingsLayout.tsx`, `app/dashboard/consultant/[consultantId]/(features)/settings/layout.tsx` |
-| Shared form state and the combined PUT    | `app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form.ts`   |
-| Pins                                      | `__tests__/dashboards/settings-hub.test.tsx`, `__tests__/dashboard/nav-targets-resolve.test.ts` |
+| Concern                                    | File                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Sidebar groups, mobile tabs, crumb labels  | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/layout.tsx`                             |
+| Shared shell, switcher, header menus       | `components/dashboard/DashboardShell.tsx`, `components/dashboard/ContextSwitcher.tsx`                               |
+| Availability page                          | `app/dashboard/consultant/[consultantId]/(features)/availability/page.tsx`                                          |
+| Offerings list, share attribution & editor | `components/offerings/list/OfferingsTabs.tsx`, `components/offerings/**`                                            |
+| Earnings, fee waivers, TDS & analytics     | `app/dashboard/consultant/[consultantId]/(features)/earnings/{EarningsBuckets,AnalyticsPanel}.tsx`                  |
+| Reviews inbox, filters & share modal       | `app/dashboard/consultant/[consultantId]/(features)/reviews/ReviewsInbox.tsx`                                       |
+| Section registry and redirects             | `app/dashboard/consultant/[consultantId]/(features)/settings/settings.ts`                                           |
+| Get paid client & section page             | `app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/{page,GetPaidClient}.tsx`                     |
+| Hub nav                                    | `components/dashboard/SettingsLayout.tsx`, `app/dashboard/consultant/[consultantId]/(features)/settings/layout.tsx` |
+| Shared form state and the combined PUT     | `app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form.ts`                       |
+| Pins                                       | `__tests__/dashboards/settings-hub.test.tsx`, `__tests__/dashboard/nav-targets-resolve.test.ts`                     |

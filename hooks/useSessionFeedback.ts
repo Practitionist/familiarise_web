@@ -6,12 +6,20 @@
  * URL for the server's older callers and reads the same row.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 interface SlotFeedback {
   appointmentOccurrenceId: string | null;
   rating: number;
+  comment?: string | null;
+}
+
+export interface SubmitFeedbackInput {
+  rating: number;
+  comment?: string;
+  occurrenceId?: string;
 }
 
 /** The one cache key for a booking's ratings.
@@ -26,8 +34,14 @@ export const bookingFeedbackKey = (bookingAppointmentId: string) =>
 export interface SessionFeedbackState {
   /** slot id → the rating this viewer gave it. */
   ratings: Record<string, number>;
+  /** slot id (or "booking") → the private comment this viewer saved. */
+  comments: Record<string, string>;
   /** Slots this viewer may rate at all — attended, or offline. */
   rateable: Set<string>;
+  /** Persist a session rating and optional private comment. */
+  submitFeedback: (input: SubmitFeedbackInput) => Promise<void>;
+  /** True while a feedback submission is in flight. */
+  isSubmitting: boolean;
   /**
    * True when the read failed.
    *
@@ -45,10 +59,14 @@ export interface SessionFeedbackState {
 export function useSessionFeedback(
   bookingAppointmentId: string,
 ): SessionFeedbackState {
+  const queryClient = useQueryClient();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const query = useQuery({
     queryKey: bookingFeedbackKey(bookingAppointmentId),
     queryFn: async (): Promise<{
       ratings: Record<string, number>;
+      comments: Record<string, string>;
       rateable: string[];
     }> => {
       const res = await fetch(
@@ -58,15 +76,23 @@ export function useSessionFeedback(
       // made React Query record success, skip its retry and cache the emptiness,
       // so a 500 rendered as unrated stars on a call the user had already rated.
       if (!res.ok) await throwSupportError(res, "session feedback load");
-      const { data, rateableSlotIds } = await res.json();
-      const rows = (data ?? []) as SlotFeedback[];
+      const json: {
+        data?: SlotFeedback[];
+        rateableSlotIds?: string[];
+      } = await res.json();
+      const rows = json.data ?? [];
       // A provider's read returns EVERY attendee's rating, so a group call yields
       // several rows for one slot. `Object.fromEntries` kept whichever came last —
       // the consultant saw one arbitrary attendee's score and read it as the
       // session's. Averaged instead, which is also how that call contributes to
       // the group score.
       const bySlot = new Map<string, { total: number; n: number }>();
+      const comments: Record<string, string> = {};
       for (const r of rows) {
+        const commentKey = r.appointmentOccurrenceId ?? "booking";
+        if (typeof r.comment === "string" && r.comment.length > 0) {
+          comments[commentKey] = r.comment;
+        }
         if (!r.appointmentOccurrenceId) continue;
         const acc = bySlot.get(r.appointmentOccurrenceId) ?? { total: 0, n: 0 };
         acc.total += r.rating;
@@ -80,14 +106,45 @@ export function useSessionFeedback(
             Math.round((a.total / a.n) * 10) / 10,
           ]),
         ),
-        rateable: (rateableSlotIds ?? []) as string[],
+        comments,
+        rateable: json.rateableSlotIds ?? [],
       };
     },
   });
 
+  const submitFeedback = async (input: SubmitFeedbackInput) => {
+    setIsSubmitting(true);
+    try {
+      const trimmedComment = input.comment?.trim();
+      const res = await fetch(
+        `/api/appointments/${bookingAppointmentId}/feedback`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rating: input.rating,
+            ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
+            ...(trimmedComment !== undefined
+              ? { comment: trimmedComment }
+              : {}),
+          }),
+        },
+      );
+      if (!res.ok) await throwSupportError(res, "session feedback save");
+      await queryClient.invalidateQueries({
+        queryKey: bookingFeedbackKey(bookingAppointmentId),
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return {
     ratings: query.data?.ratings ?? {},
+    comments: query.data?.comments ?? {},
     rateable: new Set(query.data?.rateable ?? []),
+    submitFeedback,
+    isSubmitting,
     isError: query.isError,
     retry: () => void query.refetch(),
   };

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -9,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowUpDown, FolderOpen } from "lucide-react";
+import { ArrowUpDown, FolderOpen, Search } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
@@ -47,6 +48,20 @@ const EVENT_TYPES = [
   { key: "trials", label: "Trials" },
 ] as const;
 
+export type OfferingFilterOption =
+  "all" | "consultation" | "subscription" | "webinar" | "class";
+
+const OFFERING_FILTER_OPTIONS: {
+  value: OfferingFilterOption;
+  label: string;
+}[] = [
+  { value: "all", label: "All" },
+  { value: "consultation", label: "Consultation" },
+  { value: "subscription", label: "Subscription" },
+  { value: "webinar", label: "Webinar" },
+  { value: "class", label: "Class" },
+];
+
 /**
  * `with_recordings` / `with_materials` only make sense on the combined view —
  * on the Documents page every event shown already has materials. The pages pass
@@ -54,12 +69,44 @@ const EVENT_TYPES = [
  */
 type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
 
+function matchesResourceQuery(
+  event: EventResource,
+  query: string,
+  artifact: ResourceArtifact = "both",
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (event.planTitle.toLowerCase().includes(q)) return true;
+  if ((event.contextTitle ?? "").toLowerCase().includes(q)) return true;
+  if ((event.consultantName ?? "").toLowerCase().includes(q)) return true;
+  if (
+    artifact !== "materials" &&
+    event.recordings.some((r) => r.title.toLowerCase().includes(q))
+  ) {
+    return true;
+  }
+  if (
+    artifact !== "recordings" &&
+    event.materials.some(
+      (m) =>
+        (m.originalName || m.fileName).toLowerCase().includes(q) ||
+        (m.description ?? "").toLowerCase().includes(q),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function filterEvents(
   events: EventResource[],
   filter: FilterOption,
+  searchQuery = "",
+  artifact: ResourceArtifact = "both",
 ): EventResource[] {
-  if (filter === "all") return events;
   return events.filter((e) => {
+    if (!matchesResourceQuery(e, searchQuery, artifact)) return false;
+    if (filter === "all") return true;
     if (filter === "with_recordings") return e.recordings.length > 0;
     if (filter === "with_materials") return e.materials.length > 0;
     return e.status === "COMPLETED";
@@ -76,6 +123,21 @@ function sortEvents(
   });
 }
 
+function isFilterOption(value: string): value is FilterOption {
+  return (
+    value === "all" ||
+    value === "with_recordings" ||
+    value === "with_materials" ||
+    value === "completed"
+  );
+}
+
+function resolveArtifactNoun(artifact: ResourceArtifact): string {
+  if (artifact === "materials") return "documents";
+  if (artifact === "recordings") return "recordings";
+  return "resources";
+}
+
 export function ResourcesTab({
   data,
   artifact = "both",
@@ -84,6 +146,9 @@ export function ResourcesTab({
 }: ResourcesTabProps) {
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [resourceFilter, setResourceFilter] = useState<FilterOption>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [offeringFilter, setOfferingFilter] =
+    useState<OfferingFilterOption>("all");
 
   /**
    * Events that actually carry the artifact this page is for.
@@ -116,26 +181,65 @@ export function ResourcesTab({
   const filteredData = useMemo(() => {
     if (!artifactData) return null;
     const data = artifactData;
+    const keepOffering = (
+      target: OfferingFilterOption,
+      events: EventResource[],
+    ) => (offeringFilter === "all" || offeringFilter === target ? events : []);
     return {
       consultations: sortEvents(
-        filterEvents(data.consultations, resourceFilter),
+        filterEvents(
+          keepOffering("consultation", data.consultations),
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
       subscriptions: sortEvents(
-        filterEvents(data.subscriptions, resourceFilter),
+        filterEvents(
+          keepOffering("subscription", data.subscriptions),
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
       webinars: sortEvents(
-        filterEvents(data.webinars, resourceFilter),
+        filterEvents(
+          keepOffering("webinar", data.webinars),
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
-      classes: sortEvents(filterEvents(data.classes, resourceFilter), sortDir),
+      classes: sortEvents(
+        filterEvents(
+          keepOffering("class", data.classes),
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
+        sortDir,
+      ),
       trials: sortEvents(
-        filterEvents(data.trials ?? [], resourceFilter),
+        filterEvents(
+          offeringFilter === "all" ? (data.trials ?? []) : [],
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
     };
-  }, [artifactData, resourceFilter, sortDir]);
+  }, [
+    artifactData,
+    resourceFilter,
+    searchQuery,
+    offeringFilter,
+    sortDir,
+    artifact,
+  ]);
 
   if (!data || !artifactData || !filteredData) return null;
 
@@ -165,14 +269,12 @@ export function ResourcesTab({
     );
   }
 
-  const artifactNoun =
-    artifact === "materials"
-      ? "documents"
-      : artifact === "recordings"
-        ? "recordings"
-        : "resources";
+  const artifactNoun = resolveArtifactNoun(artifact);
 
-  const isFiltered = resourceFilter !== "all";
+  const isFiltered =
+    resourceFilter !== "all" ||
+    searchQuery.trim().length > 0 ||
+    offeringFilter !== "all";
 
   return (
     <div>
@@ -183,11 +285,43 @@ export function ResourcesTab({
         }
       />
 
-      {/* Filter + Sort controls */}
+      {/* Search + Offering Type + Filter + Sort controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-64">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={`Search ${artifactNoun}…`}
+            aria-label={`Search ${artifactNoun}`}
+            className="pl-8"
+          />
+        </div>
+        <fieldset
+          aria-label="Filter by offering type"
+          className="flex flex-wrap items-center gap-1"
+        >
+          {OFFERING_FILTER_OPTIONS.map((opt) => (
+            <Button
+              key={opt.value}
+              type="button"
+              size="sm"
+              variant={offeringFilter === opt.value ? "default" : "outline"}
+              onClick={() => setOfferingFilter(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </fieldset>
         <Select
           value={resourceFilter}
-          onValueChange={(v) => setResourceFilter(v as FilterOption)}
+          onValueChange={(v) => {
+            if (isFilterOption(v)) setResourceFilter(v);
+          }}
         >
           <SelectTrigger
             className="w-full sm:w-[180px]"
@@ -220,8 +354,6 @@ export function ResourcesTab({
         </Button>
       </div>
 
-      {/* #1527 — the booking-type tabs live in the URL (?tab=); a type with
-          nothing on it has no tab, so the first one with events opens. */}
       <UrlTabs
         tabs={EVENT_TYPES.map(({ key, label }) => {
           const total = (artifactData[key as keyof ResourcesData] ?? []).length;
