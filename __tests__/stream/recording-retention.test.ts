@@ -32,6 +32,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
+import { reportSentryMessage } from "../../lib/observability/report";
 import {
   expireRecordings,
   recordingRetentionDeadline,
@@ -207,15 +208,18 @@ describe("expireRecordings", () => {
       purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     });
     const orgArm = scanWhere.OR.find(
-      (arm: { organizationId: unknown }) => arm.organizationId !== null,
+      (arm: { organization?: unknown }) => arm.organization !== undefined,
     );
     expect(orgArm.recordedAt.lt.getTime()).toBeLessThanOrEqual(
       Date.now() - 7 * 24 * 60 * 60 * 1000,
     );
-    // Personal webinar/class rows younger than 365 days can never be due, so they stay out of the scan window.
+    // Webinar/class rows on the platform schedule younger than 365 days can never be due, so they stay out of the scan window.
     expect(scanWhere.OR).toContainEqual(
       expect.objectContaining({
-        organizationId: null,
+        OR: [
+          { organizationId: null },
+          { organization: { is: { streamRecordingRetentionDays: null } } },
+        ],
         meeting: {
           occurrence: {
             appointment: { webinar: { is: null }, class: { is: null } },
@@ -236,5 +240,68 @@ describe("expireRecordings", () => {
       data: { updatedAt: expect.any(Date) },
     });
     expect(result).toMatchObject({ expired: 1, failed: 1, success: false });
+  });
+
+  it("scans org rows on the 7-day floor only when the org set a cap", async () => {
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    mockRecording.findMany.mockResolvedValue([]);
+
+    await expireRecordings();
+
+    const arms = mockRecording.findMany.mock.calls[0][0].where.OR as Array<
+      Record<string, unknown>
+    >;
+    expect(arms).toHaveLength(3);
+    // No arm admits every org row: an uncapped org follows the platform arms.
+    for (const arm of arms) {
+      expect(arm.organizationId).not.toEqual({ not: null });
+    }
+    expect(arms[2]).toEqual(
+      expect.objectContaining({
+        organization: { is: { streamRecordingRetentionDays: { not: null } } },
+      }),
+    );
+  });
+
+  it("warns once when the scan cap is spent before the due limit is reached", async () => {
+    const notDue = (id: string) => ({
+      id,
+      recordedAt: new Date(),
+      organizationId: null,
+      organization: null,
+      meeting: {
+        endedAt: new Date(),
+        occurrence: {
+          endsAt: new Date(),
+          appointment: {
+            consultation: null,
+            webinar: { id: "w" },
+            class: null,
+            subscription: null,
+            trial: null,
+            occurrences: [],
+          },
+        },
+      },
+    });
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    let page = 0;
+    mockRecording.findMany.mockImplementation(
+      async (args: { orderBy?: unknown }) => {
+        if (!Array.isArray(args.orderBy)) return [];
+        page += 1;
+        return Array.from({ length: 200 }, (_, i) => notDue(`p${page}-${i}`));
+      },
+    );
+
+    const result = await expireRecordings();
+
+    expect(result.scanned).toBe(5_000);
+    const scanCapWarnings = (
+      reportSentryMessage as jest.Mock
+    ).mock.calls.filter(([, ctx]) =>
+      (ctx as { fingerprint: string[] }).fingerprint.includes("scan-cap"),
+    );
+    expect(scanCapWarnings).toHaveLength(1);
   });
 });

@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
     },
     recordingConsent: { count: jest.fn() },
   },
@@ -63,6 +64,7 @@ jest.mock("../../lib/stream/recording-storage", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
 import {
   handleRecordingStarted,
   handleRecordingReady,
@@ -78,6 +80,9 @@ const mockRecordingFindFirst = prisma.recording.findFirst as jest.Mock;
 const mockRecordingCreate = prisma.recording.create as jest.Mock;
 const mockRecordingUpdateMany = prisma.recording.updateMany as jest.Mock;
 const mockRecordingFindMany = prisma.recording.findMany as jest.Mock;
+const mockRecordingUpdateManyAndReturn = prisma.recording
+  .updateManyAndReturn as jest.Mock;
+const mockDeleteRecordingAssets = deleteRecordingAssets as jest.Mock;
 const mockConsentCount = prisma.recordingConsent.count as jest.Mock;
 const mockGetEventAttendeeIds = getEventAttendeeIds as jest.Mock;
 
@@ -89,6 +94,12 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     mockNotifyRecordingAvailable.mockResolvedValue([]);
     mockConsentCount.mockResolvedValue(0);
     mockRecordingUpdateMany.mockResolvedValue({ count: 1 });
+    mockRecordingUpdateManyAndReturn.mockImplementation(
+      async ({ where, data }: { where: { id: string }; data: object }) => [
+        { id: where.id, ...data },
+      ],
+    );
+    mockDeleteRecordingAssets.mockResolvedValue({ success: true });
   });
 
   it("updates meeting recordingStartedAt and recordingStartedBy on call.recording_started", async () => {
@@ -158,9 +169,12 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       created_at: "2026-10-03T10:31:00.000Z",
     });
 
-    expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
+    expect(mockRecordingUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "rec-placeholder", status: "PROCESSING" },
+        where: {
+          id: "rec-placeholder",
+          status: { in: ["RECORDING", "PROCESSING"] },
+        },
         data: expect.objectContaining({
           status: "READY",
           durationInMinutes: 30,
@@ -172,6 +186,47 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       }),
     );
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("throws, notifying nobody, when the placeholder left the pre-READY states before the CAS", async () => {
+    mockMeetingFindUnique.mockResolvedValue({
+      id: "m-1",
+      streamCallId: "slot-1",
+      isRecording: true,
+      occurrence: {
+        appointment: {
+          organizationId: null,
+          consultation: { consultationPlan: { consultantProfile: null } },
+          subscription: null,
+          trial: null,
+          webinar: null,
+          class: null,
+        },
+      },
+    });
+    mockRecordingFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: "rec-placeholder",
+      status: "RECORDING",
+      storageType: "STREAM_S3",
+    });
+    mockRecordingUpdateMany.mockResolvedValue({ count: 0 });
+    mockRecordingUpdateManyAndReturn.mockResolvedValue([]);
+    mockGetEventAttendeeIds.mockResolvedValue(["u-att-1"]);
+
+    await expect(
+      handleRecordingReady({
+        type: "call.recording_ready",
+        call_cid: "default:slot-1",
+        call_recording: {
+          filename: "rec-1.mp4",
+          url: "https://us-east.stream-io-cdn.com/rec-1.mp4",
+          start_time: "2026-10-03T10:00:00.000Z",
+          end_time: "2026-10-03T10:30:00.000Z",
+        },
+        created_at: "2026-10-03T10:31:00.000Z",
+      }),
+    ).rejects.toThrow("changed while marking it ready");
+    expect(mockNotifyRecordingAvailable).not.toHaveBeenCalled();
   });
 
   it("stages notifications without Stream's URL when adopting an existing READY recording", async () => {
@@ -297,8 +352,13 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       },
     });
     mockConsentCount.mockResolvedValue(1);
-    mockRecordingFindMany.mockResolvedValue([
-      { id: "rec-placeholder", status: "PROCESSING", storagePath: null },
+    mockRecordingUpdateManyAndReturn.mockResolvedValue([
+      {
+        id: "rec-placeholder",
+        storagePath: null,
+        previewClipStoragePath: null,
+        thumbnailUrl: null,
+      },
     ]);
 
     await handleRecordingReady({
@@ -321,16 +381,91 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         decidedAt: { lte: new Date("2026-10-03T10:30:00.000Z") },
       },
     });
-    expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
-      where: { id: "rec-placeholder", status: "PROCESSING" },
-      data: { status: "EXPIRED", recordingUrl: "", storagePath: null },
-    });
+    expect(mockRecordingUpdateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          meetingId: "m-4",
+          status: { not: "EXPIRED" },
+        }),
+        data: { status: "EXPIRED", recordingUrl: "" },
+      }),
+    );
+    // Nothing stored yet, so no storage call.
+    expect(mockDeleteRecordingAssets).not.toHaveBeenCalled();
     expect(mockDeleteStreamRecording).toHaveBeenCalledWith({
       session: "sess-4",
       filename: "rec-4.mp4",
     });
     expect(mockRecordingCreate).not.toHaveBeenCalled();
     expect(mockNotifyRecordingAvailable).not.toHaveBeenCalled();
+  });
+
+  it("expires a declined copied recording before deleting its assets, then clears every media pointer", async () => {
+    mockMeetingFindUnique.mockResolvedValue({
+      id: "m-5",
+      streamCallId: "slot-5",
+      isRecording: false,
+      occurrence: {
+        appointment: {
+          organizationId: null,
+          consultation: { consultationPlan: { consultantProfile: null } },
+          subscription: null,
+          trial: null,
+          webinar: null,
+          class: null,
+        },
+      },
+    });
+    mockConsentCount.mockResolvedValue(1);
+    mockRecordingFindMany.mockResolvedValue([
+      {
+        id: "rec-copied",
+        status: "AVAILABLE",
+        storagePath: "recordings/rec-copied/a.mp4",
+      },
+    ]);
+    mockRecordingUpdateManyAndReturn.mockResolvedValue([
+      {
+        id: "rec-copied",
+        storagePath: "recordings/rec-copied/a.mp4",
+        previewClipStoragePath: "rec-copied/clip.mp4",
+        thumbnailUrl: "https://cdn.example/thumb.jpg",
+      },
+    ]);
+
+    await handleRecordingReady({
+      type: "call.recording_ready",
+      call_cid: "default:slot-5",
+      call_recording: {
+        filename: "rec-5.mp4",
+        url: "https://us-east.stream-io-cdn.com/rec-5.mp4",
+        start_time: "2026-10-03T10:00:00.000Z",
+        end_time: "2026-10-03T10:30:00.000Z",
+        session_id: "sess-5",
+      },
+      created_at: "2026-10-03T10:31:00.000Z",
+    });
+
+    expect(mockRecordingUpdateManyAndReturn).toHaveBeenCalled();
+    expect(mockDeleteRecordingAssets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "rec-copied",
+        storagePath: "recordings/rec-copied/a.mp4",
+      }),
+    );
+    expect(
+      mockRecordingUpdateManyAndReturn.mock.invocationCallOrder[0],
+    ).toBeLessThan(mockDeleteRecordingAssets.mock.invocationCallOrder[0]);
+    expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "rec-copied", status: "EXPIRED" },
+      data: {
+        storagePath: null,
+        previewClipUrl: null,
+        previewClipStoragePath: null,
+        previewClipDuration: null,
+        thumbnailUrl: null,
+      },
+    });
   });
 
   it("computes streamUrlExpiresAt from end_time and clamps negative durations in syncSessionRecordings", async () => {

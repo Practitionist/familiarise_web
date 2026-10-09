@@ -14,7 +14,7 @@ import {
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { consentRegimeFor } from "@/lib/stream/recording-consent";
 import type { AppointmentWithOwnership } from "@/lib/stream/recording-utils";
-import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
+import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 
 /** True for a 1:1 meeting where someone declined at or before `endTime`. */
 export async function wasDeclinedDuringRecording(
@@ -35,8 +35,8 @@ export async function wasDeclinedDuringRecording(
 }
 
 /**
- * Expire any row for this file and delete Stream's copy. Safe to retry: rows
- * already EXPIRED are skipped and a recording Stream no longer has is a no-op.
+ * Expire any row for this file, delete its assets and Stream's copy. Safe to
+ * retry: rows already EXPIRED are skipped and a recording Stream no longer has is a no-op.
  */
 export async function discardDeclinedRecording(args: {
   meetingId: string;
@@ -44,7 +44,9 @@ export async function discardDeclinedRecording(args: {
   sessionId: string | undefined;
   filename: string;
 }): Promise<void> {
-  const rows = await prisma.recording.findMany({
+  // Expire before deleting: a copy finishing concurrently then misses its
+  // TRANSFERRING CAS and deletes its own upload.
+  const expired = await prisma.recording.updateManyAndReturn({
     where: {
       meetingId: args.meetingId,
       status: { not: RecordingStatus.EXPIRED },
@@ -58,24 +60,26 @@ export async function discardDeclinedRecording(args: {
         },
       ],
     },
-    select: { id: true, status: true, storagePath: true },
+    data: { status: RecordingStatus.EXPIRED, recordingUrl: "" },
+    select: {
+      id: true,
+      storagePath: true,
+      previewClipStoragePath: true,
+      thumbnailUrl: true,
+    },
   });
 
-  for (const row of rows) {
-    if (row.storagePath) {
-      const deleted = await deleteRecordingAssets(row);
-      if (!deleted.success) {
-        throw new Error(deleted.error ?? "Failed to delete declined recording");
-      }
+  for (const row of expired) {
+    if (!row.storagePath && !row.previewClipStoragePath && !row.thumbnailUrl) {
+      continue;
     }
-    await prisma.recording.updateMany({
-      where: { id: row.id, status: row.status },
-      data: {
-        status: RecordingStatus.EXPIRED,
-        recordingUrl: "",
-        storagePath: null,
-      },
-    });
+    const purged = await purgeExpiredRecordingAssets(row);
+    if (!purged.success) {
+      streamLogger.warn("Declined recording assets left for the expiry sweep", {
+        recordingId: row.id,
+        error: purged.error,
+      });
+    }
   }
 
   if (!args.sessionId) {

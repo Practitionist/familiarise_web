@@ -6,7 +6,7 @@
 import type { z } from "zod";
 import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
-import { RecordingStatus } from "@prisma/client";
+import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
@@ -163,6 +163,12 @@ export async function handleRecordingStopped(
     throw error;
   }
 }
+
+/** Statuses a recording_ready may promote to READY. */
+const PRE_READY_STATUSES: RecordingStatus[] = [
+  RecordingStatus.RECORDING,
+  RecordingStatus.PROCESSING,
+];
 
 /**
  * Handle call.recording_ready event
@@ -446,8 +452,14 @@ export async function handleRecordingReady(
           existingRecording.status === "EXPIRED" ||
           existingRecording.status === "FAILED")
       ) {
-        await prisma.recording.updateMany({
-          where: { id: existingRecording.id, status: existingRecording.status },
+        // recording_stopped may move RECORDING to PROCESSING mid-flight; both precede READY.
+        const fromStatuses: RecordingStatus[] = PRE_READY_STATUSES.includes(
+          existingRecording.status,
+        )
+          ? PRE_READY_STATUSES
+          : [existingRecording.status];
+        const [adopted] = await prisma.recording.updateManyAndReturn({
+          where: { id: existingRecording.id, status: { in: fromStatuses } },
           data: {
             title,
             recordingUrl: url,
@@ -455,13 +467,19 @@ export async function handleRecordingReady(
             recordedAt: startDate,
             streamRecordingId: filename,
             streamCallId,
-            storageType: "STREAM_S3",
-            status: "READY",
+            storageType: RecordingStorageType.STREAM_S3,
+            status: RecordingStatus.READY,
             streamUrlExpiresAt,
             organizationId: appointment?.organizationId ?? null,
           },
         });
-        recording = existingRecording;
+        // The row moved past READY's prerequisites; throw so the redelivery re-reads it.
+        if (!adopted) {
+          throw new Error(
+            `Recording ${existingRecording.id} changed while marking it ready`,
+          );
+        }
+        recording = adopted;
       } else {
         streamLogger.info("Recording already exists, adopting existing row", {
           recordingId: existingRecording.id,

@@ -468,19 +468,24 @@ function RecordingRetentionCard({
   orgId,
   data,
   onVersionConflict,
-  onError,
-  onSuccess,
 }: Readonly<{
   orgId: string;
   data: SettingsResponse;
   onVersionConflict: () => void;
-  onError: (msg: string | null) => void;
-  onSuccess: () => void;
 }>) {
   const queryClient = useQueryClient();
   const stored = data.profile.streamRecordingRetentionDays;
   const [days, setDays] = useState(stored === null ? "" : String(stored));
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const orgActive = data.profile.status === "ACTIVE";
+
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2500);
+    return () => clearTimeout(timer);
+  }, [saved]);
 
   useEffect(() => {
     setDays(stored === null ? "" : String(stored));
@@ -494,27 +499,29 @@ function RecordingRetentionCard({
 
   const save = async () => {
     if (!valid) {
-      onError(
+      setError(
         "Enter a whole number of days between 7 and 3650, or leave it empty.",
       );
       return;
     }
-    onError(null);
+    setError(null);
+    setSaved(false);
     setSaving(true);
     try {
       await patchSettings(orgId, {
         expectedVersion: data.profile.version,
         streamRecordingRetentionDays: parsed,
       });
-      await queryClient.invalidateQueries({
-        queryKey: ["org-settings", orgId],
-      });
-      onSuccess();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] }),
+        queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) }),
+      ]);
+      setSaved(true);
     } catch (err) {
       if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
-        onError(
+        setError(
           err instanceof Error
             ? err.message
             : "Failed to save recording retention",
@@ -565,10 +572,28 @@ function RecordingRetentionCard({
           </p>
         )}
       </CardContent>
-      <CardFooter>
-        <Button onClick={() => void save()} disabled={saving || !valid}>
+      <CardFooter className="flex flex-wrap items-center gap-3">
+        <Button
+          onClick={() => void save()}
+          disabled={saving || !valid || !orgActive}
+        >
           {saving ? "Saving…" : "Save retention"}
         </Button>
+        {!orgActive && (
+          <p className="text-xs text-zinc-500">
+            Available once the organization is verified.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        {saved && (
+          <p role="status" className="text-sm text-emerald-600">
+            Retention saved.
+          </p>
+        )}
       </CardFooter>
     </Card>
   );
@@ -1002,11 +1027,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             orgId={orgId}
             data={data}
             onVersionConflict={() => setConflictOpen(true)}
-            onError={setError}
-            onSuccess={() => {
-              setSuccess(true);
-              setTimeout(() => setSuccess(false), 2500);
-            }}
           />
         )}
 

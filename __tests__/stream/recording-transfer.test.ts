@@ -116,6 +116,22 @@ describe("transferRecording", () => {
     expect(deleteR2Object).not.toHaveBeenCalled();
   });
 
+  it("hands the copy's abort signal to every R2 call so the timeout cancels uploads too", async () => {
+    (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+
+    await transferRecording("rec-1");
+
+    const fetchSignal = (global.fetch as jest.Mock).mock.calls[0][1]
+      .signal as AbortSignal;
+    expect(fetchSignal).toBeInstanceOf(AbortSignal);
+    expect(streamMultipartToR2).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: fetchSignal }),
+    );
+    expect(headR2Object).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: fetchSignal }),
+    );
+  });
+
   it("deletes the object and leaves the row READY when the stored size differs", async () => {
     (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 99 });
 
@@ -156,7 +172,7 @@ describe("transferRecording", () => {
 
 describe("transferRecordings", () => {
   type CandidateQuery = {
-    where: { id?: { notIn: string[] } };
+    where: { id?: unknown; OR?: unknown };
     take: number;
     orderBy?: unknown;
   };
@@ -165,24 +181,44 @@ describe("transferRecordings", () => {
       .map((c) => c[0] as CandidateQuery)
       .filter((q) => q.orderBy !== undefined);
 
-  it("keeps fetching batches until the backlog is empty, never retrying a row", async () => {
+  it("keeps fetching keyset pages until the backlog is empty, never retrying a row", async () => {
+    const tX = new Date("2026-10-10T00:00:00.000Z");
+    const tY = new Date("2026-10-11T00:00:00.000Z");
     recording.updateMany.mockResolvedValue({ count: 0 });
     recording.findMany
-      .mockResolvedValueOnce([{ id: "x" }])
-      .mockResolvedValueOnce([{ id: "y" }]);
+      .mockResolvedValueOnce([{ id: "x", streamUrlExpiresAt: tX }])
+      .mockResolvedValueOnce([{ id: "y", streamUrlExpiresAt: tY }]);
 
     await transferRecordings();
 
     const queries = candidateQueries();
     expect(queries).toHaveLength(3);
-    expect(queries[0].where.id).toBeUndefined();
-    expect(queries[1].where.id).toEqual({ notIn: ["x"] });
-    expect(queries[2].where.id).toEqual({ notIn: ["x", "y"] });
+    // The filter stays constant-size: no growing id list.
+    for (const q of queries) expect(q.where.id).toBeUndefined();
+    expect(queries[0].where.OR).toBeUndefined();
+    expect(queries[1].where.OR).toEqual([
+      { streamUrlExpiresAt: { gt: tX } },
+      { streamUrlExpiresAt: tX, id: { gt: "x" } },
+    ]);
+    expect(queries[2].where.OR).toEqual([
+      { streamUrlExpiresAt: { gt: tY } },
+      { streamUrlExpiresAt: tY, id: { gt: "y" } },
+    ]);
+  });
+
+  it("logs how many stale claims the run reclaimed", async () => {
+    recording.updateMany.mockResolvedValueOnce({ count: 3 });
+
+    const result = await transferRecordings();
+
+    expect(result.reclaimedStale).toBe(3);
   });
 
   it("stops at an explicit row limit", async () => {
     recording.updateMany.mockResolvedValue({ count: 0 });
-    recording.findMany.mockResolvedValueOnce([{ id: "x" }]);
+    recording.findMany.mockResolvedValueOnce([
+      { id: "x", streamUrlExpiresAt: new Date("2026-10-10T00:00:00.000Z") },
+    ]);
 
     await transferRecordings({ limit: 1 });
 

@@ -12,6 +12,7 @@ const mockRecordRecordingConsent = jest.fn();
 const mockGetRecordingById = jest.fn();
 const mockRecordingUpdate = jest.fn();
 const mockRecordingUpdateMany = jest.fn();
+const mockRecordingUpdateManyAndReturn = jest.fn();
 const mockRecordingFindUnique = jest.fn();
 const mockRecordingPurchaseFindFirst = jest.fn();
 const mockMeetingUpdate = jest.fn();
@@ -43,6 +44,8 @@ jest.mock("../../lib/prisma", () => ({
     recording: {
       update: (...args: unknown[]) => mockRecordingUpdate(...args),
       updateMany: (...args: unknown[]) => mockRecordingUpdateMany(...args),
+      updateManyAndReturn: (...args: unknown[]) =>
+        mockRecordingUpdateManyAndReturn(...args),
       findUnique: (...args: unknown[]) => mockRecordingFindUnique(...args),
     },
     recordingPurchase: {
@@ -260,7 +263,10 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         },
       });
       mockDeleteRecordingAssets.mockResolvedValue({ success: true });
-      mockRecordingUpdateMany.mockResolvedValueOnce({ count: 1 });
+      mockRecordingUpdateManyAndReturn.mockResolvedValueOnce([
+        { id: "rec-del", storagePath: "recordings/rec-del.mp4" },
+      ]);
+      mockRecordingUpdateMany.mockResolvedValue({ count: 1 });
       mockRecordingFindUnique.mockResolvedValue({ id: "rec-del" });
 
       const req = new NextRequest(
@@ -272,30 +278,128 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         params: Promise.resolve({ recordingId: "rec-del" }),
       });
       expect(res.status).toBe(200);
-      expect(mockDeleteRecordingAssets).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "rec-del",
-          storagePath: "recordings/rec-del.mp4",
-        }),
-      );
-      expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
+      // The row is CAS-expired before any stored object is touched.
+      expect(mockRecordingUpdateManyAndReturn).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "rec-del", status: "AVAILABLE" },
           data: expect.objectContaining({
             status: "EXPIRED",
             recordingUrl: "",
-            storagePath: null,
-            thumbnailUrl: null,
             listingStatus: "UNPUBLISHED",
           }),
         }),
       );
-
-      mockRecordingUpdateMany.mockResolvedValueOnce({ count: 0 });
-      const raced = await deleteRecording(req, {
-        params: Promise.resolve({ recordingId: "rec-del" }),
+      expect(
+        mockRecordingUpdateManyAndReturn.mock.invocationCallOrder[0],
+      ).toBeLessThan(mockDeleteRecordingAssets.mock.invocationCallOrder[0]);
+      expect(mockDeleteRecordingAssets).toHaveBeenCalledWith({
+        id: "rec-del",
+        storagePath: "recordings/rec-del.mp4",
       });
+      expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "rec-del", status: "EXPIRED" },
+          data: expect.objectContaining({
+            storagePath: null,
+            thumbnailUrl: null,
+            previewClipStoragePath: null,
+          }),
+        }),
+      );
+    });
+
+    it("refuses with 409 and deletes nothing when the row changed status mid-request", async () => {
+      mockGetSession.mockResolvedValue({
+        user: {
+          id: "consultant-user-1",
+          role: "CONSULTANT",
+          consultantProfileId: "consultant-profile-1",
+        },
+      });
+      mockGetRecordingById.mockResolvedValue({
+        id: "rec-del",
+        status: "READY",
+        listingStatus: "UNLISTED",
+        storagePath: null,
+        meeting: {
+          occurrence: {
+            appointment: {
+              consultation: {
+                consultationPlan: {
+                  consultantProfileId: "consultant-profile-1",
+                },
+              },
+              subscription: null,
+              webinar: null,
+              class: null,
+            },
+          },
+        },
+      });
+      mockDeleteRecordingAssets.mockResolvedValue({ success: true });
+      // A copy finished between the read and the write: READY is now AVAILABLE.
+      mockRecordingUpdateManyAndReturn.mockResolvedValueOnce([]);
+      mockRecordingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const raced = await deleteRecording(
+        new NextRequest("http://localhost:3000/api/stream/recordings/rec-del", {
+          method: "DELETE",
+        }),
+        { params: Promise.resolve({ recordingId: "rec-del" }) },
+      );
       expect(raced.status).toBe(409);
+      expect(mockDeleteRecordingAssets).not.toHaveBeenCalled();
+    });
+
+    it("keeps the deletion when the asset delete fails, leaving pointers for the expiry sweep", async () => {
+      mockGetSession.mockResolvedValue({
+        user: {
+          id: "consultant-user-1",
+          role: "CONSULTANT",
+          consultantProfileId: "consultant-profile-1",
+        },
+      });
+      mockGetRecordingById.mockResolvedValue({
+        id: "rec-del",
+        status: "AVAILABLE",
+        listingStatus: "UNLISTED",
+        storagePath: "recordings/rec-del.mp4",
+        meeting: {
+          occurrence: {
+            appointment: {
+              consultation: {
+                consultationPlan: {
+                  consultantProfileId: "consultant-profile-1",
+                },
+              },
+              subscription: null,
+              webinar: null,
+              class: null,
+            },
+          },
+        },
+      });
+      mockRecordingUpdateManyAndReturn.mockResolvedValueOnce([
+        { id: "rec-del", storagePath: "recordings/rec-del.mp4" },
+      ]);
+      mockDeleteRecordingAssets.mockResolvedValue({
+        success: false,
+        error: "R2 DELETE failed",
+      });
+      mockRecordingFindUnique.mockResolvedValue({ id: "rec-del" });
+
+      const res = await deleteRecording(
+        new NextRequest("http://localhost:3000/api/stream/recordings/rec-del", {
+          method: "DELETE",
+        }),
+        { params: Promise.resolve({ recordingId: "rec-del" }) },
+      );
+      expect(res.status).toBe(200);
+      expect(mockRecordingUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ storagePath: null }),
+        }),
+      );
     });
   });
 

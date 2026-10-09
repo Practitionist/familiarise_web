@@ -84,6 +84,7 @@ type TransferOutcome =
   | { status: "failed"; error: string };
 
 interface TransferRunResult {
+  reclaimedStale: number;
   processed: number;
   succeeded: number;
   failed: number;
@@ -174,10 +175,14 @@ async function copyToR2(
         response.headers.get("content-type")?.split(";")[0].trim() ||
         "video/mp4",
       maxBytes: RECORDING_MAX_OBJECT_BYTES,
+      signal: abortController.signal,
     });
 
     try {
-      const stored = await headR2Object({ key: storagePath });
+      const stored = await headR2Object({
+        key: storagePath,
+        signal: abortController.signal,
+      });
       if (
         stored?.contentLength !== uploaded.size ||
         (sourceBytes !== null && sourceBytes !== uploaded.size)
@@ -317,6 +322,7 @@ async function transferRecordingsUnlocked(
 ): Promise<TransferRunResult> {
   const startedAt = Date.now();
   const result: TransferRunResult = {
+    reclaimedStale: 0,
     processed: 0,
     succeeded: 0,
     failed: 0,
@@ -325,7 +331,7 @@ async function transferRecordingsUnlocked(
   };
 
   // A crashed run leaves its claim behind; hand those rows back.
-  await prisma.recording.updateMany({
+  const reclaimed = await prisma.recording.updateMany({
     where: {
       status: RecordingStatus.TRANSFERRING,
       storageType: RecordingStorageType.STREAM_S3,
@@ -333,32 +339,41 @@ async function transferRecordingsUnlocked(
     },
     data: { status: RecordingStatus.READY },
   });
+  result.reclaimedStale = reclaimed.count;
 
-  // Batches repeat until the budget or the backlog runs out; a row already tried this run is not retried.
-  const attempted: string[] = [];
-  while (
-    attempted.length < maxRows &&
-    Date.now() - startedAt <= RUN_BUDGET_MS
-  ) {
-    const candidates = await prisma.recording.findMany({
-      where: {
-        status: RecordingStatus.READY,
-        storageType: RecordingStorageType.STREAM_S3,
-        transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
-        streamUrlExpiresAt: { gt: new Date() },
-        ...(attempted.length > 0 && { id: { notIn: [...attempted] } }),
-      },
-      orderBy: { streamUrlExpiresAt: "asc" },
-      take: Math.min(TRANSFER_BATCH_SIZE, maxRows - attempted.length),
-      select: { id: true },
-    });
-    if (candidates.length === 0) break;
-    attempted.push(...candidates.map((c) => c.id));
+  // Keyset pages over (streamUrlExpiresAt, id): each row is tried at most once
+  // per run, and the query stays the same size however many rows were tried.
+  let attempted = 0;
+  let after: { expiresAt: Date; id: string } | null = null;
+  while (attempted < maxRows && Date.now() - startedAt <= RUN_BUDGET_MS) {
+    const candidates: { id: string; streamUrlExpiresAt: Date | null }[] =
+      await prisma.recording.findMany({
+        where: {
+          status: RecordingStatus.READY,
+          storageType: RecordingStorageType.STREAM_S3,
+          transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
+          streamUrlExpiresAt: { gt: new Date() },
+          ...(after && {
+            OR: [
+              { streamUrlExpiresAt: { gt: after.expiresAt } },
+              { streamUrlExpiresAt: after.expiresAt, id: { gt: after.id } },
+            ],
+          }),
+        },
+        orderBy: [{ streamUrlExpiresAt: "asc" }, { id: "asc" }],
+        take: Math.min(TRANSFER_BATCH_SIZE, maxRows - attempted),
+        select: { id: true, streamUrlExpiresAt: true },
+      });
+    const last = candidates.at(-1);
+    if (!last?.streamUrlExpiresAt) break;
+    attempted += candidates.length;
+    after = { expiresAt: last.streamUrlExpiresAt, id: last.id };
     await transferChunked(candidates, startedAt, result);
   }
 
   result.exhaustedReported = await reportExhaustedTransfers();
   streamLogger.info("transfer-recordings finished", {
+    reclaimedStale: result.reclaimedStale,
     processed: result.processed,
     succeeded: result.succeeded,
     failed: result.failed,

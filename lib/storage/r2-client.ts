@@ -1,6 +1,8 @@
 import { createHash, createHmac } from "node:crypto";
 
 export const R2_MULTIPART_PART_SIZE = 10 * 1024 * 1024; // 10 MB
+/** AbortMultipartUpload gets its own deadline: it runs after the caller's signal may have fired. */
+const ABORT_UPLOAD_TIMEOUT_MS = 15_000;
 
 const EMPTY_PAYLOAD_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -61,7 +63,10 @@ function encodeObjectKey(key: string): string {
 
 /** Path-style object URI under the endpoint's own path prefix, if any. */
 function objectUri(config: R2Config, key: string): string {
-  const prefix = config.endpoint.pathname.replace(/\/+$/, "");
+  const path = config.endpoint.pathname;
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  const prefix = path.slice(0, end);
   return `${prefix}/${encodeRfc3986(config.bucket)}/${encodeObjectKey(key)}`;
 }
 
@@ -95,6 +100,22 @@ function compareCodeUnits(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+/** Zero-copy fetch body over the Buffer's own bytes. */
+function bodyView(buf: Buffer): Uint8Array<ArrayBuffer> {
+  return buf.buffer instanceof ArrayBuffer
+    ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+    : new Uint8Array(buf);
 }
 
 function formatR2ErrorDetail(errorText: string): string {
@@ -244,6 +265,7 @@ async function putR2Object(opts: {
   key: string;
   body: Buffer;
   contentType?: string;
+  signal?: AbortSignal;
 }): Promise<void> {
   const signed = signR2Request({
     method: "PUT",
@@ -255,7 +277,8 @@ async function putR2Object(opts: {
   const response = await fetch(signed.url, {
     method: "PUT",
     headers: signed.headers,
-    body: new Uint8Array(opts.body),
+    body: bodyView(opts.body),
+    signal: opts.signal,
   });
 
   if (!response.ok) {
@@ -269,6 +292,7 @@ async function putR2Object(opts: {
 async function initiateMultipartUpload(opts: {
   key: string;
   contentType?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const signed = signR2Request({
     method: "POST",
@@ -280,6 +304,7 @@ async function initiateMultipartUpload(opts: {
   const response = await fetch(signed.url, {
     method: "POST",
     headers: signed.headers,
+    signal: opts.signal,
   });
 
   if (!response.ok) {
@@ -301,6 +326,7 @@ async function uploadMultipartPart(opts: {
   uploadId: string;
   partNumber: number;
   body: Buffer;
+  signal?: AbortSignal;
 }): Promise<string> {
   const signed = signR2Request({
     method: "PUT",
@@ -315,7 +341,8 @@ async function uploadMultipartPart(opts: {
   const response = await fetch(signed.url, {
     method: "PUT",
     headers: signed.headers,
-    body: new Uint8Array(opts.body),
+    body: bodyView(opts.body),
+    signal: opts.signal,
   });
 
   if (!response.ok) {
@@ -352,11 +379,12 @@ async function completeMultipartUpload(opts: {
   key: string;
   uploadId: string;
   parts: Array<{ partNumber: number; etag: string }>;
+  signal?: AbortSignal;
 }): Promise<void> {
   const partsXml = opts.parts
     .map(
       (p) =>
-        `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`,
+        `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${escapeXml(p.etag)}</ETag></Part>`,
     )
     .join("");
   const bodyBuffer = Buffer.from(
@@ -375,7 +403,8 @@ async function completeMultipartUpload(opts: {
   const response = await fetch(signed.url, {
     method: "POST",
     headers: signed.headers,
-    body: new Uint8Array(bodyBuffer),
+    body: bodyView(bodyBuffer),
+    signal: opts.signal,
   });
 
   const text = await response.text().catch(() => "");
@@ -400,12 +429,14 @@ async function abortMultipartUpload(opts: {
   await fetch(signed.url, {
     method: "DELETE",
     headers: signed.headers,
+    signal: AbortSignal.timeout(ABORT_UPLOAD_TIMEOUT_MS),
   }).catch(() => undefined);
 }
 
 /**
  * Stream to R2 in bounded parts: a single PUT up to one part, multipart above
- * it. Any failure aborts the multipart upload. `size` is the bytes streamed.
+ * it, every non-final part exactly `partSize` (R2 requires equal sizes).
+ * `signal` cancels every R2 request; any failure aborts the multipart upload.
  */
 export async function streamMultipartToR2(opts: {
   key: string;
@@ -413,8 +444,10 @@ export async function streamMultipartToR2(opts: {
   contentType?: string;
   maxBytes?: number;
   partSize?: number;
+  signal?: AbortSignal;
 }): Promise<{ key: string; size: number; parts: number }> {
   const partSize = opts.partSize ?? R2_MULTIPART_PART_SIZE;
+  const { signal } = opts;
   const reader = opts.stream.getReader();
 
   let chunks: Buffer[] = [];
@@ -424,26 +457,32 @@ export async function streamMultipartToR2(opts: {
   let partNumber = 1;
   const completedParts: Array<{ partNumber: number; etag: string }> = [];
 
+  // The remainder is copied out so the part's slab is freed once its PUT ends.
   const takeBytes = (count: number): Buffer => {
     const combined = Buffer.concat(chunks, bufferedBytes);
-    const slice = combined.subarray(0, count);
-    const remainder = combined.subarray(count);
+    const remainder = Buffer.from(combined.subarray(count));
     chunks = remainder.byteLength > 0 ? [remainder] : [];
     bufferedBytes = remainder.byteLength;
-    return slice;
+    return combined.subarray(0, count);
   };
 
+  // Before multipart starts, exactly one part's worth still fits a single PUT.
+  const hasFullPart = () =>
+    uploadId === null ? bufferedBytes > partSize : bufferedBytes >= partSize;
+
   const flushFullParts = async () => {
-    while (bufferedBytes > partSize) {
+    while (hasFullPart()) {
       uploadId ??= await initiateMultipartUpload({
         key: opts.key,
         contentType: opts.contentType,
+        signal,
       });
       const etag = await uploadMultipartPart({
         key: opts.key,
         uploadId,
         partNumber,
         body: takeBytes(partSize),
+        signal,
       });
       completedParts.push({ partNumber, etag });
       partNumber += 1;
@@ -475,6 +514,7 @@ export async function streamMultipartToR2(opts: {
         key: opts.key,
         body: Buffer.concat(chunks, bufferedBytes),
         contentType: opts.contentType,
+        signal,
       });
       return { key: opts.key, size: totalBytes, parts: 1 };
     }
@@ -488,6 +528,7 @@ export async function streamMultipartToR2(opts: {
         uploadId,
         partNumber,
         body: finalPart,
+        signal,
       });
       completedParts.push({ partNumber, etag });
     }
@@ -496,6 +537,7 @@ export async function streamMultipartToR2(opts: {
       key: opts.key,
       uploadId,
       parts: completedParts,
+      signal,
     });
 
     return { key: opts.key, size: totalBytes, parts: completedParts.length };
@@ -511,11 +553,13 @@ export async function streamMultipartToR2(opts: {
 /** Stored object size from HeadObject, or null when the key does not exist. */
 export async function headR2Object(opts: {
   key: string;
+  signal?: AbortSignal;
 }): Promise<{ contentLength: number } | null> {
   const signed = signR2Request({ method: "HEAD", key: opts.key });
   const response = await fetch(signed.url, {
     method: "HEAD",
     headers: signed.headers,
+    signal: opts.signal,
   });
   if (response.status === 404) return null;
   if (!response.ok) {

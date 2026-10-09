@@ -106,6 +106,68 @@ async function parsePublishBody(
   return parsed.data;
 }
 
+type LoadedListing = Extract<
+  Awaited<ReturnType<typeof guardOwnedListingRecording>>,
+  { ok: true }
+>["loaded"];
+
+/** Durability, plan visibility and preview-transcript gates; the refusal response, or the transcript to store. */
+function checkPublishGates(
+  loaded: LoadedListing,
+  previewTranscript: string | undefined,
+): NextResponse | { transcript: string | null } {
+  // A sold replay must outlive any single session: Stream URLs die ≤14d.
+  if (
+    !isDurablyOurs({
+      status: loaded.recordingStatus,
+      storageType: loaded.storageType,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "This recording can be published once it has been copied to our storage.",
+        code: "STORAGE_POLICY",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Org visibility + live-plan gate — same predicate the purchase route
+  // enforces before minting an order.
+  if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
+    return NextResponse.json(
+      {
+        error:
+          "This recording's plan is archived or its organization limits visibility.",
+        code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
+      },
+      { status: 403 },
+    );
+  }
+
+  // #1244 review — a preview clip cannot go public without a text
+  // alternative. Checked here rather than in the Zod schema because only the
+  // loaded recording knows whether a clip exists. An already-stored
+  // transcript satisfies the gate on re-publish.
+  const transcriptGate = resolvePreviewTranscript({
+    previewClipUrl: loaded.previewClipUrl,
+    storedTranscript: loaded.previewTranscript,
+    submittedTranscript: previewTranscript,
+  });
+  if (!transcriptGate.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
+        code: "PREVIEW_TRANSCRIPT_REQUIRED",
+      },
+      { status: 422 },
+    );
+  }
+  return { transcript: transcriptGate.transcript };
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
@@ -135,57 +197,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!guard.ok) return guard.response;
     const loaded = guard.loaded;
 
-    // A sold replay must outlive any single session: Stream URLs die ≤14d.
-    if (
-      !isDurablyOurs({
-        status: loaded.recordingStatus,
-        storageType: loaded.storageType,
-      })
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "This recording can be published once it has been copied to our storage.",
-          code: "STORAGE_POLICY",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Org visibility + live-plan gate — same predicate the purchase route
-    // enforces before minting an order.
-    if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
-      return NextResponse.json(
-        {
-          error:
-            "This recording's plan is archived or its organization limits visibility.",
-          code: loaded.plan.plan.archivedAt
-            ? "PLAN_ARCHIVED"
-            : "ORG_VISIBILITY",
-        },
-        { status: 403 },
-      );
-    }
-
-    // #1244 review — a preview clip cannot go public without a text
-    // alternative. Checked here rather than in the Zod schema because only the
-    // loaded recording knows whether a clip exists. An already-stored
-    // transcript satisfies the gate on re-publish.
-    const transcriptGate = resolvePreviewTranscript({
-      previewClipUrl: loaded.previewClipUrl,
-      storedTranscript: loaded.previewTranscript,
-      submittedTranscript: previewTranscript,
-    });
-    if (!transcriptGate.ok) {
-      return NextResponse.json(
-        {
-          error:
-            "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
-          code: "PREVIEW_TRANSCRIPT_REQUIRED",
-        },
-        { status: 422 },
-      );
-    }
+    const gate = checkPublishGates(loaded, previewTranscript);
+    if (gate instanceof NextResponse) return gate;
 
     const finalSlug = slug ?? buildSlug(listingTitle, loaded.recordingId);
     const slugClash = await prisma.recording.findUnique({
@@ -214,7 +227,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           unpublishedAt: null,
           consentAttestedAt: new Date(),
           consentAttestedById: session.user.id,
-          previewTranscript: transcriptGate.transcript,
+          previewTranscript: gate.transcript,
         },
         select: {
           id: true,

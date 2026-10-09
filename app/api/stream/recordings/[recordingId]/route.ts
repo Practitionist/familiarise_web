@@ -11,13 +11,15 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { RecordingListingStatus, RecordingStatus } from "@prisma/client";
+import {
+  RecordingListingStatus,
+  RecordingStatus,
+  RecordingStorageType,
+} from "@prisma/client";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
-import {
-  deleteRecordingAssets,
-  getBestRecordingUrl,
-} from "@/lib/stream/recording-storage";
+import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -319,6 +321,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Only an operator reaching in on their role alone is capped; anyone who
     // arrived through participation or purchase plays as before.
     const mayPlay = !viaOperatorGrant || operator.canPlay;
+    const streamCopyLapsed =
+      recording.storageType === RecordingStorageType.STREAM_S3 &&
+      recording.streamUrlExpiresAt !== null &&
+      new Date(recording.streamUrlExpiresAt) < new Date();
 
     // Written before the URL is minted, so the trail cannot lag the access it
     // describes. A failure here fails the request rather than serving an
@@ -328,7 +334,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         actorUserId: session.user.id,
         actorRole: String(session.user.role),
         surface: "GET /api/stream/recordings/[recordingId]",
-        played: mayPlay,
+        // Only a response that carries a playback URL counts as played.
+        played:
+          mayPlay &&
+          recording.status !== RecordingStatus.EXPIRED &&
+          !streamCopyLapsed,
         recordingId: recording.id,
         meetingId: recording.meeting?.id ?? null,
         streamCallId: recording.meeting?.streamCallId ?? null,
@@ -367,14 +377,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Check if Stream URL has expired
-    if (
-      recording.storageType === "STREAM_S3" &&
-      recording.streamUrlExpiresAt &&
-      new Date(recording.streamUrlExpiresAt) < new Date()
-    ) {
-      return recordingGoneResponse();
-    }
+    if (streamCopyLapsed) return recordingGoneResponse();
 
     // Get the best available URL (async — generates presigned URL for Supabase)
     const playbackUrl = await getBestRecordingUrl(recording);
@@ -718,32 +721,29 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const deleted = await deleteRecordingAssets(recording);
-    if (!deleted.success) {
-      return NextResponse.json(
-        { error: deleted.error ?? "Failed to delete recording storage" },
-        { status: 500 },
-      );
-    }
-
-    const expired = await prisma.recording.updateMany({
+    // Expire before deleting: a status change that raced this request leaves
+    // the stored objects untouched, and a failed delete is retried by expire-recordings.
+    const [expired] = await prisma.recording.updateManyAndReturn({
       where: { id: recordingId, status: recording.status },
       data: {
         status: RecordingStatus.EXPIRED,
         recordingUrl: "",
-        storagePath: null,
-        previewClipUrl: null,
-        previewClipStoragePath: null,
-        previewClipDuration: null,
-        thumbnailUrl: null,
         listingStatus: RecordingListingStatus.UNPUBLISHED,
       },
+      select: { id: true, storagePath: true },
     });
-    if (expired.count === 0) {
+    if (!expired) {
       return NextResponse.json(
         { error: "Recording changed while deleting; refresh and try again" },
         { status: 409 },
       );
+    }
+    const purged = await purgeExpiredRecordingAssets(expired);
+    if (!purged.success) {
+      streamLogger.warn("Deleted recording assets left for the expiry sweep", {
+        recordingId,
+        error: purged.error,
+      });
     }
     const updated = await prisma.recording.findUnique({
       where: { id: recordingId },

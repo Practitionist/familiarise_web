@@ -222,17 +222,29 @@ async function expireLapsedCopies(now: Date): Promise<number> {
   return lapsed.count;
 }
 
-/** Rows that can be due by age alone; personal group sessions are never due inside 365 days. */
+/**
+ * Rows that can be due by age alone. Without an org cap the platform schedule
+ * applies, so group sessions are never due inside 365 days.
+ */
 function dueScanWhere(now: Date): Prisma.RecordingWhereInput {
   const olderThan = (days: number) => ({
     lt: new Date(now.getTime() - days * DAY_MS),
   });
+  const platformSchedule: Prisma.RecordingWhereInput = {
+    OR: [
+      { organizationId: null },
+      { organization: { is: { streamRecordingRetentionDays: null } } },
+    ],
+  };
   return {
     ...retainableWhere,
     OR: [
-      { organizationId: null, recordedAt: olderThan(GROUP_RETENTION_DAYS) },
       {
-        organizationId: null,
+        ...platformSchedule,
+        recordedAt: olderThan(GROUP_RETENTION_DAYS),
+      },
+      {
+        ...platformSchedule,
         recordedAt: olderThan(ONE_TO_ONE_RETENTION_DAYS),
         meeting: {
           occurrence: {
@@ -241,7 +253,7 @@ function dueScanWhere(now: Date): Prisma.RecordingWhereInput {
         },
       },
       {
-        organizationId: { not: null },
+        organization: { is: { streamRecordingRetentionDays: { not: null } } },
         recordedAt: olderThan(MIN_ORG_RETENTION_DAYS),
       },
     ],
@@ -263,6 +275,19 @@ async function isDue(candidate: Candidate, now: Date): Promise<boolean> {
   return deadline !== null && deadline <= now;
 }
 
+/** Append the page's due rows to `due` until it holds `limit`. */
+async function collectDue(
+  page: Candidate[],
+  now: Date,
+  limit: number,
+  due: Candidate[],
+): Promise<void> {
+  for (const candidate of page) {
+    if (due.length >= limit) return;
+    if (await isDue(candidate, now)) due.push(candidate);
+  }
+}
+
 /** Oldest first, so rows that are due sort ahead of the not-yet-due ones the scan cap would otherwise spend itself on. */
 async function findDueRecordings(
   now: Date,
@@ -280,17 +305,31 @@ async function findDueRecordings(
       take: SCAN_PAGE_SIZE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
-    if (page.length === 0) break;
     result.scanned += page.length;
-    cursor = page[page.length - 1].id;
-
-    for (const candidate of page) {
-      if (await isDue(candidate, now)) due.push(candidate);
-      if (due.length >= limit) break;
-    }
+    await collectDue(page, now, limit, due);
     if (page.length < SCAN_PAGE_SIZE) break;
+    cursor = page[page.length - 1].id;
   }
   return due;
+}
+
+/** A run that spends its whole scan budget may be leaving due rows unreached, so say so once. */
+function reportScanSaturation(
+  scanned: number,
+  dueCount: number,
+  limit: number,
+): void {
+  if (scanned < MAX_SCANNED_PER_RUN || dueCount >= limit) return;
+  reportSentryMessage(
+    `expire-recordings hit its ${MAX_SCANNED_PER_RUN}-row scan cap; due rows past it wait`,
+    {
+      subsystem: "stream",
+      op: "expire-recordings",
+      level: "warning",
+      fingerprint: ["expire-recordings", "scan-cap"],
+      extra: { scanned, due: dueCount },
+    },
+  );
 }
 
 /** CAS-expire one scope's due rows; org scopes write their audit row in the same transaction. */
@@ -330,6 +369,29 @@ async function expireGroup(
   });
 }
 
+/**
+ * Delete an EXPIRED row's stored assets, then clear its pointers. On failure
+ * the pointers stay, so the daily sweep retries the delete.
+ */
+export async function purgeExpiredRecordingAssets(row: {
+  id: string;
+  storagePath: string | null;
+}): Promise<{ success: boolean; error?: string }> {
+  const deleted = await deleteRecordingAssets(row);
+  if (!deleted.success) return deleted;
+  await prisma.recording.updateMany({
+    where: { id: row.id, status: RecordingStatus.EXPIRED },
+    data: {
+      storagePath: null,
+      previewClipUrl: null,
+      previewClipStoragePath: null,
+      previewClipDuration: null,
+      thumbnailUrl: null,
+    },
+  });
+  return { success: true };
+}
+
 /** Delete stored assets of EXPIRED rows that still point at them, then clear the pointers. */
 async function cleanExpiredAssets(
   limit: number,
@@ -350,7 +412,7 @@ async function cleanExpiredAssets(
     take: limit,
   });
   for (const row of rows) {
-    const deleted = await deleteRecordingAssets(row);
+    const deleted = await purgeExpiredRecordingAssets(row);
     if (!deleted.success) {
       result.failed++;
       failedIds.push(row.id);
@@ -362,16 +424,6 @@ async function cleanExpiredAssets(
       });
       continue;
     }
-    await prisma.recording.updateMany({
-      where: { id: row.id, status: RecordingStatus.EXPIRED },
-      data: {
-        storagePath: null,
-        previewClipUrl: null,
-        previewClipStoragePath: null,
-        previewClipDuration: null,
-        thumbnailUrl: null,
-      },
-    });
     result.cleaned++;
   }
 }
@@ -394,6 +446,7 @@ async function expireRecordingsUnlocked(
   result.lapsed = await expireLapsedCopies(now);
 
   const due = await findDueRecordings(now, limit, result);
+  reportScanSaturation(result.scanned, due.length, limit);
   const groups = new Map<string | null, string[]>();
   for (const candidate of due) {
     const ids = groups.get(candidate.organizationId) ?? [];

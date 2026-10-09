@@ -7,11 +7,8 @@
  */
 
 import prisma from "@/lib/prisma";
-import {
-  ParticipantStatus,
-  type Prisma,
-  type RecordingStatus,
-} from "@prisma/client";
+import type { Prisma, RecordingStatus } from "@prisma/client";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
@@ -103,7 +100,7 @@ export interface ListRecordingsResult {
 
 import { buildUserAppointmentAccessOr } from "./list-documents";
 
-/** Own appointments, plus every run of a webinar plan that shares recordings with its attendees. */
+/** Own appointments, plus every run of a shared-recordings webinar plan the caller holds a live seat in. */
 function recordingAppointmentAccessOr(
   userId: string,
 ): Prisma.AppointmentWhereInput[] {
@@ -116,12 +113,8 @@ function recordingAppointmentAccessOr(
           webinars: {
             some: {
               appointment: {
-                participants: {
-                  some: {
-                    userId,
-                    status: { not: ParticipantStatus.CANCELLED },
-                  },
-                },
+                // Same seat predicate as playback: a released (CANCELLED/REFUNDED) seat sees nothing.
+                participants: { some: liveParticipant(userId) },
               },
             },
           },

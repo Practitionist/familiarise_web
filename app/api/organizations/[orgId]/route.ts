@@ -530,7 +530,8 @@ export async function PATCH(
       body.defaultRefundPolicy !== undefined ||
       body.isPublic !== undefined ||
       body.msmeStatus !== undefined ||
-      body.msmeWrittenAgreementOnFile !== undefined)
+      body.msmeWrittenAgreementOnFile !== undefined ||
+      body.streamRecordingRetentionDays !== undefined)
   ) {
     return NextResponse.json(
       {

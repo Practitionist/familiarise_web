@@ -3,7 +3,11 @@
  * Supabase `recordings-previews` bucket.
  */
 
-import { RecordingStatus, type Prisma } from "@prisma/client";
+import {
+  RecordingStatus,
+  RecordingStorageType,
+  type Prisma,
+} from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   createR2PresignedGetUrl,
@@ -23,19 +27,38 @@ export function isDurablyOurs(recording: {
   storageType: string;
 }): boolean {
   return (
-    recording.status === "AVAILABLE" && recording.storageType === "PLATFORM"
+    recording.status === RecordingStatus.AVAILABLE &&
+    recording.storageType === RecordingStorageType.PLATFORM
   );
 }
 
 /** {@link isDurablyOurs} as a Prisma filter; built per call so callers cannot share a mutable fragment. */
 export function durablyOursWhere(): Prisma.RecordingWhereInput {
-  return { status: "AVAILABLE", storageType: "PLATFORM" };
+  return {
+    status: RecordingStatus.AVAILABLE,
+    storageType: RecordingStorageType.PLATFORM,
+  };
+}
+
+const MIN_PLAYBACK_URL_TTL_S = 3600;
+const MAX_PLAYBACK_URL_TTL_S = 24 * 3600;
+
+/** Twice the recording's length plus an hour, so a paused or rewound watch never outlives its URL. */
+export function playbackUrlTtlSeconds(
+  durationInMinutes: number | null | undefined,
+): number {
+  const minutes = durationInMinutes ?? 0;
+  if (!Number.isFinite(minutes) || minutes <= 0) return MIN_PLAYBACK_URL_TTL_S;
+  return Math.min(
+    MAX_PLAYBACK_URL_TTL_S,
+    MIN_PLAYBACK_URL_TTL_S + Math.ceil(minutes) * 2 * 60,
+  );
 }
 
 /** Presigned playback URL for an object in the private recordings bucket. */
 export function generateSignedUrl(
   storagePath: string,
-  expiresIn: number = 3600,
+  expiresIn: number = MIN_PLAYBACK_URL_TTL_S,
 ): string | null {
   try {
     return createR2PresignedGetUrl({
@@ -58,9 +81,13 @@ export async function getBestRecordingUrl(recording: {
   status: string;
   storagePath: string | null;
   recordingUrl: string | null;
+  durationInMinutes?: number | null;
 }): Promise<string | null> {
   if (recording.status === RecordingStatus.AVAILABLE && recording.storagePath) {
-    return generateSignedUrl(recording.storagePath);
+    return generateSignedUrl(
+      recording.storagePath,
+      playbackUrlTtlSeconds(recording.durationInMinutes),
+    );
   }
 
   if (
