@@ -8,8 +8,12 @@ const mockRecording = {
   updateManyAndReturn: jest.fn(),
 };
 const mockAuditCreate = jest.fn();
+const mockOrgFindMany = jest.fn().mockResolvedValue([]);
 jest.mock("../../lib/prisma", () => {
   const client = {
+    organization: {
+      findMany: (...args: unknown[]) => mockOrgFindMany(...args),
+    },
     recording: {
       updateMany: (...args: unknown[]) => mockRecording.updateMany(...args),
       findMany: (...args: unknown[]) => mockRecording.findMany(...args),
@@ -190,6 +194,9 @@ describe("expireRecordings", () => {
         },
       },
     });
+    mockOrgFindMany.mockResolvedValueOnce([
+      { id: "org-1", streamRecordingRetentionDays: 7 },
+    ]);
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     mockRecording.findMany
       .mockResolvedValueOnce([orgRow("r1"), orgRow("r2")])
@@ -208,18 +215,14 @@ describe("expireRecordings", () => {
       purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     });
     const orgArm = scanWhere.OR.find(
-      (arm: { organization?: unknown }) => arm.organization !== undefined,
+      (arm: { organizationId?: unknown }) => arm.organizationId === "org-1",
     );
     expect(orgArm.recordedAt.lt.getTime()).toBeLessThanOrEqual(
       Date.now() - 7 * 24 * 60 * 60 * 1000,
     );
-    // Webinar/class rows on the platform schedule younger than 365 days can never be due, so they stay out of the scan window.
+    // Webinar/class rows younger than 365 days are never due on the platform schedule.
     expect(scanWhere.OR).toContainEqual(
       expect.objectContaining({
-        OR: [
-          { organizationId: null },
-          { organization: { is: { streamRecordingRetentionDays: null } } },
-        ],
         meeting: {
           occurrence: {
             appointment: { webinar: { is: null }, class: { is: null } },
@@ -242,7 +245,10 @@ describe("expireRecordings", () => {
     expect(result).toMatchObject({ expired: 1, failed: 1, success: false });
   });
 
-  it("scans org rows on the 7-day floor only when the org set a cap", async () => {
+  it("scans each capped org from its own cap and skips classes with sessions still ahead", async () => {
+    mockOrgFindMany.mockResolvedValueOnce([
+      { id: "org-a", streamRecordingRetentionDays: 30 },
+    ]);
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     mockRecording.findMany.mockResolvedValue([]);
 
@@ -252,15 +258,31 @@ describe("expireRecordings", () => {
       Record<string, unknown>
     >;
     expect(arms).toHaveLength(3);
-    // No arm admits every org row: an uncapped org follows the platform arms.
-    for (const arm of arms) {
-      expect(arm.organizationId).not.toEqual({ not: null });
-    }
-    expect(arms[2]).toEqual(
-      expect.objectContaining({
-        organization: { is: { streamRecordingRetentionDays: { not: null } } },
-      }),
-    );
+    expect(arms[0].meeting).toEqual({
+      occurrence: {
+        appointment: {
+          OR: [
+            { class: { is: null } },
+            {
+              occurrences: {
+                none: expect.objectContaining({
+                  deletedAt: null,
+                  endsAt: { gt: expect.any(Date) },
+                }),
+              },
+            },
+          ],
+        },
+      },
+    });
+    const orgArm = arms[2] as {
+      organizationId: string;
+      recordedAt: { lt: Date };
+    };
+    expect(orgArm.organizationId).toBe("org-a");
+    const ageDays =
+      (Date.now() - orgArm.recordedAt.lt.getTime()) / (24 * 60 * 60 * 1000);
+    expect(Math.round(ageDays)).toBe(30);
   });
 
   it("warns once when the scan cap is spent before the due limit is reached", async () => {

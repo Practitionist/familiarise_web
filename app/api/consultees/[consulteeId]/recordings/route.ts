@@ -8,7 +8,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import {
   hiddenFromLateJoiner,
   lateJoinRecordingAccess,
@@ -55,42 +54,39 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       (r) => !hiddenFromLateJoiner(r, lateJoin),
     );
 
-    // Format recordings for response (async — generates presigned URLs)
-    const formattedRecordings = await Promise.all(
-      recordings.map(async (recording) => {
-        const appointment = recording.meeting?.occurrence?.appointment;
+    // Playback is fetched per play from GET /api/stream/recordings/[id].
+    const formattedRecordings = recordings.map((recording) => {
+      const appointment = recording.meeting?.occurrence?.appointment;
 
-        let planType: "webinar" | "class" | null = null;
-        let planId: string | null = null;
-        let planTitle: string | null = null;
+      let planType: "webinar" | "class" | null = null;
+      let planId: string | null = null;
+      let planTitle: string | null = null;
 
-        if (appointment?.webinar?.webinarPlan) {
-          planType = "webinar";
-          planId = appointment.webinar.webinarPlan.id ?? null;
-          planTitle = appointment.webinar.webinarPlan.title ?? null;
-        } else if (appointment?.class?.classPlan) {
-          planType = "class";
-          planId = appointment.class.classPlan.id ?? null;
-          planTitle = appointment.class.classPlan.title ?? null;
-        }
+      if (appointment?.webinar?.webinarPlan) {
+        planType = "webinar";
+        planId = appointment.webinar.webinarPlan.id ?? null;
+        planTitle = appointment.webinar.webinarPlan.title ?? null;
+      } else if (appointment?.class?.classPlan) {
+        planType = "class";
+        planId = appointment.class.classPlan.id ?? null;
+        planTitle = appointment.class.classPlan.title ?? null;
+      }
 
-        return {
-          id: recording.id,
-          title: recording.title,
-          durationInMinutes: recording.durationInMinutes,
-          recordedAt: recording.recordedAt,
-          status: recording.status,
-          storageType: recording.storageType,
-          playbackUrl: await getBestRecordingUrl(recording),
-          thumbnailUrl: recording.thumbnailUrl,
-          resolution: recording.resolution,
-          planType,
-          planId,
-          planTitle,
-          createdAt: recording.createdAt,
-        };
-      }),
-    );
+      return {
+        id: recording.id,
+        title: recording.title,
+        durationInMinutes: recording.durationInMinutes,
+        recordedAt: recording.recordedAt,
+        status: recording.status,
+        storageType: recording.storageType,
+        thumbnailUrl: recording.thumbnailUrl,
+        resolution: recording.resolution,
+        planType,
+        planId,
+        planTitle,
+        createdAt: recording.createdAt,
+      };
+    });
 
     return NextResponse.json({
       recordings: formattedRecordings,

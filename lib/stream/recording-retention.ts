@@ -120,6 +120,14 @@ async function subscriptionChainEnd(start: SubscriptionEnd): Promise<Date> {
   return endOf(current);
 }
 
+/** Occurrences that still run; a class's last one sets its retention clock. */
+const liveOccurrenceWhere = {
+  deletedAt: null,
+  hostCancelledAt: null,
+  voidedAt: null,
+  isTentative: false,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 const candidateSelect = {
   id: true,
   recordedAt: true,
@@ -143,12 +151,7 @@ const candidateSelect = {
                 },
               },
               occurrences: {
-                where: {
-                  deletedAt: null,
-                  hostCancelledAt: null,
-                  voidedAt: null,
-                  isTentative: false,
-                },
+                where: liveOccurrenceWhere,
                 orderBy: { endsAt: "desc" },
                 take: 1,
                 select: { endsAt: true },
@@ -223,28 +226,39 @@ async function expireLapsedCopies(now: Date): Promise<number> {
 }
 
 /**
- * Rows that can be due by age alone. Without an org cap the platform schedule
- * applies, so group sessions are never due inside 365 days.
+ * Rows that can be due by age alone: the platform schedule (365 days for
+ * group sessions, and never for a class with sessions still ahead) or the
+ * row's org cap, whichever is shorter.
  */
-function dueScanWhere(now: Date): Prisma.RecordingWhereInput {
+async function dueScanWhere(now: Date): Promise<Prisma.RecordingWhereInput> {
   const olderThan = (days: number) => ({
     lt: new Date(now.getTime() - days * DAY_MS),
   });
-  const platformSchedule: Prisma.RecordingWhereInput = {
-    OR: [
-      { organizationId: null },
-      { organization: { is: { streamRecordingRetentionDays: null } } },
-    ],
-  };
+  const cappedOrgs = await prisma.organization.findMany({
+    where: { streamRecordingRetentionDays: { not: null } },
+    select: { id: true, streamRecordingRetentionDays: true },
+  });
   return {
     ...retainableWhere,
     OR: [
       {
-        ...platformSchedule,
         recordedAt: olderThan(GROUP_RETENTION_DAYS),
+        meeting: {
+          occurrence: {
+            appointment: {
+              OR: [
+                { class: { is: null } },
+                {
+                  occurrences: {
+                    none: { ...liveOccurrenceWhere, endsAt: { gt: now } },
+                  },
+                },
+              ],
+            },
+          },
+        },
       },
       {
-        ...platformSchedule,
         recordedAt: olderThan(ONE_TO_ONE_RETENTION_DAYS),
         meeting: {
           occurrence: {
@@ -252,10 +266,11 @@ function dueScanWhere(now: Date): Prisma.RecordingWhereInput {
           },
         },
       },
-      {
-        organization: { is: { streamRecordingRetentionDays: { not: null } } },
-        recordedAt: olderThan(MIN_ORG_RETENTION_DAYS),
-      },
+      ...cappedOrgs.flatMap(({ id, streamRecordingRetentionDays: days }) =>
+        days === null
+          ? []
+          : [{ organizationId: id, recordedAt: olderThan(days) }],
+      ),
     ],
   };
 }
@@ -295,7 +310,7 @@ async function findDueRecordings(
   result: ExpireRecordingsResult,
 ): Promise<Candidate[]> {
   const due: Candidate[] = [];
-  const where = dueScanWhere(now);
+  const where = await dueScanWhere(now);
   let cursor: string | undefined;
   while (due.length < limit && result.scanned < MAX_SCANNED_PER_RUN) {
     const page = await prisma.recording.findMany({
