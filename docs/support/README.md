@@ -27,33 +27,35 @@ The rule that falls out of the grid is short: a rating is about a conversation, 
 
 ## Source code map
 
-The table below lists every file the support subsystem is built from and what each one owns.
+The table below lists the core files the support subsystem is built from and what each one owns. It is selective: the remaining routes under `app/api/support*`, `app/api/user/support-tickets/` and `app/api/staff/support-tickets/` follow the same patterns.
 
-| File                                                        | Purpose                                                                                                                |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `lib/support/flow-walk.ts`                                  | The pure graph walk; both scopes execute identical transitions                                                         |
-| `lib/support/flows.ts`                                      | The ten appointment flowcharts, code-defined and PR-reviewed                                                           |
-| `lib/support/platform-flows.ts`                             | The five stateless platform flows and the reason-to-issue-type taxonomy                                                |
-| `lib/support/priority.ts`                                   | The single reason-to-priority policy map                                                                               |
-| `lib/support/create-ticket.ts`                              | The ticket factory, the session-scope guard, the dedup helpers, and `notifyStaffOfTicketActivity`                      |
-| `lib/support/context.ts`                                    | Stage (`UPCOMING` / `LIVE` / `COMPLETED`), `endsAt`, `isOrgOperator`                                                   |
-| `lib/support/service.ts`                                    | `runSupportTurn`: reason, priority and org attribution, `lastMessageAt`, `ORG_PARTY_CATEGORIES`                        |
-| `lib/support/resolvers/`                                    | The flowchart resolver (turn resolution over a flow)                                                                   |
-| `lib/support/reference.ts`                                  | The `FAM-<YYYY>-<SEQ6>` reference format and its allocator                                                             |
-| `lib/support/sla.ts`                                        | The statutory ceilings, per-priority targets, the pause arithmetic, and `slaStateOf`                                   |
-| `lib/support/deflection.ts`                                 | `recordFlowOutcome` and `deflectionSince`                                                                              |
-| `lib/support/message-seq.ts`                                | `MESSAGE_ORDER`, the per-thread total order                                                                            |
-| `lib/support/error-copy.ts`                                 | The client-side code-to-friendly-copy mapper                                                                           |
-| `lib/api/support-http.ts`                                   | The error envelope, the Sentry policy, `parseRouteParams`                                                              |
-| `lib/api/appointment-access.ts`                             | The one authorization gate for appointment-scoped routes                                                               |
-| `app/api/appointments/[appointmentId]/support/route.ts`     | Per-appointment scope: `GET` thread and gated intents, `POST` one turn                                                 |
-| `app/api/support/platform/route.ts`                         | Platform scope: `GET` the intent catalogue for the caller's role, `POST` one turn                                      |
-| `app/support/_components/SupportRequestCasePage.tsx`        | The per-appointment full page (#1527 round 5), replacing the drawer                                                    |
-| `components/support/PlatformSupportSheet.tsx`               | The platform drawer (kept: it serves a chat-unavailable caller, not an ongoing conversation)                           |
-| `components/support/AppointmentSupportStatusCard.tsx`       | The status card on an appointment                                                                                      |
-| `components/dashboard/shared/support/SupportHub.tsx`        | The consultee and consultant Support tab                                                                               |
-| `components/dashboard/backoffice/support/CaseWorkspace.tsx` | The back-office Support inbox's case workspace (#1527 round 5), replacing the separate Tickets and Conversations pages |
-| `schemas/support.ts`, `schemas/enums.ts`                    | Route-parameter schemas, and the one definition of the category and status lists                                       |
+| File                                                         | Purpose                                                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `lib/support/flow-walk.ts`                                   | The pure graph walk; both scopes execute identical transitions                                                         |
+| `lib/support/flows.ts`                                       | The ten appointment flowcharts, code-defined and PR-reviewed                                                           |
+| `lib/support/platform-flows.ts`                              | The five stateless platform flows and the reason-to-issue-type taxonomy                                                |
+| `lib/support/priority.ts`                                    | The single reason-to-priority policy map                                                                               |
+| `lib/support/create-ticket.ts`                               | The ticket factory, the session-scope guard, the dedup helpers, and `notifyStaffOfTicketActivity`                      |
+| `lib/support/context.ts`                                     | Stage (`UPCOMING` / `LIVE` / `COMPLETED`), `endsAt`, `isOrgOperator`                                                   |
+| `lib/support/service.ts`                                     | `runSupportTurn`: reason, priority and org attribution, `lastMessageAt`, `ORG_PARTY_CATEGORIES`                        |
+| `lib/support/resolvers/`                                     | The flowchart resolver (turn resolution over a flow)                                                                   |
+| `lib/support/reference.ts`                                   | The `FAM-<YYYY>-<SEQ6>` reference format and its allocator                                                             |
+| `lib/support/sla.ts`                                         | The statutory ceilings, per-priority targets, the pause arithmetic, and `slaStateOf`                                   |
+| `lib/support/deflection.ts`                                  | `recordFlowOutcome` and `deflectionSince`                                                                              |
+| `lib/support/message-seq.ts`                                 | `MESSAGE_ORDER`, the per-thread total order                                                                            |
+| `lib/support/error-copy.ts`                                  | The client-side code-to-friendly-copy mapper                                                                           |
+| `lib/api/support-http.ts`                                    | The error envelope, the Sentry policy, `parseRouteParams`                                                              |
+| `lib/api/appointment-access.ts`                              | The one authorization gate for appointment-scoped routes                                                               |
+| `app/api/appointments/[appointmentId]/support/route.ts`      | Per-appointment scope: `GET` thread and gated intents, `POST` one turn                                                 |
+| `app/api/support/platform/route.ts`                          | Platform scope: `GET` the intent catalogue for the caller's role, `POST` one turn                                      |
+| `app/api/user/support-tickets/[ticketId]/responses/route.ts` | Customer reply: reopens a resolved ticket, refuses a closed one                                                        |
+| `app/api/support-tickets/[ticketId]/attachments/route.ts`    | Ticket attachments: list, upload and delete, per-ticket limiter for customers, staff exempt                            |
+| `app/support/_components/SupportRequestCasePage.tsx`         | The per-appointment full page (#1527 round 5), replacing the drawer                                                    |
+| `components/support/PlatformSupportSheet.tsx`                | The platform drawer (kept: it serves a chat-unavailable caller, not an ongoing conversation)                           |
+| `components/support/AppointmentSupportStatusCard.tsx`        | The status card on an appointment                                                                                      |
+| `components/dashboard/shared/support/SupportHub.tsx`         | The consultee and consultant Support tab                                                                               |
+| `components/dashboard/backoffice/support/CaseWorkspace.tsx`  | The back-office Support inbox's case workspace (#1527 round 5), replacing the separate Tickets and Conversations pages |
+| `schemas/support.ts`, `schemas/enums.ts`                     | Route-parameter schemas, and the one definition of the category and status lists                                       |
 
 ## Related decisions
 

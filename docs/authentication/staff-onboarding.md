@@ -161,7 +161,7 @@ The rules the code enforces:
 
 - The `/two-factor/disable` endpoint answers 403 `TWO_FACTOR_REQUIRED` for an operator (`hooks.before` in `lib/auth.ts`). An operator cannot turn their own second factor off, so a stuck active session cannot "disable 2FA" and that is correct behaviour, not a defect.
 - Recovery is a backup code, or an ADMIN **Reset 2FA** from the Team page, which deletes the `TwoFactor` row, clears `twoFactorEnabled` and ends every session in one transaction.
-- An un-enrolled operator is sent to `/auth/two-factor/setup` by `requireOperator`, and every back-office API answers 428 `TWO_FACTOR_REQUIRED` with `X-Auth-Action: enroll-2fa`.
+- An un-enrolled operator is sent to `/auth/two-factor/setup` by `requireOperator`, and every back-office API behind the operator precondition answers 428 `TWO_FACTOR_REQUIRED` with `X-Auth-Action: enroll-2fa`; routes that read `getSession()` directly answer 401.
 
 Two gaps remain open under issue #2033 and are stated here so nobody assumes they are closed:
 

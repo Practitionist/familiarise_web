@@ -31,7 +31,7 @@ Only rows with a `NULL` `excludedFromAggregateAt` enter either published score o
 
 `excludedFromAggregateAt` is distinct from `deletedAt`. A rating excluded because our video stack failed is still a true statement about that session, so the review stays listed with its text; it simply stops arithmetically punishing the person who did not cause it. A deleted row disappears from every public read.
 
-The exclusion is disclosed, not concealed. `sanitisePublicReview` replaces the timestamp with a boolean `notCounted`, and the review card on the expert's profile renders the label "Not counted in rating" beside the date. The timestamp itself and the staff reason on the audit row never reach the wire, so a reader learns that the review is not in the score but not who decided or why. The label exists because a silent exclusion is a transparency failure in both directions: a reader cannot tell why the score ignores a visible one-star review, and the expert can lose a published score without being told (excluding one of five reviews drops a consultant under the five-client publication gate).
+The exclusion is disclosed, not concealed. `sanitisePublicReview` replaces the timestamp with a boolean `notCounted`, and the review card on the expert's profile renders the label "Not counted in rating" beside the date. The timestamp itself and the staff reason on the audit row never reach the wire, so a reader learns that the review is not in the score but not who decided or why. The label exists because a reader otherwise cannot tell why the score ignores a visible one-star review. The expert is told separately, by the "Not counted in rating" bell described below, which matters because excluding one of five reviews drops a consultant under the five-client publication gate.
 
 ## How a cause travels
 
@@ -44,7 +44,7 @@ The cause is a claim the rater makes about a low score, and it round-trips throu
 
 ## The adjudication path
 
-Staff set the exclusion through a moderation report, and every step happens in the report action's one Serializable transaction.
+Staff set the exclusion through a moderation report. The database writes and the notification staging happen in the report action's one Serializable transaction; the public review-surface purge runs after commit.
 
 ```mermaid
 sequenceDiagram

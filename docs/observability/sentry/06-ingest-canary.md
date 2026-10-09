@@ -147,6 +147,6 @@ The alert email's routing, sender and Slack mirror are described in [Email at Fa
 
 ## Deprecated & Superseded Approaches
 
-- **Treating a 2xx envelope response as delivery**: Sentry accepts and then drops events for an exhausted quota or a dead project, so a 2xx proves nothing. The canary asserts on the body and the rate-limit header, and alert paths must not depend on Sentry alone.
+- **Treating a 2xx envelope response as delivery**: Sentry accepts and then drops events for an exhausted quota or a dead project, so a 2xx proves nothing. The canary's verdict comes from the status code and the response body (`dropped data` on a 2xx is a failure); it reports the `x-sentry-rate-limits` header in the alert but does not decide health from it. Alert paths must not depend on Sentry alone.
 - **A five-minute canary cadence**: it alone consumed more than the Developer plan's monthly error allowance; it runs every 30 minutes.
 - **Hardcoding the ingest host**: the endpoint is derived from the DSN verbatim.

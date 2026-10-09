@@ -270,4 +270,4 @@ connection pool, which is the failure mode behind #932.
 ## Deprecated & Superseded Approaches
 
 - **A hard-coded fallback GSTIN**: the supplier used to fall back to a dummy GSTIN when the variable was unset, producing invoices that carried a fabricated number. Superseded by the fail-closed null above; never reintroduce a default.
-- **Assuming the Netlify build traces every file a route reads**: files loaded through `createRequire`, `path.join(process.cwd(), …)` or a `#` import map are invisible to the tracer and must be named in `outputFileTracingIncludes`.
+- **Assuming the Netlify build traces every file a route reads**: a file the tracer cannot resolve is missing from the deployed function. The known cases, the Devanagari fonts read through `path.join(process.cwd(), …)`, PDFKit's `#standard-fonts/*` import-map files and `react/jsx-runtime`, are named in `outputFileTracingIncludes`, and any new runtime file read of that shape needs an entry there too.

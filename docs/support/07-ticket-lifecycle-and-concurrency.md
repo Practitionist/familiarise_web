@@ -28,6 +28,8 @@ stateDiagram-v2
     RESOLVED --> CLOSED: staff PATCH
     IN_PROGRESS --> CLOSED: staff PATCH
     CLOSED --> OPEN: staff PATCH only
+    CLOSED --> IN_PROGRESS: staff PATCH only
+    CLOSED --> RESOLVED: staff PATCH only
     CLOSED --> CLOSED: customer reply refused (400)
 ```
 
@@ -37,7 +39,7 @@ Two rules, both decided by the owner, define reopening.
 
 **A customer reply reopens a resolved ticket.** The route `POST /api/user/support-tickets/[ticketId]/responses` computes the next status from the status it read: a `RESOLVED` or `ON_HOLD` ticket becomes `OPEN` when nobody is assigned and `IN_PROGRESS` when someone is, and every other live ticket becomes `IN_PROGRESS`. The same write clears `resolvedAt` and `closedAt`, so a reopened ticket stops reading as finished, and it folds the wait that just ended into `pausedSeconds` through `userRepliedPatch`. A reply to a `CLOSED` ticket is refused with a 400 saying the ticket is closed and can no longer receive replies, and the client then offers a new request. While a ticket is `RESOLVED` the reply box says "This request is marked resolved. Replying reopens it.", so the reopen is never a surprise.
 
-**A staff reply never reopens a resolved ticket.** The staff `POST` on `/api/staff/support-tickets/[ticketId]/responses` moves a ticket only from `OPEN` to `IN_PROGRESS`, with the status read as the expected prior status in the `WHERE` clause, and assigns the replier when nobody was assigned. On any other live status it bumps `lastMessageAt` and nothing else, so a reply that races a Resolve leaves the ticket `RESOLVED` rather than `IN_PROGRESS` with a stale `resolvedAt`. The reply is still saved and sent. An internal note touches neither the status nor the activity clock, and it is the only write allowed on a `CLOSED` ticket. The back-office composer follows that rule: on a closed case it disables the reply box and Send, says that the customer can no longer receive replies, and keeps private notes available.
+**A staff reply never reopens a resolved ticket.** The staff `POST` on `/api/staff/support-tickets/[ticketId]/responses` moves a ticket only from `OPEN` to `IN_PROGRESS`, with the status read as the expected prior status in the `WHERE` clause, and assigns the replier when nobody was assigned. On any other live status it bumps `lastMessageAt` and nothing else, so a reply that races a Resolve leaves the ticket `RESOLVED` rather than `IN_PROGRESS` with a stale `resolvedAt`. The reply is still saved and sent. An internal note touches neither the status nor the activity clock, and it is the only reply write allowed on a `CLOSED` ticket; the staff `PATCH` can still change a closed ticket's status. The back-office composer follows that rule: on a closed case it disables the reply box and Send, says that the customer can no longer receive replies, and keeps private notes available.
 
 Only staff can take a `CLOSED` ticket out of `CLOSED`, through the staff `PATCH`. That write also moves the booking thread, as described below.
 
