@@ -28,6 +28,10 @@ Removal of a review is admin-only everywhere: the direct `DELETE /api/staff/mode
 
 A report is resolved exactly once. The action route moves the report out of `PENDING`, `UNDER_REVIEW` or `ESCALATED` with a conditional update and throws a 409 when zero rows match, inside the same transaction as the action row and its side effects, so two staff acting at once produce one action and one 409. The report `PATCH` refuses a `DISMISSED` or `ACTION_TAKEN` report and matches on the status and assignee the caller last saw, so a resolved report can only be changed through the audited action route and a stale edit gets a 409.
 
+## What the moderator sees
+
+The report dialog in `ModerationPage.tsx` shows the reported review's star rating, its text and the expert it is about, the reporter's description, the audit trail and the booking context. `ModerationReport.reason` is free text, so `reportReasonLabel` in `lib/labels/report-reasons.ts` renders it: the expert's report codes get their picker labels (the same list `ReviewsInbox.tsx` offers), other upper-case codes are humanised, and sentences pass through unchanged. For a review report, the detail route also returns `exclusionDropsBelowGate`, computed by `exclusionUnpublishesScore` in `lib/reviews.ts` over the expert's counted reviews. When it is true, the dialog warns that excluding the review would take the expert below the publication gate, so their score would stop showing.
+
 ## What the reporter and the expert are told
 
 Every disposition notifies the reporter through an outbox-staged bell, `MODERATION_REPORT_OUTCOME`, carrying the report reference and plain-language outcome copy ("decided: no action needed" or "decided: action taken", with a one-line reason), and an email twin sent after commit. When the action excludes a review from the rating, the reviewed expert additionally receives the "Not counted in rating" bell; if the reporter is that same expert they receive only that one message. The detail of the exclusion flow is in [rating cause and aggregate exclusion](04-rating-cause-and-aggregate-exclusion.md).

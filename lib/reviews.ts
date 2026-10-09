@@ -210,6 +210,22 @@ function groupPoints(rows: ScorableReview[]): number[] {
     .map((ratings) => ratings.reduce((a, b) => a + b, 0) / ratings.length);
 }
 
+/** Does any track publish a score now and lose it once this review leaves the arithmetic? */
+export function exclusionUnpublishesScore(
+  counted: (ScorableReview & { id: string })[],
+  reviewId: string,
+): boolean {
+  if (!counted.some((r) => r.id === reviewId)) return false;
+  const without = counted.filter((r) => r.id !== reviewId);
+  const loses = (points: (rows: ScorableReview[]) => number[], min: number) =>
+    scoreTrack(points(counted), min).published !== null &&
+    scoreTrack(points(without), min).published === null;
+  return (
+    loses(oneToOnePoints, MIN_RATED_CLIENTS_ONE_TO_ONE) ||
+    loses(groupPoints, MIN_RATED_EVENTS_GROUP)
+  );
+}
+
 /** The exact delegate methods scoring touches. Narrow on purpose: the dry run
  *  in lib/reviews-recompute.ts stubs `consultantProfile.update` against this
  *  type, so a new dependency here fails the build there, not an operator's
