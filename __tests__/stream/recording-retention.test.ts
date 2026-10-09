@@ -195,7 +195,7 @@ describe("expireRecordings", () => {
       },
     });
     mockOrgFindMany.mockResolvedValueOnce([
-      { id: "org-1", streamRecordingRetentionDays: 7 },
+      { streamRecordingRetentionDays: 7 },
     ]);
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     mockRecording.findMany
@@ -215,9 +215,9 @@ describe("expireRecordings", () => {
       purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
     });
     const orgArm = scanWhere.OR.find(
-      (arm: { organizationId?: unknown }) => arm.organizationId === "org-1",
+      (arm: { organization?: unknown }) => arm.organization !== undefined,
     );
-    expect(orgArm.recordedAt.lt.getTime()).toBeLessThanOrEqual(
+    expect(orgArm.recordedAt.lte.getTime()).toBeLessThanOrEqual(
       Date.now() - 7 * 24 * 60 * 60 * 1000,
     );
     // Webinar/class rows younger than 365 days are never due on the platform schedule.
@@ -245,9 +245,9 @@ describe("expireRecordings", () => {
     expect(result).toMatchObject({ expired: 1, failed: 1, success: false });
   });
 
-  it("scans each capped org from its own cap and skips classes with sessions still ahead", async () => {
+  it("scans capped orgs from their own cap, inclusive, and skips classes with sessions still ahead", async () => {
     mockOrgFindMany.mockResolvedValueOnce([
-      { id: "org-a", streamRecordingRetentionDays: 30 },
+      { streamRecordingRetentionDays: 30 },
     ]);
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     mockRecording.findMany.mockResolvedValue([]);
@@ -275,13 +275,18 @@ describe("expireRecordings", () => {
         },
       },
     });
-    const orgArm = arms[2] as {
-      organizationId: string;
-      recordedAt: { lt: Date };
+    expect(mockOrgFindMany.mock.calls[0][0].distinct).toEqual([
+      "streamRecordingRetentionDays",
+    ]);
+    const capArm = arms[2] as {
+      organization: unknown;
+      recordedAt: { lte: Date };
     };
-    expect(orgArm.organizationId).toBe("org-a");
+    expect(capArm.organization).toEqual({
+      is: { streamRecordingRetentionDays: 30 },
+    });
     const ageDays =
-      (Date.now() - orgArm.recordedAt.lt.getTime()) / (24 * 60 * 60 * 1000);
+      (Date.now() - capArm.recordedAt.lte.getTime()) / (24 * 60 * 60 * 1000);
     expect(Math.round(ageDays)).toBe(30);
   });
 

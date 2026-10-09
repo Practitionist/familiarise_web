@@ -231,12 +231,13 @@ async function expireLapsedCopies(now: Date): Promise<number> {
  * row's org cap, whichever is shorter.
  */
 async function dueScanWhere(now: Date): Promise<Prisma.RecordingWhereInput> {
-  const olderThan = (days: number) => ({
-    lt: new Date(now.getTime() - days * DAY_MS),
-  });
-  const cappedOrgs = await prisma.organization.findMany({
+  const cutoff = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const olderThan = (days: number) => ({ lt: cutoff(days) });
+  // One arm per distinct cap, not per org, keeps the predicate bounded.
+  const caps = await prisma.organization.findMany({
     where: { streamRecordingRetentionDays: { not: null } },
-    select: { id: true, streamRecordingRetentionDays: true },
+    distinct: ["streamRecordingRetentionDays"],
+    select: { streamRecordingRetentionDays: true },
   });
   return {
     ...retainableWhere,
@@ -266,10 +267,16 @@ async function dueScanWhere(now: Date): Promise<Prisma.RecordingWhereInput> {
           },
         },
       },
-      ...cappedOrgs.flatMap(({ id, streamRecordingRetentionDays: days }) =>
+      // A cap is due at recordedAt + cap <= now, so its cutoff is inclusive.
+      ...caps.flatMap(({ streamRecordingRetentionDays: days }) =>
         days === null
           ? []
-          : [{ organizationId: id, recordedAt: olderThan(days) }],
+          : [
+              {
+                organization: { is: { streamRecordingRetentionDays: days } },
+                recordedAt: { lte: cutoff(days) },
+              },
+            ],
       ),
     ],
   };
