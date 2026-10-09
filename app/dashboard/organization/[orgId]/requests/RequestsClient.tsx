@@ -1,7 +1,6 @@
 "use client";
 
 import { RequestsInbox } from "@/components/dashboard/shared/requests/RequestsInbox";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 
 /**
  * This organisation's Requests inbox (#1775): the same component the
@@ -18,11 +17,6 @@ export function RequestsClient({
   consultantProfileId,
 }: Readonly<{ orgId: string; consultantProfileId: string }>) {
   return (
-    <DashboardErrorBoundary>
-      <RequestsInbox
-        consultantProfileId={consultantProfileId}
-        orgScope={orgId}
-      />
-    </DashboardErrorBoundary>
+    <RequestsInbox consultantProfileId={consultantProfileId} orgScope={orgId} />
   );
 }

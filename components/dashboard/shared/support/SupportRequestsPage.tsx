@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { FeedbackPanel } from "./FeedbackPanel";
@@ -28,7 +27,7 @@ export function SupportRequestsPage({
   suggested,
 }: Readonly<SupportRequestsPageProps>) {
   return (
-    <DashboardErrorBoundary>
+    <>
       <PageHeader
         title="Support requests"
         description="Your conversations with the Familiarise team — about a session or the platform."
@@ -56,6 +55,6 @@ export function SupportRequestsPage({
           },
         ]}
       />
-    </DashboardErrorBoundary>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -1420,10 +1421,8 @@ function ReferralsListCard<T extends { id: string }>({
 
 function CreditsTabPanel({
   canManage,
-  onOpenIssue,
 }: Readonly<{
   canManage: boolean;
-  onOpenIssue: () => void;
 }>) {
   const [q, setQ] = useState("");
   const [sourceFilter, setSourceFilter] = useState("ALL");
@@ -1492,8 +1491,6 @@ function CreditsTabPanel({
       <ReferralsListCard<ReferralCreditItem>
         title={creditCountLabel}
         description="Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID), balances, and payment redemptions."
-        actionLabel={canManage ? "Issue Goodwill Credit" : undefined}
-        onAction={canManage ? onOpenIssue : undefined}
         searchAriaLabel="Search by email, name, or referral code"
         searchPlaceholder="Search by user email, name, referral code, or ID…"
         searchValue={q}
@@ -1575,13 +1572,20 @@ function CreditsTabPanel({
 // Tab 2: Fee Waivers Panel
 // ---------------------------------------------------------------------------
 
-function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
+function FeeWaiversTabPanel({
+  canManage,
+  grantOpen,
+  onGrantOpenChange,
+}: Readonly<{
+  canManage: boolean;
+  grantOpen: boolean;
+  onGrantOpenChange: (open: boolean) => void;
+}>) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [reasonFilter, setReasonFilter] = useState("ALL");
   const [page, setPage] = useState(1);
 
-  const [grantOpen, setGrantOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<FeeWaiverItem | null>(null);
 
   const waiversQuery = useQuery({
@@ -1628,8 +1632,6 @@ function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
       <ReferralsListCard<FeeWaiverItem>
         title={waiverCountLabel}
         description="0% platform-fee session waivers granted to referred and referring experts."
-        actionLabel={canManage ? "Grant Fee Waiver" : undefined}
-        onAction={canManage ? () => setGrantOpen(true) : undefined}
         searchAriaLabel="Search fee waivers"
         searchPlaceholder="Search by consultant name, email, or referral ID…"
         searchValue={q}
@@ -1685,7 +1687,10 @@ function FeeWaiversTabPanel({ canManage }: Readonly<{ canManage: boolean }>) {
       />
 
       {canManage && (
-        <GrantFeeWaiverDialog open={grantOpen} onOpenChange={setGrantOpen} />
+        <GrantFeeWaiverDialog
+          open={grantOpen}
+          onOpenChange={onGrantOpenChange}
+        />
       )}
 
       {revokeTarget && canManage && (
@@ -2343,20 +2348,32 @@ function ProgramAndFeeConfigTabPanel({
 export function ReferralCreditsPageClient() {
   const { can } = useBackofficeCapability();
   const canManage = can("referrals.manage");
+  const searchParams = useSearchParams();
+  const activeTab = searchParams?.get("tab") ?? "credits";
   const [issueOpen, setIssueOpen] = useState(false);
+  const [grantOpen, setGrantOpen] = useState(false);
+
+  let headerAction: React.ReactNode = null;
+  if (canManage && activeTab === "credits") {
+    headerAction = (
+      <Button size="sm" onClick={() => setIssueOpen(true)}>
+        <Plus className="mr-1 h-4 w-4" /> Issue Goodwill Credit
+      </Button>
+    );
+  } else if (canManage && activeTab === "waivers") {
+    headerAction = (
+      <Button size="sm" onClick={() => setGrantOpen(true)}>
+        <Plus className="mr-1 h-4 w-4" /> Grant Fee Waiver
+      </Button>
+    );
+  }
 
   return (
     <>
       <DashboardHeader
         title="Referrals & Fee Schedules"
         subtitle="Manage referral credit balances, expert fee waivers, program economics, and maker-checker take rates."
-        actions={
-          canManage && (
-            <Button size="sm" onClick={() => setIssueOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> Issue Goodwill Credit
-            </Button>
-          )
-        }
+        actions={headerAction}
       />
 
       <DashboardContent>
@@ -2365,17 +2382,18 @@ export function ReferralCreditsPageClient() {
             {
               value: "credits",
               label: "Credits",
-              content: (
-                <CreditsTabPanel
-                  canManage={canManage}
-                  onOpenIssue={() => setIssueOpen(true)}
-                />
-              ),
+              content: <CreditsTabPanel canManage={canManage} />,
             },
             {
               value: "waivers",
               label: "Fee Waivers",
-              content: <FeeWaiversTabPanel canManage={canManage} />,
+              content: (
+                <FeeWaiversTabPanel
+                  canManage={canManage}
+                  grantOpen={grantOpen}
+                  onGrantOpenChange={setGrantOpen}
+                />
+              ),
             },
             {
               value: "config",

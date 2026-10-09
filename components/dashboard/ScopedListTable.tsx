@@ -26,7 +26,7 @@ export interface Column<T> {
 }
 
 export interface ScopedListTableProps<T> {
-  title: string;
+  title?: string;
   description?: React.ReactNode;
   isLoading: boolean;
   isError: boolean;
@@ -68,13 +68,15 @@ export function ScopedListTable<T>({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description && (
-          <p className="text-sm text-muted-foreground">{description}</p>
-        )}
-      </CardHeader>
-      <CardContent>
+      {(title || description) && (
+        <CardHeader>
+          {title && <CardTitle>{title}</CardTitle>}
+          {description && (
+            <p className="text-sm text-muted-foreground">{description}</p>
+          )}
+        </CardHeader>
+      )}
+      <CardContent className={!title && !description ? "pt-6" : undefined}>
         {toolbar && <div className="mb-4">{toolbar}</div>}
 
         {isLoading ? (

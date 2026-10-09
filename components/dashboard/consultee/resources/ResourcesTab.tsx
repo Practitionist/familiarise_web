@@ -38,6 +38,7 @@ interface ResourcesTabProps {
   artifact?: ResourceArtifact;
   title?: string;
   subtitle?: string;
+  sortDir?: "desc" | "asc";
 }
 
 const EVENT_TYPES = [
@@ -47,20 +48,6 @@ const EVENT_TYPES = [
   { key: "classes", label: "Classes" },
   { key: "trials", label: "Trials" },
 ] as const;
-
-export type OfferingFilterOption =
-  "all" | "consultation" | "subscription" | "webinar" | "class";
-
-const OFFERING_FILTER_OPTIONS: {
-  value: OfferingFilterOption;
-  label: string;
-}[] = [
-  { value: "all", label: "All" },
-  { value: "consultation", label: "Consultation" },
-  { value: "subscription", label: "Subscription" },
-  { value: "webinar", label: "Webinar" },
-  { value: "class", label: "Class" },
-];
 
 /**
  * `with_recordings` / `with_materials` only make sense on the combined view —
@@ -143,12 +130,14 @@ export function ResourcesTab({
   artifact = "both",
   title,
   subtitle,
+  sortDir: externalSortDir,
 }: ResourcesTabProps) {
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [internalSortDir, setInternalSortDir] = useState<"desc" | "asc">(
+    "desc",
+  );
+  const sortDir = externalSortDir ?? internalSortDir;
   const [resourceFilter, setResourceFilter] = useState<FilterOption>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [offeringFilter, setOfferingFilter] =
-    useState<OfferingFilterOption>("all");
 
   /**
    * Events that actually carry the artifact this page is for.
@@ -180,15 +169,10 @@ export function ResourcesTab({
 
   const filteredData = useMemo(() => {
     if (!artifactData) return null;
-    const data = artifactData;
-    const keepOffering = (
-      target: OfferingFilterOption,
-      events: EventResource[],
-    ) => (offeringFilter === "all" || offeringFilter === target ? events : []);
     return {
       consultations: sortEvents(
         filterEvents(
-          keepOffering("consultation", data.consultations),
+          artifactData.consultations,
           resourceFilter,
           searchQuery,
           artifact,
@@ -197,7 +181,7 @@ export function ResourcesTab({
       ),
       subscriptions: sortEvents(
         filterEvents(
-          keepOffering("subscription", data.subscriptions),
+          artifactData.subscriptions,
           resourceFilter,
           searchQuery,
           artifact,
@@ -206,7 +190,7 @@ export function ResourcesTab({
       ),
       webinars: sortEvents(
         filterEvents(
-          keepOffering("webinar", data.webinars),
+          artifactData.webinars,
           resourceFilter,
           searchQuery,
           artifact,
@@ -215,7 +199,7 @@ export function ResourcesTab({
       ),
       classes: sortEvents(
         filterEvents(
-          keepOffering("class", data.classes),
+          artifactData.classes,
           resourceFilter,
           searchQuery,
           artifact,
@@ -224,7 +208,7 @@ export function ResourcesTab({
       ),
       trials: sortEvents(
         filterEvents(
-          offeringFilter === "all" ? (data.trials ?? []) : [],
+          artifactData.trials ?? [],
           resourceFilter,
           searchQuery,
           artifact,
@@ -232,14 +216,7 @@ export function ResourcesTab({
         sortDir,
       ),
     };
-  }, [
-    artifactData,
-    resourceFilter,
-    searchQuery,
-    offeringFilter,
-    sortDir,
-    artifact,
-  ]);
+  }, [artifactData, resourceFilter, searchQuery, sortDir, artifact]);
 
   if (!data || !artifactData || !filteredData) return null;
 
@@ -253,12 +230,14 @@ export function ResourcesTab({
   if (totalResources === 0) {
     return (
       <>
-        <PageHeader
-          title={title ?? "Resources"}
-          description={
-            subtitle ?? "Materials and recordings from your enrolled events"
-          }
-        />
+        {title && (
+          <PageHeader
+            title={title}
+            description={
+              subtitle ?? "Materials and recordings from your enrolled events"
+            }
+          />
+        )}
         <EmptyState
           variant="page"
           icon={FolderOpen}
@@ -269,23 +248,42 @@ export function ResourcesTab({
     );
   }
 
+  if (artifact === "recordings") {
+    const mergedRecordings = sortEvents(
+      [
+        ...filteredData.consultations,
+        ...filteredData.subscriptions,
+        ...filteredData.webinars,
+        ...filteredData.classes,
+        ...filteredData.trials,
+      ],
+      sortDir,
+    );
+
+    return (
+      <div className="space-y-4">
+        {mergedRecordings.map((event) => (
+          <EventResourceCard key={event.id} event={event} artifact={artifact} />
+        ))}
+      </div>
+    );
+  }
+
   const artifactNoun = resolveArtifactNoun(artifact);
 
-  const isFiltered =
-    resourceFilter !== "all" ||
-    searchQuery.trim().length > 0 ||
-    offeringFilter !== "all";
+  const isFiltered = resourceFilter !== "all" || searchQuery.trim().length > 0;
 
   return (
     <div>
-      <PageHeader
-        title={title ?? "Resources"}
-        description={
-          subtitle ?? "Materials and recordings from your enrolled events"
-        }
-      />
+      {title && (
+        <PageHeader
+          title={title}
+          description={
+            subtitle ?? "Materials and recordings from your enrolled events"
+          }
+        />
+      )}
 
-      {/* Search + Offering Type + Filter + Sort controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative w-full sm:w-64">
           <Search
@@ -301,22 +299,6 @@ export function ResourcesTab({
             className="pl-8"
           />
         </div>
-        <fieldset
-          aria-label="Filter by offering type"
-          className="flex flex-wrap items-center gap-1"
-        >
-          {OFFERING_FILTER_OPTIONS.map((opt) => (
-            <Button
-              key={opt.value}
-              type="button"
-              size="sm"
-              variant={offeringFilter === opt.value ? "default" : "outline"}
-              onClick={() => setOfferingFilter(opt.value)}
-            >
-              {opt.label}
-            </Button>
-          ))}
-        </fieldset>
         <Select
           value={resourceFilter}
           onValueChange={(v) => {
@@ -331,10 +313,6 @@ export function ResourcesTab({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All {artifactNoun}</SelectItem>
-            {/* Redundant on an artifact-specific page: every event shown on
-                Documents already has materials, so "With materials" would
-                filter nothing and "With recordings" would contradict the
-                page. */}
             {artifact === "both" && (
               <>
                 <SelectItem value="with_recordings">With recordings</SelectItem>
@@ -347,7 +325,9 @@ export function ResourcesTab({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+          onClick={() =>
+            setInternalSortDir((d) => (d === "desc" ? "asc" : "desc"))
+          }
         >
           <ArrowUpDown className="h-4 w-4 mr-2" />
           {sortDir === "desc" ? "Newest first" : "Oldest first"}

@@ -2,11 +2,11 @@
 
 import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { ArrowUpDown, Search } from "lucide-react";
 
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -91,6 +91,7 @@ export function ConsulteeRecordingsPage({
   const { consulteeId } = use(params);
   const [category, setCategory] = useState<ConsulteeRecordingCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["consultee-recordings", consulteeId],
@@ -187,9 +188,12 @@ export function ConsulteeRecordingsPage({
     );
   }
 
-  const purchasedItems = (data?.purchased ?? []).filter((item) =>
-    matchesSearch(item, searchQuery),
-  );
+  const purchasedItems = [...(data?.purchased ?? [])]
+    .filter((item) => matchesSearch(item, searchQuery))
+    .sort((a, b) => {
+      const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      return sortDir === "desc" ? -diff : diff;
+    });
   const totalScopedCount =
     (scopedData?.consultations.length ?? 0) +
     (scopedData?.subscriptions.length ?? 0) +
@@ -225,48 +229,48 @@ export function ConsulteeRecordingsPage({
     );
   } else {
     recordingsContent = (
-      <ResourcesTab
-        data={scopedData}
-        artifact="recordings"
-        title="Recordings"
-        subtitle="Recordings of the sessions you've attended and purchased replays"
-      />
+      <ResourcesTab data={scopedData} artifact="recordings" sortDir={sortDir} />
     );
   }
 
   return (
-    <DashboardErrorBoundary>
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="tablist"
-            aria-label="Recording categories"
-            className="flex flex-wrap items-center gap-1.5"
-          >
-            {RECORDING_CATEGORIES.map((tab) => {
-              const purchasedCount = data?.purchased?.length ?? 0;
-              const badgeSuffix =
-                tab.value === "purchased" && purchasedCount > 0
-                  ? ` (${purchasedCount})`
-                  : "";
-              return (
-                <Button
-                  key={tab.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={category === tab.value}
-                  variant={category === tab.value ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setCategory(tab.value)}
-                >
-                  {tab.label}
-                  {badgeSuffix}
-                </Button>
-              );
-            })}
-          </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Recordings"
+        description="Recordings of the sessions you've attended and purchased replays"
+      />
 
-          <div className="relative w-full sm:w-64">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="tablist"
+          aria-label="Recording categories"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {RECORDING_CATEGORIES.map((tab) => {
+            const purchasedCount = data?.purchased?.length ?? 0;
+            const badgeSuffix =
+              tab.value === "purchased" && purchasedCount > 0
+                ? ` (${purchasedCount})`
+                : "";
+            return (
+              <Button
+                key={tab.value}
+                type="button"
+                role="tab"
+                aria-selected={category === tab.value}
+                variant={category === tab.value ? "default" : "outline"}
+                size="sm"
+                onClick={() => setCategory(tab.value)}
+              >
+                {tab.label}
+                {badgeSuffix}
+              </Button>
+            );
+          })}
+        </div>
+
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden
@@ -280,10 +284,20 @@ export function ConsulteeRecordingsPage({
               className="pl-8"
             />
           </div>
-        </div>
 
-        {recordingsContent}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+          >
+            <ArrowUpDown className="mr-2 h-4 w-4" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        </div>
       </div>
-    </DashboardErrorBoundary>
+
+      {recordingsContent}
+    </div>
   );
 }

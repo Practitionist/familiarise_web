@@ -107,10 +107,7 @@ export function ExpertPayoutRoutingPanel({
     ) : null;
 
   return (
-    <Section
-      title="Experts' payout routing"
-      description="Whether each expert's share of a session is paid to the expert or to this organization."
-    >
+    <Section description="Whether each expert's share of a session is paid to the expert or to this organization.">
       {isError ? (
         <ErrorState
           title="Couldn't load experts' payout routing"

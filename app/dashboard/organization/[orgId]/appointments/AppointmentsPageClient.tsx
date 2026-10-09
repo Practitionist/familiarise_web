@@ -360,8 +360,7 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
     </div>
   );
 
-  let listDescription: React.ReactNode =
-    "Sessions booked by members of this organization or scoped to a member's program assignment.";
+  let listDescription: React.ReactNode;
   if (suspendedOnly) {
     listDescription = (
       <>
@@ -381,7 +380,6 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-6">
       <ScopedListTable
-        title="Org appointments"
         description={listDescription}
         isLoading={isLoading}
         isError={isError}

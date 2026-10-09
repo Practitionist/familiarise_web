@@ -239,7 +239,6 @@ function InvoicesTabScaffold<T extends { id: string }>({
   statusValue,
   statusOptions,
   onStatusChange,
-  cardTitle,
   isLoading,
   isError,
   onRetry,
@@ -264,7 +263,6 @@ function InvoicesTabScaffold<T extends { id: string }>({
   statusValue: string;
   statusOptions: Array<{ value: string; label: string }>;
   onStatusChange: (value: string) => void;
-  cardTitle: string;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -353,10 +351,7 @@ function InvoicesTabScaffold<T extends { id: string }>({
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{cardTitle}</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {content}
 
           {pagination && pagination.totalPages > 1 && (
@@ -490,7 +485,6 @@ function OrganizationInvoicesTab({
       statusValue={statusFilter}
       statusOptions={B2B_STATUS_OPTIONS}
       onStatusChange={handleStatusChange}
-      cardTitle={`Organization Invoices (${pagination?.total ?? 0})`}
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
@@ -636,7 +630,6 @@ function ConsumerInvoicesTab({
       statusValue={statusFilter}
       statusOptions={B2C_STATUS_OPTIONS}
       onStatusChange={handleStatusChange}
-      cardTitle={`Consumer Tax Invoices (${pagination?.total ?? 0})`}
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
