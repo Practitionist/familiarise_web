@@ -310,6 +310,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
     const validatedData = result.data;
+    // ON_HOLD stays readable on existing rows but has no write path until it is a real feature.
+    if (validatedData.status === "ON_HOLD") {
+      return NextResponse.json(
+        {
+          error:
+            "On hold isn't available yet; use 'Waiting on customer' or leave a note.",
+          code: "STATUS_NOT_SUPPORTED",
+        },
+        { status: 400 },
+      );
+    }
 
     const existing = await prisma.supportTicket.findUnique({
       where: { id: ticketId },
@@ -391,7 +402,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     if (!updatedTicket) {
       return NextResponse.json(
-        { error: "Ticket was modified concurrently; please retry." },
+        {
+          error: "Ticket was modified concurrently; please retry.",
+          code: "CONFLICT",
+        },
         { status: 409 },
       );
     }

@@ -46,6 +46,10 @@ jest.mock("../../lib/prisma", () => {
 
 import { NextRequest } from "next/server";
 import { PATCH } from "../../app/api/staff/support-tickets/[ticketId]/route";
+import {
+  SupportRequestError,
+  isStaleCaseError,
+} from "../../lib/support/error-copy";
 
 const patch = (body: object) =>
   PATCH(
@@ -63,6 +67,7 @@ describe("PATCH /api/staff/support-tickets/[ticketId] CAS", () => {
     const stamp = "2026-10-01T10:00:00.123Z";
     const res = await patch({ priority: "HIGH", expectedUpdatedAt: stamp });
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONFLICT");
     expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
       id: "t1",
       updatedAt: new Date(stamp),
@@ -73,5 +78,24 @@ describe("PATCH /api/staff/support-tickets/[ticketId] CAS", () => {
   it("answers 400 without an expectedUpdatedAt", async () => {
     expect((await patch({ priority: "HIGH" })).status).toBe(400);
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses ON_HOLD on write with a clear code", async () => {
+    const res = await patch({
+      status: "ON_HOLD",
+      expectedUpdatedAt: "2026-10-01T10:00:00.000Z",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("STATUS_NOT_SUPPORTED");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("classifies only a 409 as a stale case the panel reloads", () => {
+    expect(
+      isStaleCaseError(new SupportRequestError("x", 409, "CONFLICT")),
+    ).toBe(true);
+    expect(
+      isStaleCaseError(new SupportRequestError("x", 500, "INTERNAL")),
+    ).toBe(false);
   });
 });
