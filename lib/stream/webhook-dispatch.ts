@@ -15,7 +15,6 @@ import {
   handleRecordingStopped,
   handleRecordingReady,
   handleRecordingFailed,
-  StreamRecordingReadyEvent,
   StreamRecordingFailedEvent,
 } from "@/lib/stream/recording-handlers";
 import {
@@ -70,14 +69,14 @@ const streamCallBaseEventSchema = z.object({
   created_at: z.string(),
 });
 
-// Recording ready event schema
-const streamRecordingReadySchema = streamCallBaseEventSchema.extend({
+export const streamRecordingReadySchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_ready"),
   call_recording: z.object({
     filename: z.string(),
     url: z.string(),
     start_time: z.string(),
     end_time: z.string(),
+    session_id: z.string().optional(),
   }),
 });
 
@@ -258,8 +257,9 @@ const EVENT_HANDLERS = {
     streamRecordingStoppedSchema,
     handleRecordingStopped,
   ),
-  "call.recording_ready": entry(streamRecordingReadySchema, (e) =>
-    handleRecordingReady(e as StreamRecordingReadyEvent),
+  "call.recording_ready": entry(
+    streamRecordingReadySchema,
+    handleRecordingReady,
   ),
   "call.recording_failed": entry(streamRecordingFailedSchema, (e) =>
     handleRecordingFailed(e as StreamRecordingFailedEvent),

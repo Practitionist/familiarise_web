@@ -9,9 +9,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
 import { isPrivileged } from "@/lib/auth-helpers";
+import {
+  webinarRecordingVisible,
+  type WebinarRecordingScope,
+} from "@/lib/stream/recording-attendee-scope";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -72,7 +75,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Attendee path: must have purchased a webinar from this plan.
+    // Attendee path: must have purchased a webinar from this plan, and sees
+    // only the runs the plan's sharing setting allows.
+    let attendeeScope: WebinarRecordingScope | null = null;
     if (!hasAccess) {
       const enrollment = await prisma.payment.findFirst({
         where: {
@@ -86,6 +91,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         },
       });
       hasAccess = !!enrollment;
+      if (hasAccess) {
+        ({ webinarScope: attendeeScope } =
+          await RecordingService.getPaidPlanIds(session.user.id));
+      }
     }
 
     if (!hasAccess) {
@@ -95,26 +104,37 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Get recordings for this webinar plan
-    const recordings =
+    const planRecordings =
       await RecordingService.getWebinarPlanRecordings(webinarPlanId);
+    const scope = attendeeScope;
+    const recordings = scope
+      ? planRecordings.filter((recording) =>
+          webinarRecordingVisible(
+            {
+              appointmentId: recording.meeting.occurrence.appointment.id,
+              webinarPlanId,
+            },
+            scope,
+          ),
+        )
+      : planRecordings;
 
-    // Map recordings to response format (async — presigned URLs)
-    const formattedRecordings = await Promise.all(recordings.map(async (recording) => ({
+    const formattedRecordings = recordings.map((recording) => ({
       id: recording.id,
       title: recording.title,
       durationInMinutes: recording.durationInMinutes,
       recordedAt: recording.recordedAt,
       status: recording.status,
       storageType: recording.storageType,
-      playbackUrl: await getBestRecordingUrl(recording),
+      // Playback URLs are minted per play by GET /api/stream/recordings/[id], which re-checks access.
+      playbackUrl: null,
       thumbnailUrl: recording.thumbnailUrl,
       resolution: recording.resolution,
       previewClipUrl: recording.previewClipUrl,
       previewClipDuration: recording.previewClipDuration,
       streamUrlExpiresAt: recording.streamUrlExpiresAt,
       createdAt: recording.createdAt,
-    })));
+    }));
 
     return NextResponse.json({
       planId: webinarPlanId,
@@ -124,7 +144,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       total: formattedRecordings.length,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
     console.error("Error getting webinar plan recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },

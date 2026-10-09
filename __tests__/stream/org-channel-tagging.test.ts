@@ -127,11 +127,6 @@ jest.mock("../../lib/stream-logger", () => ({
   },
 }));
 
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
-  RecordingTransferService: {},
-  resolveAppointmentStoragePolicy: jest.fn(),
-}));
-
 describe("RecordingService.getConsulteeRecordings organizationId filter", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -142,7 +137,10 @@ describe("RecordingService.getConsulteeRecordings organizationId filter", () => 
         refunds: [],
         appointment: {
           id: "appt-1",
-          webinar: { webinarPlanId: "wp-1" },
+          webinar: {
+            webinarPlanId: "wp-1",
+            webinarPlan: { shareRecordingsWithAllAttendees: false },
+          },
           class: null,
           consultation: null,
           subscription: null,

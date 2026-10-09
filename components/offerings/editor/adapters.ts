@@ -202,7 +202,6 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       ...sharedDefaults,
       durationInHours: 1,
       recordingEnabled: false,
-      recordingStoragePolicy: "STREAM_ONLY",
     },
     planOf: (event) => {
       const plan = (event as { consultationPlan?: Record<string, unknown> })
@@ -227,7 +226,6 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       emailSupport: "GENERAL",
       subscriptionContents: [],
       recordingEnabled: false,
-      recordingStoragePolicy: "STREAM_ONLY",
       trialEnabled: false,
       trialDurationMinutes: 30,
       trialPriceInPaise: 0,
@@ -276,8 +274,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       maxParticipants: 100,
       certificateProvided: false,
       recordingEnabled: false,
-      // Permanent storage is an explicit opt-in even for marketplace-eligible offerings.
-      recordingStoragePolicy: "STREAM_ONLY",
+      shareRecordingsWithAllAttendees: false,
     },
     planOf: (event) => {
       const plan = (event as { webinarPlan?: Record<string, unknown> })
@@ -301,6 +298,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     imageType: "class-plans",
     defaults: {
       ...sharedDefaults,
+      // ClassPlanSchema's discriminator; no plan row carries it, so it lives here.
+      planType: "class",
       durationInMonths: 1,
       sessionsPerWeek: 1,
       // Exposed as a real field now. The dialog hardcoded 1 and never rendered
@@ -310,7 +309,6 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       emailSupport: "GENERAL",
       certificateProvided: false,
       recordingEnabled: false,
-      recordingStoragePolicy: "STREAM_ONLY",
       classContents: [],
       schedulingStartDate: null,
       lateJoinUntilSession: null,

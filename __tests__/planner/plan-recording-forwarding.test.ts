@@ -12,21 +12,11 @@ jest.mock("../../utils/contentValidation", () => ({
 
 import { WebinarService } from "@/components/planner/services/events/webinar-service";
 import { ClassService } from "@/components/planner/services/events/class-service";
-import { OFFERING_ADAPTERS } from "@/components/offerings/editor/adapters";
 import type { WebinarEvent, ClassEvent } from "@/types/planner-events";
 
-describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", () => {
-  it("defaults webinar and class offering adapters to STREAM_ONLY recordingStoragePolicy so permanent storage is an explicit opt-in", () => {
-    expect(OFFERING_ADAPTERS.webinar.defaults.recordingStoragePolicy).toBe(
-      "STREAM_ONLY",
-    );
-    expect(OFFERING_ADAPTERS.class.defaults.recordingStoragePolicy).toBe(
-      "STREAM_ONLY",
-    );
-  });
-
-  it("forwards recordingEnabled and recordingStoragePolicy in WebinarService.buildRequestBody and omits them on partial updates when undefined", () => {
-    const bodyPermanent = WebinarService.buildRequestBody(
+describe("Plan Builder recording settings & session duration forwarding", () => {
+  it("forwards recordingEnabled and shareRecordingsWithAllAttendees in WebinarService.buildRequestBody and omits them on partial updates when undefined", () => {
+    const bodyShared = WebinarService.buildRequestBody(
       {
         webinarPlan: {
           title: "Deep Dive Webinar",
@@ -36,7 +26,7 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
           durationInHours: 1.5,
           maxParticipants: 50,
           recordingEnabled: true,
-          recordingStoragePolicy: "PERMANENT",
+          shareRecordingsWithAllAttendees: true,
         } as unknown as WebinarEvent["webinarPlan"],
       },
       "cp-1",
@@ -47,8 +37,8 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
       "",
     );
 
-    expect(bodyPermanent.recordingEnabled).toBe(true);
-    expect(bodyPermanent.recordingStoragePolicy).toBe("PERMANENT");
+    expect(bodyShared.recordingEnabled).toBe(true);
+    expect(bodyShared.shareRecordingsWithAllAttendees).toBe(true);
 
     const partialUpdate = WebinarService.buildRequestBody(
       {
@@ -69,10 +59,10 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
     );
 
     expect(partialUpdate.recordingEnabled).toBeUndefined();
-    expect(partialUpdate.recordingStoragePolicy).toBeUndefined();
+    expect(partialUpdate.shareRecordingsWithAllAttendees).toBeUndefined();
   });
 
-  it("forwards recordingEnabled, recordingStoragePolicy, and sessionDurationInHours in ClassService.buildRequestBody and preserves them on partial updates", () => {
+  it("forwards recordingEnabled and sessionDurationInHours in ClassService.buildRequestBody and preserves them on partial updates", () => {
     const body = ClassService.buildRequestBody(
       {
         classPlan: {
@@ -85,7 +75,6 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
           sessionsPerWeek: 2,
           sessionDurationInHours: 1.5,
           recordingEnabled: true,
-          recordingStoragePolicy: "PERMANENT",
           classContents: [],
         } as unknown as ClassEvent["classPlan"],
       },
@@ -98,7 +87,6 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
     );
 
     expect(body.recordingEnabled).toBe(true);
-    expect(body.recordingStoragePolicy).toBe("PERMANENT");
     expect(body.sessionDurationInHours).toBe(1.5);
 
     const partialClassUpdate = ClassService.buildRequestBody(
@@ -122,6 +110,5 @@ describe("Plan Builder Recording Storage Policy & Session Duration Forwarding", 
     );
 
     expect(partialClassUpdate.recordingEnabled).toBeUndefined();
-    expect(partialClassUpdate.recordingStoragePolicy).toBeUndefined();
   });
 });

@@ -671,17 +671,6 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.RECORDING_EXPIRING,
-    name: "Recordings expiring",
-    description: "The host, before Stream-only recordings lapse (STR-3).",
-    category: "appointments",
-    inApp: {
-      subject: "Recordings expiring",
-      body: "{{payload.recordingCount}} recording{% if payload.recordingCount != 1 %}s{% endif %} will expire on {{payload.expiresAt}}. Download anything you want to keep before then.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
     workflowId: W.DOCUMENT_UPLOADED,
     name: "Document shared",
     description: "The other party, when a document is uploaded to a booking.",
