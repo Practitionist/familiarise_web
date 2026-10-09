@@ -9,6 +9,7 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  isPasskeyCancellation,
   normalizeAuthErrorCode,
   type AuthErrorAction,
   type AuthErrorField,
@@ -129,6 +130,7 @@ function SignInContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
@@ -463,6 +465,44 @@ function SignInContent() {
     }
   };
 
+  // A passkey sign-in signals the session store, so the redirect is the same
+  // `useAuthenticatedRedirectTarget` hand-off a password sign-in uses.
+  const handlePasskeySignIn = async () => {
+    setFieldError({});
+    setErrorAction(null);
+    retryAfter.clear();
+    setPasskeyBusy(true);
+    try {
+      const { error } = await signIn.passkey({
+        fetchOptions: retryAfter.fetchOptions,
+      });
+      if (!error) {
+        toast({ title: "Sign In Successful" });
+        return;
+      }
+      if (isPasskeyCancellation("code" in error ? error.code : null)) return;
+      const copy = humanizeAuthError("signin", error, {
+        retryAfterSeconds: retryAfter.take(),
+      });
+      setErrorAction(copy.action ?? null);
+      toast({
+        title: copy.title,
+        description: copy.description,
+        variant: "destructive",
+      });
+    } catch {
+      const copy = humanizeAuthError("signin", { status: 0 });
+      setErrorAction(copy.action ?? null);
+      toast({
+        title: copy.title,
+        description: copy.description,
+        variant: "destructive",
+      });
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
   /**
    * Which catalog actions this page can service, and how.
    *
@@ -618,7 +658,7 @@ function SignInContent() {
               <Button
                 type="submit"
                 className="mt-4 w-full bg-white text-black hover:bg-white/90"
-                disabled={isLoading}
+                disabled={isLoading || passkeyBusy}
               >
                 {isLoading ? "Signing In..." : "Sign In with Email"}
               </Button>
@@ -644,6 +684,17 @@ function SignInContent() {
           </form>
           {!ssoCheck?.enforceSSO && (
             <>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 w-full border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                onClick={() => void handlePasskeySignIn()}
+                disabled={isLoading || passkeyBusy}
+              >
+                {passkeyBusy
+                  ? "Waiting for your passkey…"
+                  : "Staff: sign in with a passkey"}
+              </Button>
               <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-white/15" />

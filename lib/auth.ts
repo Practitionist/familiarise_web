@@ -1,15 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
-import {
-  APIError,
-  createAuthMiddleware,
-  getSessionFromCtx,
-} from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { admin, customSession, twoFactor } from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
+import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import {
@@ -37,11 +34,20 @@ import {
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
+import { notifySecurityEvents } from "@/lib/auth/security-event-hook";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import {
   assertOperatorMayEnableTwoFactor,
+  assertTwoFactorRequestPolicy,
+  generateBackupCodes,
   isTwoFactorEnrolment,
 } from "@/lib/auth/two-factor-policy";
+import { assertSensitiveAuthAction } from "@/lib/auth/step-up";
+import {
+  assertOperatorMayRegisterPasskey,
+  operatorPasskeyOptions,
+} from "@/lib/auth/passkey-policy";
+import { sendSecurityEventEmail } from "@/lib/auth/security-email";
 import {
   isSentryIdentityEnabled,
   resolveSentryUserId,
@@ -162,33 +168,15 @@ export const auth = betterAuth({
           message: "organizationSlug is not supported",
         });
       }
-      // Only operators use 2FA, and a trusted device would let a stolen
-      // password skip the authenticator for 30 days. The UI never offers it.
-      if (
-        (ctx.path === "/two-factor/verify-totp" ||
-          ctx.path === "/two-factor/verify-backup-code") &&
-        ctx.body?.trustDevice
-      ) {
-        throw new APIError("BAD_REQUEST", {
-          message: "Trusted devices are not available.",
-          code: "TRUST_DEVICE_DISABLED",
-        });
-      }
+      await assertTwoFactorRequestPolicy(ctx);
       await assertOperatorMayEnableTwoFactor(ctx);
-      // 2FA is mandatory for operators. Recovery from a lost authenticator is
-      // a backup code or an admin reset (app/api/admin/team/members/[userId]/
-      // two-factor), never self-service removal.
-      if (ctx.path === "/two-factor/disable") {
-        const current = await getSessionFromCtx(ctx);
-        if (isOperatorRole((current?.user as { role?: string })?.role)) {
-          throw new APIError("FORBIDDEN", {
-            message: "Two-factor authentication is required for staff.",
-            code: "TWO_FACTOR_REQUIRED",
-          });
-        }
-      }
+      await assertSensitiveAuthAction(ctx);
+      await assertOperatorMayRegisterPasskey(ctx);
     }),
-    after: stripSessionToken,
+    after: createAuthMiddleware(async (ctx) => {
+      await notifySecurityEvents(ctx);
+      return stripSessionToken(ctx);
+    }),
   },
 
   database: prismaAdapter(prisma, {
@@ -348,6 +336,10 @@ export const auth = betterAuth({
     // cache saved one indexed lookup. Re-enabling it brings back the stale
     // window that getCachedSession() and the eslint freshness rule guard.
     cookieCache: { enabled: false },
+    // Stamped by app/api/user/reauthenticate; read by lib/auth/step-up.ts.
+    additionalFields: {
+      reauthenticatedAt: { type: "date", required: false, input: false },
+    },
   },
 
   user: {
@@ -564,6 +556,7 @@ export const auth = betterAuth({
         after: async (user, ctx) => {
           if (isTwoFactorEnrolment(user, ctx?.path)) {
             await revokeAllUserSessions(prisma, user.id);
+            await sendSecurityEventEmail(user, { kind: "authenticator-added" });
           }
         },
       },
@@ -720,8 +713,13 @@ export const auth = betterAuth({
         amount: 10,
         length: 10,
         storeBackupCodes: "encrypted",
+        customBackupCodesGenerate: generateBackupCodes,
       },
     }),
+
+    // Operator passkeys: registration is limited to enrolled operators in
+    // hooks.before, and TOTP stays the recovery factor.
+    passkey(operatorPasskeyOptions(process.env.BETTER_AUTH_URL)),
 
     // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
     // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in

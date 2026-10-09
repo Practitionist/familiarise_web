@@ -1,6 +1,15 @@
+import { randomInt } from "node:crypto";
 import { APIError, getSessionFromCtx } from "better-auth/api";
 import type { GenericEndpointContext } from "better-auth";
+import { z } from "zod";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+
+const withRole = z.object({ role: z.string().nullish() });
+
+function roleOf(user: unknown): string | null | undefined {
+  const parsed = withRole.safeParse(user);
+  return parsed.success ? parsed.data.role : undefined;
+}
 
 /**
  * `hooks.before` on /two-factor/enable. Consumer 2FA has no UI, recovery or
@@ -12,10 +21,38 @@ export async function assertOperatorMayEnableTwoFactor(
 ): Promise<void> {
   if (ctx.path !== "/two-factor/enable") return;
   const current = await getSessionFromCtx(ctx);
-  if (!isOperatorRole((current?.user as { role?: string } | undefined)?.role)) {
+  if (!isOperatorRole(roleOf(current?.user))) {
     throw new APIError("FORBIDDEN", {
       message: "Two-factor authentication is only available for staff.",
       code: "TWO_FACTOR_OPERATORS_ONLY",
+    });
+  }
+}
+
+/**
+ * `hooks.before`: a trusted device would let a stolen password skip the
+ * authenticator for 30 days, and operators may never remove their 2FA (recovery
+ * is a backup code or an admin reset).
+ */
+export async function assertTwoFactorRequestPolicy(
+  ctx: GenericEndpointContext,
+): Promise<void> {
+  if (
+    (ctx.path === "/two-factor/verify-totp" ||
+      ctx.path === "/two-factor/verify-backup-code") &&
+    ctx.body?.trustDevice
+  ) {
+    throw new APIError("BAD_REQUEST", {
+      message: "Trusted devices are not available.",
+      code: "TRUST_DEVICE_DISABLED",
+    });
+  }
+  if (ctx.path !== "/two-factor/disable") return;
+  const current = await getSessionFromCtx(ctx);
+  if (isOperatorRole(roleOf(current?.user))) {
+    throw new APIError("FORBIDDEN", {
+      message: "Two-factor authentication is required for staff.",
+      code: "TWO_FACTOR_REQUIRED",
     });
   }
 }
@@ -31,4 +68,18 @@ export function isTwoFactorEnrolment(
   path: string | undefined,
 ): boolean {
   return path === "/two-factor/verify-totp" && user.twoFactorEnabled === true;
+}
+
+/** Lowercase, without the confusable 0/o, 1/l/i. */
+const BACKUP_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
+/** Ten `xxxxx-xxxxx` backup codes drawn from {@link BACKUP_CODE_ALPHABET}. */
+export function generateBackupCodes(): string[] {
+  return Array.from({ length: 10 }, () => {
+    const chars = Array.from(
+      { length: 10 },
+      () => BACKUP_CODE_ALPHABET[randomInt(BACKUP_CODE_ALPHABET.length)],
+    ).join("");
+    return `${chars.slice(0, 5)}-${chars.slice(5)}`;
+  });
 }

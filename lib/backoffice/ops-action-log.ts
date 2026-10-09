@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { requireFreshSession } from "@/lib/auth/step-up";
 import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -116,11 +117,17 @@ export function withOpsAction<S extends z.ZodRawShape>(
   actionOf: string | ((body: z.infer<z.ZodObject<S>>) => string),
   shape: S,
   door: TxDoor<z.infer<z.ZodObject<S>>> | GatewayDoor<z.infer<z.ZodObject<S>>>,
+  /** `stepUp`: IAM and money doors also need a session re-authenticated within 15 minutes. */
+  options: { stepUp?: boolean } = {},
 ) {
   const schema = z.object(shape).extend({ reason: opsReasonSchema });
   return async (req: NextRequest, route: RouteContext) => {
     const auth = await requireBackofficeSurface(surface);
     if (auth.error) return auth.error;
+    if (options.stepUp) {
+      const stale = requireFreshSession(auth.session);
+      if (stale) return stale;
+    }
     const parsed = schema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
       return NextResponse.json(

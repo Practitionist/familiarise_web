@@ -24,6 +24,7 @@ import { getAppUrl } from "@/lib/url";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -512,6 +513,8 @@ export async function DELETE(
     if (!isSelfDeletion && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {

@@ -4,6 +4,7 @@ import {
   twoFactorClient,
 } from "better-auth/client/plugins";
 import { ssoClient } from "@better-auth/sso/client";
+import { passkeyClient } from "@better-auth/passkey/client";
 import type { auth } from "@/lib/auth";
 import { forgetAuthState } from "@/lib/auth-remembered";
 import { clearSentryIdentity } from "@/lib/observability/identity";
@@ -24,7 +25,14 @@ export const authClient = createAuthClient({
   // rather than behind a capability check: it adds no cookie and no
   // interceptor, and gating it would mean a component has to guess whether the
   // operator is staff before it can render the enrolment form.
-  plugins: [customSessionClient<typeof auth>(), ssoClient(), twoFactorClient()],
+  // `passkeyClient` exposes operator passkey sign-in and management; the
+  // server refuses registration for anyone but an enrolled operator.
+  plugins: [
+    customSessionClient<typeof auth>(),
+    ssoClient(),
+    twoFactorClient(),
+    passkeyClient(),
+  ],
   // NOTE (#1856): no `sessionOptions.refetchInterval` here, deliberately.
   // BetterAuth's built-in poll cannot skip hidden tabs and re-renders
   // every consumer on each tick. AuthSyncProvider re-checks on tab focus

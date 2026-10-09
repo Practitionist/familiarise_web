@@ -1,17 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
 import { AuthFormSkeleton } from "@/app/auth/AuthFormSkeleton";
 import { GlobeIcon } from "@/components/auth/auth-icons";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { invalidProps } from "@/components/ui/field-error";
 import { authClient } from "@/lib/auth-client";
-import { humanizeAuthError } from "@/lib/labels/auth-errors";
+import {
+  humanizeAuthError,
+  normalizeAuthErrorCode,
+} from "@/lib/labels/auth-errors";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
+
+/** Codes after which this challenge can never succeed; only a new sign-in helps. */
+const CHALLENGE_ENDED_CODES: ReadonlySet<string> = new Set([
+  "INVALID_TWO_FACTOR_COOKIE",
+  "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE",
+]);
+
+const ERROR_ID = "two-factor-error";
 
 /**
  * The second step of an operator sign-in. `/sign-in/email` answered
@@ -30,29 +43,69 @@ export default function TwoFactorChallengePage() {
 }
 
 function TwoFactorChallenge() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = safeSameOriginPath(searchParams.get("callbackUrl"));
+  const destination = callbackUrl || "/dashboard";
+  const signInHref = callbackUrl
+    ? `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/auth/signin";
+  const retryAfter = useRetryAfterCapture();
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [challengeEnded, setChallengeEnded] = useState(false);
+
+  // The two-factor cookie is one per browser: another tab may already have
+  // finished this challenge, in which case the session exists and the code is moot.
+  const redirectIfSignedIn = useCallback(async (): Promise<boolean> => {
+    try {
+      const { data } = await authClient.getSession({
+        query: { disableCookieCache: true },
+      });
+      if (!data?.user) return false;
+      router.replace(destination);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [router, destination]);
+
+  useEffect(() => {
+    void redirectIfSignedIn();
+  }, [redirectIfSignedIn]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    retryAfter.clear();
     try {
       const { error: failure } = useBackupCode
-        ? await authClient.twoFactor.verifyBackupCode({ code: code.trim() })
-        : await authClient.twoFactor.verifyTotp({ code });
+        ? await authClient.twoFactor.verifyBackupCode({
+            code: code.trim(),
+            fetchOptions: retryAfter.fetchOptions,
+          })
+        : await authClient.twoFactor.verifyTotp({
+            code,
+            fetchOptions: retryAfter.fetchOptions,
+          });
       if (failure) {
-        const copy = humanizeAuthError("signin", failure);
-        setError(`${copy.title}. ${copy.description}`);
         setCode("");
+        const ended = CHALLENGE_ENDED_CODES.has(
+          normalizeAuthErrorCode(failure.code) ?? "",
+        );
+        if (ended && (await redirectIfSignedIn())) return;
+        const copy = humanizeAuthError("signin", failure, {
+          retryAfterSeconds: retryAfter.take(),
+        });
+        setChallengeEnded(ended);
+        setError(`${copy.title}. ${copy.description}`);
         return;
       }
       // A full navigation, so the server guards read the new session cookie.
-      window.location.assign(callbackUrl || "/dashboard");
+      window.location.assign(destination);
     } catch (thrown) {
       const copy = humanizeAuthError("signin", {
         message: thrown instanceof Error ? thrown.message : String(thrown),
@@ -88,10 +141,12 @@ function TwoFactorChallenge() {
             <Input
               id="two-factor-code"
               autoFocus
-              autoComplete="one-time-code"
+              autoComplete={useBackupCode ? "off" : "one-time-code"}
+              autoCapitalize="none"
+              spellCheck={false}
               inputMode={useBackupCode ? "text" : "numeric"}
               maxLength={useBackupCode ? 32 : 6}
-              placeholder={useBackupCode ? "Backup code" : "123456"}
+              placeholder={useBackupCode ? "xxxxx-xxxxx" : "123456"}
               value={code}
               onChange={(e) =>
                 setCode(
@@ -100,43 +155,55 @@ function TwoFactorChallenge() {
                     : e.target.value.replace(/\D/g, ""),
                 )
               }
-              disabled={busy}
+              disabled={busy || challengeEnded}
+              {...invalidProps(error, ERROR_ID)}
             />
           </div>
           {error ? (
-            <p role="alert" className="text-sm text-red-400">
+            <p id={ERROR_ID} role="alert" className="text-sm text-red-400">
               {error}
             </p>
           ) : null}
-          <Button
-            type="submit"
-            className="w-full bg-white text-black hover:bg-white/90"
-            disabled={busy || !ready}
-          >
-            {busy ? "Verifying…" : "Verify"}
-          </Button>
+          {challengeEnded ? (
+            <Button
+              asChild
+              className="w-full bg-white text-black hover:bg-white/90"
+            >
+              <Link href={signInHref}>Sign in again</Link>
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              className="w-full bg-white text-black hover:bg-white/90"
+              disabled={busy || !ready}
+            >
+              {busy ? "Verifying…" : "Verify"}
+            </Button>
+          )}
         </form>
-        <div className="mt-6 flex flex-col items-center gap-3 text-sm">
-          <button
-            type="button"
-            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-            onClick={() => {
-              setUseBackupCode((value) => !value);
-              setCode("");
-              setError(null);
-            }}
-          >
-            {useBackupCode
-              ? "Use my authenticator app instead"
-              : "Lost your authenticator? Use a backup code"}
-          </button>
-          <Link
-            href="/auth/signin"
-            className="text-zinc-400 underline-offset-4 hover:text-white hover:underline"
-          >
-            Start over
-          </Link>
-        </div>
+        {challengeEnded ? null : (
+          <div className="mt-6 flex flex-col items-center gap-3 text-sm">
+            <button
+              type="button"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+              onClick={() => {
+                setUseBackupCode((value) => !value);
+                setCode("");
+                setError(null);
+              }}
+            >
+              {useBackupCode
+                ? "Use my authenticator app instead"
+                : "Lost your authenticator? Use a backup code"}
+            </button>
+            <Link
+              href={signInHref}
+              className="text-zinc-400 underline-offset-4 hover:text-white hover:underline"
+            >
+              Start over
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

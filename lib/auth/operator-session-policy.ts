@@ -1,7 +1,7 @@
 /**
  * Which BetterAuth endpoints may mint a session for a platform operator
  * (STAFF or ADMIN). Operators sign in with a password and an authenticator
- * code, nothing else.
+ * code, or with a user-verified passkey.
  *
  * The twoFactor plugin only challenges the credential sign-in: a Google,
  * GitHub or SSO callback creates a full session with no second factor. So the
@@ -17,12 +17,15 @@
  *   that completes a challenge, and the re-issue when enrolment is confirmed.
  * - `/change-password`: re-issues the caller's existing session
  *   (`revokeOtherSessions`), which already passed both factors.
+ * - `/passkey/verify-authentication`: a user-verified passkey, which only an
+ *   enrolled operator can hold (lib/auth/passkey-policy.ts).
  */
 const OPERATOR_SESSION_PATHS: ReadonlySet<string> = new Set([
   "/sign-in/email",
   "/two-factor/verify-totp",
   "/two-factor/verify-backup-code",
   "/change-password",
+  "/passkey/verify-authentication",
 ]);
 
 export function isOperatorRole(role: string | null | undefined): boolean {

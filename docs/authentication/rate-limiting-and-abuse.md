@@ -4,7 +4,7 @@
 | ------------- | ------------------------------------------------------------------------------------------------------ |
 | Status        | Live                                                                                                   |
 | Audience      | Engineers, on-call                                                                                     |
-| Last reviewed | 2026-10-01                                                                                             |
+| Last reviewed | 2026-10-09                                                                                             |
 | Source        | `lib/auth/rate-limit.ts`, `lib/auth/password-policy.ts`, `lib/rate-limit/policies.ts`, `middleware.ts` |
 
 ## 1. Two limiters, no overlap
@@ -66,6 +66,7 @@ come first.
 | session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP  | Edge    |
 | session management, per user  | same                                             | 60 / 15 min per user | Handler |
 | `platform.staff-create`       | `POST /api/admin/team/members`, `.../setup-link` | 20 / hour per ADMIN  | Handler |
+| re-authentication             | `POST /api/user/reauthenticate`                  | 5 / 15 min per user  | Handler |
 
 The `enterprise.*` and `platform.*` scopes are declared once in
 `lib/rate-limit/policies.ts` (scope, window, budgets, rationale) and reported
@@ -77,6 +78,10 @@ at rest. These limiters also fail open.
 
 The invite-accept policy also declares a 20 / hour per-invitation budget, but
 no handler spends it yet (open item).
+
+`POST /api/user/reauthenticate` checks a password (and, for operators, a TOTP
+code) outside BetterAuth, so it carries its own `lib/rate-limit.ts`
+limiter (`reauthLimiter`, 5 per 15 minutes per user).
 
 ## 4. Breached passwords (`lib/auth/password-policy.ts`)
 
@@ -99,7 +104,7 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
 | Email verification before a credential session | `requireEmailVerification`; stops pre-registering a victim's address                                    |
 | No auto-link on unverified email               | No `trustedProviders`                                                                                   |
 | Generic sign-in errors                         | [errors.md](./errors.md)                                                                                |
-| 2FA lockout                                    | twoFactor plugin: 10 consecutive wrong codes, 15-minute pause                                           |
+| 2FA lockouts                                   | twoFactor plugin: 5 wrong codes void one challenge; 10 consecutive wrong codes pause 2FA for 15 minutes |
 | Hashed tokens at rest                          | Reset and verification identifiers stored as SHA-256                                                    |
 | CSP                                            | Report-only to Sentry, see [security headers](../enterprise/20-iam-and-security/04-security-headers.md) |
 
@@ -113,7 +118,14 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
 | Break-glass account  | A standing bypass is a standing target. Operator recovery is the ADMIN 2FA reset                                     |
 | Account-state hints  | Graded disclosure is an enumeration oracle                                                                           |
 
-## 7. Adding a limit
+## 7. Accepted risks
+
+| Risk                 | What can happen                                                                                                                                  | Why it is accepted                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TOTP replay window   | The twoFactor plugin verifies ±1 step with no used-code guard, so a code stays valid for about 90 s and can complete a second challenge          | The password is still required, and the per-challenge budget (5 codes) plus the account lock (10 straight failures, 15 minutes) bound guessing. Passkeys are the phishing-resistant answer |
+| 2FA lockout as a DoS | Anyone holding an operator's password can spend 10 wrong codes, restarting challenges, and pause that operator's 2FA verification for 15 minutes | It needs the password, and the operator gets a lockout email, so the attempt is visible                                                                                                    |
+
+## 8. Adding a limit
 
 - **A BetterAuth path:** add a rule to `AUTH_RATE_LIMIT_RULES`, more specific
   patterns first. Nothing else is needed.

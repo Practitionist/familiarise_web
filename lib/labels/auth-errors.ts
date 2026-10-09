@@ -5,7 +5,8 @@
  * ever echoing raw server/library error strings (`error.message`).
  */
 
-export type AuthErrorField = "email" | "password" | "newPassword" | "referral" | "code";
+export type AuthErrorField =
+  "email" | "password" | "newPassword" | "referral" | "code";
 
 export type AuthErrorAction =
   | "forgot-password"
@@ -30,7 +31,13 @@ export type AuthFlowName = "signin" | "signup" | "forgot" | "reset" | "verify";
 export type { AuthFlowName as AuthFlow };
 
 const SUPPORT = "support@familiarisenow.com";
-const FIELDS = new Set<string>(["email", "password", "newPassword", "referral", "code"]);
+const FIELDS = new Set<string>([
+  "email",
+  "password",
+  "newPassword",
+  "referral",
+  "code",
+]);
 
 function entry(
   title: string,
@@ -123,9 +130,21 @@ export const AUTH_ERROR_COPY = {
     "Nothing was changed. Please try again.",
     "retry",
   ),
-  INVALID_EMAIL: entry("Check the email address", "Enter a valid email address.", "email"),
-  PASSWORD_TOO_SHORT: entry("Password too short", "Use at least 8 characters.", "password"),
-  PASSWORD_TOO_LONG: entry("Password too long", "Use at most 128 characters.", "password"),
+  INVALID_EMAIL: entry(
+    "Check the email address",
+    "Enter a valid email address.",
+    "email",
+  ),
+  PASSWORD_TOO_SHORT: entry(
+    "Password too short",
+    "Use at least 8 characters.",
+    "password",
+  ),
+  PASSWORD_TOO_LONG: entry(
+    "Password too long",
+    "Use at most 128 characters.",
+    "password",
+  ),
   PASSWORD_COMPROMISED: entry(
     "Choose a different password",
     "This password has appeared in a data breach, so attackers try it first. Pick one you don't use anywhere else.",
@@ -196,7 +215,11 @@ export const AUTH_ERROR_COPY = {
     `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
     "contact-support",
   ),
-  RATE_LIMITED: entry("Too many attempts", "Please wait a moment, then try again.", "retry"),
+  RATE_LIMITED: entry(
+    "Too many attempts",
+    "Please wait a moment, then try again.",
+    "retry",
+  ),
   TWO_FACTOR_REQUIRED: entry(
     "Set up two-factor authentication",
     "Staff accounts need a second factor before you can continue.",
@@ -210,7 +233,11 @@ export const AUTH_ERROR_COPY = {
     "Trusted devices aren't available",
     "Enter a code from your authenticator app each time you sign in.",
   ),
-  INVALID_CODE: entry("That code isn't right", "Check the code and try again.", "code"),
+  INVALID_CODE: entry(
+    "That code isn't right",
+    "Check the code and try again.",
+    "code",
+  ),
   INVALID_BACKUP_CODE: entry(
     "That backup code isn't right",
     "Each backup code works once. Try another, or generate new ones.",
@@ -221,11 +248,48 @@ export const AUTH_ERROR_COPY = {
     "Sign in again to start a new one.",
     "sign-in",
   ),
+  TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: entry(
+    "Too many wrong codes",
+    "For your security, this sign-in was stopped. Sign in again to get a new verification step.",
+    "sign-in",
+  ),
+  TOTP_NOT_ENABLED: entry(
+    "Two-factor isn't set up yet",
+    "Set up an authenticator app first, then try again.",
+    "enroll-2fa",
+  ),
+  TOTP_ALREADY_ENABLED: entry(
+    "Two-factor is already on",
+    "Your authenticator app is already set up. Refresh the page to see your settings.",
+    "retry",
+  ),
   ACCOUNT_TEMPORARILY_LOCKED: entry(
     "Too many wrong codes",
     "For your security, two-factor sign-in is paused. Wait 15 minutes, then try again.",
     "code",
     "retry",
+  ),
+  REAUTH_REQUIRED: entry(
+    "Confirm it's you",
+    "This is a sensitive change, so we need you to confirm your identity first. Try again and complete the check.",
+    "retry",
+  ),
+  PASSKEY_OPERATORS_ONLY: entry(
+    "Passkeys are for staff accounts",
+    "Passkeys are available to staff who have set up an authenticator app. Sign in with your email and password instead.",
+  ),
+  PASSKEY_USER_VERIFICATION_REQUIRED: entry(
+    "Unlock your passkey",
+    "Confirm with your device PIN, fingerprint or face, then try again.",
+    "retry",
+  ),
+  PASSKEY_NOT_FOUND: entry(
+    "We don't recognise that passkey",
+    "It may have been removed. Sign in with your email and password instead.",
+  ),
+  ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED: entry(
+    "This passkey is already added",
+    "This device already has a passkey for your account.",
   ),
   REQUEST_REJECTED: entry(
     "This sign-in request was blocked",
@@ -260,8 +324,23 @@ export function normalizeAuthErrorCode(
   return KNOWN_CODES.has(upper) ? (upper as AuthErrorCode) : null;
 }
 
+/** WebAuthn ceremony codes for a dismissed or timed-out browser prompt; show nothing. */
+const PASSKEY_CANCELLATION_CODES: ReadonlySet<string> = new Set([
+  "AUTH_CANCELLED",
+  "ERROR_CEREMONY_ABORTED",
+  "ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY",
+]);
+
+export function isPasskeyCancellation(
+  code: string | null | undefined,
+): boolean {
+  return !!code && PASSKEY_CANCELLATION_CODES.has(code);
+}
+
 export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
-  Partial<Record<AuthFlowName, Readonly<Record<string, Partial<AuthErrorCopy>>>>>
+  Partial<
+    Record<AuthFlowName, Readonly<Record<string, Partial<AuthErrorCopy>>>>
+  >
 > = {
   reset: {
     INVALID_TOKEN: entry(
@@ -331,9 +410,21 @@ function withRetryAfter(
 }
 
 const FLOW_FALLBACK_COPY: Record<AuthFlowName, AuthErrorCopy> = {
-  signin: entry("Couldn't sign you in", "Check the details you entered and try again.", "retry"),
-  signup: entry("Couldn't create your account", "Check the details you entered and try again.", "retry"),
-  forgot: entry("Couldn't send the reset link", "Check the email address and try again.", "retry"),
+  signin: entry(
+    "Couldn't sign you in",
+    "Check the details you entered and try again.",
+    "retry",
+  ),
+  signup: entry(
+    "Couldn't create your account",
+    "Check the details you entered and try again.",
+    "retry",
+  ),
+  forgot: entry(
+    "Couldn't send the reset link",
+    "Check the email address and try again.",
+    "retry",
+  ),
   reset: entry(
     "Couldn't update your password",
     "The reset link may have expired. Request a new one and try again.",
@@ -351,9 +442,11 @@ function copyForStatus(
   status: number | null | undefined,
   retryAfterSeconds: number | null | undefined,
 ): AuthErrorCopy {
-  if (status === 429) return withRetryAfter(AUTH_ERROR_COPY.RATE_LIMITED, retryAfterSeconds);
+  if (status === 429)
+    return withRetryAfter(AUTH_ERROR_COPY.RATE_LIMITED, retryAfterSeconds);
   if (status === 401 || status === 403) return AUTH_ERROR_COPY.REQUEST_REJECTED;
-  if (status === 0 || (typeof status === "number" && status >= 500)) return UNREACHABLE;
+  if (status === 0 || (typeof status === "number" && status >= 500))
+    return UNREACHABLE;
   return FLOW_FALLBACK_COPY[flow];
 }
 
@@ -363,11 +456,18 @@ function fieldFromValidationMessage(
 ): Partial<AuthErrorCopy> | null {
   if (!message) return null;
   if (message.includes("[body.email]")) return AUTH_ERROR_COPY.INVALID_EMAIL;
-  if (message.includes("[body.password]") || message.includes("[body.newPassword]")) {
+  if (
+    message.includes("[body.password]") ||
+    message.includes("[body.newPassword]")
+  ) {
     const field: AuthErrorField =
-      flow === "reset" && message.includes("[body.newPassword]") ? "newPassword" : "password";
-    if (message.includes("Too small")) return { ...AUTH_ERROR_COPY.PASSWORD_TOO_SHORT, field };
-    if (message.includes("Too big")) return { ...AUTH_ERROR_COPY.PASSWORD_TOO_LONG, field };
+      flow === "reset" && message.includes("[body.newPassword]")
+        ? "newPassword"
+        : "password";
+    if (message.includes("Too small"))
+      return { ...AUTH_ERROR_COPY.PASSWORD_TOO_SHORT, field };
+    if (message.includes("Too big"))
+      return { ...AUTH_ERROR_COPY.PASSWORD_TOO_LONG, field };
     return entry("Check the password", "Use 8 to 128 characters.", field);
   }
   return null;
@@ -380,7 +480,8 @@ function extractError(error: unknown): AuthClientError {
     code: typeof e.code === "string" ? e.code : null,
     status: typeof e.status === "number" ? e.status : null,
     message: typeof e.message === "string" ? e.message : null,
-    retryAfterSeconds: typeof e.retryAfterSeconds === "number" ? e.retryAfterSeconds : null,
+    retryAfterSeconds:
+      typeof e.retryAfterSeconds === "number" ? e.retryAfterSeconds : null,
   };
 }
 
@@ -389,20 +490,27 @@ export function humanizeAuthError(
   error: unknown,
   options?: HumanizeOptions,
 ): AuthErrorCopy {
-  const { code: rawCode, status, message, retryAfterSeconds } = extractError(error);
+  const {
+    code: rawCode,
+    status,
+    message,
+    retryAfterSeconds,
+  } = extractError(error);
   const wait = options?.retryAfterSeconds ?? retryAfterSeconds;
 
   const code = normalizeAuthErrorCode(rawCode);
   if (code) {
     if (code === "VALIDATION_ERROR") {
       const fromField = fieldFromValidationMessage(flow, message);
-      if (fromField?.title && fromField.description) return fromField as AuthErrorCopy;
+      if (fromField?.title && fromField.description)
+        return fromField as AuthErrorCopy;
     }
     const base = AUTH_ERROR_COPY[code];
     if (base) {
       const override = AUTH_ERROR_COPY_BY_FLOW[flow]?.[code];
       const merged: AuthErrorCopy = override ? { ...base, ...override } : base;
-      if (code === "RATE_LIMITED" || status === 429) return withRetryAfter(merged, wait);
+      if (code === "RATE_LIMITED" || status === 429)
+        return withRetryAfter(merged, wait);
       return merged;
     }
   }

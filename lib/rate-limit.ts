@@ -181,6 +181,9 @@ export const staffCreateLimiter = makeLimiter(
   "rl:platform:staff-create",
 );
 
+/** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
+export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
+
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.
  */

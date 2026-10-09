@@ -18,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { createAuthMiddleware } from "better-auth/api";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
 
 const authSrc = fs.readFileSync(
@@ -58,7 +59,7 @@ describe("session token exposure (#1856)", () => {
   });
 
   it("wires the after-hook that strips sign-in/sign-up tokens", () => {
-    expect(authSrc).toMatch(/after:\s*stripSessionToken/);
+    expect(authSrc).toMatch(/return stripSessionToken\(ctx\)/);
   });
 });
 
@@ -74,7 +75,7 @@ describe("stripSessionToken on a real BetterAuth instance", () => {
       verification: [],
     }),
     emailAndPassword: { enabled: true },
-    hooks: { after: stripSessionToken },
+    hooks: { after: createAuthMiddleware(stripSessionToken) },
   });
   const post = (p: string, body: unknown) =>
     auth.handler(

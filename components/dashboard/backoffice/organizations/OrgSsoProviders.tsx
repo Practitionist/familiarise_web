@@ -11,6 +11,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import type { OrgDetail } from "@/lib/backoffice/org-detail";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 type Provider = OrgDetail["ssoProviders"][number];
 
@@ -63,11 +64,14 @@ export function OrgSsoProviders({
   const router = useRouter();
 
   const post = async (path: string, body: object) => {
-    const res = await fetch(`/api/admin/organizations/${orgId}/${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const res = await fetchWithReauth(
+      `/api/admin/organizations/${orgId}/${path}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok)
       throw new Error(json.error ?? "The change did not go through.");

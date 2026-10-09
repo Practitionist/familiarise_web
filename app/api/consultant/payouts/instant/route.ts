@@ -16,6 +16,7 @@ import {
   createInstantPayout,
   InstantPayoutError,
 } from "@/lib/payments/payouts/payout-service";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -28,6 +29,8 @@ export async function POST() {
         { status: 401, headers: NO_STORE },
       );
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
     const rateLimited = await applyRateLimit(moneyOpsLimiter, session.user.id);
     if (rateLimited) return rateLimited;
     // The profile is looked up by the session's own user, so it is always theirs.

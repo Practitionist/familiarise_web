@@ -37,6 +37,7 @@ import {
   PAYOUT_ALLOWED_FROM,
   transitionOrgPayout,
 } from "@/lib/enterprise/transitions";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"]);
 
@@ -200,6 +201,8 @@ export async function PATCH(
     requireActive: true,
   });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);

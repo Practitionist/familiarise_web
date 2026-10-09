@@ -5,13 +5,14 @@ import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { sendOperatorSetupLink } from "@/lib/auth/operators";
+import { sendSecurityEventEmail } from "@/lib/auth/security-email";
 
 /**
  * DELETE /api/admin/team/members/{userId}/two-factor — reset an operator's
  * 2FA after a lost authenticator and spent backup codes.
  *
  * ADMIN-only (`users.moderate`), never on oneself. In one transaction it
- * deletes the TwoFactor row, clears `twoFactorEnabled`, replaces the password
+ * deletes the TwoFactor row and passkeys, clears `twoFactorEnabled`, replaces the password
  * with random bytes and ends every session; after commit the operator is
  * emailed a set-password link. Re-enrolment therefore needs the mailbox, not
  * the old password, which may be what was compromised.
@@ -36,7 +37,13 @@ export const DELETE = withOpsAction(
       }
       const target = await tx.user.findUnique({
         where: { id: userId },
-        select: { id: true, email: true, role: true, twoFactorEnabled: true },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          twoFactorEnabled: true,
+        },
       });
       if (!target) {
         throw new OpsRefusal(
@@ -56,6 +63,7 @@ export const DELETE = withOpsAction(
       }
 
       const removed = await tx.twoFactor.deleteMany({ where: { userId } });
+      const passkeys = await tx.passkey.deleteMany({ where: { userId } });
       await tx.user.update({
         where: { id: userId },
         data: { twoFactorEnabled: false },
@@ -77,12 +85,19 @@ export const DELETE = withOpsAction(
         after: {
           twoFactorEnabled: false,
           secretsRemoved: removed.count,
+          passkeysRemoved: passkeys.count,
           sessionsRevoked: revoked,
           passwordRotated: true,
         },
         response: { userId, sessionsRevoked: revoked },
-        afterCommit: () => sendOperatorSetupLink(target.email),
+        afterCommit: async () => {
+          await sendOperatorSetupLink(target.email);
+          await sendSecurityEventEmail(target, {
+            kind: "two-factor-reset-by-admin",
+          });
+        },
       };
     },
   },
+  { stepUp: true },
 );

@@ -30,6 +30,7 @@ import {
   humanizeAuthError,
   normalizeAuthErrorCode,
 } from "@/lib/labels/auth-errors";
+import { withReauth } from "@/lib/auth/reauth-client";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -114,11 +115,13 @@ export function PasswordSection() {
       // #1856 — a password change must end every other session, or a
       // stolen device survives the reset. BetterAuth does it in the same
       // request, so there is no second call that can fail on its own.
-      const { error } = await authClient.changePassword({
-        currentPassword: current,
-        newPassword: next,
-        revokeOtherSessions: true,
-      });
+      const { error } = await withReauth(() =>
+        authClient.changePassword({
+          currentPassword: current,
+          newPassword: next,
+          revokeOtherSessions: true,
+        }),
+      );
       if (error) {
         // BEFORE: `error.message` straight into the form. Better Auth's
         // sentence for a wrong current password is "Invalid password", and

@@ -27,6 +27,7 @@ const PatchBodySchema = z.object({
 });
 
 import { type MemberStatus, type Prisma } from "@prisma/client";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 // Removed and erased memberships keep their rows for historical attribution
 // but are never paid again, so they have no routing to show or change.
@@ -72,6 +73,8 @@ export async function PATCH(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, { requireActive: true });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   // #1851 decision 5 — where an expert is paid is a finance decision, so the
   // refusal matches the member PATCH's, code included.

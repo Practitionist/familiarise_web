@@ -11,7 +11,10 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 

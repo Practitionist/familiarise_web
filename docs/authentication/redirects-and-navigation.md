@@ -26,7 +26,7 @@ navigation to target T fires exactly once; repeat effect invocations
 (React Strict-Mode double-invocation, duplicate session-store emissions,
 dependency wobbles) compute the same T, see the ref match, and no-op.
 
-**Why:** signin historically derived `callbackUrl` via *delayed state*
+**Why:** signin historically derived `callbackUrl` via _delayed state_
 (`useState` populated by an effect). Render #1 ran the redirect with `null`
 → pushed `/dashboard`; render #2 ran again with the real callback → pushed
 the real destination. Users visibly flashed through `/dashboard` en route to
@@ -53,11 +53,11 @@ So the client helpers call
 `getSession({ query: { disableCookieCache: true } })` before committing a
 destination:
 
-| Fresh read result | Behavior |
-|---|---|
-| Returns a user | Trust its `onboardingCompleted`; navigate |
+| Fresh read result                     | Behavior                                                                                 |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Returns a user                        | Trust its `onboardingCompleted`; navigate                                                |
 | Returns no user (**revoked session**) | **Do not navigate** into protected routes — stay put; the session store update drives UI |
-| Network error | Fall back to the cached value (best effort beats dead end) |
+| Network error                         | Fall back to the cached value (best effort beats dead end)                               |
 
 ### Rule 4 — Callback URLs go through `safeSameOriginPath()`
 

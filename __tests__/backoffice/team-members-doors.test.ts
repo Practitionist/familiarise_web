@@ -26,6 +26,7 @@ const mockDb = {
   staffProfile: { create: jest.fn() },
   adminProfile: { create: jest.fn() },
   twoFactor: { deleteMany: jest.fn() },
+  passkey: { deleteMany: jest.fn() },
   account: { updateMany: jest.fn() },
   session: { deleteMany: jest.fn() },
   opsActionLog: { create: jest.fn() },
@@ -61,6 +62,11 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
   staffCreateLimiter: {},
 }));
+const mockSendSecurityEventEmail = jest.fn();
+jest.mock("../../lib/auth/security-email", () => ({
+  __esModule: true,
+  sendSecurityEventEmail: (...a: unknown[]) => mockSendSecurityEventEmail(...a),
+}));
 jest.mock("../../lib/observability/report", () => ({
   __esModule: true,
   reportSentryError: jest.fn(),
@@ -80,7 +86,10 @@ const request = (method: string, body: unknown) =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockRequireBackofficeSurface.mockResolvedValue({
-    session: { user: { id: "admin1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   });
   mockDb.$transaction.mockImplementation((fn: (tx: typeof mockDb) => unknown) =>
     fn(mockDb),
@@ -167,6 +176,7 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     });
     mockDb.account.updateMany.mockResolvedValue({ count: 1 });
     mockDb.twoFactor.deleteMany.mockResolvedValue({ count: 1 });
+    mockDb.passkey.deleteMany.mockResolvedValue({ count: 2 });
     mockDb.session.deleteMany.mockResolvedValue({ count: 3 });
 
     const res = await resetTwoFactor(
@@ -176,6 +186,9 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
 
     expect(res.status).toBe(200);
     expect(mockDb.twoFactor.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "op1" },
+    });
+    expect(mockDb.passkey.deleteMany).toHaveBeenCalledWith({
       where: { userId: "op1" },
     });
     expect(mockDb.user.update).toHaveBeenCalledWith({
@@ -196,6 +209,28 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
         redirectTo: "/auth/reset-password",
       },
     });
+    expect(mockSendSecurityEventEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op1" }),
+      { kind: "two-factor-reset-by-admin" },
+    );
+  });
+
+  it("needs a recently re-authenticated session", async () => {
+    mockRequireBackofficeSurface.mockResolvedValue({
+      session: {
+        user: { id: "admin1", role: "ADMIN" },
+        session: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+    });
+    const res = await resetTwoFactor(
+      request("DELETE", { reason: "Lost phone, verified on a call" }),
+      params,
+    );
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "REAUTH_REQUIRED",
+    });
+    expect(mockDb.twoFactor.deleteMany).not.toHaveBeenCalled();
   });
 
   it("refuses an administrator resetting their own second factor", async () => {
