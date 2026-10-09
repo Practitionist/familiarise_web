@@ -30,6 +30,8 @@ jest.mock("../../lib/meetings/access", () => ({
 }));
 
 jest.mock("../../lib/stream/recording-consent", () => ({
+  RECORDING_NOTICE_VERSION: 1,
+  consentRegimeFor: () => "OPT_OUT",
   getRecordingNotice: (...args: unknown[]) => mockGetRecordingNotice(...args),
   recordRecordingConsent: (...args: unknown[]) =>
     mockRecordRecordingConsent(...args),
@@ -76,7 +78,10 @@ import {
   PATCH as patchRecording,
   DELETE as deleteRecording,
 } from "../../app/api/stream/recordings/[recordingId]/route";
-import { POST as postRecordingConsent } from "../../app/api/meetings/[meetingId]/recording-consent/route";
+import {
+  GET as getRecordingConsent,
+  POST as postRecordingConsent,
+} from "../../app/api/meetings/[meetingId]/recording-consent/route";
 
 describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
   beforeEach(() => {
@@ -336,6 +341,40 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         where: { id: "meeting-1" },
         data: { isRecording: false },
       });
+    });
+
+    it("never asks or stores a decision for the host", async () => {
+      mockRequireApiAuth.mockResolvedValue({
+        ok: true,
+        session: { user: { id: "consultant-user-1" } },
+      });
+      mockResolveMeetingAccess.mockResolvedValue({
+        hasAccess: true,
+        role: "host",
+        meetingId: "meeting-1",
+        appointment: { consultationId: "cons-1" },
+      });
+      const params = { params: Promise.resolve({ meetingId: "meeting-1" }) };
+      const url =
+        "http://localhost:3000/api/meetings/meeting-1/recording-consent";
+
+      const getRes = await getRecordingConsent(new NextRequest(url), params);
+      expect(await getRes.json()).toMatchObject({
+        required: false,
+        decision: null,
+      });
+
+      const postRes = await postRecordingConsent(
+        new NextRequest(url, {
+          method: "POST",
+          body: JSON.stringify({ decision: "DECLINED" }),
+          headers: { "Content-Type": "application/json" },
+        }),
+        params,
+      );
+      expect(postRes.status).toBe(403);
+      expect(mockGetRecordingNotice).not.toHaveBeenCalled();
+      expect(mockRecordRecordingConsent).not.toHaveBeenCalled();
     });
   });
 });
