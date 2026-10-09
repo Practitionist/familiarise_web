@@ -107,6 +107,14 @@ const PatchBodySchema = z
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     isPublic: z.boolean().optional(),
+    // Owner-only via settings.ownerFields; null follows the platform schedule.
+    streamRecordingRetentionDays: z
+      .number()
+      .int()
+      .min(7)
+      .max(3650)
+      .nullable()
+      .optional(),
     expectedVersion: z.coerce.number().int().min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -442,6 +450,9 @@ function buildOrganizationUpdateData(
       defaultRefundPolicy: body.defaultRefundPolicy,
     }),
     ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
+    ...(body.streamRecordingRetentionDays !== undefined && {
+      streamRecordingRetentionDays: body.streamRecordingRetentionDays,
+    }),
   };
 }
 

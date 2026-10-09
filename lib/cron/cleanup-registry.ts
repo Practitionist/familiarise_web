@@ -5,49 +5,12 @@ import {
   parseLimitParamOrDefault,
   statusFor,
 } from "@/lib/cron/cleanup-route";
-import { goHref } from "@/lib/dashboard/go";
-import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
-import { getAppUrl } from "@/lib/url";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
   POST: (req: NextRequest) => Promise<NextResponse>;
 };
-
-type ExpiringStreamOnly = {
-  recordingId: string;
-  title: string;
-  consultantUserId: string;
-  expiresAt: Date;
-};
-
-async function notifyConsultantsOfExpiringRecordings(
-  expiring: ExpiringStreamOnly[],
-): Promise<void> {
-  const byConsultant = new Map<string, ExpiringStreamOnly[]>();
-  for (const rec of expiring) {
-    if (!rec.consultantUserId) continue;
-    const list = byConsultant.get(rec.consultantUserId) ?? [];
-    list.push(rec);
-    byConsultant.set(rec.consultantUserId, list);
-  }
-
-  const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
-  await Promise.allSettled(
-    Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {
-      const soonest = recs.reduce(
-        (min, r) => (r.expiresAt < min ? r.expiresAt : min),
-        recs[0].expiresAt,
-      );
-      return notifyRecordingExpiring(consultantUserId, {
-        recordingCount: recs.length,
-        expiresAt: soonest.toISOString(),
-        dashboardUrl,
-      });
-    }),
-  );
-}
 
 // Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
 // overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
@@ -361,6 +324,24 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Notification outbox drain failed",
       }),
 
+    // @cleanup-twin expire-recordings
+    "expire-recordings": () =>
+      cleanupRoute({
+        job: "expire-recordings",
+        run: async (req) => {
+          const { expireRecordings } =
+            await import("@/lib/stream/recording-retention");
+          return expireRecordings({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          expired: r.expired,
+          failed: r.failed,
+        }),
+        status: (r) => statusFor(r),
+        failureMessage: "Recording retention sweep failed",
+      }),
+
     // @cleanup-twin expire-referral-credits
     "expire-referral-credits": () =>
       cleanupRoute({
@@ -456,38 +437,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
         }),
         failureMessage: "Failed to handle stuck payouts",
-      }),
-
-    // @cleanup-twin mark-expired-recordings
-    "mark-expired-recordings": () =>
-      cleanupRoute({
-        job: "mark-expired-recordings",
-        run: async () => {
-          const { RecordingTransferService } =
-            await import("@/lib/stream/recording-transfer-service");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          const expiredCount = await withCronLock(
-            "mark-expired-recordings",
-            { failMode: "open" },
-            () => RecordingTransferService.markExpiredRecordings(),
-          );
-          return { success: true, expiredCount };
-        },
-        summarize: (r) => ({ expiredCount: r.expiredCount }),
-        failureMessage: "Cron job failed",
-      }),
-
-    // @cleanup-twin old-stream-recordings
-    "old-stream-recordings": () =>
-      cleanupRoute({
-        job: "cleanup-old-stream-recordings",
-        run: async () => {
-          const { cleanupOldStreamRecordings } =
-            await import("@/scripts/cleanup/cleanup-old-stream-recordings");
-          return cleanupOldStreamRecordings();
-        },
-        summarize: (r) => ({ success: r.success }),
-        failureMessage: "Stream retention sweep failed",
       }),
 
     // @cleanup-twin process-data-exports
@@ -1133,53 +1082,24 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to cleanup tentative slots",
       }),
 
-    // @cleanup-twin transfer-expiring-recordings
-    "transfer-expiring-recordings": () =>
+    // @cleanup-twin transfer-recordings
+    "transfer-recordings": () =>
       cleanupRoute({
-        job: "transfer-expiring-recordings",
-        run: async () => {
-          const { RecordingTransferService } =
+        job: "transfer-recordings",
+        run: async (req) => {
+          const { transferRecordings } =
             await import("@/lib/stream/recording-transfer-service");
-          const { streamLogger } = await import("@/lib/stream-logger");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          const { transferResult, expiringStreamOnly } = await withCronLock(
-            "transfer-expiring-recordings",
-            { failMode: "open" },
-            async () => {
-              const transferResult =
-                await RecordingTransferService.processExpiringRecordings(
-                  14,
-                  10,
-                  "PERMANENT",
-                );
-              const expiringStreamOnly =
-                await RecordingTransferService.getExpiringStreamOnlyRecordings(
-                  3,
-                );
-              if (expiringStreamOnly.length > 0) {
-                streamLogger.info("STREAM_ONLY recordings expiring soon", {
-                  count: expiringStreamOnly.length,
-                });
-                await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
-              }
-              return { transferResult, expiringStreamOnly };
-            },
-          );
-          return {
-            success: true,
-            transferred: transferResult.succeeded,
-            failed: transferResult.failed,
-            expiringStreamOnly: expiringStreamOnly.length,
-            errors: transferResult.errors,
-          };
+          const r = await transferRecordings({ limit: parseLimitParam(req) });
+          return { success: r.failed === 0, ...r };
         },
         summarize: (r) => ({
-          transferred: r.transferred,
+          processed: r.processed,
+          succeeded: r.succeeded,
           failed: r.failed,
-          expiringStreamOnly: r.expiringStreamOnly,
+          exhaustedReported: r.exhaustedReported,
         }),
         status: () => 200,
-        failureMessage: "Cron job failed",
+        failureMessage: "Recording copy sweep failed",
       }),
 
     // @cleanup-twin vest-referral-credits

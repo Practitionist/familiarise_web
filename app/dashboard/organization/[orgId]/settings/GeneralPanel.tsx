@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Globe, FileText, AlertTriangle, Loader2 } from "lucide-react";
+import { Globe, FileText, AlertTriangle, Loader2, Video } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -82,6 +82,8 @@ interface SettingsResponse {
     website: string | null;
     paymentTermsDays: number;
     isPublic: boolean;
+    // Owner-set cap on org recording retention; null follows the platform schedule.
+    streamRecordingRetentionDays: number | null;
     // #779 §A — verification lifecycle (banner + resubmit affordance).
     verificationReason?: string | null;
     verificationRejectedAt?: string | null;
@@ -126,6 +128,7 @@ interface PatchPayload {
   // #1230 wave-4 — MSME declaration rides the same PATCH upsert.
   msmeStatus?: MsmeStatus;
   msmeWrittenAgreementOnFile?: boolean;
+  streamRecordingRetentionDays?: number | null;
   expectedVersion?: number;
 }
 
@@ -438,6 +441,105 @@ function TaxComplianceCard({
           disabled={taxSaving || !gstinValid || !panValid}
         >
           {taxSaving ? "Saving…" : "Save tax details"}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+function RecordingRetentionCard({
+  orgId,
+  data,
+  onVersionConflict,
+  onError,
+  onSuccess,
+}: Readonly<{
+  orgId: string;
+  data: SettingsResponse;
+  onVersionConflict: () => void;
+  onError: (msg: string | null) => void;
+  onSuccess: () => void;
+}>) {
+  const queryClient = useQueryClient();
+  const stored = data.profile.streamRecordingRetentionDays;
+  const [days, setDays] = useState(stored === null ? "" : String(stored));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDays(stored === null ? "" : String(stored));
+  }, [stored]);
+
+  const trimmed = days.trim();
+  const parsed = trimmed === "" ? null : Number(trimmed);
+  const valid =
+    parsed === null ||
+    (Number.isInteger(parsed) && parsed >= 7 && parsed <= 3650);
+
+  const save = async () => {
+    if (!valid) {
+      onError(
+        "Enter a whole number of days between 7 and 3650, or leave it empty.",
+      );
+      return;
+    }
+    onError(null);
+    setSaving(true);
+    try {
+      await patchSettings(orgId, {
+        expectedVersion: data.profile.version,
+        streamRecordingRetentionDays: parsed,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
+      onSuccess();
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "VERSION_CONFLICT") {
+        onVersionConflict();
+      } else {
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Failed to save recording retention",
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Video className="w-4 h-4" /> Session recordings
+        </CardTitle>
+        <CardDescription>
+          Sold or published replays are never deleted automatically.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <Label htmlFor="recording-retention-days">
+          Delete org session recordings after N days (leave empty to follow the
+          platform schedule)
+        </Label>
+        <Input
+          id="recording-retention-days"
+          type="number"
+          inputMode="numeric"
+          min={7}
+          max={3650}
+          step={1}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+          placeholder="Platform schedule"
+          className="max-w-[12rem]"
+        />
+      </CardContent>
+      <CardFooter>
+        <Button onClick={() => void save()} disabled={saving || !valid}>
+          {saving ? "Saving…" : "Save retention"}
         </Button>
       </CardFooter>
     </Card>
@@ -865,6 +967,19 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               </CardFooter>
             )}
           </Card>
+        )}
+
+        {can("settings.ownerFields") && (
+          <RecordingRetentionCard
+            orgId={orgId}
+            data={data}
+            onVersionConflict={() => setConflictOpen(true)}
+            onError={setError}
+            onSuccess={() => {
+              setSuccess(true);
+              setTimeout(() => setSuccess(false), 2500);
+            }}
+          />
         )}
 
         {can("settings.cancellationPolicy.publish") && (
