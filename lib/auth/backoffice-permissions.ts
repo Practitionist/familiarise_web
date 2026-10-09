@@ -40,6 +40,7 @@ export type BackofficeSurface =
   | "threads.manage"
   | "feedback.manage"
   | "moderation.manage"
+  | "engineering.escalate"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
   | "waitlist.manage"
@@ -47,22 +48,13 @@ export type BackofficeSurface =
   | "users.read"
   | "users.verify"
   | "users.moderate"
-  // #1927 — the operator roster. Split from `users.read` deliberately: a
-  // support agent's "who else is on staff" question is a normal ticket, but
-  // a roster that lists every operator's 2FA state, last login and live
-  // session count is reconnaissance for the very door that suspends them, and
-  // the file's own stated policy puts irreversible account actions behind the
-  // admin grant. The MUTATIONS (invite, revoke, suspend, reactivate, force
-  // sign-out) deliberately reuse `users.moderate` rather than a `team.manage`
-  // key: they are exactly "role change / delete someone's access", and a
-  // second key for the same act is a second place to get the policy wrong.
+  // Operator roster: split from users.read because 2FA state and live sessions
+  // are reconnaissance; its mutations deliberately reuse users.moderate.
   | "team.read"
-  // Session recordings — #1270. Split because "look at the metadata" and
-  // "watch the session" are different acts with different blast radii.
+  // Recordings: metadata and playback are different acts with different blast radii.
   | "recordings.read"
   | "recordings.play"
-  // Money — staff read, admin executes. The `.read` grants are what make
-  // billing tickets resolvable without an escalation.
+  // Money: staff read, admin executes; .read grants keep billing tickets resolvable.
   | "payments.read"
   | "payments.manage"
   | "refunds.read"
@@ -79,20 +71,20 @@ export type BackofficeSurface =
   | "referrals.manage"
   | "approvalPayments.manage"
   | "tds.read"
-  // #1771 K-6 — the class-series doors: support moves vs money moves.
+  // Class-series doors: support moves vs money moves.
   | "classSeries.support"
   | "classSeries.money"
-  // #1771 K-9 — the console's audit log; staff read only their own rows.
+  // The console's audit log; staff read only their own rows.
   | "opsLog.read"
-  // Platform — org lifecycle, comms, and system control.
+  // Platform: org lifecycle, comms, and system control.
   | "organizations.manage"
   | "announcements.manage"
   | "analytics.read"
   | "systemJobs.manage"
   | "maintenance.manage"
-  // #1527 Q5 — erasure requests, data breaches and failed emails.
+  // Erasure requests, data breaches and failed emails.
   | "compliance.manage"
-  // #1527 — the newsletter mass send, split from triaging the list.
+  // The newsletter mass send, split from triaging the list.
   | "newsletter.send";
 
 const roles = (...list: UserRole[]): ReadonlySet<UserRole> =>
@@ -106,13 +98,13 @@ export const BACKOFFICE_PERMISSIONS: Record<
   BackofficeSurface,
   ReadonlySet<UserRole>
 > = {
-  // Support — staff's core job, no admin carve-outs.
+  // Support: staff's core job; only the engineering escalation is admin-only.
   "tickets.manage": OPERATORS,
-  // #support-hub — the per-appointment conversation inbox; same remit as the
-  // ticket queue it escalates into.
+  // The per-appointment conversation inbox, same remit as the ticket queue.
   "threads.manage": OPERATORS,
   "feedback.manage": OPERATORS,
   "moderation.manage": OPERATORS,
+  "engineering.escalate": ADMIN_ONLY,
 
   // Operations — staff triage bookings and clear the verification queue.
   // `users.moderate` (ban / role change / delete) is the one exception:

@@ -58,6 +58,30 @@ import type {
   ModerationStats,
 } from "@/types/moderation";
 
+interface ReportContextSignals {
+  hasRefund: boolean;
+  hasOpenTicket: boolean;
+  hasDispute: boolean;
+}
+
+interface ReportBookingContext {
+  appointmentId: string;
+  appointmentStatus: string;
+  refundCount: number;
+  latestRefundStatus: string | null;
+  hasDispute: boolean;
+  openSupportCount: number;
+  signals: string[];
+}
+
+type ModerationReportItem = ModerationReport & {
+  contextSignals?: ReportContextSignals | null;
+};
+
+type ModerationReportDetailWithContext = ModerationReportDetail & {
+  bookingContext?: ReportBookingContext | null;
+};
+
 // #1527 — one tone map for report statuses (was a local colour switch).
 const REPORT_STATUS_TONE: Record<string, Tone> = {
   PENDING: "warning",
@@ -442,7 +466,7 @@ export function ModerationPage() {
   } = useQuery({
     queryKey: ["staff-moderation-reports", statusFilter, debouncedSearch],
     queryFn: async (): Promise<{
-      reports: ModerationReport[];
+      reports: ModerationReportItem[];
       capabilities?: ModerationCapabilities;
     }> => {
       const params = new URLSearchParams({ status: statusFilter });
@@ -454,9 +478,6 @@ export function ModerationPage() {
     placeholderData: keepPreviousData,
   });
   const reports = reportsData?.reports ?? [];
-  // Banning is ADMIN-only server-side. Trusting the server's answer rather than
-  // guessing from the session keeps the button and the 403 in agreement; the
-  // tree's capability also hides it in the staff console (#1527).
   const canModerateUsers =
     can("users.moderate") &&
     (reportsData?.capabilities?.canModerateUsers ?? false);
@@ -479,22 +500,19 @@ export function ModerationPage() {
   });
   const reviews = reviewsData?.reviews ?? [];
 
-  // #1300 — the list row only carries the latest action; the drawer's full
-  // audit trail comes from the report's own detail route, fetched only once
-  // a report is opened.
   const {
     data: selectedReportDetail,
     status: selectedReportDetailStatus,
     refetch: refetchSelectedReportDetail,
   } = useQuery({
     queryKey: ["staff-moderation-report-detail", selectedReport?.id],
-    queryFn: async (): Promise<ModerationReportDetail> => {
+    queryFn: async (): Promise<ModerationReportDetailWithContext> => {
       const response = await fetch(
         `/api/staff/moderation/reports/${selectedReport?.id}`,
       );
       if (!response.ok) throw new Error("Failed to fetch report detail");
       const body = (await response.json()) as {
-        report: ModerationReportDetail;
+        report: ModerationReportDetailWithContext;
       };
       return body.report;
     },
@@ -515,6 +533,7 @@ export function ModerationPage() {
     DISMISS: "NO_ACTION",
     WARN: "WARNING_ISSUED",
     REMOVE_CONTENT: "CONTENT_REMOVED",
+    EXCLUDE_REVIEW_AGGREGATE: "REVIEW_EXCLUDED_FROM_AGGREGATE",
     SUSPEND: "USER_SUSPENDED",
     BAN: "USER_BANNED",
   } as const;
@@ -691,14 +710,24 @@ export function ModerationPage() {
       },
       { key: "WARN", label: "Warn", icon: XCircle, variant: "outline" },
     ];
-    // CONTENT_REMOVED only removes something when the report points at one:
-    // offering it on a report with neither a message nor a review resolves the
-    // report and deletes nothing, which is the defect it was added to fix.
-    if (report.streamMessageId || report.reviewId) {
+    const canRemoveContent =
+      Boolean(report.streamMessageId) ||
+      (report.type === "REVIEW"
+        ? Boolean(report.reviewId) && canModerateUsers
+        : Boolean(report.reviewId));
+    if (canRemoveContent) {
       actions.push({
         key: "REMOVE_CONTENT",
         label: "Remove content",
         icon: Trash2,
+        variant: "outline",
+      });
+    }
+    if (report.reviewId) {
+      actions.push({
+        key: "EXCLUDE_REVIEW_AGGREGATE",
+        label: "Exclude from rating",
+        icon: Flag,
         variant: "outline",
       });
     }
@@ -917,7 +946,7 @@ export function ModerationPage() {
                             {getTypeIcon(report.type)}
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <p className="font-medium">{title.primary}</p>
                               <Badge variant="outline">
                                 {humanizeEnum(report.type)}
@@ -928,6 +957,15 @@ export function ModerationPage() {
                                   REPORT_STATUS_TONE[report.status] ?? "neutral"
                                 }
                               />
+                              {report.contextSignals?.hasRefund && (
+                                <Badge variant="secondary">Refund</Badge>
+                              )}
+                              {report.contextSignals?.hasOpenTicket && (
+                                <Badge variant="secondary">Open support</Badge>
+                              )}
+                              {report.contextSignals?.hasDispute && (
+                                <Badge variant="secondary">Dispute</Badge>
+                              )}
                             </div>
                             {title.secondary && (
                               <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -1030,10 +1068,6 @@ export function ModerationPage() {
           ) : (
             <div className="space-y-3">
               {reviews.map((review) => {
-                // #1300 — this used to read `review.consultee` /
-                // `review.consultation.consultant.user`, neither of which the
-                // route has ever sent; every card fell back to "Anonymous" /
-                // "Consultant" regardless of the real names.
                 const reviewerName = review.isAnonymous
                   ? "Anonymous"
                   : review.reviewer.name || "Anonymous";
@@ -1081,9 +1115,6 @@ export function ModerationPage() {
                                 {review.reviewDescription}
                               </p>
                             )}
-                            {/* #1300 — the tab never said whether a review or
-                                its reply had already been taken down, so a
-                                removed row looked identical to a live one. */}
                             {review.deletedAt && (
                               <p className="mt-1 text-xs text-destructive">
                                 {review.removedBy === "MODERATION"
@@ -1114,8 +1145,6 @@ export function ModerationPage() {
                         </span>
                       </div>
                       <div className="flex justify-end gap-2 mt-4">
-                        {/* #1527 — Remove is confirmed; the dead Approve is gone
-                            (no approve API: a review with no report is live). */}
                         <ConfirmDialog
                           trigger={
                             <Button
@@ -1163,9 +1192,6 @@ export function ModerationPage() {
                 </ResponsiveModalDescription>
               </ResponsiveModalHeader>
               <div className="space-y-4">
-                {/* #1270 — the excerpt has been captured at report time since
-                    the report button shipped and was never rendered, so bans
-                    were decided on a reason string alone. */}
                 {selectedReport.contentText ? (
                   <div className="p-4 rounded-lg border bg-muted">
                     <Label className="text-sm font-medium">
@@ -1231,6 +1257,47 @@ export function ModerationPage() {
                       : ""}
                   </p>
                 </div>
+                {selectedReportDetail?.bookingContext && (
+                  <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                    <Label className="text-sm font-medium">
+                      Booking context
+                    </Label>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        Session:{" "}
+                        {humanizeEnum(
+                          selectedReportDetail.bookingContext.appointmentStatus,
+                        )}
+                      </span>
+                      <span>
+                        Refunds:{" "}
+                        {selectedReportDetail.bookingContext.refundCount}
+                        {selectedReportDetail.bookingContext.latestRefundStatus
+                          ? ` (${humanizeEnum(selectedReportDetail.bookingContext.latestRefundStatus)})`
+                          : ""}
+                      </span>
+                      <span>
+                        Open support cases:{" "}
+                        {selectedReportDetail.bookingContext.openSupportCount}
+                      </span>
+                      <span>
+                        Dispute:{" "}
+                        {selectedReportDetail.bookingContext.hasDispute
+                          ? "Recorded"
+                          : "None"}
+                      </span>
+                    </div>
+                    {selectedReportDetail.bookingContext.signals.length > 0 && (
+                      <ul className="space-y-0.5 text-xs text-muted-foreground">
+                        {selectedReportDetail.bookingContext.signals.map(
+                          (signal) => (
+                            <li key={signal}>• {signal}</li>
+                          ),
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 {selectedReport.latestAction && (
                   <EnforcementSummary action={selectedReport.latestAction} />
                 )}

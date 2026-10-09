@@ -1159,6 +1159,41 @@ export async function revokeCollaboratorAccess(
   return { success };
 }
 
+async function revokeSingleOpenCallMember(
+  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
+  userId: string,
+  isSeated: boolean,
+): Promise<void> {
+  const callErrors: unknown[] = [];
+  try {
+    await call.updateCallMembers(
+      isSeated
+        ? { update_members: [{ user_id: userId, role: CALL_MEMBER_ROLE }] }
+        : { remove_members: [userId] },
+    );
+  } catch (err) {
+    if (!isExpectedStreamError(err)) callErrors.push(err);
+  }
+  if (!isSeated) {
+    try {
+      await call.updateUserPermissions({
+        user_id: userId,
+        revoke_permissions: ["send-audio", "send-video", "screenshare"],
+      });
+    } catch (err) {
+      if (!isExpectedStreamError(err)) callErrors.push(err);
+    }
+    try {
+      await call.kickUser({ user_id: userId });
+    } catch (err) {
+      if (!isExpectedStreamError(err)) callErrors.push(err);
+    }
+  }
+  if (callErrors.length > 0) {
+    throw callErrors[0];
+  }
+}
+
 async function revokeOpenCallPresenterRole(
   planType: PlanType,
   planId: string,
@@ -1194,46 +1229,8 @@ async function revokeOpenCallPresenterRole(
       occurrences.flatMap(({ appointmentId, meeting }) => {
         if (!meeting) return [];
         const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
-        const isSeated = seated.has(appointmentId);
         return [
-          (async () => {
-            const callErrors: unknown[] = [];
-            try {
-              await call.updateCallMembers(
-                isSeated
-                  ? {
-                      update_members: [
-                        { user_id: userId, role: CALL_MEMBER_ROLE },
-                      ],
-                    }
-                  : { remove_members: [userId] },
-              );
-            } catch (err) {
-              if (!isExpectedStreamError(err)) callErrors.push(err);
-            }
-            if (!isSeated) {
-              try {
-                await call.updateUserPermissions({
-                  user_id: userId,
-                  revoke_permissions: [
-                    "send-audio",
-                    "send-video",
-                    "screenshare",
-                  ],
-                });
-              } catch (err) {
-                if (!isExpectedStreamError(err)) callErrors.push(err);
-              }
-              try {
-                await call.kickUser({ user_id: userId });
-              } catch (err) {
-                if (!isExpectedStreamError(err)) callErrors.push(err);
-              }
-            }
-            if (callErrors.length > 0) {
-              throw callErrors[0];
-            }
-          })(),
+          revokeSingleOpenCallMember(call, userId, seated.has(appointmentId)),
         ];
       }),
     );

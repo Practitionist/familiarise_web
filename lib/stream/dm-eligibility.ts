@@ -352,29 +352,32 @@ function resolveDirectBookingTitle(
   return planTitle ?? fallbackTitle;
 }
 
-function resolveGroupBookingTitle(
-  status: string,
-  planTitle: string | undefined,
-  fallbackTitle: string,
-  hostUserId: string | undefined,
-  collaborators: ContextAppointmentCollaboratorRow[] | null | undefined,
-  learnerIds: Set<string>,
-  userId: string,
-  counterpartyUserId: string,
-): string | null {
-  if (!EVENT_ELIGIBLE_STATUS_SET.has(status)) return null;
-  const presenterIds = resolveEventPresenterIds(hostUserId, collaborators);
+function resolveGroupBookingTitle(opts: {
+  status: string;
+  planTitle: string | undefined;
+  fallbackTitle: string;
+  hostUserId: string | undefined;
+  collaborators: ContextAppointmentCollaboratorRow[] | null | undefined;
+  learnerIds: Set<string>;
+  userId: string;
+  counterpartyUserId: string;
+}): string | null {
+  if (!EVENT_ELIGIBLE_STATUS_SET.has(opts.status)) return null;
+  const presenterIds = resolveEventPresenterIds(
+    opts.hostUserId,
+    opts.collaborators,
+  );
   if (
     !isMatchingPresenterAndLearner(
-      userId,
-      counterpartyUserId,
+      opts.userId,
+      opts.counterpartyUserId,
       presenterIds,
-      learnerIds,
+      opts.learnerIds,
     )
   ) {
     return null;
   }
-  return planTitle ?? fallbackTitle;
+  return opts.planTitle ?? opts.fallbackTitle;
 }
 
 export function resolveVerifiedBookingContextTitle(
@@ -412,29 +415,29 @@ export function resolveVerifiedBookingContextTitle(
   );
 
   if (appt.webinar) {
-    return resolveGroupBookingTitle(
-      appt.webinar.status,
-      appt.webinar.webinarPlan?.title,
-      "Webinar",
-      appt.webinar.webinarPlan?.consultantProfile?.userId,
-      appt.webinar.webinarPlan?.collaborators,
+    return resolveGroupBookingTitle({
+      status: appt.webinar.status,
+      planTitle: appt.webinar.webinarPlan?.title,
+      fallbackTitle: "Webinar",
+      hostUserId: appt.webinar.webinarPlan?.consultantProfile?.userId,
+      collaborators: appt.webinar.webinarPlan?.collaborators,
       learnerIds,
       userId,
       counterpartyUserId,
-    );
+    });
   }
 
   if (appt.class) {
-    return resolveGroupBookingTitle(
-      appt.class.status,
-      appt.class.classPlan?.title,
-      "Class",
-      appt.class.classPlan?.consultantProfile?.userId,
-      appt.class.classPlan?.collaborators,
+    return resolveGroupBookingTitle({
+      status: appt.class.status,
+      planTitle: appt.class.classPlan?.title,
+      fallbackTitle: "Class",
+      hostUserId: appt.class.classPlan?.consultantProfile?.userId,
+      collaborators: appt.class.classPlan?.collaborators,
       learnerIds,
       userId,
       counterpartyUserId,
-    );
+    });
   }
 
   return null;

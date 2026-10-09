@@ -737,6 +737,8 @@ export async function resolvePaymentForEarnings(
  * journal atomically alongside appointment confirmation without ballooning
  * Serializable lock hold times.
  */
+type GroupPlanKind = "webinar" | "class";
+
 function resolvePlanScope(
   appointmentType: string,
   appointment:
@@ -747,9 +749,9 @@ function resolvePlanScope(
     | null
     | undefined,
 ): {
-  planType: "webinar" | "class" | null;
+  planType: GroupPlanKind | null;
   planId: string | null;
-  scope: { id: string; kind: "webinar" | "class" } | null;
+  scope: { id: string; kind: GroupPlanKind } | null;
 } {
   if (appointmentType === "WEBINAR" && appointment?.webinar) {
     const planId = appointment.webinar.webinarPlanId;
@@ -1655,6 +1657,39 @@ async function resolveOverageSurchargeForCredits(
   return preplanned?.orgOverageSurchargePaise ?? 0;
 }
 
+function appendPartySettlementCredits(
+  partySettlements: PartySettlement[],
+  overageSurcharge: number,
+  pushCredit: (account: AccountRef, amountPaise: number) => void,
+): void {
+  const totalPlatformFee = partySettlements.reduce(
+    (sum, p) => sum + p.platformFeePaise,
+    0,
+  );
+  pushCredit({ kind: "PLATFORM_FEE" }, totalPlatformFee + overageSurcharge);
+
+  for (const p of partySettlements) {
+    if (p.consultantProfileId) {
+      pushCredit(
+        {
+          kind: "CONSULTANT_PAYABLE",
+          consultantProfileId: p.consultantProfileId,
+        },
+        p.consultantSharePaise,
+      );
+    }
+    if (p.orgSplit && p.orgSplit.orgShare > 0) {
+      pushCredit(
+        {
+          kind: "ORG_PAYABLE",
+          organizationId: p.orgSplit.organizationId,
+        },
+        p.orgSplit.orgShare,
+      );
+    }
+  }
+}
+
 async function resolveBookingJournalCredits(
   tx: Tx,
   params: {
@@ -1697,32 +1732,11 @@ async function resolveBookingJournalCredits(
   );
 
   if (partySettlements.length > 0) {
-    const totalPlatformFee = partySettlements.reduce(
-      (sum, p) => sum + p.platformFeePaise,
-      0,
+    appendPartySettlementCredits(
+      partySettlements,
+      overageSurcharge,
+      pushCredit,
     );
-    pushCredit({ kind: "PLATFORM_FEE" }, totalPlatformFee + overageSurcharge);
-
-    for (const p of partySettlements) {
-      if (p.consultantProfileId) {
-        pushCredit(
-          {
-            kind: "CONSULTANT_PAYABLE",
-            consultantProfileId: p.consultantProfileId,
-          },
-          p.consultantSharePaise,
-        );
-      }
-      if (p.orgSplit && p.orgSplit.orgShare > 0) {
-        pushCredit(
-          {
-            kind: "ORG_PAYABLE",
-            organizationId: p.orgSplit.organizationId,
-          },
-          p.orgSplit.orgShare,
-        );
-      }
-    }
   } else {
     pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise + overageSurcharge);
     if (consultantProfileId) {

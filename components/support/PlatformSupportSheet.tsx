@@ -26,9 +26,11 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -108,6 +110,8 @@ export function PlatformSupportSheet({
     collectFeedback?: boolean;
   } | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [bareHumanLabel, setBareHumanLabel] = useState<string | null>(null);
+  const [bareHumanDetails, setBareHumanDetails] = useState("");
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -219,6 +223,8 @@ export function PlatformSupportSheet({
     setNodeId(null);
     setMessages([]);
     setDone(null);
+    setBareHumanLabel(null);
+    setBareHumanDetails("");
     turn.mutate({
       flowId: flow.id,
       chosenLabel: flow.title,
@@ -233,6 +239,8 @@ export function PlatformSupportSheet({
     setMessages([]);
     setDone(null);
     setFeedback("");
+    setBareHumanLabel(null);
+    setBareHumanDetails("");
   };
 
   // #705 — the "leave feedback" terminal used to say the entry was "read and
@@ -458,58 +466,120 @@ export function PlatformSupportSheet({
 
         {flowId && !done && (
           <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
-            {options.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {options.map((o) => (
-                  <Button
-                    key={o.id}
-                    variant="outline"
-                    size="sm"
-                    disabled={turn.isPending}
-                    onClick={() =>
-                      turn.mutate({
-                        flowId: flowId!,
-                        nodeId,
-                        chosenOptionId: o.id,
-                        chosenLabel: o.label,
-                        epoch: sittingRef.current,
-                      })
-                    }
-                  >
-                    {o.label}
-                  </Button>
-                ))}
-              </div>
-            )}
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const msg = text.trim();
-                if (msg)
+            {bareHumanLabel ? (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const details = bareHumanDetails.trim();
+                  if (details.length < 20) return;
+                  const targetNode = nodeId;
+                  setBareHumanLabel(null);
+                  setBareHumanDetails("");
                   turn.mutate({
                     flowId: flowId!,
-                    nodeId,
-                    userMessage: msg,
+                    nodeId: targetNode,
+                    userMessage: `Speak to someone: ${details}`,
                     epoch: sittingRef.current,
                   });
-              }}
-            >
-              <Input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Type a message…"
-                disabled={turn.isPending}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={turn.isPending || !text.trim()}
-                aria-label="Send"
+                }}
               >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+                <Label htmlFor="platform-support-human-details">
+                  Tell us what happened
+                </Label>
+                <Textarea
+                  id="platform-support-human-details"
+                  rows={4}
+                  maxLength={1900}
+                  value={bareHumanDetails}
+                  onChange={(e) => setBareHumanDetails(e.target.value)}
+                  disabled={turn.isPending}
+                  placeholder="What went wrong, and what would you like us to do?"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setBareHumanLabel(null);
+                      setBareHumanDetails("");
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      turn.isPending || bareHumanDetails.trim().length < 20
+                    }
+                  >
+                    Send to the support team
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <>
+                {options.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {options.map((o) => (
+                      <Button
+                        key={o.id}
+                        variant="outline"
+                        size="sm"
+                        disabled={turn.isPending}
+                        onClick={() =>
+                          turn.mutate({
+                            flowId: flowId!,
+                            nodeId,
+                            chosenOptionId: o.id,
+                            chosenLabel: o.label,
+                            epoch: sittingRef.current,
+                          })
+                        }
+                      >
+                        {o.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const msg = text.trim();
+                    if (!msg) return;
+                    if (isBareHumanRequest(msg)) {
+                      setText("");
+                      setBareHumanLabel(msg);
+                      return;
+                    }
+                    turn.mutate({
+                      flowId: flowId!,
+                      nodeId,
+                      userMessage: msg,
+                      epoch: sittingRef.current,
+                    });
+                  }}
+                >
+                  <Input
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder="Type a message…"
+                    disabled={turn.isPending}
+                  />
+                  <Button
+                    type="submit"
+                    size="icon"
+                    disabled={turn.isPending || !text.trim()}
+                    aria-label="Send"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </form>
+              </>
+            )}
           </div>
         )}
       </SheetContent>

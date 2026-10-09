@@ -334,6 +334,33 @@ async function checkSelfLeaveWindow(
   return null;
 }
 
+async function executeGroupSeatLeave(opts: {
+  kind: GroupEventKind;
+  eventId: string;
+  userId: string;
+  actorUserId: string;
+  isSelfLeave: boolean;
+  exitMode: boolean;
+}) {
+  if (opts.kind === "webinar") {
+    return leaveEventSeat({
+      kind: "webinar",
+      eventId: opts.eventId,
+      userId: opts.userId,
+      actorUserId: opts.actorUserId,
+      isSelfLeave: opts.isSelfLeave,
+    });
+  }
+  return leaveEventSeat({
+    kind: "class",
+    eventId: opts.eventId,
+    userId: opts.userId,
+    actorUserId: opts.actorUserId,
+    isSelfLeave: opts.isSelfLeave,
+    exit: opts.isSelfLeave && opts.exitMode,
+  });
+}
+
 export async function handleGroupParticipantDelete(
   request: Request,
   kind: GroupEventKind,
@@ -386,29 +413,18 @@ export async function handleGroupParticipantDelete(
       if (windowRefusal) return windowRefusal;
     }
 
-    let left;
-    try {
-      left =
-        kind === "webinar"
-          ? await leaveEventSeat({
-              kind: "webinar",
-              eventId,
-              userId,
-              actorUserId: session.user.id,
-              isSelfLeave,
-            })
-          : await leaveEventSeat({
-              kind: "class",
-              eventId,
-              userId,
-              actorUserId: session.user.id,
-              isSelfLeave,
-              exit: isSelfLeave && searchParams.get("mode") === "exit",
-            });
-    } catch (error) {
-      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    const left = await executeGroupSeatLeave({
+      kind,
+      eventId,
+      userId,
+      actorUserId: session.user.id,
+      isSelfLeave,
+      exitMode: searchParams.get("mode") === "exit",
+    }).catch((error: unknown) => {
+      if (error instanceof BookingRuleError) return error;
       throw error;
-    }
+    });
+    if (left instanceof BookingRuleError) return bookingRuleResponse(left);
 
     if (!left) {
       return NextResponse.json({ removed: false, refund: null });

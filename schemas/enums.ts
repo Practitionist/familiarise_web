@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { SupportThreadCategory, SupportThreadStatus } from "@prisma/client";
+import type {
+  SupportThreadCategory,
+  SupportThreadStatus,
+} from "@prisma/client";
 
 /**
  * Support-thread intents and statuses — ONE definition, previously transcribed
@@ -133,3 +136,24 @@ export const RequestStatusEnum = z.enum([
   "CANCELLED",
   "EXPIRED",
 ]);
+
+export const RatingCauseSchema = z.enum([
+  "CONSULTANT",
+  "PLATFORM_TECHNICAL",
+  "PAYMENT",
+  "SCHEDULING",
+  "CONTENT",
+  "OTHER",
+]);
+export type RatingCause = z.infer<typeof RatingCauseSchema>;
+
+export const PlatformFeedbackStatusSchema = z.enum([
+  "PENDING",
+  "ACKNOWLEDGED",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+]);
+export type PlatformFeedbackStatus = z.infer<
+  typeof PlatformFeedbackStatusSchema
+>;
