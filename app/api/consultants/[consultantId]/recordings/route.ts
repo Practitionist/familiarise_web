@@ -14,7 +14,6 @@ import { liveParticipant } from "@/lib/booking/participants";
 import { getSession } from "@/lib/auth-server";
 import {
   isDiscoverablePlanPlan,
-  resolveAppointmentStoragePolicy,
   resolveListingPlan,
 } from "@/lib/stream/recording-listing-access";
 import {
@@ -60,7 +59,6 @@ const consultantRecordingFullInclude =
                         id: true,
                         title: true,
                         consultantProfileId: true,
-                        recordingStoragePolicy: true,
                         organizationId: true,
                         visibility: true,
                         archivedAt: true,
@@ -75,7 +73,6 @@ const consultantRecordingFullInclude =
                         id: true,
                         title: true,
                         consultantProfileId: true,
-                        recordingStoragePolicy: true,
                         organizationId: true,
                         visibility: true,
                         archivedAt: true,
@@ -90,7 +87,6 @@ const consultantRecordingFullInclude =
                         id: true,
                         title: true,
                         consultantProfileId: true,
-                        recordingStoragePolicy: true,
                       },
                     },
                   },
@@ -102,7 +98,6 @@ const consultantRecordingFullInclude =
                         id: true,
                         title: true,
                         consultantProfileId: true,
-                        recordingStoragePolicy: true,
                       },
                     },
                   },
@@ -114,7 +109,6 @@ const consultantRecordingFullInclude =
                         id: true,
                         title: true,
                         consultantProfileId: true,
-                        recordingStoragePolicy: true,
                       },
                     },
                   },
@@ -309,20 +303,15 @@ function formatConsultantRecording(
     resolveRecordingPlanInfo(appointment);
 
   const isPrimaryOwner = ownerProfileId === consultantId;
-  const { policy: storagePolicy } =
-    resolveAppointmentStoragePolicy(appointment);
   const listingPlan = resolveListingPlan(appointment);
   const canManage = isPrimaryOwner;
-  const canTransfer =
-    isPrimaryOwner &&
-    recording.status === "READY" &&
-    recording.storageType === "STREAM_S3" &&
-    (storagePolicy === "PERMANENT" || storagePolicy === "SUPABASE_PERMANENT");
+  const awaitingCopy =
+    recording.status === "READY" && recording.storageType === "STREAM_S3";
   const canPublish =
     isPrimaryOwner &&
     listingPlan !== null &&
     isDiscoverablePlanPlan(listingPlan.plan) &&
-    (isDurablyOurs(recording) || canTransfer);
+    (isDurablyOurs(recording) || awaitingCopy);
   const hasBuyers = recording.purchases.length > 0;
 
   const allNames = (appointment.participants ?? [])
@@ -364,7 +353,6 @@ function formatConsultantRecording(
     consentAttestedAt: recording.consentAttestedAt,
     hasBuyers,
     canManage,
-    canTransfer,
     canPublish,
   };
 }

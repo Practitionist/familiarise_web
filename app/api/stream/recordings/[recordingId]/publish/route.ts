@@ -28,7 +28,10 @@ const PublishSchema = z.object({
   slug: z
     .string()
     .trim()
-    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "Lowercase letters, digits, dashes")
+    .regex(
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+      "Lowercase letters, digits, dashes",
+    )
     .min(3)
     .max(80)
     .optional(),
@@ -68,16 +71,16 @@ const PublishSchema = z.object({
  * longer than the slice boundary.
  */
 function buildSlug(title: string, id: string): string {
-  const words = title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const words = title
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
   let base = words.join("-").slice(0, 60);
   if (base.endsWith("-")) base = base.slice(0, -1);
   return `${base || "recording"}-${id.slice(-6).toLowerCase()}`;
 }
 
-export async function POST(
-  request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
@@ -110,8 +113,14 @@ export async function POST(
         { status: 400 },
       );
     }
-    const { listingTitle, listingDescription, listPricePaise, tags, slug, previewTranscript } =
-      parsed.data;
+    const {
+      listingTitle,
+      listingDescription,
+      listPricePaise,
+      tags,
+      slug,
+      previewTranscript,
+    } = parsed.data;
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
@@ -128,7 +137,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Only permanently stored (premium plan) recordings can be published.",
+            "This recording can be published once it has been copied to our storage.",
           code: "STORAGE_POLICY",
         },
         { status: 400 },
@@ -142,7 +151,9 @@ export async function POST(
         {
           error:
             "This recording's plan is archived or its organization limits visibility.",
-          code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
+          code: loaded.plan.plan.archivedAt
+            ? "PLAN_ARCHIVED"
+            : "ORG_VISIBILITY",
         },
         { status: 403 },
       );
@@ -197,7 +208,12 @@ export async function POST(
           consentAttestedById: session.user.id,
           previewTranscript: transcriptGate.transcript,
         },
-        select: { id: true, slug: true, listingStatus: true, publishedAt: true },
+        select: {
+          id: true,
+          slug: true,
+          listingStatus: true,
+          publishedAt: true,
+        },
       });
     } catch (updateError) {
       // Two concurrent publishes can pass the pre-check above; the @unique
@@ -230,10 +246,7 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {

@@ -56,8 +56,6 @@ import {
   type PaymentSuccessPayload,
   type PayoutInput,
   type PayoutPayload,
-  type RecordingExpiringInput,
-  type RecordingExpiringPayload,
   type RecordingFailedPayload,
   type RecordingPayload,
   type ReferralCreditsAppliedInput,
@@ -695,19 +693,6 @@ function disputeWire(payload: DisputeInput): DisputePayload {
   };
 }
 
-function recordingExpiringWire(
-  payload: RecordingExpiringInput,
-  timezone: string,
-): RecordingExpiringPayload {
-  const { expiresAt: raw, ...rest } = payload;
-  const expiresAt = formatNotificationDateTime(raw, timezone);
-  return {
-    ...rest,
-    expiresAt: expiresAt ?? "the date shown in your dashboard",
-    ...(expiresAt ? { expiresAtIso: raw } : {}),
-  };
-}
-
 function referralCreditsAppliedWire(
   payload: ReferralCreditsAppliedInput,
 ): ReferralCreditsAppliedPayload {
@@ -901,10 +886,6 @@ export const notifyRecordingFailed =
     W.RECORDING_FAILED,
     ({ errorMessage: _vendorDetail, ...rest }) => rest,
   );
-export const notifyRecordingExpiring = defineZonedSingleNotifier(
-  W.RECORDING_EXPIRING,
-  recordingExpiringWire,
-);
 
 // Document Review
 export const notifyDocumentUploaded =

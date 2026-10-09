@@ -3,6 +3,7 @@
  * Handles webhook events for recording lifecycle
  */
 
+import type { z } from "zod";
 import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
@@ -17,12 +18,14 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import {
   generateRecordingTitle,
   getEventAttendeeIds,
+  streamCopyExpiresAt,
 } from "@/lib/stream/recording-utils";
 import { toCallId } from "@/lib/stream/call-cid";
 import {
-  RecordingTransferService,
-  resolveAppointmentStoragePolicy,
-} from "@/lib/stream/recording-transfer-service";
+  discardDeclinedRecording,
+  wasDeclinedDuringRecording,
+} from "@/lib/stream/recording-decline";
+import type { streamRecordingReadySchema } from "@/lib/stream/webhook-dispatch";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -41,17 +44,9 @@ export interface StreamRecordingStoppedEvent {
   created_at: string;
 }
 
-export interface StreamRecordingReadyEvent {
-  call_cid: string;
-  type: "call.recording_ready";
-  call_recording: {
-    filename: string;
-    url: string;
-    start_time: string;
-    end_time: string;
-  };
-  created_at: string;
-}
+export type StreamRecordingReadyEvent = z.infer<
+  typeof streamRecordingReadySchema
+>;
 
 export interface StreamRecordingFailedEvent {
   call_cid: string;
@@ -257,7 +252,6 @@ function resolveRecordingNotificationMeta(
 
 async function stageAndSendRecordingReadyNotifications(
   appointment: RecordingNotificationAppointment | null | undefined,
-  url: string,
   recordingId: string,
   streamCallId: string,
 ): Promise<void> {
@@ -274,7 +268,6 @@ async function stageAndSendRecordingReadyNotifications(
         ...notificationScope(appointment?.organizationId),
         appointmentType,
         consultantName,
-        recordingUrl: url,
         dashboardUrl: notificationHref(
           appointment?.organizationId,
           "recordings",
@@ -306,10 +299,10 @@ async function stageAndSendRecordingReadyNotifications(
 export async function handleRecordingReady(
   event: StreamRecordingReadyEvent,
 ): Promise<void> {
-  const { call_cid, call_recording, created_at: _created_at } = event;
+  const { call_cid, call_recording } = event;
 
   const streamCallId = toCallId(call_cid);
-  const { filename, url, start_time, end_time } = call_recording;
+  const { filename, url, start_time, end_time, session_id } = call_recording;
 
   streamLogger.info("Recording ready", {
     streamCallId,
@@ -404,11 +397,25 @@ export async function handleRecordingReady(
       : 0;
 
     const appointment = meeting.occurrence.appointment;
-    const title = generateRecordingTitle(appointment, startDate);
 
-    // Calculate Stream URL expiration (2 weeks from now)
-    const streamUrlExpiresAt = new Date();
-    streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+    if (await wasDeclinedDuringRecording(meeting.id, appointment, endDate)) {
+      await discardDeclinedRecording({
+        meetingId: meeting.id,
+        streamCallId,
+        sessionId: session_id,
+        filename,
+      });
+      if (meeting.isRecording) {
+        await prisma.meeting.update({
+          where: { id: meeting.id },
+          data: { isRecording: false },
+        });
+      }
+      return;
+    }
+
+    const title = generateRecordingTitle(appointment, startDate);
+    const streamUrlExpiresAt = streamCopyExpiresAt(endDate);
 
     // Check if recording already exists by streamRecordingId or active placeholder
     const existingRecording =
@@ -441,8 +448,8 @@ export async function handleRecordingReady(
           existingRecording.status === "EXPIRED" ||
           existingRecording.status === "FAILED")
       ) {
-        recording = await prisma.recording.update({
-          where: { id: existingRecording.id },
+        await prisma.recording.updateMany({
+          where: { id: existingRecording.id, status: existingRecording.status },
           data: {
             title,
             recordingUrl: url,
@@ -456,6 +463,7 @@ export async function handleRecordingReady(
             organizationId: appointment?.organizationId ?? null,
           },
         });
+        recording = existingRecording;
       } else {
         streamLogger.info("Recording already exists, adopting existing row", {
           recordingId: existingRecording.id,
@@ -522,27 +530,8 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
-    const alreadyTransferred =
-      recording.storageType === "PLATFORM" || recording.status === "AVAILABLE";
-    const storagePolicy = resolveAppointmentStoragePolicy(appointment);
-    if (
-      !alreadyTransferred &&
-      recording.status !== "TRANSFERRING" &&
-      (storagePolicy === "PERMANENT" || storagePolicy === "SUPABASE_PERMANENT")
-    ) {
-      await runAfterOrInline(() =>
-        RecordingTransferService.queueRecordingTransfer(recordingId).catch(
-          (err) =>
-            streamLogger.error("Ready-time transfer kick threw", err, {
-              recordingId,
-            }),
-        ),
-      );
-    }
-
     await stageAndSendRecordingReadyNotifications(
       appointment,
-      recording.recordingUrl || url,
       recordingId,
       streamCallId,
     );

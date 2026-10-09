@@ -187,7 +187,6 @@ export async function POST(request: NextRequest) {
       topics: topicNames,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
       sessionsPerWeek,
       emailSupport,
       classContents,
@@ -301,7 +300,6 @@ export async function POST(request: NextRequest) {
               faqs: faqCreateNested(faqs),
               certificateProvided,
               recordingEnabled,
-              recordingStoragePolicy,
               sessionsPerWeek,
               sessionDurationInHours,
               totalSessions,
@@ -340,7 +338,10 @@ export async function POST(request: NextRequest) {
 
           // #2010 — also verify the host consultant has no overlapping live
           // hold, co-host commitment, or confirmed session when publishing.
-          if (classStatus === ClassStatus.SCHEDULED && sessionWindows.length > 0) {
+          if (
+            classStatus === ClassStatus.SCHEDULED &&
+            sessionWindows.length > 0
+          ) {
             await assertConsultantAvailableForWindows(tx, {
               consultantProfileId,
               consultantUserId: session.user.id,
@@ -372,7 +373,8 @@ export async function POST(request: NextRequest) {
                               startsAt: slotStart,
                               durationInHours: sessionDurationInHours,
                               consultantProfileId,
-                              isTentative: classStatus !== ClassStatus.SCHEDULED,
+                              isTentative:
+                                classStatus !== ClassStatus.SCHEDULED,
                               ordinal: index + 1,
                             }),
                           ),
@@ -564,7 +566,6 @@ export async function PATCH(request: NextRequest) {
       startDate: startDateString,
       endDate: endDateString,
       recordingEnabled,
-      recordingStoragePolicy,
       sessionDurationInHours: patchSessionDuration,
       lateJoinUntilSession,
       lateJoinersGetPastRecordings,
@@ -690,8 +691,6 @@ export async function PATCH(request: NextRequest) {
             updateData.certificateProvided = certificateProvided;
           if (recordingEnabled !== undefined)
             updateData.recordingEnabled = recordingEnabled;
-          if (recordingStoragePolicy !== undefined)
-            updateData.recordingStoragePolicy = recordingStoragePolicy;
           if (sessionsPerWeek !== undefined)
             updateData.sessionsPerWeek = sessionsPerWeek;
           if (emailSupport !== undefined)
@@ -948,7 +947,7 @@ export async function PATCH(request: NextRequest) {
             }
             const ownerChanged = Boolean(
               consultantProfileId &&
-                consultantProfileId !== existingPlan.consultantProfileId,
+              consultantProfileId !== existingPlan.consultantProfileId,
             );
 
             // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
