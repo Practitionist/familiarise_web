@@ -76,4 +76,34 @@ describe("applyErrorBudget", () => {
     jest.advanceTimersByTime(60 * 60 * 1000 + 1);
     expect(applyErrorBudget(thrown("after the hour"))).not.toBeNull();
   });
+
+  it("fingerprints Prisma schema drift (P2021/P2022/missing column or table) as fatal and bypasses open breaker", () => {
+    for (let i = 0; i < 35; i++) {
+      applyErrorBudget(thrown(`noise event ${"x".repeat(i)}`));
+    }
+
+    const p2022 = applyErrorBudget(
+      thrown("PrismaClientKnownRequestError: P2022 column missing"),
+    );
+    expect(p2022).not.toBeNull();
+    expect(p2022?.fingerprint).toEqual(["prisma-schema-drift"]);
+    expect(p2022?.level).toBe("fatal");
+
+    // Repeat schema drift across another route within throttle window collapses to same family key.
+    const p2021 = applyErrorBudget(
+      thrown(
+        "The table `public.SupportTicketAttachment` does not exist in the current database.",
+        "otherRouteHandler",
+      ),
+    );
+    expect(p2021).toBeNull();
+
+    jest.advanceTimersByTime(INFRA_THROTTLE_MS + 1);
+    const p2021AfterWindow = applyErrorBudget(
+      thrown("Invalid `prisma.user.findUnique()` invocation: P2021"),
+    );
+    expect(p2021AfterWindow).not.toBeNull();
+    expect(p2021AfterWindow?.fingerprint).toEqual(["prisma-schema-drift"]);
+    expect(p2021AfterWindow?.level).toBe("fatal");
+  });
 });

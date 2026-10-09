@@ -138,6 +138,8 @@ async function reconcilePendingRefundsUnlocked(
   let totalProcessed = 0;
   const retiredNoClient: string[] = [];
   const failedUnknownOrder: string[] = [];
+  const ambiguousPlaceholders: string[] = [];
+  const failedUnknownRefunds: string[] = [];
 
   /**
    * A row on a gateway with no live client is FAILED/`GATEWAY_DISABLED` past
@@ -248,6 +250,9 @@ async function reconcilePendingRefundsUnlocked(
             amountPaise: refund.amountPaise,
             paymentAmountPaise: refund.payment.amount,
             reason: refund.reason ?? "Gateway refund reconciled",
+            userId: refund.payment.userId,
+            organizationId: refund.payment.organizationId,
+            currency: refund.currency,
           },
         );
         if (bound === "bound") {
@@ -274,10 +279,7 @@ async function reconcilePendingRefundsUnlocked(
         console.warn(
           `⚠️ Refund ${refund.id}: ${candidates.length} amount-matching gateway refunds without reservation ids; leaving PENDING for manual review`,
         );
-        reportSentryMessage(
-          `Ambiguous refund reconciliation: ${candidates.length} candidates for placeholder ${refund.id}`,
-          { subsystem: "payments", tags: { feature: "refund-reconcile" } },
-        );
+        ambiguousPlaceholders.push(refund.id);
         skippedCount++;
         continue;
       }
@@ -512,17 +514,7 @@ async function reconcilePendingRefundsUnlocked(
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;
-          reportSentryMessage(
-            `Refund ${refund.id} moved to FAILED: gateway has no record of ${refund.refundId}`,
-            {
-              subsystem: "payments",
-              op: "refund-reconcile.unknown-id",
-              expected: true,
-              level: "warning",
-              tags: { provider: "razorpay" },
-              extra: { refundRowId: refund.id, refundId: refund.refundId },
-            },
-          );
+          failedUnknownRefunds.push(refund.id);
         }
         console.error(
           `❌ Real-id refund ${refund.id} (${refund.refundId}) unknown at gateway; marked FAILED`,
@@ -568,6 +560,31 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
+  if (failedUnknownRefunds.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: FAILED ${failedUnknownRefunds.length} real-id refund(s) unknown at gateway`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.unknown-id",
+        expected: true,
+        level: "warning",
+        tags: { provider: "razorpay" },
+        extra: { failed: failedUnknownRefunds },
+      },
+    );
+  }
+
+  if (ambiguousPlaceholders.length > 0) {
+    reportSentryMessage(
+      `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length})`,
+      {
+        subsystem: "payments",
+        tags: { feature: "refund-reconcile" },
+        extra: { ambiguous: ambiguousPlaceholders },
+      },
+    );
+  }
+
   await notifyFailedRefundsUnlocked();
 
   return {
@@ -605,6 +622,9 @@ async function bindGatewayRefundToPlaceholder(
     amountPaise: number;
     paymentAmountPaise?: number;
     reason: string;
+    userId: string;
+    organizationId: string | null;
+    currency: string;
   },
 ): Promise<"bound" | "superseded"> {
   const nextStatus = mapGatewayRefundStatus(gatewayRefund.status);
@@ -614,18 +634,24 @@ async function bindGatewayRefundToPlaceholder(
     reconciled_at: new Date().toISOString(),
   } as Prisma.InputJsonValue;
 
+  let bell: StagedTrigger | null = null;
+  let emails: StagedRecipientEmail[] = [];
+
   try {
     const overageDue = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
-          await tx.refund.update({
-            where: { id: placeholderRowId },
+          bell = null;
+          emails = [];
+          const claim = await tx.refund.updateMany({
+            where: { id: placeholderRowId, status: RefundStatus.PENDING },
             data: {
               refundId: gatewayRefund.refundId,
               status: nextStatus,
               metadata: mergedMetadata,
             },
           });
+          if (claim.count === 0) return null;
           if (nextStatus !== RefundStatus.SUCCEEDED) return null;
           const result = await applyRefundCascade(tx, {
             paymentId: cascade.paymentId,
@@ -641,6 +667,23 @@ async function bindGatewayRefundToPlaceholder(
             cascade.paymentAmountPaise,
             placeholderRowId,
           );
+          const notice = await notifyRefundProcessed(
+            cascade.userId,
+            {
+              ...notificationScope(cascade.organizationId),
+              amount: cascade.amountPaise,
+              currency: cascade.currency,
+              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+            },
+            { tx, entityRef: `payment:${cascade.paymentId}` },
+          );
+          bell = notice?.staged ?? null;
+          emails = await stageRefundProcessedEmail(tx, {
+            userId: cascade.userId,
+            paymentId: cascade.paymentId,
+            amountPaise: cascade.amountPaise,
+            currency: cascade.currency,
+          });
           return result.memberOverageRefundDue;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -651,25 +694,24 @@ async function bindGatewayRefundToPlaceholder(
       due: overageDue,
       initiatedByUserId: null,
     });
+    await attemptRefundNotice(bell, emails);
     return "bound";
   } catch (error) {
-    if (
-      !(
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      )
-    ) {
+    if (!(
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )) {
       throw error;
     }
   }
 
   const winner = await prisma.refund.findUnique({
     where: { refundId: gatewayRefund.refundId },
-    select: { id: true, paymentId: true },
+    select: { id: true, paymentId: true, metadata: true },
   });
   const placeholder = await prisma.refund.findUnique({
     where: { id: placeholderRowId },
-    select: { paymentId: true },
+    select: { paymentId: true, dedupeKey: true, metadata: true },
   });
   if (!winner || !placeholder || winner.paymentId !== placeholder.paymentId) {
     // Collision outside the same payment is an integrity fault, not a race.
@@ -677,7 +719,19 @@ async function bindGatewayRefundToPlaceholder(
       `Refund id collision across payments while reconciling ${placeholderRowId} -> ${gatewayRefund.refundId}`,
     );
   }
-  await prisma.refund.delete({ where: { id: placeholderRowId } });
+  await prisma.$transaction([
+    prisma.refund.delete({ where: { id: placeholderRowId } }),
+    prisma.refund.update({
+      where: { id: winner.id },
+      data: {
+        ...(placeholder.dedupeKey ? { dedupeKey: placeholder.dedupeKey } : {}),
+        metadata: {
+          ...prismaMetadataObject(winner.metadata),
+          ...prismaMetadataObject(placeholder.metadata),
+        } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
   return "superseded";
 }
 

@@ -62,6 +62,13 @@ interface OrgMembership {
 /** "About" value for a personal request. */
 const ABOUT_ME = "me";
 
+const PRIORITY_BY_VALUE: Record<string, SupportPriority> = {
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+  URGENT: "URGENT",
+};
+
 export function CreateTicketDialog({
   trigger,
   defaults,
@@ -69,9 +76,9 @@ export function CreateTicketDialog({
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
-  /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
+  /** Pre-fill, e.g. org Billing's "Request an invoice". */
   defaults?: CreateTicketDefaults;
-  /** #1527 — the new request's page; the dialog navigates there on create. */
+  /** The new request's page; the dialog navigates there on create. */
   requestHref?: (ticketId: string) => string;
 }) {
   const router = useRouter();
@@ -81,11 +88,11 @@ export function CreateTicketDialog({
   const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
+  const [callbackRequested, setCallbackRequested] = useState(false);
+  const [callbackPhone, setCallbackPhone] = useState("");
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  // #1527 — orgs this viewer may raise a request about; the route re-checks.
-  // Same key as the Support hub's session picker (ACTIVE memberships).
   const memberships = useQuery({
     queryKey: ["user-org-memberships"],
     queryFn: async (): Promise<OrgMembership[]> => {
@@ -109,11 +116,15 @@ export function CreateTicketDialog({
           title: title.trim(),
           description: description.trim(),
           priority,
+          ...(callbackRequested && callbackPhone.trim()
+            ? { callbackPhone: callbackPhone.trim() }
+            : {}),
           ...(about !== ABOUT_ME && { organizationId: about }),
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return (await res.json()) as { id: string };
+      const json: { id: string } = await res.json();
+      return json;
     },
     onSuccess: (ticket) => {
       toast({
@@ -127,6 +138,8 @@ export function CreateTicketDialog({
       setTitle(defaults?.title ?? "");
       setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
+      setCallbackRequested(false);
+      setCallbackPhone("");
       setAbout(defaults?.organizationId ?? ABOUT_ME);
       if (requestHref && ticket?.id) router.push(requestHref(ticket.id));
     },
@@ -245,7 +258,13 @@ export function CreateTicketDialog({
             <Label htmlFor="new-ticket-priority">Priority</Label>
             <Select
               value={priority}
-              onValueChange={(v) => setPriority(v as SupportPriority)}
+              onValueChange={(v) => {
+                const nextPriority = PRIORITY_BY_VALUE[v] ?? "MEDIUM";
+                setPriority(nextPriority);
+                setCallbackRequested(
+                  nextPriority === "HIGH" || nextPriority === "URGENT",
+                );
+              }}
             >
               <SelectTrigger id="new-ticket-priority">
                 <SelectValue />
@@ -259,12 +278,37 @@ export function CreateTicketDialog({
             </Select>
           </div>
 
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={callbackRequested}
+                onChange={(e) => setCallbackRequested(e.target.checked)}
+              />
+              <span>Request urgent phone callback</span>
+            </label>
+            {callbackRequested && (
+              <Input
+                id="new-ticket-callback-phone"
+                type="tel"
+                value={callbackPhone}
+                onChange={(e) => setCallbackPhone(e.target.value)}
+                placeholder="+91 98765 43210"
+                maxLength={32}
+              />
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={!valid || create.isPending}
+              disabled={
+                !valid ||
+                create.isPending ||
+                (callbackRequested && !callbackPhone.trim())
+              }
               onClick={() => create.mutate()}
             >
               {create.isPending ? "Creating…" : "Create request"}

@@ -18,6 +18,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+import { formatReportReference } from "@/lib/moderation/report-reference";
 
 // #831 — raw destructuring accepted unbounded strings; every user-typed
 // field now carries a .max()
@@ -210,6 +211,7 @@ export async function POST(req: NextRequest) {
         where: { id: reviewId, deletedAt: null },
         select: {
           reviewDescription: true,
+          consultantProfile: { select: { userId: true } },
           consulteeProfile: { select: { userId: true } },
           appointment: { select: { organizationId: true } },
         },
@@ -220,12 +222,34 @@ export async function POST(req: NextRequest) {
           { status: 404 },
         );
       }
-      // The target of a review report IS its author, read from the review. The
-      // caller's `targetUserId` is not compared against it: answering "wrong
-      // person" told a consultant which of their clients wrote an anonymous review.
+      const consultantUserId = reported.consultantProfile?.userId;
+      const hostOrgId = reported.appointment?.organizationId ?? null;
+      if (consultantUserId && consultantUserId !== session.user.id) {
+        const isHostOrgMember = hostOrgId
+          ? Boolean(
+              await prisma.membership.findFirst({
+                where: {
+                  organizationId: hostOrgId,
+                  userId: session.user.id,
+                  status: "ACTIVE",
+                },
+                select: { id: true },
+              }),
+            )
+          : false;
+        if (!isHostOrgMember) {
+          return NextResponse.json(
+            {
+              error:
+                "Only the reviewed consultant or an active host organization member can report this review",
+            },
+            { status: 403 },
+          );
+        }
+      }
       target = reported.consulteeProfile.userId;
       reportedReviewId = reviewId;
-      resolvedOrganizationId = reported.appointment?.organizationId ?? null;
+      resolvedOrganizationId = hostOrgId;
       reviewSnapshotText = reported.reviewDescription ?? null;
     }
 
@@ -313,11 +337,6 @@ export async function POST(req: NextRequest) {
         where: { id: similarReport.id },
         data: {
           reportCount: { increment: 1 },
-          // #1270 — the first reporter may have had no excerpt to send (a
-          // profile report, an attachment-only message). Fill the gap rather
-          // than leave the moderator deciding a ban with nothing to read; a
-          // row that already has an excerpt keeps it, because within one
-          // content scope every reporter is describing the same content.
           ...(similarReport.contentText === null && backfillContentText
             ? { contentText: backfillContentText }
             : {}),
@@ -327,6 +346,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         message: "Report submitted successfully",
         reportId: updatedReport.id,
+        reportReference: formatReportReference(updatedReport.id),
         aggregated: true,
       });
     }
@@ -366,6 +386,7 @@ export async function POST(req: NextRequest) {
       {
         message: "Report submitted successfully",
         reportId: report.id,
+        reportReference: formatReportReference(report.id),
       },
       { status: 201 },
     );

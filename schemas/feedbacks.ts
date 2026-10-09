@@ -4,6 +4,7 @@ import {
   MAX_TEXT_LENGTH,
   MAX_TITLE_LENGTH,
 } from "@/lib/validation/limits";
+import { RatingCauseSchema } from "@/schemas/enums";
 
 // #831 — every user-typed string carries a .max()
 export const CreateFeedbackSchema = z.object({
@@ -37,15 +38,12 @@ export const CreateReviewSchema = z.object({
    * from someone who may want to book this person again.
    */
   isAnonymous: z.boolean().optional(),
+  ratingCause: RatingCauseSchema.nullable().optional(),
 });
 
-// PUT only mutates the two consultee-owned fields; a partial keeps either optional.
-// #705 — `isAnonymous` MUST be here. It was omitted, so zod silently stripped
-// it from every PUT: the checkbox stayed ticked, the toast said "updated", and
-// the row never changed. Anonymity could only ever be set at creation, which
-// the UI never does once a review exists.
 export const UpdateReviewSchema = CreateReviewSchema.pick({
   rating: true,
   reviewDescription: true,
   isAnonymous: true,
+  ratingCause: true,
 }).partial();

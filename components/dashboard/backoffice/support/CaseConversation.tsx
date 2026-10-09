@@ -104,6 +104,16 @@ export function CaseConversation({
 
   return (
     <div className="flex min-h-[28rem] flex-col rounded-lg border border-border bg-card">
+      {data.handoffSummary && (
+        <div className="border-b border-border bg-muted/40 px-4 py-3 text-xs">
+          <p className="mb-1 font-semibold uppercase tracking-wide text-muted-foreground">
+            Case Summary
+          </p>
+          <p className="whitespace-pre-line text-foreground">
+            {data.handoffSummary}
+          </p>
+        </div>
+      )}
       <div className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4">
         {data.timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>

@@ -378,12 +378,13 @@ export async function mintConsumerInvoice(
       tags: { feature: "consumer-invoice" },
       extra: { paymentId: payment.id, ...mismatch },
     });
-    void recordSystemErrorSafe({
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: "Consumer tax invoice not minted: supplier state is ambiguous",
       err: ambiguous,
       context: { paymentId: payment.id, ...mismatch },
+      db: tx,
     });
     return { consumerInvoiceId: null };
   }
@@ -551,6 +552,7 @@ export async function mintConsumerCreditNote(
     reason: string;
     refundId?: string;
     disputeId?: string;
+    now?: Date;
   },
 ): Promise<{ consumerCreditNoteId: string | null }> {
   if (Boolean(params.refundId) === Boolean(params.disputeId)) {
@@ -628,7 +630,7 @@ export async function mintConsumerCreditNote(
     const refusal = new Error(
       `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
     );
-    void recordSystemEventSafe({
+    await recordSystemEventSafe({
       organizationId: null,
       category: "PAYMENT",
       severity: "ERROR",
@@ -639,6 +641,7 @@ export async function mintConsumerCreditNote(
         disputeId: params.disputeId ?? null,
         errorMessage: refusal.message,
       },
+      db: tx,
     });
     reportSentryError(refusal, {
       subsystem: "payments",
@@ -657,7 +660,7 @@ export async function mintConsumerCreditNote(
   if (derived.outcome === "NOTHING_TO_CREDIT") {
     return { consumerCreditNoteId: null };
   }
-  const commercial = isPastGstCreditNoteCutoff(invoice.supplyDate);
+  const commercial = isPastGstCreditNoteCutoff(invoice.supplyDate, params.now);
   const amounts = commercial
     ? {
         ...derived.amounts,
@@ -668,7 +671,7 @@ export async function mintConsumerCreditNote(
       }
     : derived.amounts;
 
-  const issuedAt = new Date();
+  const issuedAt = params.now ?? new Date();
   const { creditNoteNumber, fiscalYear } =
     await generateConsumerCreditNoteNumber(tx, issuedAt);
 

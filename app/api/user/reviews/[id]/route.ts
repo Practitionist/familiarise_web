@@ -7,7 +7,11 @@ import {
   checkOwnership,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { recomputeConsultantRating, ModeratedReviewError } from "@/lib/reviews";
+import {
+  recomputeConsultantRating,
+  ModeratedReviewError,
+  resolveRatingCausePatch,
+} from "@/lib/reviews";
 import {
   publicReviewSelect,
   sanitisePublicReview,
@@ -125,17 +129,16 @@ export async function PUT(
               replyDeletedAt: true,
             },
           });
-          if (current?.deletedAt) throw new ModeratedReviewError();
+          if (!current || current.deletedAt) throw new ModeratedReviewError();
 
           // Only a changed OPINION is a revision. `isAnonymous` is a display
           // choice, not a change to what was said.
           const textChanged =
-            current !== null &&
-            ((body.rating !== undefined && body.rating !== current.rating) ||
-              (body.reviewDescription !== undefined &&
-                (body.reviewDescription ?? null) !==
-                  (current.reviewDescription ?? null)));
-          if (textChanged && current) {
+            (body.rating !== undefined && body.rating !== current.rating) ||
+            (body.reviewDescription !== undefined &&
+              (body.reviewDescription ?? null) !==
+                (current.reviewDescription ?? null));
+          if (textChanged) {
             // Allocated by an atomic increment, not from the read above — see the
             // POST route: the row lock turns a concurrent editor's P2002 into a
             // retried P2034.
@@ -162,6 +165,10 @@ export async function PUT(
               rating: body.rating,
               reviewDescription: body.reviewDescription,
               isAnonymous: body.isAnonymous,
+              ...resolveRatingCausePatch(
+                body.rating ?? current.rating,
+                body.ratingCause,
+              ),
             },
             // Explicit select, never `include` — see the POST route.
             select: publicReviewSelect,

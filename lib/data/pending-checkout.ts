@@ -7,6 +7,12 @@
 import type { Currency, PaymentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  deriveCheckoutAmount,
+  type CheckoutDiscountInput,
+} from "@/lib/payments/pricing/derive-checkout-amount";
+import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
+import { getUserCredits } from "@/lib/referrals/service";
 
 export interface PendingCheckout {
   paymentId: string;
@@ -20,6 +26,15 @@ export interface PendingCheckout {
   taxPaise: number;
   creditsPaise: number;
   totalPaise: number;
+  /** Re-derived total from live coupon/credit state; null when the held order used credits or a welcome discount, which the row does not fully describe. */
+  currentTotalPaise: number | null;
+  /** Why a re-quoted checkout differs from the held order; advisory while the Razorpay hold is active. */
+  quoteStaleReason:
+    | "COUPON_EXHAUSTED"
+    | "COUPON_INVALID"
+    | "CREDITS_SHORT"
+    | "TAX_CHANGED"
+    | null;
   expiresAt: Date | null;
   /** The booking the abandon door keys on; null for a charge with no booking. */
   appointmentId: string | null;
@@ -27,6 +42,111 @@ export interface PendingCheckout {
 }
 
 const planTitleSelect = { select: { title: true } } as const;
+
+interface QuoteFreshnessInput {
+  paymentStatus: PaymentStatus;
+  amount: number;
+  originalAmount: number;
+  buyerCountry: string | null;
+  welcomeDiscountPaise: number | null;
+  userId: string;
+  appointmentType: Parameters<typeof appointmentTypeToServiceType>[0] | null;
+  discountCode: {
+    discountType: CheckoutDiscountInput["discountType"];
+    discountValue: number | bigint;
+    maxDiscount: number | bigint | null;
+    isActive: boolean;
+    expiresAt: Date | null;
+    maxUses: number | null;
+    currentUses: number;
+  } | null;
+  creditsPaise: number;
+  validHeldCreditsPaise: number;
+  now: Date;
+}
+
+/** Evaluates live coupon validity while discounting this PENDING payment's own held slot. */
+function resolveLiveCoupon(
+  paymentStatus: PaymentStatus,
+  liveCode: QuoteFreshnessInput["discountCode"],
+  now: Date,
+): {
+  liveDiscount: CheckoutDiscountInput | null;
+  staleReason: PendingCheckout["quoteStaleReason"];
+} {
+  if (!liveCode) {
+    return { liveDiscount: null, staleReason: null };
+  }
+  const codeDead =
+    !liveCode.isActive ||
+    (liveCode.expiresAt !== null && now > liveCode.expiresAt);
+  if (codeDead) {
+    return { liveDiscount: null, staleReason: "COUPON_INVALID" };
+  }
+  const effectiveOtherUses =
+    paymentStatus === "PENDING"
+      ? liveCode.currentUses - 1
+      : liveCode.currentUses;
+  if (liveCode.maxUses !== null && effectiveOtherUses >= liveCode.maxUses) {
+    return { liveDiscount: null, staleReason: "COUPON_EXHAUSTED" };
+  }
+  return {
+    liveDiscount: {
+      discountType: liveCode.discountType,
+      discountValue: Number(liveCode.discountValue),
+      maxDiscount:
+        liveCode.maxDiscount !== null ? Number(liveCode.maxDiscount) : null,
+    },
+    staleReason: null,
+  };
+}
+
+/**
+ * Revalidates the held quote against live coupon, held+available wallet credits,
+ * and current GST/LUT rules.
+ */
+async function resolveQuoteFreshness(input: QuoteFreshnessInput): Promise<{
+  currentTotalPaise: number | null;
+  quoteStaleReason: PendingCheckout["quoteStaleReason"];
+}> {
+  const coupon = resolveLiveCoupon(
+    input.paymentStatus,
+    input.discountCode,
+    input.now,
+  );
+  let quoteStaleReason = coupon.staleReason;
+
+  // Only query remaining wallet balance when non-expired VESTED credits held on this order fall short.
+  if (
+    input.creditsPaise > 0 &&
+    input.validHeldCreditsPaise < input.creditsPaise
+  ) {
+    const liveBalance = (await getUserCredits(input.userId)).totalAvailable;
+    if (liveBalance + input.validHeldCreditsPaise < input.creditsPaise) {
+      quoteStaleReason ??= "CREDITS_SHORT";
+    }
+  }
+
+  if (input.creditsPaise > 0 || input.welcomeDiscountPaise !== null) {
+    return { currentTotalPaise: null, quoteStaleReason };
+  }
+
+  const rederived = await deriveCheckoutAmount({
+    basePaise: input.originalAmount,
+    buyerCountry: input.buyerCountry ?? "IN",
+    serviceType: input.appointmentType
+      ? appointmentTypeToServiceType(input.appointmentType)
+      : "CONSULTING",
+    discount: coupon.liveDiscount,
+    welcomeDiscount: null,
+  });
+  const currentTotalPaise = rederived.amount;
+  if (currentTotalPaise !== input.amount) {
+    quoteStaleReason ??= "TAX_CHANGED";
+  }
+
+  return { currentTotalPaise, quoteStaleReason };
+}
 
 export async function readPendingCheckout(args: {
   paymentId: string;
@@ -47,13 +167,39 @@ export async function readPendingCheckout(args: {
       originalAmount: true,
       taxAmount: true,
       currency: true,
+      buyerCountry: true,
+      welcomeDiscountPaise: true,
       expiresAt: true,
       appointmentId: true,
-      discountCode: { select: { code: true } },
-      creditUsages: { select: { amount: true } },
-      user: { select: { consulteeProfile: { select: { id: true } } } },
+      discountCode: {
+        select: {
+          code: true,
+          discountType: true,
+          discountValue: true,
+          maxDiscount: true,
+          isActive: true,
+          expiresAt: true,
+          maxUses: true,
+          currentUses: true,
+        },
+      },
+      creditUsages: {
+        select: {
+          amount: true,
+          credit: { select: { state: true, expiresAt: true } },
+        },
+      },
+      legs: {
+        where: { source: "REFERRAL_CREDIT" },
+        select: { amountPaise: true },
+        take: 1,
+      },
+      user: {
+        select: { id: true, consulteeProfile: { select: { id: true } } },
+      },
       appointment: {
         select: {
+          appointmentType: true,
           consultation: { select: { consultationPlan: planTitleSelect } },
           subscription: { select: { subscriptionPlan: planTitleSelect } },
           webinar: { select: { webinarPlan: planTitleSelect } },
@@ -65,16 +211,40 @@ export async function readPendingCheckout(args: {
   });
   if (!payment) return null;
 
+  const now = new Date();
   const a = payment.appointment;
-  const creditsPaise = payment.creditUsages.reduce(
-    (sum, usage) => sum + Number(usage.amount),
-    0,
-  );
+  const creditsPaise =
+    payment.creditUsages.length > 0
+      ? payment.creditUsages.reduce(
+          (sum, usage) => sum + Number(usage.amount),
+          0,
+        )
+      : Number(payment.legs?.[0]?.amountPaise ?? 0);
+  const validHeldCreditsPaise = payment.creditUsages.reduce((sum, usage) => {
+    const isSpendable =
+      usage.credit.state === "VESTED" &&
+      (usage.credit.expiresAt === null || usage.credit.expiresAt > now);
+    return isSpendable ? sum + Number(usage.amount) : sum;
+  }, 0);
   // amount = base − discount + GST − credits, so the discount is what is left.
   const discountPaise = Math.max(
     0,
     payment.originalAmount + payment.taxAmount - creditsPaise - payment.amount,
   );
+
+  const { currentTotalPaise, quoteStaleReason } = await resolveQuoteFreshness({
+    paymentStatus: payment.paymentStatus,
+    amount: payment.amount,
+    originalAmount: payment.originalAmount,
+    buyerCountry: payment.buyerCountry,
+    welcomeDiscountPaise: payment.welcomeDiscountPaise,
+    userId: payment.user.id,
+    appointmentType: a?.appointmentType ?? null,
+    discountCode: payment.discountCode,
+    creditsPaise,
+    validHeldCreditsPaise,
+    now,
+  });
 
   return toPlain({
     paymentId: payment.id,
@@ -93,6 +263,8 @@ export async function readPendingCheckout(args: {
     taxPaise: payment.taxAmount,
     creditsPaise,
     totalPaise: payment.amount,
+    currentTotalPaise,
+    quoteStaleReason,
     expiresAt: payment.expiresAt,
     appointmentId: payment.appointmentId,
     consulteeProfileId: payment.user.consulteeProfile?.id ?? null,
