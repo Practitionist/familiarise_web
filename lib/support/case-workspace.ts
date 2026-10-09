@@ -330,6 +330,7 @@ async function readTicketWorkspace(
       category: true,
       issueType: true,
       createdAt: true,
+      updatedAt: true,
       paymentId: true,
       consultationId: true,
       ...SLA_SELECT,
@@ -362,7 +363,6 @@ async function readTicketWorkspace(
     internal: false,
     at: t.createdAt.toISOString(),
   };
-  // Thread transcript holds public turns; append internal notes and unmirrored user ticket replies.
   const timeline = thread
     ? [
         ...messageItems(thread.messages),
@@ -405,6 +405,8 @@ async function readTicketWorkspace(
     ackDueAt: iso(t.ackDueAt),
     resolutionDueAt: iso(t.resolutionDueAt),
     createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    handoffSummary: thread ? t.description || null : null,
     person: {
       id: t.user.id,
       name: t.user.name,
@@ -442,6 +444,7 @@ async function readThreadWorkspace(
       activeChannel: true,
       category: true,
       createdAt: true,
+      updatedAt: true,
       supportTicketId: true,
       user: { select: PERSON_SELECT },
       organization: { select: { id: true, name: true } },
@@ -483,6 +486,8 @@ async function readThreadWorkspace(
     ackDueAt: null,
     resolutionDueAt: null,
     createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    handoffSummary: null,
     person: {
       id: t.user.id,
       name: t.user.name,

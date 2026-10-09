@@ -8,6 +8,8 @@
  * carry it (see lib/api/support-http.ts).
  */
 
+import { formatRetryAfter } from "@/lib/labels/auth-errors";
+
 const FRIENDLY_COPY: Record<string, string> = {
   UNAUTHORIZED: "Please sign in and try again.",
   INVALID_ID:
@@ -27,6 +29,7 @@ export interface SupportErrorPayload {
   code?: string;
   error?: string;
   detail?: unknown;
+  retryAfterSeconds?: number;
 }
 
 /** Parse a failed response into the envelope (never throws on bad JSON). */
@@ -45,6 +48,13 @@ export function describeSupportError(
   fallback = "Something went wrong. Please try again.",
 ): string {
   const code = payload?.code;
+  if (
+    code === "RATE_LIMITED" &&
+    typeof payload?.retryAfterSeconds === "number" &&
+    payload.retryAfterSeconds > 0
+  ) {
+    return `You're doing that a bit too quickly — try again in ${formatRetryAfter(payload.retryAfterSeconds)}.`;
+  }
   if (code && FRIENDLY_COPY[code]) return FRIENDLY_COPY[code];
   // Legacy/unknown paths: the server's `error` is still user-phrased.
   return payload?.error ?? fallback;

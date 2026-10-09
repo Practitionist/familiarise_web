@@ -114,7 +114,9 @@ export function parseInboxFilters(
   const requestedSort = oneOf(INBOX_SORTS, get("sort"));
   return {
     view,
-    sort: requestedSort ?? (view === "sla-at-risk" ? "sla" : "activity"),
+    sort:
+      requestedSort ??
+      (view === "needs-reply" || view === "sla-at-risk" ? "sla" : "activity"),
     scope: oneOf(INBOX_SCOPES, get("scope")),
     status: oneOf(INBOX_STATUSES, get("status")),
     priority: oneOf(PRIORITIES, get("priority")),
@@ -289,14 +291,6 @@ export const CASE_ORDER_BY = [
   { lastMessageAt: { sort: "desc", nulls: "last" } },
   { createdAt: "desc" },
   { id: "desc" },
-] as const;
-
-export const SLA_ORDER_BY = [
-  { acknowledgedAt: { sort: "asc", nulls: "first" } },
-  { ackDueAt: { sort: "asc", nulls: "last" } },
-  { resolutionDueAt: { sort: "asc", nulls: "last" } },
-  { createdAt: "asc" },
-  { id: "asc" },
 ] as const;
 
 /** Mirrors CASE_ORDER_BY: latest activity first, never-active rows last. */

@@ -21,11 +21,17 @@ import {
   applyTransactionalEffects,
   applyBestEffortEffects,
   persistActionSideEffects,
+  reportOutcomeCopy,
+  reporterIsNotifiedExpert,
   type ModerationReportRef,
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
 import * as Sentry from "@sentry/nextjs";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
+import { goHref } from "@/lib/dashboard/go";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { sendModerationReportOutcomeEmail } from "@/lib/email/senders/people";
+import { formatReportReference } from "@/lib/moderation/report-reference";
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -179,7 +185,10 @@ function applyModerationTransaction(
           },
         });
 
-        const transactional = await applyTransactionalEffects(tx, input);
+        const transactional = await applyTransactionalEffects(tx, {
+          ...input,
+          actionId: action.id,
+        });
 
         const updatedReport = await tx.moderationReport.findUniqueOrThrow({
           where: { id: reportId },
@@ -251,6 +260,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         id: true,
         type: true,
         status: true,
+        reportedById: true,
         targetUserId: true,
         reviewId: true,
         streamMessageId: true,
@@ -292,6 +302,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       report: {
         id: report.id,
         type: report.type,
+        reportedById: report.reportedById,
         targetUserId: report.targetUserId,
         reviewId: report.reviewId,
         feedbackId,
@@ -311,19 +322,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         input,
       );
 
-    // #705 — the moderation path never invalidated the public caches, so a
-    // removed review kept rendering on the landing page and explore for up to
-    // an hour. Purged AFTER the transaction commits: purging before would
-    // repopulate the cache from rows a rollback then restores.
     if (transactional.reviewRemovedConsultantProfileId) {
       purgeReviewSurfaces(transactional.reviewRemovedConsultantProfileId);
     }
 
-    // Refunds, Stream revocation, and notifications are best-effort — each
-    // step's outcome (including failures) is persisted for staff visibility.
     let sideEffects: SideEffectSummary = transactional;
     try {
-      sideEffects = await applyBestEffortEffects(input, transactional);
+      sideEffects = await applyBestEffortEffects(
+        { ...input, actionId: action.id },
+        transactional,
+      );
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -331,6 +339,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
     await persistActionSideEffects(action.id, sideEffects);
+
+    if (
+      report.reportedById &&
+      !reporterIsNotifiedExpert(input, transactional)
+    ) {
+      await sendModerationReportOutcomeEmail(
+        {
+          reporterUserId: report.reportedById,
+          reportId: report.id,
+          reference: formatReportReference(report.id),
+          ...reportOutcomeCopy(actionType),
+          dashboardUrl: goHref("auto", "feedbacks"),
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+    }
 
     return NextResponse.json({
       action,

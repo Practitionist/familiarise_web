@@ -8,6 +8,7 @@ import { ModerationReportStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { readReviewReportContext } from "@/lib/moderation/review-context";
 import * as Sentry from "@sentry/nextjs";
 
 const patchReportSchema = z.object({
@@ -15,22 +16,18 @@ const patchReportSchema = z.object({
     .enum([
       "PENDING",
       "UNDER_REVIEW",
-      "DISMISSED",
-      "ACTION_TAKEN",
       "ESCALATED",
     ] as const satisfies readonly ModerationReportStatus[])
     .optional(),
   assignedToId: z.string().nullable().optional(),
-  expectedStatus: z
-    .enum([
-      "PENDING",
-      "UNDER_REVIEW",
-      "DISMISSED",
-      "ACTION_TAKEN",
-      "ESCALATED",
-    ] as const satisfies readonly ModerationReportStatus[])
-    .optional(),
-  expectedAssignedToId: z.string().nullable().optional(),
+  expectedStatus: z.enum([
+    "PENDING",
+    "UNDER_REVIEW",
+    "DISMISSED",
+    "ACTION_TAKEN",
+    "ESCALATED",
+  ] as const satisfies readonly ModerationReportStatus[]),
+  expectedAssignedToId: z.string().nullable(),
 });
 interface RouteParams {
   params: Promise<{ reportId: string }>;
@@ -75,6 +72,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             id: true,
             rating: true,
             reviewDescription: true,
+            appointmentId: true,
             consultantProfile: {
               select: { user: { select: { name: true } } },
             },
@@ -95,7 +93,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ report });
+    const bookingContext = report.review?.appointmentId
+      ? await readReviewReportContext(report.review.appointmentId)
+      : null;
+
+    return NextResponse.json({
+      report: {
+        ...report,
+        bookingContext,
+      },
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -111,7 +118,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
 function buildReportPatchData(
   validatedData: z.infer<typeof patchReportSchema>,
-  userId: string,
 ): {
   status?: ModerationReportStatus;
   assignedToId?: string | null;
@@ -127,19 +133,8 @@ function buildReportPatchData(
 
   if (validatedData.status !== undefined) {
     updateData.status = validatedData.status;
-    if (
-      validatedData.status === "DISMISSED" ||
-      validatedData.status === "ACTION_TAKEN"
-    ) {
-      updateData.resolvedAt = new Date();
-      updateData.resolvedBy = userId;
-    } else if (
-      validatedData.status === "PENDING" ||
-      validatedData.status === "UNDER_REVIEW"
-    ) {
-      updateData.resolvedAt = null;
-      updateData.resolvedBy = null;
-    }
+    updateData.resolvedAt = null;
+    updateData.resolvedBy = null;
   }
 
   if (validatedData.assignedToId !== undefined) {
@@ -157,7 +152,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const { reportId } = await params;
     const rawBody = await req.json().catch(() => null);
@@ -200,18 +194,23 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const updateData = buildReportPatchData(parsed.data, session.user.id);
-    const expectedStatus = parsed.data.expectedStatus ?? existing.status;
-    const expectedAssignedToId =
-      parsed.data.expectedAssignedToId !== undefined
-        ? parsed.data.expectedAssignedToId
-        : existing.assignedToId;
+    if (existing.status === "DISMISSED" || existing.status === "ACTION_TAKEN") {
+      return NextResponse.json(
+        { error: "This report is already resolved" },
+        { status: 409 },
+      );
+    }
 
+    const updateData = buildReportPatchData(parsed.data);
+    // Resolved reports change only through the audited action route.
     const updated = await prisma.moderationReport.updateMany({
       where: {
         id: reportId,
-        status: expectedStatus,
-        assignedToId: expectedAssignedToId,
+        assignedToId: parsed.data.expectedAssignedToId,
+        AND: [
+          { status: parsed.data.expectedStatus },
+          { status: { notIn: ["DISMISSED", "ACTION_TAKEN"] } },
+        ],
       },
       data: updateData,
     });

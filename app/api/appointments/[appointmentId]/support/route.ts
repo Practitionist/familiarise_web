@@ -76,8 +76,8 @@ export async function GET(
     // #support-hub — the intents the SERVER offers for this appointment
     // (stage/provider/org gating is server truth; the sheet renders exactly
     // this list instead of a hardcoded menu).
-    let intents: { category: string; title: string }[] = [];
-    // #1527 — the booking card on the request page, from the same context.
+    let intents: { category: string; title: string; escalates?: boolean }[] =
+      [];
     let booking: {
       title: string | null;
       kind: string;
@@ -87,9 +87,7 @@ export async function GET(
     } | null = null;
     try {
       // Deliberately UNSCOPED: this context decides which intents to OFFER,
-      // so it must describe the current-or-next session. Scoping it to the
-      // thread's stored category would let a resolved no-show thread keep
-      // gating the menu on a session that finished weeks ago.
+      // so it must describe the current-or-next session.
       const ctx = await buildSupportContext(
         thread?.id ?? "unstarted",
         appointmentId,
@@ -100,22 +98,26 @@ export async function GET(
           title: ctx.planTitle,
           kind: ctx.appointmentType,
           startsAt: ctx.startsAt,
-          // An org party is not the payer (ADR 20): no payment handle.
+          // An org party is not the payer: no payment handle.
           paymentId: auth.isOrgParty ? null : ctx.paymentId,
           organizationId: ctx.organizationId,
         };
-        // An org party sees only the intents the POST will accept from it; the
-        // sheet used to offer "Recording access" to an operator and then fail.
+        // An org party sees only the intents the POST will accept from it.
         intents = flowsForContext(ctx)
           .filter(
             (f) => !auth.isOrgParty || ORG_PARTY_CATEGORIES.has(f.category),
           )
           .map((f) => ({ category: f.category, title: f.title }));
+        if (!auth.isOrgParty) {
+          intents.push({
+            category: "OTHER",
+            title: "Talk to a person",
+            escalates: true,
+          });
+        }
       }
     } catch (cause) {
-      // Intent resolution is an optimization — the sheet falls back to its
-      // static list and the POST path still gates authoritatively. But a
-      // persistent regression here would be invisible, so record it.
+      // Intent resolution is an optimization; the POST still gates authoritatively.
       Sentry.captureException(cause, {
         tags: { subsystem: "support", code: "INTENTS_DEGRADED" },
         extra: { route: SUPPORT_ROUTE, appointmentId },

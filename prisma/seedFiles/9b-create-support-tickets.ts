@@ -216,7 +216,9 @@ function buildPlannedSeedResponses(
   const numResponses =
     status === "OPEN"
       ? faker.number.int({ min: 0, max: 2 })
-      : faker.number.int({ min: 1, max: 5 });
+      : status === "ON_HOLD"
+        ? faker.helpers.arrayElement([1, 3])
+        : faker.number.int({ min: 1, max: 5 });
 
   const responses: {
     message: string;
@@ -235,6 +237,8 @@ function buildPlannedSeedResponses(
     let message: string;
     if (!isStaff) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
+    } else if (status === "ON_HOLD" && j === numResponses - 1) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
     } else if (j === 0) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
     } else if (status === "RESOLVED" || status === "CLOSED") {
@@ -258,6 +262,14 @@ function buildPlannedSeedResponses(
 
   return { responses, lastResponseDate };
 }
+
+const GUARANTEED_INITIAL_STATUSES: SupportTicketStatus[] = [
+  "OPEN",
+  "ON_HOLD",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+];
 
 export async function createSupportTickets(
   users: UserWithProfiles[],
@@ -286,6 +298,23 @@ export async function createSupportTickets(
   let responsesCreated = 0;
   const highestSeqByYear = new Map<number, number>();
 
+  // Continue from the live counter so seeded references never collide with real ones.
+  const counterStartByYear = new Map<number, number>();
+  const cursorByYear = new Map<number, number>();
+  const nextSeedSeq = async (year: number): Promise<number> => {
+    if (!counterStartByYear.has(year)) {
+      const counter = await prisma.supportTicketCounter.findUnique({
+        where: { year },
+        select: { nextSeq: true },
+      });
+      counterStartByYear.set(year, counter?.nextSeq ?? 1);
+      cursorByYear.set(year, counter?.nextSeq ?? 1);
+    }
+    const seq = cursorByYear.get(year) ?? 1;
+    cursorByYear.set(year, seq + 1);
+    return seq;
+  };
+
   for (let i = 0; i < NUM_TICKETS; i++) {
     try {
       const creator = faker.helpers.arrayElement(ticketCreators);
@@ -295,7 +324,9 @@ export async function createSupportTickets(
       const priority: SupportPriority =
         i === 0 ? "URGENT" : getWeightedPriority();
       const status: SupportTicketStatus =
-        i === 0 ? "OPEN" : getWeightedStatus();
+        i < GUARANTEED_INITIAL_STATUSES.length
+          ? GUARANTEED_INITIAL_STATUSES[i]
+          : getWeightedStatus();
       const rawDescription = faker.helpers.arrayElement(templates.descriptions);
       const description =
         priority === "URGENT"
@@ -304,7 +335,7 @@ export async function createSupportTickets(
 
       const ticketDate = faker.date.recent({ days: 30 });
       const year = ticketDate.getUTCFullYear();
-      const seq = i + 1;
+      const seq = await nextSeedSeq(year);
       const referenceNumber = formatTicketReference(year, seq);
       const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
         priority,
@@ -379,10 +410,11 @@ export async function createSupportTickets(
   }
 
   for (const [year, highestSeq] of highestSeqByYear) {
+    const nextSeq = Math.max(counterStartByYear.get(year) ?? 1, highestSeq + 1);
     await prisma.supportTicketCounter.upsert({
       where: { year },
-      create: { year, nextSeq: highestSeq + 1 },
-      update: { nextSeq: highestSeq + 1 },
+      create: { year, nextSeq },
+      update: { nextSeq },
     });
   }
 

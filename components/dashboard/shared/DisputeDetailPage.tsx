@@ -431,6 +431,16 @@ export function DisputeDetailPage({
                 </pre>
               </div>
             </div>
+          ) : dispute.evidenceSubmittedAt ? (
+            // Evidence is withheld from viewers without disputes.manage; its submission is not.
+            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
+              <FileText className="h-12 w-12 mb-4 text-zinc-300" />
+              <p className="font-medium">
+                Evidence was submitted on{" "}
+                {formatDate(dispute.evidenceSubmittedAt)}. Only admins can view
+                it.
+              </p>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
               <FileText className="h-12 w-12 mb-4 text-zinc-300" />

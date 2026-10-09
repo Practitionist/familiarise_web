@@ -32,13 +32,17 @@ export const NOVU_WORKFLOWS = {
 
   // Support
   SUPPORT_TICKET_CREATED: "support-ticket-created",
+  SUPPORT_TICKET_RECEIVED: "support-ticket-received",
   SUPPORT_TICKET_ACTIVITY: "support-ticket-activity",
   SUPPORT_TICKET_UPDATE: "support-ticket-update",
   SUPPORT_TICKET_RESPONSE: "support-ticket-response",
 
   // Feedback & Reviews
   FEEDBACK_RECEIVED: "feedback-received",
+  MODERATION_REPORT_OUTCOME: "moderation-report-outcome",
+  PLATFORM_FEEDBACK_UPDATE: "platform-feedback-update",
   NEW_REVIEW_RECEIVED: "new-review-received",
+  REVIEW_EXCLUDED_FROM_RATING: "review-excluded-from-rating",
 
   // Trials
   TRIAL_SESSION_REQUESTED: "trial-session-requested",
@@ -65,6 +69,7 @@ export const NOVU_WORKFLOWS = {
 
   // Moderation
   MODERATION_WARNING: "moderation-warning",
+  CONTENT_REMOVED_NOTICE: "content-removed-notice",
   ACCOUNT_SUSPENDED: "account-suspended",
   ACCOUNT_BANNED: "account-banned",
 
@@ -282,6 +287,30 @@ export type SupportTicketPayload = NotificationScope & {
   respondedBy?: string;
   userName?: string;
   activity?: "replied" | "reopened";
+  slaWindow?: string;
+  dashboardUrl: string;
+};
+
+export type SupportTicketReceivedPayload = NotificationScope & {
+  ticketId: string;
+  reference?: string;
+  ticketTitle: string;
+  slaWindow?: string;
+  dashboardUrl: string;
+};
+
+export type ModerationReportOutcomePayload = {
+  reportId: string;
+  reference: string;
+  outcome: string;
+  reason?: string;
+  dashboardUrl: string;
+};
+
+export type PlatformFeedbackUpdatePayload = {
+  feedbackId: string;
+  status: string;
+  message?: string;
   dashboardUrl: string;
 };
 

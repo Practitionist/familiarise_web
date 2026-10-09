@@ -32,7 +32,8 @@ export const CreateSupportTicketSchema = z.object({
 
 export const UpdateSupportTicketSchema = z.object({
   status: SupportTicketStatusEnum.optional(),
-  expectedStatus: SupportTicketStatusEnum.optional(),
+  /** The `updatedAt` the caller rendered; a stale tab answers 409. */
+  expectedUpdatedAt: z.string().datetime(),
   priority: SupportPriorityEnum.optional(),
   assignedToId: z.string().nullable().optional(),
   refundId: z.string().optional(),
@@ -50,6 +51,10 @@ export const CreateSupportResponseSchema = z.object({
 // lookup is the real validator — a format check here only produced 400s that
 // looked like data bugs. Length-bounded so garbage can't reach Prisma.
 // ---------------------------------------------------------------------------
+
+export const DeleteSupportAttachmentSchema = z.object({
+  attachmentId: z.string().min(1).max(64),
+});
 
 export const AppointmentIdParams = z.object({
   appointmentId: z.string().min(1).max(64),

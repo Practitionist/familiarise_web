@@ -7,7 +7,7 @@ import {
   sanitisePublicReviews,
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
-import { notifyNewReview } from "@/lib/novu";
+import { attemptTrigger, notifyNewReview } from "@/lib/novu";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
@@ -37,11 +37,13 @@ async function recordReviewRevisionIfChanged(
   nextRating: number,
   nextDescription: string | null | undefined,
 ): Promise<void> {
+  // Only a changed opinion is an edit; an identical re-submit is idempotent.
   const textChanged =
     existing.rating !== nextRating ||
     (existing.reviewDescription ?? null) !== (nextDescription ?? null);
   if (!textChanged) return;
 
+  // Allocated by an atomic increment (row lock), never from the earlier read.
   const bumped = await tx.consultantReview.update({
     where: { id: existing.id },
     data: { revisionNo: { increment: 1 }, editedAt: new Date() },
@@ -242,6 +244,7 @@ export async function POST(req: NextRequest) {
           // documented order. Only what the notification below reads.
           const select = {
             ...publicReviewSelect,
+            updatedAt: true,
             consultantProfile: {
               select: { userId: true, user: { select: { name: true } } },
             },
@@ -304,33 +307,46 @@ export async function POST(req: NextRequest) {
 
           await recomputeConsultantRating(tx, created.consultantProfileId);
 
-          // A revived withdrawal is news to the consultant just as a first
-          // review is: the profile regains a review they were not told about.
-          return { review: created, isNew: !existing || withdrawnByAuthor };
+          // Only a new or revived review is news; an edit must not re-notify.
+          const isNew = !existing || withdrawnByAuthor;
+          let stagedBell = null;
+          if (isNew) {
+            // An anonymous reviewer's name is never sent to the consultant.
+            const reviewerName = created.isAnonymous
+              ? "A verified client"
+              : created.consulteeProfile?.user?.name || "User";
+            const reviewsInboxHref = goHref("expert", "reviews");
+            const triggerResult = await notifyNewReview(
+              created.consultantProfile.userId,
+              {
+                reviewerName,
+                rating: created.rating,
+                comment: created.reviewDescription || undefined,
+                planTitle: reviewable.title,
+                dashboardUrl: reviewsInboxHref,
+              },
+              `review-published:${created.id}:${created.updatedAt.getTime()}`,
+              { tx },
+            );
+            stagedBell = triggerResult.staged ?? null;
+          }
+
+          return { review: created, isNew, stagedBell };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    const { review: newReview, isNew } = writeResult;
+    const { review: newReview, isNew, stagedBell } = writeResult;
 
-    // Only a NEW (or revived) review is news; an edit must not re-notify.
     if (isNew) {
-      // The reviewer withheld their name from the public page; sending it to
-      // the consultant in a notification would hand back exactly what the
-      // flag exists to withhold, and to the one person it is kept from.
+      if (stagedBell) {
+        await attemptTrigger(stagedBell);
+      }
       const reviewerName = newReview.isAnonymous
         ? "A verified client"
         : newReview.consulteeProfile?.user?.name || "User";
       const reviewsInboxHref = goHref("expert", "reviews");
-      await notifyNewReview(newReview.consultantProfile.userId, {
-        reviewerName,
-        rating: newReview.rating,
-        comment: newReview.reviewDescription || undefined,
-        planTitle: reviewable.title,
-        dashboardUrl: reviewsInboxHref,
-      });
-      // #1653 — the email twin of the bell; the sender never throws.
       await sendNewReviewEmail(
         {
           reviewId: newReview.id,
@@ -344,14 +360,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Reviews are the landing page's testimonials and they move the expert's
-    // denormalized rating, which orders the directory — both surfaces are stale
-    // until purged, and the landing page's window is an hour.
     purgeReviewSurfaces(newReview.consultantProfileId);
 
-    // The public shape, exactly as a reader would get it: a removed reply is
-    // stripped and the consultant's user id (notification-only) does not travel.
-    const { consultantProfile, ...publicRow } = newReview;
+    const {
+      consultantProfile,
+      updatedAt: _updatedAt,
+      ...publicRow
+    } = newReview;
     return NextResponse.json(
       sanitisePublicReview({
         ...publicRow,

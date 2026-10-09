@@ -25,6 +25,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import { caseStatus, ticketPriority } from "@/lib/labels/backoffice-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { CASE_TOPIC_LABEL, type CaseTopic } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
@@ -33,6 +34,7 @@ import type {
   ArticleLink,
   CaseWorkspace as CaseData,
 } from "@/types/support-case";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 import { bookingHref, CaseDetails } from "./CaseDetails";
 import { CaseConversation, type ComposerMode } from "./CaseConversation";
@@ -156,6 +158,7 @@ export function CaseWorkspace({
       return ((await res.json()) as { data: CaseData }).data;
     },
     // The customer replies from their side; nothing pushes that here.
+    refetchIntervalInBackground: false,
     refetchInterval: (q) =>
       q.state.data && SETTLED.has(q.state.data.status) ? false : 30_000,
   });
@@ -329,6 +332,38 @@ export function CaseWorkspace({
             </Button>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>
+            <span className="font-medium text-foreground">
+              {data.person.name ?? "Unknown user"}
+            </span>
+            {data.person.email ? ` (${data.person.email})` : ""}
+          </span>
+          {data.booking && (
+            <span>
+              <span className="font-medium text-foreground">
+                {data.booking.title}
+              </span>
+              {data.booking.firstStartsAt
+                ? ` · ${when(data.booking.firstStartsAt)}`
+                : ""}
+            </span>
+          )}
+          {data.payment && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="font-medium text-foreground">
+                {formatCurrencyAmount(
+                  data.payment.amount,
+                  data.payment.currency,
+                )}
+              </span>
+              <StatusBadge
+                {...paymentStatusBadge(data.payment.status)}
+                size="sm"
+              />
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <StatusBadge {...caseStatus(data.kind, data.status)} />
           {!isTicket && data.channel !== "HUMAN" && (
@@ -339,6 +374,9 @@ export function CaseWorkspace({
             />
           )}
           {sla && <StatusBadge {...sla} variant="dot" />}
+          {data.person.callbackRequested && (
+            <StatusBadge label="Callback" tone="critical" />
+          )}
           {data.ackDueAt &&
             !data.sla?.ackBreached &&
             data.sla?.msToAckDue !== null && (

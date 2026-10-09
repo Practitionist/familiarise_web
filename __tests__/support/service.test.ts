@@ -26,7 +26,7 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
       findUniqueOrThrow: jest.fn(),
     },
-    supportMessage: { create: jest.fn() },
+    supportMessage: { create: jest.fn(), findMany: jest.fn() },
     supportTicket: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -55,7 +55,7 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
     findUniqueOrThrow: jest.Mock;
   };
-  supportMessage: { create: jest.Mock };
+  supportMessage: { create: jest.Mock; findMany: jest.Mock };
   supportTicket: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -117,6 +117,7 @@ beforeEach(() => {
       : (arg as (tx: unknown) => unknown)(mockPrisma),
   );
   mockPrisma.supportMessage.create.mockResolvedValue({});
+  mockPrisma.supportMessage.findMany.mockResolvedValue([]);
   // #705 — the thread row is also the message-sequence allocator, so every
   // write path reads `messageSeq` back off this update.
   mockPrisma.appointmentSupportThread.update.mockResolvedValue({

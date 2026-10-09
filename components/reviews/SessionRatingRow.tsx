@@ -52,6 +52,7 @@ export function SessionRatingRow({
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState(existingComment);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [forceRateOpen, setForceRateOpen] = useState(false);
   const [ratingCause, setRatingCause] = useState<RatingCause | null>(
     existingCause,
   );
@@ -59,6 +60,7 @@ export function SessionRatingRow({
   useEffect(() => {
     setRating(existingRating ?? 0);
     setRatingCause(existingCause);
+    setForceRateOpen(false);
   }, [existingRating, existingCause, occurrenceId]);
 
   useEffect(() => {
@@ -131,6 +133,21 @@ export function SessionRatingRow({
           {existingRating}
         </span>
       </div>
+    );
+  }
+
+  if (feedback.supportOpen && rating === 0 && !forceRateOpen) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setForceRateOpen(true);
+        }}
+        className="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+      >
+        Support request in progress · Rate anyway
+      </button>
     );
   }
 

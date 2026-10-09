@@ -351,8 +351,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         const updated = await tx.supportTicket.updateMany({
           where: {
             id: ticketId,
-            status: validatedData.expectedStatus ?? existing.status,
-            awaitingUserSince: existing.awaitingUserSince,
+            updatedAt: new Date(validatedData.expectedUpdatedAt),
+            // Priority and assignee edits never land on a closed ticket.
+            ...(validatedData.status ? {} : { status: { not: "CLOSED" } }),
           },
           data: updateData,
         });

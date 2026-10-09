@@ -43,19 +43,12 @@ export interface SessionFeedbackState {
   ratingCauses: Record<string, RatingCause>;
   /** Slots this viewer may rate at all — attended, or offline. */
   rateable: Set<string>;
+  /** Whether an unresolved support thread is active on this appointment. */
+  supportOpen: boolean;
   /** Persist a session rating and optional private comment. */
   submitFeedback: (input: SubmitFeedbackInput) => Promise<void>;
   /** True while a feedback submission is in flight. */
   isSubmitting: boolean;
-  /**
-   * True when the read failed.
-   *
-   * The query throws so React Query records the failure and retries, but the
-   * aggregation below reads optional data — so a failed read contributed no
-   * ratings and no rateable slots, which renders identically to "you have rated
-   * nothing here and may rate nothing here". A transient 500 would tell somebody
-   * their rating never happened.
-   */
   isError: boolean;
   /** Re-run the read. */
   retry: () => void;
@@ -74,24 +67,18 @@ export function useSessionFeedback(
       comments: Record<string, string>;
       ratingCauses: Record<string, RatingCause>;
       rateable: string[];
+      supportOpen: boolean;
     }> => {
       const res = await fetch(
         `/api/appointments/${bookingAppointmentId}/feedback?scope=booking`,
       );
-      // A failed read is NOT "you have rated nothing". Returning an empty result
-      // made React Query record success, skip its retry and cache the emptiness,
-      // so a 500 rendered as unrated stars on a call the user had already rated.
       if (!res.ok) await throwSupportError(res, "session feedback load");
       const json: {
         data?: SlotFeedback[];
         rateableSlotIds?: string[];
+        supportOpen?: boolean;
       } = await res.json();
       const rows = json.data ?? [];
-      // A provider's read returns EVERY attendee's rating, so a group call yields
-      // several rows for one slot. `Object.fromEntries` kept whichever came last —
-      // the consultant saw one arbitrary attendee's score and read it as the
-      // session's. Averaged instead, which is also how that call contributes to
-      // the group score.
       const bySlot = new Map<string, { total: number; n: number }>();
       const comments: Record<string, string> = {};
       const ratingCauses: Record<string, RatingCause> = {};
@@ -119,6 +106,7 @@ export function useSessionFeedback(
         comments,
         ratingCauses,
         rateable: json.rateableSlotIds ?? [],
+        supportOpen: Boolean(json.supportOpen),
       };
     },
   });
@@ -158,6 +146,7 @@ export function useSessionFeedback(
     comments: query.data?.comments ?? {},
     ratingCauses: query.data?.ratingCauses ?? {},
     rateable: new Set(query.data?.rateable ?? []),
+    supportOpen: query.data?.supportOpen ?? false,
     submitFeedback,
     isSubmitting,
     isError: query.isError,
