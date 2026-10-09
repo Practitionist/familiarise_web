@@ -21,7 +21,7 @@ import {
 // The leaf module, NOT `@/lib/supabase` — that one opens with
 // `import "server-only"`, which throws outside Next's `react-server` condition
 // and killed every cron that reached it (#1270).
-import { supabase, supabaseAdmin } from "@/lib/supabase-storage-core";
+import { adminStorage, removeObjects } from "@/lib/supabase-storage-core";
 
 export const RECORDINGS_BUCKET = "recordings";
 
@@ -73,9 +73,6 @@ export const RECORDING_MIME_TYPES = [
   // Stream sometimes serves recordings without a specific video content type.
   "application/octet-stream",
 ];
-
-/** Admin client bypasses RLS; the bucket is private so playback needs signing. */
-export const storageClient = supabaseAdmin || supabase;
 
 /**
  * Is this recording durably in our custody, rather than on Stream's clock?
@@ -138,16 +135,21 @@ export async function generateSignedUrl(
     }
   }
 
-  const { data, error } = await storageClient.storage
-    .from(RECORDINGS_BUCKET)
-    .createSignedUrl(storagePath, expiresIn);
-
-  if (error || !data?.signedUrl) {
+  try {
+    const { data, error } = await adminStorage()
+      .from(RECORDINGS_BUCKET)
+      .createSignedUrl(storagePath, expiresIn);
+    if (error || !data?.signedUrl) {
+      streamLogger.error("Failed to generate signed URL", error, {
+        storagePath,
+      });
+      return null;
+    }
+    return data.signedUrl;
+  } catch (error) {
     streamLogger.error("Failed to generate signed URL", error, { storagePath });
     return null;
   }
-
-  return data.signedUrl;
 }
 
 /**
@@ -208,10 +210,7 @@ export async function deleteRecordingObject(
         return { success: false, error: r2Result.error };
       }
       if (r2Result.notFound) {
-        await storageClient?.storage
-          ?.from(bucket)
-          ?.remove([storagePath])
-          .catch(() => undefined);
+        await removeObjects(bucket, [storagePath]);
       }
       return { success: true };
     } catch (error) {
@@ -224,10 +223,8 @@ export async function deleteRecordingObject(
     }
   }
 
-  const { error } = await storageClient.storage
-    .from(bucket)
-    .remove([storagePath]);
-  if (error) {
+  if (!(await removeObjects(bucket, [storagePath]))) {
+    const error = new Error("Recording object was not removed from storage");
     streamLogger.error("Failed to delete recording object", error, {
       path: storagePath,
     });

@@ -139,7 +139,12 @@ export async function DELETE(
     if (!guard.ok) return guard.response;
 
 
-    await deleteRecordingPreviewAssets(recordingId);
+    if (!(await deleteRecordingPreviewAssets(recordingId))) {
+      return NextResponse.json(
+        { error: "Could not delete the previews. Please try again." },
+        { status: 502 },
+      );
+    }
     const updated = await prisma.recording.update({
       where: { id: recordingId },
       data: {

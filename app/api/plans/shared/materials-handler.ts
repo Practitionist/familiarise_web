@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -589,10 +590,12 @@ export async function handleDeleteMaterial(
     const storageDeleted = await deletePlanMaterial(access.storagePath).catch(
       () => false,
     );
+    // The row is already gone; the orphan sweep removes the leftover object.
     if (!storageDeleted) {
-      console.warn("Plan material storage delete failed", {
-        materialId,
-        storagePath: access.storagePath,
+      reportSentryError(new Error("Plan material storage delete failed"), {
+        subsystem: "storage",
+        op: "plan-material-delete",
+        extra: { materialId },
       });
     }
 
