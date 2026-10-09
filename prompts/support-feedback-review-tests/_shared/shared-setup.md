@@ -151,7 +151,7 @@ Limits are keyed per route and per user, not shared across routes. Read the limi
 
 Planning rules:
 
-1. Plan at least three consultee accounts for the whole run so that one exhausted route key does not block a later lane. Spend each account's tokens per route deliberately and note the spend per route in the report.
+1. Plan at least four consultee accounts for the whole run (Customers A, B and C plus the race customer) so that one exhausted route key does not block a later lane. Spend each account's tokens per route deliberately and note the spend per route in the report.
 2. A deduplicated platform-escalation replay still burns a token of its own key.
 3. Run every limiter-exhaustion case last in its lane, because exhaustion locks that route for the account for up to an hour.
 4. Never sign in more than needed; reuse jars and the single browser session.
@@ -193,7 +193,7 @@ Mark `[PR]` if the behaviour is introduced or changed by the diff and `[PRE]` if
 1. One page for the whole run. Use a second tab only when a case truly needs two sessions at once, and close extras at the end.
 2. Desktop viewport.
 3. Prefer `take_snapshot` (the accessibility tree) over screenshots. Take a screenshot only as evidence for a FAIL or PARTIAL and save it to `{AUDIT_DIR}/shots/L<n>-<case>.png`.
-4. If the chrome profile is locked, fall back to `puppeteer-core` with the system Chrome in headless mode and a throwaway `userDataDir` such as `/tmp/fw-qa-<email>`.
+4. If the chrome profile is locked, fall back to `puppeteer-core` with the system Chrome in headless mode and a throwaway `userDataDir` under `/tmp/qa-{PR_NUMBER}/chrome-profile`, so lane 06 removes it with the other local files.
 5. Run `list_console_messages` and `list_network_requests` after each state change that matters.
 
 ---

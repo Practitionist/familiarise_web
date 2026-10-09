@@ -8,7 +8,7 @@ Prove the environment can support the run before any lane spends a rate-limit to
 
 ## Personas and accounts
 
-All seed accounts come from the roster `docs/team/mock-credentials.md` at the repository root, but the personas are picked by query, not by name: one admin, one staff operator, at least three consultees (role CONSULTEE, onboarding completed, with a rateable held occurrence whose outcome is not `NOBODY_JOINED`), one or two consultants with published scores, and the owner of an organisation that has appointments. Some roster accounts are not onboarded, and a CONSULTANT account can carry a consultee profile, so check role and onboarding for every pick. Sign in with curl jars (shared setup section 4). The sign-in limiter allows 30 per 15 minutes per IP, so sign each persona in exactly once.
+All seed accounts come from the roster `docs/team/mock-credentials.md` at the repository root, but the personas are picked by query, not by name: one admin, one staff operator, at least four consultees (Customers A, B and C plus the race customer; role CONSULTEE, onboarding completed, each with a rateable held occurrence whose outcome is not `NOBODY_JOINED`), one or two consultants with published scores, and the owner of an organisation that has appointments. Some roster accounts are not onboarded, and a CONSULTANT account can carry a consultee profile, so check role and onboarding for every pick. Sign in with curl jars (shared setup section 4). The sign-in limiter allows 30 per 15 minutes per IP, so sign each persona in exactly once.
 
 ## Preconditions
 
@@ -60,7 +60,11 @@ order by table_name, ordinal_position;
 select tablename, indexname, indexdef from pg_indexes where schemaname = 'public' and tablename in (<same list>);
 select conrelid::regclass as tbl, conname, contype, confdeltype, pg_get_constraintdef(oid)
 from pg_constraint where connamespace = 'public'::regnamespace and conrelid::regclass::text in (<quoted list>);
+select tgrelid::regclass as tbl, tgname, tgenabled, pg_get_triggerdef(oid)
+from pg_trigger where not tgisinternal and tgname in (<every trigger name in prisma/sql/*.sql>);
 ```
+
+   Every sidecar trigger must be present with `tgenabled = 'O'` and a definition matching its sidecar file; a missing or disabled trigger is drift.
 
 5. `confdeltype` values: `a` no action, `r` restrict, `c` cascade, `n` set null. A foreign key that is `c` where the schema says `Restrict` is drift with data-loss implications; report it.
 6. Optionally run the read-only `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` when a `prisma` binary is available in the checkout. It always prints `DropIndex` lines for the sidecar unique indexes defined in `prisma/sql/check-constraints.sql` (`appointment_feedback_level_key`, `consultant_earnings_occurrence_key`, `organization_earnings_split_key`); these are expected and are not drift. Never run `db push`.
