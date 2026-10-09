@@ -171,6 +171,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "verification-status-changed": "account",
   "new-consultant-application": "account",
   "moderation-warning": "account",
+  "content-removed-notice": "account",
   "account-suspended": "account",
   "account-banned": "account",
 

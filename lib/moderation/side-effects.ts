@@ -112,23 +112,48 @@ const captureModerationError = (error: unknown) =>
     { tags: { subsystem: "moderation" } },
   );
 
+/** Reporter-facing words for how a report was decided. */
+export function reportOutcomeCopy(actionType: ModerationActionType): {
+  outcome: string;
+  reason: string;
+} {
+  return actionType === "NO_ACTION"
+    ? {
+        outcome: "decided: no action needed",
+        reason: "No policy violation requiring enforcement was identified.",
+      }
+    : {
+        outcome: "decided: action taken",
+        reason:
+          "Appropriate action was applied under our community guidelines.",
+      };
+}
+
+/** True when the reporter already hears about this action as the reviewed expert. */
+export function reporterIsNotifiedExpert(
+  input: ModerationSideEffectInput,
+  result: TransactionalEffectResult,
+): boolean {
+  return (
+    input.actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" &&
+    !!result.expertUserId &&
+    input.report.reportedById === result.expertUserId
+  );
+}
+
 async function stageReporterDispositionBell(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<void> {
   if (!input.report.reportedById) return;
   const reference = formatReportReference(input.report.id);
-  const dismissed = input.actionType === "NO_ACTION";
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
     recipients: [input.report.reportedById],
     payload: {
       reportId: input.report.id,
       reference,
-      outcome: dismissed ? "dismissed" : "action_taken",
-      reason: dismissed
-        ? "No policy violation requiring enforcement was identified."
-        : "Appropriate action was applied under our community guidelines.",
+      ...reportOutcomeCopy(input.actionType),
       dashboardUrl: goHref("auto", "feedbacks"),
     },
     dedupeKey: `report-disposition:${input.report.id}:${input.actionId ?? input.actionType}`,
@@ -140,12 +165,19 @@ export async function applyTransactionalEffects(
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
   const result = await applyActionEffects(tx, input);
+  if (
+    input.actionType === "CONTENT_REMOVED" ||
+    input.actionType === "REVIEW_REMOVED"
+  ) {
+    await stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
+      recipients: [input.report.targetUserId],
+      payload: { ...(input.notes ? { reason: input.notes } : {}) },
+      dedupeKey: `content-removed:${input.actionId ?? input.report.id}`,
+    });
+  }
   // The expert already gets the exclusion notice; one message is enough.
-  const reporterIsNotifiedExpert =
-    input.actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" &&
-    !!result.expertUserId &&
-    input.report.reportedById === result.expertUserId;
-  if (!reporterIsNotifiedExpert) {
+  if (!reporterIsNotifiedExpert(input, result)) {
     await stageReporterDispositionBell(tx, input);
   }
   return result;
@@ -659,17 +691,6 @@ async function triggerModerationNotification(
         { reason: notes },
         dedupeKey,
       );
-    case "CONTENT_REMOVED":
-    case "REVIEW_REMOVED": {
-      const removalReason = notes
-        ? `Your content was removed as it did not align with our community guidelines: ${notes}`
-        : "Your content was removed as it did not align with our community guidelines.";
-      return notifyModerationWarning(
-        report.targetUserId,
-        { reason: removalReason },
-        dedupeKey,
-      );
-    }
     case "USER_SUSPENDED": {
       const bell = await notifyAccountSuspended(
         report.targetUserId,
@@ -723,6 +744,8 @@ async function triggerModerationNotification(
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REPLY_REMOVED":
+    case "CONTENT_REMOVED":
+    case "REVIEW_REMOVED":
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
       return Promise.resolve(null);

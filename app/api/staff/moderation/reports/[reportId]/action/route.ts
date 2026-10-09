@@ -21,11 +21,17 @@ import {
   applyTransactionalEffects,
   applyBestEffortEffects,
   persistActionSideEffects,
+  reportOutcomeCopy,
+  reporterIsNotifiedExpert,
   type ModerationReportRef,
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
 import * as Sentry from "@sentry/nextjs";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
+import { goHref } from "@/lib/dashboard/go";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { sendModerationReportOutcomeEmail } from "@/lib/email/senders/people";
+import { formatReportReference } from "@/lib/moderation/report-reference";
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -333,6 +339,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
     await persistActionSideEffects(action.id, sideEffects);
+
+    if (
+      report.reportedById &&
+      !reporterIsNotifiedExpert(input, transactional)
+    ) {
+      await sendModerationReportOutcomeEmail(
+        {
+          reporterUserId: report.reportedById,
+          reportId: report.id,
+          reference: formatReportReference(report.id),
+          ...reportOutcomeCopy(actionType),
+          dashboardUrl: goHref("auto", "feedbacks"),
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+    }
 
     return NextResponse.json({
       action,

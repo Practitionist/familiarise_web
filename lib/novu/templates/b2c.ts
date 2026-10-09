@@ -576,6 +576,16 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.CONTENT_REMOVED_NOTICE,
+    name: "Content removed",
+    description: "The author, when moderation removes their content.",
+    category: null,
+    inApp: {
+      subject: "Your content was removed",
+      body: "Your content was removed because it did not align with our community guidelines{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+    },
+  },
+  {
     workflowId: W.ACCOUNT_SUSPENDED,
     name: "Account suspended",
     description: "The suspended user (#693, #1604).",

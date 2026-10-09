@@ -69,6 +69,7 @@ export const NOVU_WORKFLOWS = {
 
   // Moderation
   MODERATION_WARNING: "moderation-warning",
+  CONTENT_REMOVED_NOTICE: "content-removed-notice",
   ACCOUNT_SUSPENDED: "account-suspended",
   ACCOUNT_BANNED: "account-banned",
 
@@ -294,7 +295,7 @@ export type SupportTicketReceivedPayload = NotificationScope & {
   ticketId: string;
   reference?: string;
   ticketTitle: string;
-  slaWindow: string;
+  slaWindow?: string;
   dashboardUrl: string;
 };
 

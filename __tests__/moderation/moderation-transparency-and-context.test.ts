@@ -483,20 +483,20 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
             "report-disposition:11223344-5566-7788-99aa-bbccddeeff00:act-999",
           payload: expect.objectContaining({
             reference: "RPT-11223344",
-            outcome: "action_taken",
+            outcome: "decided: action taken",
           }),
+        }),
+      );
+      expect(mockStageTrigger).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
+          recipients: ["author-user-1"],
+          dedupeKey: "content-removed:act-999",
         }),
       );
 
       await applyBestEffortEffects(input, txResult);
-      expect(mockNotifyModerationWarning).toHaveBeenCalledWith(
-        "author-user-1",
-        {
-          reason:
-            "Your content was removed as it did not align with our community guidelines.",
-        },
-        "moderation-action:act-999",
-      );
+      expect(mockNotifyModerationWarning).not.toHaveBeenCalled();
     });
   });
 
