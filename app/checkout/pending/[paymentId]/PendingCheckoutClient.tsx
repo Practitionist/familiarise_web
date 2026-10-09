@@ -219,9 +219,15 @@ export function PendingCheckoutClient({
           {pending.quoteStaleReason !== null && (
             <p className="text-center text-sm text-muted-foreground">
               {pending.quoteStaleReason === "COUPON_EXHAUSTED" &&
-                "Your coupon ran out of uses — active holds honor Total, while re-quoted checkouts apply Current total."}
+                (pending.currentTotalPaise !== null &&
+                pending.currentTotalPaise !== pending.totalPaise
+                  ? "Your coupon ran out of uses — active holds honor Total, while re-quoted checkouts apply Current total."
+                  : "Your coupon ran out of uses — active holds honor Total; a re-quoted checkout will be priced without it.")}
               {pending.quoteStaleReason === "COUPON_INVALID" &&
-                "Your coupon is no longer valid — active holds honor Total, while re-quoted checkouts apply Current total."}
+                (pending.currentTotalPaise !== null &&
+                pending.currentTotalPaise !== pending.totalPaise
+                  ? "Your coupon is no longer valid — active holds honor Total, while re-quoted checkouts apply Current total."
+                  : "Your coupon is no longer valid — active holds honor Total; a re-quoted checkout will be priced without it.")}
               {pending.quoteStaleReason === "CREDITS_SHORT" &&
                 "Your credit balance changed — active holds honor Total, while re-quoted checkouts reflect remaining credits."}
               {pending.quoteStaleReason === "TAX_CHANGED" &&
