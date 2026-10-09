@@ -62,13 +62,12 @@ export interface ThreadBooking {
 
 export interface ThreadData {
   thread: SupportThread | null;
-  intents: { category: string; title: string }[];
+  intents: { category: string; title: string; escalates?: boolean }[];
   booking: ThreadBooking | null;
 }
 
 export type SupportAction =
-  | { kind: "OFFER_CANCEL_REFUND"; refundPct: number }
-  | { kind: string };
+  { kind: "OFFER_CANCEL_REFUND"; refundPct: number } | { kind: string };
 
 interface TurnResult {
   status: string;
@@ -347,9 +346,7 @@ export function useSupportThread(
   const query = useQuery({
     queryKey,
     enabled,
-    // Staff reply from the ops queue and nothing pushes that down, so the page
-    // polls — never once settled, never in a background tab, and never while a
-    // turn is in flight (a late poll would put the pre-turn transcript back).
+    refetchIntervalInBackground: false,
     refetchInterval: (q) => {
       if (turn.isPending) return false;
       const status = q.state.data?.thread?.status;
@@ -360,11 +357,12 @@ export function useSupportThread(
   const data = query.data;
   const thread = data?.thread ?? null;
 
-  // Server-gated intents win; there is NO static fallback. An empty list is a
-  // successful answer (every intent gated out), so a fallback would re-offer
-  // exactly what the server withheld.
   const availableIntents = data
-    ? data.intents.map((i) => ({ category: i.category, label: i.title }))
+    ? data.intents.map((i) => ({
+        category: i.category,
+        label: i.title,
+        escalates: i.escalates,
+      }))
     : [];
 
   const messages = thread?.messages ?? [];

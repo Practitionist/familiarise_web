@@ -34,10 +34,6 @@ import {
  * useful only for correlating a person across rows.
  */
 const MUST_NOT_BE_PUBLIC = [
-  // The staff adjudication that removes a rating from the aggregate (#1300).
-  "excludedFromAggregateAt",
-  // #1562 — who removed the review or its reply. A public reader sees neither a
-  // removed review nor a removed reply, so it has no use for the actor.
   "removedBy",
   "replyRemovedBy",
   // The reviewer's own cause claim: an input to moderation, not a public label.
@@ -88,24 +84,29 @@ describe("sanitisePublicReview", () => {
     consulteeProfileId: "cp-1",
     appointmentId: "appt-1",
     ratingUnitId: "class:c-1",
+    excludedFromAggregateAt: null as Date | null,
     replyBody: "Thanks — glad it helped.",
     repliedAt: new Date("2026-09-01T00:00:00Z"),
     replyDeletedAt: null as Date | null,
     consulteeProfile: { user: { name: "Priya S.", image: null } },
   };
 
-  it("keeps a live reply", () => {
+  it("keeps a live reply and strips excludedFromAggregateAt while projecting notCounted", () => {
     const out = sanitisePublicReview(base);
     expect(out.replyBody).toBe("Thanks — glad it helped.");
     expect(out.repliedAt).not.toBeNull();
+    expect(out.notCounted).toBe(false);
+    expect("excludedFromAggregateAt" in out).toBe(false);
+
+    const excluded = sanitisePublicReview({
+      ...base,
+      excludedFromAggregateAt: new Date("2026-09-03T00:00:00Z"),
+    });
+    expect(excluded.notCounted).toBe(true);
+    expect("excludedFromAggregateAt" in excluded).toBe(false);
   });
 
   it("drops a reply staff removed, and does not ship the tombstone", () => {
-    // `replyDeletedAt` exists so an abusive reply can be taken down WITHOUT
-    // erasing the consumer review underneath it. Every public read returned
-    // `replyBody` regardless; it was unreachable only because nothing wrote a
-    // reply yet, which is exactly the kind of latency that turns into an
-    // incident the week the feature ships.
     const out = sanitisePublicReview({
       ...base,
       replyDeletedAt: new Date("2026-09-02T00:00:00Z"),
@@ -120,7 +121,6 @@ describe("sanitisePublicReview", () => {
     expect(out.consulteeProfile).toBeNull();
     expect(out.appointmentId).toBeNull();
     expect(out.ratingUnitId).toBeNull();
-    // ...and the reply is the consultant's own words, so it survives.
     expect(out.replyBody).toBe("Thanks — glad it helped.");
   });
 });

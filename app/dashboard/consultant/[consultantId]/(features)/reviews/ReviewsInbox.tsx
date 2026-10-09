@@ -9,6 +9,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Flag, MessageSquareQuote, Share2, Star } from "lucide-react";
+import { z } from "zod";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -55,6 +56,86 @@ function formatShareReviewerName(rawName: string | null | undefined): string {
 }
 
 const reviewsKey = (consultantId: string) => ["own-reviews", consultantId];
+
+const OWN_REPORTS_KEY = ["own-reports"];
+const reportReceiptSchema = z.object({ reportReference: z.string() });
+const reportOutcomeSchema = z.enum([
+  "PENDING_REVIEW",
+  "NO_ACTION_TAKEN",
+  "CONTENT_REMOVED",
+  "EXCLUDED_FROM_AGGREGATE",
+  "POLICY_ACTION_TAKEN",
+]);
+const OUTCOME_LABEL: Record<z.infer<typeof reportOutcomeSchema>, string> = {
+  PENDING_REVIEW: "Under review",
+  NO_ACTION_TAKEN: "Decided: no action needed",
+  CONTENT_REMOVED: "Decided: content removed",
+  EXCLUDED_FROM_AGGREGATE: "Decided: not counted in rating",
+  POLICY_ACTION_TAKEN: "Decided: action taken",
+};
+const ownReportsSchema = z.object({
+  reports: z.array(
+    z.object({
+      reportId: z.string(),
+      reference: z.string(),
+      createdAt: z.string(),
+      outcome: reportOutcomeSchema,
+    }),
+  ),
+});
+
+/** The reviews this expert reported, newest first, with how each was decided. */
+function YourReports() {
+  const query = useQuery({
+    queryKey: OWN_REPORTS_KEY,
+    queryFn: async () =>
+      ownReportsSchema.parse(
+        await requireJsonResponse(
+          await fetch("/api/user/reports?limit=20"),
+          "Couldn't load your reports",
+        ),
+      ).reports,
+  });
+  if (query.isLoading) return <Skeleton className="h-24 rounded-xl" />;
+  if (query.isError) {
+    return (
+      <ErrorState
+        title="Couldn't load your reports"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  }
+  const reports = query.data ?? [];
+  if (reports.length === 0) {
+    return (
+      <EmptyState
+        icon={Flag}
+        title="No reports yet"
+        description="Reviews you report appear here with their outcome."
+      />
+    );
+  }
+  return (
+    <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+      {reports.map((r) => (
+        <li
+          key={r.reportId}
+          className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
+        >
+          <span className="font-medium text-foreground">{r.reference}</span>
+          <span className="text-muted-foreground">
+            {new Date(r.createdAt).toLocaleDateString()}
+          </span>
+          <StatusBadge
+            label={OUTCOME_LABEL[r.outcome]}
+            tone={r.outcome === "PENDING_REVIEW" ? "info" : "neutral"}
+            size="sm"
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 async function fetchReviews(query: URLSearchParams): Promise<OwnReviewsPage> {
   const res = await fetch(`/api/consultant/reviews?${query.toString()}`, {
@@ -244,14 +325,18 @@ function ReviewCard({
         }),
         "Couldn't submit report",
       ),
-    onSuccess: () => {
+    onSuccess: (data) => {
       setReportOpen(false);
       setReportReason(REPORT_REASONS[0].value);
       setReportDetails("");
+      const reference = reportReceiptSchema.safeParse(data);
       toast({
-        title: "Review reported",
-        description: "Our moderation team will review it shortly.",
+        title: reference.success
+          ? `Report ${reference.data.reportReference} received`
+          : "Report received",
+        description: "We will tell you here and by email when it is decided.",
       });
+      void queryClient.invalidateQueries({ queryKey: OWN_REPORTS_KEY });
     },
     onError: (error: Error) =>
       toast({
@@ -652,6 +737,11 @@ export function ReviewsInbox({
                 shareHref={shareHref}
               />
             ),
+          },
+          {
+            value: "your-reports",
+            label: "Your reports",
+            content: <YourReports />,
           },
         ]}
       />
