@@ -16,6 +16,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: (...args: unknown[]) => transaction(...args),
     webinarPlan: { findUnique: jest.fn() },
+    consultantProfile: { findUnique: jest.fn() },
     webinar: { findFirst: jest.fn() },
   },
 }));
@@ -102,5 +103,44 @@ describe("webinar PATCH scopes webinarId to the plan", () => {
         data: expect.objectContaining({ title: "Renamed" }),
       }),
     );
+  });
+});
+
+describe("webinar PATCH only moves a plan to a profile the caller owns", () => {
+  beforeEach(() => {
+    base.webinar.findFirst.mockResolvedValue(WEBINAR);
+  });
+
+  it("403s a profile owned by another user without writing", async () => {
+    base.consultantProfile.findUnique.mockResolvedValue({ userId: "user-2" });
+
+    const response = await PATCH(
+      request({ id: "plan-1", consultantProfileId: "cp-other" }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows another profile the caller owns", async () => {
+    base.consultantProfile.findUnique.mockResolvedValue({ userId: "user-1" });
+
+    const response = await PATCH(
+      request({ id: "plan-1", consultantProfileId: "cp-2" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(transaction).toHaveBeenCalled();
+  });
+
+  it("skips the ownership lookup when the profile is unchanged", async () => {
+    base.consultantProfile.findUnique.mockClear();
+
+    const response = await PATCH(
+      request({ id: "plan-1", consultantProfileId: "cp-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(base.consultantProfile.findUnique).not.toHaveBeenCalled();
   });
 });
