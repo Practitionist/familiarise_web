@@ -105,4 +105,26 @@ describe("stripSessionToken on a real BetterAuth instance", () => {
       );
     },
   );
+
+  it("/change-password with revokeOtherSessions answers without a token", async () => {
+    const signIn = await post("/sign-in/email", credentials);
+    const cookie = (signIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const res = await auth.handler(
+      new Request(`${APP}/api/auth/change-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: APP, cookie },
+        body: JSON.stringify({
+          currentPassword: credentials.password,
+          newPassword: "correct-horse-2",
+          revokeOtherSessions: true,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).not.toHaveProperty("token");
+    expect(res.headers.get("set-cookie")).toMatch(
+      /better-auth\.session_token=/,
+    );
+  });
 });

@@ -1,18 +1,20 @@
+import { randomBytes } from "node:crypto";
+import bcrypt from "bcrypt";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { sendOperatorSetupLink } from "@/lib/auth/operators";
 
 /**
  * DELETE /api/admin/team/members/{userId}/two-factor — reset an operator's
  * 2FA after a lost authenticator and spent backup codes.
  *
- * ADMIN-only (`users.moderate`). Deletes the TwoFactor row, clears
- * `twoFactorEnabled` and ends every session in one transaction, so the
- * operator's next sign-in is password-only and lands on enrolment. Whoever
- * holds the password at that moment enrols the new authenticator, which is
- * why the reason is audited and the admin should confirm identity out of
- * band first.
+ * ADMIN-only (`users.moderate`), never on oneself. In one transaction it
+ * deletes the TwoFactor row, clears `twoFactorEnabled`, replaces the password
+ * with random bytes and ends every session; after commit the operator is
+ * emailed a set-password link. Re-enrolment therefore needs the mailbox, not
+ * the old password, which may be what was compromised.
  */
 export const DELETE = withOpsAction(
   "users.moderate",
@@ -20,14 +22,21 @@ export const DELETE = withOpsAction(
   {},
   {
     mode: "tx",
-    run: async (tx, { params }) => {
+    run: async (tx, { params, actor }) => {
       const userId = params.userId;
       if (!userId) {
         throw new OpsRefusal("INVALID_BODY", "Missing operator id.", 400);
       }
+      if (userId === actor.userId) {
+        throw new OpsRefusal(
+          "SELF_RESET_FORBIDDEN",
+          "Ask another administrator to reset your two-factor authentication.",
+          403,
+        );
+      }
       const target = await tx.user.findUnique({
         where: { id: userId },
-        select: { id: true, role: true, twoFactorEnabled: true },
+        select: { id: true, email: true, role: true, twoFactorEnabled: true },
       });
       if (!target) {
         throw new OpsRefusal(
@@ -51,6 +60,14 @@ export const DELETE = withOpsAction(
         where: { id: userId },
         data: { twoFactorEnabled: false },
       });
+      const password = await bcrypt.hash(
+        randomBytes(32).toString("base64url"),
+        12,
+      );
+      await tx.account.updateMany({
+        where: { userId, providerId: "credential" },
+        data: { password },
+      });
       const { revoked } = await revokeAllUserSessions(tx, userId);
 
       return {
@@ -61,8 +78,10 @@ export const DELETE = withOpsAction(
           twoFactorEnabled: false,
           secretsRemoved: removed.count,
           sessionsRevoked: revoked,
+          passwordRotated: true,
         },
         response: { userId, sessionsRevoked: revoked },
+        afterCommit: () => sendOperatorSetupLink(target.email),
       };
     },
   },

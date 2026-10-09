@@ -79,7 +79,10 @@ export async function POST(req: NextRequest) {
   // declaration below; binding to a fresh const preserves the
   // narrowed type for closure reads.
   const inv = invitation;
-  if (inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()) {
+  if (
+    auth.session.user.emailVerified !== true ||
+    inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()
+  ) {
     return NextResponse.json(
       { error: "This invitation is not addressed to you" },
       { status: 403 },
@@ -234,7 +237,9 @@ export async function POST(req: NextRequest) {
       }
       if (normalizedRole === "LEARNER" && org.canSponsor === false) {
         throw Object.assign(
-          new Error("Organization cannot sponsor learners (canSponsor is false)"),
+          new Error(
+            "Organization cannot sponsor learners (canSponsor is false)",
+          ),
           { httpStatus: 403 },
         );
       }

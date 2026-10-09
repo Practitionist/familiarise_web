@@ -39,6 +39,11 @@ import {
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  assertOperatorMayEnableTwoFactor,
+  isTwoFactorEnrolment,
+} from "@/lib/auth/two-factor-policy";
 import {
   isSentryIdentityEnabled,
   resolveSentryUserId,
@@ -84,6 +89,9 @@ export const auth = betterAuth({
   // server calls are unaffected.
   disabledPaths: [
     "/list-sessions",
+    "/revoke-session",
+    "/revoke-sessions",
+    "/revoke-other-sessions",
     // No caller: these hand out the linked provider's OAuth tokens or let the
     // browser write session fields.
     "/get-access-token",
@@ -93,6 +101,9 @@ export const auth = betterAuth({
     // Email/SMS OTP is not configured; operators use TOTP or backup codes.
     "/two-factor/send-otp",
     "/two-factor/verify-otp",
+    // Session + password would return the TOTP secret, letting a session thief
+    // clone the authenticator. Enrolment shows the URI from /two-factor/enable.
+    "/two-factor/get-totp-uri",
     // The admin plugin's whole HTTP surface. It stays installed for the
     // role/ban columns, the sign-in ban check and the server-side
     // `auth.api.createUser` used by staff onboarding, but its endpoints skip
@@ -165,6 +176,7 @@ export const auth = betterAuth({
           code: "TRUST_DEVICE_DISABLED",
         });
       }
+      await assertOperatorMayEnableTwoFactor(ctx);
       // 2FA is mandatory for operators. Recovery from a lost authenticator is
       // a backup code or an admin reset (app/api/admin/team/members/[userId]/
       // two-factor), never self-service removal.
@@ -404,6 +416,18 @@ export const auth = betterAuth({
           if (ctx?.path?.startsWith("/sso/")) {
             await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
           }
+          // requireEmailVerification covers email/password only. A social
+          // provider that reports the address unverified (GitHub can) must
+          // not mint a session that claims it.
+          if (
+            ctx?.path?.startsWith("/callback/") &&
+            user.emailVerified !== true
+          ) {
+            throw new APIError("FORBIDDEN", {
+              message: "Verify this email address with the provider first.",
+              code: "EMAIL_NOT_VERIFIED",
+            });
+          }
         },
         after: async (user, ctx) => {
           try {
@@ -532,6 +556,15 @@ export const auth = betterAuth({
               error instanceof Error ? error : new Error(String(error)),
               { tags: { subsystem: "auth" } },
             );
+          }
+        },
+      },
+      update: {
+        // Enrolment ends every session; the plugin then mints the enrolling
+        // device's new one.
+        after: async (user, ctx) => {
+          if (isTwoFactorEnrolment(user, ctx?.path)) {
+            await revokeAllUserSessions(prisma, user.id);
           }
         },
       },

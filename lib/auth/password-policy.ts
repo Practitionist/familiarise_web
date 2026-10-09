@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { BetterAuthPlugin } from "better-auth";
-import { APIError } from "better-auth/api";
-import { tryGetCurrentAuthEndpointContext } from "@better-auth/core/context";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /**
@@ -9,7 +8,11 @@ import { captureThrottled } from "@/lib/observability/throttled-capture";
  * staff are created with a random 32-byte password nobody sees, so checking
  * it would only make onboarding depend on the range API.
  */
-const CHECKED_PATHS = ["/sign-up/email", "/change-password", "/reset-password"];
+export const CHECKED_PATHS = [
+  "/sign-up/email",
+  "/change-password",
+  "/reset-password",
+];
 const TIMEOUT_MS = 2000;
 
 const ERROR_CODES = {
@@ -41,45 +44,52 @@ async function breachCount(password: string): Promise<number> {
   return 0;
 }
 
+/** The chosen password in a sign-up, reset or change-password body. */
+export function chosenPassword(body: unknown): string | null {
+  const fields = body as { password?: unknown; newPassword?: unknown } | null;
+  const password = fields?.newPassword ?? fields?.password;
+  return typeof password === "string" && password.length > 0 ? password : null;
+}
+
+/** Throws PASSWORD_COMPROMISED for a breached password; fails open on outage. */
+export async function rejectBreachedPassword(password: string): Promise<void> {
+  let count = 0;
+  try {
+    count = await breachCount(password);
+  } catch (error) {
+    captureThrottled("auth:hibp", error, {
+      subsystem: "auth",
+      op: "hibp-range",
+      level: "warning",
+    });
+  }
+  if (count > 0) {
+    throw new APIError("BAD_REQUEST", { ...ERROR_CODES.PASSWORD_COMPROMISED });
+  }
+}
+
 /**
  * Rejects passwords found in the Have I Been Pwned corpus on the paths above.
  * Replaces BetterAuth's `haveIBeenPwned` plugin, which fails closed: an HIBP
  * outage would block every sign-up and reset. This one fails open, because
  * the check is a hygiene layer, not authentication, and reports the outage to
  * Sentry (throttled, since one outage hits every request).
+ *
+ * Runs as a `before` hook, ahead of the endpoint: /reset-password consumes its
+ * token before hashing, so a check inside `password.hash` would burn the link.
  */
 export const breachedPasswordCheck = {
   id: "breached-password-check",
-  init(ctx) {
-    const hash = ctx.password.hash;
-    return {
-      context: {
-        password: {
-          ...ctx.password,
-          async hash(password: string) {
-            const path = tryGetCurrentAuthEndpointContext()?.path;
-            if (path && CHECKED_PATHS.includes(path)) {
-              let count = 0;
-              try {
-                count = await breachCount(password);
-              } catch (error) {
-                captureThrottled("auth:hibp", error, {
-                  subsystem: "auth",
-                  op: "hibp-range",
-                  level: "warning",
-                });
-              }
-              if (count > 0) {
-                throw new APIError("BAD_REQUEST", {
-                  ...ERROR_CODES.PASSWORD_COMPROMISED,
-                });
-              }
-            }
-            return hash(password);
-          },
-        },
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => CHECKED_PATHS.includes(ctx.path ?? ""),
+        handler: createAuthMiddleware(async (ctx) => {
+          const password = chosenPassword(ctx.body);
+          if (password) await rejectBreachedPassword(password);
+        }),
       },
-    };
+    ],
   },
   $ERROR_CODES: ERROR_CODES,
 } satisfies BetterAuthPlugin;

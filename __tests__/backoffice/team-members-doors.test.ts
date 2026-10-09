@@ -8,8 +8,9 @@
  * - POST /api/admin/team/members creates the account through
  *   `auth.api.mockCreateUser` with no headers (a trusted server call), adds the
  *   profile, sends the set-password link and writes one OpsActionLog row.
- * - DELETE /api/admin/team/members/{id}/two-factor removes the second factor
- *   and every session, for operators only.
+ * - DELETE /api/admin/team/members/{id}/two-factor removes the second factor,
+ *   rotates the password, ends every session and emails a setup link, for
+ *   other operators only.
  * - POST /api/admin/team/members/{id}/setup-link re-sends the set-password
  *   email, for operators only.
  */
@@ -25,6 +26,7 @@ const mockDb = {
   staffProfile: { create: jest.fn() },
   adminProfile: { create: jest.fn() },
   twoFactor: { deleteMany: jest.fn() },
+  account: { updateMany: jest.fn() },
   session: { deleteMany: jest.fn() },
   opsActionLog: { create: jest.fn() },
   $transaction: jest.fn(),
@@ -156,12 +158,14 @@ describe("POST /api/admin/team/members", () => {
 describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
   const params = { params: Promise.resolve({ userId: "op1" }) };
 
-  it("removes the second factor and every session", async () => {
+  it("removes the second factor, rotates the password and ends every session", async () => {
     mockDb.user.findUnique.mockResolvedValue({
       id: "op1",
+      email: "op1@familiarise.test",
       role: "STAFF",
       twoFactorEnabled: true,
     });
+    mockDb.account.updateMany.mockResolvedValue({ count: 1 });
     mockDb.twoFactor.deleteMany.mockResolvedValue({ count: 1 });
     mockDb.session.deleteMany.mockResolvedValue({ count: 3 });
 
@@ -181,7 +185,27 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     expect(mockDb.session.deleteMany).toHaveBeenCalledWith({
       where: { userId: "op1" },
     });
+    const rotation = mockDb.account.updateMany.mock.calls[0][0];
+    expect(rotation.where).toEqual({ userId: "op1", providerId: "credential" });
+    expect(rotation.data.password).toMatch(/^\$2[aby]\$12\$/);
     await expect(res.json()).resolves.toMatchObject({ sessionsRevoked: 3 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockRequestPasswordReset).toHaveBeenCalledWith({
+      body: {
+        email: "op1@familiarise.test",
+        redirectTo: "/auth/reset-password",
+      },
+    });
+  });
+
+  it("refuses an administrator resetting their own second factor", async () => {
+    const res = await resetTwoFactor(
+      request("DELETE", { reason: "Lost phone, verified on a call" }),
+      { params: Promise.resolve({ userId: "admin1" }) },
+    );
+    expect(res.status).toBe(403);
+    expect(mockDb.twoFactor.deleteMany).not.toHaveBeenCalled();
+    expect(mockDb.account.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses to touch a customer account", async () => {

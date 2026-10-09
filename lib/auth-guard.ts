@@ -22,9 +22,10 @@ import {
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSession>>>["user"];
 
+// CONSULTEE is absent: the consultee profile is created lazily on the first
+// consumer action (ensureConsulteeProfile), so an onboarded consultee may lack it.
 const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
   CONSULTANT: "consultantProfileId",
-  CONSULTEE: "consulteeProfileId",
   STAFF: "staffProfileId",
   ORG_WORKSPACE: "orgWorkspaceProfileId",
 };

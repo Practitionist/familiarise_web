@@ -707,12 +707,10 @@ async function runOnboardingTransaction(
         validatedBody.privacyAcceptedAt &&
         tx.consentArtifact?.findFirst
       ) {
-        const { buildSignupConsentArtifacts } = await import(
-          "@/lib/compliance/dpdp"
-        );
-        const { SIGNUP_PURPOSES } = await import(
-          "@/lib/compliance/purpose-codes"
-        );
+        const { buildSignupConsentArtifacts } =
+          await import("@/lib/compliance/dpdp");
+        const { SIGNUP_PURPOSES } =
+          await import("@/lib/compliance/purpose-codes");
         const existingConsent = await tx.consentArtifact.findFirst({
           where: {
             userId,
@@ -735,26 +733,39 @@ async function runOnboardingTransaction(
   );
 }
 
-// #724, #840: another device already completed onboarding for this user; treat
-// as idempotent success rather than clobbering their transition. Returns the
-// success result on a P2025-after-completion, or null to signal a rethrow.
+// Another device already completed onboarding for this user. That is success
+// only when it chose the same role and that role's profile exists; any other
+// state is a typed refusal so this device's answers are not silently dropped.
+// Returns null to signal a rethrow.
 async function recoverIdempotentOnboarding(
   userId: string,
+  submittedRole: OnboardingData["role"],
   error: unknown,
 ): Promise<OnboardingResult | null> {
   if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2025"
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2025"
   ) {
-    const existing = await prisma.user.findUnique({
-      where: { id: userId },
-      include: onboardingUserInclude,
-    });
-    if (existing?.onboardingCompleted) {
-      return { success: true, user: existing };
-    }
+    return null;
   }
-  return null;
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    include: onboardingUserInclude,
+  });
+  if (!existing?.onboardingCompleted) return null;
+  const profileReady =
+    existing.role === UserRole.CONSULTANT
+      ? !!existing.consultantProfileId
+      : existing.role === UserRole.CONSULTEE;
+  if (existing.role === submittedRole && profileReady) {
+    return { success: true, user: existing };
+  }
+  return {
+    success: false,
+    code: "ALREADY_ONBOARDED",
+    error:
+      "Your account finished setup on another device. Reload to continue from there.",
+  };
 }
 
 /**
@@ -896,7 +907,11 @@ export async function processOnboardingData(
     try {
       updatedUser = await runOnboardingTransaction(userId, validatedBody, body);
     } catch (error: unknown) {
-      const recovered = await recoverIdempotentOnboarding(userId, error);
+      const recovered = await recoverIdempotentOnboarding(
+        userId,
+        validatedBody.role,
+        error,
+      );
       if (recovered) return recovered;
       throw error;
     }
