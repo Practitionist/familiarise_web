@@ -18,6 +18,7 @@ import {
 } from "@/lib/support/attachment-href";
 
 import { getSession } from "@/lib/auth-server";
+import { DeleteSupportAttachmentSchema } from "@/schemas/support";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
@@ -272,24 +273,16 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (rl) return rl;
 
     const { ticketId } = await params;
-    const rawBody: unknown = await req.json().catch(() => null);
-    if (!rawBody || typeof rawBody !== "object") {
-      return NextResponse.json(
-        { error: "Invalid JSON payload" },
-        { status: 400 },
-      );
-    }
-    const attachmentId =
-      "attachmentId" in rawBody && typeof rawBody.attachmentId === "string"
-        ? rawBody.attachmentId
-        : null;
-
-    if (!attachmentId) {
+    const body = DeleteSupportAttachmentSchema.safeParse(
+      await req.json().catch(() => null),
+    );
+    if (!body.success) {
       return NextResponse.json(
         { error: "Attachment ID required" },
         { status: 400 },
       );
     }
+    const { attachmentId } = body.data;
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },

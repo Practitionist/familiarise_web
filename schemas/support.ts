@@ -51,6 +51,10 @@ export const CreateSupportResponseSchema = z.object({
 // looked like data bugs. Length-bounded so garbage can't reach Prisma.
 // ---------------------------------------------------------------------------
 
+export const DeleteSupportAttachmentSchema = z.object({
+  attachmentId: z.string().min(1).max(64),
+});
+
 export const AppointmentIdParams = z.object({
   appointmentId: z.string().min(1).max(64),
 });

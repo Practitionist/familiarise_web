@@ -8,6 +8,8 @@
  * carry it (see lib/api/support-http.ts).
  */
 
+import { formatRetryAfter } from "@/lib/labels/auth-errors";
+
 const FRIENDLY_COPY: Record<string, string> = {
   UNAUTHORIZED: "Please sign in and try again.",
   INVALID_ID:
@@ -28,16 +30,6 @@ export interface SupportErrorPayload {
   error?: string;
   detail?: unknown;
   retryAfterSeconds?: number;
-}
-
-export function formatRetryAfter(seconds: number): string {
-  const safeSeconds = Math.max(1, Math.ceil(seconds));
-  if (safeSeconds < 60) return "in under a minute";
-  const minutes = Math.ceil(safeSeconds / 60);
-  if (minutes === 1) return "in about 1 minute";
-  if (minutes < 60) return `in about ${minutes} minutes`;
-  const hours = Math.ceil(minutes / 60);
-  return hours === 1 ? "in about 1 hour" : `in about ${hours} hours`;
 }
 
 /** Parse a failed response into the envelope (never throws on bad JSON). */
@@ -61,7 +53,7 @@ export function describeSupportError(
     typeof payload?.retryAfterSeconds === "number" &&
     payload.retryAfterSeconds > 0
   ) {
-    return `You're doing that a bit too quickly — try again ${formatRetryAfter(payload.retryAfterSeconds)}.`;
+    return `You're doing that a bit too quickly — try again in ${formatRetryAfter(payload.retryAfterSeconds)}.`;
   }
   if (code && FRIENDLY_COPY[code]) return FRIENDLY_COPY[code];
   // Legacy/unknown paths: the server's `error` is still user-phrased.
