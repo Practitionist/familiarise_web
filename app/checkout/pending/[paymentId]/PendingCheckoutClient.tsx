@@ -207,7 +207,25 @@ export function PendingCheckoutClient({
             <div className="border-t border-border pt-2">
               <Row label="Total" value={money(pending.totalPaise)} strong />
             </div>
+            {pending.currentTotalPaise !== null &&
+              pending.currentTotalPaise !== pending.totalPaise && (
+                <Row
+                  label="Current total"
+                  value={money(pending.currentTotalPaise)}
+                  strong
+                />
+              )}
           </div>
+          {pending.quoteStaleReason !== null && (
+            <p className="text-center text-sm text-muted-foreground">
+              {pending.quoteStaleReason === "COUPON_EXHAUSTED" &&
+                "Your coupon ran out of uses — the final total is confirmed at payment."}
+              {pending.quoteStaleReason === "COUPON_INVALID" &&
+                "Your coupon is no longer valid — the final total is confirmed at payment."}
+              {pending.quoteStaleReason === "CREDITS_SHORT" &&
+                "Your credit balance changed — the final total is confirmed at payment."}
+            </p>
+          )}
           {expiresAtMs !== null && now !== null && (
             <p className="text-center text-sm text-muted-foreground">
               Your hold expires in{" "}

@@ -486,6 +486,8 @@ export async function POST(
             });
 
           // Mark the appropriate slots as tentative
+          // Slots actually moved (matched live rows), for honest reporting.
+          let slotsMoved = 0;
           if (
             slotIds &&
             slotIds.length > 0 &&
@@ -495,13 +497,13 @@ export async function POST(
             // #1554 — one occurrence row is one session, so a per-session
             // reschedule releases exactly the rows named; releasing by
             // appointment would free every session of the programme.
-            await releaseSlots({
+            slotsMoved += await releaseSlots({
               appointmentId,
               id: { in: slotsToReschedule.map((s) => s.id) },
             });
           } else {
             // Whole booking: every live row of the one wrapper.
-            await releaseSlots({ appointmentId });
+            slotsMoved += await releaseSlots({ appointmentId });
           }
 
           if (slotsToReschedule.length > 0) {
@@ -769,6 +771,9 @@ export async function POST(
             // slotsAffected stays for back-compat / debugging.
             sessionsAffected,
             slotsAffected: slotsToReschedule.length,
+            // Slots that actually moved; below requested when some were
+            // already terminal (COMPLETED/CANCELLED) and left live.
+            slotsMoved,
             message:
               rescheduleType === "entire_booking"
                 ? "All sessions marked for rescheduling. Please select new times."
