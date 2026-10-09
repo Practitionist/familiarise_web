@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import {
-  deleteRecordingObject,
+  deleteRecordingAssets,
   getBestRecordingUrl,
 } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
@@ -25,6 +25,7 @@ import {
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 import { liveParticipant } from "@/lib/booking/participants";
+import { attendeeEntitlementFilter } from "@/lib/stream/recording-attendee-scope";
 import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
@@ -190,10 +191,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Attendee path: consultee entitlement, gated on capability not role.
     if (!hasAccess) {
-      const planFilter = appointment?.webinar?.webinarPlan?.id
-        ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
-        : appointment?.class?.classPlan?.id
-          ? { class: { classPlanId: appointment.class.classPlan.id } }
+      const planFilter =
+        appointment?.webinar?.webinarPlan || appointment?.class?.classPlan
+          ? attendeeEntitlementFilter(appointment)
           : null;
       if (planFilter) {
         const payments = await prisma.payment.findMany({
@@ -353,8 +353,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     ) {
       return NextResponse.json(
         {
-          error:
-            "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
+          error: "This recording is no longer available.",
           expired: true,
         },
         { status: 410 },
@@ -395,7 +394,6 @@ function sanitizeRecordingMutationResponse(recording: unknown) {
   if (!recording || typeof recording !== "object") return recording;
   const {
     recordingUrl: _recordingUrl,
-    storageUrl: _storageUrl,
     storagePath: _storagePath,
     previewClipStoragePath: _previewClipStoragePath,
     ...safeRecording
@@ -647,11 +645,6 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const recWithListing = recording as typeof recording & {
-      listingStatus?: string | null;
-      previewClipStoragePath?: string | null;
-    };
-
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).
     const findActivePurchase = () =>
@@ -689,7 +682,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     // If the recording was PUBLISHED, unpublish it first to close the checkout
     // window before deleting objects from storage, then re-verify no purchase
     // raced in while PUBLISHED.
-    if (recWithListing.listingStatus === "PUBLISHED") {
+    if (recording.listingStatus === "PUBLISHED") {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
@@ -709,21 +702,12 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    if (recording.storagePath) {
-      const deletedMain = await deleteRecordingObject(recording.storagePath);
-      if (!deletedMain.success) {
-        return NextResponse.json(
-          {
-            error:
-              deletedMain.error ?? "Failed to delete recording storage object",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
-    if (recWithListing.previewClipStoragePath) {
-      await deleteRecordingObject(recWithListing.previewClipStoragePath);
+    const deleted = await deleteRecordingAssets(recording);
+    if (!deleted.success) {
+      return NextResponse.json(
+        { error: deleted.error ?? "Failed to delete recording storage" },
+        { status: 500 },
+      );
     }
 
     const updated = await prisma.recording.update({
@@ -731,10 +715,11 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       data: {
         status: "EXPIRED",
         recordingUrl: "",
-        storageUrl: null,
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
+        previewClipDuration: null,
+        thumbnailUrl: null,
         listingStatus: "UNPUBLISHED",
       },
     });

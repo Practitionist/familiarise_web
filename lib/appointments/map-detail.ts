@@ -35,10 +35,14 @@ import {
 
 type Role = "consultee" | "consultant";
 
+const PLAYABLE_RECORDING_STATUSES: ReadonlySet<string> = new Set([
+  "READY",
+  "AVAILABLE",
+]);
+
 interface DetailRecordingVM {
   id: string;
   title: string;
-  url: string | null;
   thumbnailUrl: string | null;
   status: string;
   durationInMinutes: number;
@@ -229,18 +233,20 @@ export function mapAppointmentDetail(
     },
   };
 
+  // Playback is minted per request by GET /api/stream/recordings/[id]; only playable rows are listed.
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
     a.occurrences.flatMap((slot) =>
-      (slot.meeting?.recordings ?? []).map((rec) => ({
-        id: rec.id,
-        title: rec.title,
-        url: rec.storageUrl ?? rec.recordingUrl ?? null,
-        thumbnailUrl: rec.thumbnailUrl ?? null,
-        status: rec.status?.toString() ?? "READY",
-        durationInMinutes: rec.durationInMinutes,
-        recordedAt: toDate(rec.recordedAt),
-        sessionStartsAt: toDate(slot.startsAt),
-      })),
+      (slot.meeting?.recordings ?? [])
+        .filter((rec) => PLAYABLE_RECORDING_STATUSES.has(rec.status))
+        .map((rec) => ({
+          id: rec.id,
+          title: rec.title,
+          thumbnailUrl: rec.thumbnailUrl ?? null,
+          status: rec.status,
+          durationInMinutes: rec.durationInMinutes,
+          recordedAt: toDate(rec.recordedAt),
+          sessionStartsAt: toDate(slot.startsAt),
+        })),
     ),
   );
   recordings.sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());

@@ -423,7 +423,6 @@ async function purgeSingleOrgRecording(
       where: { id: rec.id },
       data: {
         status: "EXPIRED",
-        storageUrl: null,
         storagePath: null,
         storageType: "STREAM_S3",
         previewClipUrl: null,
