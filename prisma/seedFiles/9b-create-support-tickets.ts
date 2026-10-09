@@ -216,7 +216,9 @@ function buildPlannedSeedResponses(
   const numResponses =
     status === "OPEN"
       ? faker.number.int({ min: 0, max: 2 })
-      : faker.number.int({ min: 1, max: 5 });
+      : status === "ON_HOLD"
+        ? faker.helpers.arrayElement([1, 3])
+        : faker.number.int({ min: 1, max: 5 });
 
   const responses: {
     message: string;
@@ -235,6 +237,8 @@ function buildPlannedSeedResponses(
     let message: string;
     if (!isStaff) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
+    } else if (status === "ON_HOLD" && j === numResponses - 1) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
     } else if (j === 0) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
     } else if (status === "RESOLVED" || status === "CLOSED") {
@@ -258,6 +262,14 @@ function buildPlannedSeedResponses(
 
   return { responses, lastResponseDate };
 }
+
+const GUARANTEED_INITIAL_STATUSES: SupportTicketStatus[] = [
+  "OPEN",
+  "ON_HOLD",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+];
 
 export async function createSupportTickets(
   users: UserWithProfiles[],
@@ -295,7 +307,9 @@ export async function createSupportTickets(
       const priority: SupportPriority =
         i === 0 ? "URGENT" : getWeightedPriority();
       const status: SupportTicketStatus =
-        i === 0 ? "OPEN" : getWeightedStatus();
+        i < GUARANTEED_INITIAL_STATUSES.length
+          ? GUARANTEED_INITIAL_STATUSES[i]
+          : getWeightedStatus();
       const rawDescription = faker.helpers.arrayElement(templates.descriptions);
       const description =
         priority === "URGENT"

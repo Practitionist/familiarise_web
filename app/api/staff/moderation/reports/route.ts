@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import { readReviewReportSignals } from "@/lib/moderation/review-context";
 import {
   ModerationReportType,
   ModerationReportStatus,
@@ -85,9 +86,6 @@ export async function GET(req: NextRequest) {
       where.organizationId =
         organizationId === "personal" ? null : organizationId;
     }
-    // #997 secondary findings — the client used to fetch every PENDING
-    // report and substring-search on every keystroke. Search server-side
-    // over the same fields the old client filter checked.
     if (search) {
       where.OR = [
         { id: { contains: search, mode: "insensitive" } },
@@ -117,17 +115,10 @@ export async function GET(req: NextRequest) {
               email: true,
               image: true,
               role: true,
-              // #1270 — the unban path needs to know the target is still
-              // banned, and a moderator looking at a second report about an
-              // already-banned account should see that before acting again.
               banned: true,
               banExpires: true,
             },
           },
-          // #1270 — the enforcement outcome of the last action taken. It has
-          // been written to ModerationAction.sideEffects since #693 and read by
-          // nothing, so a ban whose Stream revocation failed looked identical
-          // to one that landed.
           actions: {
             orderBy: { createdAt: "desc" },
             take: 1,
@@ -136,9 +127,6 @@ export async function GET(req: NextRequest) {
               actionType: true,
               createdAt: true,
               sideEffects: true,
-              // #1300 — the card's audit line needs who acted and, when they
-              // left one, why; without these the "last action" was a verb with
-              // no author.
               notes: true,
               takenBy: { select: { name: true } },
             },
@@ -146,16 +134,12 @@ export async function GET(req: NextRequest) {
           _count: {
             select: { actions: true },
           },
-          // #1300 — a REVIEW report's card was titled with the report's own id.
-          // The review's author is already `targetUser`; this is what the
-          // review says and who it is about. `consulteeProfile` is
-          // deliberately excluded — the same PII allowlist as the reviews
-          // queue (#946, #1561).
           review: {
             select: {
               id: true,
               rating: true,
               reviewDescription: true,
+              appointmentId: true,
               consultantProfile: {
                 select: { user: { select: { name: true } } },
               },
@@ -163,8 +147,8 @@ export async function GET(req: NextRequest) {
           },
         },
         orderBy: [
-          { status: "asc" }, // Pending first
-          { reportCount: "desc" }, // More reports = higher priority
+          { status: "asc" },
+          { reportCount: "desc" },
           { createdAt: "desc" },
         ],
         take: limit,
@@ -172,6 +156,11 @@ export async function GET(req: NextRequest) {
       }),
       prisma.moderationReport.count({ where }),
     ]);
+
+    const appointmentIds = reports
+      .map((r) => r.review?.appointmentId)
+      .filter((id): id is string => Boolean(id));
+    const signalsByAppointment = await readReviewReportSignals(appointmentIds);
 
     const formattedReports = reports.map((report) => ({
       id: report.id,
@@ -188,6 +177,9 @@ export async function GET(req: NextRequest) {
       targetUser: report.targetUser,
       reviewId: report.reviewId,
       review: report.review,
+      contextSignals: report.review?.appointmentId
+        ? (signalsByAppointment[report.review.appointmentId] ?? null)
+        : null,
       organizationId: report.organizationId ?? null,
       assignedToId: report.assignedToId,
       actionCount: report._count.actions,

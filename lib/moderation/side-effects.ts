@@ -46,27 +46,24 @@ import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
 } from "./cancel-user-engagements";
+import { formatReportReference } from "./report-reference";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 
 export interface ModerationReportRef {
   id: string;
-  /** What the report is about. CONTENT_REMOVED acts on the id this type owns
-   *  and ignores any other, so a stored cross-type id can never be enforced. */
   type: ModerationReportType;
+  reportedById?: string;
   targetUserId: string;
   reviewId: string | null;
   feedbackId?: string | null;
-  /** #1270 — set on MESSAGE reports; what CONTENT_REMOVED deletes on Stream. */
   streamMessageId?: string | null;
-  /**
-   * #1270 — the channel the message lives in, canonical from Stream. Carried
-   * with the id because the two are only useful together, and because the
-   * retry sweep was forwarding one without the other.
-   */
   streamChannelCid?: string | null;
 }
 
 export interface ModerationSideEffectInput {
+  actionId?: string;
   actionType: ModerationActionType;
   report: ModerationReportRef;
   staffUserId: string;
@@ -92,20 +89,10 @@ export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
 
 export interface SideEffectSummary extends TransactionalEffectResult {
   cancellations?: BulkCancelSummary;
-  /**
-   * The outcome of this action's Stream write — and, since #1270, the queue the
-   * retry sweep drains. One field covers both Stream steps because an action
-   * only ever owes one: a ban revokes and deactivates, CONTENT_REMOVED deletes
-   * a message. `errors[]` carries the prefix that tells them apart, and
-   * `gave_up` is the terminal state the sweep stamps once it stops retrying.
-   */
   stream?: StepStatus;
-  /** #1270 — how many times the sweep has re-driven a failed Stream step. */
   streamAttempts?: number;
   notification?: StepStatus;
-  /** #1580 C-P0-4 — Stream revocation for every plan in `collaborationsRemoved`. */
   collaboratorRevocation?: StepStatus;
-  /** #1580 — how many times the sweep has re-driven a failed revocation. */
   collaboratorRevocationAttempts?: number;
   errors?: string[];
 }
@@ -124,11 +111,35 @@ const captureModerationError = (error: unknown) =>
     { tags: { subsystem: "moderation" } },
   );
 
+async function stageReporterDispositionBell(
+  tx: Tx,
+  input: ModerationSideEffectInput,
+): Promise<void> {
+  if (!input.report.reportedById || !tx.notificationOutbox) return;
+  const reference = formatReportReference(input.report.id);
+  const dismissed = input.actionType === "NO_ACTION";
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
+    recipients: [input.report.reportedById],
+    payload: {
+      reportId: input.report.id,
+      reference,
+      outcome: dismissed ? "dismissed" : "action_taken",
+      reason: dismissed
+        ? "No policy violation requiring enforcement was identified."
+        : "Appropriate action was applied under our community guidelines.",
+      dashboardUrl: goHref("auto", "feedbacks"),
+    },
+    dedupeKey: `report-disposition:${input.report.id}:${input.actionId ?? input.actionType}`,
+  });
+}
+
 export async function applyTransactionalEffects(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
   const { actionType, report } = input;
+  await stageReporterDispositionBell(tx, input);
 
   switch (actionType) {
     case "USER_SUSPENDED":
@@ -137,8 +148,6 @@ export async function applyTransactionalEffects(
     case "PROFILE_UNVERIFIED":
       return unverifyProfiles(tx, report.targetUserId);
     case "CONTENT_REMOVED":
-      // A reported chat message is removed in phase 2 — the delete is a Stream
-      // API call and cannot join this transaction (#1270).
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
@@ -615,18 +624,46 @@ async function triggerModerationNotification(
   transactional: TransactionalEffectResult,
   summary: SideEffectSummary,
 ): Promise<TriggerOutcome> {
-  const { actionType, report, notes } = input;
+  const { actionId, actionType, report, notes } = input;
+  const dedupeKey = actionId ? `moderation-action:${actionId}` : undefined;
   switch (actionType) {
     case "WARNING_ISSUED":
+      return notifyModerationWarning(
+        report.targetUserId,
+        { reason: notes },
+        dedupeKey,
+      );
     case "CONTENT_REMOVED":
-    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
-      return notifyModerationWarning(report.targetUserId, { reason: notes });
+    case "REVIEW_REMOVED": {
+      const removalReason = notes
+        ? `Your content was removed as it did not align with our community guidelines: ${notes}`
+        : "Your content was removed as it did not align with our community guidelines.";
+      return notifyModerationWarning(
+        report.targetUserId,
+        { reason: removalReason },
+        dedupeKey,
+      );
+    }
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE": {
+      const exclusionReason = notes
+        ? `Your review remains visible on the profile and is excluded from aggregate rating calculations: ${notes}`
+        : "Your review remains visible on the profile and is excluded from aggregate rating calculations.";
+      return notifyModerationWarning(
+        report.targetUserId,
+        { reason: exclusionReason },
+        dedupeKey,
+      );
+    }
     case "USER_SUSPENDED": {
-      const bell = await notifyAccountSuspended(report.targetUserId, {
-        reason: notes,
-        suspendedUntil: transactional.banExpires ?? "",
-        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-      });
+      const bell = await notifyAccountSuspended(
+        report.targetUserId,
+        {
+          reason: notes,
+          suspendedUntil: transactional.banExpires ?? "",
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        dedupeKey,
+      );
       await sendAccountSuspendedEmail(
         {
           userId: report.targetUserId,
@@ -639,10 +676,14 @@ async function triggerModerationNotification(
       return bell;
     }
     case "USER_BANNED": {
-      const bell = await notifyAccountBanned(report.targetUserId, {
-        reason: notes,
-        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-      });
+      const bell = await notifyAccountBanned(
+        report.targetUserId,
+        {
+          reason: notes,
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        dedupeKey,
+      );
       await sendAccountBannedEmail(
         {
           userId: report.targetUserId,
@@ -654,14 +695,17 @@ async function triggerModerationNotification(
       return bell;
     }
     case "PROFILE_UNVERIFIED":
-      return notifyVerificationStatusChanged(report.targetUserId, {
-        status: "REJECTED",
-        reason: notes,
-        dashboardUrl: goHref("expert", "settings"),
-      });
+      return notifyVerificationStatusChanged(
+        report.targetUserId,
+        {
+          status: "REJECTED",
+          reason: notes,
+          dashboardUrl: goHref("expert", "settings"),
+        },
+        dedupeKey,
+      );
     case "NO_ACTION":
     case "USER_REINSTATED":
-    case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
       return Promise.resolve(null);

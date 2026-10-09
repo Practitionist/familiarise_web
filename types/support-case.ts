@@ -102,6 +102,8 @@ export interface CaseWorkspace {
   ackDueAt: string | null;
   resolutionDueAt: string | null;
   createdAt: string;
+  updatedAt?: string;
+  handoffSummary?: string | null;
   person: {
     id: string;
     name: string | null;

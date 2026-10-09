@@ -53,6 +53,7 @@ import {
   supabaseAdmin,
   ensureBucketExists,
   generateStorageFileName,
+  removeObjects,
   deleteAsset,
   deleteAppointmentDocument,
   type BucketOptions,
@@ -139,7 +140,7 @@ interface UploadAssetOptions {
   file: File;
   maxBytes: number;
   allowedMime: string[];
-  access: "public" | "signed";
+  access: "public" | "signed" | "private";
   signedTtl?: number;
   upsert?: boolean;
   replaceFolder?: boolean;
@@ -148,6 +149,38 @@ interface UploadAssetOptions {
   fileNameFor?: (mimeType: string) => string;
   signWith?: SupabaseClient;
   errors?: UploadAssetErrors;
+}
+
+async function resolveUploadedAssetUrl(params: {
+  bucket: string;
+  storagePath: string;
+  access: "public" | "signed" | "private";
+  signedTtl: number;
+  signWith?: SupabaseClient;
+  signFailedError?: string;
+}): Promise<{ fileUrl?: string; error?: string }> {
+  const { bucket, storagePath, access, signedTtl, signWith, signFailedError } =
+    params;
+  if (access === "private") {
+    return {};
+  }
+  if (access === "public") {
+    return { fileUrl: getPublicAssetUrl(bucket, storagePath) };
+  }
+  const { data: signedUrlData, error: signedUrlError } =
+    await getSignedAssetUrl(bucket, storagePath, signedTtl, signWith);
+  if (signedUrlError || !signedUrlData?.signedUrl) {
+    console.error("Failed to create signed URL:", signedUrlError);
+    await deleteAsset(bucket, storagePath);
+    Sentry.captureException(
+      signedUrlError instanceof Error
+        ? signedUrlError
+        : new Error("Failed to create signed URL"),
+      { tags: { subsystem: "storage" } },
+    );
+    return { error: signFailedError ?? "Failed to generate document URL" };
+  }
+  return { fileUrl: signedUrlData.signedUrl };
 }
 
 /**
@@ -226,7 +259,9 @@ const uploadAsset = async (
       }
     }
 
-    const { error: uploadError } = await supabase.storage
+    const uploadClient =
+      access === "private" && supabaseAdmin ? supabaseAdmin : supabase;
+    const { error: uploadError } = await uploadClient.storage
       .from(bucket)
       .upload(storagePath, file, { cacheControl, upsert });
 
@@ -238,34 +273,21 @@ const uploadAsset = async (
       return { success: false, error: uploadError.message };
     }
 
-    let fileUrl: string;
-    if (access === "signed") {
-      const { data: signedUrlData, error: signedUrlError } =
-        await getSignedAssetUrl(bucket, storagePath, signedTtl, signWith);
-      if (signedUrlError || !signedUrlData?.signedUrl) {
-        console.error("Failed to create signed URL:", signedUrlError);
-        // Upload succeeded but signing failed — best-effort remove the now-orphaned
-        // object so a failed upload doesn't leave a dangling file. (#945 review)
-        await deleteAsset(bucket, storagePath);
-        Sentry.captureException(
-          signedUrlError instanceof Error
-            ? signedUrlError
-            : new Error("Failed to create signed URL"),
-          { tags: { subsystem: "storage" } },
-        );
-        return {
-          success: false,
-          error: errors?.signFailed ?? "Failed to generate document URL",
-        };
-      }
-      fileUrl = signedUrlData.signedUrl;
-    } else {
-      fileUrl = getPublicAssetUrl(bucket, storagePath);
+    const urlResolution = await resolveUploadedAssetUrl({
+      bucket,
+      storagePath,
+      access,
+      signedTtl,
+      signWith,
+      signFailedError: errors?.signFailed,
+    });
+    if (urlResolution.error) {
+      return { success: false, error: urlResolution.error };
     }
 
     return {
       success: true,
-      fileUrl,
+      fileUrl: urlResolution.fileUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -498,7 +520,7 @@ interface SupportAttachmentUploadOptions {
 }
 
 /**
- * Upload support ticket attachment to Supabase storage (public URL).
+ * Upload support ticket attachment to private Supabase storage.
  */
 const uploadSupportTicketAttachment = (
   options: SupportAttachmentUploadOptions,
@@ -519,12 +541,32 @@ const uploadSupportTicketAttachment = (
       "image/webp",
       "text/plain",
     ],
-    access: "public",
+    access: "private",
+    ensureBucket: { public: false },
     errors: {
       bucketNotReady:
-        "Support attachments storage bucket not found. Please create a 'support-attachments' bucket in your Supabase dashboard with public access enabled.",
+        "Support attachments storage bucket not found. Please create a private 'support-attachments' bucket in your Supabase dashboard.",
     },
   });
+};
+
+/**
+ * Create short-lived signed download URL for a private support attachment.
+ */
+const createSupportAttachmentSignedUrl = async (
+  storagePath: string,
+  expiresInSeconds = 60,
+): Promise<string | null> => {
+  if (!supabaseAdmin) {
+    return null;
+  }
+  const { data, error } = await supabaseAdmin.storage
+    .from("support-attachments")
+    .createSignedUrl(storagePath, expiresInSeconds);
+  if (error || !data?.signedUrl) {
+    return null;
+  }
+  return data.signedUrl;
 };
 
 /**
@@ -537,6 +579,10 @@ const deleteSupportTicketAttachment = (storagePath: string): Promise<boolean> =>
  * Get manual bucket creation instructions
  */
 const getManualBucketInstructions = (bucketName: string): string => {
+  const visibilityHint =
+    bucketName === "support-attachments" || bucketName === "documents"
+      ? 'Keep "Public bucket" disabled (private bucket)'
+      : 'Enable "Public bucket" option';
   return `
 To manually create the '${bucketName}' bucket:
 
@@ -545,7 +591,7 @@ To manually create the '${bucketName}' bucket:
 3. Navigate to Storage > Buckets
 4. Click "Create Bucket"
 5. Set bucket name: "${bucketName}"
-6. Enable "Public bucket" option
+6. ${visibilityHint}
 7. Click "Create bucket"
 
 OR
@@ -563,10 +609,7 @@ You can find this key in: Dashboard > Settings > API > service_role key
 // adding a type needs no bucket provisioning — only ownership verification,
 // which lives in app/api/plans/image/route.ts.
 export type TPlanImageType =
-  | "webinar-plans"
-  | "class-plans"
-  | "consultation-plans"
-  | "subscription-plans";
+  "webinar-plans" | "class-plans" | "consultation-plans" | "subscription-plans";
 
 interface IPlanImageUploadOptions {
   planType: TPlanImageType;
@@ -1000,6 +1043,7 @@ const deleteRecordingPreviewAssets = async (
 export default supabase;
 export {
   generateStorageFileName,
+  removeObjects,
   fetchImagesFromSupabaseStorage,
   uploadAppointmentDocument,
   deleteAppointmentDocument,
@@ -1010,6 +1054,7 @@ export {
   uploadConsultantDocument,
   // Support ticket attachments
   uploadSupportTicketAttachment,
+  createSupportAttachmentSignedUrl,
   deleteSupportTicketAttachment,
   // Plan images
   uploadPlanImage,

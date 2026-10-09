@@ -15,6 +15,7 @@ import { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { reportSentryError } from "@/lib/observability/report";
 import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -122,6 +123,68 @@ async function verifyTicketAttachmentAccess(
   return null;
 }
 
+async function createSupportAttachmentRecord(params: {
+  attachmentId: string;
+  ticketId: string;
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  storagePath: string;
+}) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${params.ticketId} FOR UPDATE`;
+      const currentCount = await tx.supportTicketAttachment.count({
+        where: { ticketId: params.ticketId },
+      });
+      if (currentCount >= 5) {
+        return null;
+      }
+      return tx.supportTicketAttachment.create({
+        data: {
+          id: params.attachmentId,
+          ticketId: params.ticketId,
+          fileName: params.fileName,
+          originalName: params.originalName,
+          fileSize: params.fileSize,
+          mimeType: params.mimeType,
+          fileUrl: params.fileUrl,
+          storagePath: params.storagePath,
+        },
+      });
+    });
+  } catch (txErr) {
+    await deleteSupportTicketAttachment(params.storagePath).catch(() => {});
+    throw txErr;
+  }
+}
+
+async function removeStorageAttachmentOrReport(
+  storagePath: string,
+): Promise<boolean> {
+  try {
+    const removed = await deleteSupportTicketAttachment(storagePath);
+    if (!removed) {
+      reportSentryError(new Error("Failed to remove attachment from storage"), {
+        subsystem: "support",
+        op: "delete_support_attachment",
+        extra: { storagePath },
+      });
+      return false;
+    }
+    return true;
+  } catch (storageErr) {
+    reportSentryError(storageErr, {
+      subsystem: "support",
+      op: "delete_support_attachment",
+      extra: { storagePath },
+    });
+    return false;
+  }
+}
+
 /**
  * POST /api/support-tickets/[ticketId]/attachments
  * Upload a new attachment to a support ticket
@@ -147,10 +210,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     );
     if (rl) return rl;
 
-    let formData;
-    try {
-      formData = await req.formData();
-    } catch {
+    const formData = await req.formData().catch(() => null);
+    if (!formData) {
       return NextResponse.json(
         { error: "Invalid file upload" },
         { status: 400 },
@@ -168,18 +229,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       file,
     });
 
-    const { fileName, fileSize, mimeType, fileUrl, storagePath } = uploadResult;
+    const { fileName, fileSize, mimeType, storagePath } = uploadResult;
     if (
       !uploadResult.success ||
       !fileName ||
       !fileSize ||
       !mimeType ||
-      !fileUrl ||
       !storagePath
     ) {
-      const isBucketError =
+      const isBucketError = Boolean(
         uploadResult.error?.includes("bucket") ||
-        uploadResult.error?.includes("storage");
+        uploadResult.error?.includes("storage"),
+      );
 
       return NextResponse.json(
         {
@@ -193,32 +254,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    let attachment;
-    try {
-      attachment = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "SupportTicket" WHERE id = ${ticketId} FOR UPDATE`;
-        const currentCount = await tx.supportTicketAttachment.count({
-          where: { ticketId },
-        });
-        if (currentCount >= 5) {
-          return null;
-        }
-        return tx.supportTicketAttachment.create({
-          data: {
-            ticketId,
-            fileName,
-            originalName: file.name,
-            fileSize,
-            mimeType,
-            fileUrl,
-            storagePath,
-          },
-        });
-      });
-    } catch (txErr) {
-      await deleteSupportTicketAttachment(storagePath).catch(() => {});
-      throw txErr;
-    }
+    const attachmentId = crypto.randomUUID();
+    const fileUrl = `/api/support-tickets/${ticketId}/attachments/${attachmentId}`;
+
+    const attachment = await createSupportAttachmentRecord({
+      attachmentId,
+      ticketId,
+      fileName,
+      originalName: file.name,
+      fileSize,
+      mimeType,
+      fileUrl,
+      storagePath,
+    });
 
     if (!attachment) {
       await deleteSupportTicketAttachment(storagePath);
@@ -315,7 +363,15 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    await deleteSupportTicketAttachment(attachment.storagePath);
+    const removed = await removeStorageAttachmentOrReport(
+      attachment.storagePath,
+    );
+    if (!removed) {
+      return NextResponse.json(
+        { error: "Failed to remove attachment from storage" },
+        { status: 502 },
+      );
+    }
 
     await prisma.supportTicketAttachment.delete({
       where: { id: attachmentId },

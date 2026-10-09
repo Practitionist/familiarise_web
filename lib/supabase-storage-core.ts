@@ -284,16 +284,44 @@ export const ensureBucketExists = async (
   }
 };
 
-// Remove a single object. Returns false on any error (never throws).
-export const deleteAsset = async (
+async function verifyUnconfirmedPathsAbsent(
+  adminClient: SupabaseClient,
   bucket: string,
-  storagePath: string,
+  unconfirmedPaths: string[],
+): Promise<boolean> {
+  for (const objectPath of unconfirmedPaths) {
+    const { data: exists, error } = await adminClient.storage
+      .from(bucket)
+      .exists(objectPath);
+    if (error || exists !== false) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Remove storage objects via service-role client and confirm idempotent absence on partial responses.
+export const removeObjects = async (
+  bucket: string,
+  paths: string[],
 ): Promise<boolean> => {
+  if (paths.length === 0) return true;
+  if (!supabaseAdmin) {
+    console.error("Supabase admin client unavailable for storage deletion");
+    return false;
+  }
   try {
-    const { error } = await supabase.storage.from(bucket).remove([storagePath]);
-    if (error) {
+    const { data, error } = await supabaseAdmin.storage
+      .from(bucket)
+      .remove(paths);
+    if (error || !data) {
       console.error("Error deleting from storage:", error);
       return false;
+    }
+    if (data.length < paths.length) {
+      const removed = new Set(data.map((item) => item.name));
+      const unconfirmed = paths.filter((p) => !removed.has(p));
+      return verifyUnconfirmedPathsAbsent(supabaseAdmin, bucket, unconfirmed);
     }
     return true;
   } catch (error) {
@@ -302,13 +330,14 @@ export const deleteAsset = async (
   }
 };
 
+// Remove a single object. Returns false on any error (never throws).
+export const deleteAsset = (
+  bucket: string,
+  storagePath: string,
+): Promise<boolean> => removeObjects(bucket, [storagePath]);
+
 /**
  * Delete document from Supabase storage.
- *
- * Here rather than in `lib/supabase.ts` for #1270: `purge-deleted-documents`
- * reaches it through `lib/documents/document-purge.ts`, and that path has to be
- * importable from a bare Node process. It is a one-line wrapper over
- * `deleteAsset`, so keeping the two together costs nothing.
  */
 export const deleteAppointmentDocument = (
   storagePath: string,

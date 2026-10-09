@@ -100,33 +100,35 @@ export async function GET(
           select: { id: true },
         });
 
-    // Every call of this booking the caller has rated (or, for the provider,
-    // every attendee rating on it), so the timeline can show a per-session
-    // breakdown instead of one number for the package.
-    const feedback = await prisma.appointmentFeedback.findMany({
-      where: asProvider
-        ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
-        : { appointmentId: { in: scopeIds }, userId: auth.userId },
-      select: {
-        id: true,
-        appointmentOccurrenceId: true,
-        rating: true,
-        // The SCORE is disclosed to the provider; the free-text note is not.
-        // Every comment in this table was typed into AppointmentCsatCard, whose
-        // own header called it "private per-participant CSAT" — and the row that
-        // replaced it takes stars only, so it cannot re-ask for consent that was
-        // never given. Nothing renders this field for a provider today, so
-        // withholding it costs no feature.
-        comment: !asProvider,
-        ratingCause: !asProvider,
-        createdAt: true,
-      },
-      // A provider could otherwise infer a rater from ordering on a group call.
-      orderBy: { createdAt: "asc" },
-    });
+    const [feedback, openSupportThread] = await Promise.all([
+      prisma.appointmentFeedback.findMany({
+        where: asProvider
+          ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
+          : { appointmentId: { in: scopeIds }, userId: auth.userId },
+        select: {
+          id: true,
+          appointmentOccurrenceId: true,
+          rating: true,
+          comment: !asProvider,
+          ratingCause: !asProvider,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.appointmentSupportThread?.findFirst
+        ? prisma.appointmentSupportThread.findFirst({
+            where: {
+              appointmentId,
+              status: { notIn: ["RESOLVED", "CLOSED"] },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
     return NextResponse.json({
       data: feedback,
       rateableSlotIds: rateable.map((s) => s.id),
+      supportOpen: Boolean(openSupportThread),
     });
   } catch (cause) {
     return supportError({

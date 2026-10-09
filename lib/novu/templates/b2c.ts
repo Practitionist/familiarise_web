@@ -439,6 +439,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.SUPPORT_TICKET_RECEIVED,
+    name: "Support ticket received",
+    description:
+      "The requester, confirming ticket intake and expected response window.",
+    category: "support",
+    inApp: {
+      subject: "Support request received",
+      body: `We received ${TICKET}. Expected response within {{payload.slaWindow | default: '24 hours'}}.`,
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.SUPPORT_TICKET_ACTIVITY,
     name: "Support ticket activity",
     description:
@@ -480,6 +492,28 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "New feedback",
       body: '{{payload.userName}} sent feedback{% if payload.category %} ({{payload.category}}){% endif %}: "{{payload.message | truncate: 140}}"',
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.MODERATION_REPORT_OUTCOME,
+    name: "Moderation report outcome",
+    description: "The reporter, when moderation concludes a review.",
+    category: "feedback",
+    inApp: {
+      subject: "Report update",
+      body: "Your report {{payload.reference}} is now {{payload.outcome}}{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.PLATFORM_FEEDBACK_UPDATE,
+    name: "Feedback status updated",
+    description: "The submitter, when product feedback changes status.",
+    category: "feedback",
+    inApp: {
+      subject: "Feedback update",
+      body: "Your feedback is now {{payload.status}}{% if payload.message %}: {{payload.message}}{% endif %}.",
       redirect: "dashboardUrl",
     },
   },

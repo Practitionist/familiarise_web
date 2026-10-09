@@ -27,6 +27,17 @@ export interface SupportErrorPayload {
   code?: string;
   error?: string;
   detail?: unknown;
+  retryAfterSeconds?: number;
+}
+
+export function formatRetryAfter(seconds: number): string {
+  const safeSeconds = Math.max(1, Math.ceil(seconds));
+  if (safeSeconds < 60) return "in under a minute";
+  const minutes = Math.ceil(safeSeconds / 60);
+  if (minutes === 1) return "in about 1 minute";
+  if (minutes < 60) return `in about ${minutes} minutes`;
+  const hours = Math.ceil(minutes / 60);
+  return hours === 1 ? "in about 1 hour" : `in about ${hours} hours`;
 }
 
 /** Parse a failed response into the envelope (never throws on bad JSON). */
@@ -45,6 +56,13 @@ export function describeSupportError(
   fallback = "Something went wrong. Please try again.",
 ): string {
   const code = payload?.code;
+  if (
+    code === "RATE_LIMITED" &&
+    typeof payload?.retryAfterSeconds === "number" &&
+    payload.retryAfterSeconds > 0
+  ) {
+    return `You're doing that a bit too quickly — try again ${formatRetryAfter(payload.retryAfterSeconds)}.`;
+  }
   if (code && FRIENDLY_COPY[code]) return FRIENDLY_COPY[code];
   // Legacy/unknown paths: the server's `error` is still user-phrased.
   return payload?.error ?? fallback;

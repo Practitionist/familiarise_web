@@ -114,7 +114,9 @@ export function parseInboxFilters(
   const requestedSort = oneOf(INBOX_SORTS, get("sort"));
   return {
     view,
-    sort: requestedSort ?? (view === "sla-at-risk" ? "sla" : "activity"),
+    sort:
+      requestedSort ??
+      (view === "needs-reply" || view === "sla-at-risk" ? "sla" : "activity"),
     scope: oneOf(INBOX_SCOPES, get("scope")),
     status: oneOf(INBOX_STATUSES, get("status")),
     priority: oneOf(PRIORITIES, get("priority")),
@@ -291,13 +293,43 @@ export const CASE_ORDER_BY = [
   { id: "desc" },
 ] as const;
 
-export const SLA_ORDER_BY = [
-  { acknowledgedAt: { sort: "asc", nulls: "first" } },
+export const SLA_ACK_ORDER_BY = [
   { ackDueAt: { sort: "asc", nulls: "last" } },
+  { createdAt: "asc" },
+  { id: "asc" },
+] as const;
+
+export const SLA_RESOLUTION_ORDER_BY = [
   { resolutionDueAt: { sort: "asc", nulls: "last" } },
   { createdAt: "asc" },
   { id: "asc" },
 ] as const;
+
+export const SLA_ORDER_BY = SLA_ACK_ORDER_BY;
+
+export async function queryTicketKeysBySla<T extends SortKey>(
+  findMany: (args: {
+    where: Prisma.SupportTicketWhereInput;
+    orderBy: typeof SLA_ACK_ORDER_BY | typeof SLA_RESOLUTION_ORDER_BY;
+    take: number;
+  }) => Promise<T[]>,
+  where: Prisma.SupportTicketWhereInput,
+  depth: number,
+): Promise<T[]> {
+  const unacknowledged = await findMany({
+    where: { AND: [where, { acknowledgedAt: null }] },
+    orderBy: SLA_ACK_ORDER_BY,
+    take: depth,
+  });
+  const acknowledged = await findMany({
+    where: { AND: [where, { acknowledgedAt: { not: null } }] },
+    orderBy: SLA_RESOLUTION_ORDER_BY,
+    take: depth,
+  });
+  return [...unacknowledged, ...acknowledged]
+    .sort(compareCasesBySla)
+    .slice(0, depth);
+}
 
 /** Mirrors CASE_ORDER_BY: latest activity first, never-active rows last. */
 export function compareCases(a: SortKey, b: SortKey): number {

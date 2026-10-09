@@ -20,7 +20,9 @@ import {
   notifySupportTicketCreated,
   notifySupportTicketResponse,
 } from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
+import { sendSupportTicketReceivedEmail } from "@/lib/email/senders/people";
+import { attemptTrigger, stageTrigger } from "@/lib/novu/outbox";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { reportSentryError } from "@/lib/observability/report";
 import { caseKeyOf } from "./case-key";
@@ -193,6 +195,61 @@ export async function notifyStaffOfTicketActivity(
   );
 }
 
+function slaWindowForPriority(priority?: SupportPriority | null): string {
+  switch (priority) {
+    case "URGENT":
+      return "2 hours";
+    case "HIGH":
+      return "8 hours";
+    default:
+      return "24 hours";
+  }
+}
+
+/** Send statutory intake receipt (in-app bell + email) without setting acknowledgedAt. */
+export async function notifyRequesterOfTicket(
+  ticket: Pick<SupportTicket, "id" | "title" | "referenceNumber" | "userId"> & {
+    priority?: SupportPriority | null;
+    organizationId?: string | null;
+  },
+): Promise<void> {
+  if (!ticket.userId) return;
+  const reference = ticket.referenceNumber ?? ticket.id;
+  const title = ticket.title || "Support Ticket";
+  const slaWindow = slaWindowForPriority(ticket.priority);
+  const ticketUrl = await supportRequestHref(ticket.userId, ticket.id);
+
+  const novuOutbox = await stageTrigger({
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
+    kind: "SINGLE",
+    recipients: [ticket.userId],
+    payload: {
+      ticketId: ticket.id,
+      reference,
+      ticketTitle: title,
+      slaWindow,
+      dashboardUrl: ticketUrl,
+      ...notificationScope(ticket.organizationId ?? null),
+    },
+    dedupeKey: `ticket-received:${ticket.id}`,
+  }).catch(() => null);
+
+  await Promise.all([
+    novuOutbox ? attemptTrigger(novuOutbox).catch(() => undefined) : undefined,
+    sendSupportTicketReceivedEmail(
+      {
+        ticketId: ticket.id,
+        ownerUserId: ticket.userId,
+        reference,
+        title,
+        slaWindow,
+        ticketUrl,
+      },
+      3_000,
+    ),
+  ]);
+}
+
 /**
  * Create a support ticket + notify the ops queue. Callers own validation and
  * dedup (e.g. the paymentId dedup is a route-level UX decision).
@@ -240,12 +297,20 @@ export async function createSupportTicket(
   );
   // The ticket is already committed — a notification failure must not turn a
   // successful create into a 500, or the retrying client files a duplicate.
-  await notifySupportStaff(ticket).catch((error) => {
-    console.error("support: staff notification failed", {
-      ticketId: ticket.id,
-      error,
-    });
-  });
+  await Promise.all([
+    notifySupportStaff(ticket).catch((error) => {
+      console.error("support: staff notification failed", {
+        ticketId: ticket.id,
+        error,
+      });
+    }),
+    notifyRequesterOfTicket(ticket).catch((error) => {
+      console.error("support: requester receipt failed", {
+        ticketId: ticket.id,
+        error,
+      });
+    }),
+  ]);
   return ticket;
 }
 

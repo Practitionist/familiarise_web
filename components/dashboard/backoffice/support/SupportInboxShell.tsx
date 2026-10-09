@@ -42,7 +42,10 @@ function avgFirstResponse(s: InboxStats | undefined): string {
   return durationLabel(s.avgFirstResponseMs);
 }
 
-function StatsLine({ className }: Readonly<{ className?: string }>) {
+function StatsLine({
+  basePath,
+  className,
+}: Readonly<{ basePath: string; className?: string }>) {
   const stats = useQuery({
     queryKey: ["support-inbox-stats"],
     queryFn: async (): Promise<InboxStats> => {
@@ -53,11 +56,7 @@ function StatsLine({ className }: Readonly<{ className?: string }>) {
     staleTime: 60_000,
   });
   const s = stats.data;
-  const items: [string, string][] = [
-    ["Open cases", s ? String(s.openCases) : "—"],
-    ["SLA breaches", s ? String(s.slaBreaches) : "—"],
-    [`Avg first response (${s?.windowDays ?? 7} days)`, avgFirstResponse(s)],
-  ];
+  const breachesHref = `${basePath}/support?view=sla-at-risk&sort=sla`;
   return (
     <dl
       className={cn(
@@ -65,12 +64,29 @@ function StatsLine({ className }: Readonly<{ className?: string }>) {
         className,
       )}
     >
-      {items.map(([label, value]) => (
-        <div key={label} className="flex items-baseline gap-1.5">
-          <dt className="text-muted-foreground">{label}</dt>
-          <dd className="font-medium tabular-nums text-foreground">{value}</dd>
-        </div>
-      ))}
+      <div className="flex items-baseline gap-1.5">
+        <dt className="text-muted-foreground">Open cases</dt>
+        <dd className="font-medium tabular-nums text-foreground">
+          {s ? String(s.openCases) : "—"}
+        </dd>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <Link
+          href={breachesHref}
+          className="inline-flex items-baseline gap-1.5 text-destructive underline-offset-4 hover:underline"
+        >
+          <dt>SLA breaches</dt>
+          <dd className="font-semibold tabular-nums">
+            {s ? String(s.slaBreaches) : "—"}
+          </dd>
+        </Link>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <dt className="text-muted-foreground">{`Avg first response (${s?.windowDays ?? 7} days)`}</dt>
+        <dd className="font-medium tabular-nums text-foreground">
+          {avgFirstResponse(s)}
+        </dd>
+      </div>
     </dl>
   );
 }
@@ -96,7 +112,10 @@ export function SupportInboxShell({
         className="mb-0"
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <StatsLine className={cn(caseKey && "hidden lg:flex")} />
+            <StatsLine
+              basePath={basePath}
+              className={cn(caseKey && "hidden lg:flex")}
+            />
             <Button
               size="sm"
               variant="outline"
@@ -133,7 +152,11 @@ export function SupportInboxShell({
             {
               key: "sort",
               label: "Sort",
-              value: f.sort ?? (view === "sla-at-risk" ? "sla" : "activity"),
+              value:
+                f.sort ??
+                (view === "needs-reply" || view === "sla-at-risk"
+                  ? "sla"
+                  : "activity"),
               options: [
                 { value: "activity", label: "Latest activity" },
                 { value: "sla", label: "Nearest SLA deadline" },

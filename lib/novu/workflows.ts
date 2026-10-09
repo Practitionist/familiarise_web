@@ -32,12 +32,15 @@ export const NOVU_WORKFLOWS = {
 
   // Support
   SUPPORT_TICKET_CREATED: "support-ticket-created",
+  SUPPORT_TICKET_RECEIVED: "support-ticket-received",
   SUPPORT_TICKET_ACTIVITY: "support-ticket-activity",
   SUPPORT_TICKET_UPDATE: "support-ticket-update",
   SUPPORT_TICKET_RESPONSE: "support-ticket-response",
 
   // Feedback & Reviews
   FEEDBACK_RECEIVED: "feedback-received",
+  MODERATION_REPORT_OUTCOME: "moderation-report-outcome",
+  PLATFORM_FEEDBACK_UPDATE: "platform-feedback-update",
   NEW_REVIEW_RECEIVED: "new-review-received",
 
   // Trials
@@ -282,6 +285,30 @@ export type SupportTicketPayload = NotificationScope & {
   respondedBy?: string;
   userName?: string;
   activity?: "replied" | "reopened";
+  slaWindow?: string;
+  dashboardUrl: string;
+};
+
+export type SupportTicketReceivedPayload = NotificationScope & {
+  ticketId: string;
+  reference?: string;
+  ticketTitle: string;
+  slaWindow: string;
+  dashboardUrl: string;
+};
+
+export type ModerationReportOutcomePayload = {
+  reportId: string;
+  reference: string;
+  outcome: string;
+  reason?: string;
+  dashboardUrl: string;
+};
+
+export type PlatformFeedbackUpdatePayload = {
+  feedbackId: string;
+  status: string;
+  message?: string;
   dashboardUrl: string;
 };
 
