@@ -20,16 +20,14 @@ const patchReportSchema = z.object({
     ] as const satisfies readonly ModerationReportStatus[])
     .optional(),
   assignedToId: z.string().nullable().optional(),
-  expectedStatus: z
-    .enum([
-      "PENDING",
-      "UNDER_REVIEW",
-      "DISMISSED",
-      "ACTION_TAKEN",
-      "ESCALATED",
-    ] as const satisfies readonly ModerationReportStatus[])
-    .optional(),
-  expectedAssignedToId: z.string().nullable().optional(),
+  expectedStatus: z.enum([
+    "PENDING",
+    "UNDER_REVIEW",
+    "DISMISSED",
+    "ACTION_TAKEN",
+    "ESCALATED",
+  ] as const satisfies readonly ModerationReportStatus[]),
+  expectedAssignedToId: z.string().nullable(),
 });
 interface RouteParams {
   params: Promise<{ reportId: string }>;
@@ -196,18 +194,23 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const updateData = buildReportPatchData(parsed.data);
-    const expectedStatus = parsed.data.expectedStatus ?? existing.status;
-    const expectedAssignedToId =
-      parsed.data.expectedAssignedToId !== undefined
-        ? parsed.data.expectedAssignedToId
-        : existing.assignedToId;
+    if (existing.status === "DISMISSED" || existing.status === "ACTION_TAKEN") {
+      return NextResponse.json(
+        { error: "This report is already resolved" },
+        { status: 409 },
+      );
+    }
 
+    const updateData = buildReportPatchData(parsed.data);
+    // Resolved reports change only through the audited action route.
     const updated = await prisma.moderationReport.updateMany({
       where: {
         id: reportId,
-        status: expectedStatus,
-        assignedToId: expectedAssignedToId,
+        assignedToId: parsed.data.expectedAssignedToId,
+        AND: [
+          { status: parsed.data.expectedStatus },
+          { status: { notIn: ["DISMISSED", "ACTION_TAKEN"] } },
+        ],
       },
       data: updateData,
     });

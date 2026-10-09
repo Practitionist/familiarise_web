@@ -401,6 +401,55 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
     });
   });
 
+  describe("PATCH /api/staff/moderation/reports/[reportId] resolved and stale guards", () => {
+    const patch = (body: object) =>
+      patchModerationReport(
+        new NextRequest("http://localhost/api/staff/moderation/reports/rep-1", {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ reportId: "rep-1" }) },
+      );
+
+    beforeEach(() => {
+      mockRequirePrivilegedAuth.mockResolvedValue({
+        session: { user: { id: "staff-1", role: "STAFF" } },
+      });
+      mockModerationReport.updateMany.mockReset();
+    });
+
+    it("refuses to reopen a resolved report and leaves it untouched", async () => {
+      mockModerationReport.findUnique.mockResolvedValueOnce({
+        id: "rep-1",
+        status: "ACTION_TAKEN",
+        assignedToId: null,
+      });
+      const res = await patch({
+        status: "PENDING",
+        expectedStatus: "ACTION_TAKEN",
+        expectedAssignedToId: null,
+      });
+      expect(res.status).toBe(409);
+      expect(mockModerationReport.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("answers 409 on a stale expectedStatus and 400 without expectations", async () => {
+      mockModerationReport.findUnique.mockResolvedValueOnce({
+        id: "rep-1",
+        status: "UNDER_REVIEW",
+        assignedToId: null,
+      });
+      mockModerationReport.updateMany.mockResolvedValueOnce({ count: 0 });
+      const stale = await patch({
+        status: "ESCALATED",
+        expectedStatus: "PENDING",
+        expectedAssignedToId: null,
+      });
+      expect(stale.status).toBe(409);
+      expect((await patch({ status: "ESCALATED" })).status).toBe(400);
+    });
+  });
+
   describe("Moderation side-effects reporter disposition & target notice copy", () => {
     it("stages reporter disposition bell inside tx and sends non-threatening content removal copy with per-action dedupeKey", async () => {
       mockConsultantReview.findUnique.mockResolvedValue({
