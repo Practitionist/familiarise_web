@@ -1,29 +1,9 @@
 /**
  * Supabase storage clients and the two primitives every upload path needs.
  *
- * Split out of `lib/supabase.ts` for #1270. That module opens with
- * `import "server-only"`, which is a marker package whose main entry does
- * nothing but `throw` — Next resolves it to an empty module under the
- * `react-server` condition, and every other resolver gets the throw. A bare
- * `npx tsx jobs/...` process is "every other resolver", so ANY cron whose
- * import graph reached `lib/supabase.ts` died during module evaluation, before
- * a line of its own code ran.
- *
- * Five scheduled jobs reached it: mark-expired-recordings,
- * cleanup-old-stream-recordings, transfer-expiring-recordings and
- * sweep-stuck-webhook-events through `lib/stream/recording-transfer-service.ts`,
- * and purge-deleted-documents through `lib/documents/document-purge.ts`. None of
- * them has ever completed. Recordings past their org's retention window were
- * never tombstoned and the Supabase objects behind them were never deleted,
- * which is a DPDP erasure gap; permanent-storage transfers never ran, so
- * STREAM_ONLY recordings lapsed when Stream's fourteen-day URL expired; and the
- * sweep that re-drives stuck Stream webhook events was itself stuck.
- *
- * So this file carries no `server-only` marker. It holds the client
- * construction and the two helpers the crons need, and nothing that touches a
- * request, a session or a cookie. `lib/supabase.ts` re-exports every name below
- * unchanged and keeps its own marker, so application code still gets the
- * client-import guard and no call site had to move.
+ * Carries no `server-only` marker: `lib/supabase.ts` imports it, and it throws
+ * outside Next's `react-server` condition, so bare-Node cron processes must
+ * import storage from here. `lib/supabase.ts` re-exports every name unchanged.
  */
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 

@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Globe, FileText, AlertTriangle, Loader2 } from "lucide-react";
+import { Globe, FileText, AlertTriangle, Loader2, Video } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -82,6 +83,8 @@ interface SettingsResponse {
     website: string | null;
     paymentTermsDays: number;
     isPublic: boolean;
+    // Owner-set cap on org recording retention; null follows the platform schedule.
+    streamRecordingRetentionDays: number | null;
     // #779 §A — verification lifecycle (banner + resubmit affordance).
     verificationReason?: string | null;
     verificationRejectedAt?: string | null;
@@ -126,8 +129,27 @@ interface PatchPayload {
   // #1230 wave-4 — MSME declaration rides the same PATCH upsert.
   msmeStatus?: MsmeStatus;
   msmeWrittenAgreementOnFile?: boolean;
+  streamRecordingRetentionDays?: number | null;
   expectedVersion?: number;
 }
+
+const PatchErrorBodySchema = z.object({
+  error: z.string().optional(),
+  code: z.string().optional(),
+});
+
+/** Carries the API's structured code so VERSION_CONFLICT opens the stale-tab dialog. */
+class SettingsPatchError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+  ) {
+    super(message);
+  }
+}
+
+const isVersionConflict = (err: unknown) =>
+  err instanceof SettingsPatchError && err.code === "VERSION_CONFLICT";
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
   const res = await fetch(`/api/organizations/${orgId}/settings`, {
@@ -137,12 +159,12 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
   });
   const body = await res.json();
   if (!res.ok) {
-    // Carry the structured code so onError can branch (VERSION_CONFLICT →
-    // stale-tab dialog instead of the generic error banner).
-    throw Object.assign(new Error(body.error ?? "Failed to update settings"), {
-      code: body.code as string | undefined,
-      currentVersion: body.currentVersion as number | undefined,
-    });
+    const parsed = PatchErrorBodySchema.safeParse(body);
+    const errorBody = parsed.success ? parsed.data : {};
+    throw new SettingsPatchError(
+      errorBody.error ?? "Failed to update settings",
+      errorBody.code,
+    );
   }
   return body;
 }
@@ -245,8 +267,7 @@ function TaxComplianceCard({
       });
       onSuccess();
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
+      if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
         onError(
@@ -271,8 +292,7 @@ function TaxComplianceCard({
         queryKey: ["org-settings", orgId],
       });
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
+      if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
         onError(
@@ -444,6 +464,141 @@ function TaxComplianceCard({
   );
 }
 
+function RecordingRetentionCard({
+  orgId,
+  data,
+  onVersionConflict,
+}: Readonly<{
+  orgId: string;
+  data: SettingsResponse;
+  onVersionConflict: () => void;
+}>) {
+  const queryClient = useQueryClient();
+  const stored = data.profile.streamRecordingRetentionDays;
+  const [days, setDays] = useState(stored === null ? "" : String(stored));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const orgActive = data.profile.status === "ACTIVE";
+
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2500);
+    return () => clearTimeout(timer);
+  }, [saved]);
+
+  useEffect(() => {
+    setDays(stored === null ? "" : String(stored));
+  }, [stored]);
+
+  const trimmed = days.trim();
+  const parsed = trimmed === "" ? null : Number(trimmed);
+  const valid =
+    parsed === null ||
+    (Number.isInteger(parsed) && parsed >= 7 && parsed <= 3650);
+
+  const save = async () => {
+    if (!valid) {
+      setError(
+        "Enter a whole number of days between 7 and 3650, or leave it empty.",
+      );
+      return;
+    }
+    setError(null);
+    setSaved(false);
+    setSaving(true);
+    try {
+      await patchSettings(orgId, {
+        expectedVersion: data.profile.version,
+        streamRecordingRetentionDays: parsed,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] }),
+        queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) }),
+      ]);
+      setSaved(true);
+    } catch (err) {
+      if (isVersionConflict(err)) {
+        onVersionConflict();
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to save recording retention",
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Video className="w-4 h-4" /> Session recordings
+        </CardTitle>
+        <CardDescription>
+          Sold or published replays are never deleted automatically.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <Label htmlFor="recording-retention-days">
+          Delete org session recordings after N days (leave empty to follow the
+          platform schedule)
+        </Label>
+        <Input
+          id="recording-retention-days"
+          type="number"
+          inputMode="numeric"
+          min={7}
+          max={3650}
+          step={1}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+          placeholder="Platform schedule"
+          className="max-w-[12rem]"
+          aria-invalid={!valid}
+          aria-describedby="recording-retention-hint"
+        />
+        {valid ? (
+          <p id="recording-retention-hint" className="text-xs text-zinc-500">
+            Between 7 and 3650 days. Leave empty to follow the platform
+            schedule.
+          </p>
+        ) : (
+          <p id="recording-retention-hint" className="text-xs text-red-600">
+            Enter a whole number of days between 7 and 3650, or leave it empty.
+          </p>
+        )}
+      </CardContent>
+      <CardFooter className="flex flex-wrap items-center gap-3">
+        <Button
+          onClick={() => void save()}
+          disabled={saving || !valid || !orgActive}
+        >
+          {saving ? "Saving…" : "Save retention"}
+        </Button>
+        {!orgActive && (
+          <p className="text-xs text-zinc-500">
+            Available once the organization is verified.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        {saved && (
+          <output className="block text-sm text-emerald-600">
+            Retention saved.
+          </output>
+        )}
+      </CardFooter>
+    </Card>
+  );
+}
+
 export function GeneralPanel({ orgId }: { orgId: string }) {
   const { can, isLoading: roleLoading } = useOrgRole(orgId);
   const canManage = can("settings.manage");
@@ -500,8 +655,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       setError(null);
       setTimeout(() => setSuccess(false), 2500);
     },
-    onError: (err: Error & { code?: string }) => {
-      if (err.code === "VERSION_CONFLICT") {
+    onError: (err: Error) => {
+      if (isVersionConflict(err)) {
         setConflictOpen(true);
         setSuccess(false);
         return;
@@ -865,6 +1020,14 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               </CardFooter>
             )}
           </Card>
+        )}
+
+        {can("settings.ownerFields") && (
+          <RecordingRetentionCard
+            orgId={orgId}
+            data={data}
+            onVersionConflict={() => setConflictOpen(true)}
+          />
         )}
 
         {can("settings.cancellationPolicy.publish") && (

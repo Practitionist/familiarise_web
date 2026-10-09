@@ -5,9 +5,7 @@ import Link from "next/link";
 import type { RecordingListingStatus } from "@prisma/client";
 import { z } from "zod";
 import {
-  AlertTriangle,
   CheckCircle2,
-  CloudUpload,
   ExternalLink,
   Globe,
   Loader2,
@@ -47,7 +45,6 @@ export interface ManagedRecordingData extends Omit<RecordingData, "planType"> {
   consentAttestedAt?: string | null;
   hasBuyers?: boolean;
   canManage?: boolean;
-  canTransfer?: boolean;
   canPublish?: boolean;
 }
 
@@ -132,9 +129,6 @@ interface RecordingDetailsSectionProps {
   readonly setTitle: (value: string) => void;
   readonly isRenaming: boolean;
   readonly onRename: (e: FormEvent) => Promise<void>;
-  readonly canTransfer: boolean;
-  readonly isTransferring: boolean;
-  readonly onTransfer: () => Promise<void>;
   readonly canDelete: boolean;
   readonly confirmingDelete: boolean;
   readonly setConfirmingDelete: (value: boolean) => void;
@@ -148,9 +142,6 @@ function RecordingDetailsSection({
   setTitle,
   isRenaming,
   onRename,
-  canTransfer,
-  isTransferring,
-  onTransfer,
   canDelete,
   confirmingDelete,
   setConfirmingDelete,
@@ -190,34 +181,6 @@ function RecordingDetailsSection({
           </Button>
         </div>
       </form>
-
-      {canTransfer && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3.5 space-y-2.5">
-          <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>
-              This recording is currently stored in temporary Stream storage
-              (expires in 14 days). Transfer it to permanent cloud storage to
-              retain it indefinitely.
-            </span>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => void onTransfer()}
-            disabled={isTransferring}
-          >
-            {isTransferring ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CloudUpload className="mr-2 h-4 w-4" />
-            )}
-            Transfer to Permanent Storage
-          </Button>
-        </div>
-      )}
 
       <div className="pt-1 space-y-2">
         {!confirmingDelete ? (
@@ -283,7 +246,6 @@ export function RecordingManageSheet({
 
   const [title, setTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
-  const [isTransferring, setIsTransferring] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -327,9 +289,6 @@ export function RecordingManageSheet({
   const isGroupRecording =
     recording.planType === "webinar" || recording.planType === "class";
   const canShowMarketplace = recording.canPublish ?? isGroupRecording;
-  const canTransfer =
-    recording.canTransfer ??
-    (recording.status === "READY" && recording.storageType === "STREAM_S3");
   const canDelete = canDeleteRecording(recording);
   const listingStatus: RecordingListingStatus =
     recording.listingStatus ?? "DRAFT";
@@ -376,40 +335,6 @@ export function RecordingManageSheet({
       });
     } finally {
       setIsRenaming(false);
-    }
-  };
-
-  const handleTransfer = async () => {
-    setIsTransferring(true);
-    try {
-      const response = await fetch(
-        `/api/stream/recordings/${recording.id}/transfer`,
-        {
-          method: "POST",
-        },
-      );
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(
-          payload.error || "Failed to transfer recording to permanent storage",
-        );
-      }
-      toast({
-        title: "Transfer Complete",
-        description: "Recording transferred to permanent cloud storage.",
-      });
-      await onUpdated?.();
-    } catch (err) {
-      toast({
-        title: "Transfer Failed",
-        description:
-          err instanceof Error ? err.message : "Could not transfer recording",
-        variant: "destructive",
-      });
-    } finally {
-      setIsTransferring(false);
     }
   };
 
@@ -601,8 +526,8 @@ export function RecordingManageSheet({
             Manage Recording
           </SheetTitle>
           <SheetDescription className="text-xs text-muted-foreground">
-            Update recording details, manage cloud storage, or publish group
-            session replays to the marketplace.
+            Update recording details or publish group session replays to the
+            marketplace.
           </SheetDescription>
         </SheetHeader>
 
@@ -613,9 +538,6 @@ export function RecordingManageSheet({
             setTitle={setTitle}
             isRenaming={isRenaming}
             onRename={handleRename}
-            canTransfer={canTransfer}
-            isTransferring={isTransferring}
-            onTransfer={handleTransfer}
             canDelete={canDelete}
             confirmingDelete={confirmingDelete}
             setConfirmingDelete={setConfirmingDelete}
@@ -663,8 +585,8 @@ export function RecordingManageSheet({
 
               {!isPermanentStorage && (
                 <p className="rounded-lg border border-border bg-muted p-3 text-xs text-muted-foreground">
-                  Transfer this recording to permanent storage above before
-                  publishing it to the Replay Marketplace.
+                  This recording can be published once it has been copied to our
+                  storage, which happens automatically after the session.
                 </p>
               )}
 

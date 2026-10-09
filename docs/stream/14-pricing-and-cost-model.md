@@ -266,6 +266,10 @@ Call-minutes = 60 × 500 = 30,000
 
 After $100 credit: HD combined = $270 − $100 = **$170/month** (₹15,419/month).
 
+### 3.4 Where the recorded file lives
+
+The platform records HD (720p, composite, spotlight layout), so the HD rate in 3.2 is the one that applies. Stream holds each file for 14 days; the `transfer-recordings` job then copies it to Cloudflare R2, which costs $0.015 per GB-month with free egress ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Recording capture, not storage, is the dominant cost, and the platform retention schedule (90 days for 1:1, 365 days for group sessions) bounds the stored volume. Cloudflare Stream was rejected as the host because its storage costs roughly 20 times R2; it stays a candidate only for a paid adaptive-bitrate replay library.
+
 ---
 
 ## 4. Other Add-on Rates
