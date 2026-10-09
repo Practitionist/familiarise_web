@@ -78,7 +78,8 @@ export interface TransactionalEffectResult {
   profilesUnverified?: number;
   reviewRemoved?: boolean;
   reviewExcludedFromAggregate?: boolean;
-  alreadyExcluded?: boolean;
+  /** The reviewed expert, notified in-transaction when their review is excluded. */
+  expertUserId?: string;
   /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
@@ -115,7 +116,7 @@ async function stageReporterDispositionBell(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<void> {
-  if (!input.report.reportedById || !tx.notificationOutbox) return;
+  if (!input.report.reportedById) return;
   const reference = formatReportReference(input.report.id);
   const dismissed = input.actionType === "NO_ACTION";
   await stageBell(tx, {
@@ -138,9 +139,23 @@ export async function applyTransactionalEffects(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
-  const { actionType, report } = input;
-  await stageReporterDispositionBell(tx, input);
+  const result = await applyActionEffects(tx, input);
+  // The expert already gets the exclusion notice; one message is enough.
+  const reporterIsNotifiedExpert =
+    input.actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" &&
+    !!result.expertUserId &&
+    input.report.reportedById === result.expertUserId;
+  if (!reporterIsNotifiedExpert) {
+    await stageReporterDispositionBell(tx, input);
+  }
+  return result;
+}
 
+async function applyActionEffects(
+  tx: Tx,
+  input: ModerationSideEffectInput,
+): Promise<TransactionalEffectResult> {
+  const { actionType, report } = input;
   switch (actionType) {
     case "USER_SUSPENDED":
     case "USER_BANNED":
@@ -312,7 +327,10 @@ async function excludeReviewFromAggregate(
   if (!reviewId) return {};
   const review = await tx.consultantReview.findUnique({
     where: { id: reviewId },
-    select: { consultantProfileId: true },
+    select: {
+      consultantProfileId: true,
+      consultantProfile: { select: { userId: true } },
+    },
   });
   if (!review) {
     throw Object.assign(
@@ -335,9 +353,17 @@ async function excludeReviewFromAggregate(
     );
   }
   await recomputeConsultantRating(tx, review.consultantProfileId);
+  const expertUserId = review.consultantProfile.userId;
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING,
+    recipients: [expertUserId],
+    payload: { reviewId, dashboardUrl: goHref("expert", "reviews") },
+    dedupeKey: `review-excluded:${reviewId}`,
+  });
   return {
     reviewExcludedFromAggregate: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
+    expertUserId,
   };
 }
 
@@ -644,16 +670,6 @@ async function triggerModerationNotification(
         dedupeKey,
       );
     }
-    case "REVIEW_EXCLUDED_FROM_AGGREGATE": {
-      const exclusionReason = notes
-        ? `Your review remains visible on the profile and is excluded from aggregate rating calculations: ${notes}`
-        : "Your review remains visible on the profile and is excluded from aggregate rating calculations.";
-      return notifyModerationWarning(
-        report.targetUserId,
-        { reason: exclusionReason },
-        dedupeKey,
-      );
-    }
     case "USER_SUSPENDED": {
       const bell = await notifyAccountSuspended(
         report.targetUserId,
@@ -707,6 +723,7 @@ async function triggerModerationNotification(
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REPLY_REMOVED":
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
       return Promise.resolve(null);
   }

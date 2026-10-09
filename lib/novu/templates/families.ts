@@ -166,6 +166,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "moderation-report-outcome": "feedback",
   "platform-feedback-update": "feedback",
   "new-review-received": "feedback",
+  "review-excluded-from-rating": "feedback",
 
   "verification-status-changed": "account",
   "new-consultant-application": "account",

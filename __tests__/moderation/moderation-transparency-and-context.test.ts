@@ -451,6 +451,63 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
     });
   });
 
+  describe("review exclusion notice recipients", () => {
+    const exclusion = (reportedById: string) => ({
+      actionId: "act-ex",
+      actionType: "REVIEW_EXCLUDED_FROM_AGGREGATE" as const,
+      staffUserId: "staff-1",
+      report: {
+        id: "aabbccdd-0000-0000-0000-000000000000",
+        type: "REVIEW" as const,
+        reportedById,
+        targetUserId: "author-user-1",
+        reviewId: "rev-1",
+      },
+    });
+    const staged = () =>
+      mockStageTrigger.mock.calls.map(
+        ([a]: [{ workflowId: string; recipients: string[] }]) =>
+          `${a.workflowId}>${a.recipients.join(",")}`,
+      );
+
+    beforeEach(() => {
+      mockStageTrigger.mockClear();
+      mockNotifyModerationWarning.mockClear();
+      mockConsultantReview.findUnique.mockResolvedValue({
+        consultantProfileId: "prof-1",
+        consultantProfile: { userId: "expert-1" },
+      });
+    });
+
+    it("notifies the expert and a separate reporter, never the author", async () => {
+      mockConsultantReview.updateMany.mockResolvedValue({ count: 1 });
+      const input = exclusion("reporter-2");
+      const tx = await applyTransactionalEffects(prisma, input);
+      expect(staged()).toEqual([
+        `${NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING}>expert-1`,
+        `${NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME}>reporter-2`,
+      ]);
+      await applyBestEffortEffects(input, tx);
+      expect(mockNotifyModerationWarning).not.toHaveBeenCalled();
+    });
+
+    it("sends one message when the expert filed the report", async () => {
+      mockConsultantReview.updateMany.mockResolvedValue({ count: 1 });
+      await applyTransactionalEffects(prisma, exclusion("expert-1"));
+      expect(staged()).toEqual([
+        `${NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING}>expert-1`,
+      ]);
+    });
+
+    it("stages nothing when the exclusion CAS loses (409)", async () => {
+      mockConsultantReview.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        applyTransactionalEffects(prisma, exclusion("reporter-2")),
+      ).rejects.toMatchObject({ httpStatus: 409 });
+      expect(staged()).toEqual([]);
+    });
+  });
+
   describe("GET /api/appointments/[appointmentId]/feedback supportOpen signal", () => {
     it("returns supportOpen=true when an unresolved AppointmentSupportThread exists", async () => {
       mockAuthorizeAppointment.mockResolvedValue({

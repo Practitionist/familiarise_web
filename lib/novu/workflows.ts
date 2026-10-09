@@ -42,6 +42,7 @@ export const NOVU_WORKFLOWS = {
   MODERATION_REPORT_OUTCOME: "moderation-report-outcome",
   PLATFORM_FEEDBACK_UPDATE: "platform-feedback-update",
   NEW_REVIEW_RECEIVED: "new-review-received",
+  REVIEW_EXCLUDED_FROM_RATING: "review-excluded-from-rating",
 
   // Trials
   TRIAL_SESSION_REQUESTED: "trial-session-requested",

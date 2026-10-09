@@ -507,6 +507,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.REVIEW_EXCLUDED_FROM_RATING,
+    name: "Review not counted",
+    description:
+      "The expert, when moderation excludes a client review from their rating.",
+    category: "feedback",
+    inApp: {
+      subject: "A review no longer counts toward your rating",
+      body: "A client review on your profile is now marked 'Not counted in rating'. It stays visible but no longer affects your score.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.PLATFORM_FEEDBACK_UPDATE,
     name: "Feedback status updated",
     description: "The submitter, when product feedback changes status.",
