@@ -76,6 +76,11 @@ export class SupportRequestError extends Error {
   }
 }
 
+/** A write lost its compare-and-set because the case changed underneath it. */
+export function isStaleCaseError(e: unknown): boolean {
+  return e instanceof SupportRequestError && e.status === 409;
+}
+
 export async function throwSupportError(
   res: Response,
   context: string,

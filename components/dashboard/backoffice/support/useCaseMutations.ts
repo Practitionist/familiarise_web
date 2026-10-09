@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
-import { throwSupportError } from "@/lib/support/error-copy";
+import { isStaleCaseError, throwSupportError } from "@/lib/support/error-copy";
 import type { CaseWorkspace } from "@/types/support-case";
 
 async function send(url: string, method: "POST" | "PATCH", body: object) {
@@ -38,12 +38,22 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
         void qc.invalidateQueries({ queryKey: key });
       }
     },
-    onError: (e: unknown) =>
+    onError: (e: unknown) => {
+      // A stale tab lost the CAS: reload the case so the retry starts from what is there now.
+      if (isStaleCaseError(e)) {
+        void qc.invalidateQueries({ queryKey: ["support-case", c?.key] });
+        toast({
+          title: "The case changed — review and retry",
+          description: "We loaded the latest version of this case.",
+        });
+        return;
+      }
       toast({
         title: "That didn't go through",
         description: e instanceof Error ? e.message : undefined,
         variant: "destructive",
-      }),
+      });
+    },
   });
 
   const reply = useMutation({
