@@ -74,7 +74,6 @@ export function PendingCheckoutClient({
     }, 1000);
     return () => clearInterval(timer);
   }, [lapsed, expiresAtMs]);
-
   // The timer only says the window ended; the server decides what happened.
   const checking =
     !lapsed && expiresAtMs !== null && now !== null && now >= expiresAtMs;
