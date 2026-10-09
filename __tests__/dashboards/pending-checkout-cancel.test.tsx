@@ -62,3 +62,25 @@ it("keeps the buyer on the page and says the payment went through on ALREADY_PAI
   expect(host.textContent).toContain("already gone through");
   act(() => root.unmount());
 });
+
+it("renders Current total diff and advisory notice when quoteStaleReason is present", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PendingCheckoutClient
+        pending={{
+          ...pending,
+          totalPaise: 9440,
+          currentTotalPaise: 11800,
+          quoteStaleReason: "TAX_CHANGED",
+        }}
+      />,
+    ),
+  );
+
+  expect(host.textContent).toContain("Current total");
+  expect(host.textContent).toContain("Applicable tax changed");
+  act(() => root.unmount());
+});

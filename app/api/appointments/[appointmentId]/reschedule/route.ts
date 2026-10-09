@@ -487,23 +487,28 @@ export async function POST(
 
           // Mark the appropriate slots as tentative
           // Slots actually moved (matched live rows), for honest reporting.
-          let slotsMoved = 0;
-          if (
-            slotIds &&
-            slotIds.length > 0 &&
-            ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
-              (derivedType === "CLASS" && appointment.class))
-          ) {
-            // #1554 — one occurrence row is one session, so a per-session
-            // reschedule releases exactly the rows named; releasing by
-            // appointment would free every session of the programme.
-            slotsMoved += await releaseSlots({
-              appointmentId,
-              id: { in: slotsToReschedule.map((s) => s.id) },
-            });
-          } else {
-            // Whole booking: every live row of the one wrapper.
-            slotsMoved += await releaseSlots({ appointmentId });
+          const isPerSessionReschedule =
+            Boolean(slotIds && slotIds.length > 0) &&
+            ((derivedType === "SUBSCRIPTION" &&
+              Boolean(appointment.subscription)) ||
+              (derivedType === "CLASS" && Boolean(appointment.class)));
+          const slotsMoved = await releaseSlots(
+            isPerSessionReschedule
+              ? {
+                  appointmentId,
+                  id: { in: slotsToReschedule.map((s) => s.id) },
+                }
+              : { appointmentId },
+          );
+
+          // Reject rescheduling bookings whose allocated slots all reached terminal status before lock.
+          if (appointment.occurrences.length > 0 && slotsMoved === 0) {
+            throw Object.assign(
+              new Error(
+                "No live sessions remain eligible for rescheduling on this booking.",
+              ),
+              { httpStatus: 409, code: "NO_RESCHEDULABLE_SLOTS" },
+            );
           }
 
           if (slotsToReschedule.length > 0) {
