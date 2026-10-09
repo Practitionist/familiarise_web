@@ -1,13 +1,11 @@
 /**
- * Which recordings an attendee may see. Webinar attendees see only the run
- * they paid for or held a seat in, unless the plan shares recordings across
- * runs; class members see every batch of the plan (late-join limits apply
- * separately); 1:1 sessions stay per appointment.
+ * Webinar attendees see only their own run unless the plan shares recordings;
+ * class members see every batch of the plan; 1:1 sessions stay per appointment.
  */
 
 import type { Prisma } from "@prisma/client";
 
-export interface AttendeeScopeAppointment {
+interface AttendeeScopeAppointment {
   id: string;
   webinar?: {
     webinarPlan?: {
@@ -33,7 +31,7 @@ export function attendeeEntitlementFilter(
   return { id: appointment.id };
 }
 
-export interface WebinarEntitlement {
+interface WebinarEntitlement {
   appointmentId: string;
   webinarPlanId: string;
   shareRecordingsWithAllAttendees: boolean;

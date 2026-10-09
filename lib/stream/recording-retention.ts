@@ -4,10 +4,12 @@
  */
 
 import {
+  OrgAuditCategory,
   Prisma,
   RecordingListingStatus,
   RecordingPurchaseStatus,
   RecordingStatus,
+  RecordingStorageType,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -17,9 +19,9 @@ import { streamLogger } from "@/lib/stream-logger";
 import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const ONE_TO_ONE_RETENTION_DAYS = 90;
-export const SUBSCRIPTION_RETENTION_DAYS = 90;
-export const GROUP_RETENTION_DAYS = 365;
+const ONE_TO_ONE_RETENTION_DAYS = 90;
+const SUBSCRIPTION_RETENTION_DAYS = 90;
+const GROUP_RETENTION_DAYS = 365;
 /** Floor of the owner-set org cap; bounds which rows are worth scanning. */
 export const MIN_ORG_RETENTION_DAYS = 7;
 const DEFAULT_EXPIRE_LIMIT = 200;
@@ -29,9 +31,15 @@ const LIVE_PURCHASE_STATUSES: RecordingPurchaseStatus[] = [
   RecordingPurchaseStatus.PENDING,
   RecordingPurchaseStatus.SUCCEEDED,
 ];
+/** Live, unpublished and unbought: the only rows retention may expire. */
+const retainableWhere = {
+  status: { in: [RecordingStatus.READY, RecordingStatus.AVAILABLE] },
+  listingStatus: { not: RecordingListingStatus.PUBLISHED },
+  purchases: { none: { status: { in: LIVE_PURCHASE_STATUSES } } },
+} satisfies Prisma.RecordingWhereInput;
 
 /** What the recording's session was; end dates in the future mean "still running". */
-export type RetentionSession =
+type RetentionSession =
   | { kind: "CONSULTATION"; sessionEndedAt: Date }
   | { kind: "SUBSCRIPTION"; subscriptionEndsAt: Date }
   | { kind: "WEBINAR"; sessionEndedAt: Date }
@@ -114,16 +122,9 @@ async function subscriptionChainEnd(start: SubscriptionEnd): Promise<Date> {
 
 const candidateSelect = {
   id: true,
-  status: true,
   recordedAt: true,
   organizationId: true,
-  listingStatus: true,
   organization: { select: { streamRecordingRetentionDays: true } },
-  purchases: {
-    where: { status: { in: LIVE_PURCHASE_STATUSES } },
-    select: { id: true },
-    take: 1,
-  },
   meeting: {
     select: {
       endedAt: true,
@@ -198,7 +199,7 @@ async function resolveSession(
   return null;
 }
 
-export interface ExpireRecordingsResult {
+interface ExpireRecordingsResult {
   success: boolean;
   scanned: number;
   lapsed: number;
@@ -213,7 +214,7 @@ async function expireLapsedCopies(now: Date): Promise<number> {
   const lapsed = await prisma.recording.updateMany({
     where: {
       status: RecordingStatus.READY,
-      storageType: "STREAM_S3",
+      storageType: RecordingStorageType.STREAM_S3,
       streamUrlExpiresAt: { lt: now },
     },
     data: { status: RecordingStatus.EXPIRED, recordingUrl: "" },
@@ -231,7 +232,7 @@ async function findDueRecordings(
   while (due.length < limit && result.scanned < MAX_SCANNED_PER_RUN) {
     const page = await prisma.recording.findMany({
       where: {
-        status: { in: [RecordingStatus.READY, RecordingStatus.AVAILABLE] },
+        ...retainableWhere,
         OR: [
           {
             organizationId: null,
@@ -257,12 +258,13 @@ async function findDueRecordings(
     cursor = page[page.length - 1].id;
 
     for (const candidate of page) {
+      // Published and purchased rows are already excluded by retainableWhere.
       const deadline = recordingRetentionDeadline({
         now,
         recordedAt: candidate.recordedAt,
         session: await resolveSession(candidate),
-        published: candidate.listingStatus === RecordingListingStatus.PUBLISHED,
-        hasLivePurchase: candidate.purchases.length > 0,
+        published: false,
+        hasLivePurchase: false,
         orgRetentionDays: candidate.organizationId
           ? (candidate.organization?.streamRecordingRetentionDays ?? null)
           : null,
@@ -282,28 +284,33 @@ async function expireGroup(
 ): Promise<number> {
   const where: Prisma.RecordingWhereInput = {
     id: { in: ids },
-    status: { in: [RecordingStatus.READY, RecordingStatus.AVAILABLE] },
-    listingStatus: { not: RecordingListingStatus.PUBLISHED },
-    purchases: { none: { status: { in: LIVE_PURCHASE_STATUSES } } },
+    ...retainableWhere,
   };
   const data = { status: RecordingStatus.EXPIRED, recordingUrl: "" };
   if (!organizationId) {
     return (await prisma.recording.updateMany({ where, data })).count;
   }
   return prisma.$transaction(async (tx) => {
-    const { count } = await tx.recording.updateMany({ where, data });
-    if (count > 0) {
+    const expired = await tx.recording.updateManyAndReturn({
+      where,
+      data,
+      select: { id: true },
+    });
+    if (expired.length > 0) {
       await tx.orgAuditLog.create({
         data: {
           organizationId,
-          category: "SYSTEM",
+          category: OrgAuditCategory.SYSTEM,
           action: AUDIT_ACTIONS.SYSTEM.STREAM_RECORDING_DELETED,
-          description: `Expired ${count} recording(s) past retention`,
-          details: { recordingIds: ids, count },
+          description: `Expired ${expired.length} recording(s) past retention`,
+          details: {
+            recordingIds: expired.map((r) => r.id),
+            count: expired.length,
+          },
         },
       });
     }
-    return count;
+    return expired.length;
   });
 }
 
@@ -332,6 +339,11 @@ async function cleanExpiredAssets(
       result.failed++;
       failedIds.push(row.id);
       result.errors.push(`recording=${row.id}: ${deleted.error}`);
+      // Requeue behind the rest so a stuck row cannot pin the head of the scan.
+      await prisma.recording.updateMany({
+        where: { id: row.id, status: RecordingStatus.EXPIRED },
+        data: { updatedAt: new Date() },
+      });
       continue;
     }
     await prisma.recording.updateMany({

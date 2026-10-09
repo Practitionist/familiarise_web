@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { RecordingListingStatus, RecordingStatus } from "@prisma/client";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import {
@@ -682,11 +683,11 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     // If the recording was PUBLISHED, unpublish it first to close the checkout
     // window before deleting objects from storage, then re-verify no purchase
     // raced in while PUBLISHED.
-    if (recording.listingStatus === "PUBLISHED") {
+    if (recording.listingStatus === RecordingListingStatus.PUBLISHED) {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          listingStatus: "UNPUBLISHED",
+          listingStatus: RecordingListingStatus.UNPUBLISHED,
           unpublishedAt: new Date(),
         },
       });
@@ -710,18 +711,27 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const updated = await prisma.recording.update({
-      where: { id: recordingId },
+    const expired = await prisma.recording.updateMany({
+      where: { id: recordingId, status: recording.status },
       data: {
-        status: "EXPIRED",
+        status: RecordingStatus.EXPIRED,
         recordingUrl: "",
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
         previewClipDuration: null,
         thumbnailUrl: null,
-        listingStatus: "UNPUBLISHED",
+        listingStatus: RecordingListingStatus.UNPUBLISHED,
       },
+    });
+    if (expired.count === 0) {
+      return NextResponse.json(
+        { error: "Recording changed while deleting; refresh and try again" },
+        { status: 409 },
+      );
+    }
+    const updated = await prisma.recording.findUnique({
+      where: { id: recordingId },
     });
 
     return NextResponse.json({

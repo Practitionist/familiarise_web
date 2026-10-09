@@ -1,12 +1,11 @@
 /**
- * Copies READY recordings from Stream's 14-day copy into our R2 bucket.
- * Runs only from the `transfer-recordings` job; a failed copy leaves the row
- * READY (still playable from Stream) until the attempt cap.
+ * Copies READY recordings from Stream's 14-day copy into R2; a failed copy
+ * leaves the row READY (still playable from Stream) until the attempt cap.
  */
 
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
-import { RecordingStatus } from "@prisma/client";
+import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -16,13 +15,13 @@ import {
   streamMultipartToR2,
 } from "@/lib/storage/r2-client";
 
-export const MAX_TRANSFER_ATTEMPTS = 5;
-export const STALE_TRANSFER_MS = 15 * 60 * 1000;
+const MAX_TRANSFER_ATTEMPTS = 5;
+const STALE_TRANSFER_MS = 15 * 60 * 1000;
 /** Below STALE_TRANSFER_MS so a live copy is never reclaimed as stale. */
 const TRANSFER_TIMEOUT_MS = 12 * 60 * 1000;
 /** Stream splits recordings at two hours (~2 GB), so this only stops a runaway body. */
-export const RECORDING_MAX_OBJECT_BYTES = 20 * 1024 * 1024 * 1024;
-export const TRANSFER_BATCH_SIZE = 10;
+const RECORDING_MAX_OBJECT_BYTES = 20 * 1024 * 1024 * 1024;
+const TRANSFER_BATCH_SIZE = 10;
 const TRANSFER_CONCURRENCY = 2;
 /** No new copy starts after this, so a run fits the 45-minute workflow step. */
 const RUN_BUDGET_MS = 25 * 60 * 1000;
@@ -79,12 +78,12 @@ export function isAllowedStreamRecordingUrl(rawUrl: string): boolean {
   );
 }
 
-export type TransferOutcome =
+type TransferOutcome =
   | { status: "copied" }
   | { status: "skipped" }
   | { status: "failed"; error: string };
 
-export interface TransferRunResult {
+interface TransferRunResult {
   processed: number;
   succeeded: number;
   failed: number;
@@ -103,7 +102,7 @@ async function claimForTransfer(recordingId: string): Promise<boolean> {
     where: {
       id: recordingId,
       status: RecordingStatus.READY,
-      storageType: "STREAM_S3",
+      storageType: RecordingStorageType.STREAM_S3,
       transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
       streamUrlExpiresAt: { gt: new Date() },
     },
@@ -220,7 +219,7 @@ export async function transferRecording(
       where: { id: recordingId, status: RecordingStatus.TRANSFERRING },
       data: {
         storagePath,
-        storageType: "PLATFORM",
+        storageType: RecordingStorageType.PLATFORM,
         status: RecordingStatus.AVAILABLE,
         transferredAt: new Date(),
         fileSize: BigInt(fileSize),
@@ -251,7 +250,7 @@ export async function transferRecording(
 async function reportExhaustedTransfers(): Promise<number> {
   const exhausted = await prisma.recording.findMany({
     where: {
-      storageType: "STREAM_S3",
+      storageType: RecordingStorageType.STREAM_S3,
       status: RecordingStatus.READY,
       transferAttempts: { gte: MAX_TRANSFER_ATTEMPTS },
       transferFailureAlertedAt: null,
@@ -302,7 +301,7 @@ async function transferRecordingsUnlocked(
   await prisma.recording.updateMany({
     where: {
       status: RecordingStatus.TRANSFERRING,
-      storageType: "STREAM_S3",
+      storageType: RecordingStorageType.STREAM_S3,
       updatedAt: { lt: new Date(startedAt - STALE_TRANSFER_MS) },
     },
     data: { status: RecordingStatus.READY },
@@ -311,7 +310,7 @@ async function transferRecordingsUnlocked(
   const candidates = await prisma.recording.findMany({
     where: {
       status: RecordingStatus.READY,
-      storageType: "STREAM_S3",
+      storageType: RecordingStorageType.STREAM_S3,
       transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
       streamUrlExpiresAt: { gt: new Date(startedAt) },
     },

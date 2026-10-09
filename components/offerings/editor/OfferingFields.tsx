@@ -10,6 +10,7 @@
  */
 
 import {
+  get,
   useWatch,
   type Control,
   type ControllerRenderProps,
@@ -183,11 +184,12 @@ export function OfferingField<T extends FieldValues = FieldValues>({
   coverImage,
 }: Readonly<OfferingFieldProps<T>>) {
   const span = SPAN_CLASS[spec.span ?? 6];
-  const gate = useWatch({
+  const { shownWhen } = spec;
+  const shown = useWatch({
     control,
-    name: (spec.shownWhen ?? spec.name) as never,
+    compute: (values: T) => !shownWhen || Boolean(get(values, shownWhen)),
   });
-  if (spec.shownWhen && !gate) return null;
+  if (!shown) return null;
 
   // Composite fields own their own internal layout; they just need the cell.
   if (spec.kind === "languageLevel") {

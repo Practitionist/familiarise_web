@@ -6,6 +6,7 @@
  * host for group events).
  */
 
+import { RecordingStatus } from "@prisma/client";
 import type {
   TAppointmentDetail,
   TDetailAppointment,
@@ -35,10 +36,8 @@ import {
 
 type Role = "consultee" | "consultant";
 
-const PLAYABLE_RECORDING_STATUSES: ReadonlySet<string> = new Set([
-  "READY",
-  "AVAILABLE",
-]);
+const PLAYABLE_RECORDING_STATUSES: ReadonlySet<RecordingStatus> =
+  new Set<RecordingStatus>([RecordingStatus.READY, RecordingStatus.AVAILABLE]);
 
 interface DetailRecordingVM {
   id: string;

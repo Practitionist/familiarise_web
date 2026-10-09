@@ -2,13 +2,38 @@
  * @jest-environment node
  */
 
-jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+const mockRecording = {
+  updateMany: jest.fn(),
+  findMany: jest.fn(),
+  updateManyAndReturn: jest.fn(),
+};
+const mockAuditCreate = jest.fn();
+jest.mock("../../lib/prisma", () => {
+  const client = {
+    recording: {
+      updateMany: (...args: unknown[]) => mockRecording.updateMany(...args),
+      findMany: (...args: unknown[]) => mockRecording.findMany(...args),
+      updateManyAndReturn: (...args: unknown[]) =>
+        mockRecording.updateManyAndReturn(...args),
+    },
+    orgAuditLog: { create: (...args: unknown[]) => mockAuditCreate(...args) },
+    $transaction: (fn: (tx: unknown) => unknown) => fn(client),
+  };
+  return { __esModule: true, default: client };
+});
 jest.mock("../../lib/stream/recording-storage", () => ({
   deleteRecordingAssets: jest.fn(),
 }));
-jest.mock("../../lib/cron/with-cron-lock", () => ({ withCronLock: jest.fn() }));
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryMessage: jest.fn(),
+}));
 
+import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
 import {
+  expireRecordings,
   recordingRetentionDeadline,
   type RetentionInput,
 } from "../../lib/stream/recording-retention";
@@ -139,5 +164,59 @@ describe("recordingRetentionDeadline", () => {
         }),
       ),
     ).toEqual(plusDays("2027-01-01", 365));
+  });
+});
+
+describe("expireRecordings", () => {
+  it("filters exemptions in the query, audits only CAS-expired ids and requeues a failed asset delete", async () => {
+    const orgRow = (id: string) => ({
+      id,
+      recordedAt: day("2020-01-01"),
+      organizationId: "org-1",
+      organization: { streamRecordingRetentionDays: 7 },
+      meeting: {
+        endedAt: day("2020-01-01"),
+        occurrence: {
+          endsAt: day("2020-01-01"),
+          appointment: {
+            consultation: { id: "c" },
+            webinar: null,
+            class: null,
+            subscription: null,
+            trial: null,
+            occurrences: [],
+          },
+        },
+      },
+    });
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    mockRecording.findMany
+      .mockResolvedValueOnce([orgRow("r1"), orgRow("r2")])
+      .mockResolvedValueOnce([{ id: "x", storagePath: "p" }]);
+    mockRecording.updateManyAndReturn.mockResolvedValue([{ id: "r1" }]);
+    (deleteRecordingAssets as jest.Mock).mockResolvedValue({
+      success: false,
+      error: "boom",
+    });
+
+    const result = await expireRecordings();
+
+    const scanWhere = mockRecording.findMany.mock.calls[0][0].where;
+    expect(scanWhere).toMatchObject({
+      listingStatus: { not: "PUBLISHED" },
+      purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
+    });
+    expect(scanWhere.OR[1].recordedAt.lt.getTime()).toBeLessThanOrEqual(
+      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    );
+    expect(mockAuditCreate.mock.calls[0][0].data.details).toEqual({
+      recordingIds: ["r1"],
+      count: 1,
+    });
+    expect(mockRecording.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "x", status: "EXPIRED" },
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(result).toMatchObject({ expired: 1, failed: 1, success: false });
   });
 });

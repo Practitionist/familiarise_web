@@ -13,6 +13,8 @@ runJob("transfer-recordings", async () => {
   try {
     const result = await transferRecordings();
     console.log(JSON.stringify(result, null, 2));
+    // Transient failures retry next run; only rows past the attempt cap fail the job.
+    if (result.exhaustedReported > 0) process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }

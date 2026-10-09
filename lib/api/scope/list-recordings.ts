@@ -7,7 +7,11 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Prisma, RecordingStatus } from "@prisma/client";
+import {
+  ParticipantStatus,
+  type Prisma,
+  type RecordingStatus,
+} from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
@@ -114,7 +118,10 @@ function recordingAppointmentAccessOr(
             some: {
               appointment: {
                 participants: {
-                  some: { userId, status: { not: "CANCELLED" } },
+                  some: {
+                    userId,
+                    status: { not: ParticipantStatus.CANCELLED },
+                  },
                 },
               },
             },

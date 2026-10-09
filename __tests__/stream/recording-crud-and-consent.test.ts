@@ -11,6 +11,8 @@ const mockGetRecordingNotice = jest.fn();
 const mockRecordRecordingConsent = jest.fn();
 const mockGetRecordingById = jest.fn();
 const mockRecordingUpdate = jest.fn();
+const mockRecordingUpdateMany = jest.fn();
+const mockRecordingFindUnique = jest.fn();
 const mockRecordingPurchaseFindFirst = jest.fn();
 const mockMeetingUpdate = jest.fn();
 const mockDeleteRecordingAssets = jest.fn();
@@ -40,6 +42,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     recording: {
       update: (...args: unknown[]) => mockRecordingUpdate(...args),
+      updateMany: (...args: unknown[]) => mockRecordingUpdateMany(...args),
+      findUnique: (...args: unknown[]) => mockRecordingFindUnique(...args),
     },
     recordingPurchase: {
       findFirst: (...args: unknown[]) =>
@@ -236,6 +240,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       });
       mockGetRecordingById.mockResolvedValue({
         id: "rec-del",
+        status: "AVAILABLE",
         listingStatus: "UNLISTED",
         storagePath: "recordings/rec-del.mp4",
         previewClipStoragePath: "previews/rec-del.mp4",
@@ -255,7 +260,8 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         },
       });
       mockDeleteRecordingAssets.mockResolvedValue({ success: true });
-      mockRecordingUpdate.mockResolvedValue({ id: "rec-del" });
+      mockRecordingUpdateMany.mockResolvedValueOnce({ count: 1 });
+      mockRecordingFindUnique.mockResolvedValue({ id: "rec-del" });
 
       const req = new NextRequest(
         "http://localhost:3000/api/stream/recordings/rec-del",
@@ -272,9 +278,9 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
           storagePath: "recordings/rec-del.mp4",
         }),
       );
-      expect(mockRecordingUpdate).toHaveBeenCalledWith(
+      expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "rec-del" },
+          where: { id: "rec-del", status: "AVAILABLE" },
           data: expect.objectContaining({
             status: "EXPIRED",
             recordingUrl: "",
@@ -284,6 +290,12 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
           }),
         }),
       );
+
+      mockRecordingUpdateMany.mockResolvedValueOnce({ count: 0 });
+      const raced = await deleteRecording(req, {
+        params: Promise.resolve({ recordingId: "rec-del" }),
+      });
+      expect(raced.status).toBe(409);
     });
   });
 

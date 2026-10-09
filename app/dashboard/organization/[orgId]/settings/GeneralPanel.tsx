@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Globe, FileText, AlertTriangle, Loader2, Video } from "lucide-react";
@@ -132,6 +133,24 @@ interface PatchPayload {
   expectedVersion?: number;
 }
 
+const PatchErrorBodySchema = z.object({
+  error: z.string().optional(),
+  code: z.string().optional(),
+});
+
+/** Carries the API's structured code so VERSION_CONFLICT opens the stale-tab dialog. */
+class SettingsPatchError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+  ) {
+    super(message);
+  }
+}
+
+const isVersionConflict = (err: unknown) =>
+  err instanceof SettingsPatchError && err.code === "VERSION_CONFLICT";
+
 async function patchSettings(orgId: string, payload: PatchPayload) {
   const res = await fetch(`/api/organizations/${orgId}/settings`, {
     method: "PATCH",
@@ -140,12 +159,12 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
   });
   const body = await res.json();
   if (!res.ok) {
-    // Carry the structured code so onError can branch (VERSION_CONFLICT →
-    // stale-tab dialog instead of the generic error banner).
-    throw Object.assign(new Error(body.error ?? "Failed to update settings"), {
-      code: body.code as string | undefined,
-      currentVersion: body.currentVersion as number | undefined,
-    });
+    const parsed = PatchErrorBodySchema.safeParse(body);
+    const errorBody = parsed.success ? parsed.data : {};
+    throw new SettingsPatchError(
+      errorBody.error ?? "Failed to update settings",
+      errorBody.code,
+    );
   }
   return body;
 }
@@ -248,8 +267,7 @@ function TaxComplianceCard({
       });
       onSuccess();
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
+      if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
         onError(
@@ -274,8 +292,7 @@ function TaxComplianceCard({
         queryKey: ["org-settings", orgId],
       });
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
+      if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
         onError(
@@ -494,8 +511,7 @@ function RecordingRetentionCard({
       });
       onSuccess();
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "VERSION_CONFLICT") {
+      if (isVersionConflict(err)) {
         onVersionConflict();
       } else {
         onError(
@@ -602,8 +618,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       setError(null);
       setTimeout(() => setSuccess(false), 2500);
     },
-    onError: (err: Error & { code?: string }) => {
-      if (err.code === "VERSION_CONFLICT") {
+    onError: (err: Error) => {
+      if (isVersionConflict(err)) {
         setConflictOpen(true);
         setSuccess(false);
         return;

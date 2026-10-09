@@ -34,6 +34,7 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
+import { MIN_ORG_RETENTION_DAYS } from "@/lib/stream/recording-retention";
 
 const ORG_DELETED_CALL_REASON = "org_deleted";
 
@@ -111,7 +112,7 @@ const PatchBodySchema = z
     streamRecordingRetentionDays: z
       .number()
       .int()
-      .min(7)
+      .min(MIN_ORG_RETENTION_DAYS)
       .max(3650)
       .nullable()
       .optional(),
@@ -656,7 +657,17 @@ export async function PATCH(
               category: "SETTINGS",
               action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
               description: "Organization record updated",
-              details: { patch: body },
+              details: {
+                patch: body,
+                ...(body.streamRecordingRetentionDays !== undefined &&
+                  body.streamRecordingRetentionDays !==
+                    current.streamRecordingRetentionDays && {
+                    streamRecordingRetentionDays: {
+                      previous: current.streamRecordingRetentionDays,
+                      next: body.streamRecordingRetentionDays,
+                    },
+                  }),
+              },
             },
           });
 

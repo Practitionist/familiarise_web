@@ -44,9 +44,7 @@ export interface StreamRecordingStoppedEvent {
   created_at: string;
 }
 
-export type StreamRecordingReadyEvent = z.infer<
-  typeof streamRecordingReadySchema
->;
+type StreamRecordingReadyEvent = z.infer<typeof streamRecordingReadySchema>;
 
 export interface StreamRecordingFailedEvent {
   call_cid: string;

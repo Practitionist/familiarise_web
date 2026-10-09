@@ -335,7 +335,7 @@ async function uploadMultipartPart(opts: {
 }
 
 /** S3 may answer CompleteMultipartUpload with 200 and an `<Error>` body. */
-export function parseCompleteMultipartUploadResponse(xml: string): void {
+function parseCompleteMultipartUploadResponse(xml: string): void {
   if (/<Error>/.test(xml)) {
     const code = /<Code>([^<]*)<\/Code>/.exec(xml)?.[1] ?? "Unknown";
     const message = /<Message>([^<]*)<\/Message>/.exec(xml)?.[1] ?? "";

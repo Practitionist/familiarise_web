@@ -3,9 +3,8 @@
  */
 
 /**
- * The copy job: a verified copy flips the row to AVAILABLE; any failure
- * (including a size mismatch after upload) deletes the object and returns the
- * row to READY with the attempt counted. The transfer path never writes FAILED.
+ * A verified copy flips the row to AVAILABLE; any failure deletes the object
+ * and returns the row to READY with the attempt counted, never FAILED.
  */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -15,8 +14,13 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    $disconnect: jest.fn(),
   },
 }));
+jest.mock("../../lib/maintenance-cron", () => ({
+  abortIfMaintenance: jest.fn(),
+}));
+jest.mock("../../lib/observability/job-sentry", () => ({ runJob: jest.fn() }));
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -33,6 +37,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import { runJob } from "../../lib/observability/job-sentry";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
   deleteR2Object,
@@ -164,6 +169,34 @@ describe("transferRecordings", () => {
       where: { id: { in: string[] } };
     };
     expect(stamp.where.id.in).toEqual(["a", "b"]);
+  });
+});
+
+describe("transfer-recordings job", () => {
+  it("fails the run for exhausted rows but not for a copy that will retry", async () => {
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+    await import("../../jobs/stream/transfer-recordings");
+    const job = (runJob as jest.Mock).mock.calls[0][1] as () => Promise<void>;
+    const priorExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      recording.findMany
+        .mockResolvedValueOnce([{ id: "c" }])
+        .mockResolvedValueOnce([]);
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error("reset")) as unknown as typeof fetch;
+      await job();
+      expect(process.exitCode).toBeUndefined();
+
+      recording.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: "a", lastTransferError: "x" }]);
+      await job();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = priorExitCode;
+    }
   });
 });
 

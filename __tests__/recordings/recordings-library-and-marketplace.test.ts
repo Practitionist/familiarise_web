@@ -740,7 +740,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       ).toEqual([]);
     });
 
-    it("computes canPublish as true for a READY STREAM_S3 webinar recording awaiting its copy", async () => {
+    it("withholds canPublish from a READY STREAM_S3 webinar recording until our copy exists", async () => {
       mockGetSession.mockResolvedValue({
         user: { id: "u-consultant", role: "CONSULTANT" },
       });
@@ -809,7 +809,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       expect(body.recordings[0]).toMatchObject({
         id: "rec-perm-1",
         canManage: true,
-        canPublish: true,
+        canPublish: false,
       });
     });
 

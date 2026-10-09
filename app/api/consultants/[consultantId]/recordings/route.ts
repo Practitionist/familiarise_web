@@ -305,13 +305,11 @@ function formatConsultantRecording(
   const isPrimaryOwner = ownerProfileId === consultantId;
   const listingPlan = resolveListingPlan(appointment);
   const canManage = isPrimaryOwner;
-  const awaitingCopy =
-    recording.status === "READY" && recording.storageType === "STREAM_S3";
   const canPublish =
     isPrimaryOwner &&
     listingPlan !== null &&
     isDiscoverablePlanPlan(listingPlan.plan) &&
-    (isDurablyOurs(recording) || awaitingCopy);
+    isDurablyOurs(recording);
   const hasBuyers = recording.purchases.length > 0;
 
   const allNames = (appointment.participants ?? [])

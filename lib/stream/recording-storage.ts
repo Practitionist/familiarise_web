@@ -1,10 +1,9 @@
 /**
- * Recording storage access: the durability rule, playback URL minting and
- * object deletion. Full recordings live in R2; preview clips and thumbnails
- * live in the public Supabase `recordings-previews` bucket.
+ * Full recordings live in R2; preview clips and thumbnails live in the public
+ * Supabase `recordings-previews` bucket.
  */
 
-import type { Prisma } from "@prisma/client";
+import { RecordingStatus, type Prisma } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   createR2PresignedGetUrl,
@@ -60,12 +59,13 @@ export async function getBestRecordingUrl(recording: {
   storagePath: string | null;
   recordingUrl: string | null;
 }): Promise<string | null> {
-  if (recording.status === "AVAILABLE" && recording.storagePath) {
+  if (recording.status === RecordingStatus.AVAILABLE && recording.storagePath) {
     return generateSignedUrl(recording.storagePath);
   }
 
   if (
-    (recording.status === "READY" || recording.status === "TRANSFERRING") &&
+    (recording.status === RecordingStatus.READY ||
+      recording.status === RecordingStatus.TRANSFERRING) &&
     recording.recordingUrl
   ) {
     return recording.recordingUrl;
@@ -100,9 +100,7 @@ export async function deleteRecordingObject(
 }
 
 /** Remove the recording's preview folder (clip and thumbnail); false means objects may survive. */
-export async function deleteRecordingPreviews(
-  recordingId: string,
-): Promise<boolean> {
+async function deleteRecordingPreviews(recordingId: string): Promise<boolean> {
   try {
     const { data, error } = await adminStorage()
       .from(RECORDING_PREVIEWS_BUCKET)
