@@ -20,15 +20,15 @@ The suite was distilled from a seven-lane campaign run on 2026-10-09. Each lane 
 
 | Persona | Seed account | Used for |
 | --- | --- | --- |
-| Customer (consultee) A | `daniel.brown@gmail.com` | Main support journey, ratings, reviews |
-| Customer B and C | `isabella.brown@yahoo.com` and `ethan.brown@protonmail.com` | Second and third rate-limit budgets, callback and tag cases |
-| Race customer | One more roster consultee with an eligible session, found in lane 01 | Concurrent first-save races |
-| Expert (consultant) | `jessica.anderson@gmail.com`, plus the seeded consultant that has at least five rated clients (found in lane 01) | Receiving reviews, reply, report, score gate |
-| Organisation owner | `samantha.anderson@yahoo.com` (Wipro owner) | Organisation triage, feedback summary, disputes tab |
-| Staff | `maria.brown@gmail.com` and other staff in the roster | Inbox, replies, moderation queue |
-| Admin | `olivia.brown@protonmail.com` | Admin-only gates, dispute reads, removals |
+| Customer (consultee) A | Picked by query in lane 01: role CONSULTEE, onboarding completed, a rateable held occurrence | Main support journey, ratings, reviews |
+| Customer B and C | Two more consultees picked the same way | Separate per-route rate-limit budgets, callback and tag cases |
+| Race customer | One more consultee with an eligible session, found in lane 01 | Concurrent first-save races |
+| Expert (consultant) | A consultant below the publish gate and one with at least five rated clients, found in lane 01 | Receiving reviews, reply, report, score gate |
+| Organisation owner | The owner of an organisation that has appointments, found in lane 01 | Organisation triage, feedback summary, disputes tab |
+| Staff | A staff operator from the roster | Inbox, replies, moderation queue |
+| Admin | An admin operator from the roster | Admin-only gates, dispute reads, removals |
 
-The authoritative roster is [`docs/team/mock-credentials.md`](../../docs/team/mock-credentials.md); all seeded accounts share the seed password documented there. Fixture ids are never stored in this suite; lane 01 discovers them at run time.
+The authoritative roster is `docs/team/mock-credentials.md` at the repository root; all seeded accounts share the seed password documented there. Some roster accounts are not onboarded and some have a role that differs from their surname group, so personas are picked by query, never by name. Fixture ids are never stored in this suite; lane 01 discovers them at run time.
 
 ## How to run
 
@@ -47,12 +47,14 @@ Lanes never edit repository files, never spawn sub-agents, and never run `next d
 | [`00-orchestrator.md`](./00-orchestrator.md) | Orchestrator playbook: model tiers, sequencing, verification, decisions, reporting, cleanup gate |
 | [`_shared/shared-setup.md`](./_shared/shared-setup.md) | Run parameters, hard rules, sign-in and 2FA recipes, rate-limit budget, fixture discipline, report format |
 | [`_shared/complaint-catalogue.md`](./_shared/complaint-catalogue.md) | Customer, expert and staff complaint patterns, psychology heuristics and India regulatory expectations, as test heuristics |
-| [`01-preflight-drift-and-fixtures.md`](./01-preflight-drift-and-fixtures.md) | Schema drift check, health, sign-in, 2FA status, seed gaps, fixture discovery |
-| [`02-customer-support-journey.md`](./02-customer-support-journey.md) | The customer side of support, from bot to ticket to reply |
-| [`03-staff-support-operations.md`](./03-staff-support-operations.md) | The staff side: inbox, case workspace, replies, status, races, escalation |
-| [`04-reviews-and-session-feedback.md`](./04-reviews-and-session-feedback.md) | Session ratings, public reviews, replies, scores, organisation feedback summary |
-| [`05-moderation-platform-feedback-disputes.md`](./05-moderation-platform-feedback-disputes.md) | Moderation queue and actions, platform feedback, disputes |
-| [`06-cleanup-and-sentry.md`](./06-cleanup-and-sentry.md) | Fixture removal, global tag sweep, restore verification, Sentry check |
+| [`01-preflight-drift-and-fixtures.md`](./01-preflight-drift-and-fixtures.md) | 14 cases: schema drift check, health, sign-in, 2FA status, seed gaps, fixture discovery |
+| [`02-customer-support-journey.md`](./02-customer-support-journey.md) | 33 cases: the customer side of support, from bot to ticket to reply |
+| [`03-staff-support-operations.md`](./03-staff-support-operations.md) | 30 cases: the staff side: inbox, case workspace, replies, status, races, escalation |
+| [`04-reviews-and-session-feedback.md`](./04-reviews-and-session-feedback.md) | 29 cases: session ratings, public reviews, replies, scores, organisation feedback summary |
+| [`05-moderation-platform-feedback-disputes.md`](./05-moderation-platform-feedback-disputes.md) | 30 cases: moderation queue and actions, platform feedback, disputes |
+| [`06-cleanup-and-sentry.md`](./06-cleanup-and-sentry.md) | 13 cases: fixture removal, global tag sweep, restore verification, Sentry check |
+
+The suite holds 149 cases in total. Reports are named `0N-report.md` after the lane number.
 
 ## Case ID scheme and tags
 

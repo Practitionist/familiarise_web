@@ -14,6 +14,18 @@
 
 Lane runners must not spawn sub-agents. Launch them in the background and wait for the completion notification; never predict a result before it arrives.
 
+### Known product decisions
+
+These were decided by the owner (see the 2026-10-09 run and the tracking issues #2026 and #2033). Lane runners and the orchestrator do not re-raise them as defects; a case that contradicts one is a stale case to correct.
+
+- Two-factor authentication is mandatory for staff and admin operators. Operators cannot disable it themselves; the run reverts enrolment by SQL in lane 06.
+- A staff reply never reopens a resolved ticket. A customer reply to a resolved ticket reopens it.
+- Removal of a review is admin-only everywhere, including `CONTENT_REMOVED` on a review report.
+- Only admins see the engineering escalation control, and its body carries the case key and reference only.
+- Staff may read disputes; evidence and billing PII are redacted unless the viewer may manage disputes.
+- An excluded review stays visible, labelled "Not counted in rating", and the expert and reporter are told.
+- Rate limits are per route; public review edit and delete have no limiter today.
+
 ## 2. Before launching
 
 1. Fill the run parameters from the shared setup section 1: `{PR_NUMBER}`, `{PREVIEW_URL}`, `{HEAD_SHA}`, `{BRANCH}`, `{RUN_DATE}`, `{RUN_TAG}`, `{AUDIT_DIR}`.
@@ -24,7 +36,7 @@ Lane runners must not spawn sub-agents. Launch them in the background and wait f
 
 ## 3. Lane sequence
 
-The lanes are strictly sequential, because they share fixture rows, rate-limit budgets and the single-session policy of operators.
+The lanes are strictly sequential, because they share fixture rows, rate-limit budgets and the possible single-session policy of operators.
 
 | Order | Lane | Gate to continue |
 | --- | --- | --- |
@@ -35,13 +47,13 @@ The lanes are strictly sequential, because they share fixture rows, rate-limit b
 | 5 | `05-moderation-platform-feedback-disputes.md` | Dispute rows restored |
 | 6 | `06-cleanup-and-sentry.md` | Global tag sweep returns zero rows |
 
-Give each lane its prompt file, the run parameters, the path to the previous lane's report, and the handoff table it must honour.
+Give each lane its prompt file, the run parameters, the path to the previous lane's report (`{AUDIT_DIR}/0N-report.md`), and the handoff table it must honour.
 
 ## 4. After each lane
 
 1. Read the report. Count verdicts and reconcile them against the case table of the lane file; every case must appear as PASS, FAIL, PARTIAL, BLOCKED or NOT RUN.
-2. **Re-check every FAIL and every PARTIAL at the PR head yourself** (or with an `Explore` agent): read the cited `file:line` with `git show origin/{BRANCH}:<path>`, and compare with `git show origin/dev:<path>` to classify `[PR]`, `[PRE]` or `[ENV]`. Reject a FAIL that the code does not support, and demote or promote verdicts with the reason written into the synthesis.
-3. Look for lane-induced artefacts before blaming the product: microsecond timestamps written by SQL that make every optimistic write conflict, a limiter exhausted by an earlier case, a cold-boot timeout, a single-session policy that revoked a jar.
+2. **Re-check every FAIL and every PARTIAL at the PR head yourself** (or with an `Explore` agent): read the cited `file:line` with `git show origin/{BRANCH}:<path>`, and compare with `git show origin/dev:<path>` (when the ref is a shell variable in zsh, write `"${B}:path"`, because `$B:path` applies a history modifier) to classify `[PR]`, `[PRE]` or `[ENV]`. Reject a FAIL that the code does not support, and demote or promote verdicts with the reason written into the synthesis.
+3. Look for lane-induced artefacts before blaming the product: microsecond timestamps written by SQL that make every optimistic write conflict, a limiter exhausted by an earlier case, a cold-boot timeout, a single-session policy that revoked a jar (not observed on 2026-10-09, but possible).
 4. Check the lane's fixtures section against the next lane's preconditions. If a lane left something half-reverted, fix it before continuing.
 5. If a lane hit a session limit, relaunch only its NOT RUN cases as a new lane run; do not resume a stopped agent.
 
@@ -82,7 +94,7 @@ Do not close the run until all of these hold:
 
 - Lane 06's global sweep for `{RUN_TAG}` returned zero rows across every text column, including `FailedEmail` and `NotificationOutbox`.
 - Every restored score row, dispute row and excluded flag matches the recorded original values.
-- Staff and admin two-factor enrolment is reverted by SQL and local secrets and cookie jars are deleted.
+- Staff and admin two-factor enrolment is reverted by SQL (operators cannot self-disable) and local secrets and cookie jars are deleted.
 - Residue that cannot be removed (vendor notifications, consumed ticket references, sign-in session rows) is listed in the report.
 - The browser has one page left, or none.
 
