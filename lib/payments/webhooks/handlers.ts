@@ -364,7 +364,9 @@ export async function handlePaymentSuccess(
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
                 description: autoRefundPendingDescription(
-                  `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
+                  gatewayAmountPaise > payment.amount
+                    ? `Over-capture surplus of ${gatewayAmountPaise - payment.amount}p on ${paymentIntentId} (capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p)`
+                    : `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
                 ),
               },
             });
@@ -871,6 +873,21 @@ export async function handlePaymentSuccess(
       txResult.expectedAmount,
     );
     const surplusPaise = txResult.gatewayAmountPaise - refundablePaise;
+    if (surplusPaise > 0) {
+      // Log surplus audit event before attempting gateway refund so transient errors never drop it.
+      void recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Over-capture surplus of ${surplusPaise}p on payment ${txResult.paymentId} requires operator refund`,
+        err: new Error("OVERCAPTURE_SURPLUS_RECOVERY"),
+        context: {
+          paymentId: txResult.paymentId,
+          gatewayAmountPaise: txResult.gatewayAmountPaise,
+          expectedAmount: txResult.expectedAmount,
+          surplusPaise,
+        },
+      });
+    }
     try {
       const outcome = await refundPayment({
         paymentId: txResult.paymentId,
@@ -878,20 +895,6 @@ export async function handlePaymentSuccess(
         reason: "capture amount mismatch",
         initiatedByUserId: null,
       });
-      if (surplusPaise > 0) {
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Over-capture surplus of ${surplusPaise}p on payment ${txResult.paymentId} requires operator refund`,
-          err: new Error("OVERCAPTURE_SURPLUS_RECOVERY"),
-          context: {
-            paymentId: txResult.paymentId,
-            gatewayAmountPaise: txResult.gatewayAmountPaise,
-            expectedAmount: txResult.expectedAmount,
-            surplusPaise,
-          },
-        });
-      }
       if (outcome?.status !== "PENDING") {
         await prisma.payment.update({
           where: { id: txResult.paymentId },
@@ -956,23 +959,21 @@ export async function handlePaymentSuccess(
 
   if (txResult.capturedAfterTerminal) {
     try {
-      if (txResult.seatReleased) {
-        // Refund THIS capture by intent (a seat may be org- or credit-funded).
-        // It throws on failure, so the marker below survives for the retry sweep.
-        await refundBookingPayment({
-          paymentId: txResult.paymentId,
-          reason: "capture after seat release",
-          initiatedByUserId: null,
-          dedupeKey: `capture-unseated:${txResult.paymentId}`,
-        });
-      } else {
-        await refundPayment({
-          paymentId: txResult.paymentId,
-          reason: "capture after cancellation",
-          initiatedByUserId: null,
-        });
+      const outcome = txResult.seatReleased
+        ? await refundBookingPayment({
+            paymentId: txResult.paymentId,
+            reason: "capture after seat release",
+            initiatedByUserId: null,
+            dedupeKey: `capture-unseated:${txResult.paymentId}`,
+          })
+        : await refundPayment({
+            paymentId: txResult.paymentId,
+            reason: "capture after cancellation",
+            initiatedByUserId: null,
+          });
+      if (outcome?.status !== "PENDING") {
+        await settleAutoRefundMarker(txResult.paymentId);
       }
-      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
@@ -985,13 +986,15 @@ export async function handlePaymentSuccess(
 
   if (txResult.doubleBookingBlocked) {
     try {
-      await refundPayment({
+      const outcome = await refundPayment({
         paymentId: txResult.paymentId,
         reason: DOUBLE_BOOKING_BLOCKED_NOTE,
         initiatedByUserId: null,
       });
       await releaseBlockedBookingHold(txResult.appointmentId);
-      await settleAutoRefundMarker(txResult.paymentId);
+      if (outcome?.status !== "PENDING") {
+        await settleAutoRefundMarker(txResult.paymentId);
+      }
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",

@@ -119,7 +119,7 @@ Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's nam
 
 ## Section 34 cutoff & transaction invariants
 
-- **Single pinned cutoff clock (`cascadeNow`)**: `applyRefundCascade` pins a single `Date` across `ConsumerCreditNote` minting (`mintConsumerCreditNote(..., { now: cascadeNow })`), B2B `OrganizationInvoice` credit note minting (`mintRefundCreditNote`), and Step 9 `isPastGstCreditNoteCutoff(payment.createdAt, cascadeNow)` so midnight/year-end boundary transitions never diverge between tax document issuance and ledger GST reversal.
+- **Single pinned cutoff clock (`cascadeNow`)**: `applyRefundCascade` pins a single `Date` across `ConsumerCreditNote` minting (`mintConsumerCreditNote(..., { now: cascadeNow })`), B2B `OrganizationInvoice` credit note minting (`mintRefundCreditNote`), and Step 9 `isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)` (`linkedOrgInvoice?.issuedAt ?? payment.createdAt`) so midnight/year-end boundary transitions never diverge between tax document issuance and ledger GST reversal.
 - **B2B rollup invoice cutoff & remaining balance**: For B2B rollup invoices (`OrganizationInvoice`), the Section 34 time limit is evaluated against `invoice.issuedAt`, and invoice status transitions to `REFUNDED` only when cumulative non-cancelled `CreditNote.amountPaise` reaches `invoice.subtotalPaise` (`remainingOrgInvoiceCreditPaise <= 0`).
 - **Single-connection transaction safety (`PG_POOL_MAX=1`)**: `mintConsumerInvoice` and `mintConsumerCreditNote` pass the enclosing interactive transaction client (`db: tx`) into `recordSystemErrorSafe` and `recordSystemEventSafe` so error/audit persistence never competes for a second connection from the pool.
 

@@ -799,38 +799,38 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           where: { id: boundRefundRowId, status: RefundStatus.PENDING },
           data: { status: RefundStatus.SUCCEEDED },
         });
-        const cascade =
-          settledClaim.count > 0
-            ? await applyRefundCascade(tx, {
-                paymentId: input.paymentId,
-                refundId: boundRefundRowId,
-                amountPaise: requested,
-                reason: input.reason,
-                initiatedByUserId: input.initiatedByUserId ?? null,
-              })
-            : {
-                legsReversed: 0,
-                consultantEarningsReversed: 0,
-                organizationEarningsReversed: 0,
-                clawbackInitiated: false,
-                memberOverageRefundDue: null,
-              };
+        if (settledClaim.count === 0) {
+          // Concurrent webhook or reconciler already transitioned this row out of PENDING;
+          // only treat as settled if that writer landed SUCCEEDED (and already restored credits).
+          const current = await tx.refund.findUnique({
+            where: { id: boundRefundRowId },
+            select: { status: true },
+          });
+          return {
+            refundId: boundRefundRowId,
+            amountRefundedPaise: requested,
+            legsReversed: 0,
+            consultantEarningsReversed: 0,
+            organizationEarningsReversed: 0,
+            clawbackInitiated: false,
+            memberOverageRefundDue: null,
+            status:
+              current?.status === RefundStatus.SUCCEEDED
+                ? ("SUCCEEDED" as const)
+                : ("PENDING" as const),
+            gatewayRefundId: gateway.refundId || undefined,
+          };
+        }
 
-        // Restore referral credits. This closes the #B20 gap: credit restoration
-        // used to live ONLY in the gateway-refund webhook, so a refund initiated
-        // through the app (or through the reversal engine) settled without ever
-        // giving the buyer their credits back.
-        //
-        // It must run AFTER the SUCCEEDED update above, because
-        // reverseCreditsForPayment derives its restoration target from the
-        // cumulative SUCCEEDED refund total for the payment — called before, this
-        // refund would be missing from that sum and credits would be
-        // under-restored. It is re-entrant, so the webhook calling it again for
-        // the same refund is a no-op.
-        // `payment.amount` is the denominator, matching what the webhook passes
-        // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
-        // amount charged), and the two paths must agree or a payment refunded
-        // partly through each would restore the wrong total.
+        const cascade = await applyRefundCascade(tx, {
+          paymentId: input.paymentId,
+          refundId: boundRefundRowId,
+          amountPaise: requested,
+          reason: input.reason,
+          initiatedByUserId: input.initiatedByUserId ?? null,
+        });
+
+        // Runs after SUCCEEDED transition so cumulative SUCCEEDED refund sum includes this row.
         const restoredCredits = await reverseCreditsForPayment(
           input.paymentId,
           tx,

@@ -258,10 +258,19 @@ async function stageExistingCaptureRefund(
       },
     });
     if (claimed.count === 0) return null;
-    if (input.chargedPaise !== existing.amount) {
-      await tx.paymentLeg.updateMany({
-        where: { paymentId: existing.id, source: "CARD" },
-        data: { amountPaise: input.chargedPaise },
+    // Ensure CARD leg matches amount so deferred payment_legs_sum_to_amount trigger passes at COMMIT.
+    const updatedLegs = await tx.paymentLeg.updateMany({
+      where: { paymentId: existing.id, source: "CARD" },
+      data: { amountPaise: input.chargedPaise },
+    });
+    if (updatedLegs.count === 0) {
+      await tx.paymentLeg.create({
+        data: {
+          paymentId: existing.id,
+          source: "CARD",
+          amountPaise: input.chargedPaise,
+          sourceRef: input.paymentIntent,
+        },
       });
     }
     await postUnappliedReceipt(tx, {
@@ -448,33 +457,66 @@ async function settleReplaySale(
     organizationId,
     planInfo,
   } = input;
-  const payment =
-    orderPayment ??
-    (await tx.payment.create({
-      data: {
-        userId: input.buyerId,
-        appointmentId: null,
-        amount: chargedPaise,
-        originalAmount: charge.originalAmount,
-        taxAmount: charge.taxAmount,
-        ...(charge.buyerCountry
-          ? {
-              buyerCountry: charge.buyerCountry,
-              isInternational: charge.buyerCountry !== "IN",
-            }
-          : {}),
-        currency: "INR",
-        paymentMethod: "CARD",
-        paymentIntent: orderId,
-        paymentGateway: "RAZORPAY",
-        paymentStatus: "SUCCEEDED",
-        capturedAt: new Date(),
-        description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
-        organizationId,
-        legs: cardLeg(chargedPaise, orderId),
-        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-      },
-    }));
+  const payment = orderPayment
+    ? await (async () => {
+        const updatedLegs = await tx.paymentLeg.updateMany({
+          where: { paymentId: orderPayment.id, source: "CARD" },
+          data: { amountPaise: chargedPaise },
+        });
+        if (updatedLegs.count === 0) {
+          await tx.paymentLeg.create({
+            data: {
+              paymentId: orderPayment.id,
+              source: "CARD",
+              amountPaise: chargedPaise,
+              sourceRef: orderId,
+            },
+          });
+        }
+        return tx.payment.update({
+          where: { id: orderPayment.id },
+          data: {
+            amount: chargedPaise,
+            originalAmount: charge.originalAmount,
+            taxAmount: charge.taxAmount,
+            ...(charge.buyerCountry
+              ? {
+                  buyerCountry: charge.buyerCountry,
+                  isInternational: charge.buyerCountry !== "IN",
+                }
+              : {}),
+            paymentStatus: "SUCCEEDED",
+            capturedAt: new Date(),
+            description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+            ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+          },
+        });
+      })()
+    : await tx.payment.create({
+        data: {
+          userId: input.buyerId,
+          appointmentId: null,
+          amount: chargedPaise,
+          originalAmount: charge.originalAmount,
+          taxAmount: charge.taxAmount,
+          ...(charge.buyerCountry
+            ? {
+                buyerCountry: charge.buyerCountry,
+                isInternational: charge.buyerCountry !== "IN",
+              }
+            : {}),
+          currency: "INR",
+          paymentMethod: "CARD",
+          paymentIntent: orderId,
+          paymentGateway: "RAZORPAY",
+          paymentStatus: "SUCCEEDED",
+          capturedAt: new Date(),
+          description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
+          organizationId,
+          legs: cardLeg(chargedPaise, orderId),
+          ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
+        },
+      });
 
   await createEarningsFromPayment({
     payment: {

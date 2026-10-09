@@ -422,8 +422,9 @@ async function syncPaymentEarningsUnlocked(
   }
 
   if (skippedRefundedIds.length > 0) {
+    // Keep message string static so Sentry groups all occurrences into one issue; IDs live in extra.
     reportSentryMessage(
-      `EARNINGS_SKIPPED_REFUNDED: payment ${skippedRefundedIds.join(", ")} was refunded or charged back after the cohort read; not accrued`,
+      "EARNINGS_SKIPPED_REFUNDED: payment(s) refunded or charged back after the cohort read; not accrued",
       {
         subsystem: "payments",
         op: "sync-payment-earnings.race",
