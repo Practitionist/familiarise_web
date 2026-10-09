@@ -4,6 +4,7 @@ import {
   buildEngineeringEscalationHref,
   extractCallbackInfo,
 } from "@/lib/support/callback-info";
+import { escalationBrief } from "@/lib/support/escalation";
 import { callbackPhoneSchema, stripCallbackTags } from "@/lib/validation/phone";
 import { slaStateOf } from "@/lib/support/sla";
 import {
@@ -46,6 +47,11 @@ describe("Support, Feedback & Review Megafix invariants", () => {
         null,
       );
       expect(platform.callbackRequested).toBe(false);
+      const brief = stripCallbackTags(
+        escalationBrief({ customerAsk: "[Callback Requested: +919876543210]" }),
+      );
+      expect(brief).not.toMatch(/callback requested/i);
+      expect(extractCallbackInfo(brief, null).callbackRequested).toBe(false);
       expect(
         stripCallbackTags(
           "[Callback [Callback Requested: x]Requested: +919876543210] hi",

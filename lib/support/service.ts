@@ -21,10 +21,15 @@ import type {
   SupportThreadStatus,
 } from "@prisma/client";
 import { seatOrganizationId } from "@/lib/booking/participants";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
-import { decideEscalation, escalationBrief } from "./escalation";
+import {
+  decideEscalation,
+  escalationBrief,
+  isBareHumanRequest,
+} from "./escalation";
 import { issueTypeForReason, priorityForReason } from "./priority";
 import {
   notifyRequesterOfTicket,
@@ -602,6 +607,7 @@ async function escalate(
   let turnMessageId: string | undefined;
   const ticketId = await prisma.$transaction(
     async (tx) => {
+      // Claim first, CAS on not-CLOSED: a settled thread is never reopened or given a second ticket.
       const claimed = await tx.appointmentSupportThread.updateMany({
         where: { id: threadId, status: { not: "CLOSED" } },
         data: {
@@ -614,12 +620,13 @@ async function escalate(
       });
       if (claimed.count === 0) return null;
 
-      const priorTurns =
-        (await tx.supportMessage.findMany?.({
+      const priorTurns = (
+        await tx.supportMessage.findMany({
           where: { threadId },
-          orderBy: { seq: "asc" },
+          orderBy: { seq: "desc" },
           take: 6,
-        })) ?? [];
+        })
+      ).reverse();
 
       const userSaid = [turn.chosenLabel, userMessage].filter(
         (s): s is string => !!s,
@@ -668,23 +675,26 @@ async function escalate(
         const lastBotMessage =
           turn.messages.find((m) => m.sender === "BOT")?.body ??
           priorTurns.filter((t) => t.sender === "BOT").at(-1)?.body;
+        const typed = userMessage?.trim();
         const customerAsk =
-          userMessage?.trim() ||
-          turn.chosenLabel?.trim() ||
-          priorUserSteps.at(-1) ||
-          null;
+          typed && !isBareHumanRequest(typed)
+            ? typed
+            : (priorUserSteps.filter((b) => !isBareHumanRequest(b)).at(-1) ??
+              (turn.chosenLabel?.trim() || null));
 
         const ticket = await tx.supportTicket.create({
           data: {
             userId: ctx.userId,
             title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
-            description: escalationBrief({
-              customerAsk,
-              path: pathSteps.join(" → ") || null,
-              botSaid: lastBotMessage ?? null,
-              reason: effectiveReason,
-              topic: category,
-            }),
+            description: stripCallbackTags(
+              escalationBrief({
+                customerAsk,
+                path: pathSteps.join(" → ") || null,
+                botSaid: lastBotMessage ?? null,
+                reason: effectiveReason,
+                topic: category,
+              }),
+            ),
             priority,
             referenceNumber,
             lastMessageAt: openedAt,
