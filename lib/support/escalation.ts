@@ -11,10 +11,10 @@ import type { SupportContext, SupportTurnResult } from "./types";
 
 /** Word-bounded human/legal escalation triggers so substrings never false-match. */
 const HUMAN_KEYWORD_RE =
-  /\b(human|agent|representative|support|person)\b|speak to someone|\b(complaint|legal|chargeback|fraud)\b/i;
+  /\b(human|agent|representative|complaint|legal|chargeback|fraud)\b|speak to someone/i;
 
 const BARE_HUMAN_PHRASE_RE =
-  /\b(human|agent|representative|support|person)\b|speak to someone/i;
+  /\b(human|agent|representative)\b|speak to someone|talk to a person/i;
 
 const BARE_STRIP_RE =
   /\b(i\s+(?:want|need|would\s+like)\s+(?:to\s+)?)?(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+|an\s+|live\s+|real\s+)?(?:human|agent|representative|support|person|someone)\b|\b(?:human|agent|representative|support|person|someone|please|now|help|me|can|i|to|with|a|an)\b/gi;

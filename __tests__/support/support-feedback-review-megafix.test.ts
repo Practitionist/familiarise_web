@@ -4,7 +4,11 @@ import {
   buildEngineeringEscalationHref,
   extractCallbackInfo,
 } from "@/lib/support/callback-info";
-import { escalationBrief } from "@/lib/support/escalation";
+import {
+  escalationBrief,
+  isBareHumanRequest,
+  mentionsHumanKeyword,
+} from "@/lib/support/escalation";
 import { callbackPhoneSchema, stripCallbackTags } from "@/lib/validation/phone";
 import { slaStateOf } from "@/lib/support/sla";
 import {
@@ -65,6 +69,17 @@ describe("Support, Feedback & Review Megafix invariants", () => {
         phone: null,
         callbackRequested: false,
       });
+    });
+  });
+
+  describe("human escalation keywords", () => {
+    it("ordinary uses of 'person' or 'support' walk the flow instead of escalating", () => {
+      expect(mentionsHumanKeyword("the person never joined")).toBe(false);
+      expect(mentionsHumanKeyword("I need support with my payment")).toBe(
+        false,
+      );
+      expect(mentionsHumanKeyword("let me speak to someone")).toBe(true);
+      expect(isBareHumanRequest("talk to a person")).toBe(true);
     });
   });
 

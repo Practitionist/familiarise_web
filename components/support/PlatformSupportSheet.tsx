@@ -479,7 +479,7 @@ export function PlatformSupportSheet({
                   turn.mutate({
                     flowId: flowId!,
                     nodeId: targetNode,
-                    userMessage: `Talk to a person: ${details}`,
+                    userMessage: `Speak to someone: ${details}`,
                     epoch: sittingRef.current,
                   });
                 }}
