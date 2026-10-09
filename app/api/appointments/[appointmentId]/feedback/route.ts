@@ -15,8 +15,9 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
-import { heldOccurrence } from "@/lib/reviews";
+import { heldOccurrence, resolveRatingCausePatch } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
+import { RatingCauseSchema } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { apiError } from "@/lib/errors/api-error";
 import { Refusal } from "@/lib/errors/refusal";
@@ -24,6 +25,8 @@ import {
   authorizeAppointment,
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
+import { assertBodySize } from "@/lib/validation/limits";
+import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
 
 const FEEDBACK_ROUTE = "appointments.feedback";
 
@@ -38,6 +41,7 @@ const feedbackSchema = z.object({
   comment: z.string().trim().max(2000).optional(),
   /** Which call of this booking is being rated; absent = the whole booking. */
   occurrenceId: z.string().min(1).max(64).optional(),
+  ratingCause: RatingCauseSchema.nullable().optional(),
 });
 
 export async function GET(
@@ -96,32 +100,45 @@ export async function GET(
           select: { id: true },
         });
 
-    // Every call of this booking the caller has rated (or, for the provider,
-    // every attendee rating on it), so the timeline can show a per-session
-    // breakdown instead of one number for the package.
-    const feedback = await prisma.appointmentFeedback.findMany({
-      where: asProvider
-        ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
-        : { appointmentId: { in: scopeIds }, userId: auth.userId },
-      select: {
-        id: true,
-        appointmentOccurrenceId: true,
-        rating: true,
-        // The SCORE is disclosed to the provider; the free-text note is not.
-        // Every comment in this table was typed into AppointmentCsatCard, whose
-        // own header called it "private per-participant CSAT" — and the row that
-        // replaced it takes stars only, so it cannot re-ask for consent that was
-        // never given. Nothing renders this field for a provider today, so
-        // withholding it costs no feature.
-        comment: !asProvider,
-        createdAt: true,
-      },
-      // A provider could otherwise infer a rater from ordering on a group call.
-      orderBy: { createdAt: "asc" },
-    });
+    const [feedback, openSupportThread] = await Promise.all([
+      prisma.appointmentFeedback.findMany({
+        where: asProvider
+          ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
+          : { appointmentId: { in: scopeIds }, userId: auth.userId },
+        select: {
+          id: true,
+          appointmentOccurrenceId: true,
+          rating: true,
+          // The provider sees the score, never the rater's free-text note.
+          comment: !asProvider,
+          ratingCause: !asProvider,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      // Only the caller's own case softens their prompt; another attendee's stays private.
+      asProvider
+        ? Promise.resolve(null)
+        : prisma.appointmentSupportThread.findFirst({
+            where: {
+              appointmentId,
+              userId: auth.userId,
+              OR: [
+                { status: { notIn: ["RESOLVED", "CLOSED"] } },
+                {
+                  supportTicket: {
+                    status: { in: ["OPEN", "IN_PROGRESS", "ON_HOLD"] },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          }),
+    ]);
     return NextResponse.json({
       data: feedback,
       rateableSlotIds: rateable.map((s) => s.id),
+      supportOpen: Boolean(openSupportThread),
     });
   } catch (cause) {
     return supportError({
@@ -137,6 +154,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  const tooLarge = assertBodySize(req);
+  if (tooLarge) return tooLarge;
+
   const id = await parseRouteParams(AppointmentIdParams, params, {
     route: FEEDBACK_ROUTE,
   });
@@ -150,6 +170,12 @@ export async function POST(
         appointmentId,
       });
     }
+
+    const rl = await applyRateLimit(
+      spamLimiter,
+      `appointment-feedback:${auth.userId}`,
+    );
+    if (rl) return rl;
     // CSAT is a PARTICIPANT's private rating: staff/admin read access must
     // not become write access — a privileged non-participant's row would
     // pollute the org quality aggregate with a rating they never earned.
@@ -264,6 +290,11 @@ export async function POST(
         (body.data.comment !== undefined &&
           (previous.comment ?? "") !== body.data.comment));
 
+    const updateRatingCausePatch = resolveRatingCausePatch(
+      body.data.rating,
+      body.data.ratingCause,
+    );
+
     let feedback;
     try {
       feedback = previous
@@ -273,6 +304,7 @@ export async function POST(
               rating: body.data.rating,
               comment: body.data.comment,
               raterRole,
+              ...updateRatingCausePatch,
               ...(opinionChanged ? { updatedAt: new Date() } : {}),
             },
           })
@@ -282,26 +314,53 @@ export async function POST(
               appointmentId,
               userId: auth.userId,
               organizationId: auth.organizationId,
-              // #1550 — the consultant on the rated call (or on the booking's
-              // held call, for a whole-booking rating).
               consultantProfileId: slot.consultantProfileId,
-              // #1580 — the co-presenter the rating also speaks to.
               coPresenterProfileId: presenter?.consultantProfileId ?? null,
               rating: body.data.rating,
               comment: body.data.comment,
+              ...resolveRatingCausePatch(
+                body.data.rating,
+                body.data.ratingCause ?? null,
+              ),
               raterRole,
             },
           });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        return supportError({
-          status: 409,
-          code: "CONFLICT",
-          message: "You have already rated this; reload and edit it instead",
-          context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+        const concurrent = await prisma.appointmentFeedback.findFirst({
+          where: {
+            appointmentId,
+            appointmentOccurrenceId: ratedOccurrenceId,
+            userId: auth.userId,
+          },
+          select: { id: true, rating: true, comment: true },
         });
+        if (concurrent) {
+          const concurrentOpinionChanged =
+            concurrent.rating !== body.data.rating ||
+            (body.data.comment !== undefined &&
+              (concurrent.comment ?? "") !== body.data.comment);
+          feedback = await prisma.appointmentFeedback.update({
+            where: { id: concurrent.id },
+            data: {
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+              ...updateRatingCausePatch,
+              ...(concurrentOpinionChanged ? { updatedAt: new Date() } : {}),
+            },
+          });
+        } else {
+          return supportError({
+            status: 409,
+            code: "CONFLICT",
+            message: "You have already rated this; reload and edit it instead",
+            context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+          });
+        }
+      } else {
+        throw error;
       }
-      throw error;
     }
     return NextResponse.json({ data: feedback });
   } catch (cause) {

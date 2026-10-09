@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import {
   liveParticipant,
   recordParticipants,
@@ -614,6 +615,13 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const reassignmentRefusal = await refuseForeignProfileReassignment(
+      session.user.id,
+      existingPlan.consultantProfileId,
+      consultantProfileId,
+    );
+    if (reassignmentRefusal) return reassignmentRefusal;
+
     const lateJoinRefusal = lateJoinCutoffRefusal(
       lateJoinUntilSession,
       (sessionsPerWeek ?? existingPlan.sessionsPerWeek) *
@@ -622,14 +630,21 @@ export async function PATCH(request: NextRequest) {
     );
     if (lateJoinRefusal) return lateJoinRefusal;
 
-    // Get the class instance - use the provided classId or the first one associated with the plan
+    // A supplied classId must name an instance of this plan; otherwise use its first.
     const classToUpdate = classId
-      ? await prisma.class.findUnique({
-          where: { id: classId },
+      ? await prisma.class.findFirst({
+          where: { id: classId, classPlanId: id },
         })
       : existingPlan.classes.length > 0
         ? existingPlan.classes[0]
         : null;
+
+    if (classId && !classToUpdate) {
+      return NextResponse.json(
+        { error: `Class ${classId} not found on plan ${id}` },
+        { status: 404 },
+      );
+    }
 
     // Check if trying to update instance fields without an instance (still necessary)
     if (

@@ -5,6 +5,7 @@ import {
   liveParticipant,
   recordParticipants,
 } from "@/lib/booking/participants";
+import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -586,10 +587,17 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // Get the webinar instance - use the provided webinarId or the first one associated with the plan
+    const reassignmentRefusal = await refuseForeignProfileReassignment(
+      session.user.id,
+      existingPlan.consultantProfileId,
+      consultantProfileId,
+    );
+    if (reassignmentRefusal) return reassignmentRefusal;
+
+    // A supplied webinarId must name an instance of this plan; otherwise use its first.
     const webinarToUpdate = webinarId
-      ? await prisma.webinar.findUnique({
-          where: { id: webinarId },
+      ? await prisma.webinar.findFirst({
+          where: { id: webinarId, webinarPlanId: id },
           include: {
             appointment: {
               include: {
@@ -601,6 +609,13 @@ export async function PATCH(request: NextRequest) {
       : existingPlan.webinars.length > 0
         ? existingPlan.webinars[0]
         : null;
+
+    if (webinarId && !webinarToUpdate) {
+      return NextResponse.json(
+        { error: `Webinar ${webinarId} not found on plan ${id}` },
+        { status: 404 },
+      );
+    }
 
     if (
       !webinarToUpdate &&

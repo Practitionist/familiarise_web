@@ -8,6 +8,7 @@ import type {
   TimelineItem,
 } from "@/types/support-case";
 
+import { extractCallbackInfo } from "./callback-info";
 import { supportAttachmentHref } from "./attachment-href";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { PLAN_TITLE_SELECT, SLA_SELECT, planTitle } from "./case-read";
@@ -202,6 +203,31 @@ export function responseItems(responses: ResponseRow[]): TimelineItem[] {
   }));
 }
 
+const MIRROR_DEDUPE_WINDOW_MS = 5_000;
+
+/** Pair-deduplicate non-internal user ticket replies mirrored into thread USER messages within 5s. */
+export function dedupeEscalatedResponses(
+  responses: ResponseRow[],
+  messages: MessageRow[],
+): ResponseRow[] {
+  const unmatchedUserMessages = messages.filter((m) => m.sender === "USER");
+  return responses.filter((r) => {
+    if (r.isInternal) return true;
+    if (isOperator(r.user.role)) return false;
+    const matchIdx = unmatchedUserMessages.findIndex(
+      (m) =>
+        m.body === r.message &&
+        Math.abs(r.createdAt.getTime() - m.createdAt.getTime()) <=
+          MIRROR_DEDUPE_WINDOW_MS,
+    );
+    if (matchIdx !== -1) {
+      unmatchedUserMessages.splice(matchIdx, 1);
+      return false;
+    }
+    return true;
+  });
+}
+
 export const byTime = (a: TimelineItem, b: TimelineItem) =>
   a.at.localeCompare(b.at);
 
@@ -231,6 +257,7 @@ const PERSON_SELECT = {
   id: true,
   name: true,
   email: true,
+  phone: true,
   role: true,
   createdAt: true,
 } as const;
@@ -303,6 +330,7 @@ async function readTicketWorkspace(
       category: true,
       issueType: true,
       createdAt: true,
+      updatedAt: true,
       paymentId: true,
       consultationId: true,
       ...SLA_SELECT,
@@ -335,14 +363,11 @@ async function readTicketWorkspace(
     internal: false,
     at: t.createdAt.toISOString(),
   };
-  // An escalated case's transcript is the thread: public staff replies are
-  // mirrored into it both ways, so only notes and user-side ticket replies
-  // are added from the ticket (else every staff reply shows twice).
   const timeline = thread
     ? [
-        ...messageItems(thread.messages as MessageRow[]),
+        ...messageItems(thread.messages),
         ...responseItems(
-          t.responses.filter((r) => r.isInternal || !isOperator(r.user.role)),
+          dedupeEscalatedResponses(t.responses, thread.messages),
         ),
       ]
     : [opener, ...responseItems(t.responses)];
@@ -362,6 +387,8 @@ async function readTicketWorkspace(
     findUserIssues({ userId: t.user.id, limit: 5 }),
   ]);
 
+  const cb = extractCallbackInfo(t.description, t.user.phone);
+
   return {
     key,
     kind: "ticket",
@@ -378,11 +405,15 @@ async function readTicketWorkspace(
     ackDueAt: iso(t.ackDueAt),
     resolutionDueAt: iso(t.resolutionDueAt),
     createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    handoffSummary: thread ? t.description || null : null,
     person: {
       id: t.user.id,
       name: t.user.name,
       role: t.user.role,
       email: grants.showEmail ? t.user.email : null,
+      phone: cb.phone ?? t.user.phone,
+      callbackRequested: cb.callbackRequested,
       joinedAt: t.user.createdAt.toISOString(),
     },
     booking,
@@ -413,6 +444,7 @@ async function readThreadWorkspace(
       activeChannel: true,
       category: true,
       createdAt: true,
+      updatedAt: true,
       supportTicketId: true,
       user: { select: PERSON_SELECT },
       organization: { select: { id: true, name: true } },
@@ -454,11 +486,14 @@ async function readThreadWorkspace(
     ackDueAt: null,
     resolutionDueAt: null,
     createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    handoffSummary: null,
     person: {
       id: t.user.id,
       name: t.user.name,
       role: t.user.role,
       email: grants.showEmail ? t.user.email : null,
+      phone: t.user.phone,
       joinedAt: t.user.createdAt.toISOString(),
     },
     booking,
@@ -466,7 +501,7 @@ async function readThreadWorkspace(
     organization: t.organization,
     pastCases,
     sentryIssues,
-    timeline: messageItems(t.messages as MessageRow[]),
+    timeline: messageItems(t.messages),
     attachments: [],
   };
 }

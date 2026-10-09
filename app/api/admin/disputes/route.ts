@@ -4,6 +4,37 @@ import prisma from "@/lib/prisma";
 import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
+
+const adminDisputesQuerySchema = z.object({
+  status: z
+    .enum([
+      "WARNING_NEEDS_RESPONSE",
+      "WARNING_UNDER_REVIEW",
+      "WARNING_CLOSED",
+      "NEEDS_RESPONSE",
+      "UNDER_REVIEW",
+      "CHARGE_REFUNDED",
+      "WON",
+      "LOST",
+      "CLOSED",
+    ] as const satisfies readonly DisputeStatus[])
+    .optional(),
+  gateway: z
+    .enum([
+      "STRIPE",
+      "RAZORPAY",
+      "DODO_PAYMENTS",
+      "CARD",
+    ] as const satisfies readonly PaymentGateway[])
+    .optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .transform((n) => Math.min(100, Math.max(1, n)))
+    .default(20),
+});
 
 const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = [
   "NEEDS_RESPONSE",
@@ -85,14 +116,24 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const searchParams = req.nextUrl.searchParams;
-    const rawPage = Number.parseInt(searchParams.get("page") || "1", 10);
-    const page = Number.isFinite(rawPage) ? Math.max(1, rawPage) : 1;
-    const rawLimit = Number.parseInt(searchParams.get("limit") || "20", 10);
-    const limit = Number.isFinite(rawLimit)
-      ? Math.min(100, Math.max(1, rawLimit))
-      : 20;
-    const status = searchParams.get("status") as DisputeStatus | null;
-    const gateway = searchParams.get("gateway") as PaymentGateway | null;
+    const parsedQuery = adminDisputesQuerySchema.safeParse({
+      status: searchParams.get("status") ?? undefined,
+      gateway: searchParams.get("gateway") ?? undefined,
+      page: searchParams.get("page") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+    });
+    if (!parsedQuery.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid query parameters",
+          details: parsedQuery.error.issues,
+        },
+        { status: 400 },
+      );
+    }
+    const { page, limit } = parsedQuery.data;
+    const status = parsedQuery.data.status ?? null;
+    const gateway = parsedQuery.data.gateway ?? null;
     const search = searchParams.get("search");
     const orgId = searchParams.get("orgId");
 

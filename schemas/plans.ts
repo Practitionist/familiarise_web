@@ -378,6 +378,8 @@ export const SubscriptionPlanSchema = z.object({
 
 // Base schema for common fields
 const BaseEventPlanSchema = z.object({
+  // Kept through the editor's resolver so an edit PATCHes instead of POSTing.
+  id: z.string().optional(),
   title: planTitleSchema,
   description: requiredDescriptionSchema,
   price: priceSchema,

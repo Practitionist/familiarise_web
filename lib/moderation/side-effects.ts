@@ -46,26 +46,24 @@ import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
 } from "./cancel-user-engagements";
+import { formatReportReference } from "./report-reference";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 
 export interface ModerationReportRef {
   id: string;
-  /** What the report is about. CONTENT_REMOVED acts on the id this type owns
-   *  and ignores any other, so a stored cross-type id can never be enforced. */
   type: ModerationReportType;
+  reportedById?: string;
   targetUserId: string;
   reviewId: string | null;
-  /** #1270 — set on MESSAGE reports; what CONTENT_REMOVED deletes on Stream. */
+  feedbackId?: string | null;
   streamMessageId?: string | null;
-  /**
-   * #1270 — the channel the message lives in, canonical from Stream. Carried
-   * with the id because the two are only useful together, and because the
-   * retry sweep was forwarding one without the other.
-   */
   streamChannelCid?: string | null;
 }
 
 export interface ModerationSideEffectInput {
+  actionId?: string;
   actionType: ModerationActionType;
   report: ModerationReportRef;
   staffUserId: string;
@@ -79,13 +77,12 @@ export interface TransactionalEffectResult {
   earningsHeld?: number;
   profilesUnverified?: number;
   reviewRemoved?: boolean;
-  /** #705 — whose public surfaces need purging once the transaction commits.
-   *  A removed review kept rendering on the landing page for up to an hour
-   *  because nothing invalidated the cache. */
+  reviewExcludedFromAggregate?: boolean;
+  /** The reviewed expert, notified in-transaction when their review is excluded. */
+  expertUserId?: string;
+  /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
-  /** #1580 C-P0-4 — the plans whose collaborator row the ban moved to REMOVED;
-   *  phase 2 revokes their Stream access. Reinstatement never restores them. */
   collaborationsRemoved?: CollaborationRef[];
 }
 
@@ -93,20 +90,10 @@ export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
 
 export interface SideEffectSummary extends TransactionalEffectResult {
   cancellations?: BulkCancelSummary;
-  /**
-   * The outcome of this action's Stream write — and, since #1270, the queue the
-   * retry sweep drains. One field covers both Stream steps because an action
-   * only ever owes one: a ban revokes and deactivates, CONTENT_REMOVED deletes
-   * a message. `errors[]` carries the prefix that tells them apart, and
-   * `gave_up` is the terminal state the sweep stamps once it stops retrying.
-   */
   stream?: StepStatus;
-  /** #1270 — how many times the sweep has re-driven a failed Stream step. */
   streamAttempts?: number;
   notification?: StepStatus;
-  /** #1580 C-P0-4 — Stream revocation for every plan in `collaborationsRemoved`. */
   collaboratorRevocation?: StepStatus;
-  /** #1580 — how many times the sweep has re-driven a failed revocation. */
   collaboratorRevocationAttempts?: number;
   errors?: string[];
 }
@@ -125,12 +112,82 @@ const captureModerationError = (error: unknown) =>
     { tags: { subsystem: "moderation" } },
   );
 
+/** Reporter-facing words for how a report was decided. */
+export function reportOutcomeCopy(actionType: ModerationActionType): {
+  outcome: string;
+  reason: string;
+} {
+  return actionType === "NO_ACTION"
+    ? {
+        outcome: "decided: no action needed",
+        reason: "No policy violation requiring enforcement was identified.",
+      }
+    : {
+        outcome: "decided: action taken",
+        reason:
+          "Appropriate action was applied under our community guidelines.",
+      };
+}
+
+/** True when the reporter already hears about this action as the reviewed expert. */
+export function reporterIsNotifiedExpert(
+  input: ModerationSideEffectInput,
+  result: TransactionalEffectResult,
+): boolean {
+  return (
+    input.actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" &&
+    !!result.expertUserId &&
+    input.report.reportedById === result.expertUserId
+  );
+}
+
+async function stageReporterDispositionBell(
+  tx: Tx,
+  input: ModerationSideEffectInput,
+): Promise<void> {
+  if (!input.report.reportedById) return;
+  const reference = formatReportReference(input.report.id);
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
+    recipients: [input.report.reportedById],
+    payload: {
+      reportId: input.report.id,
+      reference,
+      ...reportOutcomeCopy(input.actionType),
+      dashboardUrl: goHref("auto", "feedbacks"),
+    },
+    dedupeKey: `report-disposition:${input.report.id}:${input.actionId ?? input.actionType}`,
+  });
+}
+
 export async function applyTransactionalEffects(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
-  const { actionType, report } = input;
+  const result = await applyActionEffects(tx, input);
+  if (
+    input.actionType === "CONTENT_REMOVED" ||
+    input.actionType === "REVIEW_REMOVED"
+  ) {
+    await stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
+      recipients: [input.report.targetUserId],
+      payload: { ...(input.notes ? { reason: input.notes } : {}) },
+      dedupeKey: `content-removed:${input.actionId ?? input.report.id}`,
+    });
+  }
+  // The expert already gets the exclusion notice; one message is enough.
+  if (!reporterIsNotifiedExpert(input, result)) {
+    await stageReporterDispositionBell(tx, input);
+  }
+  return result;
+}
 
+async function applyActionEffects(
+  tx: Tx,
+  input: ModerationSideEffectInput,
+): Promise<TransactionalEffectResult> {
+  const { actionType, report } = input;
   switch (actionType) {
     case "USER_SUSPENDED":
     case "USER_BANNED":
@@ -138,19 +195,17 @@ export async function applyTransactionalEffects(
     case "PROFILE_UNVERIFIED":
       return unverifyProfiles(tx, report.targetUserId);
     case "CONTENT_REMOVED":
-      // A reported chat message is removed in phase 2 — the delete is a Stream
-      // API call and cannot join this transaction (#1270).
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
+      return excludeReviewFromAggregate(tx, report.reviewId);
+    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
+      return excludeFeedbackFromAggregate(tx, report.feedbackId);
     case "WARNING_ISSUED":
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
-    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
-    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
-      // A reinstatement is taken through the unban route, and the four #1562 acts
-      // are written by their own routes with the audit row; none lands here.
       return {};
   }
 }
@@ -295,6 +350,71 @@ async function softDeleteReview(
     reviewRemoved: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
   };
+}
+
+async function excludeReviewFromAggregate(
+  tx: Tx,
+  reviewId: string | null,
+): Promise<TransactionalEffectResult> {
+  if (!reviewId) return {};
+  const review = await tx.consultantReview.findUnique({
+    where: { id: reviewId },
+    select: {
+      consultantProfileId: true,
+      consultantProfile: { select: { userId: true } },
+    },
+  });
+  if (!review) {
+    throw Object.assign(
+      new Error("This review is already excluded or removed"),
+      { httpStatus: 409 },
+    );
+  }
+  const updated = await tx.consultantReview.updateMany({
+    where: {
+      id: reviewId,
+      excludedFromAggregateAt: null,
+      deletedAt: null,
+    },
+    data: { excludedFromAggregateAt: new Date() },
+  });
+  if (updated.count === 0) {
+    throw Object.assign(
+      new Error("This review is already excluded or removed"),
+      { httpStatus: 409 },
+    );
+  }
+  await recomputeConsultantRating(tx, review.consultantProfileId);
+  const expertUserId = review.consultantProfile.userId;
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING,
+    recipients: [expertUserId],
+    payload: { reviewId, dashboardUrl: goHref("expert", "reviews") },
+    dedupeKey: `review-excluded:${reviewId}`,
+  });
+  return {
+    reviewExcludedFromAggregate: true,
+    reviewRemovedConsultantProfileId: review.consultantProfileId,
+    expertUserId,
+  };
+}
+
+async function excludeFeedbackFromAggregate(
+  tx: Tx,
+  feedbackId: string | null | undefined,
+): Promise<TransactionalEffectResult> {
+  if (!feedbackId) return {};
+  const updated = await tx.appointmentFeedback.updateMany({
+    where: { id: feedbackId, excludedFromAggregateAt: null },
+    data: { excludedFromAggregateAt: new Date() },
+  });
+  if (updated.count === 0) {
+    throw Object.assign(
+      new Error("This feedback is already excluded or not found"),
+      { httpStatus: 409 },
+    );
+  }
+  return {};
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;
@@ -562,19 +682,25 @@ async function triggerModerationNotification(
   transactional: TransactionalEffectResult,
   summary: SideEffectSummary,
 ): Promise<TriggerOutcome> {
-  const { actionType, report, notes } = input;
+  const { actionId, actionType, report, notes } = input;
+  const dedupeKey = actionId ? `moderation-action:${actionId}` : undefined;
   switch (actionType) {
     case "WARNING_ISSUED":
-    case "CONTENT_REMOVED":
-      return notifyModerationWarning(report.targetUserId, { reason: notes });
+      return notifyModerationWarning(
+        report.targetUserId,
+        { reason: notes },
+        dedupeKey,
+      );
     case "USER_SUSPENDED": {
-      const bell = await notifyAccountSuspended(report.targetUserId, {
-        reason: notes,
-        suspendedUntil: transactional.banExpires ?? "",
-        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-      });
-      // #1653 — a required notice, never gated; the sender never throws and
-      // the bell's outcome is what the summary records.
+      const bell = await notifyAccountSuspended(
+        report.targetUserId,
+        {
+          reason: notes,
+          suspendedUntil: transactional.banExpires ?? "",
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        dedupeKey,
+      );
       await sendAccountSuspendedEmail(
         {
           userId: report.targetUserId,
@@ -587,11 +713,14 @@ async function triggerModerationNotification(
       return bell;
     }
     case "USER_BANNED": {
-      const bell = await notifyAccountBanned(report.targetUserId, {
-        reason: notes,
-        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-      });
-      // #1653 — the ban's email twin; same contract as the suspension.
+      const bell = await notifyAccountBanned(
+        report.targetUserId,
+        {
+          reason: notes,
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        dedupeKey,
+      );
       await sendAccountBannedEmail(
         {
           userId: report.targetUserId,
@@ -603,21 +732,22 @@ async function triggerModerationNotification(
       return bell;
     }
     case "PROFILE_UNVERIFIED":
-      return notifyVerificationStatusChanged(report.targetUserId, {
-        status: "REJECTED",
-        reason: notes,
-        // #1527 — PROFILE_UNVERIFIED only ever targets a consultant.
-        dashboardUrl: goHref("expert", "settings"),
-      });
+      return notifyVerificationStatusChanged(
+        report.targetUserId,
+        {
+          status: "REJECTED",
+          reason: notes,
+          dashboardUrl: goHref("expert", "settings"),
+        },
+        dedupeKey,
+      );
     case "NO_ACTION":
     case "USER_REINSTATED":
-    case "REVIEW_REMOVED":
     case "REVIEW_REPLY_REMOVED":
+    case "CONTENT_REMOVED":
+    case "REVIEW_REMOVED":
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
-      // No Novu workflow exists for a reinstatement, and inventing a
-      // log-and-skip trigger would report "skipped" for one nobody plans to
-      // build. The #1562 acts are never taken through a report.
       return Promise.resolve(null);
   }
 }

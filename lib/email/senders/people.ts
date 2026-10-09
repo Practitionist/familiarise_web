@@ -4,7 +4,15 @@
  */
 
 import * as React from "react";
+import { Button, Section, Text } from "react-email";
 import type { SupportTicketStatus } from "@prisma/client";
+import { EmailLayout } from "@/emails/components/EmailLayout";
+import {
+  button,
+  buttonContainer,
+  heading,
+  paragraph,
+} from "@/emails/components/styles";
 import AccountBannedEmail, {
   ACCOUNT_BANNED_SUBJECT,
 } from "@/emails/account/AccountBannedEmail";
@@ -21,12 +29,7 @@ import SupportTicketUpdateEmail, {
   supportTicketUpdateSubject,
 } from "@/emails/support/SupportTicketUpdateEmail";
 import { SENDERS, supportEmail } from "../config";
-import {
-  absolute,
-  defineBudgetedEmailSender,
-  greet,
-  whenText,
-} from "./shared";
+import { absolute, defineBudgetedEmailSender, greet, whenText } from "./shared";
 
 const EXCERPT_LENGTH = 140;
 
@@ -39,6 +42,60 @@ function excerptOf(text: string | null | undefined): string | undefined {
 }
 
 // ── Support ─────────────────────────────────────────────────────────────────
+
+export interface SupportTicketReceivedEmailArgs {
+  ticketId: string;
+  ownerUserId: string;
+  reference: string;
+  title: string;
+  slaWindow: string | null;
+  ticketUrl: string;
+}
+
+export const sendSupportTicketReceivedEmail =
+  defineBudgetedEmailSender<SupportTicketReceivedEmailArgs>((args) => {
+    const subject = `Support request received (${args.reference})`;
+    return {
+      userIds: [args.ownerUserId],
+      spec: {
+        emailType: "SUPPORT_TICKET_RECEIVED",
+        category: null,
+        from: SENDERS.notifications,
+        entityRef: `ticket:${args.ticketId}`,
+        subject: () => subject,
+        render: (r) =>
+          React.createElement(EmailLayout, {
+            preview: subject,
+            children: [
+              React.createElement(Text, { style: heading, key: "h" }, subject),
+              React.createElement(
+                Text,
+                { style: paragraph, key: "greet" },
+                `Hi ${greet(r)},`,
+              ),
+              React.createElement(
+                Text,
+                { style: paragraph, key: "body" },
+                `We received your support request `,
+                React.createElement("strong", null, args.reference),
+                args.slaWindow
+                  ? ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`
+                  : ` (${args.title}).`,
+              ),
+              React.createElement(
+                Section,
+                { style: buttonContainer, key: "cta" },
+                React.createElement(
+                  Button,
+                  { style: button, href: absolute(args.ticketUrl) },
+                  "View request",
+                ),
+              ),
+            ],
+          }),
+      },
+    };
+  });
 
 export interface SupportTicketResponseEmailArgs {
   ticketId: string;
@@ -121,6 +178,67 @@ export const sendSupportTicketUpdateEmail =
 
 // ── Account ─────────────────────────────────────────────────────────────────
 
+export type ModerationReportOutcomeEmailArgs = {
+  reportId: string;
+  reference: string;
+  outcome: string;
+  reason?: string | null;
+  dashboardUrl?: string;
+} & (
+  | { userId: string; reporterUserId?: string }
+  | { reporterUserId: string; userId?: string }
+);
+
+export const sendModerationReportOutcomeEmail =
+  defineBudgetedEmailSender<ModerationReportOutcomeEmailArgs>((args) => {
+    const recipientUserId = args.reporterUserId ?? args.userId ?? "";
+    const subject = `Update on your report (${args.reference})`;
+    return {
+      userIds: [recipientUserId],
+      spec: {
+        emailType: "MODERATION_REPORT_OUTCOME",
+        category: null,
+        from: SENDERS.security,
+        entityRef: `report:${args.reportId}`,
+        subject: () => subject,
+        render: (r) =>
+          React.createElement(EmailLayout, {
+            preview: subject,
+            children: [
+              React.createElement(Text, { style: heading, key: "h" }, subject),
+              React.createElement(
+                Text,
+                { style: paragraph, key: "greet" },
+                `Hi ${greet(r)},`,
+              ),
+              React.createElement(
+                Text,
+                { style: paragraph, key: "body" },
+                `We have completed reviewing your report `,
+                React.createElement("strong", null, args.reference),
+                `. Outcome: `,
+                React.createElement("strong", null, args.outcome),
+                args.reason ? `. ${args.reason}` : ".",
+              ),
+              ...(args.dashboardUrl
+                ? [
+                    React.createElement(
+                      Section,
+                      { style: buttonContainer, key: "cta" },
+                      React.createElement(
+                        Button,
+                        { style: button, href: absolute(args.dashboardUrl) },
+                        "Open dashboard",
+                      ),
+                    ),
+                  ]
+                : []),
+            ],
+          }),
+      },
+    };
+  });
+
 export interface AccountSuspendedEmailArgs {
   userId: string;
   reason?: string | null;
@@ -187,8 +305,8 @@ export interface NewReviewEmailArgs {
   reviewUrl: string;
 }
 
-export const sendNewReviewEmail =
-  defineBudgetedEmailSender<NewReviewEmailArgs>((args) => ({
+export const sendNewReviewEmail = defineBudgetedEmailSender<NewReviewEmailArgs>(
+  (args) => ({
     userIds: [args.consultantUserId],
     spec: {
       emailType: "NEW_REVIEW_RECEIVED",
@@ -206,4 +324,5 @@ export const sendNewReviewEmail =
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-  }));
+  }),
+);

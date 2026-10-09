@@ -298,6 +298,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     imageType: "class-plans",
     defaults: {
       ...sharedDefaults,
+      // ClassPlanSchema's discriminator; no plan row carries it, so it lives here.
+      planType: "class",
       durationInMonths: 1,
       sessionsPerWeek: 1,
       // Exposed as a real field now. The dialog hardcoded 1 and never rendered

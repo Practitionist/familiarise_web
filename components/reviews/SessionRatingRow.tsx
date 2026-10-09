@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,8 @@ import {
   bookingFeedbackKey,
   useSessionFeedback,
 } from "@/hooks/useSessionFeedback";
+
+import { RatingCauseSelector } from "./RatingCauseSelector";
 
 export function SessionRatingRow({
   appointmentId,
@@ -43,22 +46,33 @@ export function SessionRatingRow({
   const qc = useQueryClient();
   const feedback = useSessionFeedback(bookingAppointmentId);
   const existingComment = feedback.comments[occurrenceId] ?? "";
+  const existingCause = feedback.ratingCauses[occurrenceId] ?? null;
 
   const [rating, setRating] = useState(existingRating ?? 0);
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState(existingComment);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [forceRateOpen, setForceRateOpen] = useState(false);
+  const [ratingCause, setRatingCause] = useState<RatingCause | null>(
+    existingCause,
+  );
 
   useEffect(() => {
     setRating(existingRating ?? 0);
-  }, [existingRating, occurrenceId]);
+    setRatingCause(existingCause);
+    setForceRateOpen(false);
+  }, [existingRating, existingCause, occurrenceId]);
 
   useEffect(() => {
     setComment(existingComment);
   }, [existingComment, occurrenceId]);
 
   const save = useMutation({
-    mutationFn: async (args: { value: number; note?: string }) => {
+    mutationFn: async (args: {
+      value: number;
+      note?: string;
+      cause: RatingCause | null;
+    }) => {
       const trimmedNote = args.note?.trim();
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
         method: "POST",
@@ -67,6 +81,7 @@ export function SessionRatingRow({
           rating: args.value,
           occurrenceId,
           ...(trimmedNote !== undefined ? { comment: trimmedNote } : {}),
+          ratingCause: args.value > 3 ? null : args.cause,
         }),
       });
       if (!res.ok) await throwSupportError(res, "session rating");
@@ -121,6 +136,21 @@ export function SessionRatingRow({
     );
   }
 
+  if (feedback.supportOpen && rating === 0 && !forceRateOpen) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setForceRateOpen(true);
+        }}
+        className="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+      >
+        Support request in progress · Rate anyway
+      </button>
+    );
+  }
+
   const DISCLOSURE =
     "Stars are shared with the expert; written notes are private to Familiarise.";
 
@@ -141,10 +171,19 @@ export function SessionRatingRow({
               onClick={(e) => {
                 e.stopPropagation();
                 const previous = rating;
-                setRating(n);
+                const previousCause = ratingCause;
+                const nextRating = n;
+                const nextCause = nextRating > 3 ? null : ratingCause;
+                setRating(nextRating);
+                setRatingCause(nextCause);
                 save.mutate(
-                  { value: n },
-                  { onError: () => setRating(previous) },
+                  { value: nextRating, cause: nextCause },
+                  {
+                    onError: () => {
+                      setRating(previous);
+                      setRatingCause(previousCause);
+                    },
+                  },
                 );
               }}
               className="rounded p-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
@@ -175,6 +214,26 @@ export function SessionRatingRow({
         )}
       </div>
 
+      {rating > 0 && rating <= 3 && (
+        <RatingCauseSelector
+          value={ratingCause}
+          disabled={save.isPending}
+          onChange={(nextCause) => {
+            const previousCause = ratingCause;
+            setRatingCause(nextCause);
+            save.mutate(
+              {
+                value: rating,
+                cause: rating > 3 ? null : nextCause,
+              },
+              {
+                onError: () => setRatingCause(previousCause),
+              },
+            );
+          }}
+        />
+      )}
+
       {rating > 0 && noteOpen && (
         <div className="flex flex-wrap items-center gap-1.5">
           <Input
@@ -193,7 +252,11 @@ export function SessionRatingRow({
             disabled={save.isPending}
             onClick={(e) => {
               e.stopPropagation();
-              save.mutate({ value: rating, note: comment });
+              save.mutate({
+                value: rating,
+                note: comment,
+                cause: rating > 3 ? null : ratingCause,
+              });
             }}
           >
             {save.isPending ? "Saving…" : "Save note"}

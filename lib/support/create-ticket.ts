@@ -20,9 +20,12 @@ import {
   notifySupportTicketCreated,
   notifySupportTicketResponse,
 } from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
+import { sendSupportTicketReceivedEmail } from "@/lib/email/senders/people";
+import { attemptTrigger, stageTrigger } from "@/lib/novu/outbox";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { reportSentryError } from "@/lib/observability/report";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { withSupportAttachmentHrefs } from "./attachment-href";
 import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
@@ -60,6 +63,8 @@ export interface CreateSupportTicketInput {
   userId: string;
   title: string;
   description: string;
+  /** Already Zod-validated; the only source of the callback marker. */
+  callbackPhone?: string | null;
   priority?: SupportPriority;
   category?: string | null;
   issueType?: SupportIssueType | null;
@@ -194,6 +199,74 @@ export async function notifyStaffOfTicketActivity(
   );
 }
 
+/** The acknowledgement window the ticket was actually given, in whole hours. */
+function slaWindowOf(createdAt: Date, ackDueAt: Date | null): string | null {
+  if (!ackDueAt) return null;
+  const hours = Math.ceil(
+    (ackDueAt.getTime() - createdAt.getTime()) / 3_600_000,
+  );
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+/** Send statutory intake receipt (in-app bell + email) without setting acknowledgedAt. */
+export async function notifyRequesterOfTicket(
+  ticket: Pick<
+    SupportTicket,
+    | "id"
+    | "title"
+    | "referenceNumber"
+    | "userId"
+    | "ackDueAt"
+    | "createdAt"
+    | "organizationId"
+  >,
+): Promise<void> {
+  const reference = ticket.referenceNumber ?? ticket.id;
+  const title = ticket.title || "Support Ticket";
+  const slaWindow = slaWindowOf(ticket.createdAt, ticket.ackDueAt);
+  const ticketUrl = supportRequestHref(
+    caseKeyOf({ kind: "ticket", id: ticket.id }),
+    ticket.organizationId,
+  );
+
+  const novuOutbox = await stageTrigger({
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
+    kind: "SINGLE",
+    recipients: [ticket.userId],
+    payload: {
+      ticketId: ticket.id,
+      reference,
+      ticketTitle: title,
+      ...(slaWindow ? { slaWindow } : {}),
+      dashboardUrl: ticketUrl,
+      ...notificationScope(ticket.organizationId),
+    },
+    dedupeKey: `ticket-received:${ticket.id}`,
+  }).catch((error) => {
+    reportSentryError(error, {
+      subsystem: "support",
+      op: "ticket-receipt",
+      extra: { ticketId: ticket.id },
+    });
+    return null;
+  });
+
+  await Promise.all([
+    novuOutbox ? attemptTrigger(novuOutbox).catch(() => undefined) : undefined,
+    sendSupportTicketReceivedEmail(
+      {
+        ticketId: ticket.id,
+        ownerUserId: ticket.userId,
+        reference,
+        title,
+        slaWindow,
+        ticketUrl,
+      },
+      3_000,
+    ),
+  ]);
+}
+
 /**
  * Create a support ticket + notify the ops queue. Callers own validation and
  * dedup (e.g. the paymentId dedup is a route-level UX decision).
@@ -202,6 +275,10 @@ export async function createSupportTicket(
   input: CreateSupportTicketInput,
 ): Promise<SupportTicket> {
   const priority = input.priority ?? "MEDIUM";
+  const body = stripCallbackTags(input.description).trim();
+  const description = input.callbackPhone
+    ? `[Callback Requested: ${input.callbackPhone}]\n\n${body}`
+    : body;
   // One transaction so a rolled-back ticket cannot leave a live reference
   // behind, and so the SLA clock and the row it belongs to commit together.
   const ticket = await prisma.$transaction(
@@ -212,7 +289,7 @@ export async function createSupportTicket(
       return tx.supportTicket.create({
         data: {
           title: input.title,
-          description: input.description,
+          description,
           priority,
           referenceNumber,
           ackDueAt,
@@ -241,12 +318,20 @@ export async function createSupportTicket(
   );
   // The ticket is already committed — a notification failure must not turn a
   // successful create into a 500, or the retrying client files a duplicate.
-  await notifySupportStaff(ticket).catch((error) => {
-    console.error("support: staff notification failed", {
-      ticketId: ticket.id,
-      error,
-    });
-  });
+  await Promise.all([
+    notifySupportStaff(ticket).catch((error) => {
+      console.error("support: staff notification failed", {
+        ticketId: ticket.id,
+        error,
+      });
+    }),
+    notifyRequesterOfTicket(ticket).catch((error) => {
+      console.error("support: requester receipt failed", {
+        ticketId: ticket.id,
+        error,
+      });
+    }),
+  ]);
   return ticket;
 }
 
