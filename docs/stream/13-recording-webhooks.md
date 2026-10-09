@@ -1099,8 +1099,9 @@ re-exports every one of those names, so application code is unaffected and still
 gets the client-import guard. `__tests__/maintenance/workflow-import-env.test.ts`
 re-derives each scheduled workflow's import graph on every test run and fails if
 any of them reaches a `server-only` module again, or if a job that reaches the
-Supabase client module is not given the `NEXT_PUBLIC_SUPABASE_URL` and
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` that module throws without.
+Supabase client module is not given the `NEXT_PUBLIC_SUPABASE_URL` that module
+throws without. Storage calls run on the service-role client, so jobs also need
+`SUPABASE_SERVICE_ROLE_KEY`.
 
 ---
 

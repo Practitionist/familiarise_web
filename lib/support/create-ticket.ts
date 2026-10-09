@@ -23,6 +23,7 @@ import {
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { reportSentryError } from "@/lib/observability/report";
+import { withSupportAttachmentHrefs } from "./attachment-href";
 import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
@@ -285,8 +286,8 @@ export async function findRecentOpenEscalation(
 export async function findOpenTicketForPayment(
   userId: string,
   paymentId: string,
-): Promise<SupportTicket | null> {
-  return prisma.supportTicket.findFirst({
+) {
+  const ticket = await prisma.supportTicket.findFirst({
     where: {
       paymentId,
       userId,
@@ -301,6 +302,9 @@ export async function findOpenTicketForPayment(
       attachments: { orderBy: { uploadedAt: "desc" } },
     },
   });
+  return ticket
+    ? { ...ticket, attachments: withSupportAttachmentHrefs(ticket.attachments) }
+    : null;
 }
 
 export interface CreateOutboundStaffSupportTicketInput {

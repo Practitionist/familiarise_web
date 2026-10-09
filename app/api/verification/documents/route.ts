@@ -326,7 +326,15 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await deleteFromSupabase(document.storagePath);
+    if (!(await deleteFromSupabase(document.storagePath))) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Could not delete the file. Please try again.",
+        },
+        { status: 502 },
+      );
+    }
     await prisma.profileVerificationDocument.delete({
       where: { id: documentId },
     });
