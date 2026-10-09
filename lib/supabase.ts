@@ -101,7 +101,17 @@ const deleteAssetFolder = async (
   folder: string,
 ): Promise<boolean> => {
   try {
-    const { data: files, error: listError } = await listAssets(bucket, folder);
+    // Deletes bypass RLS via the service client; anon fallback warns.
+    const admin = supabaseAdmin ?? supabase;
+    if (!supabaseAdmin) {
+      console.warn("Listing storage folder without service key:", {
+        bucket,
+        folder,
+      });
+    }
+    const { data: files, error: listError } = await admin.storage
+      .from(bucket)
+      .list(folder);
     if (listError) {
       console.error("Error listing storage folder:", listError);
       return false;
@@ -110,7 +120,7 @@ const deleteAssetFolder = async (
       return true;
     }
     const filesToDelete = files.map((f) => `${folder}/${f.name}`);
-    const { error: deleteError } = await supabase.storage
+    const { error: deleteError } = await admin.storage
       .from(bucket)
       .remove(filesToDelete);
     if (deleteError) {
@@ -246,7 +256,13 @@ const uploadAsset = async (
         console.error("Failed to create signed URL:", signedUrlError);
         // Upload succeeded but signing failed — best-effort remove the now-orphaned
         // object so a failed upload doesn't leave a dangling file. (#945 review)
-        await deleteAsset(bucket, storagePath);
+        const rolledBack = await deleteAsset(bucket, storagePath);
+        if (!rolledBack) {
+          console.warn("Upload rollback delete failed:", {
+            bucket,
+            storagePath,
+          });
+        }
         Sentry.captureException(
           signedUrlError instanceof Error
             ? signedUrlError
@@ -846,7 +862,13 @@ const uploadToSupabase = async (
         console.error("Failed to create signed URL:", signedUrlError);
         // Upload succeeded but signing failed — best-effort remove the now-orphaned
         // object so a failed upload doesn't leave a dangling file. (#945 review)
-        await deleteAsset(bucketName, storagePath);
+        const rolledBack = await deleteAsset(bucketName, storagePath);
+        if (!rolledBack) {
+          console.warn("Upload rollback delete failed:", {
+            bucket: bucketName,
+            storagePath,
+          });
+        }
         Sentry.captureException(
           signedUrlError instanceof Error
             ? signedUrlError
@@ -881,7 +903,14 @@ const deleteFromSupabase = async (
   bucketName: string = "documents",
 ): Promise<boolean> => {
   try {
-    const { error } = await supabase.storage
+    // Deletes bypass RLS via the service client; anon fallback warns.
+    if (!supabaseAdmin) {
+      console.warn("Deleting storage object without service key:", {
+        bucketName,
+        storagePath,
+      });
+    }
+    const { error } = await (supabaseAdmin ?? supabase).storage
       .from(bucketName)
       .remove([storagePath]);
 

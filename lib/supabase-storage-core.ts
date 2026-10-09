@@ -285,12 +285,20 @@ export const ensureBucketExists = async (
 };
 
 // Remove a single object. Returns false on any error (never throws).
+// Deletes bypass RLS via the service client; anon fallback warns.
 export const deleteAsset = async (
   bucket: string,
   storagePath: string,
 ): Promise<boolean> => {
   try {
-    const { error } = await supabase.storage.from(bucket).remove([storagePath]);
+    const client = supabaseAdmin ?? supabase;
+    if (!supabaseAdmin) {
+      console.warn("Deleting storage object without service key:", {
+        bucket,
+        storagePath,
+      });
+    }
+    const { error } = await client.storage.from(bucket).remove([storagePath]);
     if (error) {
       console.error("Error deleting from storage:", error);
       return false;

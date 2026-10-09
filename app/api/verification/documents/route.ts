@@ -326,7 +326,17 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await deleteFromSupabase(document.storagePath);
+    // Same orphan-over-dangling shape as support attachments: warn on a
+    // denied storage delete, then remove the row.
+    const storageDeleted = await deleteFromSupabase(
+      document.storagePath,
+    ).catch(() => false);
+    if (!storageDeleted) {
+      console.warn("Verification document storage delete failed:", {
+        documentId,
+        storagePath: document.storagePath,
+      });
+    }
     await prisma.profileVerificationDocument.delete({
       where: { id: documentId },
     });

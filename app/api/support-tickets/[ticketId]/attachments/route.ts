@@ -239,8 +239,17 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Delete from storage
-    await deleteSupportTicketAttachment(attachment.storagePath);
+    // Delete from storage; a denied delete leaves an orphan for the sweep,
+    // never a dangling row, so warn and continue with the DB delete.
+    const storageDeleted = await deleteSupportTicketAttachment(
+      attachment.storagePath,
+    ).catch(() => false);
+    if (!storageDeleted) {
+      console.warn("Support attachment storage delete failed:", {
+        attachmentId,
+        storagePath: attachment.storagePath,
+      });
+    }
 
     // Delete from database
     await prisma.supportTicketAttachment.delete({
