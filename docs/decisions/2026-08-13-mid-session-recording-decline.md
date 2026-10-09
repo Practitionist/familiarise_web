@@ -1,6 +1,7 @@
 # ADR: A mid-session recording decline stops the recording and discards it
 
 - **Status**: Accepted
+- **Implementation**: the discard runs in the `recording_ready` webhook handler and the sync path through `discardDeclinedRecording` (`lib/stream/recording-decline.ts`); see the [storage, retention and visibility ADR](2026-10-09-recording-storage-retention-visibility.md).
 - **Date**: 2026-08-13
 - **Author**: teetangh
 - **Part of**: #1134, #1146
@@ -74,9 +75,10 @@ the only action available is to understand it. There is no decline to honour.
 
 ### Neutral
 
-- Nothing about the currently shipped behaviour is wrong today. Enforcement is
-  start-time only and the source says so explicitly, so this ADR records a
-  decision to be built, not a defect to be repaired.
+- Enforcement covers the whole session: a decline blocks a start, a decline
+  during the call stops the recording server-side
+  (`app/api/meetings/[meetingId]/recording-consent/route.ts`), and the file it
+  produced is discarded when it lands (`lib/stream/recording-decline.ts`).
 
 ## Alternatives considered
 
@@ -104,10 +106,9 @@ which is not consent.
 
 ## Follow-ups
 
-Tracked in #1146. The work is a decline path that is authenticated during the
-call, a server-side stop, and a delete that reaches Stream's stored asset and
-any in-flight transfer, together with pre-join copy that states a decline can
-arrive at any time.
+The in-call decline, the server-side stop and the discard of Stream's copy and
+any stored asset are implemented. Pre-join copy stating that a decline can
+arrive at any time remains to be written.
 
 ## References
 

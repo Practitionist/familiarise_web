@@ -188,7 +188,6 @@ export async function POST(request: NextRequest) {
       topics: topicNames,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
       sessionsPerWeek,
       emailSupport,
       classContents,
@@ -302,7 +301,6 @@ export async function POST(request: NextRequest) {
               faqs: faqCreateNested(faqs),
               certificateProvided,
               recordingEnabled,
-              recordingStoragePolicy,
               sessionsPerWeek,
               sessionDurationInHours,
               totalSessions,
@@ -569,7 +567,6 @@ export async function PATCH(request: NextRequest) {
       startDate: startDateString,
       endDate: endDateString,
       recordingEnabled,
-      recordingStoragePolicy,
       sessionDurationInHours: patchSessionDuration,
       lateJoinUntilSession,
       lateJoinersGetPastRecordings,
@@ -709,8 +706,6 @@ export async function PATCH(request: NextRequest) {
             updateData.certificateProvided = certificateProvided;
           if (recordingEnabled !== undefined)
             updateData.recordingEnabled = recordingEnabled;
-          if (recordingStoragePolicy !== undefined)
-            updateData.recordingStoragePolicy = recordingStoragePolicy;
           if (sessionsPerWeek !== undefined)
             updateData.sessionsPerWeek = sessionsPerWeek;
           if (emailSupport !== undefined)

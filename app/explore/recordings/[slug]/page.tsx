@@ -13,6 +13,7 @@ import {
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { webinarRecordingVisible } from "@/lib/stream/recording-attendee-scope";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { deriveReplayAmount } from "@/lib/payments/pricing/replay-price";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
@@ -28,6 +29,7 @@ type RecordingAccessRow = {
     occurrence?: {
       startsAt: Date;
       appointment?: {
+        id: string;
         classId: string | null;
         class?: { classPlanId: string } | null;
       } | null;
@@ -60,11 +62,16 @@ async function canUserWatchRecording(
     return true;
   }
 
-  const { webinarPlanIds, classPlanIds } =
+  const { webinarScope, classPlanIds } =
     await RecordingService.getPaidPlanIds(userId);
+  const appointmentId = recording?.meeting?.occurrence?.appointment?.id;
   if (
     listing.planType === "WEBINAR" &&
-    webinarPlanIds.includes(listing.planId)
+    appointmentId &&
+    webinarRecordingVisible(
+      { appointmentId, webinarPlanId: listing.planId },
+      webinarScope,
+    )
   ) {
     return true;
   }
@@ -170,6 +177,7 @@ export default async function RecordingDetailPage({
                   startsAt: true,
                   appointment: {
                     select: {
+                      id: true,
                       classId: true,
                       class: { select: { classPlanId: true } },
                     },

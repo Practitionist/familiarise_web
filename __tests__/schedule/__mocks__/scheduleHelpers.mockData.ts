@@ -168,9 +168,7 @@ export const pastEvent: EventWithType = {
   classPlan: {
     id: "past-plan",
     title: "Past Plan",
-    consultantProfile: {
-      /* Fill with valid profile data */
-    } as any,
+    consultantProfile: {/* Fill with valid profile data */} as any,
     topics: [],
     classContents: [],
     createdAt: new Date(),
@@ -223,7 +221,6 @@ export const pastEvent: EventWithType = {
   // Add other required top-level Class fields from EventWithType if known
   startDate: null, // Added
   endDate: null, // Added
-  recordingUrls: [], // Added
   feedbackSummary: null, // Added
   classPlanId: "past-plan", // Added
 } as unknown as EventWithType; // Use unknown cast if EventWithType is complex union

@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
       status,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
+      shareRecordingsWithAllAttendees,
     } = validatedData;
 
     // Verify ownership - user must own this consultant profile
@@ -292,7 +292,7 @@ export async function POST(request: NextRequest) {
               faqs: faqCreateNested(faqs),
               certificateProvided,
               recordingEnabled,
-              recordingStoragePolicy,
+              shareRecordingsWithAllAttendees,
               consultantProfile: { connect: { id: consultantProfileId } },
               topics:
                 topicIds.length > 0
@@ -527,7 +527,7 @@ export async function PATCH(request: NextRequest) {
       priceCurrency,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
+      shareRecordingsWithAllAttendees,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -728,8 +728,9 @@ export async function PATCH(request: NextRequest) {
             updateData.certificateProvided = certificateProvided;
           if (recordingEnabled !== undefined)
             updateData.recordingEnabled = recordingEnabled;
-          if (recordingStoragePolicy !== undefined)
-            updateData.recordingStoragePolicy = recordingStoragePolicy;
+          if (shareRecordingsWithAllAttendees !== undefined)
+            updateData.shareRecordingsWithAllAttendees =
+              shareRecordingsWithAllAttendees;
           if (learningOutcomes !== undefined)
             updateData.learningOutcomes = learningOutcomes;
           if (subtitle !== undefined) updateData.subtitle = subtitle;

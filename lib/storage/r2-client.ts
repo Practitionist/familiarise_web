@@ -1,74 +1,49 @@
 import { createHash, createHmac } from "node:crypto";
 
-export const DEFAULT_R2_RECORDINGS_BUCKET = "recordings";
-export const DEFAULT_R2_PREVIEWS_BUCKET = "recording-previews";
 export const R2_MULTIPART_PART_SIZE = 10 * 1024 * 1024; // 10 MB
+/** AbortMultipartUpload gets its own deadline: it runs after the caller's signal may have fired. */
+const ABORT_UPLOAD_TIMEOUT_MS = 15_000;
 
 const EMPTY_PAYLOAD_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-export interface R2Credentials {
-  accountId: string;
+interface R2Config {
+  endpoint: URL;
+  bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
 }
 
-export function getR2Credentials(): R2Credentials | null {
-  const accountId = (
-    process.env.R2_ACCOUNT_ID ??
-    process.env.CLOUDFLARE_R2_ACCOUNT_ID ??
-    ""
-  ).trim();
-  const accessKeyId = (
-    process.env.R2_ACCESS_KEY_ID ??
-    process.env.CLOUDFLARE_R2_ACCESS_KEY_ID ??
-    ""
-  ).trim();
-  const secretAccessKey = (
-    process.env.R2_SECRET_ACCESS_KEY ??
-    process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY ??
-    ""
-  ).trim();
-
-  if (!accountId || !accessKeyId || !secretAccessKey) {
+function getR2Config(): R2Config | null {
+  const endpoint = process.env.R2_S3_ENDPOINT?.trim();
+  const bucket = process.env.R2_BUCKET?.trim();
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
+  try {
+    return {
+      endpoint: new URL(endpoint),
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+    };
+  } catch {
     return null;
   }
-
-  return { accountId, accessKeyId, secretAccessKey };
 }
 
 export function isR2Configured(): boolean {
-  return getR2Credentials() !== null;
+  return getR2Config() !== null;
 }
 
-export function getR2RecordingsBucket(): string {
-  return (
-    process.env.R2_RECORDINGS_BUCKET?.trim() || DEFAULT_R2_RECORDINGS_BUCKET
-  );
-}
-
-export function getR2PreviewsBucket(): string {
-  return process.env.R2_PREVIEWS_BUCKET?.trim() || DEFAULT_R2_PREVIEWS_BUCKET;
-}
-
-export function getR2PublicBaseUrl(): string | null {
-  const raw = process.env.R2_PUBLIC_BASE_URL?.trim();
-  if (!raw) return null;
-  let url = raw;
-  while (url.endsWith("/")) {
-    url = url.slice(0, -1);
-  }
-  return url;
-}
-
-function requireR2Credentials(): R2Credentials {
-  const creds = getR2Credentials();
-  if (!creds) {
+function requireR2Config(): R2Config {
+  const config = getR2Config();
+  if (!config) {
     throw new Error(
-      "Cloudflare R2 is not configured (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY)",
+      "Cloudflare R2 is not configured (R2_S3_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)",
     );
   }
-  return creds;
+  return config;
 }
 
 function encodeRfc3986(value: string): string {
@@ -84,6 +59,15 @@ function encodeObjectKey(key: string): string {
     .split("/")
     .map((segment) => encodeRfc3986(segment))
     .join("/");
+}
+
+/** Path-style object URI under the endpoint's own path prefix, if any. */
+function objectUri(config: R2Config, key: string): string {
+  const path = config.endpoint.pathname;
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  const prefix = path.slice(0, end);
+  return `${prefix}/${encodeRfc3986(config.bucket)}/${encodeObjectKey(key)}`;
 }
 
 function formatAmzTimestamps(now: Date): {
@@ -105,15 +89,10 @@ function hmacSha256(key: string | Buffer, data: string): Buffer {
   return createHmac("sha256", key).update(data, "utf8").digest();
 }
 
-function deriveSigningKey(
-  secretAccessKey: string,
-  dateStamp: string,
-  region = "auto",
-  service = "s3",
-): Buffer {
+function deriveSigningKey(secretAccessKey: string, dateStamp: string): Buffer {
   const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
-  const kRegion = hmacSha256(kDate, region);
-  const kService = hmacSha256(kRegion, service);
+  const kRegion = hmacSha256(kDate, "auto");
+  const kService = hmacSha256(kRegion, "s3");
   return hmacSha256(kService, "aws4_request");
 }
 
@@ -121,6 +100,22 @@ function compareCodeUnits(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+/** Zero-copy fetch body over the Buffer's own bytes. */
+function bodyView(buf: Buffer): Uint8Array<ArrayBuffer> {
+  return buf.buffer instanceof ArrayBuffer
+    ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+    : new Uint8Array(buf);
 }
 
 function formatR2ErrorDetail(errorText: string): string {
@@ -142,22 +137,19 @@ function buildCanonicalQueryString(
 }
 
 function signR2Request(opts: {
-  method: "GET" | "PUT" | "POST" | "DELETE";
-  bucket: string;
+  method: "GET" | "HEAD" | "PUT" | "POST" | "DELETE";
   key: string;
   query?: Record<string, string | undefined>;
   headers?: Record<string, string>;
   payloadHash?: string;
-  now?: Date;
 }): {
   url: string;
   headers: Record<string, string>;
 } {
-  const creds = requireR2Credentials();
-  const now = opts.now ?? new Date();
-  const { amzDate, dateStamp } = formatAmzTimestamps(now);
-  const host = `${creds.accountId}.r2.cloudflarestorage.com`;
-  const canonicalUri = `/${encodeRfc3986(opts.bucket)}/${encodeObjectKey(opts.key)}`;
+  const config = requireR2Config();
+  const { amzDate, dateStamp } = formatAmzTimestamps(new Date());
+  const host = config.endpoint.host;
+  const canonicalUri = objectUri(config, opts.key);
   const canonicalQuery = buildCanonicalQueryString(opts.query ?? {});
   const payloadHash = opts.payloadHash ?? EMPTY_PAYLOAD_SHA256;
 
@@ -195,12 +187,14 @@ function signR2Request(opts: {
     sha256Hex(canonicalRequest),
   ].join("\n");
 
-  const signingKey = deriveSigningKey(creds.secretAccessKey, dateStamp);
-  const signature = createHmac("sha256", signingKey)
+  const signature = createHmac(
+    "sha256",
+    deriveSigningKey(config.secretAccessKey, dateStamp),
+  )
     .update(stringToSign, "utf8")
     .digest("hex");
 
-  const authorization = `AWS4-HMAC-SHA256 Credential=${creds.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  const authorization = `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
   const requestHeaders: Record<string, string> = {
     ...rawHeaders,
@@ -210,36 +204,32 @@ function signR2Request(opts: {
 
   const querySuffix = canonicalQuery ? `?${canonicalQuery}` : "";
   return {
-    url: `https://${host}${canonicalUri}${querySuffix}`,
+    url: `${config.endpoint.origin}${canonicalUri}${querySuffix}`,
     headers: requestHeaders,
   };
 }
 
 /**
- * Generate an S3 Signature V4 presigned GET URL against Cloudflare R2.
- * Supports HTTP Range requests natively because only the `host` header is signed.
+ * SigV4 presigned GET URL. Only `host` is signed, so HTTP Range requests work.
  */
 export function createR2PresignedGetUrl(opts: {
-  bucket?: string;
   key: string;
   expiresInSeconds?: number;
   now?: Date;
 }): string {
-  const creds = requireR2Credentials();
-  const bucket = opts.bucket || getR2RecordingsBucket();
-  const now = opts.now ?? new Date();
-  const { amzDate, dateStamp } = formatAmzTimestamps(now);
+  const config = requireR2Config();
+  const { amzDate, dateStamp } = formatAmzTimestamps(opts.now ?? new Date());
   const expires = Math.max(
     1,
     Math.min(604800, Math.floor(opts.expiresInSeconds ?? 3600)),
   );
-  const host = `${creds.accountId}.r2.cloudflarestorage.com`;
-  const canonicalUri = `/${encodeRfc3986(bucket)}/${encodeObjectKey(opts.key)}`;
+  const host = config.endpoint.host;
+  const canonicalUri = objectUri(config, opts.key);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
 
   const canonicalQuery = buildCanonicalQueryString({
     "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
-    "X-Amz-Credential": `${creds.accessKeyId}/${credentialScope}`,
+    "X-Amz-Credential": `${config.accessKeyId}/${credentialScope}`,
     "X-Amz-Date": amzDate,
     "X-Amz-Expires": String(expires),
     "X-Amz-SignedHeaders": "host",
@@ -261,101 +251,70 @@ export function createR2PresignedGetUrl(opts: {
     sha256Hex(canonicalRequest),
   ].join("\n");
 
-  const signingKey = deriveSigningKey(creds.secretAccessKey, dateStamp);
-  const signature = createHmac("sha256", signingKey)
+  const signature = createHmac(
+    "sha256",
+    deriveSigningKey(config.secretAccessKey, dateStamp),
+  )
     .update(stringToSign, "utf8")
     .digest("hex");
 
-  return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  return `${config.endpoint.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
-/**
- * Upload a Buffer or Uint8Array to R2 using a single signed PUT request.
- */
-export async function uploadR2Object(opts: {
-  bucket?: string;
+async function putR2Object(opts: {
   key: string;
-  body: Buffer | Uint8Array | string;
+  body: Buffer;
   contentType?: string;
-}): Promise<{ etag: string | null; key: string; bucket: string }> {
-  const bucket = opts.bucket || getR2RecordingsBucket();
-  const bodyBytes =
-    typeof opts.body === "string"
-      ? Buffer.from(opts.body, "utf8")
-      : Buffer.from(
-          opts.body.buffer,
-          opts.body.byteOffset,
-          opts.body.byteLength,
-        );
-  const payloadHash = sha256Hex(bodyBytes);
-  const extraHeaders: Record<string, string> = {};
-  if (opts.contentType) {
-    extraHeaders["content-type"] = opts.contentType;
-  }
-
+  signal?: AbortSignal;
+}): Promise<void> {
   const signed = signR2Request({
     method: "PUT",
-    bucket,
     key: opts.key,
-    headers: extraHeaders,
-    payloadHash,
+    headers: opts.contentType ? { "content-type": opts.contentType } : {},
+    payloadHash: sha256Hex(opts.body),
   });
 
   const response = await fetch(signed.url, {
     method: "PUT",
     headers: signed.headers,
-    body: new Uint8Array(bodyBytes),
+    body: bodyView(opts.body),
+    signal: opts.signal,
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const detail = formatR2ErrorDetail(errorText);
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
     throw new Error(
       `R2 PUT failed (${response.status} ${response.statusText})${detail}`,
     );
   }
-
-  return {
-    etag: response.headers.get("etag"),
-    key: opts.key,
-    bucket,
-  };
 }
 
 async function initiateMultipartUpload(opts: {
-  bucket: string;
   key: string;
   contentType?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
-  const extraHeaders: Record<string, string> = {};
-  if (opts.contentType) {
-    extraHeaders["content-type"] = opts.contentType;
-  }
-
   const signed = signR2Request({
     method: "POST",
-    bucket: opts.bucket,
     key: opts.key,
     query: { uploads: "" },
-    headers: extraHeaders,
-    payloadHash: EMPTY_PAYLOAD_SHA256,
+    headers: opts.contentType ? { "content-type": opts.contentType } : {},
   });
 
   const response = await fetch(signed.url, {
     method: "POST",
     headers: signed.headers,
+    signal: opts.signal,
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const detail = formatR2ErrorDetail(errorText);
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
     throw new Error(
       `R2 CreateMultipartUpload failed (${response.status} ${response.statusText})${detail}`,
     );
   }
 
-  const xml = await response.text();
-  const match = /<UploadId>([^<]+)<\/UploadId>/.exec(xml);
+  const match = /<UploadId>([^<]+)<\/UploadId>/.exec(await response.text());
   if (!match?.[1]) {
     throw new Error("R2 CreateMultipartUpload response missing UploadId");
   }
@@ -363,33 +322,31 @@ async function initiateMultipartUpload(opts: {
 }
 
 async function uploadMultipartPart(opts: {
-  bucket: string;
   key: string;
   uploadId: string;
   partNumber: number;
   body: Buffer;
+  signal?: AbortSignal;
 }): Promise<string> {
-  const payloadHash = sha256Hex(opts.body);
   const signed = signR2Request({
     method: "PUT",
-    bucket: opts.bucket,
     key: opts.key,
     query: {
       partNumber: String(opts.partNumber),
       uploadId: opts.uploadId,
     },
-    payloadHash,
+    payloadHash: sha256Hex(opts.body),
   });
 
   const response = await fetch(signed.url, {
     method: "PUT",
     headers: signed.headers,
-    body: new Uint8Array(opts.body),
+    body: bodyView(opts.body),
+    signal: opts.signal,
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const detail = formatR2ErrorDetail(errorText);
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
     throw new Error(
       `R2 UploadPart #${opts.partNumber} failed (${response.status} ${response.statusText})${detail}`,
     );
@@ -404,80 +361,93 @@ async function uploadMultipartPart(opts: {
   return etag;
 }
 
+/** S3 may answer CompleteMultipartUpload with 200 and an `<Error>` body. */
+function parseCompleteMultipartUploadResponse(xml: string): void {
+  if (/<Error>/.test(xml)) {
+    const code = /<Code>([^<]*)<\/Code>/.exec(xml)?.[1] ?? "Unknown";
+    const message = /<Message>([^<]*)<\/Message>/.exec(xml)?.[1] ?? "";
+    throw new Error(`R2 CompleteMultipartUpload error ${code}: ${message}`);
+  }
+  if (!/<CompleteMultipartUploadResult[\s>/]/.test(xml)) {
+    throw new Error(
+      `R2 CompleteMultipartUpload returned an unexpected body${formatR2ErrorDetail(xml)}`,
+    );
+  }
+}
+
 async function completeMultipartUpload(opts: {
-  bucket: string;
   key: string;
   uploadId: string;
   parts: Array<{ partNumber: number; etag: string }>;
+  signal?: AbortSignal;
 }): Promise<void> {
   const partsXml = opts.parts
     .map(
       (p) =>
-        `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`,
+        `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${escapeXml(p.etag)}</ETag></Part>`,
     )
     .join("");
-  const bodyXml = `<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUpload>${partsXml}</CompleteMultipartUpload>`;
-  const bodyBuffer = Buffer.from(bodyXml, "utf8");
-  const payloadHash = sha256Hex(bodyBuffer);
+  const bodyBuffer = Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUpload>${partsXml}</CompleteMultipartUpload>`,
+    "utf8",
+  );
 
   const signed = signR2Request({
     method: "POST",
-    bucket: opts.bucket,
     key: opts.key,
     query: { uploadId: opts.uploadId },
     headers: { "content-type": "application/xml" },
-    payloadHash,
+    payloadHash: sha256Hex(bodyBuffer),
   });
 
   const response = await fetch(signed.url, {
     method: "POST",
     headers: signed.headers,
-    body: new Uint8Array(bodyBuffer),
+    body: bodyView(bodyBuffer),
+    signal: opts.signal,
   });
 
+  const text = await response.text().catch(() => "");
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const detail = formatR2ErrorDetail(errorText);
     throw new Error(
-      `R2 CompleteMultipartUpload failed (${response.status} ${response.statusText})${detail}`,
+      `R2 CompleteMultipartUpload failed (${response.status} ${response.statusText})${formatR2ErrorDetail(text)}`,
     );
   }
+  parseCompleteMultipartUploadResponse(text);
 }
 
 async function abortMultipartUpload(opts: {
-  bucket: string;
   key: string;
   uploadId: string;
 }): Promise<void> {
   const signed = signR2Request({
     method: "DELETE",
-    bucket: opts.bucket,
     key: opts.key,
     query: { uploadId: opts.uploadId },
-    payloadHash: EMPTY_PAYLOAD_SHA256,
   });
 
   await fetch(signed.url, {
     method: "DELETE",
     headers: signed.headers,
+    signal: AbortSignal.timeout(ABORT_UPLOAD_TIMEOUT_MS),
   }).catch(() => undefined);
 }
 
 /**
- * Stream a ReadableStream<Uint8Array> to R2 in bounded 10 MB parts.
- * Streams <= 10 MB are uploaded in a single PUT; larger streams use S3 Multipart Upload
- * and abort the upload automatically on any mid-stream failure.
+ * Stream to R2 in bounded parts: a single PUT up to one part, multipart above
+ * it, every non-final part exactly `partSize` (R2 requires equal sizes).
+ * `signal` cancels every R2 request; any failure aborts the multipart upload.
  */
 export async function streamMultipartToR2(opts: {
-  bucket?: string;
   key: string;
   stream: ReadableStream<Uint8Array>;
   contentType?: string;
   maxBytes?: number;
   partSize?: number;
-}): Promise<{ key: string; bucket: string; size: number; parts: number }> {
-  const bucket = opts.bucket || getR2RecordingsBucket();
+  signal?: AbortSignal;
+}): Promise<{ key: string; size: number; parts: number }> {
   const partSize = opts.partSize ?? R2_MULTIPART_PART_SIZE;
+  const { signal } = opts;
   const reader = opts.stream.getReader();
 
   let chunks: Buffer[] = [];
@@ -487,29 +457,32 @@ export async function streamMultipartToR2(opts: {
   let partNumber = 1;
   const completedParts: Array<{ partNumber: number; etag: string }> = [];
 
+  // The remainder is copied out so the part's slab is freed once its PUT ends.
   const takeBytes = (count: number): Buffer => {
     const combined = Buffer.concat(chunks, bufferedBytes);
-    const slice = combined.subarray(0, count);
-    const remainder = combined.subarray(count);
+    const remainder = Buffer.from(combined.subarray(count));
     chunks = remainder.byteLength > 0 ? [remainder] : [];
     bufferedBytes = remainder.byteLength;
-    return slice;
+    return combined.subarray(0, count);
   };
 
+  // Before multipart starts, exactly one part's worth still fits a single PUT.
+  const hasFullPart = () =>
+    uploadId === null ? bufferedBytes > partSize : bufferedBytes >= partSize;
+
   const flushFullParts = async () => {
-    while (bufferedBytes > partSize) {
+    while (hasFullPart()) {
       uploadId ??= await initiateMultipartUpload({
-        bucket,
         key: opts.key,
         contentType: opts.contentType,
+        signal,
       });
-      const partBuffer = takeBytes(partSize);
       const etag = await uploadMultipartPart({
-        bucket,
         key: opts.key,
         uploadId,
         partNumber,
-        body: partBuffer,
+        body: takeBytes(partSize),
+        signal,
       });
       completedParts.push({ partNumber, etag });
       partNumber += 1;
@@ -525,7 +498,7 @@ export async function streamMultipartToR2(opts: {
       totalBytes += value.byteLength;
       if (opts.maxBytes !== undefined && totalBytes > opts.maxBytes) {
         throw new Error(
-          `RECORDING_OBJECT_CEILING: Recording stream exceeded maximum size (${Math.round(opts.maxBytes / 1024 / 1024)}MB)`,
+          `Recording stream exceeded the ${Math.round(opts.maxBytes / 1024 / 1024)}MB ceiling`,
         );
       }
 
@@ -537,17 +510,13 @@ export async function streamMultipartToR2(opts: {
     }
 
     if (!uploadId) {
-      const singleBody =
-        bufferedBytes > 0
-          ? Buffer.concat(chunks, bufferedBytes)
-          : Buffer.alloc(0);
-      await uploadR2Object({
-        bucket,
+      await putR2Object({
         key: opts.key,
-        body: singleBody,
+        body: Buffer.concat(chunks, bufferedBytes),
         contentType: opts.contentType,
+        signal,
       });
-      return { key: opts.key, bucket, size: totalBytes, parts: 1 };
+      return { key: opts.key, size: totalBytes, parts: 1 };
     }
 
     if (bufferedBytes > 0) {
@@ -555,55 +524,61 @@ export async function streamMultipartToR2(opts: {
       chunks = [];
       bufferedBytes = 0;
       const etag = await uploadMultipartPart({
-        bucket,
         key: opts.key,
         uploadId,
         partNumber,
         body: finalPart,
+        signal,
       });
       completedParts.push({ partNumber, etag });
     }
 
     await completeMultipartUpload({
-      bucket,
       key: opts.key,
       uploadId,
       parts: completedParts,
+      signal,
     });
 
-    return {
-      key: opts.key,
-      bucket,
-      size: totalBytes,
-      parts: completedParts.length,
-    };
+    return { key: opts.key, size: totalBytes, parts: completedParts.length };
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     if (uploadId) {
-      await abortMultipartUpload({
-        bucket,
-        key: opts.key,
-        uploadId,
-      });
+      await abortMultipartUpload({ key: opts.key, uploadId });
     }
     throw error;
   }
 }
 
-/**
- * Delete an object from R2, treating 404 Not Found as success.
- */
+/** Stored object size from HeadObject, or null when the key does not exist. */
+export async function headR2Object(opts: {
+  key: string;
+  signal?: AbortSignal;
+}): Promise<{ contentLength: number } | null> {
+  const signed = signR2Request({ method: "HEAD", key: opts.key });
+  const response = await fetch(signed.url, {
+    method: "HEAD",
+    headers: signed.headers,
+    signal: opts.signal,
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(
+      `R2 HEAD failed (${response.status} ${response.statusText})`,
+    );
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    throw new Error("R2 HEAD response missing a valid Content-Length");
+  }
+  return { contentLength };
+}
+
+/** Delete an object, treating 404 Not Found as success. */
 export async function deleteR2Object(opts: {
-  bucket?: string;
   key: string;
 }): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
-  const bucket = opts.bucket || getR2RecordingsBucket();
-  const signed = signR2Request({
-    method: "DELETE",
-    bucket,
-    key: opts.key,
-    payloadHash: EMPTY_PAYLOAD_SHA256,
-  });
+  const signed = signR2Request({ method: "DELETE", key: opts.key });
 
   const response = await fetch(signed.url, {
     method: "DELETE",
@@ -615,8 +590,7 @@ export async function deleteR2Object(opts: {
   }
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const detail = formatR2ErrorDetail(errorText);
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
     return {
       success: false,
       error: `R2 DELETE failed (${response.status} ${response.statusText})${detail}`,
