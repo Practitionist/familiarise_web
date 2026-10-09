@@ -161,7 +161,7 @@ jest.mock("../../lib/stream/recording-operator-access", () => {
 
 jest.mock("../../lib/stream/session-recordings", () => ({
   __esModule: true,
-  extractRecordings: jest.fn().mockResolvedValue([]),
+  extractRecordings: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock("../../lib/data/recordings-explore", () => ({
@@ -197,7 +197,7 @@ import { handleRecordingPurchaseSuccess } from "@/lib/payments/webhooks/recordin
 describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetBestRecordingUrl.mockResolvedValue(
+    mockGetBestRecordingUrl.mockReturnValue(
       "https://signed.example.com/rec.mp4",
     );
     mockGetPaidPlanIds.mockResolvedValue({
@@ -384,7 +384,9 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         eventType: "purchased",
         status: "COMPLETED",
       });
-      expect(body.data.purchased[0].recordings[0].playbackUrl).toBeNull();
+      expect(body.data.purchased[0].recordings[0]).not.toHaveProperty(
+        "playbackUrl",
+      );
       expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
     });
 
@@ -951,7 +953,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
             recordedAt: "2026-10-01T10:00:00.000Z",
             durationInMinutes: 45,
             status: "AVAILABLE",
-            playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
+            playable: true,
           },
           { title: "System Design Cohort", kind: "CLASS" },
         ),
@@ -960,7 +962,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         title: "Cohort Session 1",
         recordedAt: "2026-10-01T10:00:00.000Z",
         durationInMinutes: 45,
-        playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
         planTitle: "System Design Cohort",
         planType: "Class",
       });

@@ -200,9 +200,7 @@ export default async function RecordingDetailPage({
     : false;
 
   const fullPlaybackUrl =
-    alreadyAccess && rawRecording
-      ? await getBestRecordingUrl(rawRecording)
-      : null;
+    alreadyAccess && rawRecording ? getBestRecordingUrl(rawRecording) : null;
 
   // Same inputs as the order mint, so the total shown is the total charged.
   const viewer = session?.user?.id

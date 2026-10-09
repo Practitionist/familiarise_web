@@ -33,8 +33,8 @@ afterEach(() => {
 });
 
 describe("presigned playback URL lifetime", () => {
-  it("outlives a two-hour recording watched with pauses", async () => {
-    const url = await getBestRecordingUrl({
+  it("outlives a two-hour recording watched with pauses", () => {
+    const url = getBestRecordingUrl({
       status: "AVAILABLE",
       storagePath: "recordings/r/a.mp4",
       recordingUrl: null,

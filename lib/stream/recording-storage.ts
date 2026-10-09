@@ -82,12 +82,12 @@ export function generateSignedUrl(
  * Our copy once AVAILABLE, otherwise Stream's URL while READY or mid-copy.
  * Branches on `status` alone: mid-transfer `storageType` does not yet describe the bytes.
  */
-export async function getBestRecordingUrl(recording: {
+export function getBestRecordingUrl(recording: {
   status: string;
   storagePath: string | null;
   recordingUrl: string | null;
   durationInMinutes?: number | null;
-}): Promise<string | null> {
+}): string | null {
   if (recording.status === RecordingStatus.AVAILABLE && recording.storagePath) {
     return generateSignedUrl(
       recording.storagePath,
