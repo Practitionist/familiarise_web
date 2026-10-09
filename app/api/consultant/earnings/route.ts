@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -38,9 +39,23 @@ export async function GET(req: NextRequest) {
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") as EarningStatus | null;
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const querySchema = z.object({
+      status: z.nativeEnum(EarningStatus).optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(20),
+      offset: z.coerce.number().int().min(0).default(0),
+    });
+    const parsedQuery = querySchema.safeParse({
+      status: searchParams.get("status") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      offset: searchParams.get("offset") ?? undefined,
+    });
+    if (!parsedQuery.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters" },
+        { status: 400 },
+      );
+    }
+    const { status, limit, offset } = parsedQuery.data;
     // Additive: ?includeMonthly=1 appends trailing-6-month buckets for the
     // analytics page. Absent param = response unchanged.
     const includeMonthly = searchParams.get("includeMonthly") === "1";

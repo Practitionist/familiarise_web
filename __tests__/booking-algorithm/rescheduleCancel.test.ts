@@ -870,6 +870,7 @@ describe("Reschedule Route Handler - POST", () => {
       occurrences: [],
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
+    mockTx.appointmentOccurrence.updateManyAndReturn.mockResolvedValueOnce([]);
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -877,6 +878,20 @@ describe("Reschedule Route Handler - POST", () => {
 
     expect(res.status).toBe(200);
     expect(body.slotsAffected).toBe(0);
+    expect(body.slotsMoved).toBe(0);
+  });
+
+  it("should return 409 NO_RESCHEDULABLE_SLOTS when booking has occurrences but zero live slots moved", async () => {
+    const appointment = makeConsultationAppointment();
+    mockTx.appointment.findUnique.mockResolvedValue(appointment);
+    mockTx.appointmentOccurrence.updateManyAndReturn.mockResolvedValueOnce([]);
+
+    const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("NO_RESCHEDULABLE_SLOTS");
   });
 
   it("should return 500 for unexpected errors", async () => {

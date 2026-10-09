@@ -125,8 +125,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           paymentSuccess: r.paymentCleanup.success,
           consultationSuccess: r.consultationCleanup.success,
           reminderSuccess: r.paymentReminders.success,
+          errorCount:
+            r.paymentCleanup.errors.length +
+            r.consultationCleanup.errors.length +
+            r.paymentReminders.errors.length,
         }),
-        status: (r) => statusFor({ success: r.overallSuccess }),
+        status: (r) =>
+          statusFor(
+            { success: r.overallSuccess },
+            r.paymentCleanup.errors.length +
+              r.consultationCleanup.errors.length +
+              r.paymentReminders.errors.length >
+              0,
+          ),
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
         failureMessage: "Cleanup job failed",
