@@ -86,6 +86,8 @@ export async function GET(
       organizationId: string | null;
     } | null = null;
     try {
+      // Deliberately UNSCOPED: this context decides which intents to OFFER,
+      // so it must describe the current-or-next session.
       const ctx = await buildSupportContext(
         thread?.id ?? "unstarted",
         appointmentId,
@@ -96,19 +98,26 @@ export async function GET(
           title: ctx.planTitle,
           kind: ctx.appointmentType,
           startsAt: ctx.startsAt,
+          // An org party is not the payer: no payment handle.
           paymentId: auth.isOrgParty ? null : ctx.paymentId,
           organizationId: ctx.organizationId,
         };
-        intents = [
-          ...flowsForContext(ctx)
-            .filter(
-              (f) => !auth.isOrgParty || ORG_PARTY_CATEGORIES.has(f.category),
-            )
-            .map((f) => ({ category: f.category, title: f.title })),
-          { category: "OTHER", title: "Talk to a person", escalates: true },
-        ];
+        // An org party sees only the intents the POST will accept from it.
+        intents = flowsForContext(ctx)
+          .filter(
+            (f) => !auth.isOrgParty || ORG_PARTY_CATEGORIES.has(f.category),
+          )
+          .map((f) => ({ category: f.category, title: f.title }));
+        if (!auth.isOrgParty) {
+          intents.push({
+            category: "OTHER",
+            title: "Talk to a person",
+            escalates: true,
+          });
+        }
       }
     } catch (cause) {
+      // Intent resolution is an optimization; the POST still gates authoritatively.
       Sentry.captureException(cause, {
         tags: { subsystem: "support", code: "INTENTS_DEGRADED" },
         extra: { route: SUPPORT_ROUTE, appointmentId },
@@ -160,10 +169,10 @@ export async function POST(
         },
       });
     }
+    // Org parties raise only the org-party intents on someone else's session.
     if (
       auth.isOrgParty &&
       body.data.category &&
-      body.data.category !== "OTHER" &&
       !ORG_PARTY_CATEGORIES.has(body.data.category)
     ) {
       return supportError({
