@@ -119,6 +119,83 @@ async function mirrorStaffReplyToThread(
   }
 }
 
+async function executeTicketResponseTx(params: {
+  ticketId: string;
+  ticketStatus: Prisma.SupportTicketGetPayload<object>["status"];
+  ticketAssignedToId: string | null;
+  fallbackLastMessageAt: Date | null;
+  sessionUserId: string;
+  message: string;
+  isInternal: boolean;
+  expectedDate: Date | undefined;
+  now: Date;
+}) {
+  const {
+    ticketId,
+    ticketStatus,
+    ticketAssignedToId,
+    fallbackLastMessageAt,
+    sessionUserId,
+    message,
+    isInternal,
+    expectedDate,
+    now,
+  } = params;
+  return prisma.$transaction(
+    async (tx) => {
+      if (!isInternal) {
+        const failure = await guardTicketPublicReplyTx({
+          tx,
+          ticketId,
+          ticketStatus,
+          ticketAssignedToId,
+          fallbackLastMessageAt,
+          sessionUserId,
+          expectedDate,
+          now,
+        });
+        if (failure) return failure;
+      }
+
+      const created = await tx.supportResponse.create({
+        data: {
+          message,
+          isInternal,
+          supportTicket: { connect: { id: ticketId } },
+          user: { connect: { id: sessionUserId } },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              image: true,
+            },
+          },
+        },
+      });
+
+      if (!isInternal) {
+        await applyStaffReply(tx, ticketId, now);
+        await mirrorStaffReplyToThread(
+          tx,
+          ticketId,
+          message,
+          sessionUserId,
+          now,
+        );
+      }
+
+      return { ok: true as const, created };
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+}
+
 /**
  * POST /api/staff/support-tickets/[ticketId]/responses
  * Staff/Admin can respond to any support ticket
@@ -181,59 +258,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const txOutcome = await prisma.$transaction(
-      async (tx) => {
-        if (!validatedData.isInternal) {
-          const failure = await guardTicketPublicReplyTx({
-            tx,
-            ticketId,
-            ticketStatus: ticket.status,
-            ticketAssignedToId: ticket.assignedToId,
-            fallbackLastMessageAt: ticket.lastMessageAt,
-            sessionUserId: session.user.id,
-            expectedDate,
-            now,
-          });
-          if (failure) return failure;
-        }
-
-        const created = await tx.supportResponse.create({
-          data: {
-            message: validatedData.message,
-            isInternal: validatedData.isInternal,
-            supportTicket: { connect: { id: ticketId } },
-            user: { connect: { id: session.user.id } },
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                role: true,
-                image: true,
-              },
-            },
-          },
-        });
-
-        if (!validatedData.isInternal) {
-          await applyStaffReply(tx, ticketId, now);
-          await mirrorStaffReplyToThread(
-            tx,
-            ticketId,
-            validatedData.message,
-            session.user.id,
-            now,
-          );
-        }
-
-        return { ok: true as const, created };
-      },
-      {
-        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-        timeout: ALLOCATION_TX_TIMEOUT_MS,
-      },
-    );
+    const txOutcome = await executeTicketResponseTx({
+      ticketId,
+      ticketStatus: ticket.status,
+      ticketAssignedToId: ticket.assignedToId,
+      fallbackLastMessageAt: ticket.lastMessageAt,
+      sessionUserId: session.user.id,
+      message: validatedData.message,
+      isInternal: validatedData.isInternal,
+      expectedDate,
+      now,
+    });
 
     if (!txOutcome.ok) {
       if (txOutcome.code === "NEW_CUSTOMER_MESSAGE") {
