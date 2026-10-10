@@ -19,7 +19,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useRecordingConsentDecision } from "../hooks/useRecordingConsentDecision";
 
 /** In-call 1:1 decline: stops the running recording and has it discarded. */
-export default function DeclineRecordingButton({ callId }: { callId: string }) {
+export default function DeclineRecordingButton({
+  callId,
+}: Readonly<{ callId: string }>) {
   const { toast } = useToast();
   const { submit, pending } = useRecordingConsentDecision(callId);
   const [open, setOpen] = useState(false);
