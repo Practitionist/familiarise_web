@@ -12,6 +12,8 @@ import { Separator } from "@/components/ui/separator";
 import { Mail, Phone, Clock, MessageSquare } from "lucide-react";
 import { ContactForm } from "./ContactForm";
 import {
+  ACK_PROMISE_COPY,
+  ANTI_SCAM_NOTICE,
   COMPANY_INFO,
   PAGE_META,
   BUSINESS_HOURS,
@@ -76,28 +78,32 @@ export default function ContactUsPage() {
                   </div>
                 </div>
 
-                <Separator />
+                {COMPANY_INFO.phone ? (
+                  <>
+                    <Separator />
 
-                {/* Phone */}
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                    <Phone className="h-5 w-5 text-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Phone</h3>
-                    <p className="text-sm text-muted-foreground">
-                      <a
-                        href={getTelLink()}
-                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                      >
-                        {COMPANY_INFO.phone}
-                      </a>
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      (Available during business hours)
-                    </p>
-                  </div>
-                </div>
+                    {/* Phone */}
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                        <Phone className="h-5 w-5 text-foreground" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold mb-1">Phone</h3>
+                        <p className="text-sm text-muted-foreground">
+                          <a
+                            href={getTelLink()}
+                            className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                          >
+                            {COMPANY_INFO.phone}
+                          </a>
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          (Available during business hours)
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
 
                 <Separator />
 
@@ -175,19 +181,20 @@ export default function ContactUsPage() {
                 <div>
                   <h3 className="font-semibold mb-2">Quick Response</h3>
                   <p className="text-sm text-muted-foreground">
-                    We aim to respond to all inquiries within 24-48 hours
+                    We acknowledge all inquiries {ACK_PROMISE_COPY}
                   </p>
                 </div>
                 <div>
                   <h3 className="font-semibold mb-2">Professional Support</h3>
                   <p className="text-sm text-muted-foreground">
-                    Our dedicated team is here to assist with any questions
+                    {ANTI_SCAM_NOTICE}
                   </p>
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-2">Multiple Channels</h3>
+                  <h3 className="font-semibold mb-2">Payment &amp; Refunds</h3>
                   <p className="text-sm text-muted-foreground">
-                    Reach us via email, phone, or contact form
+                    Report failed debits or refund issues promptly with your
+                    booking reference for priority reconciliation.
                   </p>
                 </div>
               </div>

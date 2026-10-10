@@ -22,11 +22,10 @@ const PRIORITY_WEIGHTS: { priority: SupportPriority; weight: number }[] = [
   { priority: "LOW", weight: 20 },
 ];
 
-// Status distribution: 30% OPEN, 25% IN_PROGRESS, 10% ON_HOLD, 25% RESOLVED, 10% CLOSED
+// Status distribution: 35% OPEN, 30% IN_PROGRESS, 25% RESOLVED, 10% CLOSED
 const STATUS_WEIGHTS: { status: SupportTicketStatus; weight: number }[] = [
-  { status: "OPEN", weight: 30 },
-  { status: "IN_PROGRESS", weight: 25 },
-  { status: "ON_HOLD", weight: 10 },
+  { status: "OPEN", weight: 35 },
+  { status: "IN_PROGRESS", weight: 30 },
   { status: "RESOLVED", weight: 25 },
   { status: "CLOSED", weight: 10 },
 ];
@@ -216,9 +215,7 @@ function buildPlannedSeedResponses(
   const numResponses =
     status === "OPEN"
       ? faker.number.int({ min: 0, max: 2 })
-      : status === "ON_HOLD"
-        ? faker.helpers.arrayElement([1, 3])
-        : faker.number.int({ min: 1, max: 5 });
+      : faker.number.int({ min: 1, max: 5 });
 
   const responses: {
     message: string;
@@ -237,8 +234,6 @@ function buildPlannedSeedResponses(
     let message: string;
     if (!isStaff) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
-    } else if (status === "ON_HOLD" && j === numResponses - 1) {
-      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
     } else if (j === 0) {
       message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
     } else if (status === "RESOLVED" || status === "CLOSED") {
@@ -265,7 +260,6 @@ function buildPlannedSeedResponses(
 
 const GUARANTEED_INITIAL_STATUSES: SupportTicketStatus[] = [
   "OPEN",
-  "ON_HOLD",
   "IN_PROGRESS",
   "RESOLVED",
   "CLOSED",
@@ -293,6 +287,15 @@ export async function createSupportTickets(
     console.warn("No staff/admin users found for support responses");
     return;
   }
+
+  await prisma.notificationPreference.updateMany({
+    where: { userId: { in: staffAndAdmins.map((u) => u.id) } },
+    data: {
+      quietHoursEnabled: false,
+      quietHoursStart: null,
+      quietHoursEnd: null,
+    },
+  });
 
   let ticketsCreated = 0;
   let responsesCreated = 0;
@@ -334,7 +337,9 @@ export async function createSupportTickets(
           : rawDescription;
 
       const ticketDate = faker.date.recent({ days: 30 });
-      const year = ticketDate.getUTCFullYear();
+      const year = new Date(
+        ticketDate.getTime() + 330 * 60_000,
+      ).getUTCFullYear();
       const seq = await nextSeedSeq(year);
       const referenceNumber = formatTicketReference(year, seq);
       const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(

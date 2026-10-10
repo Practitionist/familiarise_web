@@ -77,6 +77,8 @@ const PatchBodySchema = z
       .nullable()
       .optional(),
     billingEmail: z.string().email().optional(),
+    supportContactEmail: z.string().email().nullable().optional(),
+    escalationContactEmail: z.string().email().nullable().optional(),
     canSponsor: z.boolean().optional(),
     canHost: z.boolean().optional(),
     requiresPO: z.boolean().optional(),
@@ -191,6 +193,8 @@ const MAINTAINER_FIELDS = new Set([
   "bannerImage",
   "primaryColor",
   "secondaryColor",
+  "supportContactEmail",
+  "escalationContactEmail",
 ]);
 const BILLING_ADMIN_FIELDS = new Set(["billingEmail", "paymentTermsDays"]);
 // Concurrency control, not a writable column: the optimistic-lock CAS below is
@@ -427,6 +431,38 @@ function buildMsmeInfoUpsert(
   return { upsert: { create: fields, update: fields } };
 }
 
+function buildScalarOrganizationFields(
+  d: PatchBody,
+): Prisma.OrganizationUpdateInput {
+  const data: Prisma.OrganizationUpdateInput = {};
+  if (d.name !== undefined) data.name = d.name;
+  if (d.slug !== undefined) data.slug = d.slug;
+  if (d.billingEmail !== undefined) data.billingEmail = d.billingEmail;
+  if (d.supportContactEmail !== undefined) {
+    data.supportContactEmail = d.supportContactEmail;
+  }
+  if (d.escalationContactEmail !== undefined) {
+    data.escalationContactEmail = d.escalationContactEmail;
+  }
+  if (d.canSponsor !== undefined) data.canSponsor = d.canSponsor;
+  if (d.canHost !== undefined) data.canHost = d.canHost;
+  if (d.requiresPO !== undefined) data.requiresPO = d.requiresPO;
+  if (d.paymentTermsDays !== undefined) {
+    data.paymentTermsDays = d.paymentTermsDays;
+  }
+  if (d.defaultCancellationPolicy !== undefined) {
+    data.defaultCancellationPolicy = d.defaultCancellationPolicy;
+  }
+  if (d.defaultRefundPolicy !== undefined) {
+    data.defaultRefundPolicy = d.defaultRefundPolicy;
+  }
+  if (d.isPublic !== undefined) data.isPublic = d.isPublic;
+  if (d.streamRecordingRetentionDays !== undefined) {
+    data.streamRecordingRetentionDays = d.streamRecordingRetentionDays;
+  }
+  return data;
+}
+
 function buildOrganizationUpdateData(
   body: PatchBody,
   gstStateCode: string | null | undefined,
@@ -435,28 +471,10 @@ function buildOrganizationUpdateData(
   const taxInfo = buildTaxInfoUpsert(body, gstStateCode);
   const msmeInfo = buildMsmeInfoUpsert(body);
   return {
-    ...(body.name !== undefined && { name: body.name }),
-    ...(body.slug !== undefined && { slug: body.slug }),
-    ...(body.billingEmail !== undefined && { billingEmail: body.billingEmail }),
-    ...(body.canSponsor !== undefined && { canSponsor: body.canSponsor }),
-    ...(body.canHost !== undefined && { canHost: body.canHost }),
-    ...(body.requiresPO !== undefined && { requiresPO: body.requiresPO }),
-    ...(body.paymentTermsDays !== undefined && {
-      paymentTermsDays: body.paymentTermsDays,
-    }),
+    ...buildScalarOrganizationFields(body),
     ...(brandingProfile && { brandingProfile }),
     ...(taxInfo && { taxInfo }),
     ...(msmeInfo && { msmeInfo }),
-    ...(body.defaultCancellationPolicy !== undefined && {
-      defaultCancellationPolicy: body.defaultCancellationPolicy,
-    }),
-    ...(body.defaultRefundPolicy !== undefined && {
-      defaultRefundPolicy: body.defaultRefundPolicy,
-    }),
-    ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
-    ...(body.streamRecordingRetentionDays !== undefined && {
-      streamRecordingRetentionDays: body.streamRecordingRetentionDays,
-    }),
   };
 }
 

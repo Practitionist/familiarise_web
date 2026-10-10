@@ -44,7 +44,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     // AUTHOR-withdrawn row (moderation wins; the author could otherwise revive
     // it), and is a no-op on a row moderation already removed. Serializable +
     // retry so the recompute cannot lose-update against a concurrent review write.
-    await withSerializableRetry(() =>
+    const didRemove = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
           const removed = await tx.consultantReview.updateMany({
@@ -54,7 +54,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
             },
             data: { deletedAt: new Date(), removedBy: "MODERATION" },
           });
-          if (removed.count === 0) return;
+          if (removed.count === 0) return false;
           await tx.moderationAction.create({
             data: {
               actionType: "REVIEW_REMOVED",
@@ -63,13 +63,20 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
             },
           });
           await recomputeConsultantRating(tx, review.consultantProfileId);
+          return true;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    // #705 — the moderation paths never purged, so a removed review kept
-    // rendering on the landing page and explore for up to an hour.
+    if (!didRemove) {
+      return NextResponse.json({
+        success: true,
+        alreadyRemoved: true,
+        message: "Review was already removed",
+      });
+    }
+
     purgeReviewSurfaces(review.consultantProfileId);
 
     return NextResponse.json({

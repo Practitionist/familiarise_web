@@ -145,23 +145,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Cleanup job failed",
       }),
 
-    // @cleanup-twin alert-dispute-deadlines
-    "alert-dispute-deadlines": () =>
-      cleanupRoute({
-        job: "alert-dispute-deadlines",
-        run: async () => {
-          const { alertDisputeDeadlines } =
-            await import("@/scripts/disputes/alert-dispute-deadlines");
-          return alertDisputeDeadlines();
-        },
-        summarize: (r) => ({
-          urgentCount: r.urgentCount,
-          criticalCount: r.criticalCount,
-        }),
-        status: (r) => (r.criticalCount > 0 ? 207 : 200),
-        failureMessage: "Failed to check dispute deadlines",
-      }),
-
     // @cleanup-twin alert-orphaned-payments
     "alert-orphaned-payments": () =>
       cleanupRoute({
@@ -1031,6 +1014,27 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedDeletions: r.totalFailedDeletions,
         }),
         failureMessage: "Failed to sync Stream users",
+      }),
+
+    // @cleanup-twin support-sla-sweep
+    "support-sla-sweep": () =>
+      cleanupRoute({
+        job: "support-sla-sweep",
+        run: async (req) => {
+          const { runSupportSlaSweep } =
+            await import("@/lib/support/sla-sweep");
+          return runSupportSlaSweep({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          slaNoticesStaged: r.slaNoticesStaged,
+          orgEscalationEmailsSent: r.orgEscalationEmailsSent,
+          autoClosedCount: r.autoClosedCount,
+          disputeNoticesStaged: r.disputeNoticesStaged,
+          errors: r.errors.length,
+        }),
+        status: (r) => statusFor(r, r.errors.length > 0),
+        failureMessage: "Failed to run support SLA sweep",
       }),
 
     // @cleanup-twin sweep-abandoned-overage-charges

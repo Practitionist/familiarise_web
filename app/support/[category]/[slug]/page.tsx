@@ -16,6 +16,7 @@ import {
   getCategory,
   relatedArticles,
 } from "../../_data/support-content";
+import { ACK_PROMISE_COPY, ANTI_SCAM_NOTICE } from "@/app/(pages)/constants";
 
 export const revalidate = 3600;
 
@@ -161,12 +162,12 @@ export default async function SupportArticlePage({
             <div className="mt-10 rounded-2xl border border-border bg-muted/40 p-5">
               <p className="font-semibold">Still need help?</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Contact us — we reply within 24–48 hours on business days. For
-                money questions, the{" "}
+                Contact us — we acknowledge all requests {ACK_PROMISE_COPY}. For
+                payment or refund questions, the{" "}
                 <Link href="/refund" className="underline underline-offset-2">
                   Cancellation &amp; Refund Policy
                 </Link>{" "}
-                governs.
+                governs. {ANTI_SCAM_NOTICE}
               </p>
               <Link
                 href={contactHref}

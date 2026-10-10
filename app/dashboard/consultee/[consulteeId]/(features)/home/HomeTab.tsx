@@ -621,7 +621,7 @@ export default function HomeTab({
     enabled: isOwner,
     queryFn: () =>
       fetchJson<ReviewableSessionRow[]>(
-        "/api/user/reviews/reviewable-sessions",
+        "/api/user/reviews/reviewable-sessions?unreviewed=1",
         true,
       ),
   });

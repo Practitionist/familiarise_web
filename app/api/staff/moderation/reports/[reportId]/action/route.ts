@@ -259,6 +259,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       select: {
         id: true,
         type: true,
+        reason: true,
         status: true,
         reportedById: true,
         targetUserId: true,
@@ -302,6 +303,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       report: {
         id: report.id,
         type: report.type,
+        reason: report.reason,
         reportedById: report.reportedById,
         targetUserId: report.targetUserId,
         reviewId: report.reviewId,
@@ -349,7 +351,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           reporterUserId: report.reportedById,
           reportId: report.id,
           reference: formatReportReference(report.id),
-          ...reportOutcomeCopy(actionType),
+          ...reportOutcomeCopy(actionType, report.id, report.reason),
           dashboardUrl: goHref("auto", "feedbacks"),
         },
         EMAIL_BUDGET_MS.REQUEST,

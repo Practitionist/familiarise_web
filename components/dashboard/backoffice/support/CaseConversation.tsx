@@ -55,6 +55,7 @@ export function CaseConversation({
   suggested,
   helpArticles,
   onInsert,
+  onSelectReply,
 }: Readonly<{
   data: CaseWorkspace;
   mode: ComposerMode;
@@ -67,6 +68,7 @@ export function CaseConversation({
   suggested: ArticleLink[];
   helpArticles: ArticleLink[];
   onInsert: (text: string) => void;
+  onSelectReply?: (reply: SavedReply) => void;
 }>) {
   const canNote = !!data.ticketId;
   const [note, setNote] = useState("");
@@ -89,7 +91,6 @@ export function CaseConversation({
   }, [data.key, data.timeline.length]);
 
   const isNote = mode === "note" && canNote;
-  // A closed case refuses public replies server-side; private notes still land.
   const replyLocked = data.status === "CLOSED" && !isNote;
   const draft = isNote ? note : replyDraft;
   const submit = async () => {
@@ -98,12 +99,14 @@ export function CaseConversation({
     try {
       await onSend(message, isNote);
     } catch {
-      return; // the toast says why; the draft stays for a retry
+      return;
     }
     if (isNote) changeNote("");
     else onReplyDraftChange("");
     setNoteSaved(false);
   };
+
+  const promises = data.botPromises ?? [];
 
   return (
     <div className="flex min-h-[28rem] flex-col rounded-lg border border-border bg-card">
@@ -115,6 +118,18 @@ export function CaseConversation({
           <p className="whitespace-pre-line text-foreground">
             {data.handoffSummary}
           </p>
+          {promises.length > 0 && (
+            <div className="mt-2 rounded border border-border bg-background/80 px-2.5 py-2">
+              <p className="font-semibold text-foreground">
+                Bot promises to customer
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {promises.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
       <div className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4">
@@ -200,6 +215,7 @@ export function CaseConversation({
             suggested={suggested}
             all={helpArticles}
             onInsert={onInsert}
+            onSelectReply={onSelectReply}
           />
         </div>
         {replyLocked && (

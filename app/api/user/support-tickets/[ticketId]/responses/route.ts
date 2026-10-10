@@ -22,7 +22,7 @@ function resolveUserReplyNextStatus(
   if (status === "RESOLVED" || status === "ON_HOLD") {
     return assignedToId ? "IN_PROGRESS" : "OPEN";
   }
-  return "IN_PROGRESS";
+  return status === "OPEN" && !assignedToId ? "OPEN" : "IN_PROGRESS";
 }
 
 async function mirrorUserReplyToThread(

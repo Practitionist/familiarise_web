@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { describeWait } from "./useSupportThread";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -60,19 +61,384 @@ interface PlatformFlow {
 
 interface TurnResponse {
   messages: {
-    sender: string;
+    sender: Sender;
     body: string;
-    /** PROMPT nodes carry their tappable options here (flow-walk). */
     metadata?: { options?: { id: string; label: string }[] } | null;
   }[];
   nextNodeId: string | null;
-  /** Resolver-requested side effects. Displayed, never executed from here. */
   actions?: { kind: string }[];
   resolved: boolean;
   escalated: boolean;
   supportTicketId?: string;
-  /** #705 — the handle the user quotes back. Null on pre-#705 tickets. */
   supportTicketReference?: string | null;
+  outcomeId?: string | null;
+  replyByAt?: string | null;
+}
+
+interface DoneState {
+  resolved: boolean;
+  ticketId?: string;
+  ticketReference?: string | null;
+  outcomeId?: string | null;
+  replyByAt?: string | null;
+  collectFeedback?: boolean;
+}
+
+function platformLiveStatus(
+  isPending: boolean,
+  done: DoneState | null,
+  offline: boolean,
+): string {
+  if (isPending) return "Sending message…";
+  if (done && !done.resolved) return "Request escalated to our support team.";
+  if (offline) return "You are offline. Draft preserved.";
+  return "";
+}
+
+function PlatformCatalogPicker({
+  flows,
+  isLoading,
+  isError,
+  error,
+  disabled,
+  onRetry,
+  onSelect,
+}: Readonly<{
+  flows: PlatformFlow[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  disabled: boolean;
+  onRetry: () => void;
+  onSelect: (flow: PlatformFlow) => void;
+}>) {
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+  if (isError) {
+    const message =
+      error instanceof Error ? error.message : "Couldn't load support topics.";
+    return (
+      <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+        {message}{" "}
+        <Button variant="outline" size="sm" className="ml-1" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {flows.map((f) => (
+        <Button
+          key={f.id}
+          variant="outline"
+          disabled={disabled}
+          className="h-auto justify-start py-2 text-left"
+          onClick={() => onSelect(f)}
+        >
+          <span>
+            <span className="block text-sm font-medium">{f.title}</span>
+            <span className="block text-xs text-muted-foreground">
+              {f.description}
+            </span>
+          </span>
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function PlatformDoneView({
+  done,
+  flowRating,
+  feedback,
+  feedbackPending,
+  requestHref,
+  onRate,
+  onEscalateAfterRating,
+  onFeedbackChange,
+  onSubmitFeedback,
+}: Readonly<{
+  done: DoneState;
+  flowRating: number | null;
+  feedback: string;
+  feedbackPending: boolean;
+  requestHref?: (ticketId: string) => string;
+  onRate: (rating: number) => void;
+  onEscalateAfterRating: () => void;
+  onFeedbackChange: (value: string) => void;
+  onSubmitFeedback: () => void;
+}>) {
+  if (done.resolved && !done.collectFeedback) {
+    return (
+      <div className="space-y-2">
+        <Badge variant="secondary" className="mt-1">
+          <CheckCircle2 className="mr-1 h-3 w-3" /> Resolved
+        </Badge>
+        <div className="rounded-lg border border-border bg-card p-3 text-xs">
+          <p className="font-medium text-foreground">
+            {flowRating
+              ? "Thanks for rating this answer."
+              : "Was this answer helpful?"}
+          </p>
+          <div className="mt-1.5 flex items-center gap-1">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <Button
+                key={star}
+                type="button"
+                size="sm"
+                variant={flowRating === star ? "default" : "outline"}
+                className="h-7 w-7 p-0 text-xs"
+                aria-label={`Rate ${star} out of 5`}
+                onClick={() => onRate(star)}
+              >
+                {star}★
+              </Button>
+            ))}
+          </div>
+          {flowRating !== null && flowRating <= 2 && (
+            <div className="mt-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={onEscalateAfterRating}
+              >
+                {HUMAN_EXIT_LABEL}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  if (done.collectFeedback) {
+    return (
+      <div className="space-y-2">
+        <Textarea
+          rows={4}
+          maxLength={2000}
+          value={feedback}
+          onChange={(e) => onFeedbackChange(e.target.value)}
+          placeholder="What would you change?"
+        />
+        <Button
+          size="sm"
+          disabled={!feedback.trim() || feedbackPending}
+          onClick={onSubmitFeedback}
+        >
+          Send to the product team
+        </Button>
+      </div>
+    );
+  }
+  if (!done.resolved && done.ticketId) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+        <Ticket className="mr-1 inline h-3 w-3" />
+        {done.ticketReference ? (
+          <>
+            Request{" "}
+            <span className="font-mono text-foreground">
+              {done.ticketReference}
+            </span>{" "}
+            created — quote it if you follow up.{" "}
+          </>
+        ) : (
+          <>Ticket created — </>
+        )}
+        {describeWait(done.replyByAt)}
+        {requestHref && (
+          <Link
+            href={requestHref(done.ticketId)}
+            className="ml-1 font-medium text-foreground underline underline-offset-4"
+          >
+            Open the request
+          </Link>
+        )}
+      </div>
+    );
+  }
+  return null;
+}
+
+function PlatformFooterControls({
+  flowId,
+  nodeId,
+  options,
+  text,
+  bareHumanLabel,
+  bareHumanDetails,
+  bareHumanUrgent,
+  turnPending,
+  onTextChange,
+  onBareHumanLabelChange,
+  onBareHumanDetailsChange,
+  onBareHumanUrgentChange,
+  onSubmitTurn,
+}: Readonly<{
+  flowId: string;
+  nodeId: string | null;
+  options: { id: string; label: string }[];
+  text: string;
+  bareHumanLabel: string | null;
+  bareHumanDetails: string;
+  bareHumanUrgent: boolean;
+  turnPending: boolean;
+  onTextChange: (value: string) => void;
+  onBareHumanLabelChange: (value: string | null) => void;
+  onBareHumanDetailsChange: (value: string) => void;
+  onBareHumanUrgentChange: (value: boolean) => void;
+  onSubmitTurn: (payload: {
+    flowId: string;
+    nodeId: string | null;
+    chosenOptionId?: string;
+    chosenLabel?: string;
+    userMessage?: string;
+    urgent?: boolean;
+  }) => void;
+}>) {
+  if (bareHumanLabel) {
+    return (
+      <form
+        className="space-y-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const details = bareHumanDetails.trim();
+          if (details.length < 20) return;
+          const targetNode = nodeId;
+          const urgent = bareHumanUrgent;
+          onBareHumanLabelChange(null);
+          onBareHumanDetailsChange("");
+          onBareHumanUrgentChange(false);
+          onSubmitTurn({
+            flowId,
+            nodeId: targetNode,
+            userMessage: `Speak to someone: ${details}`,
+            urgent,
+          });
+        }}
+      >
+        <Label htmlFor="platform-support-human-details">
+          Tell us what happened
+        </Label>
+        <Textarea
+          id="platform-support-human-details"
+          rows={4}
+          maxLength={1900}
+          value={bareHumanDetails}
+          onChange={(e) => onBareHumanDetailsChange(e.target.value)}
+          disabled={turnPending}
+          placeholder="What went wrong, and what would you like us to do?"
+        />
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={bareHumanUrgent}
+            onChange={(e) => onBareHumanUrgentChange(e.target.checked)}
+            disabled={turnPending}
+          />
+          <span>This is urgent</span>
+        </label>
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              onBareHumanLabelChange(null);
+              onBareHumanDetailsChange("");
+              onBareHumanUrgentChange(false);
+            }}
+          >
+            Back
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={turnPending || bareHumanDetails.trim().length < 20}
+          >
+            Send to the support team
+          </Button>
+        </div>
+      </form>
+    );
+  }
+  return (
+    <>
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {options.map((o) => (
+            <Button
+              key={o.id}
+              variant="outline"
+              size="sm"
+              disabled={turnPending}
+              onClick={() =>
+                // A flow's own human option opens the same details + urgency form as the exit.
+                o.label === HUMAN_EXIT_LABEL
+                  ? onBareHumanLabelChange(o.label)
+                  : onSubmitTurn({
+                      flowId,
+                      nodeId,
+                      chosenOptionId: o.id,
+                      chosenLabel: o.label,
+                    })
+              }
+            >
+              {o.label}
+            </Button>
+          ))}
+        </div>
+      )}
+      {/* The human exit stays one tap away at every prompt, not only in the General flow. */}
+      {options.every((o) => o.label !== HUMAN_EXIT_LABEL) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={turnPending}
+          onClick={() => onBareHumanLabelChange(HUMAN_EXIT_LABEL)}
+        >
+          {HUMAN_EXIT_LABEL}
+        </Button>
+      )}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const msg = text.trim();
+          if (!msg) return;
+          if (isBareHumanRequest(msg)) {
+            onTextChange("");
+            onBareHumanLabelChange(msg);
+            return;
+          }
+          onSubmitTurn({
+            flowId,
+            nodeId,
+            userMessage: msg,
+          });
+        }}
+      >
+        <Input
+          value={text}
+          onChange={(e) => onTextChange(e.target.value)}
+          placeholder="Type a message…"
+          disabled={turnPending}
+        />
+        <Button
+          type="submit"
+          size="icon"
+          disabled={turnPending || !text.trim()}
+          aria-label="Send"
+        >
+          <Send className="h-4 w-4" />
+        </Button>
+      </form>
+    </>
+  );
 }
 
 export function PlatformSupportSheet({
@@ -85,9 +451,7 @@ export function PlatformSupportSheet({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
-  /** Active org for operator flows (attribution, server-validated). */
   orgId?: string;
-  /** #1527 — the escalated request's page, linked once it exists. */
   requestHref?: (ticketId: string) => string;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -97,26 +461,32 @@ export function PlatformSupportSheet({
     if (controlledOpen === undefined) setInternalOpen(v);
   };
   const [text, setText] = useState("");
-  // Monotonic marker for "this sitting". The platform intake is stateless —
-  // the client holds the cursor for one sitting — so a turn that resolves
-  // after the user abandoned that sitting must be dropped, not applied.
   const sittingRef = useRef(0);
   const [flowId, setFlowId] = useState<string | null>(null);
   const [nodeId, setNodeId] = useState<string | null>(null);
+  const [visitedNodeIds, setVisitedNodeIds] = useState<string[]>([]);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
-  const [done, setDone] = useState<{
-    resolved: boolean;
-    ticketId?: string;
-    ticketReference?: string | null;
-    /** #705 — the terminal asked for the user's feedback (COLLECT_FEEDBACK). */
-    collectFeedback?: boolean;
-  } | null>(null);
+  const [done, setDone] = useState<DoneState | null>(null);
+  const [flowRating, setFlowRating] = useState<number | null>(null);
   const [feedback, setFeedback] = useState("");
   const [bareHumanLabel, setBareHumanLabel] = useState<string | null>(null);
   const [bareHumanDetails, setBareHumanDetails] = useState("");
   const [bareHumanUrgent, setBareHumanUrgent] = useState(false);
+  const [offline, setOffline] = useState(false);
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  useEffect(() => {
+    setOffline(!navigator.onLine);
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
 
   const catalog = useQuery({
     queryKey: ["platform-support-intents"],
@@ -133,32 +503,31 @@ export function PlatformSupportSheet({
     mutationFn: async ({
       epoch: _epoch,
       chosenLabel: _chosenLabel,
+      visitedNodeIdsOverride,
       ...body
     }: {
       flowId: string;
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
-      /** The customer flagged the hand-off as urgent. */
       urgent?: boolean;
-      /** Client-only sitting marker — see `sittingRef`. Never sent. */
       epoch: number;
-      /** Client-only label of the pressed chip — see onSuccess. Never sent. */
       chosenLabel?: string;
+      visitedNodeIdsOverride?: string[];
     }): Promise<TurnResponse> => {
       const res = await fetch("/api/support/platform", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, orgId }),
+        body: JSON.stringify({
+          ...body,
+          visitedNodeIds: visitedNodeIdsOverride ?? visitedNodeIds,
+          orgId,
+        }),
       });
       if (!res.ok) await throwSupportError(res, "support intake turn");
       const { data } = await res.json();
       return data;
     },
-    // Echo what the user just said BEFORE the request returns. Previously the
-    // pressed chip's label rode along as a variable and was then never read, so
-    // every option tap produced zero user bubbles and the transcript was
-    // bot-only — and free text appeared only once the server had answered.
     onMutate: (vars) => {
       const said = vars.userMessage ?? vars.chosenLabel;
       if (!said) return {};
@@ -170,37 +539,39 @@ export function PlatformSupportSheet({
       return { optimisticId };
     },
     onSuccess: (result, vars, context) => {
-      // Discard a turn that belongs to a sitting the user has already left.
-      // The sheet holds the cursor for one sitting; closing it or starting a
-      // different flow clears the transcript, and a request still in flight
-      // would otherwise repopulate it — dropping the user back into a
-      // conversation they abandoned, mid-flow, with a stale cursor.
       if (vars.epoch !== sittingRef.current) return;
       setText("");
       setMessages((m) => [
         ...m.map((x) =>
           x.id === context?.optimisticId ? { ...x, pending: false } : x,
         ),
-        // metadata.options MUST survive the trip — a PROMPT without its
-        // options is a dead end (no buttons, free text can't advance it).
         ...result.messages.map((msg) => ({
           id: nextLocalId(),
-          sender: msg.sender as Sender,
+          sender: msg.sender,
           body: msg.body,
           options: msg.metadata?.options ?? undefined,
         })),
       ]);
+      if (result.nextNodeId) {
+        setVisitedNodeIds((prev) =>
+          prev.includes(result.nextNodeId!)
+            ? prev
+            : [...prev, result.nextNodeId!],
+        );
+      }
       setNodeId(result.nextNodeId);
       if (result.escalated) {
         setDone({
           resolved: false,
           ticketId: result.supportTicketId,
           ticketReference: result.supportTicketReference,
+          replyByAt: result.replyByAt ?? null,
         });
         void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
       } else if (result.resolved) {
         setDone({
           resolved: true,
+          outcomeId: result.outcomeId ?? null,
           collectFeedback: (result.actions ?? []).some(
             (a) => a.kind === "COLLECT_FEEDBACK",
           ),
@@ -208,8 +579,6 @@ export function PlatformSupportSheet({
       }
     },
     onError: (e: unknown, _vars, context) => {
-      // A bubble left standing after the turn failed claims something was said
-      // that the server never received.
       if (context?.optimisticId) {
         setMessages((m) => m.filter((x) => x.id !== context.optimisticId));
       }
@@ -221,13 +590,34 @@ export function PlatformSupportSheet({
     },
   });
 
+  const rateOutcome = async (rating: number) => {
+    if (!done?.outcomeId) return;
+    try {
+      const res = await fetch(
+        `/api/support/flow-outcomes/${done.outcomeId}/rating`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating }),
+        },
+      );
+      if (res.ok) {
+        setFlowRating(rating);
+      }
+    } catch {
+      // Best-effort rating telemetry; never blocks the user.
+    }
+  };
+
   const startFlow = (flow: PlatformFlow) => {
     if (turn.isPending) return;
     sittingRef.current += 1;
     setFlowId(flow.id);
     setNodeId(null);
+    setVisitedNodeIds([]);
     setMessages([]);
     setDone(null);
+    setFlowRating(null);
     setBareHumanLabel(null);
     setBareHumanDetails("");
     setBareHumanUrgent(false);
@@ -235,6 +625,7 @@ export function PlatformSupportSheet({
       flowId: flow.id,
       chosenLabel: flow.title,
       epoch: sittingRef.current,
+      visitedNodeIdsOverride: [],
     });
   };
 
@@ -242,18 +633,16 @@ export function PlatformSupportSheet({
     sittingRef.current += 1;
     setFlowId(null);
     setNodeId(null);
+    setVisitedNodeIds([]);
     setMessages([]);
     setDone(null);
+    setFlowRating(null);
     setFeedback("");
     setBareHumanLabel(null);
     setBareHumanDetails("");
     setBareHumanUrgent(false);
   };
 
-  // #705 — the "leave feedback" terminal used to say the entry was "read and
-  // tracked" and then persist nothing at all. This is what makes that true; it
-  // writes product Feedback, NOT a support ticket, because a suggestion is not
-  // a support request and filing one would put every opinion in the ops queue.
   const sendFeedback = useMutation({
     mutationFn: async (body: string) => {
       const res = await fetch("/api/user/feedbacks", {
@@ -287,8 +676,6 @@ export function PlatformSupportSheet({
   const lastBot = [...messages].reverse().find((m) => m.sender === "BOT");
   const options = done ? [] : (lastBot?.options ?? []);
 
-  // Keep the newest bubble in view — the transcript is a plain overflow
-  // container, so past the drawer height every reply lands below the fold.
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -325,44 +712,17 @@ export function PlatformSupportSheet({
             sits against the composer rather than at the top of an empty panel. */}
         <div className="flex-1 overflow-y-auto px-5 pb-2">
           <div className="flex min-h-full flex-col justify-end space-y-3">
-            {!flowId &&
-              (catalog.isLoading ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              ) : catalog.isError ? (
-                <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-                  {(catalog.error as Error)?.message ??
-                    "Couldn't load support topics."}{" "}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="ml-1"
-                    onClick={() => catalog.refetch()}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {(catalog.data ?? []).map((f) => (
-                    <Button
-                      key={f.id}
-                      variant="outline"
-                      disabled={turn.isPending}
-                      className="h-auto justify-start py-2 text-left"
-                      onClick={() => startFlow(f)}
-                    >
-                      <span>
-                        <span className="block text-sm font-medium">
-                          {f.title}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {f.description}
-                        </span>
-                      </span>
-                    </Button>
-                  ))}
-                </div>
-              ))}
+            {!flowId && (
+              <PlatformCatalogPicker
+                flows={catalog.data ?? []}
+                isLoading={catalog.isLoading}
+                isError={catalog.isError}
+                error={catalog.error}
+                disabled={turn.isPending}
+                onRetry={() => void catalog.refetch()}
+                onSelect={startFlow}
+              />
+            )}
 
             {messages.map((m) => (
               <div
@@ -373,7 +733,6 @@ export function PlatformSupportSheet({
                     : "flex justify-start"
                 }
               >
-                {/* No per-bubble "USER"/"BOT" caption — side and colour say it. */}
                 <div
                   className={
                     "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
@@ -383,9 +742,6 @@ export function PlatformSupportSheet({
                     (m.pending ? " opacity-70" : "")
                   }
                 >
-                  {/* Screen-reader-only speaker attribution: the visual design
-                      dropped the captions, and side plus colour say nothing to
-                      assistive tech. */}
                   <span className="sr-only">
                     {m.sender === "USER" ? "You said" : "Assistant said"}:{" "}
                   </span>
@@ -412,59 +768,39 @@ export function PlatformSupportSheet({
               </div>
             )}
 
-            {done?.resolved && !done.collectFeedback && (
-              <Badge variant="secondary" className="mt-1">
-                <CheckCircle2 className="mr-1 h-3 w-3" /> Resolved
-              </Badge>
+            {done && (
+              <PlatformDoneView
+                done={done}
+                flowRating={flowRating}
+                feedback={feedback}
+                feedbackPending={sendFeedback.isPending}
+                requestHref={requestHref}
+                onRate={(star) => void rateOutcome(star)}
+                onEscalateAfterRating={() => {
+                  setDone(null);
+                  setBareHumanLabel(HUMAN_EXIT_LABEL);
+                }}
+                onFeedbackChange={setFeedback}
+                onSubmitFeedback={() => sendFeedback.mutate(feedback.trim())}
+              />
             )}
-
-            {done?.collectFeedback && (
-              <div className="space-y-2">
-                <Textarea
-                  rows={4}
-                  maxLength={2000}
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  placeholder="What would you change?"
-                />
-                <Button
-                  size="sm"
-                  disabled={!feedback.trim() || sendFeedback.isPending}
-                  onClick={() => sendFeedback.mutate(feedback.trim())}
+            <div aria-live="polite" className="sr-only">
+              {platformLiveStatus(turn.isPending, done, offline)}
+            </div>
+            {offline && (
+              <div
+                role="alert"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+              >
+                You appear to be offline — your message draft is preserved here.
+                If your connection does not come back, you can reach us at{" "}
+                <Link
+                  href="/contactus"
+                  className="font-medium underline underline-offset-4"
                 >
-                  Send to the product team
-                </Button>
-              </div>
-            )}
-            {done && !done.resolved && done.ticketId && (
-              <div className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                <Ticket className="mr-1 inline h-3 w-3" />
-                {/* The reference is the whole point of minting one: it is what
-                  survives the channel change when the user follows up by
-                  email or on a call. */}
-                {done.ticketReference ? (
-                  <>
-                    Request{" "}
-                    <span className="font-mono text-foreground">
-                      {done.ticketReference}
-                    </span>{" "}
-                    created — quote it if you follow up. Our team will reply
-                    here in &quot;My requests&quot; and by email.
-                  </>
-                ) : (
-                  <>
-                    Ticket created — our team will reply here in &quot;My
-                    requests&quot; and by email.
-                  </>
-                )}
-                {requestHref && (
-                  <Link
-                    href={requestHref(done.ticketId)}
-                    className="ml-1 font-medium text-foreground underline underline-offset-4"
-                  >
-                    Open the request
-                  </Link>
-                )}
+                  /contactus
+                </Link>
+                .
               </div>
             )}
             <div ref={endRef} />
@@ -473,147 +809,23 @@ export function PlatformSupportSheet({
 
         {flowId && !done && (
           <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
-            {bareHumanLabel ? (
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const details = bareHumanDetails.trim();
-                  if (details.length < 20) return;
-                  const targetNode = nodeId;
-                  const urgent = bareHumanUrgent;
-                  setBareHumanLabel(null);
-                  setBareHumanDetails("");
-                  setBareHumanUrgent(false);
-                  turn.mutate({
-                    flowId: flowId!,
-                    nodeId: targetNode,
-                    userMessage: `Speak to someone: ${details}`,
-                    urgent,
-                    epoch: sittingRef.current,
-                  });
-                }}
-              >
-                <Label htmlFor="platform-support-human-details">
-                  Tell us what happened
-                </Label>
-                <Textarea
-                  id="platform-support-human-details"
-                  rows={4}
-                  maxLength={1900}
-                  value={bareHumanDetails}
-                  onChange={(e) => setBareHumanDetails(e.target.value)}
-                  disabled={turn.isPending}
-                  placeholder="What went wrong, and what would you like us to do?"
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={bareHumanUrgent}
-                    onChange={(e) => setBareHumanUrgent(e.target.checked)}
-                    disabled={turn.isPending}
-                  />
-                  <span>This is urgent</span>
-                </label>
-                <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setBareHumanLabel(null);
-                      setBareHumanDetails("");
-                      setBareHumanUrgent(false);
-                    }}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={
-                      turn.isPending || bareHumanDetails.trim().length < 20
-                    }
-                  >
-                    Send to the support team
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <>
-                {options.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {options.map((o) => (
-                      <Button
-                        key={o.id}
-                        variant="outline"
-                        size="sm"
-                        disabled={turn.isPending}
-                        onClick={() =>
-                          // A flow's own human option opens the same details + urgency form as the exit.
-                          o.label === HUMAN_EXIT_LABEL
-                            ? setBareHumanLabel(o.label)
-                            : turn.mutate({
-                                flowId: flowId!,
-                                nodeId,
-                                chosenOptionId: o.id,
-                                chosenLabel: o.label,
-                                epoch: sittingRef.current,
-                              })
-                        }
-                      >
-                        {o.label}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-                {/* The human exit stays one tap away at every prompt, not only in the General flow. */}
-                {options.every((o) => o.label !== HUMAN_EXIT_LABEL) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={turn.isPending}
-                    onClick={() => setBareHumanLabel(HUMAN_EXIT_LABEL)}
-                  >
-                    {HUMAN_EXIT_LABEL}
-                  </Button>
-                )}
-                <form
-                  className="flex items-center gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const msg = text.trim();
-                    if (!msg) return;
-                    if (isBareHumanRequest(msg)) {
-                      setText("");
-                      setBareHumanLabel(msg);
-                      return;
-                    }
-                    turn.mutate({
-                      flowId: flowId!,
-                      nodeId,
-                      userMessage: msg,
-                      epoch: sittingRef.current,
-                    });
-                  }}
-                >
-                  <Input
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    placeholder="Type a message…"
-                    disabled={turn.isPending}
-                  />
-                  <Button
-                    type="submit"
-                    size="icon"
-                    disabled={turn.isPending || !text.trim()}
-                    aria-label="Send"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </form>
-              </>
-            )}
+            <PlatformFooterControls
+              flowId={flowId}
+              nodeId={nodeId}
+              options={options}
+              text={text}
+              bareHumanLabel={bareHumanLabel}
+              bareHumanDetails={bareHumanDetails}
+              bareHumanUrgent={bareHumanUrgent}
+              turnPending={turn.isPending}
+              onTextChange={setText}
+              onBareHumanLabelChange={setBareHumanLabel}
+              onBareHumanDetailsChange={setBareHumanDetails}
+              onBareHumanUrgentChange={setBareHumanUrgent}
+              onSubmitTurn={(payload) =>
+                turn.mutate({ ...payload, epoch: sittingRef.current })
+              }
+            />
           </div>
         )}
       </SheetContent>

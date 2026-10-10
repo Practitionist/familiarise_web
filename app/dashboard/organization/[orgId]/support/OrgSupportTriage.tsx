@@ -34,6 +34,7 @@ interface TriageRow {
   activeChannel: string;
   lastMessageAt: string;
   createdAt: string;
+  submitterUserId?: string | null;
   member: { id: string; name: string | null };
   appointment: {
     appointmentType: string;
@@ -42,22 +43,26 @@ interface TriageRow {
   };
 }
 
+export function isOrgOperatorThread(t: {
+  category: string;
+  submitterUserId?: string | null;
+  member: { id: string };
+}): boolean {
+  return (
+    t.category === "ORG_ADMIN_DISPUTE" ||
+    t.category === "SPONSORSHIP_BILLING" ||
+    (Boolean(t.submitterUserId) && t.submitterUserId !== t.member.id)
+  );
+}
+
 interface FeedbackSummary {
-  // #1300 — every one of these is nullable now, and null means SUPPRESSED rather
-  // than zero. Below the cohort floor the endpoint withholds the counts as well
-  // as the average: ADR 20's stated reason for suppressing is that the count makes
-  // the disclosure trivial, and the previous shape returned `totalResponses`
-  // unconditionally, so at one respondent an organisation learned that exactly one
-  // member had rated exactly one session.
   averageRating: number | null;
   totalResponses: number | null;
   respondents: number | null;
   averageRating30d: number | null;
   responses30d: number | null;
   respondents30d: number | null;
-  /** The floor, so this can say "needs 5" instead of rendering a blank. */
   minRespondents: number;
-  /** Per expert, already floored and secondarily suppressed by the endpoint. */
   byConsultant: {
     consultantProfileId: string;
     name: string | null;
@@ -65,8 +70,6 @@ interface FeedbackSummary {
     responses: number | null;
     respondents: number | null;
   }[];
-  /** How many experts are withheld. 0 whenever the withheld people are too few
-   *  to describe, so a count here is always about a group of five or more. */
   consultantsSuppressed: number;
 }
 
@@ -85,20 +88,11 @@ const STATUS_FILTERS = [
   "RESOLVED",
 ] as const;
 
-/**
- * One row of the org triage list.
- *
- * METADATA ONLY, by design (ADR 20 + its 2026-08-21 addendum): plan title,
- * member name, category, status and timestamps. A member's support
- * conversation is CONTENT — the org may see that it happened, never what was
- * said — so no message, body or preview field belongs here. The endpoint
- * enforces the same line with a select allowlist, pinned by
- * `__tests__/security/org-scope-payload-allowlist.test.ts`.
- */
 function OrgThreadRow({
   thread: t,
   orgId,
 }: Readonly<{ thread: TriageRow; orgId: string }>) {
+  const raisedByOrg = isOrgOperatorThread(t);
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
@@ -120,10 +114,14 @@ function OrgThreadRow({
       </div>
       <div className="flex items-center gap-2">
         <StatusBadge
+          label={raisedByOrg ? "Raised by org" : "Learner session"}
+          tone={raisedByOrg ? "info" : "neutral"}
+          variant="dot"
+        />
+        <StatusBadge
           label={STATUS[t.status]?.label ?? humanizeEnum(t.status)}
           tone={STATUS[t.status]?.tone ?? "neutral"}
         />
-        {/* #1527 — the operator's OWN conversation on this session, as a page. */}
         <Button variant="outline" size="sm" asChild>
           <Link
             href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "booking", id: t.appointmentId })}`}
@@ -180,7 +178,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   // A failed request is not "no data" — show it, with a way out. A 403 (data
   // resolved to null) is a third thing: the card is not for this role.
   const summaryError = summary.isError ? (
-    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground sm:col-span-2">
       Couldn&apos;t load the quality summary.{" "}
       <Button
         variant="outline"
@@ -190,6 +188,11 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       >
         Retry
       </Button>
+    </div>
+  ) : summary.data === null && !summary.isLoading ? (
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground sm:col-span-2">
+      The quality summary needs the quality permission, which your role does not
+      hold.
     </div>
   ) : null;
   const threadsError = threads.isError ? (
@@ -203,11 +206,6 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       >
         Retry
       </Button>
-    </div>
-  ) : summary.data === null && !summary.isLoading ? (
-    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-      The quality summary needs the quality permission, which your role does not
-      hold.
     </div>
   ) : null;
 

@@ -17,7 +17,14 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportFlowOutcome: { create: jest.fn(), groupBy: jest.fn() },
+    supportFlowOutcome: {
+      create: jest.fn(),
+      groupBy: jest.fn(),
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    supportCase: { findMany: jest.fn() },
+    supportTicket: { findMany: jest.fn() },
   },
 }));
 
@@ -25,17 +32,27 @@ import prisma from "@/lib/prisma";
 import { deflectionSince, recordFlowOutcome } from "@/lib/support/deflection";
 
 const mockPrisma = prisma as unknown as {
-  supportFlowOutcome: { create: jest.Mock; groupBy: jest.Mock };
+  supportFlowOutcome: {
+    create: jest.Mock;
+    groupBy: jest.Mock;
+    findMany: jest.Mock;
+    updateMany: jest.Mock;
+  };
+  supportCase: { findMany: jest.Mock };
+  supportTicket: { findMany: jest.Mock };
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockPrisma.supportFlowOutcome.create.mockResolvedValue({});
+  mockPrisma.supportFlowOutcome.create.mockResolvedValue({ id: "out-1" });
+  mockPrisma.supportFlowOutcome.findMany.mockResolvedValue([]);
+  mockPrisma.supportCase.findMany.mockResolvedValue([]);
+  mockPrisma.supportTicket.findMany.mockResolvedValue([]);
 });
 
 describe("recording an outcome", () => {
   it("stores the dimensions and no message body", async () => {
-    await recordFlowOutcome({
+    const id = await recordFlowOutcome({
       scope: "PLATFORM",
       flowKey: "PAYMENTS_BILLING",
       terminalNodeId: "tracking",
@@ -43,6 +60,7 @@ describe("recording an outcome", () => {
       outcome: "RESOLVED",
       userId: "u1",
     });
+    expect(id).toBe("out-1");
     const { data } = mockPrisma.supportFlowOutcome.create.mock.calls[0][0];
     expect(data).toEqual({
       scope: "PLATFORM",
@@ -53,14 +71,14 @@ describe("recording an outcome", () => {
       userId: "u1",
       organizationId: null,
     });
-    // This is a counter, not a transcript.
     expect(Object.keys(data)).not.toContain("body");
     expect(Object.keys(data)).not.toContain("message");
   });
 
   it("never lets a failed counter take down the support turn", async () => {
-    // A metric outage must not become a support outage.
-    mockPrisma.supportFlowOutcome.create.mockRejectedValue(new Error("db down"));
+    mockPrisma.supportFlowOutcome.create.mockRejectedValue(
+      new Error("db down"),
+    );
     const spy = jest.spyOn(console, "error").mockImplementation(() => {});
     await expect(
       recordFlowOutcome({
@@ -69,15 +87,24 @@ describe("recording an outcome", () => {
         outcome: "ESCALATED",
         userId: "u1",
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
 
   it("shares the caller's transaction when given one, so it can be rolled back", async () => {
-    const tx = { supportFlowOutcome: { create: jest.fn().mockResolvedValue({}) } };
+    const tx = {
+      supportFlowOutcome: {
+        create: jest.fn().mockResolvedValue({ id: "out-tx" }),
+      },
+    };
     await recordFlowOutcome(
-      { scope: "APPOINTMENT", flowKey: "RESCHEDULE", outcome: "RESOLVED", userId: "u1" },
+      {
+        scope: "APPOINTMENT",
+        flowKey: "RESCHEDULE",
+        outcome: "RESOLVED",
+        userId: "u1",
+      },
       tx as never,
     );
     expect(tx.supportFlowOutcome.create).toHaveBeenCalled();
@@ -97,6 +124,9 @@ describe("reading the rate", () => {
       escalated: 3,
       total: 10,
       deflectionRate: 70,
+      resolvedUsers: 0,
+      recontactedUsers: 0,
+      recontactRate7d: null,
     });
   });
 
@@ -108,7 +138,6 @@ describe("reading the rate", () => {
   });
 
   it("reports 0 when every conversation escalated", async () => {
-    // Distinct from the empty case above: this one is a real, bad number.
     mockPrisma.supportFlowOutcome.groupBy.mockResolvedValue([
       { outcome: "ESCALATED", _count: { _all: 4 } },
     ]);

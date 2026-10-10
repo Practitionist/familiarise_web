@@ -216,7 +216,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         method: "POST",
         body: JSON.stringify({
           type: "REVIEW",
-          reason: "INAPPROPRIATE_CONTENT",
+          reason: "HARASSMENT_OR_ABUSE",
           reviewId,
           targetUserId: authorUserId,
         }),
@@ -249,7 +249,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         method: "POST",
         body: JSON.stringify({
           type: "REVIEW",
-          reason: "INAPPROPRIATE_CONTENT",
+          reason: "HARASSMENT_OR_ABUSE",
           reviewId,
           targetUserId: authorUserId,
         }),
@@ -661,7 +661,9 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         expect.objectContaining({
           workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,
           recipients: ["author-1"],
-          dedupeKey: "platform-feedback:fb-1:RESOLVED",
+          dedupeKey: expect.stringMatching(
+            /^platform-feedback:fb-1:PENDING->RESOLVED:\d+$/,
+          ),
         }),
       );
       expect(mockAttemptTrigger).toHaveBeenCalled();

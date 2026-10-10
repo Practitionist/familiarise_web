@@ -28,6 +28,7 @@ import { invalidProps } from "@/components/ui/field-error";
 import { toast } from "@/components/ui/use-toast";
 import { authClient } from "@/lib/auth-client";
 import { withReauth } from "@/lib/auth/reauth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { AUTH_ERROR_COPY, humanizeAuthError } from "@/lib/labels/auth-errors";
 
 type Phase = "loading" | "idle" | "enrolling";
@@ -46,7 +47,7 @@ const inputClass =
 const primaryButton =
   "rounded-md bg-white px-4 py-2 text-sm font-medium text-neutral-950 disabled:opacity-50";
 const secondaryButton =
-  "rounded-md border border-neutral-700 px-4 py-2 text-sm text-white disabled:opacity-50";
+  "rounded-md border border-neutral-700 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50";
 
 /** The base32 secret inside the otpauth:// URI, for manual entry. */
 function secretOf(totpURI: string): string {
@@ -72,10 +73,30 @@ function backupCodesText(codes: readonly string[]): string {
   ].join("\n");
 }
 
+export function SetupSignOutButton() {
+  const [signingOut, setSigningOut] = useState(false);
+
+  return (
+    <button
+      type="button"
+      disabled={signingOut}
+      onClick={() => {
+        setSigningOut(true);
+        void signOutEverywhere();
+      }}
+      className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+    >
+      {signingOut ? "Signing out…" : "Sign out"}
+    </button>
+  );
+}
+
 function BackupCodes({
   codes,
   continueHref,
 }: Readonly<{ codes: readonly string[]; continueHref?: string }>) {
+  const [acknowledged, setAcknowledged] = useState(false);
+
   async function copyCodes() {
     try {
       await navigator.clipboard.writeText(backupCodesText(codes));
@@ -91,27 +112,33 @@ function BackupCodes({
 
   function downloadCodes() {
     const url = URL.createObjectURL(
-      new Blob([backupCodesText(codes)], { type: "text/plain" }),
+      new Blob([backupCodesText(codes)], { type: "text/plain;charset=utf-8" }),
     );
     const link = document.createElement("a");
     link.href = url;
     link.download = "familiarise-backup-codes.txt";
+    document.body.appendChild(link);
     link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
-    <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
+    <div className="mt-4 space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
       <p className="text-sm font-medium text-amber-200">
         Save these backup codes now — they are shown once. Each one signs you in
         once if you lose your authenticator.
       </p>
-      <ul className="mt-2 grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
+      <p className="text-xs text-neutral-300">
+        Leaving or reloading this page loses these codes. You can generate new
+        ones later from Settings using your password.
+      </p>
+      <ul className="grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
         {codes.map((c) => (
           <li key={c}>{c}</li>
         ))}
       </ul>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => void copyCodes()}
@@ -127,11 +154,21 @@ function BackupCodes({
           Download .txt
         </button>
       </div>
+      <label className="flex items-center gap-2 text-sm text-neutral-200">
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(e) => setAcknowledged(e.target.checked)}
+          className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
+        />
+        <span>I have saved my backup codes</span>
+      </label>
       {continueHref ? (
         <button
           type="button"
+          disabled={!acknowledged}
           onClick={() => window.location.assign(continueHref)}
-          className={`mt-4 ${primaryButton}`}
+          className={primaryButton}
         >
           I&apos;ve saved these codes — continue
         </button>
@@ -305,7 +342,7 @@ export function TwoFactorSettings({
           </p>
         ) : null}
         <form
-          className="mt-4 flex gap-2"
+          className="mt-4 flex flex-wrap gap-2"
           onSubmit={(event) => void confirmEnrolment(event)}
         >
           <input
@@ -324,6 +361,19 @@ export function TwoFactorSettings({
             className={primaryButton}
           >
             {busy ? "Verifying…" : "Verify"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setSetup(null);
+              setCode("");
+              setError(null);
+              setPhase("idle");
+            }}
+            className={secondaryButton}
+          >
+            Cancel
           </button>
         </form>
         {errorLine}
@@ -376,6 +426,10 @@ export function TwoFactorSettings({
       </h2>
       <p className="mt-1 text-sm text-emerald-400">
         On — every sign-in asks for a code from your authenticator app.
+      </p>
+      <p className="mt-2 text-sm text-neutral-300">
+        Lost your authenticator? Use a backup code, or ask an admin to reset
+        your two-factor authentication from the Team page.
       </p>
 
       {backupCodes ? (
