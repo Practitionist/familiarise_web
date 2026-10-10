@@ -448,3 +448,9 @@ Contact: `getstream.io/contact/`
 - `docs/finances/11-cfo-master-plan.md` — Full financial plan with SaaS costs
 - `docs/stream/00-pricing-overview.md` — Stream pricing quick reference and cost cliff summary
 - Screenshots: `docs/stream-video-pricing-apr2026.png`, `docs/stream-chat-pricing-apr2026.png`, `docs/stream-feeds-pricing-apr2026.png`
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Separate `livestream` Call Type + HLS Transcoding for Small Cohorts**: Superseded by running webinars/classes (< 100 concurrent participants) on the hardened `default` WebRTC call type with Backstage and muted/camera-off defaults, leveraging Stream Dynascale viewer rates with zero HLS egress fees.

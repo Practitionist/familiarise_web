@@ -20,6 +20,7 @@ import {
   Timer,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "@/lib/auth-client";
 import { cn } from "@/utils/tailwind";
 import {
   createMicLevelMeter,
@@ -195,7 +196,11 @@ const MeetingSetup = ({
 
   const info = useSessionInfo(role);
   const clock = useSessionClock(info.startsAt, info.endsAt);
-  const scheduledAt = formatScheduledAt(info.startsAt);
+  const { data: session } = useSession();
+  const scheduledAt = formatScheduledAt(
+    info.startsAt,
+    session?.user?.timezone ?? null,
+  );
   const heading = sessionHeading(info);
   const subheading = sessionSubheading(info);
 

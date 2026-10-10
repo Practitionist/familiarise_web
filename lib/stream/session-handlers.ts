@@ -12,7 +12,7 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
-import { toCallId } from "@/lib/stream/call-cid";
+import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import { getCallParticipantSessionsFromStream } from "@/lib/stream/call-presence";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -419,15 +419,75 @@ export async function handleCallEnded(
   }
 }
 
-async function resolveMeeting(streamCallId: string) {
-  return prisma.meeting.findUnique({
+/**
+ * Synchronously stamps `Meeting.endedAt` and `endedReason` on host-initiated
+ * termination before navigating back to the dashboard, eliminating webhook lag.
+ */
+export async function recordMeetingEndedSynchronously(
+  streamCallId: string,
+  endedAt: Date = new Date(),
+): Promise<{
+  endedReason: "ended_early" | "call_ended";
+  nextStreamCallId: string;
+} | null> {
+  const meeting = await prisma.meeting.findUnique({
     where: { streamCallId },
-    select: {
-      id: true,
-      endedAt: true,
-      endedReason: true,
-      appointmentOccurrenceId: true,
-    },
+    include: { occurrence: true },
+  });
+  if (!meeting) return null;
+
+  if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
+    return null;
+  }
+
+  const slotStartsAt = meeting.occurrence.startsAt;
+  const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+  const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
+
+  if (endedBeforeStart) {
+    const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
+    const updated = await prisma.meeting.updateMany({
+      where: { id: meeting.id, endedAt: meeting.endedAt },
+      data: {
+        endedAt,
+        endedReason,
+        streamCallId: nextStreamCallId,
+        isRecording: false,
+      },
+    });
+    if (updated.count === 0) return null;
+    return { endedReason, nextStreamCallId };
+  }
+
+  if (!(await stampEnd(meeting, endedAt, endedReason))) return null;
+  return { endedReason, nextStreamCallId: meeting.streamCallId };
+}
+
+/**
+ * Resolve the Meeting for a Stream call_cid (format "type:callId").
+ * Returns null (not throw) when no session matches — Stream emits participant
+ * events for ad-hoc calls that may never have been persisted; those are skipped.
+ */
+async function resolveMeeting(streamCallId: string) {
+  const select = {
+    id: true,
+    endedAt: true,
+    endedReason: true,
+    appointmentOccurrenceId: true,
+  } as const;
+
+  const direct = await prisma.meeting.findUnique({
+    where: { streamCallId },
+    select,
+  });
+  if (direct) return direct;
+
+  const occurrenceId = parseSlotIdFromCallId(streamCallId);
+  if (!occurrenceId) return null;
+
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: occurrenceId },
+    select,
   });
 }
 

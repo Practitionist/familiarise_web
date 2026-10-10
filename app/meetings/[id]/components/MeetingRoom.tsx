@@ -23,8 +23,6 @@ import {
   Grid3X3,
   Monitor,
   X,
-  Phone,
-  MoreVertical,
   Radio,
   MessageSquareText,
 } from "lucide-react";
@@ -35,7 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import EndCallButton from "./EndCallButton";
+import CallExitButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { StageControls } from "./StageControls";
@@ -480,12 +478,14 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
 
           <div
+            inert={!activeSideTab || undefined}
+            aria-hidden={!activeSideTab}
             className={cn(
-              "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              "fixed right-0 top-0 flex h-full w-full flex-col pb-20 sm:w-80 sm:pb-0 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
               activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
-            <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800">
+            <div className="flex shrink-0 items-center justify-between px-3 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
                 <button
                   type="button"
@@ -522,6 +522,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 )}
               </div>
               <button
+                type="button"
+                aria-label="Close panel"
                 onClick={() => setActiveSideTab(null)}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
@@ -540,7 +542,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 error={qaError}
               />
             ) : (
-              <div className="h-[calc(100%-60px)] overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 <CallParticipantsList onClose={() => setActiveSideTab(null)} />
               </div>
             )}
@@ -554,9 +556,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
-            <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
               </SpeakingWhileMutedNotification>
@@ -576,21 +578,21 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 />
               )}
 
-              <button
-                onClick={async () => {
-                  await cleanupAndNavigate(getDashboardUrl());
-                }}
-                className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
-                title="Leave call"
-              >
-                <Phone className="w-5 h-5 rotate-[135deg] text-white" />
-              </button>
+              <CallExitButton
+                isHost={isHost}
+                onLeaveForSelf={() => cleanupAndNavigate(getDashboardUrl())}
+                onEnding={handleEnding}
+              />
 
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">
+                  <button
+                    type="button"
+                    aria-label="Change layout"
+                    className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                  >
                     <LayoutList className="w-5 h-5 text-white" />
                   </button>
                 </DropdownMenuTrigger>
@@ -671,51 +673,28 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 )}
               </button>
 
-              <div className="w-px h-8 bg-zinc-700 mx-1" />
-
               {isHost && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                  isHost={isHost}
-                />
-              )}
-
-              {isHost && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
-                      title="Session options"
-                    >
-                      <MoreVertical className="w-5 h-5 text-white" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-72 bg-zinc-900 border-zinc-800 p-3 rounded-xl"
-                    sideOffset={12}
-                  >
-                    <p className="text-sm font-medium text-white">
-                      End for everyone
-                    </p>
-                    <p className="mt-1 mb-3 text-xs text-zinc-400">
-                      Disconnects every participant and closes the room. Leaving
-                      instead only removes you.
-                    </p>
-                    <EndCallButton onEnding={handleEnding} />
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={isHost}
+                  />
+                </>
               )}
 
               {!isHost && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                  isHost={false}
-                />
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={false}
+                  />
+                </>
               )}
             </div>
           </div>
@@ -744,6 +723,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               callId={call?.id ?? null}
               startsAt={info.startsAt}
               endsAt={info.endsAt}
+              baseEndsAt={info.baseEndsAt}
               extendedSeconds={info.extendedSeconds}
               extensionsUsed={info.extensionsUsed}
               isHost={isHost}

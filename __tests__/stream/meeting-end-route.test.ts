@@ -71,6 +71,12 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+const mockRecordEndedSync = jest.fn();
+jest.mock("../../lib/stream/session-handlers", () => ({
+  recordMeetingEndedSynchronously: (...a: unknown[]) =>
+    mockRecordEndedSync(...a),
+}));
+
 import { POST } from "../../app/api/meetings/[meetingId]/end/route";
 import { StreamUnavailableError } from "../../lib/stream-client";
 
@@ -92,6 +98,10 @@ beforeEach(() => {
   mockGetSession.mockResolvedValue({ user: { id: "user_1", banned: false } });
   mockResolveMeetingAccess.mockResolvedValue(granted("host"));
   mockEnd.mockResolvedValue({});
+  mockRecordEndedSync.mockResolvedValue({
+    endedReason: "call_ended",
+    nextStreamCallId: "slot-abc",
+  });
 });
 
 describe("POST /api/meetings/[meetingId]/end", () => {

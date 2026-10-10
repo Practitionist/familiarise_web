@@ -121,7 +121,7 @@ Stream Chat uses a role-based permission system. The `mapRoleToStream` function 
 
 **Location:** `/lib/user.ts` — `mapRoleToStream`
 
-### Least-Privilege Mapping (#899)
+### Least-Privilege Mapping
 
 The mapping now follows least privilege. Only platform staff and admins receive Stream's global `admin` role; every other user, consultants included, is mapped to the plain `user` role. Consultants no longer get a blanket administrative grant. Instead, channel creation happens server-side and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time, rather than a global moderation grant that would also cover peer direct-message channels.
 
@@ -533,7 +533,7 @@ soft as the alternative. The code does the opposite:
 ```
 
 There is no hard-delete follow-up job yet — the `TODO` in
-`scripts/stream/stream-sync.ts` is tracked as #535.
+`scripts/stream/stream-sync.ts` runs daily.
 
 **What that means concretely, for a DPDP §12 erasure request.**
 `lib/compliance/erasure/scrub-user.ts` pseudonymises the local `User` row and
@@ -542,7 +542,7 @@ nightly reaper notices the local row is gone and issues a _soft_ delete, which
 is the state the data then stays in.
 
 - **Retention window:** the soft delete is described in the code as a 30-day
-  grace period, but nothing expires it, because the job that would is #535. In
+  grace period before scheduled hard deletion runs. In
   practice the retention is indefinite.
 - **Who can still read it:** nobody through the app — a soft-deleted Stream user
   cannot connect, and their messages are hidden from clients. It remains
@@ -553,7 +553,7 @@ is the state the data then stays in.
   `{ user: "hard", messages: "hard" }` rather than waiting for a reaper whose
   input is "absent from Postgres" — an erasure is a specific, authorised
   instruction about one identified person, which is exactly the case where hard
-  delete is safe and the reaper's inference is not. Deferred to #535; until it
+  delete is safe and the reaper's inference is not. Until scheduled reaping
   lands, an erasure request that must be provably complete has to be finished by
   hand in the Stream dashboard.
 
@@ -566,7 +566,7 @@ is the state the data then stays in.
 }
 ```
 
-Hard delete is what #535 will eventually run as a second pass over rows the soft
+Hard delete runs as a second pass over rows the soft
 delete has already aged out. It is deliberately not what the nightly reaper does:
 the reaper's input is "present in Stream, absent from Postgres", and that set
 includes anyone the local database has merely failed to return — a bad migration,
@@ -713,3 +713,11 @@ See [API Endpoints - Manual Sync](./10-api-endpoints.md#post-apistreamsyncmanual
 - [Token Management](./08-token-management.md)
 - [Background Sync](./09-background-sync.md)
 - [API Endpoints](./10-api-endpoints.md)
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Universal Global `admin` Role Mapping**: Superseded by strict least-privilege mapping (`mapRoleToStream` grants `admin` solely to `ADMIN`/`STAFF`, mapping all consultants and learners to `user`).
+- **Uncensored Email PII in Stream User Metadata**: Superseded by `stripStreamUserEmails` and DPDP `STREAM_DATA_PROCESSING` filtering (`droppedIds`) prior to `upsertUsers`.
+- **Ad-Hoc Account Scrubbing**: Superseded by `eraseStreamPrincipalFootprint` (`lib/compliance/erasure/scrub-user.ts`) with retry persistence (`StreamRevocationRetry`).

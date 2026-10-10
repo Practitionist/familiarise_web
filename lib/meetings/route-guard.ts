@@ -7,7 +7,7 @@ import type { MeetingAccess } from "@/lib/meetings/access";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
-const meetingIdParamSchema = z.string().trim().min(1).max(128);
+export const meetingIdParamSchema = z.string().trim().min(1).max(128);
 
 /**
  * The five questions every meeting route asks before it touches Stream.
@@ -31,6 +31,28 @@ export type MeetingRouteGrant = {
   meetingId: string;
   access: Extract<MeetingAccess, { streamCallId: string }>;
 };
+
+function buildAccessRefusalBody(
+  access: Exclude<MeetingAccess, { hasAccess: true }>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    error: access.message,
+    reason: access.reason,
+  };
+  if ("code" in access && access.code) {
+    body.code = access.code;
+  }
+  if ("startsAt" in access && access.startsAt) {
+    body.startsAt = access.startsAt;
+  }
+  if ("endsAt" in access && access.endsAt) {
+    body.endsAt = access.endsAt;
+  }
+  if ("canReopen" in access && typeof access.canReopen === "boolean") {
+    body.canReopen = access.canReopen;
+  }
+  return body;
+}
 
 export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
@@ -72,11 +94,7 @@ export async function guardMeetingRoute(
       reason: access.reason,
     });
     return refuse(
-      {
-        error: access.message,
-        reason: access.reason,
-        ...("code" in access && access.code ? { code: access.code } : {}),
-      },
+      buildAccessRefusalBody(access),
       access.reason === "not_found" ? 404 : 403,
     );
   }

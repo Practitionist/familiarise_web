@@ -10,7 +10,11 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  parseOccurrenceIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
@@ -44,7 +48,10 @@ interface MeetingResolved {
   role: MeetingRole;
   message: string;
   reason: "granted" | "unauthorized";
-  code?: "CONSENT_REQUIRED";
+  code?: "CONSENT_REQUIRED" | "TOO_EARLY" | "SESSION_ENDED";
+  startsAt?: string | null;
+  endsAt?: string | null;
+  canReopen?: boolean;
   /** An accepted presenter collaborator on a webinar or class plan, not the plan owner. */
   coPresenter?: boolean;
   streamCallId: string;
@@ -138,9 +145,24 @@ const MEETING_SESSION_INCLUDE = {
   },
 } satisfies Prisma.MeetingInclude;
 
-function loadMeeting(callId: string) {
-  return prisma.meeting.findUnique({
+async function loadMeeting(callId: string) {
+  const direct = await prisma.meeting.findUnique({
     where: { streamCallId: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (direct) return direct;
+
+  const byId = await prisma.meeting.findUnique({
+    where: { id: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (byId) return byId;
+
+  const occurrenceId = parseOccurrenceIdFromCallId(callId);
+  if (!occurrenceId) return null;
+
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: occurrenceId },
     include: MEETING_SESSION_INCLUDE,
   });
 }
@@ -170,11 +192,11 @@ export async function meetingPolicyRefusal(args: {
   occurrence: GatedOccurrence;
   role: Exclude<MeetingRole, null>;
   streamCallId: string;
-}): Promise<string | null> {
+}): Promise<{ message: string; code?: "TOO_EARLY" | "SESSION_ENDED" } | null> {
   const now = new Date();
   const { occurrence } = args;
   if (isDeadOccurrence(occurrence)) {
-    return "This session has no active time slot.";
+    return { message: "This session has no active time slot." };
   }
 
   const state = getOccurrenceJoinState(occurrence, {
@@ -188,18 +210,23 @@ export async function meetingPolicyRefusal(args: {
 
   switch (state) {
     case "disabled":
-      return occurrence.isTentative
-        ? "This session is not confirmed yet."
-        : "This session is no longer available.";
+      return {
+        message: occurrence.isTentative
+          ? "This session is not confirmed yet."
+          : "This session is no longer available.",
+      };
     case "countdown":
-      return `Join opens ${
-        (args.role === "host"
-          ? CONSULTANT_JOIN_WINDOW_MS
-          : CONSULTEE_JOIN_WINDOW_MS) / 60000
-      } minutes before the start time.`;
+      return {
+        message: `Join opens ${
+          (args.role === "host"
+            ? CONSULTANT_JOIN_WINDOW_MS
+            : CONSULTEE_JOIN_WINDOW_MS) / 60000
+        } minutes before the start time.`,
+        code: "TOO_EARLY",
+      };
     case "ended": {
       if (isDeliberateEnd(occurrence.meeting)) {
-        return "This session has ended.";
+        return { message: "This session has ended.", code: "SESSION_ENDED" };
       }
 
       if (
@@ -210,7 +237,7 @@ export async function meetingPolicyRefusal(args: {
 
       if (await callHasLiveParticipants(args.streamCallId)) return null;
 
-      return "This session has ended.";
+      return { message: "This session has ended.", code: "SESSION_ENDED" };
     }
     default:
       return null;
@@ -325,11 +352,29 @@ export async function resolveMeetingAccess(
       streamCallId,
     });
     if (refusal) {
+      const occStart = new Date(meeting.occurrence.startsAt);
+      const occEnd = meeting.occurrence.endsAt
+        ? new Date(meeting.occurrence.endsAt)
+        : new Date(occStart.getTime() + 60 * 60 * 1000);
+      const canReopen =
+        role === "host" &&
+        refusal.code === "SESSION_ENDED" &&
+        isDeliberateEnd({
+          endedAt: meeting.endedAt,
+          endedReason: meeting.endedReason,
+        }) &&
+        !isDeadOccurrence(meeting.occurrence) &&
+        Date.now() <= occEnd.getTime() + REJOIN_GRACE_MS;
+
       return {
         hasAccess: false,
         role: null,
-        message: refusal,
+        message: refusal.message,
         reason: "unauthorized",
+        ...(refusal.code ? { code: refusal.code } : {}),
+        startsAt: occStart.toISOString(),
+        endsAt: occEnd.toISOString(),
+        canReopen,
         streamCallId,
         meetingId,
         appointment,

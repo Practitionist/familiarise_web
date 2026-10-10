@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format, isToday, isTomorrow } from "date-fns";
 import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import { useSession } from "@/lib/auth-client";
 
@@ -35,6 +34,7 @@ export interface SessionInfo {
   typeLabel: string | null;
   startsAt: Date | null;
   endsAt: Date | null;
+  baseEndsAt: Date | null;
   durationMinutes: number | null;
   extendedSeconds: number;
   extensionsUsed: number;
@@ -78,6 +78,7 @@ export function useSessionInfo(
 
   const startsAt = date(custom?.sessionStartsAt);
   const endsAt = date(custom?.sessionEndsAt);
+  const baseEndsAt = date(custom?.sessionBaseEndsAt);
   const stampedDuration =
     typeof custom?.sessionDurationMinutes === "number"
       ? custom.sessionDurationMinutes
@@ -99,6 +100,7 @@ export function useSessionInfo(
     typeLabel: toTypeLabel(custom?.appointmentType),
     startsAt,
     endsAt,
+    baseEndsAt,
     durationMinutes:
       stampedDuration ??
       (startsAt && endsAt
@@ -121,12 +123,31 @@ export function sessionSubheading(info: SessionInfo): string | null {
   return info.offeringTitle;
 }
 
-export function formatScheduledAt(startsAt: Date | null): string | null {
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
+
+export function formatScheduledAt(
+  startsAt: Date | null,
+  zone?: string | null,
+): string | null {
   if (!startsAt) return null;
-  const time = format(startsAt, "h:mm a");
-  if (isToday(startsAt)) return `Today at ${time}`;
-  if (isTomorrow(startsAt)) return `Tomorrow at ${time}`;
-  return `${format(startsAt, "EEE d MMM")} at ${time}`;
+  const resolvedZone =
+    zone ||
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC") ||
+    "UTC";
+  const tz = zoneLabel(startsAt, resolvedZone);
+  const time = `${formatInViewerZone(startsAt, resolvedZone, "h:mm a")} ${tz}`;
+  const dayNumber = (key: string): number => {
+    const [year, month, day] = key.split("-").map(Number);
+    return Date.UTC(year, month - 1, day) / 86_400_000;
+  };
+  const dayKey = formatInViewerZone(startsAt, resolvedZone, "yyyy-MM-dd");
+  const todayKey = formatInViewerZone(Date.now(), resolvedZone, "yyyy-MM-dd");
+  const dayDelta = dayNumber(dayKey) - dayNumber(todayKey);
+  if (dayDelta === 0) return `Today at ${time}`;
+  if (dayDelta === 1) return `Tomorrow at ${time}`;
+  return `${formatInViewerZone(startsAt, resolvedZone, "EEE d MMM")} at ${time}`;
 }
 
 export type SessionPhase =

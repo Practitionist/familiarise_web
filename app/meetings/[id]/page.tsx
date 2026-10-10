@@ -12,6 +12,7 @@ import {
 import { MeetingRoomSkeleton } from "./MeetingRoomSkeleton";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
+import { MeetingLobbyGateCard } from "./components/MeetingLobbyGateCard";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
 import { useSession } from "@/lib/auth-client";
@@ -95,8 +96,8 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  // Loading states — lobby anatomy matches MeetingSetup to avoid spinner flash
-  if (isSessionPending || isCallLoading) {
+  // Loading states — keep gate card mounted during retryJoin so Check Again never flashes blank
+  if (isSessionPending || (isCallLoading && !access)) {
     return <MeetingRoomSkeleton />;
   }
 
@@ -155,30 +156,14 @@ const MeetingPage = () => {
     );
   }
 
-  // Access denied
+  // Access refused (too early, session concluded, or unauthorized)
   if (access && !access.hasAccess) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
-        <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
-            <ShieldAlert className="w-8 h-8 text-red-600" />
-          </div>
-          <h2 className="text-xl font-bold text-foreground mb-2">
-            Access Denied
-          </h2>
-          <p className="text-muted-foreground mb-4">{access.message}</p>
-          <p className="text-sm text-muted-foreground/70">
-            If you believe this is an error, please contact support or the
-            meeting host.
-          </p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-6 px-6 py-2.5 bg-foreground text-background rounded-lg font-medium hover:bg-foreground/90 transition-colors"
-          >
-            Go Back
-          </button>
-        </div>
-      </div>
+      <MeetingLobbyGateCard
+        meetingId={id as string}
+        access={access}
+        onRetryJoin={retryJoin}
+      />
     );
   }
 
@@ -208,7 +193,7 @@ const MeetingPage = () => {
           {!isSetupComplete ? (
             <MeetingSetup
               setIsSetupComplete={setIsSetupComplete}
-              meetingId={id as string}
+              meetingId={call.id}
               role={access?.role ?? null}
             />
           ) : (

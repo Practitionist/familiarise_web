@@ -11,6 +11,10 @@ export interface MeetingAccessResult {
   hasAccess: boolean;
   role: "host" | "participant" | null;
   message: string;
+  code?: "CONSENT_REQUIRED" | "TOO_EARLY" | "SESSION_ENDED";
+  startsAt?: string | null;
+  endsAt?: string | null;
+  canReopen?: boolean;
 }
 
 /** What the participant had on when the connection died, so a rejoin restores it. */
@@ -281,11 +285,19 @@ export const useGetCallById = (callId: string) => {
               (body?.code === "CONSENT_REQUIRED" ||
                 /consent for live video|consent.*required/i.test(message));
             setConsentRequired(isConsentRefusal);
-            setAccess({ hasAccess: false, role: null, message });
+            setAccess({
+              hasAccess: false,
+              role: null,
+              message,
+              code: body?.code,
+              startsAt:
+                typeof body?.startsAt === "string" ? body.startsAt : null,
+              endsAt: typeof body?.endsAt === "string" ? body.endsAt : null,
+              canReopen:
+                typeof body?.canReopen === "boolean" ? body.canReopen : false,
+            });
             setCall(null);
             previousCall.current = null;
-            // Not an `error`: a refusal is an expected outcome with its own UI,
-            // and rendering it as a crash lost the reason.
             return;
           }
 

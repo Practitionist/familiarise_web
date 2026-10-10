@@ -125,46 +125,67 @@ curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-sec
 
 ## Meeting Lifecycle Endpoints
 
-All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate `meetingId` via `guardMeetingRoute`, and resolve caller entitlement via `resolveMeetingAccess`.
+All meeting lifecycle routes live under `/api/meetings/[meetingId]/*`, validate `meetingId` via `guardMeetingRoute`, and resolve caller entitlement via `resolveMeetingAccess` (including transparent stale-link alias fallback from older `occurrence-<uuid>` URLs to rotated `occurrence-<uuid>-r<base36>` call segments via `parseOccurrenceIdFromCallId`).
 
 ### POST /api/meetings/[meetingId]/join
 
-Admits an entitled participant to an existing Stream call and upserts the caller on Stream first. Accepted presenter collaborators on a webinar or class get the `co_presenter` member role, and everyone else gets `call_member`. The route never creates a call, because `provisionAppointmentMeeting` is the only creator. If the call is missing (Stream answers HTTP 404 with error code 16), the route reports the event to Sentry and returns HTTP 409 with `code: "ROOM_NOT_PROVISIONED"`, and the meeting page offers a Retry. Attendance and presence intervals (`MeetingAttendance`, `MeetingPresence`, and `ATTENDED` participant status) are recorded exclusively by Stream participant webhooks (`call.session_participant_joined`/`left`).
+Admits an entitled participant to an existing Stream call and upserts the caller on Stream first. Accepted presenter collaborators (`CO_HOST` / `CO_INSTRUCTOR`) on a webinar or class receive `co_presenter`; all other participants receive `call_member`. Returns structured denial descriptors (`code: "TOO_EARLY" | "SESSION_ENDED" | "CONSENT_REQUIRED"`, `startsAt`, `endsAt`, `canReopen`) on HTTP `401` / `403` / `404` for `<MeetingLobbyGateCard />`, or HTTP `409` with `code: "ROOM_NOT_PROVISIONED"` when Postgres holds a `Meeting` row whose backing Stream call has not yet been minted.
 
 **Location:** `/app/api/meetings/[meetingId]/join/route.ts`
 
-**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + booking entitlement)
+**Authentication:** Required (Better Auth session + DPDP `STREAM_DATA_PROCESSING` consent + active booking entitlement within `[startsAt - 15m, effectiveEndsAt + 30m]`)
 
 **Response (Success - 200):**
 
 ```json
 {
   "callType": "default",
-  "callId": "occurrence-slot-1",
+  "callId": "occurrence-550e8400-e29b-41d4-a716-446655440000",
   "role": "participant"
 }
 ```
 
 ### POST /api/meetings/[meetingId]/end
 
-Ends a Stream call for everyone (host-only). `Meeting.endedAt` and `Meeting.endedReason` are stamped exclusively by the `call.ended` webhook so Stream event timestamps remain authoritative.
+Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside `withStreamCircuitBreaker` and synchronously invokes `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) using CAS (`where: { id: meeting.id, endedAt: meeting.endedAt }`):
+
+- **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` segment (`endedAt = null`, `endedReason = null`) so upcoming joins open a clean room.
+- **Live Session Termination (`endedAt >= startsAt`)**: Stamps `endedAt = now`, `endedReason = "call_ended"`, and `isRecording = false`, closes open `MeetingPresence` intervals (`leftAt = endedAt`) and `MeetingAttendance` (`lastLeftAt = endedAt`), and prevents unauthorized rejoin.
+- **Error Propagation**: Returns HTTP `503` if Stream's circuit breaker is open, and returns HTTP `500` (never a false `200 OK`) if database state persistence throws an unexpected error.
 
 **Location:** `/app/api/meetings/[meetingId]/end/route.ts`
 
-**Authentication:** Required (Host only — plan owner or accepted co-presenter)
+**Authentication:** Required (Host only — plan owner, assigned occurrence consultant, or accepted co-presenter)
 
 **Response (Success - 200):**
 
 ```json
 {
   "ended": true,
-  "callId": "occurrence-slot-1"
+  "callId": "occurrence-550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### POST /api/meetings/[meetingId]/reopen
+
+Safety-valve endpoint allowing a session host or co-presenter to reopen a deliberately ended room while the occurrence remains within `[startsAt - 15m, effectiveEndsAt + 30m]`. Because `call.end()` irreversibly seals the closed Stream `cid`, `/reopen` verifies host/co-presenter authority (`isAuthorizedReopenHost`), DPDP consent, active non-dead occurrence/booking status, rotates `Meeting.streamCallId = "occurrence-<uuid>-r<base36>"` via CAS (`where: { id: meeting.id, endedAt: { not: null } }`), clears `endedAt` / `endedReason` / `isRecording`, and provisions the new Stream call immediately.
+
+**Location:** `/app/api/meetings/[meetingId]/reopen/route.ts`
+
+**Authentication:** Required (Host or accepted co-presenter with active DPDP consent)
+
+**Response (Success - 200):**
+
+```json
+{
+  "reopened": true,
+  "streamCallId": "occurrence-550e8400-e29b-41d4-a716-446655440000-r19abc2"
 }
 ```
 
 ### POST /api/meetings/[meetingId]/live
 
-Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `call.goLive()` so waiting attendees can enter the room.
+Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `call.goLive()` so waiting attendees exit the backstage lobby onto the live video stage.
 
 **Location:** `/app/api/meetings/[meetingId]/live/route.ts`
 
@@ -181,7 +202,7 @@ Transitions a 1-to-Many backstage session (`WEBINAR` or `CLASS`) to live via `ca
 
 ### POST /api/meetings/[meetingId]/extend
 
-Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge once per session when neither the consultant nor active participants have a conflicting confirmed session starting within 15 minutes. Fails closed with `503` if reading current Stream call state via `call.get()` fails.
+Extends the active call's `settings_override.limits.max_duration_seconds` by `+15 minutes` (`900s`) free of charge once per session when neither the consultant, co-presenters, nor active participants hold a conflicting confirmed booking starting within `[slotStartsAt, max(slotEndsAt, now) + 15m]`. Updates Stream `settings_override` + `custom.sessionEndsAt` / `custom.extendedSeconds = 900` / `custom.extensionsUsed = 1`, and atomically advances `AppointmentOccurrence.endsAt` via CAS (`where: { id: occurrence.id, endsAt: slotEndsAt }`) — running idempotent DB CAS recovery even when retrying an `alreadyExtended` call whose prior DB commit failed.
 
 **Location:** `/app/api/meetings/[meetingId]/extend/route.ts`
 
@@ -194,12 +215,21 @@ Extends the active call's `settings_override.limits.max_duration_seconds` by `+1
   "extended": true,
   "addedSeconds": 900,
   "maxDurationSeconds": 7200,
+  "endsAt": "2026-10-10T18:15:00.000Z",
   "extensionsUsed": 1,
   "hasConflictingNextBooking": false
 }
 ```
 
-**Response (Conflict - 409):** Returned when the free +15m extension has already been used (`alreadyExtended: true`) or a conflicting booking starts within 15 minutes (`hasConflictingNextBooking: true`).
+**Response (Conflict - 409):** Returned when the free `+15m` extension has already been used (`alreadyExtended: true`, returning healed `endsAt`), or when another session overlaps (`hasConflictingNextBooking: true`).
+
+### GET & POST /api/meetings/[meetingId]/qa
+
+Manages hybrid in-room Q&A (`GET` lists questions ordered by upvotes & creation time; `POST` supports submitting questions `action: "ask"`, attendee upvoting `action: "upvote"`, host answers `action: "answer"`, and host stage lower-third spotlight pinning `action: "pin" | "unpin"` broadcasting `familiarise.qa.*` custom events over Stream WebSockets and persisting `custom.activeStageBanner`). Disabled with `403 trial_chat_disabled` on free `TRIAL` sessions.
+
+**Location:** `/app/api/meetings/[meetingId]/qa/route.ts`
+
+**Authentication:** Required (Entitled session participants for `ask`/`upvote`; host or co-presenter for `answer`/`pin`/`unpin`)
 
 ---
 

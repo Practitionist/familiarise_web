@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { AppointmentVM } from "./view-model";
+import type { AppointmentVM, OccurrenceVM } from "./view-model";
 
 /**
  * Role adapter contract for the shared appointments surface. The shell/list
@@ -9,16 +9,12 @@ import type { AppointmentVM } from "./view-model";
  */
 
 export type PrimaryActionKind =
-  | "join"
-  | "pay"
-  | "schedule"
-  | "complete-booking"
-  | "view";
+  "join" | "pay" | "schedule" | "complete-booking" | "view";
 
 export interface PrimaryAction {
   kind: PrimaryActionKind;
   label: string;
-  onClick?: () => void;
+  onClick?: (targetOccurrence?: OccurrenceVM) => void;
   /** Navigation-style actions (pay-now URL, details route) use href instead. */
   href?: string;
   disabled?: boolean;
