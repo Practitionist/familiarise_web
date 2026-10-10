@@ -36,6 +36,30 @@ export async function revokeAllUserSessions(
   return { revoked: count };
 }
 
+/** End every session for several users (an org-wide SSO enforcement flip). */
+export async function revokeSessionsForUsers(
+  db: PrismaLike,
+  userIds: readonly string[],
+): Promise<RevokeResult> {
+  if (userIds.length === 0) return { revoked: 0 };
+  const { count } = await db.session.deleteMany({
+    where: { userId: { in: [...userIds] } },
+  });
+  return { revoked: count };
+}
+
+/**
+ * End the session a browser's cookie carried when that browser has just been
+ * issued a different one, so the overwritten row does not linger as a device.
+ */
+export async function revokeSessionByToken(
+  db: PrismaLike,
+  token: string,
+): Promise<RevokeResult> {
+  const { count } = await db.session.deleteMany({ where: { token } });
+  return { revoked: count };
+}
+
 /**
  * End every session for a user except one. Powers "log out everywhere
  * else": the current session survives so the user is not signed out of
@@ -68,6 +92,25 @@ export async function revokeSessionById(
 ): Promise<RevokeResult> {
   const { count } = await db.session.deleteMany({
     where: { id: sessionId, userId },
+  });
+  return { revoked: count };
+}
+
+/**
+ * End every session of every user whose email is on `domain`, members of an
+ * org or not, except `keepSessionId`. Used when SSO enforcement starts to bite
+ * on a domain.
+ */
+export async function revokeEmailDomainSessions(
+  db: PrismaLike,
+  domain: string,
+  keepSessionId?: string,
+): Promise<RevokeResult> {
+  const { count } = await db.session.deleteMany({
+    where: {
+      user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
+      ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
+    },
   });
   return { revoked: count };
 }

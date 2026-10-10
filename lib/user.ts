@@ -2,7 +2,6 @@
 // These work in both client and server components
 import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
-import { TStaffProfile } from "@/types/staff";
 import { TUserWithProfessionalBackground } from "@/types/user";
 
 export const fetchUserDetails = async (
@@ -43,16 +42,6 @@ export const fetchConsulteeDetails = async (
     );
   const consulteeData: { data: TConsulteeProfile } = await response.json();
   return consulteeData.data;
-};
-
-export const fetchStaffDetails = async (
-  staffId: string,
-): Promise<TStaffProfile> => {
-  const response = await fetch(`/api/user/staff/${staffId}`);
-  if (!response.ok)
-    throw new Error(`Failed to fetch staff details: ${response.statusText}`);
-  const staffData: { data: TStaffProfile } = await response.json();
-  return staffData.data;
 };
 
 /**

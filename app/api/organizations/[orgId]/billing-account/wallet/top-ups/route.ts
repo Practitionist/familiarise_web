@@ -46,8 +46,9 @@ const TopUpBodySchema = z.object({
   amountPaise: z.coerce.number().int().min(10_000),
   // Optional idempotency key from the client. If supplied, reuse a
   // pending WalletEntry instead of minting a new Razorpay order on
-  // a double-click.
-  clientIdempotencyKey: z.string().min(8).max(128).optional(),
+  // a double-click. A UUID, because the key is globally unique: a guessable
+  // key could be pre-claimed by another org.
+  clientIdempotencyKey: z.string().uuid().optional(),
 });
 
 export async function GET(
@@ -55,7 +56,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const ba = await prisma.billingAccount.findFirst({
@@ -323,8 +328,7 @@ export async function POST(
     if (claimed.count !== 1) {
       return NextResponse.json(
         {
-          error:
-            "Top-up creation is already in progress; please retry shortly",
+          error: "Top-up creation is already in progress; please retry shortly",
           code: "TOPUP_IN_PROGRESS",
         },
         { status: 409 },
@@ -390,8 +394,13 @@ export async function POST(
           ),
         );
     }
-    if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
-      Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", { tags: { subsystem: "enterprise" } });
+    if (
+      err instanceof PaymentError &&
+      err.code === "RAZORPAY_NOT_INITIALIZED"
+    ) {
+      Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", {
+        tags: { subsystem: "enterprise" },
+      });
       return NextResponse.json(
         {
           error:
@@ -401,7 +410,10 @@ export async function POST(
         { status: 503 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error("[wallet/top-ups] createRazorpayOrder failed:", err);
     return NextResponse.json(
       {
@@ -495,7 +507,10 @@ export async function POST(
     // Audit-log write failed, but the WalletEntry notes already persist
     // razorpayOrderId and the Razorpay order is live — the top-up will still
     // settle on webhook capture. Return 201 and log for operators.
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error(
       "[wallet/top-ups] audit-log write failed (top-up still valid):",
       err,

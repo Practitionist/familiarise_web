@@ -37,7 +37,10 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
     return apiError({ tag: "[WebinarPlan.GET]", error });
   }
 }
@@ -72,7 +75,7 @@ export async function PATCH(
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -143,7 +146,10 @@ export async function PATCH(
         { status: 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
     return apiError({ tag: "[WebinarPlan.PATCH]", error });
   }
 }

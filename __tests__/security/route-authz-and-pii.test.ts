@@ -12,42 +12,6 @@ import { join } from "path";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
-describe("/api/user/staff/[id] is no longer unauthenticated", () => {
-  const src = read("app/api/user/staff/[id]/route.ts");
-
-  it("guards every exported handler", () => {
-    // It shipped with ZERO auth on all five: PUT rewrote the linked User's
-    // email (an account-takeover primitive, since emailVerified is not reset)
-    // and DELETE removed the profile. Middleware only checks cookie presence,
-    // so nothing upstream covered it.
-    const handlers = Array.from(
-      src.matchAll(/export async function (GET|POST|PATCH|PUT|DELETE)\(/g),
-      (m) => m[1],
-    );
-    expect(handlers.sort()).toEqual(["DELETE", "GET", "PATCH", "POST", "PUT"]);
-
-    // Each handler body must reach a guard before touching prisma.
-    for (const verb of handlers) {
-      const start = src.indexOf(`export async function ${verb}(`);
-      const body = src.slice(start, start + 900);
-      expect({
-        verb,
-        guarded: /require(SelfOrAdmin|AdminAuth)\(/.test(body),
-      }).toEqual({
-        verb,
-        guarded: true,
-      });
-    }
-  });
-
-  it("reserves profile create/delete for ADMIN", () => {
-    for (const verb of ["POST", "DELETE"]) {
-      const start = src.indexOf(`export async function ${verb}(`);
-      expect(src.slice(start, start + 500)).toContain("requireAdminAuth()");
-    }
-  });
-});
-
 describe("PUT /api/user/[id] cannot escalate privilege", () => {
   const src = read("app/api/user/[id]/route.ts");
 

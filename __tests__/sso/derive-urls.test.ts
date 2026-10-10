@@ -4,8 +4,6 @@
  * from this, the redirect URI we hand to IT admins would no longer match
  * the callback BetterAuth actually mounts, and OIDC callbacks would be
  * rejected silently.
- *
- * See also: scripts/verify-sso-invariants.sh (grep-level check).
  */
 
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";

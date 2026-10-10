@@ -13,7 +13,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 
 export async function GET() {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.email) {
     return NextResponse.json({ invites: [] });
   }

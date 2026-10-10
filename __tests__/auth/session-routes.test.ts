@@ -18,12 +18,14 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 const sessionFindMany = jest.fn();
+const sessionCount = jest.fn();
 const sessionDeleteMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     session: {
       findMany: (...a: unknown[]) => sessionFindMany(...a),
+      count: (...a: unknown[]) => sessionCount(...a),
       // Closure defers the reference past factory evaluation (TDZ).
       deleteMany: (...a: unknown[]) => sessionDeleteMany(...a),
     },
@@ -46,9 +48,15 @@ jest.mock("../../lib/rate-limit", () => ({
 // `lib/auth/session-revoke` is deliberately NOT mocked: the routes are
 // exercised through the real helper, so the assertions below pin the
 // effect, not a re-implementation in the test.
-import { GET as listSessions } from "../../app/api/user/sessions/route";
+import { NextRequest } from "next/server";
+import { GET as listSessionsRoute } from "../../app/api/user/sessions/route";
 import { DELETE as revokeSession } from "../../app/api/user/sessions/[sessionId]/route";
 import { POST as revokeOthers } from "../../app/api/user/sessions/revoke-others/route";
+
+const listSessions = (query = "") =>
+  listSessionsRoute(
+    new NextRequest(`https://app.test/api/user/sessions${query}`),
+  );
 
 const authedAs = (userId: string, sessionId: string) =>
   mockRequireApiAuth.mockResolvedValue({
@@ -58,6 +66,7 @@ const authedAs = (userId: string, sessionId: string) =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockApplyRateLimit.mockResolvedValue(null);
+  sessionCount.mockResolvedValue(1);
 });
 
 describe("GET /api/user/sessions (#1856)", () => {
@@ -71,7 +80,6 @@ describe("GET /api/user/sessions (#1856)", () => {
         expiresAt: new Date("2026-02-01T00:00:00Z"),
         ipAddress: "1.2.3.4",
         userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/126.0",
-        impersonatedBy: null,
       },
     ]);
 
@@ -86,16 +94,42 @@ describe("GET /api/user/sessions (#1856)", () => {
     });
     expect(body.sessions[0]).not.toHaveProperty("token");
     expect(body.sessions[0]).not.toHaveProperty("userAgent");
-    // Only unexpired rows, bounded.
+    expect(body.total).toBe(1);
+    expect(body.nextCursor).toBeNull();
+    // Only unexpired rows, one page (plus one row to detect the next page).
     expect(sessionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "u1", expiresAt: { gt: expect.any(Date) } },
-        take: 25,
+        take: 26,
       }),
     );
     // The select is the allowlist — assert no token at the query level.
     const select = sessionFindMany.mock.calls[0][0].select;
     expect(select).not.toHaveProperty("token");
+  });
+
+  it("pages with a cursor and reports the next one", async () => {
+    authedAs("u1", "s-current");
+    const row = (i: number) => ({
+      id: `s-${i}`,
+      createdAt: new Date(2026, 0, 30 - i),
+      updatedAt: new Date(2026, 0, 30 - i),
+      expiresAt: new Date(2026, 2, 1),
+      ipAddress: null,
+      userAgent: null,
+    });
+    sessionFindMany.mockResolvedValue(
+      Array.from({ length: 26 }, (_, i) => row(i)),
+    );
+    sessionCount.mockResolvedValue(40);
+
+    const body = await (await listSessions("?cursor=s-prev")).json();
+    expect(body.sessions).toHaveLength(25);
+    expect(body.total).toBe(40);
+    expect(body.nextCursor).toBe("s-24");
+    expect(sessionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: { id: "s-prev" }, skip: 1 }),
+    );
   });
 
   it("passes auth errors through", async () => {

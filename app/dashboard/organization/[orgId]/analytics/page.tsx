@@ -20,6 +20,7 @@ export default async function OrgAnalyticsPage({
   // directly, so without this the dehydrated payload would embed
   // operations-only data for any member.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "operations.read",
   });
   if (access.error) redirect(`/dashboard/organization/${orgId}/home`);

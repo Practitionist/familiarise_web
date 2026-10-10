@@ -22,6 +22,7 @@ import {
   isRazorpayPayoutsConfigured,
 } from "@/lib/payments/payouts/razorpay-payouts";
 import { transitionOrgPayoutAccount } from "@/lib/enterprise/transitions";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const UpsertBodySchema = z.object({
   accountHolderName: z.string().min(1).max(200),
@@ -39,7 +40,10 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // #1527 decision 1 — the Payouts › Payout account tab's grant.
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {
@@ -182,6 +186,8 @@ export async function PUT(
     requireActive: true,
   });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   if (!access.org.canHost) {
     return NextResponse.json(

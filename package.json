@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@better-auth/core": "1.7.7",
+    "@better-auth/passkey": "1.7.7",
     "@better-auth/sso": "1.7.7",
     "@hookform/resolvers": "^5.9.1",
     "@novu/api": "^3.19.1",

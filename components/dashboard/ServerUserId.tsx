@@ -7,12 +7,12 @@ import { createContext, useContext, useMemo } from "react";
  * dashboard layouts.
  *
  * Those layouts derive identity from `useSession()`, a client hook that is
- * still pending during SSR — so `getEffectiveUserId(session)` is `undefined`
+ * still pending during SSR — so `session?.user?.id` is `undefined`
  * there, their `["user-details", userId]` query keys become
  * `["user-details", undefined]`, and a server-side seed of the real key is
  * never read. That is why they render `DashboardShellSkeleton` instead
  * of `children` server-side, and why no dashboard markup reaches the HTML at
- * all (#1103 measurement: no `<h1`, no nav, FCP ~6s).
+ * all.
  *
  * A context rather than a prop because `app/dashboard/layout.tsx` passes the
  * layouts through `children` and cannot hand them props directly.

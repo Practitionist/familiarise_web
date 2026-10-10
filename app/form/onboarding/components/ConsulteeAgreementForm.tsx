@@ -12,6 +12,7 @@ type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteePreferences> & {
     termsAccepted?: boolean;
     privacyAccepted?: boolean;
+    marketingConsent?: boolean;
     interests?: string[];
     goals?: string;
   };
@@ -20,12 +21,15 @@ interface Props {
   onNext: (data: ConsulteeFormData) => void;
   onBack: () => void;
   formData: ConsulteeFormData;
+  /** A final submit is in flight (consultee path). */
+  isSubmitting?: boolean;
 }
 
 const ConsulteeAgreementForm: React.FC<Props> = ({
   onNext,
   onBack,
   formData,
+  isSubmitting = false,
 }) => {
   const [termsAccepted, setTermsAccepted] = React.useState(
     formData.termsAccepted || false,
@@ -33,33 +37,18 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
   const [privacyAccepted, setPrivacyAccepted] = React.useState(
     formData.privacyAccepted || false,
   );
-  const [marketingAccepted, setMarketingAccepted] = React.useState(false);
-
-  const handleMarketingChange = (checked: boolean) => {
-    setMarketingAccepted(checked);
-    void fetch(
-      checked
-        ? "/api/user/privacy/consent"
-        : "/api/user/privacy/consent?purposeCode=MARKETING_COMMS",
-      {
-        method: checked ? "POST" : "DELETE",
-        headers: checked ? { "Content-Type": "application/json" } : undefined,
-        body: checked
-          ? JSON.stringify({
-              purposeCodes: ["MARKETING_COMMS"],
-              language: "en-IN",
-              version: 1,
-            })
-          : undefined,
-      },
-    ).catch(() => {});
-  };
+  // Recorded server-side with the completion, never before it.
+  const [marketingAccepted, setMarketingAccepted] = React.useState(
+    formData.marketingConsent || false,
+  );
 
   const handleSubmit = () => {
+    if (isSubmitting) return;
     onNext({
       ...formData,
       termsAccepted,
       privacyAccepted,
+      marketingConsent: marketingAccepted,
     });
   };
 
@@ -85,7 +74,8 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           To operate your Familiarise account, we process your{" "}
           <strong>identity &amp; profile details</strong> (name, email, phone,
           learning preferences, and 18+ age verification) for{" "}
-          <strong>core account delivery</strong> (<code>PRIMARY_PROCESSING</code>
+          <strong>core account delivery</strong> (
+          <code>PRIMARY_PROCESSING</code>
           ), <strong>session scheduling</strong> (<code>SESSION_BOOKING</code>),
           and <strong>live video &amp; chat</strong> via GetStream.io (
           <code>STREAM_DATA_PROCESSING</code>), as well as payment processing
@@ -158,7 +148,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
             id="marketing-consent"
             checked={marketingAccepted}
             onCheckedChange={(checked) =>
-              handleMarketingChange(checked === true)
+              setMarketingAccepted(checked === true)
             }
             className="h-5 w-5 mt-0.5"
           />
@@ -192,10 +182,10 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
         <Button
           type="button"
           onClick={handleSubmit}
-          disabled={!termsAccepted || !privacyAccepted}
+          disabled={isSubmitting || !termsAccepted || !privacyAccepted}
           className="flex-1"
         >
-          Complete Registration
+          {isSubmitting ? "Completing…" : "Complete Registration"}
         </Button>
       </div>
     </div>

@@ -57,3 +57,17 @@ describe("admin plugin HTTP surface", () => {
     expect(clientSrc).not.toMatch(/adminClient/);
   });
 });
+describe("session and TOTP secret endpoints", () => {
+  const start = authSrc.indexOf("disabledPaths:");
+  const block = authSrc.slice(start, authSrc.indexOf("]", start));
+
+  it.each([
+    "/list-sessions",
+    "/revoke-session",
+    "/revoke-sessions",
+    "/revoke-other-sessions",
+    "/two-factor/get-totp-uri",
+  ])("%s is disabled over HTTP", (p) => {
+    expect(block).toContain(`"${p}"`);
+  });
+});

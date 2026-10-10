@@ -11,6 +11,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 type Recipient = "SELF" | "ORGANIZATION";
 
@@ -53,7 +54,7 @@ export function ExpertPayoutRoutingPanel({
   });
 
   const change = async (row: ExpertRouting) => {
-    const res = await fetch(
+    const res = await fetchWithReauth(
       `/api/organizations/${orgId}/expert-payout-routing`,
       {
         method: "PATCH",

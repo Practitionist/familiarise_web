@@ -18,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { createAuthMiddleware } from "better-auth/api";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
 
 const authSrc = fs.readFileSync(
@@ -50,7 +51,7 @@ describe("session token exposure (#1856)", () => {
   });
 
   it("strips the token from the customSession payload", () => {
-    expect(authSrc).toMatch(/session:\s*sessionWithoutToken\(session\)/);
+    expect(authSrc).toMatch(/session:\s*publicSession\(session\)/);
   });
 
   it("keeps the cookie cache off so revocation is immediate", () => {
@@ -58,7 +59,7 @@ describe("session token exposure (#1856)", () => {
   });
 
   it("wires the after-hook that strips sign-in/sign-up tokens", () => {
-    expect(authSrc).toMatch(/after:\s*stripSessionToken/);
+    expect(authSrc).toMatch(/return stripSessionToken\(ctx\)/);
   });
 });
 
@@ -74,7 +75,7 @@ describe("stripSessionToken on a real BetterAuth instance", () => {
       verification: [],
     }),
     emailAndPassword: { enabled: true },
-    hooks: { after: stripSessionToken },
+    hooks: { after: createAuthMiddleware(stripSessionToken) },
   });
   const post = (p: string, body: unknown) =>
     auth.handler(
@@ -105,4 +106,26 @@ describe("stripSessionToken on a real BetterAuth instance", () => {
       );
     },
   );
+
+  it("/change-password with revokeOtherSessions answers without a token", async () => {
+    const signIn = await post("/sign-in/email", credentials);
+    const cookie = (signIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const res = await auth.handler(
+      new Request(`${APP}/api/auth/change-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: APP, cookie },
+        body: JSON.stringify({
+          currentPassword: credentials.password,
+          newPassword: "correct-horse-2",
+          revokeOtherSessions: true,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).not.toHaveProperty("token");
+    expect(res.headers.get("set-cookie")).toMatch(
+      /better-auth\.session_token=/,
+    );
+  });
 });

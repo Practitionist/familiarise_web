@@ -119,6 +119,7 @@ export const POST = withOpsAction(
       };
     },
   },
+  { stepUp: true },
 );
 
 function notPending(status: string | null) {

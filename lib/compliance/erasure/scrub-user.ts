@@ -57,6 +57,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -899,9 +900,8 @@ export async function scrubUser(
     }
 
     // Hard-delete sessions + accounts so SSO and password-based logins
-    // both break immediately. BetterAuth caches sessions in Redis;
-    // those entries expire on TTL and are non-load-bearing.
-    await tx.session.deleteMany({ where: { userId } });
+    // both break immediately.
+    await revokeAllUserSessions(tx, userId);
     await tx.account.deleteMany({ where: { userId } });
 
     // Withdraw all active DPDP ConsentArtifact rows while preserving their

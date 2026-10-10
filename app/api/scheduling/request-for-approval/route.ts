@@ -37,7 +37,7 @@ import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -210,7 +210,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (availabilityWindowWeeklyId && prisma.availabilityWindowWeekly?.findFirst) {
+    if (
+      availabilityWindowWeeklyId &&
+      prisma.availabilityWindowWeekly?.findFirst
+    ) {
       const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
         where: { id: availabilityWindowWeeklyId, consultantProfileId },
         select: { id: true },
@@ -226,7 +229,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (availabilityWindowCustomId && prisma.availabilityWindowCustom?.findFirst) {
+    if (
+      availabilityWindowCustomId &&
+      prisma.availabilityWindowCustom?.findFirst
+    ) {
       const customWindow = await prisma.availabilityWindowCustom.findFirst({
         where: { id: availabilityWindowCustomId, consultantProfileId },
         select: { id: true },

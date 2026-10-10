@@ -96,7 +96,7 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
     { params }: { params: Promise<{ planId: string }> },
   ) {
     try {
-      const session = await getSession(true);
+      const session = await getSession();
       if (!session?.user?.id) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
@@ -134,7 +134,7 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
     { params }: { params: Promise<{ planId: string }> },
   ) {
     try {
-      const session = await getSession(true);
+      const session = await getSession();
       if (!session?.user?.id) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
@@ -296,7 +296,7 @@ export async function handlePlanRevenueSplitGet(
   req?: NextRequest,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

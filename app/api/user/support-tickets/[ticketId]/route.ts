@@ -15,7 +15,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
 ) {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return supportError({ status: 401, code: "UNAUTHORIZED" });
   }

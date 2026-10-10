@@ -46,6 +46,7 @@ export async function GET(
   const { orgId } = await params;
   // #1527 P0-4 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "messaging.read",
   });
   if (access.error) return access.error;

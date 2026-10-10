@@ -50,9 +50,7 @@ class UploadRefusedError extends Error {
 export async function POST(request: NextRequest) {
   let uploadedStoragePath: string | null = null;
   try {
-    // Force-fresh: a revoked/erased/banned user must lose upload within the
-    // call, not up to 5 minutes later on the cookie cache.
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -113,33 +111,26 @@ export async function POST(request: NextRequest) {
     }
     const mimeType = normalizeDeclaredMime(file.type);
 
-    // Gate: a caller with no consultant profile may upload only from the
-    // consultant wizard (draft role picked at step 0 and autosaved).
+    // Gate on the live User row (onboarding state, add-mode eligibility),
+    // never on the draft; the upload quotas below bound abuse.
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId },
       select: { id: true },
     });
-    if (!consultantProfile) {
-      const draft = await prisma.onboardingDraft.findUnique({
-        where: { userId },
-        select: { role: true },
-      });
-      if (
-        !canUploadVerificationDoc({
-          isOnboardingMode: isOnboarding,
-          hasConsultantProfile: false,
-          draftRole: draft?.role ?? null,
-        })
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Verification uploads during onboarding require the consultant path. Pick the consultant role and save your progress, then try again.",
-          },
-          { status: 403 },
-        );
-      }
+    if (
+      !canUploadVerificationDoc({
+        isOnboardingMode: isOnboarding,
+        hasConsultantProfile: consultantProfile !== null,
+        user: session.user,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Verification uploads are for expert profiles.",
+        },
+        { status: 403 },
+      );
     }
 
     // Pre-flight admission (quota + outstanding cap) so a refusal costs no
@@ -258,7 +249,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

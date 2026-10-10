@@ -26,6 +26,7 @@ export default async function OrgSupportPage({
 }) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "supportRequests.org",
   });
   if (access.error) redirect(`/dashboard/organization/${orgId}/home`);

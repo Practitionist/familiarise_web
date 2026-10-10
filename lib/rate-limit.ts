@@ -161,9 +161,9 @@ export const orgDataExportLimiter = makeLimiter(
   "24 h",
   "rl:org-data-export",
 );
-/** 120 per hour per IP — GET /api/auth/sso/domain-check */
+/** 1000 per hour per IP (offices share one NAT address) — GET /api/auth/sso/domain-check */
 export const ssoDomainCheckLimiter = makeLimiter(
-  120,
+  1000,
   "1 h",
   "rl:sso-domain-check",
 );
@@ -174,12 +174,23 @@ export const inviteAcceptIpLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
+/** 10 per minute per IP — GET /api/referrals/code/check/[code] */
+export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
+/** 2 per hour per recipient — the "someone tried to sign up" notice */
+export const existingAccountNoticeLimiter = makeLimiter(
+  2,
+  "1 h",
+  "rl:existing-account-notice",
+);
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
 export const staffCreateLimiter = makeLimiter(
   20,
   "1 h",
   "rl:platform:staff-create",
 );
+
+/** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
+export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
 
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.

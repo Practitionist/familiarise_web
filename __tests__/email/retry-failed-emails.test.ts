@@ -425,13 +425,8 @@ describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
     );
   });
 
-  it("dead-letters an expired verification row without sending", async () => {
-    const stub = makePrismaStub(
-      makeRow({
-        emailType: "EMAIL_VERIFICATION",
-        createdAt: new Date(FROZEN_NOW_MS - 61 * 60_000),
-      }),
-    );
+  it("dead-letters a credential row without sending: its body is redacted", async () => {
+    const stub = makePrismaStub(makeRow({ emailType: "PASSWORD_RESET" }));
     const resend = mockResend(async () => ({
       data: { id: "re-never" },
       error: null,
@@ -448,7 +443,7 @@ describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
     expect(result.deadLettered).toBe(1);
     expect(stub.updates[0].data).toMatchObject({ status: "DEAD_LETTER" });
     expect((stub.updates[0].data as { lastError: string }).lastError).toContain(
-      "expired before delivery",
+      "single-use credential",
     );
   });
 });

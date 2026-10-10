@@ -76,7 +76,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application no
 | Family ID        | Events                                                                                                                                                                                                                     |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `appointment`    | appointment-booked, appointment-partially-scheduled, appointment-cancelled, appointment-rescheduled, appointment-reminder, appointment-completed, new-booking-request                                                      |
-| `session-media`  | recording-available, recording-failed, document-uploaded, document-reviewed                                                                                                                            |
+| `session-media`  | recording-available, recording-failed, document-uploaded, document-reviewed                                                                                                                                                |
 | `payment`        | payment-success, payment-failed, referral-credits-applied                                                                                                                                                                  |
 | `refund`         | refund-requested, refund-processed, refund-failed, dispute-created, dispute-resolved                                                                                                                                       |
 | `payout`         | payout-processed, payout-failed                                                                                                                                                                                            |
@@ -297,7 +297,7 @@ These emails bypass Novu and are sent directly through Resend, through `lib/emai
 | ---------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------- |
 | `sendWelcomeEmail({email, name, dashboardUrl?})`                 | "Welcome to Familiarise!"                             | onboarding@mail.familiarisenow.com |
 | `sendPasswordResetEmail({email, name, token})`                   | "Reset your Familiarise password"                     | security@mail.familiarisenow.com   |
-| `sendVerificationEmail({email, name, verificationUrl})`          | "Verify your Familiarise email address"               | onboarding@mail.familiarisenow.com |
+| `sendVerificationEmail({email, otp, expiresInMinutes})`          | "Your Familiarise verification code"                  | onboarding@mail.familiarisenow.com |
 | `sendAccountLinkedEmail({email, name, provider, dashboardUrl?})` | "Your Familiarise account now linked with {provider}" | security@mail.familiarisenow.com   |
 
 ### Payment Emails (`lib/email/index.ts`)
@@ -335,11 +335,12 @@ Syncs the authenticated user to Novu as a subscriber. Called by the `useNovuSubs
 ```
 
 **Errors**:
-| Status | Error | Cause |
-|--------|-------|-------|
-| 401 | `"Unauthorized"` | No valid session |
-| 404 | `"User not found"` | User ID not in database |
-| 500 | `"Sync failed"` | Novu API error |
+
+| Status | Error              | Cause                   |
+| ------ | ------------------ | ----------------------- |
+| 401    | `"Unauthorized"`   | No valid session        |
+| 404    | `"User not found"` | User ID not in database |
+| 500    | `"Sync failed"`    | Novu API error          |
 
 ---
 
@@ -402,11 +403,12 @@ Updates notification preferences. Accepts partial updates (any subset of fields)
 **Response**: Full updated preferences object
 
 **Errors**:
-| Status | Error | Cause |
-|--------|-------|-------|
-| 400 | `"Validation failed"` | Request body fails Zod validation |
-| 401 | `"Unauthorized"` | No valid session |
-| 500 | `"Failed to update preferences"` | Database or Novu API error |
+
+| Status | Error                            | Cause                             |
+| ------ | -------------------------------- | --------------------------------- |
+| 400    | `"Validation failed"`            | Request body fails Zod validation |
+| 401    | `"Unauthorized"`                 | No valid session                  |
+| 500    | `"Failed to update preferences"` | Database or Novu API error        |
 
 ---
 

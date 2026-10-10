@@ -84,7 +84,7 @@ function metadataOnlyResponse(
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -542,7 +542,7 @@ async function resolveRecordingWriteAccess(
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -625,7 +625,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

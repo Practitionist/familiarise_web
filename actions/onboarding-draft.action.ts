@@ -9,21 +9,15 @@ import {
   type DraftActionResult,
   type LoadDraftActionResult,
   type OnboardingDraftSnapshot,
+  type SaveDraftActionResult,
 } from "@/utils/onboarding-draft";
+import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
 import { applyRateLimit, onboardingDraftLimiter } from "@/lib/rate-limit";
 
 /**
- * Resumable-onboarding drafts.
- *
- * Every action is keyed off the SESSION user id only — there is deliberately
- * no userId parameter to forge. The draft is a convenience cache, never an
- * authorization surface: guards read `User.onboardingCompleted`, and this row
- * is deleted on completion (and cascade-deleted with the user under DPDP
- * erasure).
- *
- * Multi-device semantics are last-write-wins per user, matching how the rest
- * of onboarding treats concurrent drafts; the terminal transition remains
- * protected by the #724/#840 CAS in `processOnboardingData`.
+ * Resumable-onboarding drafts, keyed by the session user only. The draft is a
+ * convenience cache and never an authorization input. Saves are CAS on
+ * `OnboardingDraft.version`; a stale base returns DRAFT_CONFLICT.
  */
 
 function unauthorized(): { success: false; error: string } {
@@ -32,61 +26,80 @@ function unauthorized(): { success: false; error: string } {
 
 export async function saveOnboardingDraftAction(
   input: unknown,
-): Promise<DraftActionResult> {
-  const session = await getSession(true);
+): Promise<SaveDraftActionResult> {
+  const session = await getSession();
   if (!session?.user?.id) return unauthorized();
+  const user = session.user;
 
-  // The wizard autosaves on every step transition (+ pagehide flush), so a
-  // stuck client could otherwise upsert 64KB rows in a tight loop. 30/min
-  // never touches a human; a loop trips it immediately.
-  const limited = await applyRateLimit(onboardingDraftLimiter, session.user.id);
-  if (limited) {
-    return { success: false, error: "Too many requests. Please try again later." };
+  // A finished account has no draft to keep, except while adding an identity.
+  if (user.onboardingCompleted === true && !canAddConsultantIdentity(user)) {
+    return {
+      success: false,
+      code: "ONBOARDED",
+      error: "Onboarding is already complete.",
+    };
   }
 
-  // Server-action arguments arrive as untyped JSON regardless of the static
-  // signature. prepareDraftForPersist validates, sanitizes non-JSON values,
-  // and byte-gates the result in one step — the persisted object is exactly
-  // its return value, never the raw caller payload.
+  const limited = await applyRateLimit(onboardingDraftLimiter, user.id);
+  if (limited) {
+    return {
+      success: false,
+      error: "Too many requests. Please try again later.",
+    };
+  }
+
   const prepared = prepareDraftForPersist(input);
   if (prepared === null) {
     return { success: false, error: "Invalid or oversized draft payload" };
   }
 
   const data = {
-    userId: session.user.id,
     role: prepared.role,
     currentStep: prepared.currentStep,
     payload: prepared.payload as Prisma.InputJsonValue,
   };
-
-  await prisma.onboardingDraft.upsert({
-    where: { userId: session.user.id },
-    create: data,
-    update: {
-      role: data.role,
-      currentStep: data.currentStep,
-      payload: data.payload,
-    },
+  const { count } = await prisma.onboardingDraft.updateMany({
+    where: { userId: user.id, version: prepared.baseVersion },
+    data: { ...data, version: { increment: 1 } },
   });
+  if (count === 1) return { success: true, version: prepared.baseVersion + 1 };
 
-  return { success: true };
+  if (prepared.baseVersion === 0) {
+    try {
+      await prisma.onboardingDraft.create({
+        data: { userId: user.id, ...data, version: 1 },
+      });
+      return { success: true, version: 1 };
+    } catch (error) {
+      const raced =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002";
+      if (!raced) throw error;
+    }
+  }
+
+  const stored = await prisma.onboardingDraft.findUnique({
+    where: { userId: user.id },
+    select: { version: true },
+  });
+  return {
+    success: false,
+    code: "DRAFT_CONFLICT",
+    error: "Newer edits were saved on another device.",
+    currentVersion: stored?.version ?? 0,
+  };
 }
 
 export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult> {
-  // A REJECTION here is not equivalent to "no draft": the wizard arms its
-  // autosave only once this call settles, so an escaping error (a pooler
-  // blip on the very first read, a session lookup failure) left the flag
-  // unset for the whole mount and silently disabled saving for the entire
-  // run — the user finished onboarding with nothing persisted and no signal.
-  // Resolve a failure into the ordinary "no draft" answer instead.
+  // A failure is reported, not thrown: the wizard keeps autosave off until a
+  // load succeeds, so a blip cannot overwrite the stored draft with less data.
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) return unauthorized();
 
     const draft = await prisma.onboardingDraft.findUnique({
       where: { userId: session.user.id },
-      select: { role: true, currentStep: true, payload: true },
+      select: { role: true, currentStep: true, payload: true, version: true },
     });
 
     if (!draft) return { success: true, draft: null };
@@ -99,13 +112,11 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
       role: draft.role,
       currentStep: reason === null ? draft.currentStep : 0,
       payload,
+      version: draft.version,
       quarantined: reason !== null,
     };
     return { success: true, draft: snapshot };
-  } catch (error) {
-    // Losing a draft is recoverable (the user re-enters this step); losing
-    // autosave for the session is not, so this degrades rather than throws.
-    console.error("onboarding: draft load failed", error);
+  } catch {
     return { success: false, error: "Draft unavailable" };
   }
 }
@@ -113,7 +124,7 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
 /** Idempotent by design — called after successful completion and whenever the
  *  wizard restarts from step 0 with no meaningful state to keep. */
 export async function clearOnboardingDraftAction(): Promise<DraftActionResult> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) return unauthorized();
 
   await prisma.onboardingDraft.deleteMany({
