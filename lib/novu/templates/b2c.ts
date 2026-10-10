@@ -666,7 +666,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Recording failed",
-      body: "A recording could not be saved{% if payload.errorMessage %}: {{payload.errorMessage}}{% endif %}. The call itself was not affected.",
+      body: "A recording could not be saved. The call itself was not affected.",
       redirect: "dashboardUrl",
     },
   },

@@ -28,19 +28,19 @@ export async function MoneyTabBody({
       return <PaymentsPage />;
     case "refunds":
       return (
-        <>
-          {can(cap, "refunds.manage") && <RefundDoorsPanel />}
-          <RefundsPage
-            apiEndpoint="/api/admin/refunds"
-            title="Refunds"
-            description={
-              can(cap, "refunds.manage")
-                ? "Manage and view all payment refunds"
-                : "View and track refund requests"
-            }
-            queryKeyPrefix={`${cap.tree}-refunds`}
-          />
-        </>
+        <RefundsPage
+          apiEndpoint="/api/admin/refunds"
+          title="Refunds"
+          description={
+            can(cap, "refunds.manage")
+              ? "Manage and view all payment refunds"
+              : "View and track refund requests"
+          }
+          queryKeyPrefix={`${cap.tree}-refunds`}
+          beforeContent={
+            can(cap, "refunds.manage") ? <RefundDoorsPanel /> : undefined
+          }
+        />
       );
     case "payouts":
       return <PayoutsBoard />;

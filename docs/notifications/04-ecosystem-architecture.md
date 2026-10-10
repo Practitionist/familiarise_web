@@ -227,7 +227,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 1. Business logic awaits a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`); a caller inside a transaction passes `{ tx, entityRef }` and runs `attemptTrigger()` after the commit
 2. `stageTrigger()` (`lib/novu/outbox.ts`) upserts a `NotificationOutbox` row keyed on a `transactionId` derived from the event, the sorted recipients and the payload (#1654)
 3. If `isNovuConfigured()` is false the row waits for the drain and the function returns `{success: false}`; otherwise `attemptTrigger()` calls `novu.trigger()` (single user or a batch of 100) or `novu.triggerBroadcast()` (all subscribers) under the client's five-second timeout, marks the row `SENT`, dead-letters it on a terminal 4xx, or leaves it `PENDING` on a timeout or 5xx for `jobs/notifications/drain-notification-outbox.ts`, which the Netlify ticker runs every five minutes
-4. Novu Cloud receives the event, deduplicates on the `transactionId`, and executes the workflow:
+4. Novu Cloud receives the event, deduplicates on the `Idempotency-Key` header (sent equal to the `transactionId`), and executes the workflow:
    - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)

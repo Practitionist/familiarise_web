@@ -165,10 +165,14 @@ jobs:
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
   unit-tests:
-    name: Unit tests
+    name: Unit tests (${{ matrix.shard }})
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
     services:
       redis:
         # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
@@ -202,7 +206,7 @@ jobs:
         run: npm run db:generate
 
       - name: Unit Tests
-        run: npm run test
+        run: npx jest --shard=${{ matrix.shard }} --coverage=false
 
   build:
     name: Build

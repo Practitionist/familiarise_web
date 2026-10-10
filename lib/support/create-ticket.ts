@@ -163,7 +163,7 @@ export async function notifyStaffOfTicketActivity(
   /**
    * Identifies THIS activity. Without it `deriveTransactionId` falls back to
    * hashing the payload, which is byte-identical for every reply on the same
-   * ticket — Novu rejects a repeated transactionId, so only the first reply
+   * ticket — staging upserts on transactionId, so only the first reply
    * would ever have paged anyone.
    */
   eventId?: string,

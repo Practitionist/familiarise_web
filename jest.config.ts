@@ -49,7 +49,7 @@ const config: Config = {
   //   "clover"
   // ],
 
-  // An object that configures minimum threshold enforcement for coverage results (#1885)
+  // Minimum threshold enforcement for full-suite coverage runs
   coverageThreshold: {
     global: {
       branches: 60,

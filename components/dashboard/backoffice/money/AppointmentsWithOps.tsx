@@ -12,15 +12,11 @@ import { SessionOutcomesCard } from "./SessionOutcomesCard";
  */
 export function AppointmentsWithOps() {
   return (
-    <>
-      <div className="mb-6">
-        <SessionOutcomesCard />
-      </div>
-      <OperatorAppointmentsClient
-        renderOps={(appointmentId) => (
-          <BookingOpsPanel appointmentId={appointmentId} />
-        )}
-      />
-    </>
+    <OperatorAppointmentsClient
+      beforeContent={<SessionOutcomesCard />}
+      renderOps={(appointmentId) => (
+        <BookingOpsPanel appointmentId={appointmentId} />
+      )}
+    />
   );
 }
