@@ -78,28 +78,32 @@ export default function ContactUsPage() {
                   </div>
                 </div>
 
-                <Separator />
+                {COMPANY_INFO.phone ? (
+                  <>
+                    <Separator />
 
-                {/* Phone */}
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                    <Phone className="h-5 w-5 text-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Phone</h3>
-                    <p className="text-sm text-muted-foreground">
-                      <a
-                        href={getTelLink()}
-                        className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                      >
-                        {COMPANY_INFO.phone}
-                      </a>
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      (Available during business hours)
-                    </p>
-                  </div>
-                </div>
+                    {/* Phone */}
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                        <Phone className="h-5 w-5 text-foreground" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold mb-1">Phone</h3>
+                        <p className="text-sm text-muted-foreground">
+                          <a
+                            href={getTelLink()}
+                            className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                          >
+                            {COMPANY_INFO.phone}
+                          </a>
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          (Available during business hours)
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
 
                 <Separator />
 

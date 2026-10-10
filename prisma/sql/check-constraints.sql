@@ -1072,3 +1072,12 @@ ALTER TABLE "SupportCaseEvent" DROP CONSTRAINT IF EXISTS "support_case_event_tar
 ALTER TABLE "SupportCaseEvent" ADD CONSTRAINT "support_case_event_target_xor"
   CHECK (("caseId" IS NULL) <> ("legacyTicketId" IS NULL));
 
+-- SPLIT
+-- At most one CSAT rating event per pre-cutover SupportTicket.
+DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
+  ON "SupportCaseEvent" ("legacyTicketId")
+  WHERE "kind" = 'CSAT_RATED';
+
+

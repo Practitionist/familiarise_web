@@ -193,15 +193,16 @@ async function fetchSlaSweepCandidates(
     },
   } as const;
 
+  const breachCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const breachOrFilter = [
     {
       acknowledgedAt: null,
-      ackDueAt: { lte: now },
+      ackDueAt: { gte: breachCutoff, lte: now },
       ...(ackBreachIds.length > 0 ? { id: { notIn: ackBreachIds } } : {}),
     },
     {
       resolvedAt: null,
-      resolutionDueAt: { lte: now },
+      resolutionDueAt: { gte: breachCutoff, lte: now },
       ...(resBreachIds.length > 0 ? { id: { notIn: resBreachIds } } : {}),
     },
   ];
@@ -308,6 +309,7 @@ async function fetchSlaSweepCandidates(
 
 async function deliverSlaNoticeEmails(
   row: SlaSweepCandidate,
+  level: SlaNoticeLevel,
   effectiveOps: OperatorRow[],
   dedupeKey: string,
   subject: string,
@@ -333,7 +335,7 @@ async function deliverSlaNoticeEmails(
       ),
     );
 
-  if (row.escalationContactEmail) {
+  if (level === "breach" && row.escalationContactEmail) {
     emailJobs.push(
       deliver(
         {
@@ -433,6 +435,7 @@ async function processSingleSlaNotice(
 
     const { orgEscalationSent } = await deliverSlaNoticeEmails(
       row,
+      notice.level,
       effectiveOps,
       dedupeKey,
       subject,
@@ -531,6 +534,10 @@ async function autoCloseResolvedRows(
               data: { status: "CLOSED", closedAt: now },
             });
             if (res.count > 0) {
+              await tx.appointmentSupportThread.updateMany({
+                where: { supportTicketId: t.id },
+                data: { status: "CLOSED", activeChannel: "SELF_SERVE" },
+              });
               await tx.supportCaseEvent.create({
                 data: {
                   legacyTicketId: t.id,
@@ -633,6 +640,7 @@ async function processDisputeDeadlineAlerts(
 
       try {
         const payload = {
+          title: `Dispute response due within ${window}h`,
           disputeId: d.disputeId,
           amount: d.amountPaise,
           currency: d.currency,
@@ -641,7 +649,7 @@ async function processDisputeDeadlineAlerts(
           windowHours: Number(window),
         };
         const transactionId = deriveTransactionId(
-          NOVU_WORKFLOWS.DISPUTE_CREATED,
+          NOVU_WORKFLOWS.DISPUTE_UPDATED,
           recipients,
           payload,
           dedupeKey,
@@ -654,7 +662,7 @@ async function processDisputeDeadlineAlerts(
               select: { id: true },
             });
             await stageBell(tx, {
-              workflowId: NOVU_WORKFLOWS.DISPUTE_CREATED,
+              workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
               recipients,
               payload,
               dedupeKey,

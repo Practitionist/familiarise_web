@@ -46,7 +46,7 @@ async function readOwnSupportCase(
       : prisma.supportCaseMessage.findMany({
           where: { caseId: c.id, isInternal: false },
           orderBy: { seq: "asc" },
-          take: TIMELINE_LIMIT,
+          take: -TIMELINE_LIMIT,
         }),
   ]);
   return {
@@ -95,8 +95,8 @@ export async function readOwnTicket(
       organization: { select: { id: true, name: true } },
       responses: {
         where: { isInternal: false },
-        orderBy: { createdAt: "desc" },
-        take: TIMELINE_LIMIT,
+        orderBy: { createdAt: "asc" },
+        take: -TIMELINE_LIMIT,
         ...RESPONSE_SELECT,
       },
       appointmentSupportThread: { select: { appointmentId: true } },

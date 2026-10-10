@@ -1,11 +1,16 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { SupportIssueTypeEnum } from "@/schemas/enums";
+import { callbackPhoneSchema } from "@/lib/validation/phone";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
   type Tx,
 } from "@/lib/prisma";
+import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
 import {
   openWaitSeconds,
@@ -18,6 +23,25 @@ const IST_OFFSET_MS = 330 * 60_000;
 const TWENTY_EIGHT_DAYS_MS = 28 * 24 * 3_600_000;
 const TWENTY_FOUR_HOURS_MS = 24 * 3_600_000;
 const FIFTEEN_DAYS_MS = 15 * 24 * 3_600_000;
+
+export const CALLBACK_WINDOWS = [
+  "09:00-12:00 IST",
+  "12:00-15:00 IST",
+  "15:00-18:00 IST",
+  "18:00-21:00 IST",
+] as const;
+
+export const CallbackWindowSchema = z.enum(CALLBACK_WINDOWS);
+
+export class SupportCaseValidationError extends Error {
+  readonly status = 400 as const;
+  readonly code = "VALIDATION_FAILED" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SupportCaseValidationError";
+  }
+}
 
 const CASE_RELATIONS_INCLUDE = {
   subjects: true,
@@ -112,8 +136,8 @@ export const CreateSupportCaseObjectSchema = z.object({
   organizationId: z.string().min(1).max(64).nullable().optional(),
   appointmentId: z.string().min(1).max(64).nullable().optional(),
   appointmentOccurrenceId: z.string().min(1).max(64).nullable().optional(),
-  callbackPhone: z.string().trim().max(32).nullable().optional(),
-  callbackWindow: z.string().trim().max(64).nullable().optional(),
+  callbackPhone: callbackPhoneSchema.nullish(),
+  callbackWindow: CallbackWindowSchema.nullish(),
   clientIntakeId: z.string().trim().min(1).max(128).nullable().optional(),
   subjects: z
     .array(
@@ -319,11 +343,40 @@ async function appendOpenScopeTurn(
   );
 }
 
+async function validateProblemCaseTargetTx(
+  tx: Tx,
+  problemCaseId: string,
+  currentCaseId?: string,
+): Promise<boolean> {
+  const target = await tx.supportCase.findUnique({
+    where: { id: problemCaseId },
+    select: { id: true, caseKind: true, deletedAt: true },
+  });
+  return Boolean(
+    target &&
+    target.deletedAt === null &&
+    target.caseKind === "PROBLEM" &&
+    target.id !== currentCaseId,
+  );
+}
+
 async function executeCreateOrReuseCaseTx(
   tx: Tx,
   input: CreateSupportCaseInput,
   now: Date,
 ) {
+  if (input.problemCaseId !== undefined && input.problemCaseId !== null) {
+    const validProblem = await validateProblemCaseTargetTx(
+      tx,
+      input.problemCaseId,
+    );
+    if (!validProblem) {
+      throw new SupportCaseValidationError(
+        "problemCaseId must reference an active PROBLEM case.",
+      );
+    }
+  }
+
   if (input.clientIntakeId) {
     const replayed = await tx.supportCase.findFirst({
       where: {
@@ -559,7 +612,7 @@ async function advanceUserTurnState(
       ...userRepliedPatch(existingCase, now),
     },
   });
-  if (moved.count === 0) return false;
+  if ((moved?.count ?? 0) === 0) return false;
 
   if (existingCase.status === "RESOLVED" || existingCase.status === "ON_HOLD") {
     await tx.supportCaseEvent.create({
@@ -592,12 +645,23 @@ async function advanceAgentPublicTurnState(
           assignedToId: existingCase.assignedToId ?? input.authorUserId ?? null,
         }
       : {};
+  const expectedDate = input.expectedLastMessageAt
+    ? new Date(input.expectedLastMessageAt)
+    : undefined;
 
   const moved = await tx.supportCase.updateMany({
     where: {
       id: input.caseId,
       status: { not: "CLOSED" },
       awaitingUserSince: existingCase.awaitingUserSince,
+      ...(expectedDate
+        ? {
+            OR: [
+              { lastMessageAt: null },
+              { lastMessageAt: { lte: expectedDate } },
+            ],
+          }
+        : {}),
     },
     data: {
       messageSeq: { increment: 1 },
@@ -609,20 +673,7 @@ async function advanceAgentPublicTurnState(
       ...openTransitionPatch,
     },
   });
-  return moved.count > 0;
-}
-
-function isStaleAgentPublicReply(
-  input: AppendSupportCaseTurnInput,
-  lastMessageAt: Date | null,
-): boolean {
-  return Boolean(
-    input.sender === "AGENT" &&
-    !input.isInternal &&
-    input.expectedLastMessageAt &&
-    lastMessageAt &&
-    lastMessageAt.getTime() > new Date(input.expectedLastMessageAt).getTime(),
-  );
+  return (moved?.count ?? 0) > 0;
 }
 
 async function applyTurnStateUpdate(
@@ -678,18 +729,33 @@ async function executeAppendTurnTx(
     };
   }
 
-  if (isStaleAgentPublicReply(input, existingCase.lastMessageAt)) {
-    return {
-      ok: false as const,
-      status: 409 as const,
-      code: "NEW_CUSTOMER_MESSAGE" as const,
-      error:
-        "Customer replied since you opened this case. Review their message before sending.",
-    };
-  }
-
   const applied = await applyTurnStateUpdate(tx, existingCase, input, now);
   if (!applied) {
+    if (
+      input.sender === "AGENT" &&
+      !input.isInternal &&
+      input.expectedLastMessageAt
+    ) {
+      const expectedDate = new Date(input.expectedLastMessageAt);
+      const latestRow = await tx.supportCase.findUnique({
+        where: { id: input.caseId },
+        select: { lastMessageAt: true },
+      });
+      const latestLastMessageAt =
+        latestRow?.lastMessageAt ?? existingCase.lastMessageAt;
+      if (
+        latestLastMessageAt &&
+        latestLastMessageAt.getTime() > expectedDate.getTime()
+      ) {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          code: "NEW_CUSTOMER_MESSAGE" as const,
+          error:
+            "Customer replied since you opened this case. Review their message before sending.",
+        };
+      }
+    }
     return {
       ok: false as const,
       status: 409 as const,
@@ -891,7 +957,7 @@ async function resolveSingleLinkedIncident(
         : {}),
     },
   });
-  if (movedInc.count === 0) return null;
+  if ((movedInc?.count ?? 0) === 0) return null;
 
   if (closingMsg) {
     await tx.supportCaseMessage.create({
@@ -985,6 +1051,44 @@ async function validateOperatorAssigneeTx(
   return Boolean(user && (user.role === "STAFF" || user.role === "ADMIN"));
 }
 
+async function stageCaseResolutionCsatPromptTx(
+  tx: Tx,
+  target: {
+    id: string;
+    referenceNumber?: string;
+    title?: string;
+    submitterUserId?: string;
+    requesterUserId?: string;
+    organizationId?: string | null;
+  },
+  fallbackActorId: string,
+  resolvedAt: Date,
+): Promise<void> {
+  const recipientId =
+    target.submitterUserId ?? target.requesterUserId ?? fallbackActorId;
+  const dedupeKey = `csat:${target.id}:${resolvedAt.toISOString()}`;
+  const bellArgs = {
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+    recipients: [recipientId],
+    payload: {
+      ticketId: target.id,
+      reference: target.referenceNumber,
+      ticketTitle: target.title ?? "Support Request",
+      status: "Resolved — rate your resolution",
+      statusCode: "RESOLVED",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "case", id: target.id }),
+        target.organizationId,
+      ),
+      ...notificationScope(target.organizationId),
+    },
+    dedupeKey,
+    entityRef: dedupeKey,
+    notBefore: new Date(resolvedAt.getTime() + TWENTY_FOUR_HOURS_MS),
+  };
+  await stageBell(tx, bellArgs);
+}
+
 function buildLifecycleUpdateData(
   existing: NonNullable<Awaited<ReturnType<Tx["supportCase"]["findUnique"]>>>,
   input: PatchSupportCaseInput,
@@ -1037,6 +1141,22 @@ async function executePatchLifecycleTx(
     };
   }
 
+  if (input.problemCaseId !== undefined && input.problemCaseId !== null) {
+    const validProblem = await validateProblemCaseTargetTx(
+      tx,
+      input.problemCaseId,
+      existing.id,
+    );
+    if (!validProblem) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        code: "VALIDATION_FAILED" as const,
+        error: "problemCaseId must reference another active PROBLEM case.",
+      };
+    }
+  }
+
   if (!(await validateOperatorAssigneeTx(tx, input.assignedToId))) {
     return {
       ok: false as const,
@@ -1057,7 +1177,7 @@ async function executePatchLifecycleTx(
     data: buildLifecycleUpdateData(existing, input, noteTrimmed, now),
   });
 
-  if (updated.count === 0) {
+  if ((updated?.count ?? 0) === 0) {
     return {
       ok: false as const,
       status: 409 as const,
@@ -1096,6 +1216,13 @@ async function executePatchLifecycleTx(
           now,
         )
       : [];
+
+  if (input.status === "RESOLVED" && existing.status !== "RESOLVED") {
+    await stageCaseResolutionCsatPromptTx(tx, existing, input.actorId, now);
+    for (const inc of cascadedIncidents) {
+      await stageCaseResolutionCsatPromptTx(tx, inc, input.actorId, now);
+    }
+  }
 
   const refreshed = await tx.supportCase.findUniqueOrThrow({
     where: { id: input.caseId },
@@ -1241,15 +1368,29 @@ async function submitLegacyTicketCsatTx(
       error: "This case has already been rated.",
     };
   }
-  await tx.supportCaseEvent.create({
-    data: {
-      legacyTicketId: input.caseId,
-      actorId: input.userId,
-      kind: "CSAT_RATED",
-      toValue: String(input.rating),
-      createdAt: now,
-    },
-  });
+  try {
+    await tx.supportCaseEvent.create({
+      data: {
+        legacyTicketId: input.caseId,
+        actorId: input.userId,
+        kind: "CSAT_RATED",
+        toValue: String(input.rating),
+        createdAt: now,
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: "This case has already been rated.",
+      };
+    }
+    throw err;
+  }
   return {
     ok: true as const,
     csatRating: input.rating,
@@ -1334,17 +1475,36 @@ async function executeSubmitCsatTx(
 }
 
 /** Record CSAT rating (1-5) within 28 days of resolution using CAS on csatRating IS NULL. */
-export function submitSupportCaseCsat(
+export async function submitSupportCaseCsat(
   rawInput: SubmitSupportCaseCsatInput,
   now: Date = new Date(),
 ) {
   const input = SubmitSupportCaseCsatSchema.parse(rawInput);
 
-  return prisma.$transaction((tx) => executeSubmitCsatTx(tx, input, now), {
-    maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-    timeout: ALLOCATION_TX_TIMEOUT_MS,
-  });
+  try {
+    return await prisma.$transaction(
+      (tx) => executeSubmitCsatTx(tx, input, now),
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: "This case has already been rated.",
+      };
+    }
+    throw err;
+  }
 }
+
+const MODERATION_APPEAL_RE = /\bRPT-/;
 
 /** Statutory monthly compliance report across unified SupportCase and legacy SupportTicket for an IST month. */
 export async function supportMonthlyComplianceReport(
@@ -1366,6 +1526,8 @@ export async function supportMonthlyComplianceReport(
       select: {
         id: true,
         referenceNumber: true,
+        title: true,
+        description: true,
         category: true,
         status: true,
         createdAt: true,
@@ -1382,6 +1544,8 @@ export async function supportMonthlyComplianceReport(
       select: {
         id: true,
         referenceNumber: true,
+        title: true,
+        description: true,
         category: true,
         status: true,
         createdAt: true,
@@ -1399,6 +1563,7 @@ export async function supportMonthlyComplianceReport(
 
   let acknowledgedWithin24h = 0;
   let disposedWithin15d = 0;
+  let grievances = 0;
   let appealed = 0;
 
   const cases = rows.map((r) => {
@@ -1410,11 +1575,15 @@ export async function supportMonthlyComplianceReport(
       r.resolvedAt !== null &&
       r.resolvedAt.getTime() - r.createdAt.getTime() - r.pausedSeconds * 1000 <=
         FIFTEEN_DAYS_MS;
+    const isGrievance = r.category === "GRIEVANCE";
     const isAppealed =
-      r.category === "GRIEVANCE" || r.category === "MODERATION_APPEAL";
+      r.category === "MODERATION_APPEAL" ||
+      MODERATION_APPEAL_RE.test(r.title ?? "") ||
+      MODERATION_APPEAL_RE.test(r.description ?? "");
 
     if (ackOk) acknowledgedWithin24h++;
     if (dispOk) disposedWithin15d++;
+    if (isGrievance) grievances++;
     if (isAppealed) appealed++;
 
     return {
@@ -1429,6 +1598,7 @@ export async function supportMonthlyComplianceReport(
       pausedSeconds: r.pausedSeconds,
       acknowledgedWithin24h: ackOk,
       disposedWithin15d: dispOk,
+      grievance: isGrievance,
       appealed: isAppealed,
     };
   });
@@ -1439,6 +1609,7 @@ export async function supportMonthlyComplianceReport(
     received: rows.length,
     acknowledgedWithin24h,
     disposedWithin15d,
+    grievances,
     appealed,
     cases,
   };

@@ -16,9 +16,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { allocateTicketReference } from "@/lib/support/reference";
+import { slaDeadlinesFor } from "@/lib/support/sla";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
 const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
@@ -107,9 +109,46 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const session =
+    parsed.data.category === "grievance"
+      ? await getSession().catch(() => null)
+      : null;
+  const sessionUserId = session?.user?.id ?? null;
+
   const referenceNumber =
     parsed.data.category === "grievance"
-      ? await prisma.$transaction((tx) => allocateTicketReference(tx))
+      ? await prisma.$transaction(async (tx) => {
+          const fallbackOwner = sessionUserId
+            ? null
+            : await tx.user.findFirst({
+                where: { role: { in: ["ADMIN", "STAFF"] } },
+                select: { id: true },
+                orderBy: { createdAt: "asc" },
+              });
+          const userId = sessionUserId ?? fallbackOwner?.id ?? null;
+          if (!userId) {
+            return null;
+          }
+
+          const now = new Date();
+          const ref = await allocateTicketReference(tx, now);
+          const name =
+            `${parsed.data.firstName} ${parsed.data.lastName}`.trim();
+          await tx.supportTicket.create({
+            data: {
+              referenceNumber: ref,
+              title: `[Grievance] ${parsed.data.subject || "Public Grievance"}`,
+              description: `Submitted via public form by ${name} <${parsed.data.email}>\n\n${parsed.data.message}`,
+              category: "GRIEVANCE",
+              status: "OPEN",
+              priority: "HIGH",
+              userId,
+              lastMessageAt: now,
+              ...slaDeadlinesFor("HIGH", now),
+            },
+          });
+          return ref;
+        })
       : null;
 
   const result = await sendContactInquiryEmail({
@@ -130,6 +169,18 @@ export async function POST(req: NextRequest) {
           "We could not send your message right now. Please email us directly and we will pick it up.",
       },
       { status: 502 },
+    );
+  }
+
+  if (parsed.data.category === "grievance" && !referenceNumber) {
+    return NextResponse.json(
+      {
+        ok: true,
+        referenceNumber: null,
+        message:
+          "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
+      },
+      { status: 202 },
     );
   }
 

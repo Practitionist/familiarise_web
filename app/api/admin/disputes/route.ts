@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { z } from "zod";
@@ -180,10 +179,10 @@ export async function GET(req: NextRequest) {
         prisma.dispute.count({ where }),
         prisma.dispute.count({
           where: {
+            status: { in: ACTIONABLE_OPEN_STATUSES },
             dueBy: {
               lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
             },
-            ...OPEN_DISPUTE_WHERE,
           },
         }),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),

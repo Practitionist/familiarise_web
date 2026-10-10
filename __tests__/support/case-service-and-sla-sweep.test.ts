@@ -61,6 +61,25 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
 }));
 
+const mockRequireApiAuth = jest.fn<
+  Promise<
+    | {
+        session: {
+          user: {
+            id: string;
+            name: string;
+            role: string;
+            twoFactorEnabled?: boolean;
+          };
+        };
+      }
+    | { error: Response }
+  >,
+  unknown[]
+>(async () => ({
+  session: { user: { id: "user-1", name: "User One", role: "USER" } },
+}));
+
 jest.mock("../../lib/auth-helpers", () => ({
   requirePrivilegedAuth: jest.fn(async () => ({
     session: { user: { id: "staff-1", name: "Operator One", role: "STAFF" } },
@@ -68,6 +87,7 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireAdminAuth: jest.fn(async () => ({
     session: { user: { id: "admin-1", name: "Admin One", role: "ADMIN" } },
   })),
+  requireApiAuth: (...args: unknown[]) => mockRequireApiAuth(...args),
   requireApiSession: jest.fn(async () => ({
     session: { user: { id: "user-1", name: "User One", role: "USER" } },
   })),
@@ -92,11 +112,15 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(),
       create: jest.fn(),
     },
+    supportCaseSubject: {
+      findFirst: jest.fn(),
+    },
     supportCaseEvent: {
       findFirst: jest.fn(),
       create: jest.fn(),
     },
     supportTicket: {
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       findMany: jest.fn(),
@@ -174,8 +198,10 @@ interface MockPrismaClient {
     findMany: jest.Mock;
     create: jest.Mock;
   };
+  supportCaseSubject: { findFirst: jest.Mock };
   supportCaseEvent: { findFirst: jest.Mock; create: jest.Mock };
   supportTicket: {
+    findFirst: jest.Mock;
     findUnique: jest.Mock;
     findUniqueOrThrow: jest.Mock;
     findMany: jest.Mock;
@@ -217,7 +243,10 @@ import {
   supportHealthMetrics,
 } from "../../lib/support/deflection";
 import {
+  CALLBACK_WINDOWS,
+  CallbackWindowSchema,
   CreateSupportCaseInputSchema,
+  SupportCaseValidationError,
   appendSupportCaseTurn,
   createOrReuseSupportCase,
   patchSupportCaseLifecycle,
@@ -225,17 +254,23 @@ import {
   submitSupportCaseCsat,
   supportMonthlyComplianceReport,
 } from "../../lib/support/case-service";
+import { readOwnTicket } from "../../lib/support/own-case-read";
 import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
 import {
   GET as getCases,
   POST as postCases,
 } from "../../app/api/support/cases/route";
+import { GET as getCaseDetail } from "../../app/api/support/cases/[caseId]/route";
+import { POST as postCaseMessage } from "../../app/api/support/cases/[caseId]/messages/route";
 import { PATCH as patchStaffTicket } from "../../app/api/staff/support-tickets/[ticketId]/route";
 import { POST as postStaffTicketResponse } from "../../app/api/staff/support-tickets/[ticketId]/responses/route";
 
 describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRequireApiAuth.mockResolvedValue({
+      session: { user: { id: "user-1", name: "User One", role: "USER" } },
+    });
     mockPrisma.supportTicketCounter.upsert.mockReset();
     mockPrisma.supportCase.findUnique.mockReset();
     mockPrisma.supportCase.findUniqueOrThrow.mockReset();
@@ -718,6 +753,8 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
       {
         id: "c-1",
         referenceNumber: "FAM-2026-000010",
+        title: "General grievance without moderation report",
+        description: "Billing issue",
         category: "GRIEVANCE",
         status: "RESOLVED",
         createdAt: new Date("2026-10-01T01:00:00.000Z"),
@@ -725,14 +762,27 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
         resolvedAt: new Date("2026-10-03T01:00:00.000Z"),
         pausedSeconds: 0,
       },
+      {
+        id: "c-2",
+        referenceNumber: "FAM-2026-000011",
+        title: "Appeal of RPT-2026-000042 decision",
+        description: "Contesting RPT-2026-000042 outcome",
+        category: "GRIEVANCE",
+        status: "RESOLVED",
+        createdAt: new Date("2026-10-02T01:00:00.000Z"),
+        acknowledgedAt: new Date("2026-10-02T04:00:00.000Z"),
+        resolvedAt: new Date("2026-10-04T01:00:00.000Z"),
+        pausedSeconds: 0,
+      },
     ]);
     mockPrisma.supportTicket.findMany.mockResolvedValueOnce([]);
 
     const report = await supportMonthlyComplianceReport(2026, 10);
     expect(report).toMatchObject({
-      received: 1,
-      acknowledgedWithin24h: 1,
-      disposedWithin15d: 1,
+      received: 2,
+      acknowledgedWithin24h: 2,
+      disposedWithin15d: 2,
+      grievances: 2,
       appealed: 1,
     });
 
@@ -1096,6 +1146,365 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
           status: "RESOLVED",
           awaitingUserSince: null,
           pausedSeconds: 2000,
+        }),
+      }),
+    );
+  });
+
+  it("enforces HTTP 428 when STAFF has twoFactorEnabled: false across GET/POST cases, GET case detail, and POST messages", async () => {
+    const twoFactorResponse = Response.json(
+      { error: "Two-factor required", code: "TWO_FACTOR_REQUIRED" },
+      { status: 428 },
+    );
+    mockRequireApiAuth.mockResolvedValue({ error: twoFactorResponse });
+
+    const r1 = await getCases(
+      new NextRequest("https://familiarise.com/api/support/cases"),
+    );
+    expect(r1.status).toBe(428);
+
+    const r2 = await postCases(
+      new NextRequest("https://familiarise.com/api/support/cases", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Case",
+          description: "Body",
+          category: "GENERAL",
+        }),
+      }),
+    );
+    expect(r2.status).toBe(428);
+
+    const r3 = await getCaseDetail(
+      new NextRequest("https://familiarise.com/api/support/cases/case-1"),
+      { params: Promise.resolve({ caseId: "case-1" }) },
+    );
+    expect(r3.status).toBe(428);
+
+    const r4 = await postCaseMessage(
+      new NextRequest(
+        "https://familiarise.com/api/support/cases/case-1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ body: "Reply" }),
+        },
+      ),
+      { params: Promise.resolve({ caseId: "case-1" }) },
+    );
+    expect(r4.status).toBe(428);
+  });
+
+  it("skips rate limiter for staff and uses ticket-response:<userId> bucket for non-staff on POST /api/support/cases/[caseId]/messages", async () => {
+    const rateLimitMod = jest.requireMock<{
+      applyRateLimit: jest.Mock;
+      spamLimiter: unknown;
+    }>("../../lib/rate-limit");
+
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    mockRequireApiAuth.mockResolvedValueOnce({
+      session: {
+        user: {
+          id: "staff-2fa",
+          name: "Staff",
+          role: "STAFF",
+          twoFactorEnabled: true,
+        },
+      },
+    });
+    mockPrisma.supportCase.findUnique.mockResolvedValueOnce({
+      id: "case-msg-1",
+      referenceNumber: "FAM-2026-000777",
+      status: "OPEN",
+      category: "GENERAL",
+      createdAt: now,
+      requesterUserId: "user-1",
+      submitterUserId: "user-1",
+      deletedAt: null,
+      messages: [],
+      events: [],
+      subjects: [],
+    });
+    mockTx.supportCase.findUnique.mockResolvedValueOnce({
+      id: "case-msg-1",
+      status: "OPEN",
+      assignedToId: null,
+      acknowledgedAt: null,
+      firstAgentReplyAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+      createdAt: now,
+      lastMessageAt: now,
+    });
+    mockTx.supportCase.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockTx.supportCase.findUniqueOrThrow.mockResolvedValueOnce({
+      messageSeq: 2,
+    });
+    mockTx.supportCaseMessage.create.mockResolvedValueOnce({
+      id: "m-2",
+      seq: 2,
+      sender: "AGENT",
+      body: "On it",
+    });
+
+    const staffRes = await postCaseMessage(
+      new NextRequest(
+        "https://familiarise.com/api/support/cases/case-msg-1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ body: "On it", isInternal: false }),
+        },
+      ),
+      { params: Promise.resolve({ caseId: "case-msg-1" }) },
+    );
+    expect(staffRes.status).toBe(201);
+    expect(rateLimitMod.applyRateLimit).not.toHaveBeenCalled();
+
+    mockPrisma.supportCase.findUnique.mockResolvedValueOnce({
+      id: "case-msg-1",
+      referenceNumber: "FAM-2026-000777",
+      status: "IN_PROGRESS",
+      category: "GENERAL",
+      createdAt: now,
+      requesterUserId: "user-1",
+      submitterUserId: "user-1",
+      deletedAt: null,
+      messages: [],
+      events: [],
+      subjects: [],
+    });
+    mockTx.supportCase.findUnique.mockResolvedValueOnce({
+      id: "case-msg-1",
+      status: "IN_PROGRESS",
+      assignedToId: "staff-2fa",
+      awaitingUserSince: now,
+      pausedSeconds: 0,
+    });
+    mockTx.supportCase.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockTx.supportCase.findUniqueOrThrow.mockResolvedValueOnce({
+      messageSeq: 3,
+    });
+    mockTx.supportCaseMessage.create.mockResolvedValueOnce({
+      id: "m-3",
+      seq: 3,
+      sender: "USER",
+      body: "Thanks",
+    });
+
+    const userRes = await postCaseMessage(
+      new NextRequest(
+        "https://familiarise.com/api/support/cases/case-msg-1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ body: "Thanks" }),
+        },
+      ),
+      { params: Promise.resolve({ caseId: "case-msg-1" }) },
+    );
+    expect(userRes.status).toBe(201);
+    expect(rateLimitMod.applyRateLimit).toHaveBeenCalledWith(
+      rateLimitMod.spamLimiter,
+      "ticket-response:user-1",
+    );
+  });
+
+  it("validates callbackWindow enum, rejects invalid problemCaseId in tx, catches legacy P2002 CSAT duplicate with 409, stages 24h CSAT outbox prompt, and slices newest 200 messages", async () => {
+    expect(CALLBACK_WINDOWS).toEqual([
+      "09:00-12:00 IST",
+      "12:00-15:00 IST",
+      "15:00-18:00 IST",
+      "18:00-21:00 IST",
+    ]);
+    expect(CallbackWindowSchema.safeParse("09:00-12:00 IST").success).toBe(
+      true,
+    );
+    expect(CallbackWindowSchema.safeParse("anytime").success).toBe(false);
+
+    mockTx.supportCase.findUnique.mockResolvedValueOnce({
+      id: "not-a-problem",
+      caseKind: "INCIDENT",
+      deletedAt: null,
+    });
+    await expect(
+      createOrReuseSupportCase({
+        title: "Incident linking bad problem",
+        description: "Body",
+        category: "TECHNICAL",
+        requesterUserId: "u-1",
+        submitterUserId: "u-1",
+        problemCaseId: "not-a-problem",
+      }),
+    ).rejects.toBeInstanceOf(SupportCaseValidationError);
+
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    mockTx.supportCase.findUnique
+      .mockResolvedValueOnce({
+        id: "self-case",
+        caseKind: "INCIDENT",
+        status: "OPEN",
+        priority: "MEDIUM",
+        assignedToId: null,
+        problemCaseId: null,
+        updatedAt: now,
+      })
+      .mockResolvedValueOnce({
+        id: "self-case",
+        caseKind: "PROBLEM",
+        deletedAt: null,
+      });
+    const selfProblemPatch = await patchSupportCaseLifecycle(
+      {
+        caseId: "self-case",
+        actorId: "staff-1",
+        expectedUpdatedAt: now.toISOString(),
+        problemCaseId: "self-case",
+      },
+      now,
+    );
+    expect(selfProblemPatch).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+
+    const { Prisma } = await import("@prisma/client");
+    mockTx.supportCase.findUnique.mockResolvedValueOnce(null);
+    mockTx.supportTicket.findUnique.mockResolvedValueOnce({
+      id: "legacy-dup",
+      userId: "user-1",
+      status: "RESOLVED",
+      resolvedAt: new Date("2026-10-08T00:00:00.000Z"),
+    });
+    mockTx.supportCaseEvent.findFirst.mockResolvedValueOnce(null);
+    mockTx.supportCaseEvent.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "5.22.0",
+      }),
+    );
+    const raceCsat = await submitSupportCaseCsat(
+      { caseId: "legacy-dup", userId: "user-1", rating: 5 },
+      now,
+    );
+    expect(raceCsat).toEqual({
+      ok: false,
+      status: 409,
+      error: "This case has already been rated.",
+    });
+
+    mockTx.supportTicket.findUnique.mockResolvedValueOnce({
+      id: "t-resolve-csat",
+      userId: "user-1",
+      referenceNumber: "FAM-2026-000888",
+      title: "Billing help",
+      status: "IN_PROGRESS",
+      priority: "MEDIUM",
+      assignedToId: "staff-1",
+      organizationId: null,
+      ackDueAt: now,
+      acknowledgedAt: now,
+      resolutionDueAt: now,
+      resolvedAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+      updatedAt: now,
+    });
+    mockTx.supportTicket.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockTx.supportTicket.findUniqueOrThrow.mockResolvedValueOnce({
+      id: "t-resolve-csat",
+      status: "RESOLVED",
+      priority: "MEDIUM",
+      referenceNumber: "FAM-2026-000888",
+      title: "Billing help",
+      organizationId: null,
+      user: { id: "user-1", name: "User", email: "user@test.com" },
+      appointmentSupportThread: null,
+    });
+    const resolvePatchRes = await patchStaffTicket(
+      new NextRequest(
+        "https://familiarise.com/api/staff/support-tickets/t-resolve-csat",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "RESOLVED",
+            expectedUpdatedAt: now.toISOString(),
+          }),
+        },
+      ),
+      { params: Promise.resolve({ ticketId: "t-resolve-csat" }) },
+    );
+    expect(resolvePatchRes.status).toBe(200);
+    expect(mockStageBell).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({
+        dedupeKey: expect.stringMatching(/^csat:t-resolve-csat:/),
+      }),
+    );
+
+    mockPrisma.supportTicket.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.supportCase.findFirst.mockResolvedValueOnce({
+      id: "own-case-200",
+      referenceNumber: "FAM-2026-000900",
+      title: "Long conversation",
+      category: "GENERAL",
+      status: "OPEN",
+      createdAt: now,
+      appointmentId: null,
+      organizationId: null,
+      requesterUserId: "user-1",
+      submitterUserId: "user-1",
+    });
+    mockPrisma.supportCaseSubject.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.supportCaseMessage.findMany.mockResolvedValueOnce([]);
+    await readOwnTicket("own-case-200", "user-1");
+    expect(mockPrisma.supportCaseMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { caseId: "own-case-200", isInternal: false },
+        orderBy: { seq: "asc" },
+        take: -200,
+      }),
+    );
+
+    mockTx.supportCase.findUnique
+      .mockResolvedValueOnce({
+        id: "case-stale-cas",
+        status: "IN_PROGRESS",
+        assignedToId: "staff-1",
+        acknowledgedAt: now,
+        firstAgentReplyAt: now,
+        awaitingUserSince: null,
+        pausedSeconds: 0,
+        createdAt: now,
+        lastMessageAt: new Date("2026-10-10T10:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        lastMessageAt: new Date("2026-10-10T10:05:00.000Z"),
+      });
+    mockTx.supportCase.updateMany.mockResolvedValueOnce({ count: 0 });
+    const casConflict = await appendSupportCaseTurn(
+      {
+        caseId: "case-stale-cas",
+        authorUserId: "staff-1",
+        sender: "AGENT",
+        body: "Reply racing customer turn",
+        isInternal: false,
+        expectedLastMessageAt: "2026-10-10T10:01:00.000Z",
+      },
+      now,
+    );
+    expect(casConflict).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "NEW_CUSTOMER_MESSAGE",
+    });
+    expect(mockTx.supportCase.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "case-stale-cas",
+          OR: [
+            { lastMessageAt: null },
+            {
+              lastMessageAt: { lte: new Date("2026-10-10T10:01:00.000Z") },
+            },
+          ],
         }),
       }),
     );

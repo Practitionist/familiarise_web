@@ -63,9 +63,11 @@ export default function GrievanceRedressalPage() {
                     {GRIEVANCE_OFFICER.email}
                   </a>
                 </p>
-                <p>
-                  <strong>Phone:</strong> {GRIEVANCE_OFFICER.phone}
-                </p>
+                {GRIEVANCE_OFFICER.phone ? (
+                  <p>
+                    <strong>Phone:</strong> {GRIEVANCE_OFFICER.phone}
+                  </p>
+                ) : null}
                 <p>
                   <strong>Jurisdiction:</strong> {COMPANY_INFO.jurisdiction}
                 </p>

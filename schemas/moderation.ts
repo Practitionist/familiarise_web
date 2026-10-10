@@ -1,5 +1,6 @@
-import { ModerationReportType } from "@prisma/client";
+import { ModerationReportStatus, ModerationReportType } from "@prisma/client";
 import { z } from "zod";
+import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
 import { MAX_TEXT_LENGTH, MAX_TITLE_LENGTH } from "@/lib/validation/limits";
 
 /** The reasons an expert or host organization admin can pick when reporting a review. */
@@ -59,20 +60,19 @@ export type CreateReportInput = z.infer<typeof CreateReportSchema>;
  * Terminal dispositions (DISMISSED / ACTION_TAKEN) must go through `/action`.
  */
 export const PatchReportSchema = z.object({
-  status: z.enum(["PENDING", "UNDER_REVIEW", "ESCALATED"]),
+  status: z.enum([
+    "PENDING",
+    "UNDER_REVIEW",
+    "ESCALATED",
+  ] as const satisfies readonly ModerationReportStatus[]),
   resolution: z.string().optional(),
 });
 
 export type PatchReportInput = z.infer<typeof PatchReportSchema>;
 
 export const PatchFeedbackSchema = z.object({
-  status: z.enum([
-    "PENDING",
-    "ACKNOWLEDGED",
-    "IN_PROGRESS",
-    "RESOLVED",
-    "CLOSED",
-  ]),
+  status: PlatformFeedbackStatusSchema,
+  staffNote: z.string().optional(),
 });
 
 export type PatchFeedbackInput = z.infer<typeof PatchFeedbackSchema>;

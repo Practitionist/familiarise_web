@@ -100,31 +100,31 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (
-      !validatedData.isInternal &&
-      validatedData.expectedLastMessageAt &&
-      ticket.lastMessageAt &&
-      ticket.lastMessageAt.getTime() >
-        new Date(validatedData.expectedLastMessageAt).getTime()
-    ) {
-      return NextResponse.json(
-        {
-          code: "NEW_CUSTOMER_MESSAGE",
-          error:
-            "Customer replied since you opened this case. Review their message before sending.",
-        },
-        { status: 409 },
-      );
-    }
-
     const now = new Date();
-    const response = await prisma.$transaction(
+    const expectedDate =
+      !validatedData.isInternal && validatedData.expectedLastMessageAt
+        ? new Date(validatedData.expectedLastMessageAt)
+        : undefined;
+    const collisionGuard = expectedDate
+      ? {
+          OR: [
+            { lastMessageAt: null },
+            { lastMessageAt: { lte: expectedDate } },
+          ],
+        }
+      : {};
+
+    const txOutcome = await prisma.$transaction(
       async (tx) => {
         if (!validatedData.isInternal) {
           const picked =
             ticket.status === "OPEN"
               ? await tx.supportTicket.updateMany({
-                  where: { id: ticketId, status: "OPEN" },
+                  where: {
+                    id: ticketId,
+                    status: "OPEN",
+                    ...collisionGuard,
+                  },
                   data: {
                     status: "IN_PROGRESS",
                     assignedToId: ticket.assignedToId ?? session.user.id,
@@ -132,13 +132,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
                   },
                 })
               : { count: 0 };
-          if (picked.count === 0) {
+          if ((picked?.count ?? 0) === 0) {
             const touched = await tx.supportTicket.updateMany({
-              where: { id: ticketId, status: { not: "CLOSED" } },
+              where: {
+                id: ticketId,
+                status: { not: "CLOSED" },
+                ...collisionGuard,
+              },
               data: { lastMessageAt: now },
             });
-            if (touched.count === 0) {
-              return null;
+            if ((touched?.count ?? 0) === 0) {
+              if (expectedDate) {
+                const current = await tx.supportTicket.findUnique({
+                  where: { id: ticketId },
+                  select: { lastMessageAt: true },
+                });
+                const latestLastMessageAt =
+                  current?.lastMessageAt ?? ticket.lastMessageAt;
+                if (
+                  latestLastMessageAt &&
+                  latestLastMessageAt.getTime() > expectedDate.getTime()
+                ) {
+                  return {
+                    ok: false as const,
+                    code: "NEW_CUSTOMER_MESSAGE" as const,
+                  };
+                }
+              }
+              return { ok: false as const, code: "CLOSED" as const };
             }
           }
         }
@@ -173,7 +194,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           );
         }
 
-        return created;
+        return { ok: true as const, created };
       },
       {
         maxWait: ALLOCATION_TX_MAX_WAIT_MS,
@@ -181,12 +202,24 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       },
     );
 
-    if (!response) {
+    if (!txOutcome.ok) {
+      if (txOutcome.code === "NEW_CUSTOMER_MESSAGE") {
+        return NextResponse.json(
+          {
+            code: "NEW_CUSTOMER_MESSAGE",
+            error:
+              "Customer replied since you opened this case. Review their message before sending.",
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: "Cannot send a public reply to a closed ticket" },
         { status: 409 },
       );
     }
+
+    const response = txOutcome.created;
 
     // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {

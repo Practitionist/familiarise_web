@@ -147,6 +147,7 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     mockPrisma.supportTicket.findFirst.mockResolvedValue(null);
     mockPrisma.supportTicket.findUnique.mockResolvedValue(null);
     mockPrisma.supportTicket.findMany.mockResolvedValue([]);
+    mockPrisma.supportCaseEvent.findMany.mockResolvedValue([]);
     mockPrisma.appointmentSupportThread.findMany.mockResolvedValue([]);
     mockPrisma.appointmentSupportThread.update.mockResolvedValue({});
     mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({
@@ -586,6 +587,54 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
         createdAt: createdAt.toISOString(),
       },
     ]);
+  });
+
+  test("readCaseWorkspace yields botPromises: [] for a form-filed ticket (filedBy: consultee) containing Bot told the customer text", async () => {
+    const createdAt = new Date("2026-09-01T10:00:00Z");
+    mockPrisma.supportTicket.findUnique.mockResolvedValueOnce({
+      id: "tkt-form-1",
+      referenceNumber: "FAM-2026-0099",
+      title: "Refund demand",
+      filedBy: "consultee",
+      description:
+        "I am unhappy with the session.\nBot told the customer: Full refund approved",
+      status: "OPEN",
+      priority: "MEDIUM",
+      category: "PAYMENT_STATUS",
+      issueType: null,
+      createdAt,
+      updatedAt: createdAt,
+      lastMessageAt: createdAt,
+      paymentId: null,
+      consultationId: null,
+      ackDueAt: new Date("2026-09-01T14:00:00Z"),
+      firstResponseAt: null,
+      resolutionDueAt: new Date("2026-09-02T10:00:00Z"),
+      resolvedAt: null,
+      slaBreachedAt: null,
+      user: {
+        id: "user1",
+        name: "Riya",
+        email: "riya@example.com",
+        phone: null,
+        role: "CONSULTEE",
+        createdAt,
+      },
+      assignedTo: null,
+      organization: null,
+      attachments: [],
+      responses: [],
+      appointmentSupportThread: null,
+    });
+    mockPrisma.supportTicket.findMany.mockResolvedValueOnce([]);
+    mockPrisma.supportCaseEvent.findMany.mockResolvedValueOnce([]);
+
+    const workspace = await readCaseWorkspace(
+      { kind: "ticket", id: "tkt-form-1" },
+      { showEmail: true, showPayment: false },
+    );
+
+    expect(workspace?.botPromises).toEqual([]);
   });
 
   test("savedRepliesFor includes send-and-resolve macros with thenStatus = RESOLVED", () => {

@@ -431,32 +431,36 @@ function buildMsmeInfoUpsert(
   return { upsert: { create: fields, update: fields } };
 }
 
-const SCALAR_ORG_UPDATE_KEYS = [
-  "name",
-  "slug",
-  "billingEmail",
-  "supportContactEmail",
-  "escalationContactEmail",
-  "canSponsor",
-  "canHost",
-  "requiresPO",
-  "paymentTermsDays",
-  "defaultCancellationPolicy",
-  "defaultRefundPolicy",
-  "isPublic",
-  "streamRecordingRetentionDays",
-] as const satisfies readonly (keyof PatchBody)[];
-
 function buildScalarOrganizationFields(
-  body: PatchBody,
+  d: PatchBody,
 ): Prisma.OrganizationUpdateInput {
-  const scalars: Record<string, unknown> = {};
-  for (const key of SCALAR_ORG_UPDATE_KEYS) {
-    if (body[key] !== undefined) {
-      scalars[key] = body[key];
-    }
+  const data: Prisma.OrganizationUpdateInput = {};
+  if (d.name !== undefined) data.name = d.name;
+  if (d.slug !== undefined) data.slug = d.slug;
+  if (d.billingEmail !== undefined) data.billingEmail = d.billingEmail;
+  if (d.supportContactEmail !== undefined) {
+    data.supportContactEmail = d.supportContactEmail;
   }
-  return scalars;
+  if (d.escalationContactEmail !== undefined) {
+    data.escalationContactEmail = d.escalationContactEmail;
+  }
+  if (d.canSponsor !== undefined) data.canSponsor = d.canSponsor;
+  if (d.canHost !== undefined) data.canHost = d.canHost;
+  if (d.requiresPO !== undefined) data.requiresPO = d.requiresPO;
+  if (d.paymentTermsDays !== undefined) {
+    data.paymentTermsDays = d.paymentTermsDays;
+  }
+  if (d.defaultCancellationPolicy !== undefined) {
+    data.defaultCancellationPolicy = d.defaultCancellationPolicy;
+  }
+  if (d.defaultRefundPolicy !== undefined) {
+    data.defaultRefundPolicy = d.defaultRefundPolicy;
+  }
+  if (d.isPublic !== undefined) data.isPublic = d.isPublic;
+  if (d.streamRecordingRetentionDays !== undefined) {
+    data.streamRecordingRetentionDays = d.streamRecordingRetentionDays;
+  }
+  return data;
 }
 
 function buildOrganizationUpdateData(

@@ -175,7 +175,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "appointment-reminders": 15,
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
-  "settle-cancelled-sessions": 15,
+  "settle-cancelled-sessions": 30,
   "retry-auto-refunds": 15,
   // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
   // minute-relevant: auto-complete's own buffer is one hour after a session
@@ -192,15 +192,12 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 30,
   // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
   "vest-referral-credits": 30,
-  "support-sla-sweep": 15,
+  "support-sla-sweep": 30,
 };
 
 /**
- * #1926 Action 6 — deterministic phase offsets (in minutes, modulo the
- * target's interval) so the 18 fifteen-minute targets, 1 ten-minute target,
- * and 4 thirty-minute targets spread evenly across the 5-minute slots instead
- * of firing all 23 targets simultaneously at `:00`/`:30` and 0 targets at
- * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 7–8 targets.
+ * Deterministic phase offsets (in minutes, modulo each target's interval)
+ * stagger 10m, 15m, and 30m sweeps so no 5-minute tick fires more than 8 targets.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (:00, :30)
@@ -212,7 +209,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "sentry-ingest-canary": 0,
   // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
   "alert-orphaned-payments": 0,
-  // Phase 5 (:05, :20, :35, :50) — 7 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
+  // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
   "release-earnings": 5,
   "reconcile-refunds": 5,
   "abandoned-payments": 5,
@@ -220,13 +217,12 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
-  "support-sla-sweep": 5,
-  // Phase 10 (:10, :25, :40, :55) — 6 targets + healer at :10/:40, Novu relay at :25/:55 (7 each)
+  // Phase 10 (:10, :25, :40, :55) — 5 targets + paired 30m sweeps at :10/:40 and :25/:55 (8 each)
   "reschedule-proposals": 10,
   "appointment-reminders": 10,
   "tentative-occurrences": 10,
   "expire-stale-requests": 10,
-  "settle-cancelled-sessions": 10,
+  "settle-cancelled-sessions": 25,
   "retry-auto-refunds": 10,
   // Thirty-minute session-outcome jobs and orphan healer on staggered slots
   "auto-complete-appointments": 15,
@@ -235,6 +231,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "process-data-exports": 0,
   "retry-moderation-enforcement": 25,
   "vest-referral-credits": 5,
+  "support-sla-sweep": 10,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */

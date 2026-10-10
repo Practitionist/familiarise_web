@@ -13,6 +13,10 @@ lib/support/
 ├── platform-flows.ts     # 5 stateless platform flows + reason→issueType taxonomy
 ├── priority.ts           # single reason→priority policy map
 ├── create-ticket.ts      # THE ticket factory + session-scope guard + dedup helpers
+├── case-service.ts       # unified SupportCase lifecycle, ADR 20 redaction, CSAT & compliance
+├── sla.ts                # statutory ceilings, priority tightening & pause arithmetic
+├── sla-sweep.ts          # 30-min cron sweep: SLA warn/breach, 28d auto-close, dispute alerts
+├── reference.ts          # IST-year FAM-YYYY-NNNNNN reference allocator
 ├── context.ts            # stage (UPCOMING/LIVE/COMPLETED), endsAt, isOrgOperator
 ├── service.ts            # runSupportTurn: reason/priority/org attribution,
 │                         # lastMessageAt maintenance, ORG_PARTY_CATEGORIES
@@ -30,8 +34,14 @@ lib/support/error-copy.ts # client-side code→friendly-copy mapper
 `AppointmentSupportThread` is one conversation per `(appointmentId, userId)`. Intents are **stage-gated** like an order state: cancel and reschedule are offered only while the booking is upcoming; no-show, quality and recording intents only after completion. No-show has attendee **and** provider variants. Terminals carry machine-readable `reason`s (`provider_no_show`, `double_charge`, `quality_*`, and so on) that drive priority and land in the ticket description on escalation.
 
 - Route: `app/api/appointments/[appointmentId]/support/route.ts` (`GET` the thread plus the server-gated intents, `POST` one turn).
-- The page: `app/support/_components/SupportRequestCasePage.tsx`, at `…/support/requests/[caseKey]` in the consultee, consultant, organization and org-workspace trees. #1527 round 5 replaced the earlier drawer, `SupportThreadSheet.tsx`, with this full page, keyed by booking (`b_<appointmentId>`) until the first message creates the thread row (see [the support-inbox ADR](../decisions/2026-09-27-support-inbox-and-case-pages.md)).
+- The page: `app/support/_components/SupportRequestCasePage.tsx`, at `…/support/requests/[caseKey]` in the consultee, consultant, organization and org-workspace trees, keyed by booking (`b_<appointmentId>`) until the first message creates the thread row (see [the support-inbox ADR](../decisions/2026-09-27-support-inbox-and-case-pages.md)).
 - Status card: `components/support/AppointmentSupportStatusCard.tsx`.
+
+> [!IMPORTANT]
+> **Explicit Owner Decision (`2026-10-10`) — Three-Strikes Bot Auto-Escalation & Unthrottled Booking Turns (`SFR-02-04`)**:
+>
+> 1. After **3 consecutive unrecognised user turns** without flow cursor progress, `walkFlow` in `lib/support/flow-walk.ts` automatically escalates the conversation (`escalate: true`, `reason: "repeated_unrecognized"`).
+> 2. Booking-bot turns (`POST /api/appointments/[appointmentId]/support`) spend **zero** rate-limit budget — protected solely by `assertBodySize(req)` and appointment participant authorization — so multi-step guided trees and typed clarifications never hit HTTP `429`.
 
 ### Platform scope (stateless intake)
 
@@ -44,16 +54,16 @@ Platform issues (account, payments, site technical, operator billing) have no ap
 
 ### The hub surfaces
 
-Five surfaces read or write this subsystem, and the table below names each one with the file that owns it and the scope it is allowed to see. The two rating surfaces sit here because they share the hub's authorization gate; their own behaviour is documented under [`docs/feedback/`](../feedback/README.md) and [`docs/reviews/`](../reviews/README.md).
+Six surfaces read or write this subsystem, and the table below names each one with the file that owns it and the scope it is allowed to see. The two rating surfaces sit here because they share the hub's authorization gate; their own behaviour is documented under [`docs/feedback/`](../feedback/README.md) and [`docs/reviews/`](../reviews/README.md).
 
-| Surface                          | File                                                                                                                                | Scope                                                                                                                                                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Consultee/consultant Support tab | `components/dashboard/shared/support/SupportHub.tsx`                                                                                | Sessions subtab (recent-session picker plus conversation buckets, each opening its own case page) and Platform subtab                                                                                                                       |
-| Back-office Support inbox        | `components/dashboard/backoffice/support/CaseWorkspace.tsx` (#1527 round 5, replacing the separate Tickets and Conversations pages) | `tickets.manage`: full transcripts, reply, resolve and close, over both tickets and not-yet-escalated conversations as one list of cases. List rows name the requester only; email and phone appear on the case detail, behind `users.read` |
-| Org triage — threads             | `app/dashboard/organization/[orgId]/support/OrgSupportTriage.tsx` + `GET /api/organizations/[orgId]/support-threads`                | `operations.read`: a **metadata-only** thread list with no bodies ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md))                                                                                   |
-| Org triage — quality             | the same page + `GET /api/organizations/[orgId]/feedback-summary`                                                                   | `quality.read`: aggregates only, per consultant, floored and secondarily suppressed. See [the org quality signal](../feedback/02-org-quality-signal.md)                                                                                     |
-| CSAT row                         | `components/reviews/SessionRatingRow.tsx`                                                                                           | The private attendee rating rendered inline on each session row in `SessionTimeline`, one rating per call. See [feedback architecture](../feedback/01-architecture.md)                                                                      |
-| Public review composer           | `components/reviews/ProfileReviewComposer.tsx`                                                                                      | Written on the expert's profile as a client island. See [reviews architecture](../reviews/01-architecture.md)                                                                                                                               |
+| Surface                          | File                                                                                                                 | Scope                                                                                                                                                                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Consultee/consultant Support tab | `components/dashboard/shared/support/SupportHub.tsx`                                                                 | Sessions subtab (recent-session picker plus conversation buckets, each opening its own case page) and Platform subtab                                                                                                                       |
+| Back-office Support inbox        | `components/dashboard/backoffice/support/CaseWorkspace.tsx`                                                          | `tickets.manage`: full transcripts, reply, resolve and close, over both tickets and not-yet-escalated conversations as one list of cases. List rows name the requester only; email and phone appear on the case detail, behind `users.read` |
+| Org triage — threads             | `app/dashboard/organization/[orgId]/support/OrgSupportTriage.tsx` + `GET /api/organizations/[orgId]/support-threads` | `operations.read`: a **metadata-only** thread list with no bodies ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md))                                                                                   |
+| Org triage — quality             | the same page + `GET /api/organizations/[orgId]/feedback-summary`                                                    | `quality.read`: aggregates only, per consultant, floored and secondarily suppressed. See [the org quality signal](../feedback/02-org-quality-signal.md)                                                                                     |
+| CSAT row                         | `components/reviews/SessionRatingRow.tsx`                                                                            | The private attendee rating rendered inline on each session row in `SessionTimeline`, one rating per call. See [feedback architecture](../feedback/01-architecture.md)                                                                      |
+| Public review composer           | `components/reviews/ProfileReviewComposer.tsx`                                                                       | Written on the expert's profile as a client island. See [reviews architecture](../reviews/01-architecture.md)                                                                                                                               |
 
 ## The error envelope (the one contract)
 
@@ -82,17 +92,34 @@ Every support-surface error response is `{ error, code, detail? }`, produced by 
 
 Every support notification carries `NotificationScope` for attribution and filing. Deep links follow the `lib/novu/resolve-href.ts` doctrine: org-hosted threads link to `/dashboard/organization/<id>/appointments`, and B2C stays a bare `/dashboard` so the capability router picks the viewer's tree.
 
-Both directions of a ticket conversation page someone. A user replying into an escalated thread, or onto a ticket, previously told nobody, so staff only learned of it by reopening the inbox; `notifyStaffOfTicketActivity` in `lib/support/create-ticket.ts` closes that half. It prefers the assignee and falls back to the whole staff roster only when the ticket is unassigned, because fanning every reply at every staff member is how a queue's notifications get muted. In the other direction, the staff thread `PATCH` that resolves or closes a thread tells the user, who is the only party that cannot see the ops queue. Where a reference has been minted it leads the notification title, since that is the string the user will quote back.
+Both directions of a ticket conversation page someone. A user replying into an escalated thread, or onto a ticket, tells the assignee (falling back to the whole staff roster only when unassigned) via `notifyStaffOfTicketActivity` in `lib/support/create-ticket.ts`. In the other direction, the staff thread `PATCH` that resolves or closes a thread tells the user. Where a reference has been minted it leads the notification title, since that is the string the user will quote back.
+
+## Background SLA, auto-close, and dispute sweep
+
+While breach state itself is always computed on read via `slaStateOf(clock, now)`, proactive escalation and lifecycle cleanup run on a scheduled sweep: `runSupportSlaSweep` (`lib/support/sla-sweep.ts`), invoked every **30 minutes at offset `:10`** on `netlify/functions/cron-tick.mts` (`limit=20`) behind `withCronLock("support-sla-sweep")`:
+
+- **Arm 1 — SLA warnings & breaches:** stages idempotent notifications (`dedupeKey: sla:{id}:{ack|res}:{warn|breach}`), skipping paused cases (`awaitingUserSince !== null`), emailing org `escalationContactEmail` strictly on `"breach"`, bounded to open rows due within the last 30 days.
+- **Arm 2 — 28-day auto-close:** moves stale `RESOLVED` rows (`resolvedAt <= now - 28d`) to `CLOSED` and atomically closes linked `AppointmentSupportThread` rows (`status: "CLOSED"`, `activeChannel: "SELF_SERVE"`).
+- **Arm 3 — Dispute deadline reminders:** alerts `ADMIN` operators on actionable payment disputes at `T-72h` and `T-24h` (`dedupeKey: dispute-due:{id}:{72|24}` on `NOVU_WORKFLOWS.DISPUTE_UPDATED`).
 
 ## Deliberately out of scope
 
-An AI resolver, a database-stored flow editor, email intake, org admins as notification _recipients_ for member complaints, a per-org Novu inbox, and mirroring support chat into Stream (support is Postgres only; the PR #1195 description carries the reasoning).
-
-SLA timers are implemented and stored: see [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md), which also describes the badges, the tile and the deadline-first default order that render breach state. What remains out of scope is the _sweep_. There is no cron that finds breached tickets and escalates or pages on them, because breach state is derived on read rather than stored.
+An AI resolver, a database-stored flow editor, email intake, org admins as notification _recipients_ for member complaints, a per-org Novu inbox, and mirroring support chat into Stream (support is Postgres only).
 
 ## Related
 
 - [02-the-grid.md](02-the-grid.md) — where support sits beside feedback and reviews.
+- [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) — IST-year `FAM-` references, priority tightening, and SLA clocks.
 - [06-invariants-and-testing.md](06-invariants-and-testing.md) — the rules the code above must keep.
 - [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — statuses, reopening, mirroring and the compare-and-set guards.
 - [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md) — intake, callbacks, receipts, attachments and rate limits.
+- [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) — unified `SupportCase` scaffold, operator 2FA, ADR 20 redaction, CSAT, compliance report, and `runSupportSlaSweep`.
+
+## Deprecated & Superseded Approaches
+
+- **Per-appointment slide-over drawer (`SupportThreadSheet.tsx`)**: replaced by the full-page request surface (`SupportRequestCasePage.tsx` keyed by `b_<appointmentId>`) so multi-turn transcripts, file attachments, and SLA countdown badges render identically across consultee, consultant, and organization workspaces.
+- **Separate back-office Tickets and Conversations tables**: replaced by unified `CaseWorkspace.tsx` (`tickets.manage`) so operators triage pre-escalation conversations and escalated tickets in one deadline-sorted queue.
+- **Passive read-only SLA evaluation without background sweeps**: previously, breached clocks surfaced only when an operator manually loaded the queue. Superseded by `runSupportSlaSweep` (`lib/support/sla-sweep.ts`) running every 30 minutes at offset `:10`, while keeping breach state derived purely on read (`slaStateOf`).
+- **Unbounded re-prompting on unrecognised bot free text**: previously, unmatched turns re-rendered the same prompt options indefinitely unless the customer typed an explicit escalation keyword. Superseded by three-strikes auto-escalation (`reason: "repeated_unrecognized"`) in `walkFlow`.
+- **Rate-limiting appointment bot turns**: previously shared customer write limiters risked `429` rejections mid-walk; superseded by unthrottled turns protected by `assertBodySize(req)` and `authorizeAppointment`.
+- **Unauthenticated or non-2FA staff access on case routes**: superseded by mandatory `requireApiAuth` (`428 PRECONDITION_REQUIRED` until 2FA is active) across all unified support case endpoints.

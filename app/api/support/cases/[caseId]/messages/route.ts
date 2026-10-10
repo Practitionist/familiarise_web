@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isPrivileged, requireApiSession } from "@/lib/auth-helpers";
-import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import {
+  spamLimiter as ticketResponseLimiter,
+  applyRateLimit,
+} from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
@@ -32,16 +35,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const { caseId } = id.data;
 
   try {
-    const auth = await requireApiSession();
+    const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
     const staff = isPrivileged(user.role);
 
-    const rl = await applyRateLimit(
-      spamLimiter,
-      `support-case-messages:${user.id}`,
-    );
-    if (rl) return rl;
+    if (!staff) {
+      const rl = await applyRateLimit(
+        ticketResponseLimiter,
+        `ticket-response:${user.id}`,
+      );
+      if (rl) return rl;
+    }
 
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;

@@ -19,11 +19,6 @@ import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
-import {
-  spamLimiter,
-  supportTurnLimiter,
-  applyRateLimit,
-} from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import {
@@ -161,22 +156,6 @@ export async function POST(
         },
       });
     }
-
-    const existingThread = await prisma.appointmentSupportThread.findUnique({
-      where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
-      select: { activeChannel: true },
-    });
-    const onHumanChannel = existingThread?.activeChannel === "HUMAN";
-    const mayEscalate =
-      !onHumanChannel &&
-      (Boolean(parsed.data.userMessage) ||
-        parsed.data.chosenOptionId === "human" ||
-        parsed.data.category === "OTHER");
-    const rl = await applyRateLimit(
-      mayEscalate ? spamLimiter : supportTurnLimiter,
-      `appt-support:${auth.userId}`,
-    );
-    if (rl) return rl;
 
     if (
       auth.isOrgParty &&

@@ -316,11 +316,13 @@ export async function POST(req: NextRequest) {
 
       for (let attempt = 0; attempt < 3; attempt++) {
         const currentCount = candidate.reportCount;
-        const appendedDescription = `${candidate.description ?? ""}\nReporter ${currentCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
-        const cappedAppended = appendedDescription.slice(
+        const baseDescription = candidate.description ?? "";
+        const newestLine = `\nReporter ${currentCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
+        const keptPrefix = baseDescription.slice(
           0,
-          MAX_AGGREGATED_DESCRIPTION_LENGTH,
+          Math.max(0, MAX_AGGREGATED_DESCRIPTION_LENGTH - newestLine.length),
         );
+        const cappedDescription = keptPrefix + newestLine;
 
         const casResult = await prisma.moderationReport.updateMany({
           where: {
@@ -330,7 +332,7 @@ export async function POST(req: NextRequest) {
           },
           data: {
             reportCount: { increment: 1 },
-            description: cappedAppended,
+            description: cappedDescription,
             ...(candidate.contentText === null && backfillContentText
               ? { contentText: backfillContentText }
               : {}),

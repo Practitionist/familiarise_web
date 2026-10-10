@@ -145,23 +145,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Cleanup job failed",
       }),
 
-    // @cleanup-twin alert-dispute-deadlines
-    "alert-dispute-deadlines": () =>
-      cleanupRoute({
-        job: "alert-dispute-deadlines",
-        run: async () => {
-          const { alertDisputeDeadlines } =
-            await import("@/scripts/disputes/alert-dispute-deadlines");
-          return alertDisputeDeadlines();
-        },
-        summarize: (r) => ({
-          urgentCount: r.urgentCount,
-          criticalCount: r.criticalCount,
-        }),
-        status: (r) => (r.criticalCount > 0 ? 207 : 200),
-        failureMessage: "Failed to check dispute deadlines",
-      }),
-
     // @cleanup-twin alert-orphaned-payments
     "alert-orphaned-payments": () =>
       cleanupRoute({

@@ -71,11 +71,7 @@ jest.mock("../../lib/support/context", () => ({
 
 import { NextRequest } from "next/server";
 import { authorizeAppointment } from "../../lib/api/appointment-access";
-import {
-  applyRateLimit,
-  spamLimiter,
-  supportTurnLimiter,
-} from "../../lib/rate-limit";
+import { applyRateLimit } from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
@@ -180,31 +176,7 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
-  it("uses supportTurnLimiter rather than spamLimiter on benign button steps", async () => {
-    mockedRunTurn.mockResolvedValue({
-      messages: [{ sender: "BOT", body: "Next option" }],
-      nextNodeId: "n3",
-      actions: [],
-    });
-    for (let i = 0; i < 6; i++) {
-      const res = await POST(req("POST", { chosenOptionId: `opt_${i}` }), {
-        params: Promise.resolve({ appointmentId: SLUG }),
-      });
-      expect(res.status).toBe(200);
-    }
-    expect(mockedRunTurn).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).toHaveBeenCalledWith(
-      supportTurnLimiter,
-      "appt-support:u1",
-    );
-    expect(applyRateLimit).not.toHaveBeenCalledWith(
-      spamLimiter,
-      expect.anything(),
-    );
-  });
-
-  it("allows free-text turns while applying spamLimiter against automated spam bursts", async () => {
+  it("never throttles conversation turns (SFR-02-04)", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [],
       nextNodeId: null,
@@ -217,11 +189,29 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).toHaveBeenCalledWith(
-      expect.anything(),
-      "appt-support:u1",
-    );
+    expect(applyRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("never calls applyRateLimit across typed turns followed by human chip (SFR-02-04)", async () => {
+    mockedRunTurn.mockResolvedValue({
+      messages: [{ sender: "BOT", body: "How can I help?" }],
+      nextNodeId: "n2",
+      actions: [],
+    });
+    const payloads = [
+      { userMessage: "I could not join the call" },
+      { userMessage: "The host never showed up" },
+      { userMessage: "Please help resolve this" },
+      { chosenOptionId: "human" },
+    ];
+    for (const payload of payloads) {
+      const res = await POST(req("POST", payload), {
+        params: Promise.resolve({ appointmentId: SLUG }),
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(mockedRunTurn).toHaveBeenCalledTimes(payloads.length);
+    expect(applyRateLimit).not.toHaveBeenCalled();
   });
 
   it("passes the customer's urgent flag through to the hand-off", async () => {

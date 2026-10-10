@@ -586,48 +586,10 @@ enum SupportFlowOutcomeKind {
   ESCALATED
 }
 
-enum SupportCaseStatus {
-  OPEN
-  IN_PROGRESS
-  ESCALATED
-  ON_HOLD
-  RESOLVED
-  CLOSED
-}
-
-enum SupportCaseKind {
-  INCIDENT
-  PROBLEM
-}
-
-enum SupportSubjectType {
-  APPOINTMENT
-  OCCURRENCE
-  PAYMENT
-  REFUND
-  INVOICE
-  ORGANIZATION
-  ACCOUNT
-}
-
-enum SupportCaseEventKind {
-  CREATED
-  STATUS_CHANGED
-  PRIORITY_CHANGED
-  ASSIGNED
-  UNASSIGNED
-  VISIBILITY_CHANGED
-  LINKED_PROBLEM
-  DUPLICATE_CLOSED
-  REOPENED
-  AUTO_CLOSED
-  CSAT_RATED
-}
-
 /// Unified support case owning the transcript, SLA clocks, FAM reference, flow cursor,
 /// callback schedule, and resolution CSAT. Never declare an @@index or @@unique on the
-/// exact 4-tuple [appointmentId, appointmentOccurrenceId, requesterUserId, category] so
-/// prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
+/// exact 5-tuple [appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category]
+/// so prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
 model SupportCase {
   id              String            @id @default(uuid())
   referenceNumber String            @unique @db.VarChar(20)
@@ -648,9 +610,9 @@ model SupportCase {
   incidents     SupportCase[] @relation("ProblemIncidents")
 
   requesterUserId String
-  requester       User   @relation("SupportCaseRequester", fields: [requesterUserId], references: [id], onDelete: Restrict)
+  requester       User   @relation("SupportCaseRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
   submitterUserId String
-  submitter       User   @relation("SupportCaseSubmitter", fields: [submitterUserId], references: [id], onDelete: Restrict)
+  submitter       User   @relation("SupportCaseSubmitter", fields: [submitterUserId], references: [id], onDelete: Cascade)
 
   organizationId String?
   organization   Organization? @relation("SupportCaseByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -749,6 +711,44 @@ model SupportCaseEvent {
   @@index([caseId, createdAt])
   @@index([legacyTicketId, createdAt])
   @@index([actorId])
+}
+
+enum SupportCaseStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum SupportCaseKind {
+  INCIDENT
+  PROBLEM
+}
+
+enum SupportSubjectType {
+  APPOINTMENT
+  OCCURRENCE
+  PAYMENT
+  REFUND
+  INVOICE
+  ORGANIZATION
+  ACCOUNT
+}
+
+enum SupportCaseEventKind {
+  CREATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  VISIBILITY_CHANGED
+  LINKED_PROBLEM
+  DUPLICATE_CLOSED
+  REOPENED
+  AUTO_CLOSED
+  CSAT_RATED
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public

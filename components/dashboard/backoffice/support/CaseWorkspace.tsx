@@ -227,8 +227,8 @@ export function CaseWorkspace({
   const markDuplicate = async (reference: string) => {
     try {
       await reply.mutateAsync({
-        message: `Duplicate of ${reference}.`,
-        note: true,
+        message: `We've merged this into your active support request ${reference} so everything stays in one thread.`,
+        note: false,
       });
       const fresh = await query.refetch();
       if (fresh.isError) throw fresh.error;

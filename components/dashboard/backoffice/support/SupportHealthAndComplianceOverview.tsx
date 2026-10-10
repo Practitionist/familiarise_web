@@ -43,6 +43,7 @@ const ComplianceReportPayloadSchema = z.object({
   received: z.number(),
   acknowledgedWithin24h: z.number(),
   disposedWithin15d: z.number(),
+  grievances: z.number().optional(),
   appealed: z.number(),
   cases: z.array(ComplianceReportCaseRowSchema),
 });
@@ -117,8 +118,10 @@ export function SupportHealthAndComplianceOverview({
     const link = document.createElement("a");
     link.href = url;
     link.download = `familiarise-grievance-report-${selectedYear}-${String(selectedMonth).padStart(2, "0")}.csv`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   return (

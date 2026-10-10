@@ -168,8 +168,6 @@ export async function runSupportTurn(
     category = input.category;
     currentNodeId = null;
   }
-  const orgRequestedHuman =
-    Boolean(input.isOrgParty) && input.category === "OTHER";
   if (input.isOrgParty && !ORG_PARTY_CATEGORIES.has(category)) {
     category = "ORG_ADMIN_DISPUTE";
     currentNodeId = null;
@@ -180,31 +178,6 @@ export async function runSupportTurn(
     !(thread.status === "RESOLVED" && input.category)
   ) {
     return persistHumanTurn(thread, input.userMessage);
-  }
-
-  if (orgRequestedHuman) {
-    return escalate(
-      ctx,
-      thread.id,
-      thread.supportTicketId,
-      "ORG_ADMIN_DISPUTE",
-      {
-        messages: [
-          {
-            sender: "SYSTEM",
-            body: "Connecting you with our support team.",
-          },
-        ],
-        nextNodeId: null,
-        actions: [],
-        resolved: false,
-        escalate: true,
-        chosenLabel: "Talk to a person",
-      },
-      input.userMessage,
-      "org_operator_human",
-      input.urgent,
-    );
   }
 
   const flow = flowForCategory(ctx, category);

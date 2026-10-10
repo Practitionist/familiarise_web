@@ -14,8 +14,9 @@ import prisma, {
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { stageBell } from "@/lib/novu/stage-bell";
 import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
-import { notificationScope } from "@/lib/novu/workflows";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
@@ -29,6 +30,8 @@ import { UpdateSupportTicketSchema } from "@/schemas/support";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
+
+const TWENTY_FOUR_HOURS_MS = 24 * 3_600_000;
 
 const StaffPatchSupportTicketSchema = UpdateSupportTicketSchema.extend({
   note: z.string().trim().max(MAX_TEXT_LENGTH).optional(),
@@ -568,6 +571,33 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           trimmedNote,
           now,
         );
+
+        if (
+          validatedData.status === "RESOLVED" &&
+          existing.status !== "RESOLVED"
+        ) {
+          const csatDedupeKey = `csat:${ticketId}:${now.toISOString()}`;
+          const csatArgs = {
+            workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+            recipients: [existing.userId],
+            payload: {
+              ticketId,
+              reference: existing.referenceNumber ?? undefined,
+              ticketTitle: existing.title || "Support Ticket",
+              status: "Resolved — rate your resolution",
+              statusCode: "RESOLVED",
+              dashboardUrl: supportRequestHref(
+                caseKeyOf({ kind: "ticket", id: ticketId }),
+                existing.organizationId,
+              ),
+              ...notificationScope(existing.organizationId),
+            },
+            dedupeKey: csatDedupeKey,
+            entityRef: csatDedupeKey,
+            notBefore: new Date(now.getTime() + TWENTY_FOUR_HOURS_MS),
+          };
+          await stageBell(tx, csatArgs);
+        }
 
         return tx.supportTicket.findUniqueOrThrow({
           where: { id: ticketId },

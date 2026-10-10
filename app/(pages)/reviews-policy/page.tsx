@@ -86,13 +86,16 @@ export default function ReviewsPolicyPage() {
               <ul>
                 <li>
                   <strong>
-                    1:1 Consultations &amp; Subscriptions (`ONE_TO_ONE`):
+                    1:1 Consultations &amp; Subscriptions (
+                    <code>ONE_TO_ONE</code>):
                   </strong>{" "}
                   Reflects individual advisory and mentoring bookings.
                 </li>
                 <li>
-                  <strong>Group Programs (`GROUP`):</strong> Reflects
-                  interactive cohorts and live webinars.
+                  <strong>
+                    Group Programs (<code>GROUP</code>):
+                  </strong>{" "}
+                  Reflects interactive cohorts and live webinars.
                 </li>
               </ul>
               <p>

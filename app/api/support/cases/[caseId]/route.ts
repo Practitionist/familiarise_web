@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   isPrivileged,
-  requireApiSession,
+  requireApiAuth,
   requirePrivilegedAuth,
 } from "@/lib/auth-helpers";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
@@ -39,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const { caseId } = id.data;
 
   try {
-    const auth = await requireApiSession();
+    const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
 

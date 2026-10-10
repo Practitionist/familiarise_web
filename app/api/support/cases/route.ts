@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { isPrivileged, requireApiSession } from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
@@ -11,6 +12,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import {
   CreateSupportCaseObjectSchema,
   SupportCaseStatusSchema,
+  SupportCaseValidationError,
   createOrReuseSupportCase,
   readSupportCaseForViewer,
   refineCreateSupportCaseInput,
@@ -20,9 +22,8 @@ import {
   notifySupportStaff,
 } from "@/lib/support/create-ticket";
 
-const ALLOWED_ORG_SUBMITTER_ROLES = new Set<string>([
+const ALLOWED_ORG_SUBMITTER_ROLES: ReadonlySet<MemberRole> = new Set([
   "OWNER",
-  "ADMIN",
   "MAINTAINER",
 ]);
 
@@ -53,7 +54,7 @@ type ParsedCaseCreationBody = z.infer<typeof StaffCreateCaseBodySchema>;
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireApiSession();
+    const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
     const staff = isPrivileged(user.role);
@@ -399,7 +400,7 @@ async function dispatchCasePostNotifications(
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireApiSession();
+    const auth = await requireApiAuth();
     if (auth.error) return auth.error;
     const { user } = auth.session;
     const staff = isPrivileged(user.role);
@@ -452,6 +453,14 @@ export async function POST(req: NextRequest) {
       { status: result.reused ? 200 : 201 },
     );
   } catch (cause) {
+    if (cause instanceof SupportCaseValidationError) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: cause.message,
+        context: { route: "support.cases", action: "create" },
+      });
+    }
     return supportError({
       status: 500,
       code: "INTERNAL",

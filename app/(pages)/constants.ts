@@ -5,27 +5,36 @@ import {
 
 export const ACK_PROMISE_COPY = `within ${STATUTORY_ACK_HOURS} hours` as const;
 
+export function resolveLiveMailbox(): string {
+  return (
+    process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com"
+  );
+}
+
 export const COMPANY_INFO = {
-  name: "Practitionist",
-  email: "support@familiarisenow.com",
-  supportEmail: "support@familiarisenow.com",
-  phone: "+91-80-4710-8000",
-  jurisdiction: "Bengaluru, Karnataka, India",
+  name: "Practitionist (OPC) Private Limited",
+  email: resolveLiveMailbox(),
+  supportEmail: resolveLiveMailbox(),
+  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
+  jurisdiction:
+    process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India",
 } as const;
 
 export const GRIEVANCE_OFFICER = {
-  name: "Kaustav Ganguly (Grievance Redressal Officer)",
+  name:
+    process.env.NEXT_PUBLIC_GRIEVANCE_OFFICER_NAME?.trim() ||
+    "Grievance Redressal Officer — Practitionist (OPC) Private Limited",
   designation: "Grievance & Nodal Compliance Officer",
-  email: "support@familiarisenow.com",
-  phone: "+91-80-4710-8000",
+  email: resolveLiveMailbox(),
+  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
   ackPromise: ACK_PROMISE_COPY,
   resolutionPromise: `within ${STATUTORY_RESOLUTION_DAYS} days`,
 } as const;
 
 export const POLICY_DATES = {
   privacyLastUpdated: "October 10, 2026",
-  termsLastUpdated: "October 10, 2026",
-  refundLastUpdated: "October 10, 2026",
+  termsLastUpdated: "July 12, 2026",
+  refundLastUpdated: "September 26, 2026",
   grievanceLastUpdated: "October 10, 2026",
   reviewsPolicyLastUpdated: "October 10, 2026",
 } as const;
