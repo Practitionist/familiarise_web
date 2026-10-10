@@ -7,13 +7,13 @@ import type {
   InboxStats,
 } from "@/types/support-case";
 
+import { extractCallbackInfo } from "./callback-info";
 import { caseKeyOf } from "./case-key";
 import { threadTopic, ticketTopic } from "./case-topic";
 import {
   CASE_ORDER_BY,
   INBOX_MAX_DEPTH,
   INBOX_PAGE_SIZE,
-  SLA_ORDER_BY,
   STATS_WINDOW_DAYS,
   THREAD_OPEN_WHERE,
   TICKET_OPEN_WHERE,
@@ -28,13 +28,12 @@ import {
 } from "./inbox-query";
 import { slaStateOf } from "./sla";
 
+export { extractCallbackInfo } from "./callback-info";
+
 const STATS_ROW_CAP = 5000;
 
 const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
   ...CASE_ORDER_BY,
-];
-const slaOrderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
-  ...SLA_ORDER_BY,
 ];
 const threadOrderBy: Prisma.AppointmentSupportThreadOrderByWithRelationInput[] =
   [...CASE_ORDER_BY];
@@ -75,24 +74,153 @@ export function planTitle(a: PlanTitled): string {
 
 // ── The list ────────────────────────────────────────────────────────────
 
+/** List rows name the requester only; email and phone live on the case detail. */
+const USER_SELECT = {
+  id: true,
+  name: true,
+} as const;
+
+const TICKET_ROW_SELECT = {
+  id: true,
+  referenceNumber: true,
+  title: true,
+  description: true,
+  priority: true,
+  category: true,
+  issueType: true,
+  createdAt: true,
+  lastMessageAt: true,
+  ...SLA_SELECT,
+  user: { select: USER_SELECT },
+  assignedTo: { select: { id: true, name: true } },
+  appointmentSupportThread: { select: { id: true } },
+} as const;
+
+const THREAD_ROW_SELECT = {
+  id: true,
+  status: true,
+  activeChannel: true,
+  category: true,
+  createdAt: true,
+  lastMessageAt: true,
+  user: { select: USER_SELECT },
+  appointment: { select: PLAN_TITLE_SELECT },
+} as const;
+
+type TicketInboxSource = Prisma.SupportTicketGetPayload<{
+  select: typeof TICKET_ROW_SELECT;
+}>;
+type ThreadInboxSource = Prisma.AppointmentSupportThreadGetPayload<{
+  select: typeof THREAD_ROW_SELECT;
+}>;
+
+function ticketToInboxRow(t: TicketInboxSource, now: Date): InboxRow {
+  const callback = extractCallbackInfo(t.description, null);
+  return {
+    key: caseKeyOf({ kind: "ticket", id: t.id }),
+    kind: "ticket",
+    scope: t.appointmentSupportThread ? "session" : "platform",
+    requester: {
+      id: t.user.id,
+      name: t.user.name,
+      callbackRequested: callback.callbackRequested,
+    },
+    subject: t.title,
+    reference: t.referenceNumber,
+    topic: ticketTopic(t),
+    status: t.status,
+    priority: t.priority,
+    channel: null,
+    sla: slaStateOf(
+      { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
+      now,
+    ),
+    assignee: t.assignedTo,
+    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
+  };
+}
+
+function threadToInboxRow(t: ThreadInboxSource): InboxRow {
+  return {
+    key: caseKeyOf({ kind: "thread", id: t.id }),
+    kind: "thread",
+    scope: "session",
+    requester: { id: t.user.id, name: t.user.name },
+    subject: `Help with ${planTitle(t.appointment)}`,
+    reference: null,
+    topic: threadTopic(t.category),
+    status: t.status,
+    priority: null,
+    channel: t.activeChannel,
+    sla: null,
+    assignee: null,
+    lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
+  };
+}
+
+const ticketKeySelect = {
+  id: true,
+  lastMessageAt: true,
+  createdAt: true,
+  acknowledgedAt: true,
+  ackDueAt: true,
+  resolutionDueAt: true,
+} as const;
+
+/**
+ * Two reads whose DB orders each agree with `compareCasesBySla`: a single
+ * `ackDueAt` order would rank acknowledged tickets by a deadline the comparator ignores.
+ */
+async function readTicketKeysBySla(
+  ticketWhere: Prisma.SupportTicketWhereInput,
+  depth: number,
+) {
+  const [awaitingAck, rest] = await Promise.all([
+    prisma.supportTicket.findMany({
+      where: {
+        AND: [
+          ticketWhere,
+          { acknowledgedAt: null },
+          { ackDueAt: { not: null } },
+        ],
+      },
+      orderBy: [
+        { ackDueAt: "asc" },
+        { resolutionDueAt: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      take: depth,
+      select: ticketKeySelect,
+    }),
+    prisma.supportTicket.findMany({
+      where: {
+        AND: [
+          ticketWhere,
+          { OR: [{ acknowledgedAt: { not: null } }, { ackDueAt: null }] },
+        ],
+      },
+      orderBy: [
+        { resolutionDueAt: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      take: depth,
+      select: ticketKeySelect,
+    }),
+  ]);
+  return [...awaitingAck, ...rest];
+}
+
 export async function readInboxPage(
   filters: InboxFilters,
   page: number,
-  opts: { showEmail: boolean },
 ): Promise<InboxListResponse> {
   const pageSize = INBOX_PAGE_SIZE;
   const skip = Math.min((Math.max(1, page) - 1) * pageSize, INBOX_MAX_DEPTH);
   const depth = skip + pageSize;
   const ticketWhere = inboxTicketWhere(filters);
   const threadWhere = inboxThreadWhere(filters);
-  const ticketKeySelect = {
-    id: true,
-    lastMessageAt: true,
-    createdAt: true,
-    acknowledgedAt: true,
-    ackDueAt: true,
-    resolutionDueAt: true,
-  } as const;
   const threadKeySelect = {
     id: true,
     lastMessageAt: true,
@@ -101,12 +229,14 @@ export async function readInboxPage(
 
   const [ticketKeys, threadKeys, ticketTotal, threadTotal] = await Promise.all([
     ticketWhere
-      ? prisma.supportTicket.findMany({
-          where: ticketWhere,
-          orderBy: filters.sort === "sla" ? slaOrderBy : orderBy,
-          take: depth,
-          select: ticketKeySelect,
-        })
+      ? filters.sort === "sla"
+        ? readTicketKeysBySla(ticketWhere, depth)
+        : prisma.supportTicket.findMany({
+            where: ticketWhere,
+            orderBy,
+            take: depth,
+            select: ticketKeySelect,
+          })
       : [],
     threadWhere
       ? prisma.appointmentSupportThread.findMany({
@@ -146,40 +276,17 @@ export async function readInboxPage(
     .filter((k) => k.key.startsWith("s_"))
     .map((k) => k.id);
 
-  const userSelect = { id: true, name: true, email: true } as const;
   const [tickets, threads] = await Promise.all([
     ticketIds.length
       ? prisma.supportTicket.findMany({
           where: { id: { in: ticketIds } },
-          select: {
-            id: true,
-            referenceNumber: true,
-            title: true,
-            priority: true,
-            category: true,
-            issueType: true,
-            createdAt: true,
-            lastMessageAt: true,
-            ...SLA_SELECT,
-            user: { select: userSelect },
-            assignedTo: { select: { id: true, name: true } },
-            appointmentSupportThread: { select: { id: true } },
-          },
+          select: TICKET_ROW_SELECT,
         })
       : [],
     threadIds.length
       ? prisma.appointmentSupportThread.findMany({
           where: { id: { in: threadIds } },
-          select: {
-            id: true,
-            status: true,
-            activeChannel: true,
-            category: true,
-            createdAt: true,
-            lastMessageAt: true,
-            user: { select: userSelect },
-            appointment: { select: PLAN_TITLE_SELECT },
-          },
+          select: THREAD_ROW_SELECT,
         })
       : [],
   ]);
@@ -187,41 +294,13 @@ export async function readInboxPage(
   const now = new Date();
   const byKey = new Map<string, InboxRow>();
   for (const t of tickets) {
-    byKey.set(caseKeyOf({ kind: "ticket", id: t.id }), {
-      key: caseKeyOf({ kind: "ticket", id: t.id }),
-      kind: "ticket",
-      scope: t.appointmentSupportThread ? "session" : "platform",
-      requester: { ...t.user, email: opts.showEmail ? t.user.email : null },
-      subject: t.title,
-      reference: t.referenceNumber,
-      topic: ticketTopic(t),
-      status: t.status,
-      priority: t.priority,
-      channel: null,
-      sla: slaStateOf(
-        { ...t, ackDueAt: t.acknowledgedAt ? null : t.ackDueAt },
-        now,
-      ),
-      assignee: t.assignedTo,
-      lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-    });
+    byKey.set(
+      caseKeyOf({ kind: "ticket", id: t.id }),
+      ticketToInboxRow(t, now),
+    );
   }
   for (const t of threads) {
-    byKey.set(caseKeyOf({ kind: "thread", id: t.id }), {
-      key: caseKeyOf({ kind: "thread", id: t.id }),
-      kind: "thread",
-      scope: "session",
-      requester: { ...t.user, email: opts.showEmail ? t.user.email : null },
-      subject: `Help with ${planTitle(t.appointment)}`,
-      reference: null,
-      topic: threadTopic(t.category),
-      status: t.status,
-      priority: null,
-      channel: t.activeChannel,
-      sla: null,
-      assignee: null,
-      lastActivityAt: (t.lastMessageAt ?? t.createdAt).toISOString(),
-    });
+    byKey.set(caseKeyOf({ kind: "thread", id: t.id }), threadToInboxRow(t));
   }
 
   const total = ticketTotal + threadTotal;

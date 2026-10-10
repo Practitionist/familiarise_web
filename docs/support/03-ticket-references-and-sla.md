@@ -42,7 +42,24 @@ Breach state is derived by `slaStateOf(clock, now)` and never stored. A stored b
 
 `firstAgentReplyAt` is deliberately distinct from `acknowledgedAt`. An automated acknowledgement satisfies the latter; only the former is the number that predicts CSAT, and it is set once and never moved so that an auto-acknowledgement cannot claim it.
 
+## How breaches surface to staff
+
+Breach is computed on read, so every surface calls `slaStateOf` with the same stored stamps and the current time, and none of them can disagree.
+
+- **Badges.** `slaStatusBadge` renders `Breached` (either clock past due), `Waiting on customer` (the pause is running), `Due soon` (acknowledgement within six hours, or resolution within twelve) or `On track`. `slaHint` renders the tighter running clock as a short countdown. The paused state is labelled explicitly, so a quiet ticket that is waiting on the customer is never mistaken for one that is being ignored.
+- **The default order is by deadline.** `parseInboxFilters` defaults the sort to `sla` for the `Needs reply` and `SLA at risk` views, which are the views a staff member lands on, and to `activity` for the others; `sort=sla` and `sort=activity` can still be chosen explicitly. The SLA comparator ranks unacknowledged tickets by `ackDueAt` first, then everything by `resolutionDueAt`, with oldest first as the tie-break and the case key as the final tiebreak, so a breach rises to the top without anyone choosing a sort.
+- **The queue views exclude paused tickets from "needs reply".** `Needs reply` is `OPEN` or `IN_PROGRESS` with `awaitingUserSince` null, and `SLA at risk` additionally requires an unpaused ticket whose acknowledgement deadline is within six hours or resolution deadline within twelve.
+- **Paging is exact.** The inbox merges two tables (tickets, and conversations that have not escalated) and must reproduce a single `ORDER BY`. For the SLA sort, `readTicketKeysBySla` issues two ordered reads whose database orders each match the comparator, awaiting-acknowledgement tickets first and the rest by resolution deadline, each reading `skip + take` rows, and `mergeCasePage` sorts the union and slices the page. No row can be skipped or repeated across pages. Depth is capped at `INBOX_MAX_DEPTH` (1000 rows), beyond which the response sets `truncated` instead of paging further.
+
+Conversations carry no statutory clock, so the SLA views and the priority filter exclude them.
+
 ## Related
 
 - [05-schema-reference.md](05-schema-reference.md) lists the columns these two features added.
-- [07-engineering-log-2026-08-29.md](07-engineering-log-2026-08-29.md) records the sweep in which they shipped.
+- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) describes how replies start and stop the pause.
+
+## Deprecated & Superseded Approaches
+
+- **A single `ackDueAt` ordering for the SLA sort**: it ranked acknowledged tickets by a deadline the comparator ignores, so pages disagreed with the merge. Superseded by the two-read ordering above.
+- **A default activity sort with breaches reachable only through `sort=sla`**: breaches were easy to miss. Superseded by the SLA sort as the default for the work-queue views.
+- **A stored breach flag or a breach-sweep cron**: not built, and not wanted. A stored flag is wrong between runs, so breach stays derived on read.

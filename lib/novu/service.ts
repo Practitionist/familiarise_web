@@ -56,8 +56,6 @@ import {
   type PaymentSuccessPayload,
   type PayoutInput,
   type PayoutPayload,
-  type RecordingExpiringInput,
-  type RecordingExpiringPayload,
   type RecordingFailedPayload,
   type RecordingPayload,
   type ReferralCreditsAppliedInput,
@@ -277,18 +275,20 @@ async function sendUnstaged(
     const novu = getNovuClient();
     const wire = toWire(args.workflowId, args.payload);
     if (args.kind === "BROADCAST") {
-      await novu.triggerBroadcast({
-        name: wire.workflowId,
-        payload: wire.payload,
+      await novu.triggerBroadcast(
+        { name: wire.workflowId, payload: wire.payload, transactionId },
         transactionId,
-      });
+      );
     } else {
-      await novu.trigger({
-        workflowId: wire.workflowId,
-        to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
-        payload: wire.payload,
+      await novu.trigger(
+        {
+          workflowId: wire.workflowId,
+          to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
+          payload: wire.payload,
+          transactionId,
+        },
         transactionId,
-      });
+      );
     }
     return { success: true };
   } catch (error) {
@@ -695,19 +695,6 @@ function disputeWire(payload: DisputeInput): DisputePayload {
   };
 }
 
-function recordingExpiringWire(
-  payload: RecordingExpiringInput,
-  timezone: string,
-): RecordingExpiringPayload {
-  const { expiresAt: raw, ...rest } = payload;
-  const expiresAt = formatNotificationDateTime(raw, timezone);
-  return {
-    ...rest,
-    expiresAt: expiresAt ?? "the date shown in your dashboard",
-    ...(expiresAt ? { expiresAtIso: raw } : {}),
-  };
-}
-
 function referralCreditsAppliedWire(
   payload: ReferralCreditsAppliedInput,
 ): ReferralCreditsAppliedPayload {
@@ -897,14 +884,7 @@ export const notifyRecordingAvailable = defineMultiNotifier<
   appointmentTypeCode: p.appointmentType,
 }));
 export const notifyRecordingFailed =
-  defineSingleNotifier<RecordingFailedPayload>(
-    W.RECORDING_FAILED,
-    ({ errorMessage: _vendorDetail, ...rest }) => rest,
-  );
-export const notifyRecordingExpiring = defineZonedSingleNotifier(
-  W.RECORDING_EXPIRING,
-  recordingExpiringWire,
-);
+  defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED);
 
 // Document Review
 export const notifyDocumentUploaded =

@@ -15,9 +15,19 @@ const HIGH_REASONS = new Set([
 ]);
 
 /** Everything escalates at MEDIUM unless mapped otherwise here. */
-export function priorityForReason(reason: string | null | undefined): SupportPriority {
+export function priorityForReason(
+  reason: string | null | undefined,
+): SupportPriority {
   if (reason && HIGH_REASONS.has(reason)) return "HIGH";
   return "MEDIUM";
+}
+
+/** A customer who flags the hand-off as urgent gets at least HIGH, never a silent MEDIUM. */
+export function escalationPriority(
+  reason: string | null | undefined,
+  urgent: boolean | undefined,
+): SupportPriority {
+  return urgent ? "HIGH" : priorityForReason(reason);
 }
 
 /**

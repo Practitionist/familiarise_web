@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, FileText } from "lucide-react";
+import { ExternalLink, FileText, Phone } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { caseStatus } from "@/lib/labels/backoffice-labels";
 import {
   appointmentStatusBadge,
@@ -14,6 +15,7 @@ import {
   paymentStatusBadge,
   trialStatusBadge,
 } from "@/lib/labels/session-labels";
+import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -47,7 +49,6 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 export const bookingHref = (basePath: string, appointmentId: string) =>
   `${basePath}/appointments?open=${encodeURIComponent(appointmentId)}`;
 
-/** #1527 — each booking kind's status lives on a different enum. */
 function bookingStatusLabel(booking: CaseBooking): string {
   if (!booking.status) return "—";
   if (booking.kind === "TRIAL") return trialStatusBadge(booking.status).label;
@@ -57,26 +58,93 @@ function bookingStatusLabel(booking: CaseBooking): string {
   return appointmentStatusBadge(booking.status).label;
 }
 
-/**
- * #1527 — the Details panel's body: who is asking, about what, and what came
- * before. The header carries the Open booking / payment / User 360 links.
- */
+function SentryIssuesSection({
+  sentryIssues,
+}: Readonly<{ sentryIssues: NonNullable<CaseWorkspace["sentryIssues"]> }>) {
+  if (!sentryIssues.configured) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Error triage is not configured.
+      </p>
+    );
+  }
+  const issues = sentryIssues.issues ?? [];
+  if (issues.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No unresolved errors in the last 14 days.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {issues.map((issue) => (
+        <li key={issue.shortId} className="text-sm">
+          <a
+            href={issue.permalink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <span>
+              {issue.shortId} · {issue.title}
+            </span>
+            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+          </a>
+          <p className="text-xs text-muted-foreground">
+            {[issue.culprit, issue.lastSeen ? day(issue.lastSeen) : null]
+              .filter(Boolean)
+              .join(" · ") || humanizeEnum(issue.level ?? "error")}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
+  const phone = person.phone;
+  const callbackRequested = Boolean(person.callbackRequested);
+  const telHref = phone ? `tel:${phone.replace(/[^\d+]/g, "")}` : null;
+  const escalationHref = buildEngineeringEscalationHref({
+    key: data.key,
+    reference: data.reference,
+  });
+
+  const personItems: [string, ReactNode][] = [
+    ["Name", person.name ?? "—"],
+    ["Role", humanizeEnum(person.role) || "—"],
+  ];
+  if (person.email) {
+    personItems.push(["Email", person.email]);
+  }
+  if (phone && telHref) {
+    personItems.push([
+      callbackRequested ? "Callback" : "Phone",
+      <div key="phone-row" className="flex flex-wrap items-center gap-2">
+        <a
+          href={telHref}
+          className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{phone}</span>
+        </a>
+        {callbackRequested && (
+          <Badge variant="destructive" className="text-[11px]">
+            Callback requested
+          </Badge>
+        )}
+      </div>,
+    ]);
+  }
+  personItems.push(["Joined", day(person.joinedAt)]);
+
   return (
     <div className="space-y-5">
       <Section title="Person">
-        <Facts
-          items={[
-            ["Name", person.name ?? "—"],
-            ["Role", humanizeEnum(person.role) || "—"],
-            ...(person.email
-              ? [["Email", person.email] as [string, ReactNode]]
-              : []),
-            ["Joined", day(person.joinedAt)],
-          ]}
-        />
+        <Facts items={personItems} />
       </Section>
 
       {booking && (
@@ -157,41 +225,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
 
       {data.sentryIssues && (
         <Section title="Recent errors">
-          {!data.sentryIssues.configured ? (
-            <p className="text-sm text-muted-foreground">
-              Error triage is not configured.
-            </p>
-          ) : (data.sentryIssues.issues ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No unresolved errors in the last 14 days.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {(data.sentryIssues.issues ?? []).map((issue) => (
-                <li key={issue.shortId} className="text-sm">
-                  <a
-                    href={issue.permalink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
-                  >
-                    <span>
-                      {issue.shortId} · {issue.title}
-                    </span>
-                    <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-                  </a>
-                  <p className="text-xs text-muted-foreground">
-                    {[
-                      issue.culprit,
-                      issue.lastSeen ? day(issue.lastSeen) : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || humanizeEnum(issue.level ?? "error")}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
+          <SentryIssuesSection sentryIssues={data.sentryIssues} />
         </Section>
       )}
 
@@ -213,6 +247,23 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
               </li>
             ))}
           </ul>
+        </Section>
+      )}
+
+      {can("engineering.escalate") && (
+        <Section title="Engineering">
+          <a
+            href={escalationHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <span>Escalate to Engineering (GitHub Issue)</span>
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          </a>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Opens a pre-filled bug report with case IDs and zero customer PII.
+          </p>
         </Section>
       )}
     </div>

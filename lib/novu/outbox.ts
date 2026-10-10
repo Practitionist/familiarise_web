@@ -110,11 +110,9 @@ export function deriveEntityRef(payload: NovuPayload): string | null {
 // mixed-case ids across runtimes and the id must be identical everywhere.
 const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-// Deterministic transactionId so app-level retries can't double-notify: Novu
-// rejects a repeated transactionId. Derived from recipient(s) + workflow +
-// canonical payload (the payloads carry the entity ids). `dedupeKey` lets a
-// caller that legitimately re-sends an identical payload (e.g. 24h vs 1h
-// appointment reminders) disambiguate the sends.
+// Deterministic id from recipient(s) + workflow + canonical payload (or
+// `dedupeKey` for callers that legitimately re-send an identical payload). It is
+// also sent as the Idempotency-Key: Novu does not dedupe on transactionId alone.
 export function deriveTransactionId(
   workflowId: string,
   recipients: string | string[],
@@ -276,11 +274,7 @@ function sanitizeNovuErrorForSentry(
   statusCode?: number,
   novuMessage?: string,
 ): Error {
-  if (
-    error instanceof Error &&
-    !("body" in error) &&
-    !("rawValue" in error)
-  ) {
+  if (error instanceof Error && !("body" in error) && !("rawValue" in error)) {
     return error;
   }
   const baseMessage =
@@ -354,7 +348,7 @@ export function reportTriggerFailure(
 }
 
 // Best-effort: the send outcome is already decided, and the relay re-reads the
-// row, so losing this write costs a re-trigger Novu dedupes on transactionId.
+// row, so losing this write costs a re-trigger Novu dedupes on the Idempotency-Key.
 async function settleRow(
   row: StagedTrigger,
   data: Prisma.NotificationOutboxUpdateInput,
@@ -384,19 +378,23 @@ async function sendRow(row: StagedTrigger): Promise<void> {
   );
   const transactionId = row.transactionId || row.id;
   if (row.kind === "BROADCAST") {
-    await novu.triggerBroadcast({
-      name: wire.workflowId,
-      payload: wire.payload,
+    await novu.triggerBroadcast(
+      { name: wire.workflowId, payload: wire.payload, transactionId },
       transactionId,
-    });
+    );
     return;
   }
-  await novu.trigger({
-    workflowId: wire.workflowId,
-    to: row.kind === "SINGLE" ? row.recipients[0] : row.recipients,
-    payload: wire.payload,
+  // The SDK retries 408/409/429/5xx; the idempotency key stops a retry of an
+  // accepted trigger from creating a second notification.
+  await novu.trigger(
+    {
+      workflowId: wire.workflowId,
+      to: row.kind === "SINGLE" ? row.recipients[0] : row.recipients,
+      payload: wire.payload,
+      transactionId,
+    },
     transactionId,
-  });
+  );
 }
 
 /**

@@ -205,7 +205,7 @@ function SessionRequest({
               onRetry={() => void t.query.refetch()}
             />
           ) : (
-            <SessionConversation t={t} />
+            <SessionConversation t={t} requestsHref={props.requestsHref} />
           )}
         </div>
         <aside>
@@ -232,7 +232,7 @@ function TicketRequest({
       if (!res.ok) await throwSupportError(res, "request load");
       return ((await res.json()) as { data: OwnTicketCase }).data;
     },
-    // Our replies arrive from the ops side; nothing pushes them here.
+    refetchIntervalInBackground: false,
     refetchInterval: (q) =>
       q.state.data?.status === "CLOSED" ? false : 30_000,
   });
@@ -281,6 +281,7 @@ function TicketRequest({
     );
   }
   const closed = data.status === "CLOSED";
+  const resolved = data.status === "RESOLVED";
   return (
     <>
       <PageHeader
@@ -337,8 +338,14 @@ function TicketRequest({
             <div className="border-t border-border p-4">
               {closed ? (
                 <p className="text-sm text-muted-foreground">
-                  This request is closed. Start a new request from Support if
-                  you still need help.
+                  This request is closed.{" "}
+                  <Link
+                    href={props.requestsHref}
+                    className="font-medium text-foreground underline underline-offset-4"
+                  >
+                    Start a new request
+                  </Link>{" "}
+                  if you still need help.
                 </p>
               ) : (
                 <form
@@ -349,12 +356,27 @@ function TicketRequest({
                     if (msg && !reply.isPending) reply.mutate(msg);
                   }}
                 >
+                  {resolved && (
+                    <p
+                      id="support-reply-reopens"
+                      className="text-xs text-muted-foreground"
+                    >
+                      This request is marked resolved. Replying reopens it.
+                    </p>
+                  )}
                   <Textarea
                     aria-label="Reply"
+                    aria-describedby={
+                      resolved ? "support-reply-reopens" : undefined
+                    }
                     rows={3}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Write a reply to our team…"
+                    placeholder={
+                      resolved
+                        ? "Reply to reopen this request…"
+                        : "Write a reply to our team…"
+                    }
                   />
                   <div className="flex justify-end">
                     <Button

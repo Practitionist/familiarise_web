@@ -149,7 +149,7 @@ describe("consultant statutory PII is never returned by a bare include", () => {
       .replace(/^\s*\/\/.*$/gm, "");
     // middleware.ts marks this route public and the response is CDN-cached,
     // so a leak here is world-readable and persisted at the edge.
-    expect(src).toContain("Cache-Control");
+    expect(src).toContain("publicCacheHeaders(");
     expect(src).toContain("select: publicReviewSelect");
     // The write paths too: `include` returns every scalar on the row.
     expect(src).not.toMatch(/\binclude\s*(?::|,)/);

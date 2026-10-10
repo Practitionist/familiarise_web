@@ -179,13 +179,15 @@ async function retryOne(
     return;
   }
 
+  let settled = false;
   try {
-    await refundBookingPayment({
+    const outcome = await refundBookingPayment({
       paymentId: payment.id,
       reason: "auto-refund retry: capture funds no booking",
       initiatedByUserId: null,
     });
     result.refunded += 1;
+    settled = outcome?.status !== "PENDING";
   } catch (error) {
     if (
       error instanceof RefundValidationError &&
@@ -193,6 +195,7 @@ async function retryOne(
     ) {
       // The money is already back (an earlier attempt or an operator).
       result.settled += 1;
+      settled = true;
     } else if (
       error instanceof RefundValidationError &&
       (error.code === "REFUND_BLOCKED_BY_DISPUTE" ||
@@ -214,5 +217,7 @@ async function retryOne(
   if (payment.appointmentId && pending.includes(DOUBLE_BOOKING_BLOCKED_NOTE)) {
     await releaseBlockedBookingHold(payment.appointmentId);
   }
-  await settleAutoRefundMarker(payment.id);
+  if (settled) {
+    await settleAutoRefundMarker(payment.id);
+  }
 }

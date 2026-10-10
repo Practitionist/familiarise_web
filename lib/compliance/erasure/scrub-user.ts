@@ -241,8 +241,9 @@ async function purgeSingleUserRecordingOnErasure(
     previewClipStoragePath: string | null;
   },
 ): Promise<void> {
-  const { deleteRecordingObject, storageClient } =
+  const { deleteRecordingObject } =
     await import("@/lib/stream/recording-storage");
+  const { removeObjects } = await import("@/lib/supabase-storage-core");
   if (rec.storagePath) {
     const deleted = await deleteRecordingObject(rec.storagePath);
     if (!deleted.success) {
@@ -252,23 +253,18 @@ async function purgeSingleUserRecordingOnErasure(
     }
   }
   if (rec.previewClipStoragePath) {
-    if (!storageClient) {
-      throw new Error(
-        "Storage client unavailable for recording preview clip deletion",
-      );
-    }
-    const { error } = await storageClient.storage
-      .from(RECORDING_PREVIEWS_BUCKET)
-      .remove([rec.previewClipStoragePath]);
-    if (error) {
-      throw new Error(error.message);
+    if (
+      !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
+        rec.previewClipStoragePath,
+      ]))
+    ) {
+      throw new Error("Recording preview clip was not removed from storage");
     }
   }
 
   const expiredData = {
     status: "EXPIRED" as const,
     recordingUrl: "",
-    storageUrl: null,
     storagePath: null,
     previewClipUrl: null,
     previewClipStoragePath: null,

@@ -97,6 +97,8 @@ Both PDFs register Noto Sans Devanagari from `public/fonts/` and apply it to the
 
 The invoice number and a download link appear on the admin payment list and detail pages; on the consultee's own payments tab the row's "View receipt" link resolves to the invoice when one was issued (`receiptHref` in `lib/appointments/payment-display.ts`). A row without one means the payment was org-funded, which is the correct answer rather than a missing document.
 
+The supplier block comes from `getPlatformSupplier()`, whose fail-closed contract, hardcoded legal name and address, and the `pdfkit` font tracing that keeps the render from crashing are described in [required secrets](../enterprise/50-operations/07-required-secrets.md#the-supplier-identity-on-statutory-documents).
+
 ## The outward-supplies register
 
 `jobs/compliance/gst-outward-register-export.ts` runs on the third of each month for the previous IST calendar month, well ahead of the eleventh-of-the-month GSTR-1 deadline. `GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END` override the period and must be set together; the workflow exposes them as dispatch inputs.
@@ -117,6 +119,12 @@ The job is fail-closed on its cron lock and is on the financial job list, unlike
 
 Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's name, address and state. The mint still issues the invoice when those are missing, because withholding a buyer's document is a worse outcome than issuing an incomplete one, and sets `needsBuyerAddress` on the row. The register turns that flag into a warning line so finance can chase the address before filing.
 
+## Section 34 cutoff & transaction invariants
+
+- **Single pinned cutoff clock (`cascadeNow`)**: `applyRefundCascade` pins a single `Date` across `ConsumerCreditNote` minting (`mintConsumerCreditNote(..., { now: cascadeNow })`), B2B `OrganizationInvoice` credit note minting (`mintRefundCreditNote`), and Step 9 `isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)` (`linkedOrgInvoice?.issuedAt ?? payment.createdAt`) so midnight/year-end boundary transitions never diverge between tax document issuance and ledger GST reversal.
+- **B2B rollup invoice cutoff & remaining balance**: For B2B rollup invoices (`OrganizationInvoice`), the Section 34 time limit is evaluated against `invoice.issuedAt`, and invoice status transitions to `REFUNDED` only when cumulative non-cancelled `CreditNote.amountPaise` reaches `invoice.subtotalPaise` (`remainingOrgInvoiceCreditPaise <= 0`).
+- **Single-connection transaction safety (`PG_POOL_MAX=1`)**: `mintConsumerInvoice` and `mintConsumerCreditNote` pass the enclosing interactive transaction client (`db: tx`) into `recordSystemErrorSafe` and `recordSystemEventSafe` so error/audit persistence never competes for a second connection from the pool.
+
 ## What this deliberately does not do
 
 - **It posts nothing to the ledger.** Output tax is already credited to `GST_PAYABLE` at settlement. A second posting from the document trail would double-count the liability.
@@ -124,6 +132,12 @@ Rule 46 requires a B2C invoice of ₹50,000 or more to carry the recipient's nam
 - **It builds no IRN.** B2C is outside the e-invoicing scope; the IRP fields on `OrganizationInvoice` have no counterpart here.
 - **It does not handle GST-TCS under section 52.** Section 52 TCS does not apply under the principal-supplier model (ADR 26).
 - **It does not block checkout.** The billing-state picker is optional by design, because the statutory default already produces a correct invoice.
+
+## Deprecated & Superseded Approaches
+
+- **Independent `new Date()` reads across credit-note minting and ledger GST reversal**: Superseded by passing a single pinned `cascadeNow` timestamp across Steps 7.5 and 9 of `applyRefundCascade`. Independent clock reads across midnight on November 30 allowed one step to classify a refund as pre-cutoff and the other as post-cutoff.
+- **Global Prisma writes inside `mintConsumerInvoice` / `mintConsumerCreditNote` error handlers**: Superseded by passing `db: tx` to `recordSystemErrorSafe` and `recordSystemEventSafe` to avoid pool exhaustion under `PG_POOL_MAX=1`.
+- **Single `orderId` (`paymentIntent`) keying on secondary replay sale captures**: Superseded by delegating secondary captures whose `gatewayPaymentId` differs from the existing row to `paymentIntent: gatewayPaymentId` (`pay_...`) so duplicate captures never collide or lose auto-refund markers.
 
 ## Related
 

@@ -2,10 +2,21 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
+  RatingCause,
   ReviewTrack,
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
 } from "@prisma/client";
+
+/** Clears `ratingCause` on 4–5 star ratings; preserves stored cause when omitted on <=3 star updates. */
+export function resolveRatingCausePatch(
+  rating: number,
+  ratingCause?: RatingCause | null,
+): { ratingCause?: RatingCause | null } {
+  if (rating > 3) return { ratingCause: null };
+  if (ratingCause !== undefined) return { ratingCause };
+  return {};
+}
 
 /**
  * #705 / #1300 — the publication gates are code constants, not columns and not
@@ -199,6 +210,22 @@ function groupPoints(rows: ScorableReview[]): number[] {
     .map((ratings) => ratings.reduce((a, b) => a + b, 0) / ratings.length);
 }
 
+/** Does any track publish a score now and lose it once this review leaves the arithmetic? */
+export function exclusionUnpublishesScore(
+  counted: (ScorableReview & { id: string })[],
+  reviewId: string,
+): boolean {
+  if (!counted.some((r) => r.id === reviewId)) return false;
+  const without = counted.filter((r) => r.id !== reviewId);
+  const loses = (points: (rows: ScorableReview[]) => number[], min: number) =>
+    scoreTrack(points(counted), min).published !== null &&
+    scoreTrack(points(without), min).published === null;
+  return (
+    loses(oneToOnePoints, MIN_RATED_CLIENTS_ONE_TO_ONE) ||
+    loses(groupPoints, MIN_RATED_EVENTS_GROUP)
+  );
+}
+
 /** The exact delegate methods scoring touches. Narrow on purpose: the dry run
  *  in lib/reviews-recompute.ts stubs `consultantProfile.update` against this
  *  type, so a new dependency here fails the build there, not an operator's
@@ -278,6 +305,7 @@ export interface ReviewableSession {
     id: string;
     rating: number;
     reviewDescription: string | null;
+    ratingCause: RatingCause | null;
   } | null;
 }
 
@@ -461,6 +489,7 @@ type ExistingReview = {
   id: string;
   rating: number;
   reviewDescription: string | null;
+  ratingCause: RatingCause | null;
   isAnonymous: boolean;
 };
 
@@ -553,6 +582,7 @@ async function reviewsByConsultant(
       id: true,
       rating: true,
       reviewDescription: true,
+      ratingCause: true,
       isAnonymous: true,
       consultantProfileId: true,
       track: true,

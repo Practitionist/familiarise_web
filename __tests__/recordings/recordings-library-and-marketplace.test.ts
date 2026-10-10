@@ -161,7 +161,7 @@ jest.mock("../../lib/stream/recording-operator-access", () => {
 
 jest.mock("../../lib/stream/session-recordings", () => ({
   __esModule: true,
-  extractRecordings: jest.fn().mockResolvedValue([]),
+  extractRecordings: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock("../../lib/data/recordings-explore", () => ({
@@ -197,11 +197,11 @@ import { handleRecordingPurchaseSuccess } from "@/lib/payments/webhooks/recordin
 describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetBestRecordingUrl.mockResolvedValue(
+    mockGetBestRecordingUrl.mockReturnValue(
       "https://signed.example.com/rec.mp4",
     );
     mockGetPaidPlanIds.mockResolvedValue({
-      webinarPlanIds: [],
+      webinarScope: { sharedPlanIds: [], appointmentIds: [] },
       classPlanIds: [],
     });
     mockLateJoinRecordingAccess.mockResolvedValue({
@@ -256,7 +256,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
                     id: "cplan-1",
                     title: "Architecture Consultation",
                     consultantProfileId: "cp-1",
-                    recordingStoragePolicy: "STREAM_ONLY",
                   },
                 },
                 subscription: null,
@@ -292,7 +291,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         previewTranscript: "Welcome to the session.",
         hasBuyers: true,
         canManage: true,
-        canTransfer: false,
         canPublish: false,
       });
       expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
@@ -386,7 +384,9 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         eventType: "purchased",
         status: "COMPLETED",
       });
-      expect(body.data.purchased[0].recordings[0].playbackUrl).toBeNull();
+      expect(body.data.purchased[0].recordings[0]).not.toHaveProperty(
+        "playbackUrl",
+      );
       expect(mockGetBestRecordingUrl).not.toHaveBeenCalled();
     });
 
@@ -490,6 +490,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           occurrence: {
             startsAt: new Date("2026-09-01T10:00:00Z"),
             appointment: {
+              id: "appt-100",
               classId: null,
               class: null,
             },
@@ -524,7 +525,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
       mockGetPaidPlanIds.mockResolvedValueOnce({
-        webinarPlanIds: ["wplan-1"],
+        webinarScope: { sharedPlanIds: [], appointmentIds: ["appt-100"] },
         classPlanIds: [],
       });
       await RecordingDetailPage({
@@ -547,6 +548,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
           occurrence: {
             startsAt: new Date("2026-09-01T10:00:00Z"),
             appointment: {
+              id: "appt-late-1",
               classId: "class-late-1",
               class: { classPlanId: "cplan-late" },
             },
@@ -558,7 +560,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
       mockGetPaidPlanIds.mockResolvedValueOnce({
-        webinarPlanIds: [],
+        webinarScope: { sharedPlanIds: [], appointmentIds: [] },
         classPlanIds: ["cplan-late"],
       });
       mockLateJoinRecordingAccess.mockResolvedValueOnce({
@@ -577,7 +579,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       });
       mockRecordingPurchaseFindFirst.mockResolvedValueOnce(null);
       mockGetPaidPlanIds.mockResolvedValueOnce({
-        webinarPlanIds: [],
+        webinarScope: { sharedPlanIds: [], appointmentIds: [] },
         classPlanIds: [],
       });
       await RecordingDetailPage({
@@ -740,7 +742,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       ).toEqual([]);
     });
 
-    it("computes canTransfer and canPublish as true when a READY STREAM_S3 webinar recording has PERMANENT storage policy", async () => {
+    it("withholds canPublish from a READY STREAM_S3 webinar recording until our copy exists", async () => {
       mockGetSession.mockResolvedValue({
         user: { id: "u-consultant", role: "CONSULTANT" },
       });
@@ -782,7 +784,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
                     id: "wplan-perm-1",
                     title: "Production Readiness Webinar",
                     consultantProfileId: "cp-1",
-                    recordingStoragePolicy: "PERMANENT",
                     catalogVisibility: "PUBLIC",
                     organizationId: null,
                     archivedAt: null,
@@ -810,8 +811,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
       expect(body.recordings[0]).toMatchObject({
         id: "rec-perm-1",
         canManage: true,
-        canTransfer: true,
-        canPublish: true,
+        canPublish: false,
       });
     });
 
@@ -953,7 +953,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
             recordedAt: "2026-10-01T10:00:00.000Z",
             durationInMinutes: 45,
             status: "AVAILABLE",
-            playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
+            playable: true,
           },
           { title: "System Design Cohort", kind: "CLASS" },
         ),
@@ -962,7 +962,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         title: "Cohort Session 1",
         recordedAt: "2026-10-01T10:00:00.000Z",
         durationInMinutes: 45,
-        playbackUrl: "https://signed.example.com/lib-rec-1.mp4",
         planTitle: "System Design Cohort",
         planType: "Class",
       });

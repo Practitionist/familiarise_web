@@ -33,7 +33,10 @@ import { PaymentStatus, RefundStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
-import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
+import {
+  REPLAY_SALE_PREFIX,
+  notSettledElsewhereWhere,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 
 /** The `SystemEvent.category` every orphaned-payment row is filed under. */
 const EVENT_CATEGORY = "PAYMENT";
@@ -197,6 +200,7 @@ async function alertOrphanedPaymentsUnlocked(
       OR: [
         { parentPaymentId: { not: null } },
         { paymentIntent: { startsWith: "overage:" } },
+        { description: { startsWith: REPLAY_SALE_PREFIX } },
       ],
     },
   });

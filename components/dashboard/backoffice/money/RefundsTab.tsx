@@ -68,7 +68,7 @@ export function RefundDoorsPanel() {
   const items = data?.items ?? [];
 
   return (
-    <Card className="mb-6">
+    <Card>
       <CardHeader>
         <CardTitle className="text-lg">Refund doors</CardTitle>
       </CardHeader>

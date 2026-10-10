@@ -151,7 +151,6 @@ export async function PUT(
         schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
         status: requestedStatus,
-        recordingUrls: body.recordingUrls,
         feedbackSummary: body.feedbackSummary,
       },
       include: {

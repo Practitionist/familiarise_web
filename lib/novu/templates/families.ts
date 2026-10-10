@@ -125,7 +125,6 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
 
   "recording-available": "session-media",
   "recording-failed": "session-media",
-  "recording-expiring": "session-media",
   "document-uploaded": "session-media",
   "document-reviewed": "session-media",
 
@@ -157,16 +156,21 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "trial-refunded": "trial",
 
   "support-ticket-created": "support-ticket",
+  "support-ticket-received": "support-ticket",
   "support-ticket-activity": "support-ticket",
   "support-ticket-update": "support-ticket",
   "support-ticket-response": "support-ticket",
 
   "feedback-received": "feedback",
+  "moderation-report-outcome": "feedback",
+  "platform-feedback-update": "feedback",
   "new-review-received": "feedback",
+  "review-excluded-from-rating": "feedback",
 
   "verification-status-changed": "account",
   "new-consultant-application": "account",
   "moderation-warning": "account",
+  "content-removed-notice": "account",
   "account-suspended": "account",
   "account-banned": "account",
 

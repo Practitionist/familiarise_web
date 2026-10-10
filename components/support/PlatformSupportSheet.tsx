@@ -26,9 +26,11 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -47,6 +49,8 @@ interface LocalMessage {
  *  bubble that is later replaced in place. */
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
+
+const HUMAN_EXIT_LABEL = "Talk to a person";
 
 interface PlatformFlow {
   id: string;
@@ -108,6 +112,9 @@ export function PlatformSupportSheet({
     collectFeedback?: boolean;
   } | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [bareHumanLabel, setBareHumanLabel] = useState<string | null>(null);
+  const [bareHumanDetails, setBareHumanDetails] = useState("");
+  const [bareHumanUrgent, setBareHumanUrgent] = useState(false);
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -132,6 +139,8 @@ export function PlatformSupportSheet({
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
+      /** The customer flagged the hand-off as urgent. */
+      urgent?: boolean;
       /** Client-only sitting marker — see `sittingRef`. Never sent. */
       epoch: number;
       /** Client-only label of the pressed chip — see onSuccess. Never sent. */
@@ -219,6 +228,9 @@ export function PlatformSupportSheet({
     setNodeId(null);
     setMessages([]);
     setDone(null);
+    setBareHumanLabel(null);
+    setBareHumanDetails("");
+    setBareHumanUrgent(false);
     turn.mutate({
       flowId: flow.id,
       chosenLabel: flow.title,
@@ -233,6 +245,9 @@ export function PlatformSupportSheet({
     setMessages([]);
     setDone(null);
     setFeedback("");
+    setBareHumanLabel(null);
+    setBareHumanDetails("");
+    setBareHumanUrgent(false);
   };
 
   // #705 — the "leave feedback" terminal used to say the entry was "read and
@@ -458,58 +473,147 @@ export function PlatformSupportSheet({
 
         {flowId && !done && (
           <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
-            {options.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {options.map((o) => (
-                  <Button
-                    key={o.id}
-                    variant="outline"
-                    size="sm"
-                    disabled={turn.isPending}
-                    onClick={() =>
-                      turn.mutate({
-                        flowId: flowId!,
-                        nodeId,
-                        chosenOptionId: o.id,
-                        chosenLabel: o.label,
-                        epoch: sittingRef.current,
-                      })
-                    }
-                  >
-                    {o.label}
-                  </Button>
-                ))}
-              </div>
-            )}
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const msg = text.trim();
-                if (msg)
+            {bareHumanLabel ? (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const details = bareHumanDetails.trim();
+                  if (details.length < 20) return;
+                  const targetNode = nodeId;
+                  const urgent = bareHumanUrgent;
+                  setBareHumanLabel(null);
+                  setBareHumanDetails("");
+                  setBareHumanUrgent(false);
                   turn.mutate({
                     flowId: flowId!,
-                    nodeId,
-                    userMessage: msg,
+                    nodeId: targetNode,
+                    userMessage: `Speak to someone: ${details}`,
+                    urgent,
                     epoch: sittingRef.current,
                   });
-              }}
-            >
-              <Input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Type a message…"
-                disabled={turn.isPending}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={turn.isPending || !text.trim()}
-                aria-label="Send"
+                }}
               >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+                <Label htmlFor="platform-support-human-details">
+                  Tell us what happened
+                </Label>
+                <Textarea
+                  id="platform-support-human-details"
+                  rows={4}
+                  maxLength={1900}
+                  value={bareHumanDetails}
+                  onChange={(e) => setBareHumanDetails(e.target.value)}
+                  disabled={turn.isPending}
+                  placeholder="What went wrong, and what would you like us to do?"
+                />
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={bareHumanUrgent}
+                    onChange={(e) => setBareHumanUrgent(e.target.checked)}
+                    disabled={turn.isPending}
+                  />
+                  <span>This is urgent</span>
+                </label>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setBareHumanLabel(null);
+                      setBareHumanDetails("");
+                      setBareHumanUrgent(false);
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      turn.isPending || bareHumanDetails.trim().length < 20
+                    }
+                  >
+                    Send to the support team
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <>
+                {options.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {options.map((o) => (
+                      <Button
+                        key={o.id}
+                        variant="outline"
+                        size="sm"
+                        disabled={turn.isPending}
+                        onClick={() =>
+                          // A flow's own human option opens the same details + urgency form as the exit.
+                          o.label === HUMAN_EXIT_LABEL
+                            ? setBareHumanLabel(o.label)
+                            : turn.mutate({
+                                flowId: flowId!,
+                                nodeId,
+                                chosenOptionId: o.id,
+                                chosenLabel: o.label,
+                                epoch: sittingRef.current,
+                              })
+                        }
+                      >
+                        {o.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                {/* The human exit stays one tap away at every prompt, not only in the General flow. */}
+                {options.every((o) => o.label !== HUMAN_EXIT_LABEL) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={turn.isPending}
+                    onClick={() => setBareHumanLabel(HUMAN_EXIT_LABEL)}
+                  >
+                    {HUMAN_EXIT_LABEL}
+                  </Button>
+                )}
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const msg = text.trim();
+                    if (!msg) return;
+                    if (isBareHumanRequest(msg)) {
+                      setText("");
+                      setBareHumanLabel(msg);
+                      return;
+                    }
+                    turn.mutate({
+                      flowId: flowId!,
+                      nodeId,
+                      userMessage: msg,
+                      epoch: sittingRef.current,
+                    });
+                  }}
+                >
+                  <Input
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder="Type a message…"
+                    disabled={turn.isPending}
+                  />
+                  <Button
+                    type="submit"
+                    size="icon"
+                    disabled={turn.isPending || !text.trim()}
+                    aria-label="Send"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </form>
+              </>
+            )}
           </div>
         )}
       </SheetContent>
