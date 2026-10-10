@@ -32,7 +32,10 @@ export async function GET(
   // operator surface. The old `|| finance` branch admitted BILLING_ADMIN,
   // contradicting its operator-blind role design; the consent member-picker
   // it served is itself consent.read-gated (no BILLING_ADMIN) now.
-  const access = await requireOrgAccess(orgId, { permission: "members.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "members.read",
+  });
   if (access.error) return access.error;
 
   const parsed = MembersListQuerySchema.safeParse(

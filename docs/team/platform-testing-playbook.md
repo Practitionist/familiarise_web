@@ -202,14 +202,12 @@ You'll need accounts for each role to test features:
 
 1. Go to `/auth/signup`
 2. Enter email, password, and name
-3. Choose a role (Consultant or Consultee)
-4. Click "Sign Up"
-5. Check your email for a verification link (if email verification is enabled)
-6. After signup, you'll be redirected based on role:
-   - Consultee → `/dashboard/consultee/[id]/home`
-   - Consultant → `/form/onboarding` (onboarding flow)
+3. Click "Sign Up"
+4. On `/auth/verify-email`, type the 6-digit code from the email (there is no link to click)
+5. You are signed in and sent to `/form/onboarding`, where you choose Consultee, Consultant or Organization
+6. An invited user, or one who joined through SSO, goes to `/onboarding/gate` (date of birth, 18+, and consent) instead of the wizard
 
-**What to look for:** Successful account creation, correct role assignment, proper redirect.
+**What to look for:** Successful account creation, the code accepted, correct role assignment after onboarding, proper redirect.
 
 **Also supports:** Google and GitHub OAuth login via BetterAuth.
 

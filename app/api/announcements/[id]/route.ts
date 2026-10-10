@@ -17,7 +17,7 @@ interface RouteParams {
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -29,10 +29,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
     // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
     // surface from staff; the route accepted the call regardless.
-    if (!hasBackofficePermission(
-      session.user.role as UserRole,
-      "announcements.manage",
-    )) {
+    if (
+      !hasBackofficePermission(
+        session.user.role as UserRole,
+        "announcements.manage",
+      )
+    ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
         { status: 403 },
@@ -116,7 +118,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -128,10 +130,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
     // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
     // surface from staff; the route accepted the call regardless.
-    if (!hasBackofficePermission(
-      session.user.role as UserRole,
-      "announcements.manage",
-    )) {
+    if (
+      !hasBackofficePermission(
+        session.user.role as UserRole,
+        "announcements.manage",
+      )
+    ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
         { status: 403 },

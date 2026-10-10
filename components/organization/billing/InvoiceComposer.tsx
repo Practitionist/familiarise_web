@@ -37,11 +37,8 @@ function makeEmptyLine(): LineItem {
 }
 
 /**
- * #1527 Q8 — the manual invoice composer, moved from the org Billing page to
- * the back-office org detail (ops issue the invoice an org requested). Same
- * API as before, `POST /api/organizations/[orgId]/billing-account/invoices`,
- * which admits a platform admin as a synthetic OWNER (requireOrgAccess). The old tax-rate and
- * GSTIN fields were never sent, so they are gone rather than moved.
+ * The back-office manual invoice composer: ops issue the invoice an org
+ * requested through the audited admin door, with a required reason.
  */
 export function InvoiceComposer({
   orgId,
@@ -55,6 +52,7 @@ export function InvoiceComposer({
   const queryClient = useQueryClient();
   const [lineItems, setLineItems] = useState<LineItem[]>([makeEmptyLine()]);
   const [dueDate, setDueDate] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -84,23 +82,25 @@ export function InvoiceComposer({
       setError("Enter a valid, non-negative price for every line item.");
       return;
     }
+    if (reason.trim().length < 5) {
+      setError("Give a reason of at least 5 characters.");
+      return;
+    }
     setPending(true);
     try {
-      const res = await fetch(
-        `/api/organizations/${orgId}/billing-account/invoices`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            items,
-            // Default due date: 60 days from today (NET-60) if not supplied.
-            dueDate:
-              dueDate ||
-              new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
-            issueImmediately: true,
-          }),
-        },
-      );
+      const res = await fetch(`/api/admin/organizations/${orgId}/invoices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items,
+          // Default due date: 60 days from today (NET-60) if not supplied.
+          dueDate:
+            dueDate ||
+            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+          issueImmediately: true,
+          reason: reason.trim(),
+        }),
+      });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(errorMessageFromBody(body, "Failed to create invoice"));
@@ -111,6 +111,7 @@ export function InvoiceComposer({
       });
       setLineItems([makeEmptyLine()]);
       setDueDate("");
+      setReason("");
       onOpenChange(false);
     } catch {
       // #1527 review — the fetch itself (network failure) had no catch, so it
@@ -191,6 +192,15 @@ export function InvoiceComposer({
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="inv-reason">Reason</Label>
+            <Input
+              id="inv-reason"
+              placeholder="Why ops is raising this invoice"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}

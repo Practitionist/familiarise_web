@@ -18,7 +18,8 @@
  *   so Prisma-level behaviour (unique constraints, the SsoProvider secret
  *   encryption extension) and lib/auth.ts's other plugins and databaseHooks
  *   (SSO enforcement veto, welcome email, customSession) are not exercised.
- *   Only its email-domain check is wired in, the way lib/auth.ts calls it.
+ *   Only the SSO account hooks (domain check, IdP claim checks and the
+ *   unfinished-user cleanup) are wired in, the way lib/auth.ts calls them.
  * - The JIT module's own Prisma calls hit a small in-memory fake, and
  *   `applyMembershipRoleEffects` is stubbed; the gate logic itself has unit
  *   coverage in jit-membership.test.ts.
@@ -58,6 +59,7 @@ const fakePrisma = {
       );
     },
     count: async () => memberships.length,
+    findFirst: async () => null,
     create: async ({ data }: { data: MembershipRow }) => {
       memberships.push(data);
       return data;
@@ -66,9 +68,28 @@ const fakePrisma = {
   organization: {
     findUnique: async () => ({ status: "ACTIVE", ssoSettings: null }),
   },
+  orgDomainClaim: {
+    findFirst: async ({ where }: { where: { domain: string } }) =>
+      where.domain === "acme.test" ? { id: "claim_1" } : null,
+  },
+  invitation: { findFirst: async () => null },
+  orgAuditLog: { create: async () => ({}), findFirst: async () => null },
+  user: {
+    // discardUnfinishedSsoUser: only a row with no account and no session.
+    deleteMany: async ({ where }: { where: { id: string } }) => {
+      const unfinished = (u: Record<string, unknown>) =>
+        u.id === where.id &&
+        !db.account.some((a) => a.userId === where.id) &&
+        !db.session.some((x) => x.userId === where.id);
+      const before = db.user.length;
+      db.user = db.user.filter((u) => !unfinished(u));
+      return { count: before - db.user.length };
+    },
+  },
   ssoProvider: {
     findUnique: async ({ where }: { where: { providerId: string } }) =>
       db.ssoProvider.find((p) => p.providerId === where.providerId) ?? null,
+    updateMany: async () => ({ count: 0 }),
   },
   $transaction: async (fn: (tx: unknown) => unknown) => fn(fakePrisma),
 };
@@ -78,8 +99,14 @@ jest.mock("../../lib/prisma", () => ({
     return fakePrisma;
   },
 }));
+jest.mock("../../lib/novu/subscriber", () => ({
+  deleteSubscriber: jest.fn(async () => true),
+}));
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: jest.fn(async () => {}),
+}));
+jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
+  dispatchWebhookEvent: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/api/organizations/membership-transitions", () => ({
   applyMembershipRoleEffects: async () => ({
@@ -95,6 +122,11 @@ jest.mock("../../lib/enterprise/outbound-webhooks/ssrf-guard", () => ({
 
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
+  assertSsoAccountClaims,
+  assertSsoAccountUpdate,
+  discardUnfinishedSsoUser,
+} from "@/lib/sso/account-claims";
+import {
   assertSsoEmailOnDomain,
   isSsoProviderId,
 } from "@/lib/sso/account-domain";
@@ -109,6 +141,8 @@ const ORG_ID = "org_acme";
 const PROVIDER_ID = "oidc-acme";
 const IDP_USER = { sub: "idp-user-1", email: "asha@acme.test", name: "Asha" };
 let idpUser = IDP_USER;
+let emailVerified = true;
+let omitIdToken = false;
 
 type Db = Record<string, Record<string, unknown>[]>;
 type CookieJar = Map<string, string>;
@@ -154,9 +188,16 @@ function buildAuth() {
             const user = await ctx?.context.internalAdapter.findUserById(
               account.userId,
             );
-            await assertSsoEmailOnDomain(account.providerId, user?.email);
+            try {
+              await assertSsoEmailOnDomain(account.providerId, user?.email);
+              await assertSsoAccountClaims(account);
+            } catch (refusal) {
+              await discardUnfinishedSsoUser(account.userId);
+              throw refusal;
+            }
           },
         },
+        update: { before: assertSsoAccountUpdate },
       },
     },
   });
@@ -168,7 +209,11 @@ async function signInThroughIdp(providerId = PROVIDER_ID) {
     new Request(`${APP}/api/auth/sign-in/sso`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: APP },
-      body: JSON.stringify({ providerId, callbackURL: "/dashboard" }),
+      body: JSON.stringify({
+        providerId,
+        callbackURL: "/dashboard",
+        errorCallbackURL: "/auth/signin",
+      }),
     }),
   );
   storeCookies(start, jar);
@@ -213,7 +258,7 @@ beforeAll(async () => {
     (token: { payload: Record<string, unknown> }) => {
       Object.assign(token.payload, {
         ...idpUser,
-        email_verified: true,
+        email_verified: emailVerified,
         aud: CLIENT_ID,
       });
     },
@@ -224,6 +269,12 @@ beforeAll(async () => {
       res.body = { ...idpUser, email_verified: true };
     },
   );
+  idp.service.on(
+    "beforeResponse",
+    (res: { body: Record<string, unknown>; statusCode: number }) => {
+      if (omitIdToken) delete res.body.id_token;
+    },
+  );
 });
 
 afterAll(async () => {
@@ -232,6 +283,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   idpUser = IDP_USER;
+  emailVerified = true;
+  omitIdToken = false;
   memberships.length = 0;
   db = {
     user: [],
@@ -262,7 +315,6 @@ beforeEach(async () => {
         clientId: CLIENT_ID,
         clientSecret: "client-secret",
         discoveryEndpoint,
-        pkce: true,
         discovered,
       }),
     ),
@@ -368,4 +420,55 @@ it("never links an out-of-domain IdP account to an existing user", async () => {
   expect(done.headers.get("location")).toContain("error=");
   expect(db.account).toHaveLength(0);
   expect(db.session).toHaveLength(0);
+});
+
+it("refuses an identity the IdP does not mark email_verified, redirecting to sign-in with no link, session or cookie", async () => {
+  emailVerified = false;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_EMAIL_NOT_VERIFIED/,
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.user).toHaveLength(0);
+  expect(db.account).toHaveLength(0);
+  expect(db.session).toHaveLength(0);
+  expect(memberships).toHaveLength(0);
+});
+
+it("a refused re-login keeps the user's earlier session and ends only the new one", async () => {
+  await completeRoundTrip();
+  expect(db.session).toHaveLength(1);
+  const [earlier] = db.session;
+  emailVerified = false;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_EMAIL_NOT_VERIFIED/,
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.session).toEqual([earlier]);
+  // The existing link survives, so a different subject still cannot link in.
+  expect(db.account).toHaveLength(1);
+  expect(db.user).toHaveLength(1);
+});
+
+it("refuses a returning login whose IdP omits the id_token", async () => {
+  await completeRoundTrip();
+  const [earlier] = db.session;
+  omitIdToken = true;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_ID_TOKEN_MISSING/,
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.session).toEqual([earlier]);
+  expect(db.account).toHaveLength(1);
 });

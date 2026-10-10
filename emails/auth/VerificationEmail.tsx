@@ -1,48 +1,41 @@
-import {
-  Button,
-  Container,
-  Head,
-  Html,
-  Preview,
-  Section,
-  Text,
-} from "react-email";
+import { Container, Head, Html, Preview, Section, Text } from "react-email";
 import * as React from "react";
-import { getAppUrl } from "@/lib/url";
 import { EmailFooter } from "@/emails/components/EmailFooter";
 import { EmailLogo } from "@/emails/components/EmailLogo";
 
 interface VerificationEmailProps {
-  name: string;
-  verificationLink: string;
+  code: string;
+  expiresInMinutes: number;
 }
 
+// Sent before the address is proven, so it greets nobody by name: the name is
+// whatever the sign-up form was given.
 export const VerificationEmail = ({
-  name = "Valued User",
-  verificationLink = `${getAppUrl()}/api/auth/verify-email?token=123`,
+  code = "123456",
+  expiresInMinutes = 10,
 }: VerificationEmailProps) => {
   return (
     <Html>
       <Head />
-      <Preview>Verify your Familiarise email address</Preview>
+      <Preview>{`Your Familiarise verification code is ${code}`}</Preview>
       <Section style={main}>
         <Container style={container}>
           <EmailLogo />
           <Section style={content}>
             <Text style={heading}>Confirm your email</Text>
-            <Text style={paragraph}>Hi {name},</Text>
+            <Text style={paragraph}>Hi there,</Text>
             <Text style={paragraph}>
-              Thanks for signing up for Familiarise. Please confirm that this is
-              your email address by clicking the button below.
+              Enter this code on the Familiarise sign-up page to confirm your
+              email address:
             </Text>
-            <Section style={buttonContainer}>
-              <Button style={button} href={verificationLink}>
-                Verify Email Address
-              </Button>
-            </Section>
+            <Text style={codeStyle}>{code}</Text>
             <Text style={paragraph}>
-              This link is valid for the next hour. If you didn't create a
-              Familiarise account, you can safely ignore this email.
+              The code expires in {expiresInMinutes} minutes. Never share it
+              with anyone; Familiarise will never ask you for it.
+            </Text>
+            <Text style={paragraph}>
+              If you didn&apos;t try to create a Familiarise account, ignore
+              this email and nothing will happen.
             </Text>
             <Text style={paragraph}>
               Best regards,
@@ -91,19 +84,12 @@ const paragraph = {
   margin: "0 0 20px",
 };
 
-const buttonContainer = {
+const codeStyle = {
+  fontSize: "32px",
+  fontWeight: "bold",
+  letterSpacing: "8px",
+  color: "#000",
   textAlign: "center" as const,
   margin: "30px 0",
-};
-
-const button = {
-  backgroundColor: "#000000",
-  borderRadius: "5px",
-  color: "#fff",
-  fontSize: "16px",
-  fontWeight: "normal",
-  textDecoration: "none",
-  textAlign: "center" as const,
-  display: "block",
-  padding: "12px 20px",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
 };

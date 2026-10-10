@@ -23,10 +23,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
+import { PasskeyList } from "@/components/auth/PasskeyList";
+import { invalidProps } from "@/components/ui/field-error";
+import { toast } from "@/components/ui/use-toast";
 import { authClient } from "@/lib/auth-client";
+import { withReauth } from "@/lib/auth/reauth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { AUTH_ERROR_COPY, humanizeAuthError } from "@/lib/labels/auth-errors";
-import { toast } from "@/components/ui/use-toast";
 
 type Phase = "loading" | "idle" | "enrolling";
 
@@ -36,12 +39,15 @@ interface TotpSetup {
   backupCodes: string[];
 }
 
+const ERROR_ID = "tfa-error";
+const QR_LABEL = "QR code to scan with your authenticator app";
+
 const inputClass =
   "w-full max-w-sm rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-white";
 const primaryButton =
   "rounded-md bg-white px-4 py-2 text-sm font-medium text-neutral-950 disabled:opacity-50";
 const secondaryButton =
-  "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50";
+  "rounded-md border border-neutral-700 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50";
 
 /** The base32 secret inside the otpauth:// URI, for manual entry. */
 function secretOf(totpURI: string): string {
@@ -52,35 +58,19 @@ function secretOf(totpURI: string): string {
   }
 }
 
-async function copyCodesToClipboard(
-  codes: string[],
-  showToast: typeof toast,
-): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(codes.join("\n"));
-    showToast({ title: "Backup codes copied to clipboard" });
-  } catch {
-    showToast({
-      title: "Couldn't copy backup codes",
-      description:
-        "Clipboard access failed. Select the codes manually or use Download .txt.",
-      variant: "destructive",
-    });
-  }
+/** Groups of four, which authenticator apps accept with the spaces. */
+function chunkSecret(secret: string): string {
+  return secret.replace(/(.{4})/g, "$1 ").trim();
 }
 
-function downloadBackupCodesFile(codes: string[]): void {
-  const blob = new Blob([`${codes.join("\n")}\n`], {
-    type: "text/plain;charset=utf-8",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "familiarise-backup-codes.txt";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+function backupCodesText(codes: readonly string[]): string {
+  return [
+    "Familiarise backup codes",
+    "Each code signs you in once if you lose your authenticator app.",
+    "",
+    ...codes,
+    "",
+  ].join("\n");
 }
 
 export function SetupSignOutButton() {
@@ -101,6 +91,92 @@ export function SetupSignOutButton() {
   );
 }
 
+function BackupCodes({
+  codes,
+  continueHref,
+}: Readonly<{ codes: readonly string[]; continueHref?: string }>) {
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  async function copyCodes() {
+    try {
+      await navigator.clipboard.writeText(backupCodesText(codes));
+      toast({ title: "Backup codes copied" });
+    } catch {
+      toast({
+        title: "Couldn't copy the codes",
+        description: "Select them and copy them by hand, or download them.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function downloadCodes() {
+    const url = URL.createObjectURL(
+      new Blob([backupCodesText(codes)], { type: "text/plain;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "familiarise-backup-codes.txt";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  return (
+    <div className="mt-4 space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
+      <p className="text-sm font-medium text-amber-200">
+        Save these backup codes now — they are shown once. Each one signs you in
+        once if you lose your authenticator.
+      </p>
+      <p className="text-xs text-neutral-300">
+        Leaving or reloading this page loses these codes. You can generate new
+        ones later from Settings using your password.
+      </p>
+      <ul className="grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
+        {codes.map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void copyCodes()}
+          className={secondaryButton}
+        >
+          Copy codes
+        </button>
+        <button
+          type="button"
+          onClick={downloadCodes}
+          className={secondaryButton}
+        >
+          Download .txt
+        </button>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-neutral-200">
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(e) => setAcknowledged(e.target.checked)}
+          className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
+        />
+        <span>I have saved my backup codes</span>
+      </label>
+      {continueHref ? (
+        <button
+          type="button"
+          disabled={!acknowledged}
+          onClick={() => window.location.assign(continueHref)}
+          className={primaryButton}
+        >
+          I&apos;ve saved these codes — continue
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function TwoFactorSettings({
   continueHref,
 }: Readonly<{
@@ -111,7 +187,6 @@ export function TwoFactorSettings({
   const [enabled, setEnabled] = useState(false);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
-  const [savedCodesAcknowledged, setSavedCodesAcknowledged] = useState(false);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -119,9 +194,7 @@ export function TwoFactorSettings({
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await authClient.getSession({
-        query: { disableCookieCache: true },
-      });
+      const { data } = await authClient.getSession();
       setEnabled(data?.user?.twoFactorEnabled === true);
     } catch {
       // A session that cannot be read is the `SESSION_LOOKUP_FAILED` case,
@@ -161,7 +234,8 @@ export function TwoFactorSettings({
   }
 
   /** Step 1: prove the password before issuing a TOTP secret. */
-  async function beginEnrolment() {
+  async function beginEnrolment(event: React.FormEvent) {
+    event.preventDefault();
     if (!password) {
       setError(AUTH_ERROR_COPY.INVALID_PASSWORD.description);
       return;
@@ -190,8 +264,9 @@ export function TwoFactorSettings({
    * Step 2: verify the first code. This is the call that flips
    * `twoFactorEnabled`, and it re-issues the session cookie.
    */
-  async function confirmEnrolment() {
-    if (!setup) return;
+  async function confirmEnrolment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!setup || code.length !== 6) return;
     const ok = await run(async () => {
       const result = await authClient.twoFactor.verifyTotp({ code });
       return { error: result.error };
@@ -200,35 +275,33 @@ export function TwoFactorSettings({
     setCode("");
     setSetup(null);
     setBackupCodes(setup.backupCodes);
-    setSavedCodesAcknowledged(false);
     setEnabled(true);
     setPhase("idle");
     toast({ title: "Two-factor authentication is on" });
   }
 
-  async function regenerateBackupCodes() {
+  async function regenerateBackupCodes(event: React.FormEvent) {
+    event.preventDefault();
     if (!password) {
       setError(AUTH_ERROR_COPY.INVALID_PASSWORD.description);
       return;
     }
     const ok = await run(async () => {
-      const result = await authClient.twoFactor.generateBackupCodes({
-        password,
-      });
-      if (result.data?.backupCodes) {
-        setBackupCodes(result.data.backupCodes);
-        setSavedCodesAcknowledged(false);
-      }
+      const result = await withReauth(() =>
+        authClient.twoFactor.generateBackupCodes({ password }),
+      );
+      if (result.data?.backupCodes) setBackupCodes(result.data.backupCodes);
       return { error: result.error };
     });
     if (ok) setPassword("");
   }
 
   const errorLine = error ? (
-    <p role="alert" className="mt-3 text-sm text-red-400">
+    <p id={ERROR_ID} role="alert" className="mt-3 text-sm text-red-400">
       {error}
     </p>
   ) : null;
+  const describedByError = invalidProps(error, ERROR_ID);
 
   if (phase === "loading") {
     return (
@@ -252,24 +325,25 @@ export function TwoFactorSettings({
           Authenticator, Authy…), then type the six-digit code it shows.
         </p>
         <div className="mt-4 inline-block rounded-md bg-white p-3">
-          <QRCodeSVG value={setup.totpURI} size={176} />
+          <QRCodeSVG
+            value={setup.totpURI}
+            size={176}
+            title={QR_LABEL}
+            role="img"
+            aria-label={QR_LABEL}
+          />
         </div>
         {setup.secret ? (
           <p className="mt-3 text-sm text-neutral-400">
             Can&apos;t scan? Enter this key manually:{" "}
             <code className="break-all font-mono text-neutral-200">
-              {setup.secret}
+              {chunkSecret(setup.secret)}
             </code>
           </p>
         ) : null}
         <form
           className="mt-4 flex flex-wrap gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy && code.length === 6) {
-              void confirmEnrolment();
-            }
-          }}
+          onSubmit={(event) => void confirmEnrolment(event)}
         >
           <input
             aria-label="Six digit code"
@@ -279,6 +353,7 @@ export function TwoFactorSettings({
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
             className="w-32 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-white"
+            {...describedByError}
           />
           <button
             type="submit"
@@ -318,12 +393,7 @@ export function TwoFactorSettings({
         </p>
         <form
           className="mt-4 space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy) {
-              void beginEnrolment();
-            }
-          }}
+          onSubmit={(event) => void beginEnrolment(event)}
         >
           <label
             className="block text-sm text-neutral-300"
@@ -338,6 +408,7 @@ export function TwoFactorSettings({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={inputClass}
+            {...describedByError}
           />
           <button type="submit" disabled={busy} className={primaryButton}>
             {busy ? "Working…" : "Set up two-factor"}
@@ -362,60 +433,14 @@ export function TwoFactorSettings({
       </p>
 
       {backupCodes ? (
-        <div className="mt-4 space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
-          <p className="text-sm font-medium text-amber-200">
-            Save these backup codes now — they are shown once. Each one signs
-            you in once if you lose your authenticator.
-          </p>
-          <p className="text-xs text-neutral-300">
-            Leaving or reloading this page loses these codes. You can generate
-            new ones later from Settings using your password.
-          </p>
-          <ul className="grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
-            {backupCodes.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void copyCodesToClipboard(backupCodes, toast)}
-              className={secondaryButton}
-            >
-              Copy codes
-            </button>
-            <button
-              type="button"
-              onClick={() => downloadBackupCodesFile(backupCodes)}
-              className={secondaryButton}
-            >
-              Download .txt
-            </button>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-neutral-200">
-            <input
-              type="checkbox"
-              checked={savedCodesAcknowledged}
-              onChange={(e) => setSavedCodesAcknowledged(e.target.checked)}
-              className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
-            />
-            <span>I have saved my backup codes</span>
-          </label>
-          {continueHref ? (
-            <button
-              type="button"
-              disabled={!savedCodesAcknowledged}
-              onClick={() => window.location.assign(continueHref)}
-              className={primaryButton}
-            >
-              I&apos;ve saved these codes — continue
-            </button>
-          ) : null}
-        </div>
+        <BackupCodes codes={backupCodes} continueHref={continueHref} />
       ) : null}
 
       {continueHref ? null : (
-        <div className="mt-4 space-y-3">
+        <form
+          className="mt-4 space-y-3"
+          onSubmit={(event) => void regenerateBackupCodes(event)}
+        >
           <label
             className="block text-sm text-neutral-300"
             htmlFor="tfa-password"
@@ -429,20 +454,19 @@ export function TwoFactorSettings({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={inputClass}
+            {...describedByError}
           />
           <button
-            type="button"
+            type="submit"
             disabled={busy || !password}
-            onClick={() => void regenerateBackupCodes()}
-            className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+            className={secondaryButton}
           >
             New backup codes
           </button>
-        </div>
+        </form>
       )}
       {errorLine}
+      {continueHref ? null : <PasskeyList />}
     </section>
   );
 }
-
-export default TwoFactorSettings;

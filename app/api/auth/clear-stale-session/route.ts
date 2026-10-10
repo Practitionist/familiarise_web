@@ -29,7 +29,16 @@ const callbackUrlSchema = z.string().max(2048).optional();
 export async function GET(request: Request) {
   const cookieStore = await cookies();
   for (const name of SESSION_COOKIES) {
-    cookieStore.delete(name);
+    // A __Secure- cookie is only overwritten by a Set-Cookie that is Secure.
+    cookieStore.set({
+      name,
+      value: "",
+      path: "/",
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: name.startsWith("__Secure-"),
+    });
   }
 
   const url = new URL("/auth/signin", request.url);

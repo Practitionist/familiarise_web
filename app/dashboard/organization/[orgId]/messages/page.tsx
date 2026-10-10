@@ -31,7 +31,7 @@ export default async function OrgMessagesPage({
 }) {
   const { orgId } = await params;
 
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) {
     notFound();
   }

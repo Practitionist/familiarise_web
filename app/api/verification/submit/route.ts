@@ -20,8 +20,7 @@ import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
  */
 export async function POST(request: NextRequest) {
   try {
-    // Force-fresh (see documents route): revocation must bite immediately.
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },

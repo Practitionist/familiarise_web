@@ -270,10 +270,17 @@ describe("TwoFactorSettings backup code gate & TwoFactorSetupPage escape hatch",
       copyBtn?.click();
     });
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "abcde-12345\nfghij-67890",
+      [
+        "Familiarise backup codes",
+        "Each code signs you in once if you lose your authenticator app.",
+        "",
+        "abcde-12345",
+        "fghij-67890",
+        "",
+      ].join("\n"),
     );
     expect(toastMock).toHaveBeenCalledWith({
-      title: "Backup codes copied to clipboard",
+      title: "Backup codes copied",
     });
 
     Object.assign(navigator, {

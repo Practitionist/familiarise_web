@@ -33,6 +33,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "reimbursements.read",
   });
   if (access.error) return access.error;
@@ -123,9 +124,15 @@ export async function GET(
 
   const [total, pageRows, rollupRows] = await prisma.$transaction([
     prisma.payment.count({ where }),
+    // Explicit select: gateway ids and payment metadata never reach the org.
     prisma.payment.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        description: true,
+        createdAt: true,
         user: { select: { id: true, name: true, email: true } },
         refunds: succeededRefunds,
       },
@@ -148,7 +155,10 @@ export async function GET(
     }),
   ]);
 
-  const items = pageRows.map((p) => ({ ...p, ...netOf(p) }));
+  const items = pageRows.map(({ refunds, ...p }) => ({
+    ...p,
+    ...netOf({ amount: p.amount, refunds }),
+  }));
 
   let totalPaise = 0;
   let totalRefundedPaise = 0;
@@ -188,18 +198,21 @@ export async function GET(
     perMember.set(row.user.id, entry);
   }
 
-  return NextResponse.json({
-    items,
-    total,
-    page: pagination.page,
-    perPage: pagination.pageSize,
-    // `totalPaise` stays the gross so existing readers keep their meaning;
-    // `totalNetPaise` is the figure payroll should actually transfer.
-    totalPaise,
-    totalRefundedPaise,
-    totalNetPaise,
-    byMember: Array.from(perMember.values()).sort(
-      (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
-    ),
-  });
+  return NextResponse.json(
+    {
+      items,
+      total,
+      page: pagination.page,
+      perPage: pagination.pageSize,
+      // `totalPaise` stays the gross so existing readers keep their meaning;
+      // `totalNetPaise` is the figure payroll should actually transfer.
+      totalPaise,
+      totalRefundedPaise,
+      totalNetPaise,
+      byMember: Array.from(perMember.values()).sort(
+        (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
+      ),
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

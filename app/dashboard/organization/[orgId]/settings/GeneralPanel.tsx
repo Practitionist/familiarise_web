@@ -57,6 +57,7 @@ import {
   CAPABILITY_LABEL,
   deriveCapabilityKind,
 } from "@/lib/labels/org-labels";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // ---------------------------------------------------------------------------
 // Types — GET /api/organizations/[orgId]/settings returns
@@ -1202,7 +1203,7 @@ function DangerZoneCard({
 
   const transferMutation = useMutation({
     mutationFn: async (memberId: string) => {
-      const res = await fetch(
+      const res = await fetchWithIdentity(
         `/api/organizations/${orgId}/members/${memberId}`,
         {
           method: "PATCH",

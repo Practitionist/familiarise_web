@@ -9,13 +9,16 @@ import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors/api-error";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { startReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-drop";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 export async function POST() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
     // Every start mints a validation at RazorpayX; throttle per user first.
     const rateLimited = await applyRateLimit(moneyOpsLimiter, session.user.id);
     if (rateLimited) return rateLimited;

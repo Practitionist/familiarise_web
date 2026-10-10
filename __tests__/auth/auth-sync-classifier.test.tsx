@@ -3,13 +3,13 @@
  */
 
 /**
- * The client revocation check signs out ONLY on a confirmed revocation.
- *
- * Regression for the mass sign-out defect: BetterAuth's customSession answers
- * `/get-session` with `200 null` when the lookup itself fails, and the old
- * classifier read that null as "revoked" — so a database blip signed out
- * every open tab. The classifier now asks `/api/user/sessions/current`,
- * whose status codes separate the three cases.
+ * AuthSyncProvider keeps a tab honest without ever turning "unknown" into
+ * "signed out":
+ * - only a confirmed revocation (401/403 from the identity ping) leaves, and
+ *   it leaves without a second sign-out call;
+ * - a different user id (store or ping) hard-reloads the tab;
+ * - a sign-out broadcast from another tab is followed once;
+ * - focus and bfcache restore revalidate as well as visibility.
  */
 
 (
@@ -17,7 +17,7 @@
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockRefetch = jest.fn();
-const mockSessionData: unknown = {
+let mockSessionData: unknown = {
   user: { id: "u1" },
   session: { id: "s-current" },
 };
@@ -30,10 +30,29 @@ jest.mock("../../lib/auth-client", () => ({
   }),
 }));
 
-const mockSignOutEverywhere = jest.fn();
+const mockLeaveEndedSession = jest.fn(async () => {});
+const mockFollowSignOutElsewhere = jest.fn(async () => {});
+const mockReload = jest.fn();
+let broadcastHandler: (() => void) | null = null;
 jest.mock("../../lib/auth/sign-out", () => ({
   __esModule: true,
-  signOutEverywhere: (...a: unknown[]) => mockSignOutEverywhere(...a),
+  leaveEndedSession: (...a: unknown[]) => mockLeaveEndedSession(...(a as [])),
+  followSignOutElsewhere: () => mockFollowSignOutElsewhere(),
+  reloadAsSignedInUser: () => mockReload(),
+  signInHref: (reason?: string) =>
+    `/auth/signin?reason=${reason}&callbackUrl=%2Fdashboard`,
+  subscribeToSignOut: (handler: () => void) => {
+    broadcastHandler = handler;
+    return () => {
+      broadcastHandler = null;
+    };
+  },
+}));
+
+const mockSetExpectedUser = jest.fn();
+jest.mock("../../lib/auth/identity-header", () => ({
+  __esModule: true,
+  setExpectedUser: (id: string | null) => mockSetExpectedUser(id),
 }));
 
 jest.mock("../../lib/observability/identity", () => ({
@@ -53,7 +72,13 @@ function setVisible(visible: boolean): void {
   });
 }
 
-describe("AuthSyncProvider revocation classifier", () => {
+const okFor = (userId: string) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ active: true, userId }),
+});
+
+describe("AuthSyncProvider", () => {
   let container: HTMLDivElement;
   let root: Root | null = null;
   const realFetch = global.fetch;
@@ -62,8 +87,8 @@ describe("AuthSyncProvider revocation classifier", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-10-01T00:00:00Z"));
-    mockRefetch.mockReset();
-    mockSignOutEverywhere.mockReset();
+    jest.clearAllMocks();
+    mockSessionData = { user: { id: "u1" }, session: { id: "s-current" } };
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
     setVisible(true);
@@ -79,76 +104,132 @@ describe("AuthSyncProvider revocation classifier", () => {
     jest.useRealTimers();
   });
 
-  async function mountAndFocus(): Promise<void> {
+  async function mount(): Promise<void> {
     await act(async () => {
       root = createRoot(container);
       root.render(<AuthSyncProvider />);
     });
-    // Past the focus throttle, then a tab switch back.
-    jest.advanceTimersByTime(60_000);
+  }
+
+  async function settle(): Promise<void> {
     await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    await act(async () => {
+      await Promise.resolve();
       await Promise.resolve();
     });
   }
 
+  async function fire(target: EventTarget, event: Event): Promise<void> {
+    jest.advanceTimersByTime(60_000);
+    await act(async () => {
+      target.dispatchEvent(event);
+    });
+    await settle();
+  }
+
+  it("names the page's user for money/IAM writes", async () => {
+    await mount();
+    expect(mockSetExpectedUser).toHaveBeenCalledWith("u1");
+  });
+
   it.each([
     ["a 503 (lookup failed)", () => ({ ok: false, status: 503 })],
     ["a 500", () => ({ ok: false, status: 500 })],
-  ])("does not sign out on %s, and refetches", async (_label, response) => {
+  ])("does not leave on %s, and refetches", async (_label, response) => {
     fetchMock.mockResolvedValue(response());
-    await mountAndFocus();
+    await mount();
+    await fire(document, new Event("visibilitychange"));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/user/sessions/current",
       expect.objectContaining({ cache: "no-store" }),
     );
-    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+    expect(mockLeaveEndedSession).not.toHaveBeenCalled();
     expect(mockRefetch).toHaveBeenCalled();
   });
 
-  it("does nothing on a 200 from a focus check", async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
-    await mountAndFocus();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/user/sessions/current",
-      expect.objectContaining({ cache: "no-store" }),
-    );
-    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
-    expect(mockRefetch).not.toHaveBeenCalled();
-  });
-
-  it("does not sign out on a network error", async () => {
+  it("does not leave on a network error", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    await mountAndFocus();
-    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+    await mount();
+    await fire(document, new Event("visibilitychange"));
+    expect(mockLeaveEndedSession).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403])("signs out on a %s", async (status) => {
-    fetchMock.mockResolvedValue({ ok: false, status });
-    await mountAndFocus();
-    expect(mockSignOutEverywhere).toHaveBeenCalledWith(
-      "/auth/signin?reason=session-revoked",
-    );
+  it.each([401, 403])(
+    "leaves on a %s with the reason and callbackUrl, without a sign-out call",
+    async (status) => {
+      fetchMock.mockResolvedValue({ ok: false, status });
+      await mount();
+      await fire(document, new Event("visibilitychange"));
+      expect(mockLeaveEndedSession).toHaveBeenCalledTimes(1);
+      expect(mockLeaveEndedSession).toHaveBeenCalledWith(
+        "/auth/signin?reason=session-revoked&callbackUrl=%2Fdashboard",
+      );
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("/sign-out"),
+        expect.anything(),
+      );
+    },
+  );
+
+  it("revalidates on window focus and on a bfcache restore", async () => {
+    fetchMock.mockResolvedValue(okFor("u1"));
+    await mount();
+    await fire(window, new Event("focus"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const restored = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(restored, "persisted", { value: true });
+    await act(async () => {
+      window.dispatchEvent(restored);
+    });
+    await settle();
+    // A bfcache restore skips the throttle.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mockRefetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("hard-reloads when the identity ping names another user", async () => {
+    fetchMock.mockResolvedValue(okFor("u2"));
+    await mount();
+    await fire(window, new Event("focus"));
+    expect(mockReload).toHaveBeenCalledTimes(1);
+    expect(mockLeaveEndedSession).not.toHaveBeenCalled();
+  });
+
+  it("hard-reloads when the session store resolves another user", async () => {
+    await mount();
+    mockSessionData = { user: { id: "u2" }, session: { id: "s-other" } };
+    await act(async () => {
+      root?.render(<AuthSyncProvider />);
+    });
+    expect(mockReload).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows another tab's sign-out once, with no second sign-out call", async () => {
+    await mount();
+    await act(async () => {
+      broadcastHandler?.();
+      broadcastHandler?.();
+    });
+    expect(mockFollowSignOutElsewhere).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forgets a remembered session quietly on a public page", async () => {
+    localStorage.setItem("familiarise.auth_authed", "true");
+    mockSessionData = null;
+    await mount();
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockLeaveEndedSession).not.toHaveBeenCalled();
+    expect(localStorage.getItem("familiarise.auth_authed")).toBe("false");
   });
 
   it("does not probe while the tab is hidden", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 401 });
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<AuthSyncProvider />);
-    });
-    fetchMock.mockClear();
+    await mount();
     setVisible(false);
-    jest.advanceTimersByTime(60_000);
-    await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      "/api/user/sessions/current",
-      expect.anything(),
-    );
-    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+    await fire(document, new Event("visibilitychange"));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockLeaveEndedSession).not.toHaveBeenCalled();
   });
 });

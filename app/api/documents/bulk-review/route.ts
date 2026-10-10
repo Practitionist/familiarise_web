@@ -28,7 +28,7 @@ const BulkReviewSchema = z.object({
 
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required", code: "UNAUTHORIZED" },
@@ -118,7 +118,10 @@ export async function PATCH(request: NextRequest) {
       data: { updated: result.count, requested: documentIds.length },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "documents" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "documents" } },
+    );
     console.error("Error in bulk document review:", error);
     return NextResponse.json(
       { error: "Failed to review documents", code: "SERVER_ERROR" },

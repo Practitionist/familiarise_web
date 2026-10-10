@@ -31,7 +31,7 @@ export default async function PayExistingOrderPage({
   params: Promise<{ paymentId: string }>;
 }>) {
   const { paymentId } = await params;
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) notFound();
 
   const state = await resolvePayPage(paymentId, session.user.id);

@@ -5,6 +5,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { transitionMembership } from "@/lib/enterprise/transitions";
+import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
 import {
   assertNotLastOwner,
   assertRemovable,
@@ -254,6 +255,9 @@ async function removeInTx(
     where: { id: memberId, organizationId: orgId },
     to: "REMOVED",
   });
+  if (!isSelfLeave) {
+    await revokeOrgManagedUserSessions(tx, orgId, current.userId);
+  }
   if (current.role === "EXPERT" && current.consultantProfileId) {
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }

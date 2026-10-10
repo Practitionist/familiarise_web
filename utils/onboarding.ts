@@ -3,35 +3,23 @@ import {
   ScheduleType,
   UserRole,
   Gender,
-  CareerStage,
   OfferingFormat,
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
 import { DateOfBirthSchema } from "@/lib/compliance/age";
+import { MAX_OUTSTANDING_UPLOADS } from "@/lib/verification/documents";
 import {
   WeeklySlotSchema,
   CustomSlotSchema,
   ConsultantProfileSchema,
   ConsulteeProfileSchema,
-  StaffProfileSchema,
-  AdminProfileSchema,
   WorkExperienceSchema,
   EducationSchema,
   CertificationSchema,
-  CareerStageEnum,
   LONG_FORM_TEXT_MAX,
   linkedinProfileUrlFormSchema,
 } from "@/schemas/user";
-
-// ============================================================================
-// RE-EXPORTS — backward compat for consumers using old import paths
-// ============================================================================
-
-/** @deprecated Use WeeklySlotSchema from @/schemas/user */
-export const SlotWeeklyCreateInputSchema = WeeklySlotSchema;
-/** @deprecated Use CustomSlotSchema from @/schemas/user */
-export const SlotCustomCreateInputSchema = CustomSlotSchema;
 
 // ============================================================================
 // SHARED FIELD SCHEMAS (defined once, reused everywhere)
@@ -144,18 +132,6 @@ export const ConsulteeProfileCreateObjectSchema = z.object({
   create: BaseConsulteeProfileCreateInputSchema,
 });
 
-export const BaseStaffProfileCreateInputSchema = StaffProfileSchema;
-
-export const StaffProfileCreateObjectSchema = z.object({
-  create: BaseStaffProfileCreateInputSchema,
-});
-
-export const BaseAdminProfileCreateInputSchema = AdminProfileSchema;
-
-export const AdminProfileCreateObjectSchema = z.object({
-  create: BaseAdminProfileCreateInputSchema,
-});
-
 // ============================================================================
 // SERVER PAYLOAD SCHEMA (what the API receives)
 // ============================================================================
@@ -190,11 +166,8 @@ export const VerificationDocumentRefSchema = z
   })
   .strip();
 
-/**
- * OWASP ASVS V5.2.4 asks for a per-user maximum on uploads. The upload route
- * caps each file at 10 MB; this caps how many may be claimed in one submission.
- */
-export const MAX_VERIFICATION_DOCUMENTS = 6;
+/** One document limit for the wizard, the submit payload and the upload route. */
+export const MAX_VERIFICATION_DOCUMENTS = MAX_OUTSTANDING_UPLOADS;
 
 /** Admin-facing free text on a verification submission. */
 export const VERIFICATION_NOTES_MAX = 500;
@@ -226,81 +199,47 @@ export const OnboardingBaseSchema = z.object({
   verificationLinkedinUrl: linkedinProfileUrlFormSchema,
   verificationNotes: z.string().max(VERIFICATION_NOTES_MAX).optional(),
   verificationDocuments: VerificationDocumentsSchema,
-  termsAcceptedAt: z.coerce.date().optional(),
-  privacyAcceptedAt: z.coerce.date().optional(),
 });
 
+/**
+ * Consent on every completion path. The browser sends only the two literals;
+ * the server stamps the timestamps and `TERMS_VERSION`.
+ */
+export const OnboardingConsentSchema = z.object({
+  termsAccepted: z.literal(true, {
+    errorMap: () => ({ message: "Accept the terms of service to continue" }),
+  }),
+  privacyAccepted: z.literal(true, {
+    errorMap: () => ({ message: "Accept the privacy policy to continue" }),
+  }),
+  marketingConsent: z.boolean().optional(),
+});
+
+export type OnboardingConsent = z.infer<typeof OnboardingConsentSchema>;
+
+/** The interstitial for invitees and SSO members: an 18+ DOB plus consent. */
+export const OnboardingGateSchema = OnboardingConsentSchema.extend({
+  dateOfBirth: DateOfBirthSchema,
+});
+
+export type OnboardingGateInput = z.infer<typeof OnboardingGateSchema>;
+
+const OnboardingSubmitBaseSchema = OnboardingBaseSchema.merge(
+  OnboardingConsentSchema,
+);
+
 export const OnboardingDataSchema = z.discriminatedUnion("role", [
-  OnboardingBaseSchema.extend({
+  OnboardingSubmitBaseSchema.extend({
     role: z.literal(UserRole.CONSULTANT),
     consultantProfile: ConsultantProfileCreateObjectSchema,
     consulteeProfile: z.undefined().optional(),
-    staffProfile: z.undefined().optional(),
   }),
-  OnboardingBaseSchema.extend({
+  OnboardingSubmitBaseSchema.extend({
     role: z.literal(UserRole.CONSULTEE),
     consultantProfile: z.undefined().optional(),
     consulteeProfile: ConsulteeProfileCreateObjectSchema,
-    staffProfile: z.undefined().optional(),
-  }),
-  OnboardingBaseSchema.extend({
-    role: z.literal(UserRole.STAFF),
-    consultantProfile: z.undefined().optional(),
-    consulteeProfile: z.undefined().optional(),
-    staffProfile: StaffProfileCreateObjectSchema,
-  }),
-  OnboardingBaseSchema.extend({
-    role: z.literal(UserRole.ADMIN),
-    consultantProfile: z.undefined().optional(),
-    consulteeProfile: z.undefined().optional(),
-    staffProfile: z.undefined().optional(),
-    adminProfile: AdminProfileCreateObjectSchema.optional(),
-  }),
-  OnboardingBaseSchema.extend({
-    role: z.literal(UserRole.ORG_WORKSPACE),
-    consultantProfile: z.undefined().optional(),
-    consulteeProfile: z.undefined().optional(),
-    staffProfile: z.undefined().optional(),
-    // ORG_WORKSPACE onboarding no longer collects org fields — the user is
-    // marked onboarded as ORG_WORKSPACE and redirected to
-    // /dashboard/organization/create where the full wizard runs.
   }),
 ]);
-
-// ============================================================================
-// FRONTEND SCHEMAS (flat structure for forms and client-side code)
-// ============================================================================
-
-export const FrontendConsultantProfileSchema = consultantScalarFields.extend({
-  domain: domainRefSchema,
-  subDomains: z.array(subDomainRefSchema).optional(),
-  tags: z.array(tagRefSchema).optional(),
-  weeklySlots: z.array(WeeklySlotSchema).optional(),
-  customSlots: z.array(CustomSlotSchema).optional(),
-});
-
-export const FrontendConsulteeProfileSchema = ConsulteeProfileSchema;
-
-export const FrontendStaffProfileSchema = StaffProfileSchema;
-
-export const FrontendAdminProfileSchema = AdminProfileSchema;
-
-export const FrontendOnboardingBaseSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email address"),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  timezone: z.string().optional(),
-  onlineStatus: z.boolean().default(false),
-  onboardingCompleted: z.boolean().default(false),
-  role: z.nativeEnum(UserRole),
-  dateOfBirth: DateOfBirthSchema,
-  gender: z.nativeEnum(Gender).optional().nullable(),
-  city: z.string().optional(),
-  country: z.string().optional(),
-  linkedinUrl: linkedinProfileUrlFormSchema,
-  bio: z.string().max(160).optional(),
-});
 
 // ============================================================================
 // FORM SCHEMAS (react-hook-form compatible, with stricter validation)
@@ -340,38 +279,6 @@ export const ConsultantProfileFormSchema = consultantScalarFields.extend({
   customSlots: z.array(CustomSlotSchema).optional(),
 });
 
-// Consultee form: derived from base with stricter validation
-export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.extend({
-  careerStage: CareerStageEnum,
-  aboutMe: z.string().optional(),
-  skillsToDevelop: z.array(z.string()).optional(),
-  // Inline education for STUDENT path
-  consulteeInlineEducation: z
-    .object({
-      institution: z.string().optional(),
-      institutionDomain: z.string().optional(),
-      fieldOfStudy: z.string().optional(),
-      endYear: z.number().min(1900).max(2100).optional(),
-    })
-    .optional(),
-  // Inline work experience for PROFESSIONAL path
-  consulteeInlineWorkExperience: z
-    .object({
-      title: z.string().optional(),
-      company: z.string().optional(),
-      companyDomain: z.string().optional(),
-    })
-    .optional(),
-});
-
-// Staff form: derived from base with stricter validation
-export const StaffProfileFormSchema = StaffProfileSchema.extend({
-  department: z.string().min(1, "Department is required"),
-  position: z.string().min(1, "Position is required"),
-});
-
-export const AdminProfileFormSchema = AdminProfileSchema;
-
 export const PreferredScheduleFormSchema = z.object({
   scheduleType: z.nativeEnum(ScheduleType),
   weeklySlots: z.array(WeeklySlotSchema).optional(),
@@ -390,6 +297,7 @@ const sharedFormFields = PersonalInfoAndRoleFormSchema.extend({
   image: z.string().optional(),
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
+  marketingConsent: z.boolean().optional(),
 });
 
 const consultantFormFields = sharedFormFields.extend({
@@ -433,38 +341,10 @@ const consultantFormFields = sharedFormFields.extend({
 const consulteeFormFields = sharedFormFields.extend({
   role: z.literal(UserRole.CONSULTEE),
   ...ConsulteeProfileSchema.shape,
-  // Inline education for STUDENT path
-  consulteeInlineEducation: z
-    .object({
-      institution: z.string().optional(),
-      institutionDomain: z.string().optional(),
-      fieldOfStudy: z.string().optional(),
-      endYear: z.number().min(1900).max(2100).optional(),
-    })
-    .optional(),
-  // Inline work experience for PROFESSIONAL path
-  consulteeInlineWorkExperience: z
-    .object({
-      title: z.string().optional(),
-      company: z.string().optional(),
-      companyDomain: z.string().optional(),
-    })
-    .optional(),
 });
 
-const staffFormFields = sharedFormFields.extend({
-  role: z.literal(UserRole.STAFF),
-  ...StaffProfileSchema.shape,
-});
-
-const adminFormFields = sharedFormFields.extend({
-  role: z.literal(UserRole.ADMIN),
-  adminNotes: z.string().optional(),
-});
-
-// ORG_WORKSPACE onboarding collects only personal info + agreement. The full
-// organization-creation wizard lives at /dashboard/organization/create and
-// runs after onboarding completes.
+// ORG_WORKSPACE collects personal info + agreement here; the create-org
+// wizard then completes onboarding inside `POST /api/organizations`.
 const orgWorkspaceFormFields = sharedFormFields.extend({
   role: z.literal("ORG_WORKSPACE" as const),
 });
@@ -474,8 +354,6 @@ const orgWorkspaceFormFields = sharedFormFields.extend({
 export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
   consultantFormFields,
   consulteeFormFields,
-  staffFormFields,
-  adminFormFields,
   orgWorkspaceFormFields,
 ]);
 
@@ -484,31 +362,20 @@ export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
 // ============================================================================
 
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
+type WithConsentBooleans<T> = T extends unknown
+  ? Omit<T, "termsAccepted" | "privacyAccepted"> & {
+      termsAccepted: boolean;
+      privacyAccepted: boolean;
+    }
+  : never;
+/** The wire payload the wizard sends: consent is a boolean the server checks. */
+export type OnboardingSubmitPayload = WithConsentBooleans<OnboardingData>;
 export type ConsultantProfileCreateData = z.infer<
   typeof BaseConsultantProfileCreateInputSchema
 >;
 export type ConsulteeProfileCreateData = z.infer<
   typeof BaseConsulteeProfileCreateInputSchema
 >;
-export type StaffProfileCreateData = z.infer<
-  typeof BaseStaffProfileCreateInputSchema
->;
-export type AdminProfileCreateData = z.infer<
-  typeof BaseAdminProfileCreateInputSchema
->;
-type FrontendConsultantProfile = z.infer<
-  typeof FrontendConsultantProfileSchema
->;
-type FrontendConsulteeProfile = z.infer<typeof FrontendConsulteeProfileSchema>;
-type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
-type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
-type FrontendOnboardingBase = z.infer<typeof FrontendOnboardingBaseSchema>;
-type FrontendOnboardingData = FrontendOnboardingBase & {
-  consultantProfile?: FrontendConsultantProfile;
-  consulteeProfile?: FrontendConsulteeProfile;
-  staffProfile?: FrontendStaffProfile;
-  adminProfile?: FrontendAdminProfile;
-};
 
 // OnboardingFormData — flat type with all possible fields (for page-level form state).
 // Individual steps use role-specific schemas for stricter validation.
@@ -519,8 +386,6 @@ export type OnboardingFormData = Omit<
   "role"
 > &
   Partial<Omit<z.infer<typeof consulteeFormFields>, "role">> &
-  Partial<Omit<z.infer<typeof staffFormFields>, "role">> &
-  Partial<Omit<z.infer<typeof adminFormFields>, "role">> &
   Partial<Omit<z.infer<typeof orgWorkspaceFormFields>, "role">> & {
     role: UserRole;
   };
@@ -550,8 +415,10 @@ function pickUserFields(formData: OnboardingFormData) {
     verificationLinkedinUrl: formData.verificationLinkedinUrl,
     verificationNotes: formData.verificationNotes,
     verificationDocuments: formData.verificationDocuments,
-    termsAcceptedAt: formData.termsAccepted ? new Date() : undefined,
-    privacyAcceptedAt: formData.privacyAccepted ? new Date() : undefined,
+    // Wrong values are refused by OnboardingConsentSchema on the server.
+    termsAccepted: formData.termsAccepted === true,
+    privacyAccepted: formData.privacyAccepted === true,
+    marketingConsent: formData.marketingConsent === true,
   };
 }
 
@@ -604,7 +471,7 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
 
 export function transformOnboardingFormToServerData(
   formData: OnboardingFormData,
-): OnboardingData {
+): OnboardingSubmitPayload {
   const base = pickUserFields(formData);
 
   switch (formData.role) {
@@ -614,15 +481,10 @@ export function transformOnboardingFormToServerData(
         role: UserRole.CONSULTANT,
         consultantProfile: { create: buildConsultantServerProfile(formData) },
         consulteeProfile: undefined,
-        staffProfile: undefined,
       };
 
-    case UserRole.CONSULTEE: {
-      // Build inline education/work experience arrays for persistProfessionalBackground
-      const inlineEdu = formData.consulteeInlineEducation;
-      const inlineWork = formData.consulteeInlineWorkExperience;
-
-      const payload: OnboardingData & Record<string, unknown> = {
+    case UserRole.CONSULTEE:
+      return {
         ...base,
         role: UserRole.CONSULTEE,
         consultantProfile: undefined,
@@ -636,205 +498,41 @@ export function transformOnboardingFormToServerData(
             budgetPreference: formData.budgetPreference,
           },
         },
-        staffProfile: undefined,
       };
-
-      // STUDENT path: inline education → educationHistory array
-      if (
-        formData.careerStage === CareerStage.STUDENT &&
-        inlineEdu?.institution
-      ) {
-        payload.educationHistory = [
-          {
-            institution: inlineEdu.institution,
-            institutionDomain: inlineEdu.institutionDomain,
-            degree: "Student",
-            fieldOfStudy: inlineEdu.fieldOfStudy,
-            endYear: inlineEdu.endYear,
-          },
-        ];
-      }
-
-      // PROFESSIONAL path: inline work experience → workExperiences array
-      if (
-        formData.careerStage &&
-        formData.careerStage !== CareerStage.STUDENT &&
-        formData.careerStage !== CareerStage.SCHOOL_STUDENT &&
-        inlineWork?.company
-      ) {
-        payload.workExperiences = [
-          {
-            company: inlineWork.company,
-            companyDomain: inlineWork.companyDomain,
-            title: inlineWork.title || "Professional",
-            isCurrent: true,
-            startDate: new Date(),
-          },
-        ];
-      }
-
-      return payload;
-    }
-
-    case UserRole.STAFF:
-      return {
-        ...base,
-        role: UserRole.STAFF,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: {
-          create: {
-            department: formData.department,
-            position: formData.position,
-          },
-        },
-      };
-
-    case UserRole.ADMIN:
-      return {
-        ...base,
-        role: UserRole.ADMIN,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: undefined,
-        adminProfile: {
-          create: {
-            notes: formData.adminNotes,
-          },
-        },
-      };
-
-    case UserRole.ORG_WORKSPACE:
-      return {
-        ...base,
-        role: formData.role,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: undefined,
-      } as OnboardingData;
 
     default:
       throw new Error(`Invalid role: ${formData.role}`);
   }
 }
 
-export function transformFrontendToServerData(
-  frontendData: FrontendOnboardingData,
-): OnboardingData {
-  const base = {
-    name: frontendData.name,
-    email: frontendData.email,
-    phone: frontendData.phone,
-    address: frontendData.address,
-    timezone: frontendData.timezone,
-    onlineStatus: frontendData.onlineStatus,
-    onboardingCompleted: frontendData.onboardingCompleted,
-    role: frontendData.role,
-    // #1132 — carried through every role branch: the age gate is only a gate
-    // if the value it validated is the one that reaches the database.
-    dateOfBirth: frontendData.dateOfBirth,
+/**
+ * The onboarding half of `POST /api/organizations` for a first-time owner:
+ * the gate fields plus the step-0 identity columns, applied in the org tx.
+ */
+export const OrgOnboardingSchema = OnboardingGateSchema.extend({
+  name: z.string().trim().min(1, "Name is required").max(200),
+  phone: z.string().trim().min(1).max(50).optional(),
+  timezone: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
+export type OrgOnboardingInput = z.infer<typeof OrgOnboardingSchema>;
+
+/** Wizard state → the `onboarding` block of the org-create body. */
+export function transformOrgOnboardingForm(
+  formData: Partial<OnboardingFormData>,
+): Record<string, unknown> {
+  return {
+    name: formData.name?.trim() ?? "",
+    // Blank inputs are omitted: `User.phone` is unique, so "" would collide.
+    ...(formData.phone?.trim() ? { phone: formData.phone.trim() } : {}),
+    ...(formData.timezone?.trim()
+      ? { timezone: formData.timezone.trim() }
+      : {}),
+    dateOfBirth: formData.dateOfBirth,
+    termsAccepted: formData.termsAccepted === true,
+    privacyAccepted: formData.privacyAccepted === true,
+    marketingConsent: formData.marketingConsent === true,
   };
-
-  switch (frontendData.role) {
-    case UserRole.CONSULTANT: {
-      const p = frontendData.consultantProfile;
-      if (!p) throw new Error("Consultant profile is required");
-      return {
-        ...base,
-        role: UserRole.CONSULTANT,
-        consultantProfile: {
-          create: {
-            description: p.description,
-            headline: p.headline,
-            experience: p.experience,
-            scheduleType: p.scheduleType,
-            domain: { connect: { id: p.domain.id } },
-            subDomains: p.subDomains?.length
-              ? { connect: p.subDomains.map((s) => ({ id: s.id })) }
-              : undefined,
-            tags: p.tags?.length
-              ? { connect: p.tags.map((t) => ({ id: t.id })) }
-              : undefined,
-            availabilityWindowsWeekly: p.weeklySlots?.length
-              ? { create: p.weeklySlots }
-              : undefined,
-            availabilityWindowsCustom: p.customSlots?.length
-              ? { create: p.customSlots }
-              : undefined,
-            websiteUrl: p.websiteUrl,
-            twitterUrl: p.twitterUrl,
-            githubUrl: p.githubUrl,
-            videoIntroUrl: p.videoIntroUrl,
-            languages: p.languages ?? [],
-            toolsAndTechnologies: p.toolsAndTechnologies ?? [],
-            mentoringStyle: p.mentoringStyle,
-            offeringFormats: p.offeringFormats ?? [],
-          },
-        },
-        consulteeProfile: undefined,
-        staffProfile: undefined,
-      };
-    }
-
-    case UserRole.CONSULTEE: {
-      const p = frontendData.consulteeProfile;
-      if (!p) throw new Error("Consultee profile is required");
-      return {
-        ...base,
-        role: UserRole.CONSULTEE,
-        consultantProfile: undefined,
-        consulteeProfile: {
-          create: {
-            aboutMe: p.aboutMe,
-            preferredLanguage: p.preferredLanguage,
-            goals: p.goals,
-            careerStage: p.careerStage,
-            skillsToDevelop: p.skillsToDevelop ?? [],
-            budgetPreference: p.budgetPreference,
-          },
-        },
-        staffProfile: undefined,
-      };
-    }
-
-    case UserRole.STAFF: {
-      const p = frontendData.staffProfile;
-      if (!p) throw new Error("Staff profile is required");
-      return {
-        ...base,
-        role: UserRole.STAFF,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: {
-          create: {
-            department: p.department,
-            position: p.position,
-          },
-        },
-      };
-    }
-
-    case UserRole.ADMIN:
-      return {
-        ...base,
-        role: UserRole.ADMIN,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: undefined,
-      };
-
-    case UserRole.ORG_WORKSPACE:
-      return {
-        ...base,
-        role: frontendData.role,
-        consultantProfile: undefined,
-        consulteeProfile: undefined,
-        staffProfile: undefined,
-      } as OnboardingData;
-
-    default:
-      throw new Error(`Invalid role: ${frontendData.role}`);
-  }
 }
 
 // ============================================================================
@@ -866,55 +564,4 @@ export function validateOnboardingData(data: unknown):
   }
 
   return { success: true, data: validationResult.data };
-}
-
-export function validateFrontendOnboardingData(
-  data: unknown,
-):
-  | { success: true; data: FrontendOnboardingData }
-  | { success: false; error: string } {
-  try {
-    const record = data as Record<string, unknown>;
-    if (!record.name || !record.email || !record.role) {
-      return {
-        success: false,
-        error: "Missing required fields: name, email, or role",
-      };
-    }
-
-    switch (record.role) {
-      case UserRole.CONSULTANT: {
-        const cp = record.consultantProfile as
-          | { domain?: { id?: string } }
-          | undefined;
-        if (!cp) {
-          return { success: false, error: "Consultant profile is required" };
-        }
-        if (!cp.domain?.id) {
-          return {
-            success: false,
-            error: "Domain is required for consultant profile",
-          };
-        }
-        break;
-      }
-      case UserRole.CONSULTEE:
-        if (!record.consulteeProfile) {
-          return { success: false, error: "Consultee profile is required" };
-        }
-        break;
-      case UserRole.STAFF:
-        if (!record.staffProfile) {
-          return { success: false, error: "Staff profile is required" };
-        }
-        break;
-    }
-
-    return { success: true, data: record as FrontendOnboardingData };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Validation failed",
-    };
-  }
 }

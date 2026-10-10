@@ -13,6 +13,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { HttpsUrlSchema } from "@/schemas/url";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -27,7 +28,7 @@ const PatchBodySchema = z
     validUntil: z.coerce.date().nullable().optional(),
     totalAmountPaise: z.coerce.number().int().min(0).optional(),
     remainingAmountPaise: z.coerce.number().int().min(0).optional(),
-    uploadedDocUrl: z.string().url().nullable().optional(),
+    uploadedDocUrl: HttpsUrlSchema.nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
@@ -64,6 +65,7 @@ export async function GET(
 ) {
   const { orgId, poId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "purchaseOrders.read",
     canSponsor: true,
   });

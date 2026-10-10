@@ -15,7 +15,7 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
  * capability when explicitly disabled — the wizard + steps are client components below.
  */
 export default async function CreateOrganizationPage() {
-  const session = await getSession(true);
+  const session = await getSession();
   const workspaceId = session?.user?.orgWorkspaceProfileId;
   if (workspaceId) {
     redirect(`/dashboard/org-workspace/${workspaceId}/create`);

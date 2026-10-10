@@ -67,7 +67,7 @@ import * as Sentry from "@sentry/nextjs";
 import { initSentry } from "../../sentry.shared.config";
 import { markExpected, isExpectedError } from "@/lib/observability/expected";
 import { reportSentryError } from "@/lib/observability/report";
-import { SessionLookupFailedError } from "@/lib/auth-session-lookup";
+import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
 
 /** Let the SDK's async capture pipeline drain before asserting. */
 const flush = () => Sentry.flush(2000);

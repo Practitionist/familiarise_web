@@ -52,7 +52,10 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // #1527 P0-4 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
-  const access = await requireOrgAccess(orgId, { permission: "messaging.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "messaging.read",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -154,7 +157,10 @@ export async function GET(
       rows,
     });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     streamLogger.error("Failed to query org channels", err, { orgId, page });
     return NextResponse.json(
       {

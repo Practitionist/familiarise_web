@@ -16,7 +16,7 @@ import { getSession } from "@/lib/auth-server";
 export async function POST(_req: NextRequest) {
   try {
     // Check authentication
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -90,7 +90,10 @@ export async function POST(_req: NextRequest) {
     });
   } catch (error) {
     console.error("Error syncing recordings:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
 
     return NextResponse.json(
       { error: "Failed to sync recordings" },

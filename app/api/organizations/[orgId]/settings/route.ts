@@ -21,6 +21,7 @@ export async function GET(
     // the General (settings.manage) and Billing contacts (billing.manage)
     // tabs only, so the same two grants gate it; it used to floor at LEARNER.
     const access = await requireOrgAccess(orgId, {
+      readOnly: true,
       permission: ["settings.manage", "billing.manage"],
     });
     if (access.error) return access.error;
@@ -31,39 +32,41 @@ export async function GET(
     // funding source without a second round-trip. taxInfo (#777 §B)
     // hydrates the Tax & compliance section — non-secret fields only;
     // panEncrypted never leaves the server.
-    const [organization, billingAccount, taxInfo, msmeInfo] = await Promise.all([
-      prisma.organization.findUnique({
-        where: { id: orgId },
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          brandingProfile: { select: { logo: true } },
-        },
-      }),
-      prisma.billingAccount.findFirst({
-        where: { ownerOrgId: orgId },
-        select: { fundingSource: true, currency: true, creditLimit: true },
-      }),
-      prisma.organizationTaxInfo.findUnique({
-        where: { organizationId: orgId },
-        select: {
-          gstin: true,
-          gstStateCode: true,
-          gstRegStatus: true,
-          panLast4: true,
-        },
-      }),
-      // #1230 wave-4 — MSME declaration hydrates the settings card; the
-      // payout-deadline engine reads the same satellite.
-      prisma.organizationMsmeInfo.findUnique({
-        where: { organizationId: orgId },
-        select: {
-          msmeStatus: true,
-          msmeWrittenAgreementOnFile: true,
-        },
-      }),
-    ]);
+    const [organization, billingAccount, taxInfo, msmeInfo] = await Promise.all(
+      [
+        prisma.organization.findUnique({
+          where: { id: orgId },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            brandingProfile: { select: { logo: true } },
+          },
+        }),
+        prisma.billingAccount.findFirst({
+          where: { ownerOrgId: orgId },
+          select: { fundingSource: true, currency: true, creditLimit: true },
+        }),
+        prisma.organizationTaxInfo.findUnique({
+          where: { organizationId: orgId },
+          select: {
+            gstin: true,
+            gstStateCode: true,
+            gstRegStatus: true,
+            panLast4: true,
+          },
+        }),
+        // #1230 wave-4 — MSME declaration hydrates the settings card; the
+        // payout-deadline engine reads the same satellite.
+        prisma.organizationMsmeInfo.findUnique({
+          where: { organizationId: orgId },
+          select: {
+            msmeStatus: true,
+            msmeWrittenAgreementOnFile: true,
+          },
+        }),
+      ],
+    );
 
     return NextResponse.json({
       organization: organization
@@ -91,7 +94,10 @@ export async function GET(
         stack: error instanceof Error ? error.stack : undefined,
       }),
     );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "organizations" } },
+    );
     return NextResponse.json(
       { error: "Failed to fetch settings" },
       { status: 500 },

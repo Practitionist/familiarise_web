@@ -64,6 +64,12 @@ describe("auth-remembered state", () => {
     expect(readAuthedIdentity()).toBeNull();
   });
 
+  it("forgetAuthState drops a parked org invite token", () => {
+    localStorage.setItem("pendingOrgInviteToken", "tok_1");
+    forgetAuthState();
+    expect(localStorage.getItem("pendingOrgInviteToken")).toBeNull();
+  });
+
   it("clears the previous identity when the replacement write throws", () => {
     writeAuthedFlag(true, IDENTITY);
     const original = Storage.prototype.setItem;

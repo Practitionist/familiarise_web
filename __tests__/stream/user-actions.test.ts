@@ -49,8 +49,7 @@ jest.mock("../../lib/stream-cache", () => mockUserCache);
 // mocked session ("current-user"), not from a client-supplied parameter.
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
-  getSession: (disableCookieCache?: boolean) =>
-    mockGetSession(disableCookieCache),
+  getSession: () => mockGetSession(),
 }));
 
 jest.mock("../../lib/user", () => mockRoleMapper);

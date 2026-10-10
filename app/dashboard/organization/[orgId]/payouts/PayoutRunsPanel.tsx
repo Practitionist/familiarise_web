@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 interface PayoutItem {
   id: string;
@@ -137,11 +138,14 @@ async function approvePayout(
   payoutId: string,
   confirmSelfApproval?: string,
 ): Promise<void> {
-  const res = await fetch(`/api/organizations/${orgId}/payouts/${payoutId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "APPROVED", confirmSelfApproval }),
-  });
+  const res = await fetchWithReauth(
+    `/api/organizations/${orgId}/payouts/${payoutId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "APPROVED", confirmSelfApproval }),
+    },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new ApproveError(
@@ -213,7 +217,7 @@ export function PayoutRunsPanel({
   const createBatch = useMutation({
     mutationFn: async () => {
       const { periodStart, periodEnd } = defaultPayoutWindow();
-      const res = await fetch(`/api/organizations/${orgId}/payouts`, {
+      const res = await fetchWithReauth(`/api/organizations/${orgId}/payouts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -311,13 +311,13 @@ The `useUserData` hook fetches comprehensive user details including profile and 
 
 #### Return Values
 
-| Property         | Type                                                               | Description                      |
-| ---------------- | ------------------------------------------------------------------ | -------------------------------- |
-| `userDetails`    | `User \| null`                                                     | Core user object with auth data  |
-| `profileDetails` | `TConsultantProfile \| TConsulteeProfile \| TStaffProfile \| null` | Role-specific profile data       |
-| `reviews`        | `ConsultantReview[]`                                               | Reviews array (consultants only) |
-| `isLoading`      | `boolean`                                                          | Loading state indicator          |
-| `error`          | `Error \| null`                                                    | Error object if fetch failed     |
+| Property         | Type                                              | Description                      |
+| ---------------- | ------------------------------------------------- | -------------------------------- |
+| `userDetails`    | `User \| null`                                    | Core user object with auth data  |
+| `profileDetails` | `TConsultantProfile \| TConsulteeProfile \| null` | Role-specific profile data       |
+| `reviews`        | `ConsultantReview[]`                              | Reviews array (consultants only) |
+| `isLoading`      | `boolean`                                         | Loading state indicator          |
+| `error`          | `Error \| null`                                   | Error object if fetch failed     |
 
 #### Implementation
 
@@ -383,17 +383,6 @@ if (userData.role === "CONSULTEE" && userData.consulteeProfileId) {
   const consulteeData = await fetchConsulteeDetails(
     userData.consulteeProfileId,
   );
-}
-```
-
-##### STAFF
-
-```typescript
-// Fetches:
-// - User details
-// - Staff profile
-if (userData.role === "STAFF" && userData.staffProfileId) {
-  const staffData = await fetchStaffDetails(userData.staffProfileId);
 }
 ```
 

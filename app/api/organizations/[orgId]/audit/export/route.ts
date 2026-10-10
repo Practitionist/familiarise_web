@@ -87,6 +87,7 @@ export async function GET(
   // CSV follows dataExports.people (OWNER, MAINTAINER; was a MAINTAINER rank
   // floor — the same roles).
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "dataExports.people",
   });
   if (access.error) return access.error;
@@ -116,9 +117,7 @@ export async function GET(
     AND: [rowScope],
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
-    ...(q.actorMembershipId
-      ? { actorMembershipId: q.actorMembershipId }
-      : {}),
+    ...(q.actorMembershipId ? { actorMembershipId: q.actorMembershipId } : {}),
     ...(q.from || q.to
       ? {
           createdAt: {
@@ -210,20 +209,18 @@ export async function GET(
 
           // Resolve membership → email/role in-batch
           const mids: string[] = Array.from(
-            new Set(
-              [
-                ...rows
-                  .map((r: AuditExportRow) => r.actorMembershipId)
-                  .filter((v: string | null): v is string => !!v),
-                ...rows
-                  .map((r: AuditExportRow) => r.targetMembershipId)
-                  .filter((v: string | null): v is string => !!v),
-              ],
-            ),
+            new Set([
+              ...rows
+                .map((r: AuditExportRow) => r.actorMembershipId)
+                .filter((v: string | null): v is string => !!v),
+              ...rows
+                .map((r: AuditExportRow) => r.targetMembershipId)
+                .filter((v: string | null): v is string => !!v),
+            ]),
           );
           const members = mids.length
             ? await prisma.membership.findMany({
-                where: { id: { in: mids } },
+                where: { id: { in: mids }, organizationId: orgId },
                 select: {
                   id: true,
                   role: true,
@@ -250,7 +247,9 @@ export async function GET(
               actor?.role ?? "",
               escapeCsvField(target?.email ?? ""),
               escapeCsvField(sanitizeAuditDescription(row.description)),
-              escapeCsvField(JSON.stringify(sanitizeAuditDetails(row.details) ?? {})),
+              escapeCsvField(
+                JSON.stringify(sanitizeAuditDetails(row.details) ?? {}),
+              ),
             ].join(",");
             controller.enqueue(encoder.encode(line + "\n"));
           }
@@ -269,7 +268,10 @@ export async function GET(
             reason: err instanceof Error ? err.message : String(err),
           }),
         );
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "organizations" } },
+        );
         controller.error(err);
       }
     },
@@ -285,4 +287,3 @@ export async function GET(
     },
   });
 }
-

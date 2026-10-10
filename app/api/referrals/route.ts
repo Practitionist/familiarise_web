@@ -19,7 +19,7 @@ import { getUserReferrals } from "@/lib/referrals/service";
  */
 export async function GET() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -27,7 +27,10 @@ export async function GET() {
     const referrals = await getUserReferrals(session.user.id);
     return NextResponse.json({ data: referrals });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error fetching referrals:", error);
     return NextResponse.json(
       { error: "Failed to fetch referrals" },

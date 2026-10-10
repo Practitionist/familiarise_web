@@ -145,6 +145,7 @@ model User {
 
   invitations                   Invitation[]
   twoFactor                     TwoFactor?
+  passkeys                      Passkey[]
   ssoproviders                  SsoProvider[]
   erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
@@ -200,8 +201,8 @@ model OnboardingDraft {
   userId String @unique
 
   /// Role picked at step 0 (null until then). Mirrors User.role's enum but is
-  /// informational only — the authoritative role flip still happens through
-  /// setOnboardingRoleAction / processOnboardingData.
+  /// informational only: User.role is written only when processOnboardingData
+  /// completes onboarding.
   role UserRole?
 
   /// Zero-based index into the role's step registry.
@@ -253,6 +254,11 @@ model OnboardingDraft {
   /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
   /// promote that key to a real column instead of querying the blob.
   payload Json
+
+  /// Optimistic-concurrency counter: a save names the version it read and
+  /// increments it, so a stale tab or device gets a conflict, not a silent
+  /// overwrite.
+  version Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1073,6 +1079,10 @@ model Session {
   // itself is not enabled (#693).
   impersonatedBy String?
 
+  // Last successful re-authentication (password, TOTP or passkey) in this
+  // session; sensitive actions require it, or createdAt, within 15 minutes.
+  reauthenticatedAt DateTime? @db.Timestamptz
+
   // Device list (newest first per user) and the expired-row sweep.
   @@index([userId, createdAt])
   @@index([expiresAt])
@@ -1089,7 +1099,7 @@ model Verification {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([identifier])
-  // scripts/cleanup/cleanup-auth-tokens.ts deletes by expiresAt.
+  // lib/auth/cleanup-auth-tokens.ts deletes by expiresAt.
   @@index([expiresAt])
   @@map("verifications")
 }
@@ -3032,8 +3042,8 @@ model LedgerEntry {
 // Remediation is never a patch to a cache: a finding is a symptom, the fix
 // is upstream, and a money correction is a counter-transaction. #837 added
 // the one exception, a protective wallet-spend freeze on balance drift.
-// Findings are split against a checked-in baseline
-// (lib/payments/ledger/baseline.ts) so only NEW drift fails the run.
+// Findings are split against a checked-in baseline so only NEW drift fails
+// the run.
 // See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
@@ -5082,7 +5092,7 @@ enum RescheduleRequestStatus {
   // USING clause, drops the old type and renames — and the cast FAILS on any row
   // still holding the value. That is why the seed's COUNTERED rows had to go in
   // the same change: see prisma/seedFiles/6c-create-reschedule-proposals.ts.
-  // scripts/ci/check-db-drift.ts fails the build if the live type and the schema
+  // scripts/ci/check-db-live-drift.ts fails the build if the live type and the schema
   // disagree in either direction.
 }
 
@@ -7308,6 +7318,10 @@ model SsoProvider {
   // app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval
   // sets it, after re-checking the org's verified OrgDomainClaim.
   domainVerified Boolean       @default(false)
+  // First successful SSO sign-in through this provider by an org OWNER.
+  // Turning enforceSSO on requires it, so a broken IdP cannot lock the org out.
+  provenAt       DateTime?     @db.Timestamptz
+  provenByUserId String?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -7381,7 +7395,7 @@ enum WebhookEndpointStatus {
 }
 
 /// One row per delivery attempt cycle for a (WebhookEndpoint, eventType,
-/// payload) tuple. The worker (jobs/webhooks/dispatch-outbound-webhooks.ts)
+/// payload) tuple. The worker (scripts/cleanup/dispatch-outbound-webhooks.ts)
 /// polls (status, nextRetryAt) and walks the exponential backoff schedule
 /// (1m → 5m → 30m → 2h → 8h) before marking FAILED at attempt 5. `signature`
 /// stores the `t=...,v1=...` envelope so re-deliveries can reproduce the
@@ -7420,13 +7434,15 @@ enum DeliveryStatus {
   DEAD_LETTER
 }
 
-/// #474 — transactional-email dead-letter. lib/email.ts persists the already
+/// Transactional-email dead-letter. deliver() (lib/email/) persists the already
 /// RENDERED message here when a Resend send fails (instead of swallowing it).
 /// Storing the rendered fields (not the sender args) keeps retry a verbatim
 /// re-send — no Json payload, no re-render dispatcher: the worker
 /// (jobs/email/retry-failed-emails.ts) polls (status, nextRetryAt), re-sends the
 /// stored html/text, walks the backoff schedule, marks DEAD_LETTER once
 /// exhausted (operator-replayable). `emailType` is a plain tag for metrics only.
+/// Single-use credential mail (verification code, reset link) is stored with a
+/// redacted body and dead-lettered without a resend (lib/email/classify.ts).
 model FailedEmail {
   id          String              @id @default(cuid())
   recipient   String
@@ -7545,8 +7561,29 @@ enum EmailSuppressionReason {
   MANUAL
 }
 
-// BetterAuth two-factor plugin table. Holds the symmetrically encrypted TOTP
-// shared secret and backup codes JSON array for one user.
+/// WebAuthn credentials (@better-auth/passkey). Operators only for now: a
+/// passkey sign-in satisfies the operator second-factor gate.
+model Passkey {
+  id           String    @id @default(cuid())
+  name         String?
+  publicKey    String
+  userId       String
+  credentialID String    @unique
+  counter      Int
+  deviceType   String
+  backedUp     Boolean
+  transports   String?
+  aaguid       String?
+  createdAt    DateTime? @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkey")
+}
+
+// BetterAuth two-factor plugin table. Holds the TOTP shared secret and the
+// backup codes (a JSON array, AES-encrypted) for one user.
 //
 // The plugin's schema declares `secret` and `backupCodes` as
 // `returned: false`, so Prisma must mark them the same way — BetterAuth never
@@ -7563,8 +7600,8 @@ model TwoFactor {
 
   // XChaCha20-Poly1305 encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
   secret      String
-  // JSON array encrypted with BETTER_AUTH_SECRET per
-  // `backupCodeOptions.storeBackupCodes = "encrypted"`. Never selected.
+  // JSON array, AES-encrypted by the plugin (`storeBackupCodes:
+  // "encrypted"`). Never selected.
   backupCodes String
 
   // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first
@@ -7580,10 +7617,7 @@ model TwoFactor {
 
 /// DPDP §12 right-to-erasure request queue. Users file via
 /// `POST /api/users/me/erasure-requests`; admins process via
-/// `POST /api/admin/erasure-requests/[id]/process`. The cron
-/// `jobs/compliance/process-erasure-requests.ts` walks PENDING rows and
-/// either auto-processes (if `AUTO_PROCESS_ERASURE=true`) or pages ops
-/// when within 7 days of the 30-day SLA cliff. The partial-unique index
+/// `POST /api/admin/erasure-requests/[id]/process`. The partial-unique index
 /// on `(userId)` WHERE status IN (PENDING, IN_PROGRESS) lives in the SQL
 /// migration — Prisma 7's `partialIndexes` is still preview and the DB
 /// is the authoritative gate for "at most one open request per user".

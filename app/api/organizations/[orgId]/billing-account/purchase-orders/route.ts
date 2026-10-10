@@ -15,6 +15,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { HttpsUrlSchema } from "@/schemas/url";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -34,7 +35,7 @@ const CreateBodySchema = z.object({
   validUntil: z.coerce.date().nullable().optional(),
   totalAmountPaise: z.coerce.number().int().min(0),
   currency: CurrencySchema.default("INR"),
-  uploadedDocUrl: z.string().url().nullable().optional(),
+  uploadedDocUrl: HttpsUrlSchema.nullable().optional(),
 });
 
 export async function GET(
@@ -42,7 +43,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "purchaseOrders.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "purchaseOrders.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -144,7 +149,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

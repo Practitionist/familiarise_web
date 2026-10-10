@@ -1,4 +1,4 @@
-import { getCachedSession } from "@/lib/auth-server";
+import { getSession } from "@/lib/auth-server";
 
 import { describeViewerZone, type ViewerZone } from "./viewer-zone";
 
@@ -10,9 +10,7 @@ import { describeViewerZone, type ViewerZone } from "./viewer-zone";
 export async function getViewerZone(
   fallbackZone?: string | null,
 ): Promise<ViewerZone> {
-  // Cosmetic display value (the viewer's own timezone preference): the
-  // explicit cached read, not a missed force-fresh — see getCachedSession.
-  const session = await getCachedSession();
+  const session = await getSession();
   return describeViewerZone({
     userTimezone: session?.user?.timezone ?? null,
     fallbackZone,

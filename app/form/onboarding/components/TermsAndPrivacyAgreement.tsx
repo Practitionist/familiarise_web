@@ -43,38 +43,21 @@ const Agreement: React.FC<AgreementProps> = ({
 interface TermsAndPrivacyAgreementProps {
   onTermsChange: (checked: boolean) => void;
   onPrivacyChange: (checked: boolean) => void;
+  onMarketingChange: (checked: boolean) => void;
   termsChecked: boolean;
   privacyChecked: boolean;
+  /** Optional MARKETING_COMMS consent, recorded with the onboarding submit. */
+  marketingChecked: boolean;
 }
 
 const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
   onTermsChange,
   onPrivacyChange,
+  onMarketingChange,
   termsChecked,
   privacyChecked,
+  marketingChecked,
 }) => {
-  const [marketingChecked, setMarketingChecked] = React.useState(false);
-
-  const handleMarketingChange = (checked: boolean) => {
-    setMarketingChecked(checked);
-    void fetch(
-      checked
-        ? "/api/user/privacy/consent"
-        : "/api/user/privacy/consent?purposeCode=MARKETING_COMMS",
-      {
-        method: checked ? "POST" : "DELETE",
-        headers: checked ? { "Content-Type": "application/json" } : undefined,
-        body: checked
-          ? JSON.stringify({
-              purposeCodes: ["MARKETING_COMMS"],
-              language: "en-IN",
-              version: 1,
-            })
-          : undefined,
-      },
-    ).catch(() => {});
-  };
-
   return (
     <div className="space-y-4">
       {/* DPDP Act 2023 & Rule 3 Itemised Data Protection Notice */}
@@ -86,14 +69,15 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
           To operate your Familiarise account, we process your{" "}
           <strong>identity &amp; profile details</strong> (name, email, phone,
           professional bio, and 18+ age verification) for{" "}
-          <strong>core account delivery</strong> (<code>PRIMARY_PROCESSING</code>
+          <strong>core account delivery</strong> (
+          <code>PRIMARY_PROCESSING</code>
           ), <strong>session scheduling</strong> (<code>SESSION_BOOKING</code>),
           and <strong>live video &amp; chat</strong> via GetStream.io (
           <code>STREAM_DATA_PROCESSING</code>), as well as payment/payout
           settlement via Razorpay/Stripe. For platform security and support
-          diagnostics (DPDP &sect;8(5) &amp; Rule 6), error traces use a
-          one-way pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw
-          PII sent to Sentry.
+          diagnostics (DPDP &sect;8(5) &amp; Rule 6), error traces use a one-way
+          pseudonymous token (<code>ust_&lt;hash&gt;</code>) with no raw PII
+          sent to Sentry.
         </p>
         <p>
           You can <strong>download your data &amp; processor summary</strong>,{" "}
@@ -126,9 +110,7 @@ const TermsAndPrivacyAgreement: React.FC<TermsAndPrivacyAgreementProps> = ({
         <Checkbox
           id="marketing-consent"
           checked={marketingChecked}
-          onCheckedChange={(checked) =>
-            handleMarketingChange(checked === true)
-          }
+          onCheckedChange={(checked) => onMarketingChange(checked === true)}
           className="h-5 w-5 mt-0.5"
         />
         <Label

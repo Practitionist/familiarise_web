@@ -1,7 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import {
-  searchUsersWithRelationships,
-} from "@/actions/stream/chat/user.action";
+import { searchUsersWithRelationships } from "@/actions/stream/chat/user.action";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth-server";
@@ -9,7 +7,7 @@ import { streamLogger } from "@/lib/stream-logger";
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Authentication required" },
@@ -52,7 +50,10 @@ export async function GET(req: NextRequest) {
       users,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("User search failed", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },

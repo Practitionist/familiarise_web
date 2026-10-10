@@ -143,7 +143,10 @@ export async function GET(
   // Any member, incl. SUSPENDED (#1527 decision 6): the shell must render so
   // a suspended member reaches their booked sessions; they get the minimal
   // shape below.
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) return access.error;
 
   const org = await prisma.organization.findUnique({

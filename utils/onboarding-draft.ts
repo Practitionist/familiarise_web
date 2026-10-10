@@ -171,6 +171,8 @@ export interface OnboardingDraftSnapshot {
   role: UserRole | null;
   currentStep: number;
   payload: Record<string, unknown>;
+  /** CAS base for the next save (`OnboardingDraft.version`). */
+  version: number;
   /** The stored payload was thrown away instead of restored — see
    *  `readStoredDraftPayload`. The wizard must say so rather than let the
    *  resume banner promise progress that is no longer there. */
@@ -195,6 +197,8 @@ export const SaveOnboardingDraftInputSchema = z
     role: DraftableRoleSchema.nullable(),
     currentStep: z.number().int().min(0).max(ONBOARDING_DRAFT_MAX_STEP),
     payload: OnboardingDraftPayloadSchema,
+    /** The version this save was based on; a stale base is a conflict. */
+    baseVersion: z.number().int().min(0),
   })
   .strict();
 
@@ -205,11 +209,22 @@ export type SaveOnboardingDraftInput = {
   role: UserRole | null;
   currentStep: number;
   payload: Record<string, unknown>;
+  baseVersion: number;
 };
 
 export type DraftActionResult =
-  | { success: true }
-  | { success: false; error: string };
+  { success: true } | { success: false; error: string };
+
+export type SaveDraftActionResult =
+  | { success: true; version: number }
+  | {
+      success: false;
+      error: string;
+      /** DRAFT_CONFLICT: another tab or device saved first (HTTP 409 semantics). */
+      code?: "DRAFT_CONFLICT" | "ONBOARDED";
+      /** The stored version on a conflict, so the tab can choose to overwrite. */
+      currentVersion?: number;
+    };
 
 export type LoadDraftActionResult =
   | { success: true; draft: OnboardingDraftSnapshot | null }
@@ -442,17 +457,9 @@ export function readStoredDraftPayload(
 }
 
 /**
- * Client-side convenience: validate + sanitize a draft snapshot exactly the
- * way the server action will, so callers can skip no-op saves and surface
- * size problems before the request. Returns null when validation fails.
+ * Client-side: validate + sanitize a draft snapshot exactly the way the server
+ * action will, keeping the rejection reason for the over-budget banner.
  */
-export function encodeDraftForSave(
-  input: SaveOnboardingDraftInput,
-): SaveOnboardingDraftInput | null {
-  return prepareDraftForPersist(input);
-}
-
-/** `encodeDraftForSave` with the rejection reason kept. */
 export function encodeDraftForSaveDetailed(
   input: SaveOnboardingDraftInput,
 ): PrepareDraftResult {
@@ -460,11 +467,9 @@ export function encodeDraftForSaveDetailed(
 }
 
 /**
- * Serializes draft-save promises so a later wizard state can never be
- * overwritten by an earlier in-flight upsert (true last-write-wins), and so
- * lifecycle code can DRAIN every dispatched-but-unsettled save before the
- * draft row is deleted — an upsert landing after the delete would resurrect
- * stale state (review round 1, page.tsx).
+ * Serializes draft saves so each one reads the version the previous one
+ * returned, and so lifecycle code can drain every in-flight save before the
+ * row is deleted (a save landing after the delete would resurrect it).
  */
 export interface DraftSaveQueue {
   /** Chains task after all previously enqueued tasks; rejects if task throws.

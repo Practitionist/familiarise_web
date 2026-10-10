@@ -43,7 +43,7 @@ inaccessible. It is not. Anything that can reach that URL can invoke it, so:
 > `Authorization` header in the call site is not a security control.
 
 `actions/forms/onboarding.action.ts` opens every entry point with
-`getSession(true)`. That is not ceremony — it is the control.
+`getSession()`. That is not ceremony — it is the control.
 
 What an action genuinely does _not_ give you is a **stable, documented HTTP
 contract** for a third party to integrate against. That, plus multipart, caching

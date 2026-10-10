@@ -9,7 +9,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { useToast } from "components/ui/use-toast";
-import ConsultantVerificationForm from "@/app/form/onboarding/components/ConsultantVerificationForm";
+import ConsultantVerificationForm from "@/components/verification/ConsultantVerificationForm";
 import {
   CheckCircle,
   ChevronDown,

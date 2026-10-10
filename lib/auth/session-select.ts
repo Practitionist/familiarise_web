@@ -4,8 +4,8 @@ import { deriveDeviceLabel } from "@/lib/auth/device-label";
 /**
  * The session visibility boundary (#1856, ADR 35).
  *
- * A session TOKEN is a bearer credential for the whole account. In
- * BetterAuth 1.6.5 (and 1.7.6) `listSessions()` returns the raw token
+ * A session TOKEN is a bearer credential for the whole account.
+ * BetterAuth's `listSessions()` (1.7.7) returns the raw token
  * for every device, so the browser must never call it — every session
  * list in this app reads through THIS select instead. `token` is absent
  * by construction, and `userAgent` is read only to derive the display
@@ -23,7 +23,6 @@ export const SESSION_PUBLIC_SELECT = {
   expiresAt: true,
   ipAddress: true,
   userAgent: true,
-  impersonatedBy: true,
 } as const;
 
 export type SessionPublicRow = Prisma.SessionGetPayload<{
@@ -37,16 +36,13 @@ export interface PublicSession {
   ipAddress: string | null;
   createdAt: Date;
   /**
-   * Last time BetterAuth refreshed this session (`updatedAt`). With
-   * `updateAge` at one day this is coarse — the UI says "last active",
-   * never "active now".
+   * Last time BetterAuth refreshed this session (`updatedAt`): daily for a
+   * consumer, every read for a capped (operator or SSO) session.
    */
   lastSeenAt: Date;
   expiresAt: Date;
   /** True when this row is the caller's own session. */
   isCurrent: boolean;
-  /** Set when the row belongs to a staff impersonation (not enabled, #693). */
-  isImpersonated: boolean;
 }
 
 export function toPublicSession(
@@ -61,9 +57,5 @@ export function toPublicSession(
     lastSeenAt: row.updatedAt,
     expiresAt: row.expiresAt,
     isCurrent: currentSessionId !== undefined && row.id === currentSessionId,
-    // `undefined` (mocks, future select drift) must not read as an
-    // impersonation the way a bare `!== null` would.
-    isImpersonated:
-      row.impersonatedBy !== null && row.impersonatedBy !== undefined,
   };
 }

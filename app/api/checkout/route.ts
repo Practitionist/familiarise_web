@@ -54,9 +54,7 @@ export async function POST(req: NextRequest) {
   let replayUserId: string | undefined;
   let replayKey: string | undefined;
   try {
-    // Check authentication — force-fresh (auth-helpers doctrine): the cookie
-    // cache can trail a revocation by up to its TTL, and this is a money path.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const session = authResult.session!;
     replayUserId = session.user.id;

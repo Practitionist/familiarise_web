@@ -3,6 +3,7 @@
  * Syncs user data to Novu as subscribers using User.id as subscriberId.
  */
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
 import { getNovuClient, isNovuConfigured } from "./client";
@@ -92,7 +93,10 @@ export async function buildSubscriberCustomData(
   },
 ): Promise<Record<string, string | boolean>> {
   let dbRow: PersistedUserPrefsRow | null = null;
-  if (overrides.routingMode === undefined || overrides.preferences === undefined) {
+  if (
+    overrides.routingMode === undefined ||
+    overrides.preferences === undefined
+  ) {
     try {
       dbRow = (await prisma.user?.findUnique({
         where: { id: userId },
@@ -151,8 +155,7 @@ export async function buildSubscriberCustomData(
       routingMode === "BELL_AND_EMAIL" || routingMode === "BELL_ONLY",
     routingEmail:
       routingMode === "BELL_AND_EMAIL" || routingMode === "EMAIL_ONLY",
-    masterEnabled:
-      prefs?.allNotifications ?? dbPrefs?.allNotifications ?? true,
+    masterEnabled: prefs?.allNotifications ?? dbPrefs?.allNotifications ?? true,
     preferInApp: prefs?.inApp ?? dbPrefs?.inAppEnabled ?? true,
     preferEmail: prefs?.email ?? dbPrefs?.emailEnabled ?? true,
     preferPush: prefs?.push ?? dbPrefs?.pushEnabled ?? false,
@@ -167,6 +170,13 @@ export async function buildSubscriberCustomData(
  * errors) before forwarding to Sentry, and classify `RequestTimeoutError` as
  * an expected warning rather than an unhandled error page.
  */
+const StatusCodeSchema = z.object({ statusCode: z.number() });
+
+function statusCodeOf(error: unknown): number | undefined {
+  const parsed = StatusCodeSchema.safeParse(error);
+  return parsed.success ? parsed.data.statusCode : undefined;
+}
+
 function reportSubscriberError(
   error: unknown,
   op: "sync" | "update_preferences" | "delete",
@@ -176,12 +186,7 @@ function reportSubscriberError(
   cleanError.name = rawError.name;
   if (rawError.stack) cleanError.stack = rawError.stack;
   const isTimeout = rawError.name === "RequestTimeoutError";
-  const statusCode =
-    error &&
-    typeof error === "object" &&
-    typeof (error as { statusCode?: unknown }).statusCode === "number"
-      ? (error as { statusCode: number }).statusCode
-      : undefined;
+  const statusCode = statusCodeOf(error);
 
   Sentry.captureException(cleanError, {
     level: isTimeout ? "warning" : "error",
@@ -270,6 +275,17 @@ export async function updateSubscriberPreferences(
   }
 }
 
+/** Deletes the subscriber or throws; one that never existed counts as deleted. */
+export async function removeSubscriber(userId: string): Promise<void> {
+  if (!isNovuConfigured()) return;
+  try {
+    await getNovuClient().subscribers.delete(userId);
+  } catch (error) {
+    if (statusCodeOf(error) === 404) return;
+    throw error;
+  }
+}
+
 /**
  * Delete a subscriber from Novu (e.g. on account deletion).
  *
@@ -282,8 +298,7 @@ export async function deleteSubscriber(userId: string): Promise<boolean> {
   if (!isNovuConfigured()) return true;
 
   try {
-    const novu = getNovuClient();
-    await novu.subscribers.delete(userId);
+    await removeSubscriber(userId);
     console.log(`[Novu] Subscriber deleted: ${userId}`);
     return true;
   } catch (error) {
