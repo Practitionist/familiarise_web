@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-export { OPEN_DISPUTE_WHERE as ADMIN_OPEN_DISPUTE_BADGE_WHERE } from "@/lib/backoffice/queue-predicates";
+import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { z } from "zod";
 
 const adminDisputesQuerySchema = z.object({
@@ -36,10 +36,10 @@ const adminDisputesQuerySchema = z.object({
     .default(20),
 });
 
-const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = [
-  "NEEDS_RESPONSE",
-  "WARNING_NEEDS_RESPONSE",
-];
+const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] =
+  OPEN_DISPUTE_WHERE.status.in.filter(
+    (s): s is DisputeStatus => s !== "UNDER_REVIEW",
+  );
 
 /** List rows never carry evidence, billing details or internal notes; those live on the detail view behind `disputes.manage`. */
 const DISPUTE_LIST_SELECT = {
