@@ -379,9 +379,11 @@ export async function PATCH(
       );
     }
 
-    const updatedDocument = await prisma.appointmentDocument.update({
+    const casResult = await prisma.appointmentDocument.updateMany({
       where: {
         id: documentId,
+        deletedAt: null,
+        reviewStatus: document.reviewStatus,
       },
       data: {
         ...(validStatus && { reviewStatus: validStatus }),
@@ -391,6 +393,22 @@ export async function PATCH(
         ...(validStatus && { reviewedAt: new Date() }),
         ...(validStatus && { reviewedById: session.user.id }),
       },
+    });
+
+    if (casResult.count === 0) {
+      return NextResponse.json(
+        {
+          error: "Concurrent review update",
+          message:
+            "This document's review state changed concurrently. Refresh and try again.",
+          code: "CONCURRENT_REVIEW_CONFLICT",
+        },
+        { status: 409 },
+      );
+    }
+
+    const updatedDocument = await prisma.appointmentDocument.findUniqueOrThrow({
+      where: { id: documentId },
     });
 
     const appointmentInfo = await prisma.appointment.findUnique({
@@ -488,7 +506,7 @@ export async function PATCH(
     // In development mode, log review action
     if (isDevelopment) {
       console.log(
-        `[DEV MODE] Document review updated for ${documentId} - Status: ${reviewStatus || "no change"}`,
+        `[DEV MODE] Document review updated for ${documentId} - Status: ${validStatus || "no change"}`,
       );
     }
 

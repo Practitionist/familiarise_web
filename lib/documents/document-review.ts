@@ -40,6 +40,10 @@ export type DocumentUploadValidation =
       message: string;
     };
 
+const ALLOWED_DOCUMENT_MIME_TYPE_SET: ReadonlySet<string> = new Set(
+  ALLOWED_DOCUMENT_MIME_TYPES,
+);
+
 export function validateDocumentUpload(file: {
   size: number;
   type: string;
@@ -51,7 +55,7 @@ export function validateDocumentUpload(file: {
       message: `Please select a file larger than 0 bytes and smaller than ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)}MB.`,
     };
   }
-  if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(file.type as never)) {
+  if (!ALLOWED_DOCUMENT_MIME_TYPE_SET.has(file.type)) {
     return {
       ok: false,
       code: "UNSUPPORTED_FILE_TYPE",
@@ -115,7 +119,7 @@ export interface ThreadableDocument {
   reviewStatus: string;
   reviewNotes?: string | null;
   reviewedAt?: Date | string | null;
-  uploadedByRole: "CONSULTEE" | "CONSULTANT" | string;
+  uploadedByRole: string;
   uploadedAt: Date | string;
   versionNo?: number | null;
   rootDocumentId?: string | null;
@@ -170,7 +174,7 @@ export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
       );
     });
 
-    const latestVersion = versions[versions.length - 1];
+    const latestVersion = versions.at(-1)!;
     let latestConsulteeSubmission: T | null = null;
     let latestConsultantResponse: T | null = null;
     let latestNotes: string | null = null;

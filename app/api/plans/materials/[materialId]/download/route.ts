@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSession } from "@/lib/auth-server";
-import { isPreviewableMimeType } from "@/lib/documents/urls";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  formatContentDisposition,
+  isPreviewableMimeType,
+} from "@/lib/documents/urls";
 
 const CLOSED_OR_UNPAID_BOOKING_STATUSES = [
   "CANCELLED",
@@ -12,6 +14,8 @@ const CLOSED_OR_UNPAID_BOOKING_STATUSES = [
   "EXPIRED",
   "PENDING",
 ] as const;
+
+const PAID_PARTICIPANT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
 
 export async function GET(
   request: NextRequest,
@@ -72,7 +76,7 @@ export async function GET(
             trials: {
               where: {
                 consulteeProfile: { user: { id: userId } },
-                status: { notIn: ["REJECTED", "CANCELLED"] },
+                status: { in: ["SCHEDULED", "COMPLETED"] },
               },
               select: { id: true },
               take: 1,
@@ -85,9 +89,13 @@ export async function GET(
             consultantProfile: { select: { userId: true } },
             webinars: {
               where: {
+                status: { not: "CANCELLED" },
                 appointment: {
                   participants: {
-                    some: liveParticipant(userId),
+                    some: {
+                      userId,
+                      status: { in: [...PAID_PARTICIPANT_STATUSES] },
+                    },
                   },
                 },
               },
@@ -102,9 +110,13 @@ export async function GET(
             consultantProfile: { select: { userId: true } },
             classes: {
               where: {
+                status: { not: "CANCELLED" },
                 appointment: {
                   participants: {
-                    some: liveParticipant(userId),
+                    some: {
+                      userId,
+                      status: { in: [...PAID_PARTICIPANT_STATUSES] },
+                    },
                   },
                 },
               },
@@ -177,12 +189,15 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": material.mimeType || "application/octet-stream",
-        "Content-Disposition": `${effectiveDisposition}; filename="${encodeURIComponent(material.originalName)}"`,
+        "Content-Disposition": formatContentDisposition(
+          effectiveDisposition,
+          material.originalName,
+        ),
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy":
-          "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+          "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
         "Content-Length": buffer.length.toString(),
-        "Cache-Control": "private, max-age=300",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
       },
     });
   } catch (error) {

@@ -21,8 +21,7 @@ jest.mock("../../lib/auth-server", () => ({
 jest.mock("../../lib/prisma", () => {
   const txClient = {
     appointmentDocument: {
-      findMany: jest.fn(),
-      updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
     },
   };
   return {
@@ -43,8 +42,8 @@ jest.mock("../../lib/rate-limit", () => ({
 
 const mockedGetSession = getSession as jest.Mock;
 const mockedApplyRateLimit = applyRateLimit as jest.Mock;
-const mockedFindMany = prisma.appointmentDocument.findMany as jest.Mock;
-const mockedUpdateMany = prisma.appointmentDocument.updateMany as jest.Mock;
+const mockedUpdateManyAndReturn = prisma.appointmentDocument
+  .updateManyAndReturn as jest.Mock;
 
 function req(body: unknown) {
   return new Request("http://localhost/api/documents/bulk-review", {
@@ -67,7 +66,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockedApplyRateLimit.mockResolvedValue(null);
   mockedGetSession.mockResolvedValue({ user: { id: "consultant-user-1" } });
-  mockedFindMany.mockResolvedValue([
+  mockedUpdateManyAndReturn.mockResolvedValue([
     {
       id: "d1",
       appointmentId: "apt-1",
@@ -91,7 +90,6 @@ beforeEach(() => {
       },
     },
   ]);
-  mockedUpdateMany.mockResolvedValue({ count: 2 });
 });
 
 describe("PATCH /api/documents/bulk-review", () => {
@@ -101,7 +99,7 @@ describe("PATCH /api/documents/bulk-review", () => {
       req({ documentIds: ["d1"], reviewStatus: "APPROVED" }),
     );
     expect(res.status).toBe(401);
-    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("400s on an invalid review status", async () => {
@@ -109,19 +107,19 @@ describe("PATCH /api/documents/bulk-review", () => {
       req({ documentIds: ["d1"], reviewStatus: "NONSENSE" }),
     );
     expect(res.status).toBe(400);
-    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("400s on an empty document list", async () => {
     const res = await PATCH(req({ documentIds: [], reviewStatus: "APPROVED" }));
     expect(res.status).toBe(400);
-    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("400s on a malformed JSON body (not 500)", async () => {
     const res = await PATCH(rawReq("{ not valid json"));
     expect(res.status).toBe(400);
-    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("returns the rate-limit response and skips the write", async () => {
@@ -134,7 +132,7 @@ describe("PATCH /api/documents/bulk-review", () => {
       req({ documentIds: ["d1"], reviewStatus: "APPROVED" }),
     );
     expect(res.status).toBe(429);
-    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("updates only the consultant's own documents and stamps the reviewer", async () => {
@@ -150,7 +148,7 @@ describe("PATCH /api/documents/bulk-review", () => {
       data: { updated: 2, requested: 2 },
     });
 
-    const arg = mockedUpdateMany.mock.calls[0][0];
+    const arg = mockedUpdateManyAndReturn.mock.calls[0][0];
     expect(arg.where.id).toEqual({ in: ["d1", "d2"] });
     // Ownership is enforced through the appointment's consultant relations (consultation, subscription, trial).
     expect(arg.where.appointment.OR).toHaveLength(3);
@@ -162,7 +160,7 @@ describe("PATCH /api/documents/bulk-review", () => {
 
   it("omits reviewNotes when none is provided (does not clear existing notes)", async () => {
     await PATCH(req({ documentIds: ["d1"], reviewStatus: "IN_REVIEW" }));
-    const arg = mockedUpdateMany.mock.calls[0][0];
+    const arg = mockedUpdateManyAndReturn.mock.calls[0][0];
     expect("reviewNotes" in arg.data).toBe(false);
   });
 });

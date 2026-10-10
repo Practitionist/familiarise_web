@@ -553,6 +553,18 @@ export async function POST(
       );
     }
 
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Booking closed",
+          message:
+            "Documents can no longer be uploaded to a cancelled, rejected, or expired booking.",
+          code: "BOOKING_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     const consulteeId =
       appointment.consultation?.requestedBy?.id ||
       appointment.subscription?.requestedBy?.id ||
@@ -704,9 +716,8 @@ export async function POST(
       );
     }
 
-    // Save document record to database. Thread context (root + versionNo) is
-    // resolved inside the same transaction as the insert so two racing
-    // revisions cannot compute the same versionNo from a stale max().
+    // Save document record to database. Thread context + quota caps are verified
+    // inside the transaction using `tx` so concurrent uploads cannot race past limits.
     let document;
     try {
       document = await withVersionConflictRetry(() =>
@@ -720,11 +731,27 @@ export async function POST(
             });
             if (!parent) throw new Error("INVALID_REVISION_TARGET");
             rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const liveThreadCount = await tx.appointmentDocument.count({
+              where: {
+                deletedAt: null,
+                OR: [{ id: rootDocumentId }, { rootDocumentId }],
+              },
+            });
+            if (liveThreadCount >= MAX_VERSIONS_PER_THREAD) {
+              throw new Error("VERSION_LIMIT_REACHED");
+            }
             const aggregate = await tx.appointmentDocument.aggregate({
               where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
               _max: { versionNo: true },
             });
             versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          } else {
+            const rootCount = await tx.appointmentDocument.count({
+              where: { appointmentId, rootDocumentId: null, deletedAt: null },
+            });
+            if (rootCount >= MAX_DOCS_PER_APPOINTMENT) {
+              throw new Error("DOCUMENT_LIMIT_REACHED");
+            }
           }
           return tx.appointmentDocument.create({
             data: {
@@ -764,19 +791,38 @@ export async function POST(
         );
       }
 
-      if (
-        dbError instanceof Error &&
-        dbError.message === "INVALID_REVISION_TARGET"
-      ) {
-        return NextResponse.json(
-          {
-            error: "Invalid revision target",
-            message:
-              "The document this revision replaces was not found on this appointment.",
-            code: "INVALID_REVISION_TARGET",
-          },
-          { status: 400 },
-        );
+      if (dbError instanceof Error) {
+        if (dbError.message === "INVALID_REVISION_TARGET") {
+          return NextResponse.json(
+            {
+              error: "Invalid revision target",
+              message:
+                "The document this revision replaces was not found on this appointment.",
+              code: "INVALID_REVISION_TARGET",
+            },
+            { status: 400 },
+          );
+        }
+        if (dbError.message === "DOCUMENT_LIMIT_REACHED") {
+          return NextResponse.json(
+            {
+              error: "Document limit reached",
+              message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads. Please upload a revision to an existing thread or delete an unreviewed upload.`,
+              code: "DOCUMENT_LIMIT_REACHED",
+            },
+            { status: 400 },
+          );
+        }
+        if (dbError.message === "VERSION_LIMIT_REACHED") {
+          return NextResponse.json(
+            {
+              error: "Version limit reached",
+              message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
+              code: "VERSION_LIMIT_REACHED",
+            },
+            { status: 400 },
+          );
+        }
       }
 
       return NextResponse.json(

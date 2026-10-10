@@ -9,6 +9,7 @@ import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 import {
   MAX_DOCS_PER_APPOINTMENT,
   MAX_VERSIONS_PER_THREAD,
@@ -163,6 +164,18 @@ export async function POST(
       );
     }
 
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Booking closed",
+          message:
+            "Documents can no longer be uploaded to a cancelled, rejected, or expired booking.",
+          code: "BOOKING_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     const consultantId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
@@ -283,8 +296,8 @@ export async function POST(
       );
     }
 
-    // Create database record — thread anchor + versionNo resolved in the same
-    // transaction as the insert (race-safe versioning).
+    // Create database record — thread anchor + quota caps verified inside the
+    // transaction using `tx` so concurrent uploads cannot race past limits.
     let document;
     try {
       document = await withVersionConflictRetry(() =>
@@ -302,11 +315,27 @@ export async function POST(
             });
             if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
             rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const liveThreadCount = await tx.appointmentDocument.count({
+              where: {
+                deletedAt: null,
+                OR: [{ id: rootDocumentId }, { rootDocumentId }],
+              },
+            });
+            if (liveThreadCount >= MAX_VERSIONS_PER_THREAD) {
+              throw new Error("VERSION_LIMIT_REACHED");
+            }
             const aggregate = await tx.appointmentDocument.aggregate({
               where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
               _max: { versionNo: true },
             });
             versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          } else {
+            const rootCount = await tx.appointmentDocument.count({
+              where: { appointmentId, rootDocumentId: null, deletedAt: null },
+            });
+            if (rootCount >= MAX_DOCS_PER_APPOINTMENT) {
+              throw new Error("DOCUMENT_LIMIT_REACHED");
+            }
           }
           return tx.appointmentDocument.create({
             data: {
@@ -344,18 +373,37 @@ export async function POST(
         console.error("Failed to cleanup uploaded file:", cleanupError);
       }
 
-      if (
-        dbError instanceof Error &&
-        dbError.message === "INVALID_RESPONSE_TARGET"
-      ) {
-        return NextResponse.json(
-          {
-            error: "Original document not found",
-            message: "The document you're responding to does not exist",
-            code: "NOT_FOUND",
-          },
-          { status: 404 },
-        );
+      if (dbError instanceof Error) {
+        if (dbError.message === "INVALID_RESPONSE_TARGET") {
+          return NextResponse.json(
+            {
+              error: "Original document not found",
+              message: "The document you're responding to does not exist",
+              code: "NOT_FOUND",
+            },
+            { status: 404 },
+          );
+        }
+        if (dbError.message === "DOCUMENT_LIMIT_REACHED") {
+          return NextResponse.json(
+            {
+              error: "Document limit reached",
+              message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
+              code: "DOCUMENT_LIMIT_REACHED",
+            },
+            { status: 400 },
+          );
+        }
+        if (dbError.message === "VERSION_LIMIT_REACHED") {
+          return NextResponse.json(
+            {
+              error: "Version limit reached",
+              message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
+              code: "VERSION_LIMIT_REACHED",
+            },
+            { status: 400 },
+          );
+        }
       }
       return NextResponse.json(
         {

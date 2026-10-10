@@ -7,6 +7,7 @@ import {
   isReviewTransitionAllowed,
 } from "@/lib/documents/document-review";
 import {
+  formatContentDisposition,
   getAppointmentDocumentUrl,
   getPlanMaterialUrl,
   isPreviewableMimeType,
@@ -92,7 +93,7 @@ describe("groupDocumentsIntoThreads", () => {
   });
 });
 
-describe("canonical non-expiring URLs and review note transition rules", () => {
+describe("canonical non-expiring URLs, Content-Disposition, and review transition rules", () => {
   it("builds inline and attachment streaming paths without expiring JWT query tokens", () => {
     expect(getAppointmentDocumentUrl("appt-1", "doc-1", "inline")).toBe(
       "/api/appointments/appt-1/documents/doc-1/download?disposition=inline",
@@ -106,6 +107,15 @@ describe("canonical non-expiring URLs and review note transition rules", () => {
     expect(getPlanMaterialUrl("mat-1", "attachment")).toBe(
       "/api/plans/materials/mat-1/download?disposition=attachment",
     );
+  });
+
+  it("formats RFC 6266 Content-Disposition headers with ASCII fallback and UTF-8 filename*", () => {
+    const header = formatContentDisposition(
+      "inline",
+      'Résumé — Kaustav\'s "v2".pdf',
+    );
+    expect(header).toContain('inline; filename="R_sum_ _ Kaustav\'s _v2_.pdf"');
+    expect(header).toContain("filename*=UTF-8''");
   });
 
   it("identifies previewable MIME types accurately", () => {

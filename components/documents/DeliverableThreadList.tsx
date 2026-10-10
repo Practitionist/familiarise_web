@@ -24,7 +24,6 @@ import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {
   ALLOWED_DOCUMENT_ACCEPT_ATTR,
   groupDocumentsIntoThreads,
-  type DocumentThread,
   type ThreadableDocument,
 } from "@/lib/documents/document-review";
 import { getAppointmentDocumentUrl } from "@/lib/documents/urls";
@@ -57,8 +56,7 @@ export function DeliverableThreadList({
   const { toast } = useToast();
 
   const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set());
-  const [drawerThread, setDrawerThread] =
-    useState<DocumentThread<ThreadableDocument> | null>(null);
+  const [drawerRootId, setDrawerRootId] = useState<string | null>(null);
   const [drawerInitialVersionId, setDrawerInitialVersionId] = useState<
     string | undefined
   >(undefined);
@@ -81,6 +79,11 @@ export function DeliverableThreadList({
   const threads = useMemo(
     () => groupDocumentsIntoThreads(documents),
     [documents],
+  );
+
+  const drawerThread = useMemo(
+    () => threads.find((t) => t.rootId === drawerRootId) ?? null,
+    [threads, drawerRootId],
   );
 
   const refresh = () => {
@@ -239,7 +242,7 @@ export function DeliverableThreadList({
                       className="h-7 px-2 text-xs"
                       onClick={() => {
                         setDrawerInitialVersionId(thread.latestVersion.id);
-                        setDrawerThread(thread);
+                        setDrawerRootId(thread.rootId);
                       }}
                     >
                       <Eye className="mr-1 h-3 w-3" />
@@ -275,11 +278,14 @@ export function DeliverableThreadList({
                           className="h-7 px-2.5 text-xs"
                           onClick={() => {
                             setDrawerInitialVersionId(thread.latestVersion.id);
-                            setDrawerThread(thread);
+                            setDrawerRootId(thread.rootId);
                           }}
                         >
                           <FileUp className="mr-1 h-3 w-3" />
-                          Upload v{thread.versionCount + 1} Revision
+                          Upload v
+                          {(thread.latestVersion.versionNo ??
+                            thread.versionCount) + 1}{" "}
+                          Revision
                         </Button>
                       )}
                   </div>
@@ -329,7 +335,7 @@ export function DeliverableThreadList({
                             type="button"
                             onClick={() => {
                               setDrawerInitialVersionId(ver.id);
-                              setDrawerThread(thread);
+                              setDrawerRootId(thread.rootId);
                             }}
                             className="ml-2 shrink-0 text-[11px] font-medium text-primary hover:underline"
                           >
@@ -370,12 +376,14 @@ export function DeliverableThreadList({
               </p>
               <Input
                 type="file"
+                aria-label="Select deliverable or handout file"
                 accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
                 onChange={(e) => setNewFile(e.target.files?.[0] ?? null)}
                 className="h-8 text-xs"
               />
               <Input
                 type="text"
+                aria-label="Document description"
                 placeholder="Optional description or context..."
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
@@ -415,7 +423,7 @@ export function DeliverableThreadList({
         thread={drawerThread}
         isOpen={Boolean(drawerThread)}
         onClose={() => {
-          setDrawerThread(null);
+          setDrawerRootId(null);
           setDrawerInitialVersionId(undefined);
         }}
         viewerRole={viewerRole}
