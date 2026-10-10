@@ -67,7 +67,6 @@ function pollutedSlot(id: string, startsAt: string) {
         {
           id: "rec-1",
           recordingUrl: RECORDING_URL,
-          storageUrl: "https://supabase.example/rec-1",
           thumbnailUrl: "https://img.example/thumb.png",
         },
       ],

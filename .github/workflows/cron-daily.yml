@@ -45,6 +45,10 @@ jobs:
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       STREAM_SYNC_EXCLUDED_USERS: ${{ secrets.STREAM_SYNC_EXCLUDED_USERS }}
+      R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLEARTAX_API_KEY: ${{ secrets.CLEARTAX_API_KEY }}
       CLEARTAX_GSP_TOKEN: ${{ secrets.CLEARTAX_GSP_TOKEN }}
       CLEARTAX_GSTIN: ${{ secrets.CLEARTAX_GSTIN }}
@@ -80,7 +84,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|cleanup-old-stream-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|mark-expired-recordings|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
+            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -160,14 +164,14 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/sweep-abandoned-overage-charges.ts
 
-      - name: Cleanup old Stream recordings
-        id: cleanup-old-stream-recordings
+      - name: Expire recordings
+        id: expire-recordings
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-old-stream-recordings'))
-        timeout-minutes: 5
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-recordings'))
+        timeout-minutes: 10
         continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/cleanup-old-stream-recordings.ts
+        run: node_modules/.bin/tsx jobs/stream/expire-recordings.ts
 
       - name: Prune system events
         id: prune-system-events
@@ -204,15 +208,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/sweep-verification.ts
-
-      - name: Mark expired recordings
-        id: mark-expired-recordings
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'mark-expired-recordings'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/stream/mark-expired-recordings.ts
 
       - name: Prune system job executions
         id: prune-system-job-executions
@@ -355,12 +350,11 @@ jobs:
             "reconcile-document-storage:${{ steps.reconcile-document-storage.outcome }}" \
             "irp-uploader:${{ steps.irp-uploader.outcome }}" \
             "sweep-abandoned-overage-charges:${{ steps.sweep-abandoned-overage-charges.outcome }}" \
-            "cleanup-old-stream-recordings:${{ steps.cleanup-old-stream-recordings.outcome }}" \
+            "expire-recordings:${{ steps.expire-recordings.outcome }}" \
             "prune-system-events:${{ steps.prune-system-events.outcome }}" \
             "expire-contracts:${{ steps.expire-contracts.outcome }}" \
             "prune-audit-logs:${{ steps.prune-audit-logs.outcome }}" \
             "sweep-verification:${{ steps.sweep-verification.outcome }}" \
-            "mark-expired-recordings:${{ steps.mark-expired-recordings.outcome }}" \
             "prune-system-job-executions:${{ steps.prune-system-job-executions.outcome }}" \
             "alert-orphaned-payments:${{ steps.alert-orphaned-payments.outcome }}" \
             "purge-deleted-documents:${{ steps.purge-deleted-documents.outcome }}" \

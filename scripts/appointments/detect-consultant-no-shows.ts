@@ -467,6 +467,7 @@ export async function detectBothAbsent(
         issueType: SupportIssueType.TECHNICAL_ISSUES,
         consultationId: consultation.id,
         organizationId: consultation.appointment?.organizationId ?? null,
+        filedBy: "system",
       });
       raised++;
       console.log(

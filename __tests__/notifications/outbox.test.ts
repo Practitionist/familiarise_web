@@ -89,6 +89,8 @@ describe("stageTrigger + attemptTrigger", () => {
       to: ["u2", "u1"],
       transactionId,
     });
+    // Idempotency-Key: an SDK retry of an accepted trigger must not ring twice.
+    expect(mockTrigger.mock.calls[0][1]).toBe(transactionId);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "nx-1" },
       data: expect.objectContaining({ status: "SENT", lastError: null }),

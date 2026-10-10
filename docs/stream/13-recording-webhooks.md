@@ -34,14 +34,14 @@ Comprehensive documentation for Stream video call recording and webhook handling
 The recording system enables consultants to record webinars and classes for later viewing by enrolled participants. Recordings follow a two-stage storage architecture:
 
 1. **Stream S3** - Initial storage provided by Stream (14-day expiration)
-2. **Supabase Storage** - Permanent storage after transfer
+2. **Cloudflare R2** - Our copy, made by the `transfer-recordings` job and kept until retention
 
 ### Key Features
 
 - **Consultant-only recording control** - Only the session host can start/stop
 - **Automatic webhook processing** - Recording lifecycle managed via webhooks
 - **Idempotent operations** - Safe to receive duplicate webhook events
-- **Automatic transfer** - The `recording_ready` webhook enqueues the permanent-storage transfer immediately (via Next.js `after()`), and a cron job runs as a backstop sweeper that picks up any recording the webhook missed before its Stream URL expires. **See the correction below: this describes a pipeline that has never run.**
+- **Automatic copy** - The `recording_ready` webhook only records the READY row; the `transfer-recordings` job copies every READY recording into R2 while Stream's fourteen-day copy is live.
 - **Capability-based access** - Consultants, consultees, collaborators and replay buyers each reach a recording through a distinct ownership or entitlement path, and platform operators reach it through the back-office permission matrix: staff see metadata, admin alone plays the session, and either one is audited (#1270)
 
 ---
@@ -67,7 +67,7 @@ graph TB
     subgraph External["External Services"]
         StreamAPI[Stream Video API]
         StreamS3[Stream S3 Storage]
-        SupaStorage[Supabase Storage]
+        SupaStorage[Cloudflare R2]
     end
 
     subgraph Database["Database"]
@@ -96,10 +96,10 @@ graph TB
 
 ### Storage Architecture
 
-| Storage       | Duration  | Use Case           | URL Format                                  |
-| ------------- | --------- | ------------------ | ------------------------------------------- |
-| **Stream S3** | 14 days   | Initial processing | `https://stream-io-*.s3.amazonaws.com/...`  |
-| **Supabase**  | Permanent | Long-term storage  | `https://[project].supabase.co/storage/...` |
+| Storage       | Duration        | Use Case           | URL Format                                        |
+| ------------- | --------------- | ------------------ | ------------------------------------------------- |
+| **Stream S3** | 14 days         | Initial processing | `https://stream-io-*.s3.amazonaws.com/...`        |
+| **R2**        | Until retention | Our copy           | Presigned per request (`createR2PresignedGetUrl`) |
 
 ---
 
@@ -119,31 +119,30 @@ stateDiagram-v2
     TRANSFERRING --> READY: Transfer Error (revert + record attempt)
     TRANSFERRING --> READY: Transfer Cancelled
 
-    READY --> EXPIRED: URL Expired (14 days)
-    EXPIRED --> [*]: Data Lost
-
-    AVAILABLE --> [*]: Permanent Storage
+    READY --> EXPIRED: Stream URL lapsed before the R2 copy (14 days)
+    AVAILABLE --> EXPIRED: Platform retention deadline (expire-recordings)
+    EXPIRED --> [*]: Stored assets deleted
     FAILED --> [*]: Error State
 ```
 
 ### Status Definitions
 
-| Status         | Description                         | Storage Type | URL Available |
-| -------------- | ----------------------------------- | ------------ | ------------- |
-| `RECORDING`    | Recording in progress               | N/A          | No            |
-| `PROCESSING`   | Stream processing video             | Stream S3    | No            |
-| `READY`        | Available on Stream S3              | STREAM_S3    | Yes (14 days) |
-| `TRANSFERRING` | Being transferred to Supabase       | STREAM_S3    | Yes           |
-| `AVAILABLE`    | Permanently stored in Supabase      | SUPABASE     | Yes           |
-| `EXPIRED`      | Stream URL expired, not transferred | STREAM_S3    | No            |
-| `FAILED`       | Recording capture failed            | N/A          | No            |
+| Status         | Description                                    | Storage Type       | URL Available |
+| -------------- | ---------------------------------------------- | ------------------ | ------------- |
+| `RECORDING`    | Recording in progress                          | N/A                | No            |
+| `PROCESSING`   | Stream processing video                        | Stream S3          | No            |
+| `READY`        | Available on Stream S3                         | STREAM_S3          | Yes (14 days) |
+| `TRANSFERRING` | Being copied to R2                             | STREAM_S3          | Yes           |
+| `AVAILABLE`    | Copied to R2                                   | PLATFORM           | Yes           |
+| `EXPIRED`      | Past retention, or Stream copy lapsed uncopied | STREAM_S3/PLATFORM | No            |
+| `FAILED`       | Recording capture failed                       | N/A                | No            |
 
-As of #689 (STR-2/3), a failed _transfer_ no longer lands in `FAILED`. Every transfer failure path reverts the recording to `READY` so that both the cron job and the manual `/transfer` route can retry it, since a `FAILED` status would permanently dead-end the recording (the manual route only accepts `READY` recordings). `FAILED` is now reached only by a capture/processing failure, not by a transfer error.
+A failed copy never lands in `FAILED`: every transfer failure returns the row to `READY` so the next `transfer-recordings` run retries it. `FAILED` is reached only through `call.recording_failed`.
 
 ### Storage Type Transitions
 
 ```
-STREAM_S3 (initial) --> SUPABASE (after transfer)
+STREAM_S3 (initial) --> PLATFORM (after the R2 copy)
 ```
 
 ---
@@ -157,8 +156,7 @@ model Recording {
   id                  String          @id @default(cuid())
   title               String
   recordingUrl        String          // Stream S3 URL (temporary)
-  supabaseUrl         String?         // Supabase URL (permanent)
-  supabasePath        String?         // Supabase storage path
+  storagePath         String?         // Object key in R2 once copied
   durationInMinutes   Int
   recordedAt          DateTime
   streamRecordingId   String?         // Stream filename identifier
@@ -166,7 +164,7 @@ model Recording {
   storageType         RecordingStorageType @default(STREAM_S3)
   status              RecordingStatus @default(READY)
   streamUrlExpiresAt  DateTime?       // When Stream URL expires
-  transferredAt       DateTime?       // When transferred to Supabase
+  transferredAt       DateTime?       // When copied to R2
   fileSize            BigInt?         // File size in bytes
 
   // #689 (STR-2/3) — transfer reliability tracking
@@ -183,7 +181,7 @@ model Recording {
 
 enum RecordingStorageType {
   STREAM_S3
-  SUPABASE
+  PLATFORM
 }
 
 enum RecordingStatus {
@@ -234,7 +232,7 @@ erDiagram
         string id PK
         string title
         string recordingUrl
-        string supabaseUrl
+        string storagePath
         int durationInMinutes
         datetime recordedAt
         string status
@@ -340,6 +338,8 @@ sequenceDiagram
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
 | `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
 
+`call.session_started` is subscribed but listed in `IGNORED_EVENT_TYPES` (`lib/stream/webhook-events.ts`): the route acknowledges it with `ignored: true` and writes no receipt.
+
 ### End Events and the `endedAt` Column
 
 Three rules govern how the two end events write `Meeting.endedAt` and `endedReason`, all from #1607. First, the last end wins: Stream reuses a call id across sessions, so a `call.session_ended` fired by the inactivity timeout after a host's pre-start device check must not be the end of record for the real call an hour later. Both handlers therefore accept an event only when its timestamp is later than the recorded `endedAt`, which also means a replayed or out-of-order older event can never move the column backwards. Second, a `call.ended` that arrives before the booked start is stamped `ended_early` rather than `call_ended`, and the slot is left `SCHEDULED`; `ended_early` is not a deliberate end, so every join gate re-lights and the same room is re-entered for the real session. Third, a `call.session_participant_joined` on a session whose recorded end is not deliberate (`session_timeout`, `ended_early`, or one of the reconciler's guesses) clears `endedAt` and `endedReason`, because a participant joining means Stream has opened a new session on that call id. That clear is compare-and-set on the end the handler read, so a real end committed concurrently is never overwritten. A deliberate end — the host closing the room after the start, or the maintenance drain — is never cleared. `heldOccurrence`'s attendance arm and the maintenance drain both read `endedAt` as "the room is closed", and these rules are what keep that reading true while a call is live.
@@ -400,13 +400,13 @@ interface StreamRecordingReadyEvent {
 interface StreamRecordingFailedEvent {
   call_cid: string;
   type: "call.recording_failed";
-  error?: {
-    message?: string;
-    code?: string;
-  };
+  egress_id: string; // e.g. "call_recorder:unique"
+  recording_type: string; // e.g. "composite"
   created_at: string;
 }
 ```
+
+Stream sends no error detail, so the log names the recording type and egress id and the host's notification carries no reason.
 
 ### Webhook Security
 
@@ -492,105 +492,80 @@ if (existingRecording) {
 
 ## Recording Transfer
 
+### Why the file is pulled instead of pushed
+
+Stream can push recordings into a customer bucket itself, but it does not document what happens when that push fails: there are no retry or fallback semantics, `call.recording_failed` carries no reason, and the GetStream/protocol discussion #371 reports problems. Twilio's analogous feature deletes recordings after exhausted retries. Pulling from Stream's own 14-day copy means our side can fail and retry without ever losing the recording. Stream external storage is to be revisited after a bad-credentials canary test; the full reasoning is in the [storage, retention and visibility ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
+
 ### Transfer Architecture
+
+`call.recording_ready` only upserts the `READY` row; it never copies. The
+`transfer-recordings` job (`lib/stream/recording-transfer-service.ts`, every
+six hours in `cron-intra-day.yml`) copies every READY recording into
+Cloudflare R2 while Stream's fourteen-day copy is still live. R2 is the only
+destination; Stream's copy is the retry source.
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Cron Job / Manual
-    participant Transfer as TransferService
+    participant Job as transfer-recordings
     participant DB as Database
-    participant Stream as Stream S3
-    participant Supa as Supabase Storage
+    participant Stream as Stream copy
+    participant R2 as Cloudflare R2
 
-    Cron->>DB: Get READY permanent recordings (14-day window)
-    DB-->>Cron: Recording list
-
-    loop Each Recording
-        Cron->>Transfer: transferRecordingToSupabase(id)
-        Transfer->>DB: Update status = TRANSFERRING
-
-        Transfer->>Stream: Download video file
-        Stream-->>Transfer: Video data (streamed body, #899)
-
-        alt File too large (>500MB)
-            Transfer->>DB: Revert to READY
-            Transfer-->>Cron: Error: File too large
-        else Normal size
-            Transfer->>Supa: Upload to bucket
-            Supa-->>Transfer: Public URL
-
-            Transfer->>DB: Update recording
-            Note over DB: status = AVAILABLE<br/>storageType = SUPABASE<br/>supabaseUrl = URL
-            Transfer-->>Cron: Success
+    Job->>DB: Reset TRANSFERRING rows stale > 15 min to READY
+    Job->>DB: Oldest READY rows with live streamUrlExpiresAt (batch of 10)
+    loop Each recording
+        Job->>DB: CAS READY -> TRANSFERRING
+        Job->>Stream: GET recording (SSRF host allowlist)
+        Job->>R2: Multipart upload (10 MB parts, 20 GiB ceiling)
+        Job->>R2: HEAD object, compare size with bytes streamed and source Content-Length
+        alt verified
+            Job->>DB: CAS TRANSFERRING -> AVAILABLE (storageType PLATFORM)
+        else any failure
+            Job->>R2: Abort upload / delete object
+            Job->>DB: CAS TRANSFERRING -> READY, transferAttempts++, lastTransferError
         end
     end
+    Job->>DB: Rows at MAX_TRANSFER_ATTEMPTS, not yet alerted
+    Job-->>Job: One Sentry report per run, stamp transferFailureAlertedAt
 ```
 
-### Transfer Configuration
+### Invariants
 
-| Setting             | Value        | Description                                                                                                                                                                                         |
-| ------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAX_TRANSFER_SIZE` | 500MB        | Maximum file size for direct transfer                                                                                                                                                               |
-| `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name                                                                                                                                                                        |
-| `daysBeforeExpiry`  | 5            | Days before expiry to start transfer (default). The production jobs pass 14 — the full Stream URL lifetime — so every READY permanent recording is swept near-ready rather than near-expiry (#899). |
-| `batchSize`         | 10           | Max recordings per cron run                                                                                                                                                                         |
+- A failed copy never hides a playable recording: the transfer path only
+  writes `READY`, `TRANSFERRING` or `AVAILABLE`. `FAILED` is reserved for
+  `call.recording_failed`. While `READY` or `TRANSFERRING`, playback uses
+  Stream's URL.
+- `streamUrlExpiresAt` is `end_time + 14 days`, computed by
+  `streamCopyExpiresAt` in both the webhook and `syncSessionRecordings`.
+- A CompleteMultipartUpload answer is parsed for an `<Error>` body even on
+  HTTP 200; any upload error aborts the multipart upload.
+- READY rows whose Stream copy lapsed without a copy become `EXPIRED` in the
+  daily `expire-recordings` job.
 
 ### Storage Path Format
 
 ```
-recordings/{year}/{month}/{recordingId}/{filename}
-
-Example:
-recordings/2025/01/clx123abc/rec_xyz789.mp4
+recordings/{recordingId}/{uuid}.mp4
 ```
 
-### Transfer Service Methods
+### Mid-session decline
 
-```typescript
-class RecordingTransferService {
-  // Queue for transfer
-  static async queueRecordingTransfer(recordingId: string): Promise<boolean>;
+For a 1:1 meeting where a participant's `DECLINED` consent was decided at or
+before the recording's end time, `recording_ready` and the sync path delete the
+recording from Stream (`call.deleteRecording({ session, filename })`) and
+CAS-expire any row instead of creating a playable one
+(`lib/stream/recording-decline.ts`). Retries are no-ops.
 
-  // Execute transfer
-  static async transferRecordingToSupabase(recordingId: string): Promise<{
-    success: boolean;
-    error?: string;
-  }>;
+### Retention
 
-  // Process batch of expiring recordings
-  static async processExpiringRecordings(
-    daysBeforeExpiry?: number,
-    batchSize?: number,
-  ): Promise<{
-    processed: number;
-    succeeded: number;
-    failed: number;
-    errors: string[];
-  }>;
-
-  // Mark expired recordings
-  static async markExpiredRecordings(): Promise<number>;
-
-  // Delete from Supabase
-  static async deleteRecordingFromSupabase(recordingId: string): Promise<{
-    success: boolean;
-    error?: string;
-  }>;
-
-  // Get best available URL
-  static getBestRecordingUrl(recording: Recording): string | null;
-}
-```
-
-### Transfer Failure Handling and Paging
-
-As of #689 (STR-2/3), transfer reliability is tracked on the recording itself rather than left to logs. Every failure path inside `transferRecordingToSupabase` — a missing bucket, a failed download, a file over the 500MB limit, an upload error, or any unexpected exception — routes through a single `recordTransferFailure` helper. That helper reverts the recording to `READY`, increments `transferAttempts`, and stamps `lastTransferError` with the failure message. A successful transfer clears this trail by nulling `lastTransferError` and `transferFailureAlertedAt`, so a recording that recovers stops looking stuck.
-
-Once a recording crosses three failed attempts, the helper pages engineering exactly once by calling `recordSystemError` with the `RECORDING_TRANSFER` category, and stamps `transferFailureAlertedAt` so the same stuck recording does not re-page on every subsequent sweep. The stamp is written only after the page is recorded, so a crash mid-alert re-pages on the next failure rather than silently swallowing it.
-
-### STREAM_ONLY Expiry Warning
-
-For recordings on a `STREAM_ONLY` plan there is nothing to auto-transfer — the URL simply expires after fourteen days. As of #689, the previously-TODO expiry-warning email to the consultant is now actually sent. `getExpiringStreamOnlyRecordings` collects the consultant-owned `STREAM_ONLY` recordings whose Stream URL expires soon but has not yet lapsed, and the expiry-warning job dispatches a notification to each owning consultant through Novu so they can save the recording before it is lost.
+`lib/stream/recording-retention.ts` holds the one rule and the daily
+`expire-recordings` job: 1:1 sessions are kept 90 days after the session,
+subscription and trial recordings 90 days after the subscription ends, webinars
+365 days, and classes 365 days after their final session. Published replays and
+recordings with a PENDING or SUCCEEDED purchase are exempt. An org's
+`streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped
+recordings only. Expiry deletes the R2 object and the preview clip and
+thumbnail, and writes a `STREAM_RECORDING_DELETED` org audit row. The reasoning behind the windows is in the [ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
 
 ---
 
@@ -680,7 +655,7 @@ A successful response always carries an `access` object so a client can tell "yo
     "durationInMinutes": 45,
     "recordedAt": "2025-01-15T10:00:00Z",
     "status": "AVAILABLE",
-    "storageType": "SUPABASE"
+    "storageType": "PLATFORM"
   },
   "access": { "level": "FULL" }
 }
@@ -699,7 +674,7 @@ A successful response always carries an `access` object so a client can tell "yo
     "durationInMinutes": 45,
     "recordedAt": "2025-01-15T10:00:00Z",
     "status": "AVAILABLE",
-    "storageType": "SUPABASE",
+    "storageType": "PLATFORM",
     "streamUrlExpiresAt": null
   },
   "access": {
@@ -710,24 +685,6 @@ A successful response always carries an `access` object so a client can tell "yo
 ```
 
 Every media URL is withheld from the metadata-only response, not only `playbackUrl`. A thumbnail is a frame of the session and the preview clip is a cut of it, so returning either would hand over exactly the content the cap exists to protect. The expiry branch behaves differently too: a full-access caller receives a `410` when a `STREAM_S3` recording's link has lapsed, whereas a metadata-only caller receives the record with `streamUrlExpiresAt` populated, because diagnosing that expiry is the reason a support agent is looking at all.
-
----
-
-#### POST /api/stream/recordings/[recordingId]/transfer
-
-Transfer a recording from Stream S3 to Supabase.
-
-**Authorization:** Consultant only, must own the recording
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "message": "Recording transferred successfully",
-  "recording": { ... }
-}
-```
 
 ---
 
@@ -856,14 +813,14 @@ Receives webhook events from Stream.
 
 ### Recording Operations
 
-| Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Transfer | Delete |
-| -------------- | :---: | :--: | :------: | :------------: | :--------: | :------: | :----: |
-| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   Yes    |   No   |
-| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |    No    |   No   |
-| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |    No    |   No   |
-| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |    No    |   No   |
+| Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Delete |
+| -------------- | :---: | :--: | :------: | :------------: | :--------: | :----: |
+| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   No   |
+| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |   No   |
+| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |   No   |
+| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |   No   |
 
-\*Consultees can only view recordings for webinars/classes they have a live paid enrollment for. As of #689 (STR-1), a successful payment alone is no longer sufficient — the entitlement nets any refunds, so a fully-refunded buyer loses access while a partially-refunded buyer keeps it.
+\*Consultees can play recordings of 1:1, subscription and trial appointments they took part in, and of webinar and class sessions they hold a live seat or entitled payment for (see [Recording Visibility Rules](#recording-visibility-rules)). Entitlement nets refunds: a fully refunded buyer loses access, a partially refunded buyer keeps it.
 
 ### Operator access (ADMIN / STAFF)
 
@@ -889,7 +846,7 @@ Every read that is granted by the operator branch writes a trail before the resp
 
 `Recording.recordingUrl` holds Stream's pre-signed S3 link. It is valid for fourteen days and carries its own credentials, so anybody who ends up holding the string can fetch the video with no session and no membership — a forwarded email, a pasted chat message, an exported CSV, or a third-party tool consuming the API all suffice. `GET /api/organizations/[orgId]/stream/calls` used to return that column verbatim to any org MANAGER+ when called with `?withRecordings=1`.
 
-That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `supabaseUrl`, not `supabasePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
+That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `storagePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
 
 The route deliberately offers no playback arm at all, not even a short-lived signed one. [ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md) is the governing rule — an organization may see that a session happened, not what happened in it — and it considered and rejected exactly that design, on the grounds that an audit row does not change what a member has to assume about who can watch their coaching session. The equivalent allowlist already existed in `lib/api/scope/list-recordings.ts` for the org recordings page; this route was the arm the July 2026 audit missed.
 
@@ -927,10 +884,15 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 
 ### Recording Visibility Rules
 
-1. **Consultants** see all their own recordings (webinars + classes)
-2. **Consultees** see recordings only for paid enrollments that have not been fully refunded (as of #689, access nets refunds — a full refund revokes it, a partial refund retains it)
-3. **Admins** can view all recordings for oversight
-4. **Recording must not be FAILED or EXPIRED** to be visible
+Recordings are private by default. The playback route is the only place a viewer is admitted, and it evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
+
+| Session type                          | Who may play                                                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1:1 consultation, subscription, trial | Only that appointment's participants (consultant, payer, participants, requester). Never plan-wide, never sellable.           |
+| Webinar                               | Attendees (paid or seated) of that run. `WebinarPlan.shareRecordingsWithAllAttendees` extends this to attendees of every run. |
+| Class                                 | Enrolled members. `ClassPlan.lateJoinersGetPastRecordings` shares earlier sessions with late joiners.                         |
+
+The owner and accepted co-presenters always have access, a platform ADMIN has full access, STAFF and organization roles see metadata only, and buyers of a published replay may play it.
 
 ---
 
@@ -941,7 +903,8 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 | File                                       | Purpose                        |
 | ------------------------------------------ | ------------------------------ |
 | `lib/stream/recording-service.ts`          | Recording CRUD operations      |
-| `lib/stream/recording-transfer-service.ts` | Stream S3 to Supabase transfer |
+| `lib/stream/recording-transfer-service.ts` | Stream to R2 copy job          |
+| `lib/stream/recording-retention.ts`        | Retention rule and job         |
 | `lib/stream/recording-handlers.ts`         | Webhook event handlers         |
 | `lib/stream/recording-utils.ts`            | Helper functions               |
 | `lib/stream/recording-types.ts`            | Prisma payload types           |
@@ -955,7 +918,6 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 | `app/api/stream/recordings/stop/route.ts`                        | POST /stop          |
 | `app/api/stream/recordings/sync/route.ts`                        | POST /sync          |
 | `app/api/stream/recordings/[recordingId]/route.ts`               | GET /:id            |
-| `app/api/stream/recordings/[recordingId]/transfer/route.ts`      | POST /:id/transfer  |
 | `app/api/stream/webhooks/route.ts`                               | Webhook handler     |
 | `app/api/stream/meetings/[streamCallId]/recording-info/route.ts` | GET recording state |
 | `app/api/organizations/[orgId]/stream/calls/route.ts`            | GET org call export |
@@ -980,9 +942,14 @@ STREAM_API_SECRET=your_api_secret
 # Webhook signature verification (required for webhooks)
 STREAM_WEBHOOK_SECRET=your_webhook_secret
 
-# Supabase (required for transfer)
+# Cloudflare R2 (our recording copies)
+R2_S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_BUCKET=your_bucket
+R2_ACCESS_KEY_ID=your_access_key_id
+R2_SECRET_ACCESS_KEY=your_secret_access_key
+
+# Supabase (public recordings-previews bucket for preview clips and thumbnails)
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
@@ -994,40 +961,18 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
    - Events: `call.recording_*`, `call.session_ended`, `call.ended`
    - Signing Secret: Copy to `STREAM_WEBHOOK_SECRET`
 
-### Supabase Storage Setup
-
-1. Create a bucket named `recordings`
-2. Set appropriate RLS policies:
-
-   ```sql
-   -- Allow service role full access
-   CREATE POLICY "Service role access"
-   ON storage.objects
-   FOR ALL
-   TO service_role
-   USING (bucket_id = 'recordings');
-
-   -- Allow authenticated users to read their recordings
-   CREATE POLICY "Users can read own recordings"
-   ON storage.objects
-   FOR SELECT
-   TO authenticated
-   USING (bucket_id = 'recordings');
-   ```
-
 ### The scheduled fleet behind recordings
 
-Four scheduled workflows keep the recording pipeline honest. Each one runs as a
+Three scheduled jobs keep the recording pipeline honest. Each one runs as a
 bare `npx tsx jobs/...` process under GitHub Actions, takes the fleet cron lock
 so that a manual dispatch cannot race the schedule, and writes a
 `SystemJobExecution` row that the staff Jobs page reads.
 
-| Workflow                            | Schedule (UTC)         | What it does                                                                                                                                                                                                                                                                 |
-| ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transfer-expiring-recordings.yml`  | Every six hours at :58 | Copies every `SUPABASE_PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred. |
-| `mark-expired-recordings.yml`       | Daily at 03:20         | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves.                                                                                                                              |
-| `cleanup-old-stream-recordings.yml` | Daily at 03:00         | Deletes the Supabase object and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database.                  |
-| `reconcile-orphaned-recordings.yml` | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                         |
+| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                                                                       |
+| ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies READY recordings into R2 before Stream's fourteen-day copy lapses, and reports rows that exhausted their attempts once per run.                                             |
+| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes their R2 and preview objects, and writes the org audit row. This is the erasure half of the retention promise. |
+| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                               |
 
 ### Recovering a recording whose webhook never arrived
 
@@ -1125,10 +1070,10 @@ throws without. Storage calls run on the service-role client, so jobs also need
 
 #### Transfer failing
 
-1. Check Supabase credentials and bucket exists
-2. Verify file size is under 500MB limit
-3. Check Stream URL hasn't expired
-4. Review transfer service logs for errors
+1. Check the R2 secrets in `cron-intra-day.yml` and that the bucket exists
+2. Read `lastTransferError` and `transferAttempts` on the row
+3. Check Stream URL hasn't expired (`streamUrlExpiresAt`)
+4. Review the `transfer-recordings` run output and its Sentry report
 
 ### Debug Logging
 
@@ -1152,40 +1097,10 @@ streamLogger.error("Transfer failed", error, { recordingId });
 
 ---
 
-## Correction — 2026-09-01
-
-**The transfer pipeline described above has never executed once.** Measured
-against the live database on 2026-08-30: 191 `Recording` rows, every one of them
-`READY` / `STREAM_S3`, and `transferAttempts = 0` across the board. Not "runs and
-sometimes fails" — never started.
-
-Two causes stacked. The `recording_ready` webhook could not enqueue anything
-because the whole Stream webhook endpoint 500'd on every delivery for months
-(it demanded a `STREAM_WEBHOOK_SECRET` Stream does not issue — fixed 2026-08-13
-in #1136), and the six-hourly backstop cron is one of the eight that could not
-start at all because `lib/auth-server.ts` called React 18's absent `cache()` at
-module scope (fixed in #1281).
-
-The section above is left in place rather than deleted because it still
-describes the design accurately, and because #1284 has since **decoupled new
-recordings from that pipeline entirely** in favour of Stream's external storage —
-writing straight to our own bucket, which removes the download-reupload hop, the
-fourteen-day race, the size cap and the cron together. That work is tracked in
-#1280 and is not yet shipped, so the transfer service and its workflow are still
-in the tree.
-
-Separately, #1280 catalogues four correctness defects that would have bitten had
-it ever run: a 500MB size cap below a normal 60-minute recording, a success gate
-that never verifies the uploaded bytes (a zero-byte MP4 can become the permanent
-record of a paid session), a non-CAS status write that lets two concurrent
-transfers permanently strand a recording, and a random path per retry that makes
-orphaned objects impossible to collect.
-
-**Do not read the section above as a description of production behaviour.**
-
----
-
 ## Deprecated & Superseded Approaches
+
+- **Per-plan storage tiers and the manual transfer route**: `recordingStoragePolicy` (`STREAM_ONLY` / `PERMANENT`), `POST /api/stream/recordings/[id]/transfer`, the Supabase recordings bucket fallback and the consultant "recording expires soon" email are gone. Every recording is copied to R2 by `transfer-recordings`; retention is platform-set.
+- **Ready-time transfer kicks and the three recording crons**: the webhook no longer starts a copy in `after()`; `transfer-expiring-recordings`, `mark-expired-recordings` and `cleanup-old-stream-recordings` became `transfer-recordings` and `expire-recordings`. Stream external storage was considered and not adopted: Stream's fourteen-day copy is the retry source.
 
 - **Synchronous attendance or end-state writes in join/end routes**: `POST /api/meetings/[meetingId]/join` and `POST /api/meetings/[meetingId]/end` do not write `MeetingAttendance`, `MeetingPresence`, `ATTENDED`, `Meeting.endedAt`, or `Meeting.endedReason`; Stream webhooks (`call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended`) own normal call lifecycle writes, while `reconcileOrphanedSessions` repairs orphaned records if a terminal webhook never arrives.
 - **`reconcileOrphanedSessions` leaving `MeetingPresence(leftAt: null)` open**: The orphaned-session reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`) orders candidates oldest-first (`occurrence.endsAt: "asc"`) and closes any open `MeetingPresence` intervals when stamping `endedAt`.

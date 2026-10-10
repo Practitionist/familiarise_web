@@ -51,11 +51,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             currency: true,
             paymentMethod: true,
             createdAt: true,
+            // Billing contact details follow the evidence gate.
             user: {
               select: {
                 id: true,
                 name: true,
-                email: true,
+                ...(canManageDisputes ? { email: true } : {}),
               },
             },
           },

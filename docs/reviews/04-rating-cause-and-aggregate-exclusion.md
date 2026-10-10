@@ -27,16 +27,60 @@ Uber publishes this as "ratings protection": it drops ratings attributed to traf
 
 Only rows with a `NULL` `excludedFromAggregateAt` enter either published score or the organisation's quality aggregate. `recomputeConsultantRating` and the organisation's `feedback-summary` both carry the predicate.
 
-## Excluded is not deleted
+## Excluded is not deleted, and is not hidden
 
-`excludedFromAggregateAt` is distinct from `deletedAt`. A rating excluded because our video stack failed is still a true statement about that session and still renders on the profile with its text; it simply stops arithmetically punishing the person who did not cause it. A deleted row disappears from every public read. The public projection never exposes the exclusion column, so a reader cannot tell an excluded review from a counted one, and the reason on the audit row is staff-internal material that never reaches the wire.
+`excludedFromAggregateAt` is distinct from `deletedAt`. A rating excluded because our video stack failed is still a true statement about that session, so the review stays listed with its text; it simply stops arithmetically punishing the person who did not cause it. A deleted row disappears from every public read.
 
-## What exists today
+The exclusion is disclosed, not concealed. `sanitisePublicReview` replaces the timestamp with a boolean `notCounted`, and the review card on the expert's profile renders the label "Not counted in rating" beside the date. The timestamp itself and the staff reason on the audit row never reach the wire, so a reader learns that the review is not in the score but not who decided or why. The label exists because a reader otherwise cannot tell why the score ignores a visible one-star review. The expert is told separately, by the "Not counted in rating" bell described below, which matters because excluding one of five reviews drops a consultant under the five-client publication gate.
 
-This page describes reserved data-model support, not a shipped feature. The columns, the predicates in every aggregate, and the enum all exist and every aggregate already carries the filter, but no route yet writes `ratingCause` on either model, and no staff surface yet sets the exclusion, so nothing is actually excluded on this branch — the columns ship ahead of the surfaces that use them so that the push, which is the coordinated step, is done once. The consultant- and staff-facing review surfaces are gathered under #1547, and nothing asks for a rating at all yet, which is #1548.
+## How a cause travels
+
+The cause is a claim the rater makes about a low score, and it round-trips through both rails.
+
+- **Private rating.** `POST /api/appointments/[appointmentId]/feedback` accepts `ratingCause` (nullable, validated against the enum) beside the star value. `resolveRatingCausePatch` in `lib/reviews.ts` is the one rule for what is stored: a rating above three clears the cause to `NULL`, a rating of three or below stores the supplied cause, and an update that omits the cause leaves the stored one alone. The feedback `GET` returns the caller's own cause per occurrence (`ratingCauses`) so `SessionRatingRow` can pre-select it after a reload; the provider's view of the same rows carries neither the cause nor the comment. If saving a new cause fails, the row restores the previous selection, exactly as a failed star save does.
+- **Public review.** `existingReview` in `lib/reviews.ts` selects `ratingCause`, so the composer pre-selects it, and `PUT /api/user/reviews/[id]` writes it through the same `resolveRatingCausePatch`, using the new rating when the edit changes it and the stored rating otherwise. A text-only edit of a three-star review therefore keeps its cause, and raising the rating above three clears it.
+
+`ratingCause` never reaches an anonymous reader: it is deliberately absent from `publicReviewSelect`.
+
+## The adjudication path
+
+Staff set the exclusion through a moderation report. The database writes and the notification staging happen in the report action's one Serializable transaction; the public review-surface purge runs after commit.
+
+```mermaid
+sequenceDiagram
+    participant R as Reporter (expert or org)
+    participant API as POST /api/report
+    participant S as Staff
+    participant A as report action route
+    participant DB as Postgres
+    R->>API: report a review
+    API-->>R: reportReference (RPT-XXXXXXXX)
+    S->>A: REVIEW_EXCLUDED_FROM_AGGREGATE
+    A->>DB: CAS report PENDING/UNDER_REVIEW/ESCALATED to ACTION_TAKEN
+    A->>DB: CAS review excludedFromAggregateAt IS NULL and deletedAt IS NULL
+    A->>DB: recompute consultant rating, ModerationAction row
+    A->>DB: stage bell to the expert (REVIEW_EXCLUDED_FROM_RATING)
+    A->>DB: stage outcome bell to the reporter, unless the reporter is the expert
+    DB-->>A: commit
+    A->>A: purge public review surfaces
+```
+
+- **Both parties are told.** The expert gets the "Not counted in rating" bell inside the transaction. The reporter gets the report-outcome bell unless the reporter is the reviewed expert, who already received the exclusion notice; one message is enough. The review's author is not sent a warning, since an exclusion is not a finding against them.
+- **A second exclusion is a 409, not a second audit row.** The review update is conditional on `excludedFromAggregateAt IS NULL` and `deletedAt IS NULL`; zero rows throws a 409 and the transaction rolls back, so nothing is staged and the report does not flip.
+- **Feedback exclusion is bound to the reported review.** `FEEDBACK_EXCLUDED_FROM_AGGREGATE` needs a REVIEW report bound to an appointment, a `feedbackId`, and that feedback must belong to the same appointment and be authored by the reported review's author, so staff cannot exclude an unrelated rating. The write is conditional on `excludedFromAggregateAt IS NULL` and answers 409 when the row is already excluded.
+
+Only rows with a `NULL` `excludedFromAggregateAt` enter either published score or the organisation's quality aggregate. `recomputeConsultantRating` and the organisation's `feedback-summary` both carry the predicate.
 
 ## Related
 
+- [05-moderation-and-reports.md](05-moderation-and-reports.md) — the report pipe, the gates and the references reporters receive.
 - [02-two-track-scoring.md](02-two-track-scoring.md) — the arithmetic the exclusion removes a row from.
 - [The org quality signal](../feedback/02-org-quality-signal.md) — the aggregate that honours the same predicate on the private rail.
 - [ADR 29](../enterprise/70-design-decisions/29-two-track-reputation-and-the-right-of-reply.md), "A low rating we caused does not count against the consultant".
+
+## Deprecated & Superseded Approaches
+
+- **Reserved columns with no writers**: `ratingCause` and `excludedFromAggregateAt` once shipped ahead of any route that set them, and this page described them as reserved. They are now written by the routes above; do not describe them as data-model support only.
+- **A public projection that hid the exclusion entirely**: the review stayed listed with no label and nobody was notified. Superseded by the boolean `notCounted`; the timestamp stays private.
+- **The composer dropping the cause**: `existingReview` did not select it, and `PUT` never wrote or cleared it, so a text-only edit saved `ratingCause: null`. Superseded by the shared patch rule.
+- **Warning the review's author on exclusion**: the notice was once routed to the report's target through the moderation-warning template. Superseded by a notice to the expert and an outcome bell to the reporter.

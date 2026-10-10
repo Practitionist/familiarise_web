@@ -58,4 +58,4 @@ Every index above requires `npm run db:push` on each environment, because a sche
 
 ## Related
 
-- [07-engineering-log-2026-08-29.md](07-engineering-log-2026-08-29.md) records the sweep in which most of these columns were added, with schema line numbers as they stood on that date.
+- [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) explains how the reference and SLA columns are used.

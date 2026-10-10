@@ -57,6 +57,12 @@ jest.mock("../../lib/support/service", () => ({
   runSupportTurn: jest.fn(),
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  spamLimiter: {},
+  applyRateLimit: jest.fn(async () => null),
+}));
+
 jest.mock("../../lib/support/context", () => ({
   __esModule: true,
   buildSupportContext: jest.fn(),
@@ -64,6 +70,7 @@ jest.mock("../../lib/support/context", () => ({
 
 import { NextRequest } from "next/server";
 import { authorizeAppointment } from "../../lib/api/appointment-access";
+import { applyRateLimit } from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
@@ -93,6 +100,7 @@ function req(method: string, body?: unknown): NextRequest {
 }
 
 beforeEach(() => {
+  jest.clearAllMocks();
   mockedAuthorize.mockResolvedValue({
     userId: "u1",
     isOrgParty: false,
@@ -180,6 +188,24 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(6);
+    expect(applyRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("passes the customer's urgent flag through to the hand-off", async () => {
+    mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
+    await POST(
+      req("POST", {
+        category: "OTHER",
+        userMessage: "the audio kept cutting out",
+        urgent: true,
+      }),
+      { params: Promise.resolve({ appointmentId: SLUG }) },
+    );
+    expect(mockedRunTurn).toHaveBeenCalledWith(
+      SLUG,
+      "u1",
+      expect.objectContaining({ category: "OTHER", urgent: true }),
+    );
   });
 
   it("VALIDATION_FAILED envelope when the turn has nothing actionable", async () => {

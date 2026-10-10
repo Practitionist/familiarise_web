@@ -11,7 +11,7 @@ on:
     - cron: "17 * * * *"
     # Every 4 hours: stuck payout recovery
     - cron: "52 */4 * * *"
-    # Every 6 hours: dispute status sync, payout status sync, expiring recording transfer
+    # Every 6 hours: dispute status sync, payout status sync, recording copy to R2
     - cron: "33 */6 * * *"
   workflow_dispatch:
     inputs:
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   intra-day:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
 
     env:
       NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
@@ -40,6 +40,10 @@ jobs:
       NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+      R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -79,7 +83,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|reconcile-orphaned-sessions|alert-dispute-deadlines|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-disputes|reconcile-payout-status|transfer-expiring-recordings)
+            ""|all|reconcile-orphaned-sessions|alert-dispute-deadlines|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-disputes|reconcile-payout-status|transfer-recordings)
               ;;
             *)
               echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
@@ -150,14 +154,14 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/payouts/reconcile-payout-status.ts
 
-      - name: Transfer expiring recordings
-        id: transfer-expiring-recordings
+      - name: Transfer recordings
+        id: transfer-recordings
         if: >-
           (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'transfer-expiring-recordings'))
-        timeout-minutes: 5
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'transfer-recordings'))
+        timeout-minutes: 45
         continue-on-error: true
-        run: node_modules/.bin/tsx jobs/stream/transfer-expiring-recordings.ts
+        run: node_modules/.bin/tsx jobs/stream/transfer-recordings.ts
 
       - name: Check job outcomes and notify on failure
         if: always()
@@ -176,7 +180,7 @@ jobs:
             "handle-stuck-payouts:${{ steps.handle-stuck-payouts.outcome }}" \
             "reconcile-disputes:${{ steps.reconcile-disputes.outcome }}" \
             "reconcile-payout-status:${{ steps.reconcile-payout-status.outcome }}" \
-            "transfer-expiring-recordings:${{ steps.transfer-expiring-recordings.outcome }}"
+            "transfer-recordings:${{ steps.transfer-recordings.outcome }}"
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"

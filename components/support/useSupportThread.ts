@@ -91,6 +91,8 @@ export interface TurnVars {
   category?: string;
   chosenOptionId?: string;
   userMessage?: string;
+  /** The customer flagged the escalation as urgent. */
+  urgent?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
 }

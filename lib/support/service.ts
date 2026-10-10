@@ -29,11 +29,12 @@ import {
   escalationBrief,
   isBareHumanRequest,
 } from "./escalation";
-import { issueTypeForReason, priorityForReason } from "./priority";
+import { escalationPriority, issueTypeForReason } from "./priority";
 import {
   notifyRequesterOfTicket,
   notifySupportStaff,
   notifyStaffOfTicketActivity,
+  raiseReusedTicketToHigh,
 } from "./create-ticket";
 import { allocateMessageSeq } from "./message-seq";
 import { recordFlowOutcome } from "./deflection";
@@ -48,6 +49,8 @@ export interface RunTurnInput {
   chosenOptionId?: string;
   /** Free text the user typed. */
   userMessage?: string;
+  /** The customer flagged this hand-off as urgent. */
+  urgent?: boolean;
   /**
    * #support-hub — caller reached this appointment only via the org-operator
    * party branch. Their conversation is their own, but restricted to the
@@ -178,6 +181,7 @@ export async function runSupportTurn(
       },
       input.userMessage,
       "no_flow",
+      input.urgent,
     );
   }
 
@@ -257,6 +261,7 @@ export async function runSupportTurn(
         },
         input.userMessage,
         terminal.reason ?? "recording_missing",
+        input.urgent,
       );
     }
   }
@@ -279,6 +284,7 @@ export async function runSupportTurn(
       escalating,
       input.userMessage,
       decision.reason ?? "escalated",
+      input.urgent,
     );
   }
 
@@ -581,11 +587,12 @@ async function escalate(
   },
   userMessage: string | undefined,
   reason: string,
+  urgent: boolean | undefined,
 ): Promise<RunTurnResult> {
   // Terminal-node reasons win (they're the specific why); policy reasons
   // (high_value_refund, no_flow) fill in. Priority comes from the shared map.
   const effectiveReason = turn.reason ?? reason;
-  const priority = priorityForReason(effectiveReason);
+  const priority = escalationPriority(effectiveReason, urgent);
   const issueType = issueTypeForReason(effectiveReason);
 
   // Staff notification must fire only for a ticket that actually committed, so
@@ -658,6 +665,7 @@ async function escalate(
           where: { id: linkedTicketId, status: "RESOLVED" },
           data: { status: "OPEN", resolvedAt: null },
         });
+        if (urgent) await raiseReusedTicketToHigh(tx, linkedTicketId);
       } else {
         const openedAt = new Date();
         const referenceNumber = await allocateTicketReference(tx, openedAt);

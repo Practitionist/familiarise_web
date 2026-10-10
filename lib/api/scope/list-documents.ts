@@ -5,6 +5,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -103,11 +104,7 @@ export function buildUserAppointmentAccessOr(
     { subscription: { requestedBy: { userId } } },
     { trial: { consulteeProfile: { userId } } },
     { trial: { consultantProfile: { userId } } },
-    {
-      participants: {
-        some: { userId, status: { not: "CANCELLED" } },
-      },
-    },
+    { participants: { some: liveParticipant(userId) } },
     {
       consultation: {
         consultationPlan: {

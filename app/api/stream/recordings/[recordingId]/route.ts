@@ -11,12 +11,15 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import {
+  RecordingListingStatus,
+  RecordingStatus,
+  RecordingStorageType,
+} from "@prisma/client";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
-import {
-  deleteRecordingObject,
-  getBestRecordingUrl,
-} from "@/lib/stream/recording-storage";
+import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -25,6 +28,7 @@ import {
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 import { liveParticipant } from "@/lib/booking/participants";
+import { attendeeEntitlementFilter } from "@/lib/stream/recording-attendee-scope";
 import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
@@ -50,6 +54,33 @@ type RouteParams = {
     recordingId: string;
   }>;
 };
+
+function recordingGoneResponse() {
+  return NextResponse.json(
+    { error: "This recording is no longer available.", expired: true },
+    { status: 410 },
+  );
+}
+
+/**
+ * Every media URL is withheld, not only `playbackUrl`: a thumbnail is a frame of the session and the
+ * preview clip a cut of it. `access.level` is what a consumer branches on, since a null URL alone is ambiguous.
+ */
+function metadataOnlyResponse(
+  metadata: Record<string, unknown>,
+  reason: string,
+) {
+  return NextResponse.json({
+    recording: {
+      ...metadata,
+      playbackUrl: null,
+      thumbnailUrl: null,
+      previewClipUrl: null,
+      previewTranscript: null,
+    },
+    access: { level: "METADATA_ONLY" as const, reason },
+  });
+}
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
@@ -214,10 +245,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     if (!hasAccess) {
-      const planFilter = appointment?.webinar?.webinarPlan?.id
-        ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
-        : appointment?.class?.classPlan?.id
-          ? { class: { classPlanId: appointment.class.classPlan.id } }
+      const planFilter =
+        appointment?.webinar?.webinarPlan || appointment?.class?.classPlan
+          ? attendeeEntitlementFilter(appointment)
           : null;
       if (planFilter) {
         const payments = await prisma.payment.findMany({
@@ -315,13 +345,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     const mayPlay = !viaOperatorGrant || operator.canPlay;
+    const streamCopyLapsed =
+      recording.storageType === RecordingStorageType.STREAM_S3 &&
+      recording.streamUrlExpiresAt !== null &&
+      new Date(recording.streamUrlExpiresAt) < new Date();
 
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
         actorUserId: session.user.id,
         actorRole: String(session.user.role),
         surface: "GET /api/stream/recordings/[recordingId]",
-        played: mayPlay,
+        // Only a response that carries a playback URL counts as played.
+        played:
+          mayPlay &&
+          recording.status !== RecordingStatus.EXPIRED &&
+          !streamCopyLapsed,
         recordingId: recording.id,
         meetingId: recording.meeting?.id ?? null,
         streamCallId: recording.meeting?.streamCallId ?? null,
@@ -342,39 +380,25 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       createdAt: recording.createdAt,
     };
 
-    if (!mayPlay) {
-      return NextResponse.json({
-        recording: {
-          ...metadata,
-          playbackUrl: null,
-          thumbnailUrl: null,
-          previewClipUrl: null,
-          previewTranscript: null,
-        },
-        access: {
-          level: "METADATA_ONLY" as const,
-          reason:
-            "Playback requires the recordings.play permission; staff receive metadata only.",
-        },
-      });
-    }
-
-    if (
-      recording.storageType === "STREAM_S3" &&
-      recording.streamUrlExpiresAt &&
-      new Date(recording.streamUrlExpiresAt) < new Date()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
-          expired: true,
-        },
-        { status: 410 },
+    // An expired recording is gone for everyone except an operator reading its metadata.
+    if (recording.status === RecordingStatus.EXPIRED) {
+      if (!viaOperatorGrant) return recordingGoneResponse();
+      return metadataOnlyResponse(
+        metadata,
+        "This recording has expired; only its metadata remains.",
       );
     }
 
-    const playbackUrl = await getBestRecordingUrl(recording);
+    if (!mayPlay) {
+      return metadataOnlyResponse(
+        metadata,
+        "Playback requires the recordings.play permission; staff receive metadata only.",
+      );
+    }
+
+    if (streamCopyLapsed) return recordingGoneResponse();
+
+    const playbackUrl = getBestRecordingUrl(recording);
 
     return NextResponse.json({
       recording: {
@@ -407,7 +431,6 @@ function sanitizeRecordingMutationResponse(recording: unknown) {
   if (!recording || typeof recording !== "object") return recording;
   const {
     recordingUrl: _recordingUrl,
-    storageUrl: _storageUrl,
     storagePath: _storagePath,
     previewClipStoragePath: _previewClipStoragePath,
     ...safeRecording
@@ -631,11 +654,6 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const recWithListing = recording as typeof recording & {
-      listingStatus?: string | null;
-      previewClipStoragePath?: string | null;
-    };
-
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).
     const findActivePurchase = () =>
@@ -673,11 +691,11 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     // If the recording was PUBLISHED, unpublish it first to close the checkout
     // window before deleting objects from storage, then re-verify no purchase
     // raced in while PUBLISHED.
-    if (recWithListing.listingStatus === "PUBLISHED") {
+    if (recording.listingStatus === RecordingListingStatus.PUBLISHED) {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          listingStatus: "UNPUBLISHED",
+          listingStatus: RecordingListingStatus.UNPUBLISHED,
           unpublishedAt: new Date(),
         },
       });
@@ -693,34 +711,32 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    if (recording.storagePath) {
-      const deletedMain = await deleteRecordingObject(recording.storagePath);
-      if (!deletedMain.success) {
-        return NextResponse.json(
-          {
-            error:
-              deletedMain.error ?? "Failed to delete recording storage object",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
-    if (recWithListing.previewClipStoragePath) {
-      await deleteRecordingObject(recWithListing.previewClipStoragePath);
-    }
-
-    const updated = await prisma.recording.update({
-      where: { id: recordingId },
+    // Expire before deleting: a status change that raced this request leaves
+    // the stored objects untouched, and a failed delete is retried by expire-recordings.
+    const [expired] = await prisma.recording.updateManyAndReturn({
+      where: { id: recordingId, status: recording.status },
       data: {
-        status: "EXPIRED",
+        status: RecordingStatus.EXPIRED,
         recordingUrl: "",
-        storageUrl: null,
-        storagePath: null,
-        previewClipUrl: null,
-        previewClipStoragePath: null,
-        listingStatus: "UNPUBLISHED",
+        listingStatus: RecordingListingStatus.UNPUBLISHED,
       },
+      select: { id: true, storagePath: true },
+    });
+    if (!expired) {
+      return NextResponse.json(
+        { error: "Recording changed while deleting; refresh and try again" },
+        { status: 409 },
+      );
+    }
+    const purged = await purgeExpiredRecordingAssets(expired);
+    if (!purged.success) {
+      streamLogger.warn("Deleted recording assets left for the expiry sweep", {
+        recordingId,
+        error: purged.error,
+      });
+    }
+    const updated = await prisma.recording.findUnique({
+      where: { id: recordingId },
     });
 
     return NextResponse.json({

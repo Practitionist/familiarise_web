@@ -373,6 +373,18 @@ sequenceDiagram
     SB->>C: Stream file content
 ```
 
+## Server-client operations and private buckets
+
+Every storage write, delete and signing call runs on the server-side client, never the public one, and private buckets are served only through access-checked signed URLs. The rules are these.
+
+- **Deletes are verified.** `removeObjects` in `lib/supabase-storage-core.ts` returns true only when every path is gone afterwards. Storage's batch delete answers with just the objects it removed, so each path missing from that answer is re-checked with an existence call. `deleteAsset`, `deleteAppointmentDocument` and the feature deletes all route through it, and callers act on the boolean: a route whose storage delete may have left the object behind reports once to Sentry and answers an error, and it keeps the database row so the delete can be retried. A delete that cannot be proven is never reported as a success.
+- **Rollbacks use the same path.** When a database insert fails after an upload, the object just written is removed with the same helper, so a failed save does not strand a file.
+- **Private buckets hand out short-lived signed URLs only.** Support attachments, appointment documents, plan materials and the finance PDFs are never linked by a stored URL. The app route checks the caller's access, signs a URL (60 seconds for support attachments) and redirects with `Cache-Control: private, no-store`. Rows written before a bucket became private may still hold an old stored URL, so readers map the row to the app route rather than rendering the stored value.
+- **Public buckets stay public deliberately.** Avatars, organisation logos and landing assets are served from their public endpoint; they hold nothing that needs an access check.
+- **Orphans are swept by reconciliation.** `scripts/cleanup/reconcile-document-storage.ts` treats every path referenced by a database row as live and removes unreferenced objects after a grace period, and it aborts on a listing error rather than deleting on partial information.
+
+See [support attachments](../support/08-intake-callbacks-attachments-and-limits.md#attachments) for the worked example.
+
 ## Cleanup Strategy
 
 ### 1. Orphan Sweep (`reconcile-document-storage`, daily)
@@ -597,7 +609,7 @@ sequenceDiagram
 
 ### 2. Data Protection
 
-- **Private Buckets**: The `documents`, `support-attachments`, `recordings` and `org-invoices` buckets are private (`public: false`) and are served only through signed URLs. `support-attachments` is set private on the first upload by `reconcileBucketOptions`. Its API rows expose `/api/support-tickets/{ticketId}/attachments/{id}`, which checks the caller and redirects to a 60-second signed URL. The image and preview buckets (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) stay public, so their public URLs work without any storage policy.
+- **Private Buckets**: The `documents`, `support-attachments`, `recordings` and `org-invoices` buckets are private (`public: false`) and are served only through signed URLs. `support-attachments` is set private on the first upload by `reconcileBucketOptions`. Its API rows expose `/api/support-tickets/{ticketId}/attachments/{id}`, which checks the caller and redirects to a 60-second signed URL. The image and preview buckets (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) stay public, so their public URLs resolve directly.
 - **Signed URLs**: All document access uses time-limited signed URLs generated via `supabaseAdmin.storage.from('documents').createSignedUrl()`. The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is required.
 - **Download Proxy**: The download API endpoint uses `supabaseAdmin` to generate signed URLs. If the service role key is not configured, the endpoint returns an explicit error rather than silently failing.
 - **File Scanning**: Virus scanning for uploaded files (future)
@@ -682,3 +694,8 @@ Debug: Check browser console for detailed error messages
 - Report issues to development team
 
 This comprehensive strategy ensures reliable, efficient, and secure document storage management while providing robust cleanup and maintenance capabilities.
+
+## Deprecated & Superseded Approaches
+
+- **Deleting through the public client and ignoring the result**: storage deletes could silently remove nothing while the caller reported success. Superseded by the server client and the verified `removeObjects` above; never read a `true` from a delete helper as anything weaker than "the object is gone".
+- **Public buckets with stored public URLs for user-uploaded private files**: superseded by private buckets and signed redirects; keep public buckets only for assets that are meant to be world-readable.

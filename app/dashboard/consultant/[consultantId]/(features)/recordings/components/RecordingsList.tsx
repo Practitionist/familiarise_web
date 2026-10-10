@@ -230,27 +230,6 @@ export function RecordingsList({
     }
   };
 
-  const handleTransfer = async (recordingId: string) => {
-    const response = await fetch(
-      `/api/stream/recordings/${recordingId}/transfer`,
-      {
-        method: "POST",
-      },
-    );
-
-    if (!response.ok) {
-      const payload = await response.json();
-      throw new Error(payload.error || "Transfer failed");
-    }
-
-    await refetch();
-
-    toast({
-      title: "Success",
-      description: "Recording transferred to permanent storage.",
-    });
-  };
-
   if (isPending) {
     return <RecordingsSkeletonGrid />;
   }
@@ -349,7 +328,6 @@ export function RecordingsList({
             <RecordingCard
               key={recording.id}
               recording={recording}
-              onTransfer={handleTransfer}
               onWatch={(rec) => setActivePlayerRecordingId(rec.id)}
               onManage={(rec) => setActiveManageRecordingId(rec.id)}
             />
@@ -378,7 +356,6 @@ export function RecordingsList({
                 resolution: activePlayerRecording.resolution,
                 playbackUrl: activePlayerRecording.playbackUrl,
                 storageType: activePlayerRecording.storageType,
-                streamUrlExpiresAt: activePlayerRecording.streamUrlExpiresAt,
                 planTitle: activePlayerRecording.planTitle,
                 previewTranscript: activePlayerRecording.previewTranscript,
               }

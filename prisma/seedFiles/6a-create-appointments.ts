@@ -583,10 +583,6 @@ const createClassAppointment = async (
         status: isPastAppointment
           ? ClassStatus.COMPLETED
           : faker.helpers.arrayElement(LIVE_CLASS_STATUSES),
-        recordingUrls: Array.from(
-          { length: faker.number.int({ min: 0, max: 3 }) }, // Reduced from 5 to 3
-          () => faker.internet.url(),
-        ),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
       },
     },

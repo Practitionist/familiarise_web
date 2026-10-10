@@ -76,17 +76,18 @@ function EscalateStep({
 }: Readonly<{
   option: Option;
   disabled: boolean;
-  onSend: (description: string) => void;
+  onSend: (description: string, urgent: boolean) => void;
   onBack: () => void;
 }>) {
   const [text, setText] = useState("");
+  const [urgent, setUrgent] = useState(false);
   const short = text.trim().length < MIN_DESCRIPTION;
   return (
     <form
       className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!short) onSend(text.trim());
+        if (!short) onSend(text.trim(), urgent);
       }}
     >
       <p className="text-sm">
@@ -110,6 +111,15 @@ function EscalateStep({
         At least {MIN_DESCRIPTION} characters. Our support team will read this
         and reply here and by email.
       </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={urgent}
+          onChange={(e) => setUrgent(e.target.checked)}
+          disabled={disabled}
+        />
+        <span>This is urgent</span>
+      </label>
       <div className="flex items-center justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>
           Back
@@ -146,22 +156,29 @@ export function SessionConversation({
       option={target}
       disabled={t.turnPending}
       onBack={() => setPicked(null)}
-      onSend={(description) => {
+      onSend={(description, urgent) => {
         const sent = target.isCategory
           ? t.submitTurn({
               category: target.id,
               chosenLabel: target.label,
               userMessage: description,
+              urgent,
             })
           : t.submitTurn({
               chosenOptionId: target.id,
               chosenLabel: target.label,
               userMessage: description,
+              urgent,
             });
         if (sent) setPicked(null);
       }}
     />
   );
+
+  // The human exit stays one tap away in every bot state, not only on the first menu.
+  const humanIntent = t.availableIntents.find((i) => i.category === "OTHER");
+  const humanExit =
+    humanIntent && !t.isHuman && !t.isClosed ? humanIntent : null;
 
   const controls = () => {
     if (escalating) {
@@ -169,17 +186,36 @@ export function SessionConversation({
     }
     if (t.started) {
       return (
-        t.options.length > 0 && (
-          <OptionButtons
-            options={t.options}
-            disabled={t.turnPending}
-            onPick={(o) =>
-              o.escalates
-                ? setPicked(o)
-                : t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
-            }
-          />
-        )
+        <>
+          {t.options.length > 0 && (
+            <OptionButtons
+              options={t.options}
+              disabled={t.turnPending}
+              onPick={(o) =>
+                o.escalates
+                  ? setPicked(o)
+                  : t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
+              }
+            />
+          )}
+          {humanExit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={t.turnPending}
+              onClick={() =>
+                setPicked({
+                  id: humanExit.category,
+                  label: humanExit.label,
+                  escalates: true,
+                  isCategory: true,
+                })
+              }
+            >
+              {humanExit.label}
+            </Button>
+          )}
+        </>
       );
     }
     if (t.query.isError) {
@@ -310,43 +346,50 @@ export function SessionConversation({
               if you still need help.
             </p>
           ) : (
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const msg = text.trim();
-                if (!msg) return;
-                if (!t.isHuman && isBareHumanRequest(msg)) {
-                  setText("");
-                  setPicked({
-                    id: "OTHER",
-                    label: msg,
-                    escalates: true,
-                    isCategory: true,
-                  });
-                  return;
-                }
-                if (t.submitTurn({ userMessage: msg })) setText("");
-              }}
-            >
-              <Input
-                aria-label="Message"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder={
-                  t.isHuman ? "Message our team…" : "Type a message…"
-                }
-                disabled={t.turnPending}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={t.turnPending || !text.trim()}
-                aria-label="Send"
+            <>
+              {t.isHuman && t.isResolved && (
+                <p className="text-xs text-muted-foreground">
+                  This request is marked resolved. Replying reopens it.
+                </p>
+              )}
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const msg = text.trim();
+                  if (!msg) return;
+                  if (!t.isHuman && isBareHumanRequest(msg)) {
+                    setText("");
+                    setPicked({
+                      id: "OTHER",
+                      label: msg,
+                      escalates: true,
+                      isCategory: true,
+                    });
+                    return;
+                  }
+                  if (t.submitTurn({ userMessage: msg })) setText("");
+                }}
               >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+                <Input
+                  aria-label="Message"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder={
+                    t.isHuman ? "Message our team…" : "Type a message…"
+                  }
+                  disabled={t.turnPending}
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={t.turnPending || !text.trim()}
+                  aria-label="Send"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </form>
+            </>
           ))}
       </div>
     </div>
