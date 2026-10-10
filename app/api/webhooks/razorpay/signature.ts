@@ -122,14 +122,15 @@ export function matchRazorpayWebhookSecret(
 export function isPayoutEventName(rawBody: string): boolean {
   try {
     const parsed: unknown = JSON.parse(rawBody);
+    if (typeof parsed !== "object" || parsed === null) {
+      return false;
+    }
+    const event = "event" in parsed ? parsed.event : undefined;
     return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as { event?: unknown }).event === "string" &&
-      (parsed as { event: string }).event.startsWith("payout.")
+      typeof event === "string" &&
+      (event.startsWith("payout.") || event.startsWith("fund_account."))
     );
   } catch {
-    // Unparseable body — not a webhook we can classify, so no fallback.
     return false;
   }
 }

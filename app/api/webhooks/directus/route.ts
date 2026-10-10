@@ -1,19 +1,28 @@
 /**
  * POST /api/webhooks/directus
  *
- * Placeholder for Directus CMS webhook handler.
- * Disabled unless DIRECTUS_WEBHOOK_SECRET is configured.
- *
- * When Directus is integrated (Issue #312), this will:
- * 1. Receive `items.create` events for `cms_posts`
- * 2. Call ConvertKit to create a broadcast with the new blog post
- * 3. Optionally invalidate ISR/cache for the blog pages
+ * Placeholder for Directus CMS webhook handler. Disabled unless DIRECTUS_WEBHOOK_SECRET is configured.
  */
 
 import { timingSafeEqual } from "node:crypto";
-
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
+import {
+  MAX_WEBHOOK_BODY_BYTES,
+  readBodyWithinCap,
+} from "@/lib/webhooks/read-body";
+
+export const runtime = "nodejs";
+
+const directusWebhookSchema = z
+  .object({
+    collection: z.string().optional(),
+    event: z.string().optional(),
+    keys: z.array(z.union([z.string(), z.number()])).optional(),
+    key: z.union([z.string(), z.number()]).optional(),
+  })
+  .passthrough();
 
 /** Constant-time compare; timingSafeEqual throws on unequal lengths. */
 function secretMatches(given: string, expected: string): boolean {
@@ -25,45 +34,54 @@ function secretMatches(given: string, expected: string): boolean {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const secret = process.env.DIRECTUS_WEBHOOK_SECRET;
 
-  // Endpoint disabled when secret is not configured
   if (!secret) {
     return NextResponse.json({ error: "Not Found" }, { status: 404 });
   }
 
-  // Validate webhook signature
+  const declaredBytes = Number(req.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredBytes) &&
+    declaredBytes > MAX_WEBHOOK_BODY_BYTES
+  ) {
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+
   const signature = req.headers.get("x-directus-signature");
   if (!signature || !secretMatches(signature, secret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const rawBody = await readBodyWithinCap(req);
+  if (rawBody === null) {
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+  if (!rawBody) {
+    return NextResponse.json({ error: "Empty body" }, { status: 400 });
+  }
+
+  let parsedJson: unknown;
   try {
-    const body = await req.json();
+    parsedJson = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-    console.log("[webhooks/directus] Received webhook event:", {
-      collection: body?.collection,
-      event: body?.event,
-      keys: body?.keys,
-    });
-
-    // TODO: Issue #312 — Implement Directus webhook handling
-    // 1. Check event type (items.create on cms_posts)
-    // 2. Fetch post data from Directus API
-    // 3. Call createBroadcast() from lib/newsletter/convertkit.ts
-    // 4. Invalidate blog page cache
-
-    return NextResponse.json({
-      received: true,
-      message: "CMS integration not yet active",
-    });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "api" } },
-    );
-    console.error("[webhooks/directus] Error:", error);
+  const parsed = directusWebhookSchema.safeParse(parsedJson);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Webhook processing failed" },
-      { status: 500 },
+      { error: "Invalid webhook payload" },
+      { status: 400 },
     );
   }
+
+  console.log("[webhooks/directus] Received webhook event:", {
+    collection: parsed.data.collection,
+    event: parsed.data.event,
+    keys: parsed.data.keys,
+  });
+
+  return NextResponse.json({
+    received: true,
+    message: "CMS integration not yet active",
+  });
 }

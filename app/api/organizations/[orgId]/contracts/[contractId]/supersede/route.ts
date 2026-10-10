@@ -350,22 +350,21 @@ export async function POST(
         },
       });
 
-      if (typeof tx.webhookEndpoint?.findMany === "function") {
-        await dispatchWebhookEvent({
-          prisma: tx,
-          organizationId: orgId,
-          eventType: "contract.signed",
-          payload: {
-            contractId: successor.id,
-            supersededContractId: old.id,
-            reason: body.reason,
-            status: "ACTIVE",
-            signedAt: now.toISOString(),
-            effectiveFrom: effectiveFrom.toISOString(),
-            effectiveTo: effectiveTo?.toISOString() ?? null,
-          },
-        });
-      }
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "contract.signed",
+        payload: {
+          contractId: successor.id,
+          billingAccountId: old.billingAccountId,
+          status: "ACTIVE",
+          signedAt: now.toISOString(),
+          effectiveFrom: effectiveFrom.toISOString(),
+          effectiveTo: effectiveTo?.toISOString() ?? null,
+          supersededContractId: old.id,
+          reason: body.reason,
+        },
+      });
 
       return successor;
     });
@@ -381,9 +380,7 @@ export async function POST(
         });
       } catch (rollupErr) {
         Sentry.captureException(
-          rollupErr instanceof Error
-            ? rollupErr
-            : new Error(String(rollupErr)),
+          rollupErr instanceof Error ? rollupErr : new Error(String(rollupErr)),
           {
             tags: {
               subsystem: "enterprise",

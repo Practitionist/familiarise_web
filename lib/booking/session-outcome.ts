@@ -42,7 +42,11 @@ export interface SessionOutcomeInput {
   /** The plan's consultant plus every accepted collaborator (D1). */
   hostUserIds: readonly string[];
   intervals: readonly PresenceInterval[];
-  meeting: { endedAt: Date | null; endedReason: string | null } | null;
+  meeting: {
+    endedAt: Date | null;
+    endedReason: string | null;
+    endedByUserId?: string | null;
+  } | null;
   /** Stream's call report; null means "no evidence", never "nobody came". */
   report: { unique: number } | null;
   maintenanceWindows: readonly OutageWindow[];
@@ -239,6 +243,10 @@ export function classifySessionOutcome(
   const horizon = end + OVERRUN_CREDIT_MINUTES * MIN_MS;
   const hosts = new Set(input.hostUserIds);
   const endedAt = input.meeting?.endedAt?.getTime() ?? null;
+  const endedByUserId = input.meeting?.endedByUserId ?? null;
+  const isDeliberateHostEnd =
+    input.meeting?.endedReason === "call_ended" &&
+    (endedByUserId === null || hosts.has(endedByUserId));
   const sides: Sides = {
     host: mergeSide(
       input.intervals.filter((i) => hosts.has(i.userId)),
@@ -252,7 +260,7 @@ export function classifySessionOutcome(
     ),
     outages: outageSegments(input),
     deliberateEndAt:
-      input.meeting?.endedReason === "call_ended" &&
+      isDeliberateHostEnd &&
       endedAt !== null &&
       endedAt >= start &&
       endedAt < end

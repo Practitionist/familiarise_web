@@ -82,8 +82,10 @@ const ENDPOINT_STATUS: Record<
 
 const DELIVERY_STATUS: Record<string, { label: string; tone: Tone }> = {
   PENDING: { label: "Queued", tone: "info" },
+  IN_FLIGHT: { label: "Delivering", tone: "neutral" },
+  RETRY: { label: "Retrying", tone: "caution" },
   SUCCESS: { label: "Delivered", tone: "success" },
-  FAILED: { label: "Failed, retrying", tone: "caution" },
+  FAILED: { label: "Failed (permanent)", tone: "critical" },
   DEAD_LETTER: { label: "Gave up", tone: "critical" },
 };
 
@@ -298,6 +300,25 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
     onError: (err: Error) => setCreateError(err.message),
   });
 
+  const setEndpointStatus = useMutation({
+    mutationFn: (vars: { id: string; status: "ACTIVE" | "PAUSED" }) =>
+      send(`/api/organizations/${orgId}/webhooks/${vars.id}`, "PATCH", {
+        status: vars.status,
+      }),
+    onSuccess: (_json, vars) => {
+      void qc.invalidateQueries({ queryKey: ["org-webhooks", orgId] });
+      toast({
+        title: vars.status === "PAUSED" ? "Endpoint paused" : "Endpoint active",
+      });
+    },
+    onError: (err: Error) =>
+      toast({
+        title: "Couldn't update endpoint",
+        description: err.message,
+        variant: "destructive",
+      }),
+  });
+
   if (isGateLoading || !allowed) return null;
 
   const rotate = async (row: WebhookRow) => {
@@ -306,8 +327,6 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
       "POST",
     );
     setShownSecret((json as { endpoint: { secret: string } }).endpoint.secret);
-    // #1527 review — create and remove both invalidate the list; rotate
-    // didn't, so the endpoint list could show server state a rotation ago.
     void qc.invalidateQueries({ queryKey: ["org-webhooks", orgId] });
     toast({
       title: "Secret rotated",
@@ -326,6 +345,29 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
       <Button size="sm" variant="ghost" onClick={() => setDeliveriesFor(row)}>
         Deliveries
       </Button>
+      {row.status === "ACTIVE" ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={setEndpointStatus.isPending}
+          onClick={() =>
+            setEndpointStatus.mutate({ id: row.id, status: "PAUSED" })
+          }
+        >
+          Pause
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={setEndpointStatus.isPending}
+          onClick={() =>
+            setEndpointStatus.mutate({ id: row.id, status: "ACTIVE" })
+          }
+        >
+          {row.status === "DISABLED" ? "Re-enable" : "Resume"}
+        </Button>
+      )}
       {can("webhooks.rotateSecret") && (
         <ConfirmDialog
           title="Rotate the signing secret?"

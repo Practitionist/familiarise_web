@@ -46,6 +46,7 @@ import {
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable but un-PATCH-able
@@ -272,6 +273,100 @@ function reportAndRethrow(err: unknown): never {
   throw err;
 }
 
+async function emitMembershipStatusWebhook(
+  tx: Tx,
+  args: {
+    orgId: string;
+    memberId: string;
+    statusChanged: boolean;
+    previousStatus: MemberRow["status"];
+    nextStatus: MemberPatch["status"];
+    userId: string;
+    role: MemberRow["role"];
+  },
+): Promise<void> {
+  if (!args.statusChanged) return;
+  if (args.previousStatus === "ACTIVE" && args.nextStatus === "SUSPENDED") {
+    await dispatchWebhookEvent({
+      prisma: tx,
+      organizationId: args.orgId,
+      eventType: "member.removed",
+      payload: {
+        membershipId: args.memberId,
+        userId: args.userId,
+        role: args.role,
+        previousStatus: "ACTIVE",
+        reason: "suspended",
+      },
+    });
+  } else if (
+    args.previousStatus === "SUSPENDED" &&
+    args.nextStatus === "ACTIVE"
+  ) {
+    await dispatchWebhookEvent({
+      prisma: tx,
+      organizationId: args.orgId,
+      eventType: "member.added",
+      payload: {
+        membershipId: args.memberId,
+        userId: args.userId,
+        role: args.role,
+        previousStatus: "SUSPENDED",
+        source: "reactivated",
+      },
+    });
+  }
+}
+
+async function applyRoleAndStatusTransitions(
+  tx: Tx,
+  args: {
+    orgId: string;
+    memberId: string;
+    current: MemberRow;
+    patch: MemberPatch;
+    actor: { kind: "member"; membershipId: string; role: MemberRow["role"] };
+    org: Parameters<typeof assertRoleChangeAllowed>[1]["org"];
+    roleChanged: boolean;
+    statusChanged: boolean;
+  },
+): Promise<Awaited<ReturnType<typeof applyMembershipRoleEffects>> | null> {
+  const { current, patch, actor, orgId, memberId } = args;
+  let roleEffects: Awaited<
+    ReturnType<typeof applyMembershipRoleEffects>
+  > | null = null;
+
+  if (args.roleChanged && patch.role !== undefined) {
+    await assertRoleChangeAllowed(tx, {
+      membership: current,
+      to: patch.role,
+      actor,
+      org: args.org,
+    });
+    roleEffects = await applyMembershipRoleEffects(tx, {
+      userId: current.userId,
+      role: patch.role,
+    });
+  }
+
+  if (args.statusChanged && patch.status !== undefined) {
+    await assertStatusChangeAllowed(tx, {
+      membership: current,
+      to: patch.status,
+      actor,
+    });
+    await transitionMembership(tx, {
+      where: { id: memberId, organizationId: orgId },
+      to: patch.status,
+    });
+    if (patch.status === "SUSPENDED") {
+      await revokeOrgManagedUserSessions(tx, orgId, current.userId);
+    }
+  }
+
+  return roleEffects;
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -297,10 +392,6 @@ export async function PATCH(
   }
   const patch = parsed.data;
 
-  // Gated per field. Role, status and department are people management
-  // (OWNER, MAINTAINER). #1851 decision 5 — an EXPERT's payout recipient
-  // decides where money goes, so only the finance roles (OWNER,
-  // BILLING_ADMIN) change it; MAINTAINER can see it but not change it.
   const touchesPeople =
     patch.role !== undefined ||
     patch.status !== undefined ||
@@ -333,9 +424,6 @@ export async function PATCH(
     role: access.member.role,
   };
 
-  // ORG-07 — PATCH → REMOVED is the same operation as DELETE, so it runs the
-  // same removal (guard, cascade, audit, webhook, notices). It is its own
-  // action: mixing it with a role or label edit would half-apply one of them.
   if (patch.status === "REMOVED") {
     if (
       patch.role !== undefined ||
@@ -364,13 +452,9 @@ export async function PATCH(
     }
   }
 
-  // The membership-changed email, staged inside the transaction below.
   let stagedRoleEmail: StagedOnboardingEmail | null = null;
 
   try {
-    // N4 — Serializable, so two OWNERs demoting or suspending each other
-    // cannot both count the other as the remaining OWNER (write skew); SSI
-    // aborts one side and the retry sees the committed change.
     const result = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
@@ -383,57 +467,25 @@ export async function PATCH(
             });
           }
 
-          // Removed and erased memberships are immutable tombstones; any re-entry requires a fresh invitation.
           assertNotTombstone(current);
           // Even a label-only edit on an OWNER, MAINTAINER or BILLING_ADMIN row needs an OWNER.
           if (touchesPeople) assertActorMayManage(actor, current.role);
 
           const roleChanged =
             patch.role !== undefined && patch.role !== current.role;
-          // #1846 bucket C — the shared guard: self, OWNER-only roles, the
-          // LEARNER↔EXPERT block, the no-history rule for LEARNER/EXPERT, an
-          // existing expert profile for a move into EXPERT, and the last OWNER.
-          if (roleChanged && patch.role !== undefined) {
-            await assertRoleChangeAllowed(tx, {
-              membership: current,
-              to: patch.role,
-              actor,
-              org: access.org,
-            });
-          }
-
-          // Role-driven profile reconciliation through the shared helper, so
-          // PATCH stays in sync with invite-accept. The guard above already
-          // required an existing ConsultantProfile for EXPERT, so nothing is
-          // created here. payoutRecipient resets to the role default.
-          const roleEffects =
-            roleChanged && patch.role !== undefined
-              ? await applyMembershipRoleEffects(tx, {
-                  userId: current.userId,
-                  role: patch.role,
-                })
-              : null;
-
-          // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
-          // matches zero rows and 409s instead of being resurrected); the
-          // remaining fields ride a plain update in the same tx. The guard
-          // refuses a self change and suspending the last OWNER (N4).
           const statusChanged =
             patch.status !== undefined && patch.status !== current.status;
-          if (statusChanged && patch.status !== undefined) {
-            await assertStatusChangeAllowed(tx, {
-              membership: current,
-              to: patch.status,
-              actor,
-            });
-            await transitionMembership(tx, {
-              where: { id: memberId, organizationId: orgId },
-              to: patch.status,
-            });
-            if (patch.status === "SUSPENDED") {
-              await revokeOrgManagedUserSessions(tx, orgId, current.userId);
-            }
-          }
+
+          const roleEffects = await applyRoleAndStatusTransitions(tx, {
+            orgId,
+            memberId,
+            current,
+            patch,
+            actor,
+            org: access.org,
+            roleChanged,
+            statusChanged,
+          });
 
           const otherData = memberUpdateData(patch, current.role, roleEffects);
           const updated =
@@ -446,9 +498,6 @@ export async function PATCH(
                   where: { id: memberId },
                 });
 
-          // A4: an EXPERT entering or leaving EXPERT or ACTIVE shifts the
-          // consultant's HOST-membership count, which drives
-          // ConsultantProfile.isIndependent.
           if (roleChanged || statusChanged) {
             await recomputeIndependenceAcross(tx, [current, updated]);
           }
@@ -463,9 +512,16 @@ export async function PATCH(
             statusChanged,
           });
 
-          // P3 email twin: a role change notifies the affected member. Staged
-          // inside this transaction so the notice row commits with the change
-          // or rolls back with it (review round 2 on #1700).
+          await emitMembershipStatusWebhook(tx, {
+            orgId,
+            memberId,
+            statusChanged,
+            previousStatus: current.status,
+            nextStatus: patch.status,
+            userId: updated.userId,
+            role: updated.role,
+          });
+
           if (roleChanged) {
             stagedRoleEmail = await stageOrgMembershipChangedEmail(
               {
@@ -479,8 +535,6 @@ export async function PATCH(
                   access.session.user.name ??
                   access.session.user.email ??
                   "An operator",
-                // The affected member's org home — not a bare dashboard
-                // bounce that drops them on the wrong tree.
                 dashboardUrl: `${getAppUrl()}/dashboard/organization/${orgId}/home`,
               },
               tx,
@@ -493,7 +547,6 @@ export async function PATCH(
       ),
     );
 
-    // Vendor attempt after the response; the row was written in the tx.
     if (stagedRoleEmail) {
       const staged = stagedRoleEmail;
       scheduleAfter(
@@ -504,7 +557,6 @@ export async function PATCH(
 
     return NextResponse.json({ membership: result });
   } catch (err) {
-    // Never leak a 500 for a user-facing refusal.
     return errorResponse(err) ?? reportAndRethrow(err);
   }
 }

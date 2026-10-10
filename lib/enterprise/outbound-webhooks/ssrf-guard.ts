@@ -139,40 +139,62 @@ function ipv6ToBytes(ip: string): Uint8Array | null {
   return Uint8Array.from(bytes);
 }
 
-function isBlockedV6(ip: string): boolean {
-  const b = ipv6ToBytes(ip);
-  if (b === null) return true; // unparseable → fail closed
-
-  const allZeroUpTo = (n: number) => b.slice(0, n).every((x) => x === 0);
-
-  // ::  (unspecified) and ::1 (loopback)
-  if (allZeroUpTo(15) && (b[15] === 0 || b[15] === 1)) return true;
-
-  // ::ffff:a.b.c.d — IPv4-mapped. Classify the embedded v4 address.
-  if (allZeroUpTo(10) && b[10] === 0xff && b[11] === 0xff) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
-  }
-  // 64:ff9b::/96 — NAT64, likewise wraps a v4 address.
-  if (
+function extractEmbeddedV4FromV6(b: Uint8Array): string | null {
+  const isV4Mapped =
+    b.slice(0, 10).every((x) => x === 0) && b[10] === 0xff && b[11] === 0xff;
+  const isSiitTranslated =
+    b.slice(0, 8).every((x) => x === 0) &&
+    b[8] === 0xff &&
+    b[9] === 0xff &&
+    b[10] === 0 &&
+    b[11] === 0;
+  const isNat64WellKnown =
     b[0] === 0x00 &&
     b[1] === 0x64 &&
     b[2] === 0xff &&
     b[3] === 0x9b &&
-    b.slice(4, 12).every((x) => x === 0)
-  ) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+    b.slice(4, 12).every((x) => x === 0);
+
+  if (isV4Mapped || isSiitTranslated || isNat64WellKnown) {
+    return `${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
   }
-  // Any other address inside ::/96 embeds a v4 address in its low word
-  // (e.g. ::7f00:1 is 127.0.0.1) — treat it the same way.
-  if (allZeroUpTo(12) && !(b[12] === 0 && b[13] === 0)) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+  return null;
+}
+
+function isSpecialPurpose2001V6(b: Uint8Array): boolean {
+  if (b[0] !== 0x20 || b[1] !== 0x01) return false;
+  // 2001::/32 Teredo tunneling
+  if (b[2] === 0x00 && b[3] === 0x00) return true;
+  // 2001:0002::/48 benchmarking (RFC 5180)
+  if (b[2] === 0x00 && b[3] === 0x02 && b[4] === 0x00 && b[5] === 0x00) {
+    return true;
+  }
+  // 2001:0010::/28 ORCHID
+  if (b[2] === 0x00 && (b[3] & 0xf0) === 0x10) return true;
+  // 2001:db8::/32 documentation (RFC 3849)
+  return b[2] === 0x0d && b[3] === 0xb8;
+}
+
+function isBlockedV6(ip: string): boolean {
+  const b = ipv6ToBytes(ip);
+  if (b === null) return true;
+
+  const embeddedV4 = extractEmbeddedV4FromV6(b);
+  if (embeddedV4 !== null) {
+    return isBlockedV4(embeddedV4);
   }
 
+  // Remaining 0000::/8 reserved block (covers ::, ::1, ::/96, 64:ff9b:1::/48, etc.)
+  if (b[0] === 0x00) return true;
+  // 100::/64 discard prefix (RFC 6666)
+  if (b[0] === 0x01 && b[1] === 0x00 && b.slice(2, 8).every((x) => x === 0)) {
+    return true;
+  }
+  if (isSpecialPurpose2001V6(b)) return true;
+  if (b[0] === 0x20 && b[1] === 0x02) return true; // 2002::/16 6to4
   if ((b[0] & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
   if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return true; // fe80::/10 link-local
-  if (b[0] === 0xff) return true; // ff00::/8 multicast
-  if (b[0] === 0x20 && b[1] === 0x02) return true; // 2002::/16 6to4
-  return false;
+  return b[0] === 0xff; // ff00::/8 multicast
 }
 
 function isBlockedAddress(ip: string): boolean {
@@ -183,10 +205,12 @@ function isBlockedAddress(ip: string): boolean {
 }
 
 /**
- * Rejects a webhook URL that is not plainly a public https endpoint.
- * Throws `SsrfBlockedError` with a customer-safe reason; never returns false.
+ * Resolves a webhook HTTPS URL and verifies every candidate IP is publicly routable.
+ * Returns the parsed URL and a validated public IP so callers can pin TCP dial to it.
  */
-export async function assertPublicUrl(rawUrl: string): Promise<void> {
+export async function resolvePublicUrl(
+  rawUrl: string,
+): Promise<{ url: URL; address: string; family: 4 | 6 }> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -204,11 +228,6 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     throw new SsrfBlockedError("credentials in the URL are not allowed");
   }
 
-  // #1132 — `url.hostname` KEEPS the brackets on an IPv6 literal ("[::1]"),
-  // so `isIP` returned 0 and the address fell through to a DNS lookup that
-  // could never succeed. That happened to reject loopback, but for the wrong
-  // reason, and it made every legitimate IPv6-only endpoint unusable. Strip
-  // the brackets so literals are classified as addresses.
   const host = url.hostname
     .toLowerCase()
     .replace(/^\[|\]$/g, "")
@@ -221,15 +240,15 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     throw new SsrfBlockedError("host is not publicly routable");
   }
 
-  // A literal IP skips DNS entirely — classify it directly.
-  if (isIP(host)) {
+  const literalFamily = isIP(host);
+  if (literalFamily === 4 || literalFamily === 6) {
     if (isBlockedAddress(host)) {
       throw new SsrfBlockedError("host is not publicly routable");
     }
-    return;
+    return { url, address: host, family: literalFamily };
   }
 
-  let resolved: Array<{ address: string }>;
+  let resolved: Array<{ address: string; family: number }>;
   try {
     resolved = await lookup(host, { all: true });
   } catch {
@@ -238,13 +257,24 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   if (resolved.length === 0) {
     throw new SsrfBlockedError("host could not be resolved");
   }
-  // EVERY answer must be public: a host that returns one public and one private
-  // address would otherwise be dialled on the private one at connect time.
   for (const { address } of resolved) {
     if (isBlockedAddress(address)) {
       throw new SsrfBlockedError("host resolves to a non-public address");
     }
   }
+  return {
+    url,
+    address: resolved[0].address,
+    family: resolved[0].family === 6 ? 6 : 4,
+  };
+}
+
+/**
+ * Rejects a webhook URL that is not plainly a public https endpoint.
+ * Throws `SsrfBlockedError` with a customer-safe reason; never returns false.
+ */
+export async function assertPublicUrl(rawUrl: string): Promise<void> {
+  await resolvePublicUrl(rawUrl);
 }
 
 /**

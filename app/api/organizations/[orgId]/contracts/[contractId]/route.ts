@@ -293,43 +293,49 @@ export async function PATCH(
           const existingSub = await tx.billingSubscription.findUnique({
             where: { contractId },
           });
+          const effectiveFromVal =
+            body.effectiveFrom ?? current.effectiveFrom ?? new Date();
+          const effectiveToVal =
+            body.effectiveTo !== undefined
+              ? body.effectiveTo
+              : current.effectiveTo;
           if (existingSub) {
-            const effectiveFrom =
-              body.effectiveFrom ?? current.effectiveFrom ?? new Date();
-            const effectiveTo =
-              body.effectiveTo !== undefined
-                ? body.effectiveTo
-                : current.effectiveTo;
-            const cycleEnd = computeCycleEnd(effectiveFrom, existingSub.cycle);
+            const cycleEnd = computeCycleEnd(
+              effectiveFromVal,
+              existingSub.cycle,
+            );
             await tx.billingSubscription.update({
               where: { id: existingSub.id },
               data: {
-                currentCycleStart: effectiveFrom,
+                currentCycleStart: effectiveFromVal,
                 currentCycleEnd: cycleEnd,
                 nextInvoiceDate: cycleEnd,
-                startsAt: effectiveFrom,
-                endsAt: effectiveTo ?? null,
+                startsAt: effectiveFromVal,
+                endsAt: effectiveToVal ?? null,
               },
             });
           }
 
-          if (typeof tx.webhookEndpoint?.findMany === "function") {
-            await dispatchWebhookEvent({
-              prisma: tx,
-              organizationId: orgId,
-              eventType: "contract.signed",
-              payload: {
-                contractId,
-                status: "ACTIVE",
-                signedAt: (
-                  body.signedAt ??
-                  defaultSignedAt ??
-                  current.signedAt ??
-                  new Date()
-                ).toISOString(),
-              },
-            });
-          }
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: orgId,
+            eventType: "contract.signed",
+            payload: {
+              contractId,
+              billingAccountId: current.billingAccountId,
+              status: "ACTIVE",
+              signedAt: (
+                body.signedAt ??
+                defaultSignedAt ??
+                current.signedAt ??
+                new Date()
+              ).toISOString(),
+              effectiveFrom: effectiveFromVal.toISOString(),
+              effectiveTo: effectiveToVal?.toISOString() ?? null,
+              supersededContractId: null,
+              reason: null,
+            },
+          });
         }
 
         // #779 §A / #1846 SM-C14 — a dead contract takes its programs and

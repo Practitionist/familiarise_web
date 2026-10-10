@@ -104,6 +104,7 @@ const DEFAULT_LIMIT = 50;
  */
 const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
+  "dispatch-outbound-webhooks": 15,
   // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
   // fits its timeout.
   "retry-failed-emails": 20,
