@@ -60,6 +60,39 @@ export const razorpayFetchedPaymentSchema = z
   })
   .passthrough();
 
+const pennyDropResultsSchema = z
+  .object({
+    account_status: z.enum(["active", "invalid"]).nullable().optional(),
+    registered_name: z.string().nullable().optional(),
+    name_match_score: z.number().nullable().optional(),
+  })
+  .passthrough()
+  .nullish()
+  .transform((v) => v ?? undefined);
+
+const reversePennyDropResultsSchema = z
+  .object({
+    account_status: z
+      .enum(["active", "inactive", "invalid"])
+      .nullable()
+      .optional(),
+    registered_name: z.string().nullable().optional(),
+    name_match_score: z.number().nullable().optional(),
+    bank_account: z
+      .object({
+        bank_routing_code: z.string().nullable().optional(),
+        account_number: z.string().nullable().optional(),
+        bank_name: z.string().nullable().optional(),
+        account_type: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough()
+  .nullish()
+  .transform((v) => v ?? undefined);
+
 export const fundAccountValidationEntitySchema = z
   .object({
     id: z.string(),
@@ -76,9 +109,20 @@ export const fundAccountValidationEntitySchema = z
           .optional(),
       })
       .passthrough()
-      .optional(),
+      .nullish()
+      .transform((v) => v ?? undefined),
     status: z.string().optional(),
-    results: z.record(z.unknown()).optional(),
+    results: pennyDropResultsSchema,
+    validation_results: reversePennyDropResultsSchema,
+    status_details: z
+      .object({
+        description: z.string().nullable().optional(),
+        source: z.string().nullable().optional(),
+        reason: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullish()
+      .transform((v) => v ?? undefined),
     notes: razorpayNotesSchema,
   })
   .passthrough();
@@ -248,29 +292,7 @@ export const razorpayWebhookEnvelopeSchema = z
           .optional(),
         "fund_account.validation": z
           .object({
-            entity: z
-              .object({
-                id: z.string(),
-                reference_id: z.string().nullable().optional(),
-                fund_account: z
-                  .object({
-                    id: z.string(),
-                    account_type: z.string().optional(),
-                    vpa: z
-                      .object({
-                        address: z.string().optional(),
-                      })
-                      .passthrough()
-                      .optional(),
-                  })
-                  .passthrough()
-                  .optional(),
-                status: z.string().optional(),
-                results: z.record(z.unknown()).optional(),
-                notes: razorpayNotesSchema,
-              })
-              .passthrough()
-              .optional(),
+            entity: fundAccountValidationEntitySchema.optional(),
           })
           .passthrough()
           .optional(),

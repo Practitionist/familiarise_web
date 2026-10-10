@@ -98,22 +98,81 @@ function resolveCallEndedReason(
   return "call_ended";
 }
 
+const MEETING_END_INCLUDE = {
+  occurrence: {
+    include: {
+      appointment: {
+        select: {
+          webinar: { select: { id: true } },
+          class: { select: { id: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+type GroupSessionCandidate = {
+  occurrence?: {
+    appointment?: {
+      webinar?: unknown;
+      class?: unknown;
+    } | null;
+  } | null;
+};
+
+function summarizeParticipantIntervals(
+  intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>,
+  endedAt: Date,
+): Map<string, { firstJoinedAt: Date; lastLeftAt: Date; count: number }> {
+  const summaryByUser = new Map<
+    string,
+    { firstJoinedAt: Date; lastLeftAt: Date; count: number }
+  >();
+  for (const interval of intervals) {
+    const effectiveLeft = interval.leftAt ?? endedAt;
+    const existing = summaryByUser.get(interval.userId);
+    if (!existing) {
+      summaryByUser.set(interval.userId, {
+        firstJoinedAt: interval.joinedAt,
+        lastLeftAt: effectiveLeft,
+        count: 1,
+      });
+      continue;
+    }
+    if (interval.joinedAt < existing.firstJoinedAt) {
+      existing.firstJoinedAt = interval.joinedAt;
+    }
+    if (effectiveLeft > existing.lastLeftAt) {
+      existing.lastLeftAt = effectiveLeft;
+    }
+    existing.count += 1;
+  }
+  return summaryByUser;
+}
+
 /**
- * Backfills participant presence and attendance rows missed during end-of-call webhook bursts,
- * preserving strict `Meeting -> MeetingPresence -> MeetingAttendance` lock ordering.
+ * Backfills webinar/class participant presence and attendance rows missed during end-of-call bursts,
+ * preserving `Meeting -> MeetingPresence -> MeetingAttendance` lock ordering.
  */
 export async function reconcileWebinarAttendance(
   meeting: {
     id: string;
     streamCallId: string;
     appointmentOccurrenceId: string;
-  },
+  } & GroupSessionCandidate,
   endedAt: Date,
 ): Promise<void> {
+  const slotOfAppointment = meeting.occurrence?.appointment;
+  if (!slotOfAppointment?.webinar && !slotOfAppointment?.class) {
+    return;
+  }
+
   const intervals = await getCallParticipantSessionsFromStream(
     meeting.streamCallId,
   );
   if (intervals.length === 0) return;
+
+  const summaryByUser = summarizeParticipantIntervals(intervals, endedAt);
 
   await prisma.$transaction(async (tx) => {
     await tx.meetingPresence.createMany({
@@ -127,35 +186,6 @@ export async function reconcileWebinarAttendance(
       })),
       skipDuplicates: true,
     });
-
-    await tx.meetingPresence.updateMany?.({
-      where: { meetingId: meeting.id, leftAt: null },
-      data: { leftAt: endedAt },
-    });
-
-    const summaryByUser = new Map<
-      string,
-      { firstJoinedAt: Date; lastLeftAt: Date; count: number }
-    >();
-    for (const interval of intervals) {
-      const effectiveLeft = interval.leftAt ?? endedAt;
-      const existing = summaryByUser.get(interval.userId);
-      if (!existing) {
-        summaryByUser.set(interval.userId, {
-          firstJoinedAt: interval.joinedAt,
-          lastLeftAt: effectiveLeft,
-          count: 1,
-        });
-      } else {
-        if (interval.joinedAt < existing.firstJoinedAt) {
-          existing.firstJoinedAt = interval.joinedAt;
-        }
-        if (effectiveLeft > existing.lastLeftAt) {
-          existing.lastLeftAt = effectiveLeft;
-        }
-        existing.count += 1;
-      }
-    }
 
     for (const [userId, summary] of summaryByUser) {
       await tx.meetingAttendance.upsert({
@@ -195,11 +225,36 @@ export async function reconcileWebinarAttendance(
   });
 }
 
+async function runBestEffortGroupReconciliation(
+  meeting: {
+    id: string;
+    streamCallId: string;
+    appointmentOccurrenceId: string;
+  } & GroupSessionCandidate,
+  endedAt: Date,
+): Promise<void> {
+  try {
+    await reconcileWebinarAttendance(meeting, endedAt);
+  } catch (reconcileErr) {
+    streamLogger.warn(
+      "Webinar attendance backfill failed; end stamp preserved",
+      {
+        meetingId: meeting.id,
+        sessionId: meeting.id,
+        streamCallId: meeting.streamCallId,
+        error:
+          reconcileErr instanceof Error
+            ? reconcileErr.message
+            : String(reconcileErr),
+      },
+    );
+  }
+}
+
 export async function handleSessionEnded(
   event: StreamSessionEndedEvent,
 ): Promise<void> {
   const { call_cid, created_at } = event;
-
   const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Session ended", {
@@ -210,9 +265,7 @@ export async function handleSessionEnded(
   try {
     const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
-      include: {
-        occurrence: true,
-      },
+      include: MEETING_END_INCLUDE,
     });
 
     if (!meeting) {
@@ -228,6 +281,10 @@ export async function handleSessionEnded(
       isDeliberateEnd(meeting) ||
       !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
+      await runBestEffortGroupReconciliation(
+        meeting,
+        meeting.endedAt ?? endedAt,
+      );
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
@@ -242,7 +299,7 @@ export async function handleSessionEnded(
     const stamped = await stampEnd(meeting, endedAt, "session_timeout");
     if (!stamped) return;
 
-    await reconcileWebinarAttendance(meeting, endedAt);
+    await runBestEffortGroupReconciliation(meeting, endedAt);
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -286,21 +343,19 @@ export async function handleCallEnded(
 ): Promise<void> {
   const { call_cid, created_at } = event;
   const endedByUserId = extractEndedByUserId(event);
-
+  const hasEndedByUser = Boolean(endedByUserId);
   const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Call ended", {
     streamCallId,
     endedAt: created_at,
-    endedByUserId,
+    hasEndedByUser,
   });
 
   try {
     const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
-      include: {
-        occurrence: true,
-      },
+      include: MEETING_END_INCLUDE,
     });
 
     if (!meeting) {
@@ -313,6 +368,10 @@ export async function handleCallEnded(
     const endedAt = new Date(created_at);
 
     if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
+      await runBestEffortGroupReconciliation(
+        meeting,
+        meeting.endedAt ?? endedAt,
+      );
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
@@ -331,7 +390,7 @@ export async function handleCallEnded(
 
     if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
-    await reconcileWebinarAttendance(meeting, endedAt);
+    await runBestEffortGroupReconciliation(meeting, endedAt);
 
     const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
@@ -341,7 +400,7 @@ export async function handleCallEnded(
       streamLogger.info("Session duration calculated", {
         sessionId: meeting.id,
         durationMinutes,
-        endedByUserId,
+        hasEndedByUser,
       });
     }
 
@@ -350,7 +409,7 @@ export async function handleCallEnded(
       streamCallId,
       endedAt: created_at,
       endedReason,
-      endedByUserId,
+      hasEndedByUser,
     });
   } catch (error) {
     streamLogger.error("Failed to handle call ended event", error, {
@@ -415,6 +474,17 @@ function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
   return !recorded || incoming.getTime() > recorded.getTime();
 }
 
+function buildAttendanceJoinUpdate(
+  newSessions: number,
+  effectiveEndedAt: Date | null,
+): { joinCount?: { increment: number }; lastLeftAt?: null } {
+  if (newSessions <= 0) return {};
+  if (effectiveEndedAt) {
+    return { joinCount: { increment: newSessions } };
+  }
+  return { joinCount: { increment: newSessions }, lastLeftAt: null };
+}
+
 export async function handleSessionParticipantJoined(
   event: StreamSessionParticipantJoinedEvent,
 ): Promise<void> {
@@ -446,16 +516,25 @@ export async function handleSessionParticipantJoined(
       joinedAt > meeting.endedAt &&
       !isDeliberateEnd(meeting),
     );
-    const effectiveEndedAt = reopensSession ? null : (meeting.endedAt ?? null);
     const userSessionId = presenceKey(event.session_id, participant, userId);
 
-    // Acquire row locks in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
+    // Touch rows in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
     await prisma.$transaction(async (tx) => {
+      let effectiveEndedAt = meeting.endedAt ?? null;
       if (reopensSession) {
-        await tx.meeting?.updateMany?.({
+        const reopened = await tx.meeting?.updateMany?.({
           where: { id: meetingId, endedAt: meeting.endedAt },
           data: { endedAt: null, endedReason: null },
         });
+        if (reopened && reopened.count > 0) {
+          effectiveEndedAt = null;
+        } else {
+          const latest = await tx.meeting.findUnique({
+            where: { id: meeting.id },
+            select: { endedAt: true },
+          });
+          effectiveEndedAt = latest?.endedAt ?? meeting.endedAt ?? null;
+        }
       }
 
       const { count: newSessions } = await tx.meetingPresence.createMany({
@@ -494,12 +573,7 @@ export async function handleSessionParticipantJoined(
           firstJoinedAt: joinedAt,
           ...(effectiveEndedAt ? { lastLeftAt: effectiveEndedAt } : {}),
         },
-        update:
-          newSessions > 0
-            ? effectiveEndedAt
-              ? { joinCount: { increment: newSessions } }
-              : { joinCount: { increment: newSessions }, lastLeftAt: null }
-            : {},
+        update: buildAttendanceJoinUpdate(newSessions, effectiveEndedAt),
       });
 
       await tx.meetingAttendance.updateMany?.({

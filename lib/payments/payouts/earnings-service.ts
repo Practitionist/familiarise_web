@@ -292,6 +292,25 @@ async function resolveSettlementContractId(
  * oldest active canHost membership. ADR 18 records that as known-crude, and it
  * remains the fallback rather than the primary rule.
  */
+async function resolvePlanOwnerOrgId(
+  tx: Tx | typeof prisma,
+  plan: { id: string; kind: "webinar" | "class" } | null,
+): Promise<string | null> {
+  if (!plan) return null;
+  if (plan.kind === "webinar") {
+    const found = await tx.webinarPlan.findUnique({
+      where: { id: plan.id },
+      select: { organizationId: true },
+    });
+    return found?.organizationId ?? null;
+  }
+  const found = await tx.classPlan.findUnique({
+    where: { id: plan.id },
+    select: { organizationId: true },
+  });
+  return found?.organizationId ?? null;
+}
+
 async function resolveOrgSplit(
   tx: Tx | typeof prisma,
   consultantProfileId: string,
@@ -319,19 +338,7 @@ async function resolveOrgSplit(
 
   // Only Webinar and Class can be org-owned — Consultation and Subscription
   // require a consultantProfileId, so an org can never solely own one.
-  const ownerOrgId = plan
-    ? ((
-        await (plan.kind === "webinar"
-          ? tx.webinarPlan.findUnique({
-              where: { id: plan.id },
-              select: { organizationId: true },
-            })
-          : tx.classPlan.findUnique({
-              where: { id: plan.id },
-              select: { organizationId: true },
-            }))
-      )?.organizationId ?? null)
-    : null;
+  const ownerOrgId = await resolvePlanOwnerOrgId(tx, plan);
 
   // Arch-4: Membership where role=EXPERT and parent org canHost=true.
   // Rate card resolved via the time-scoped resolver at the booking instant.
@@ -1886,6 +1893,105 @@ export async function getConsultantEarnings(
  * When `tx` is omitted we fall back to the global `prisma` client for
  * legacy callers that drive refunds outside a transaction.
  */
+async function refundOrgEarningsForPayment(
+  db: Tx | typeof prisma,
+  paymentId: string,
+  prorateRefundPaise: (paise: number) => number,
+): Promise<void> {
+  const orgEarnings = await db.organizationEarnings.findMany({
+    where: { paymentId },
+  });
+
+  for (const orgEarning of orgEarnings) {
+    if (orgEarning.status === EarningStatus.REFUNDED) continue;
+
+    const alreadyRefunded = orgEarning.refundedAmountPaise ?? 0;
+    const maxReversible = Math.max(
+      0,
+      orgEarning.orgSharePaise - alreadyRefunded,
+    );
+    const orgRefundAmount = Math.min(
+      prorateRefundPaise(orgEarning.orgSharePaise),
+      maxReversible,
+    );
+    if (orgRefundAmount <= 0) continue;
+
+    const orgReversal = await applyCappedOrgEarningReversal(
+      db,
+      orgEarning,
+      orgRefundAmount,
+    );
+
+    if (orgReversal.lostRace) {
+      console.warn(
+        `Org earnings ${orgEarning.id}: refundEarnings CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgRefundAmount} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarning.orgSharePaise}).`,
+      );
+    }
+
+    console.log(
+      `Org earnings ${orgEarning.id} refunded: ${orgReversal.reversedPaise} paise (${orgReversal.fullyRefunded ? "full" : "partial"})`,
+    );
+  }
+}
+
+async function refundSingleConsultantEarning(
+  db: Tx | typeof prisma,
+  earnings: Awaited<
+    ReturnType<typeof prisma.consultantEarnings.findMany>
+  >[number],
+  shareToReverse: number,
+  forceRefund: boolean,
+  refundNumPaise: number,
+  refundDenPaise: number,
+): Promise<void> {
+  if (earnings.status === EarningStatus.PAID) {
+    if (!forceRefund) {
+      console.error(
+        `Cannot refund earnings ${earnings.id} - already paid out. Use forceRefund: true to proceed with TDS reversal.`,
+      );
+      return;
+    }
+    const paidReversal = await applyCappedEarningReversal(
+      db,
+      earnings,
+      shareToReverse,
+    );
+    if (earnings.payoutId && paidReversal.reversedPaise > 0) {
+      await recordTdsReversal(db, {
+        payoutId: earnings.payoutId,
+        consultantProfileId: earnings.consultantProfileId,
+        earningsId: earnings.id,
+        refundAmountPaise: refundNumPaise,
+        paymentAmountPaise: refundDenPaise,
+      });
+    }
+    if (paidReversal.lostRace) {
+      console.warn(
+        `Earnings ${earnings.id} already reversed by a concurrent refund path; ` +
+          `${paidReversal.reversedPaise} paise applied here ` +
+          `(${paidReversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
+      );
+    }
+    return;
+  }
+
+  const reversal = await applyCappedEarningReversal(
+    db,
+    earnings,
+    shareToReverse,
+    REFUNDABLE_UNPAID_EARNING_SOURCE,
+  );
+  if (reversal.lostRace) {
+    console.warn(
+      `Earnings ${earnings.id} CAS lost to a concurrent refund path; ` +
+        `${reversal.reversedPaise} paise applied here ` +
+        `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
+    );
+  }
+}
+
 export async function refundEarnings(
   paymentId: string,
   options?: {
@@ -1908,21 +2014,22 @@ export async function refundEarnings(
     return false;
   }
 
-  // Calculate refund ratio for partial refunds.
-  // If refundAmount < paymentAmount, only reverse a proportional share of earnings.
-  // Handle edge case: refundAmount=0 means no reversal (ratio=0).
+  const refundAmount = options?.refundAmount;
+  const paymentAmount = options?.paymentAmount;
   const isPartialRefund =
-    options?.refundAmount !== null &&
-    options?.refundAmount !== undefined &&
-    options?.paymentAmount !== null &&
-    options?.paymentAmount !== undefined &&
-    options.paymentAmount > 0 &&
-    options.refundAmount < options.paymentAmount;
-  const refundRatio = isPartialRefund
-    ? options!.refundAmount! / options!.paymentAmount!
-    : options?.refundAmount === 0
-      ? 0
-      : 1;
+    refundAmount !== null &&
+    refundAmount !== undefined &&
+    paymentAmount !== null &&
+    paymentAmount !== undefined &&
+    paymentAmount > 0 &&
+    refundAmount < paymentAmount;
+
+  let refundRatio = 1;
+  if (isPartialRefund) {
+    refundRatio = refundAmount / paymentAmount;
+  } else if (refundAmount === 0) {
+    refundRatio = 0;
+  }
 
   if (refundRatio === 0) {
     console.log(
@@ -1931,67 +2038,19 @@ export async function refundEarnings(
     return true;
   }
 
-  // #813 — integer-paise proportion pair shared by the TDS-reversal helper and
-  // the proration floors below. Partial refunds carry explicit paise amounts; a
-  // full refund has none, so we pass an equal pair to express ratio=1 without
-  // reintroducing float math.
-  const refundNumPaise = isPartialRefund ? options!.refundAmount! : 1;
-  const refundDenPaise = isPartialRefund ? options!.paymentAmount! : 1;
-  // #778 §C-2 — floor each party's clawback (was Math.round; same plug policy
-  // as operations/refund.ts): the buyer is made whole in full, so the shaved
-  // paise are absorbed by the PLATFORM — never over-clawed from a consultant
-  // or an org.
+  const refundNumPaise = isPartialRefund ? refundAmount : 1;
+  const refundDenPaise = isPartialRefund ? paymentAmount : 1;
   const prorateRefundPaise = (paise: number) =>
     prorate(paise, refundNumPaise, refundDenPaise);
 
   if (isPartialRefund) {
     console.log(
-      `Partial refund: ${options!.refundAmount}/${options!.paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
+      `Partial refund: ${refundAmount}/${paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
     );
   }
 
-  // Also refund any org earnings for this payment (HOST 3-way split)
-  const orgEarnings = await db.organizationEarnings.findMany({
-    where: { paymentId },
-  });
+  await refundOrgEarningsForPayment(db, paymentId, prorateRefundPaise);
 
-  for (const orgEarning of orgEarnings) {
-    if (orgEarning.status === EarningStatus.REFUNDED) continue;
-
-    const alreadyRefunded = orgEarning.refundedAmountPaise ?? 0;
-    const maxReversible = Math.max(
-      0,
-      orgEarning.orgSharePaise - alreadyRefunded,
-    );
-    const rawOrgRefund = prorateRefundPaise(orgEarning.orgSharePaise);
-    const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
-
-    if (orgRefundAmount <= 0) continue;
-
-    // #CASC — the shared CAS writer pins the legal-source set and prior amount
-    // and writes an absolute value: concurrent writers compose to
-    // min(share, a + b).
-    const orgReversal = await applyCappedOrgEarningReversal(
-      db,
-      orgEarning,
-      orgRefundAmount,
-    );
-
-    if (orgReversal.lostRace) {
-      console.warn(
-        `Org earnings ${orgEarning.id}: refundEarnings CAS lost, ` +
-          `${orgReversal.reversedPaise} paise applied of ${orgRefundAmount} ` +
-          `(${orgReversal.refundedAmountPaise}/${orgEarning.orgSharePaise}).`,
-      );
-    }
-
-    console.log(
-      `Org earnings ${orgEarning.id} refunded: ${orgReversal.reversedPaise} paise (${orgReversal.fullyRefunded ? "full" : "partial"})`,
-    );
-  }
-
-  // #1766 — subscription tranches: one clawback over the summed share,
-  // consumed newest-tranche-first (same allocator as applyRefundCascade).
   const trancheRows = allEarnings.filter(
     (e) => typeof e.cycleOrdinal === "number",
   );
@@ -2004,9 +2063,7 @@ export async function refundEarnings(
     ).map((a) => [a.id, a.absorbPaise] as const),
   );
 
-  // Refund each earnings record (supports multi-party collaborator payments)
   for (const earnings of allEarnings) {
-    // C7 FIX: Guard against already-refunded earnings.
     if (earnings.status === EarningStatus.REFUNDED) {
       console.warn(
         `Earnings ${earnings.id} already refunded for payment ${paymentId}. Skipping.`,
@@ -2014,8 +2071,6 @@ export async function refundEarnings(
       continue;
     }
 
-    // Cap shareToReverse against remaining reversible balance to prevent
-    // over-refunding on duplicate webhooks or sequential partial refunds.
     const alreadyRefunded = earnings.refundedShareAmount ?? 0;
     const maxReversible = Math.max(
       0,
@@ -2034,57 +2089,14 @@ export async function refundEarnings(
       continue;
     }
 
-    // PAID rows reverse only under forceRefund (with the TDS reversal).
-    if (earnings.status === EarningStatus.PAID) {
-      if (!options?.forceRefund) {
-        console.error(
-          `Cannot refund earnings ${earnings.id} - already paid out. Use forceRefund: true to proceed with TDS reversal.`,
-        );
-        continue;
-      }
-      const paidReversal = await applyCappedEarningReversal(
-        db,
-        earnings,
-        shareToReverse,
-      );
-
-      // #813 — proportional TDS reversal via the shared helper, AFTER the CAS
-      // and only when `reversedPaise > 0`. The basis stays booking-level
-      // (`refundNumPaise / refundDenPaise`): a compliance figure.
-      if (earnings.payoutId && paidReversal.reversedPaise > 0) {
-        await recordTdsReversal(db, {
-          payoutId: earnings.payoutId,
-          consultantProfileId: earnings.consultantProfileId,
-          earningsId: earnings.id,
-          refundAmountPaise: refundNumPaise,
-          paymentAmountPaise: refundDenPaise,
-        });
-      }
-      if (paidReversal.lostRace) {
-        console.warn(
-          `Earnings ${earnings.id} already reversed by a concurrent refund path; ` +
-            `${paidReversal.reversedPaise} paise applied here ` +
-            `(${paidReversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
-        );
-      }
-
-      continue;
-    }
-
-    // Non-PAID rows: a row that turns PAID mid-flight is refused, not reversed.
-    const reversal = await applyCappedEarningReversal(
+    await refundSingleConsultantEarning(
       db,
       earnings,
       shareToReverse,
-      REFUNDABLE_UNPAID_EARNING_SOURCE,
+      Boolean(options?.forceRefund),
+      refundNumPaise,
+      refundDenPaise,
     );
-    if (reversal.lostRace) {
-      console.warn(
-        `Earnings ${earnings.id} CAS lost to a concurrent refund path; ` +
-          `${reversal.reversedPaise} paise applied here ` +
-          `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
-      );
-    }
   }
 
   return true;

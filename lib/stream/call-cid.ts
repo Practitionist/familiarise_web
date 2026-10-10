@@ -59,6 +59,6 @@ export function callTypeFromCid(callCidOrId: string): string {
 /** Extract anchor occurrence/slot ID from `slot-<id>[-r<suffix>]` or `occurrence-<id>[-r<suffix>]`. */
 export function parseSlotIdFromCallId(callCidOrId: string): string | null {
   const bare = toCallId(callCidOrId);
-  const match = /^(?:slot|occurrence)-(.+?)(?:-r[a-z0-9]+)?$/i.exec(bare);
+  const match = bare.match(/^(?:slot|occurrence)-(.+?)(?:-r[a-z0-9]+)?$/i);
   return match?.[1] ?? null;
 }

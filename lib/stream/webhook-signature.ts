@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { verifySignature } from "stream-chat";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -16,16 +16,19 @@ export function isValidStreamSignatureFormat(
 }
 
 /**
- * Verifies the optional `x-api-key` header in constant time when both the
- * request header and `NEXT_PUBLIC_STREAM_API_KEY` are configured.
+ * Verifies the `x-api-key` header in constant time whenever
+ * `NEXT_PUBLIC_STREAM_API_KEY` (or `expectedApiKey`) is configured.
  */
 export function verifyStreamApiKeyHeader(
   apiKeyHeader: string | null | undefined,
   expectedApiKey: string | undefined = process.env.NEXT_PUBLIC_STREAM_API_KEY,
 ): boolean {
-  if (!apiKeyHeader || !expectedApiKey) return true;
-  const actualBuf = Buffer.from(apiKeyHeader, "utf8");
-  const expectedBuf = Buffer.from(expectedApiKey, "utf8");
+  const expected = expectedApiKey?.trim();
+  if (!expected) return true;
+  const provided = apiKeyHeader?.trim();
+  if (!provided) return false;
+  const actualBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
   return (
     actualBuf.byteLength === expectedBuf.byteLength &&
     crypto.timingSafeEqual(actualBuf, expectedBuf)

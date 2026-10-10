@@ -17,7 +17,7 @@ import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
 import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
 
 const SORTED_DESIRED_EVENT_TYPES = Array.from(
-  new Set<string>([...DESIRED_EVENT_TYPES]),
+  new Set(DESIRED_EVENT_TYPES),
 ).sort(compareStringsByCodeUnit);
 
 type IdentifiedHook = EventHook & { id: string };
@@ -30,8 +30,14 @@ function productFor(eventType: string): "chat" | "video" {
     : "video";
 }
 
+function hookProduct(hook: EventHook): string | undefined {
+  return "product" in hook && typeof hook.product === "string"
+    ? hook.product
+    : undefined;
+}
+
 function hookAccepts(hook: EventHook, eventType: string): boolean {
-  const product = (hook as { product?: string }).product;
+  const product = hookProduct(hook);
   if (!product || product === "all") return true;
   return product === productFor(eventType);
 }
@@ -63,11 +69,84 @@ export function evaluateHookDrift(
   const eligibleSet = new Set(eligible);
   const missing = receivesAll ? [] : eligible.filter((t) => !current.has(t));
   const extra = [...current].filter((t) => t !== "*" && !eligibleSet.has(t));
-  const product = (hook as { product?: string }).product ?? "unscoped";
+  const product = hookProduct(hook) ?? "unscoped";
   const hasDrift =
     eligible.length > 0 &&
     (receivesAll || missing.length > 0 || extra.length > 0);
   return { product, receivesAll, missing, extra, hasDrift };
+}
+
+function formatDriftReasons(drift: HookDriftReport): string {
+  const reasons: string[] = [];
+  if (drift.receivesAll) reasons.push("wildcard subscription active");
+  if (drift.missing.length > 0) {
+    reasons.push(`missing [${drift.missing.join(", ")}]`);
+  }
+  if (drift.extra.length > 0) {
+    reasons.push(`extra [${drift.extra.join(", ")}]`);
+  }
+  return reasons.join("; ");
+}
+
+function logHookDriftDetails(
+  hook: IdentifiedHook,
+  drift: HookDriftReport,
+  mode: EnsureMode,
+): void {
+  if (drift.receivesAll) {
+    console.log(`  WILDCARD detected (unfiltered delivery across all events)`);
+  }
+  if (drift.missing.length > 0) {
+    console.log(`  MISSING (${drift.missing.length}):`);
+    for (const t of drift.missing) console.log(`    + ${t}`);
+  }
+  if (drift.extra.length > 0) {
+    console.log(`  EXTRA (${drift.extra.length}):`);
+    for (const t of drift.extra) console.log(`    - ${t}`);
+  }
+  if (mode === "check") {
+    annotate(
+      `Stream webhook drift: hook ${hook.id} (${drift.product}) has ${formatDriftReasons(drift)}. ` +
+        `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
+    );
+  }
+}
+
+function reportUnplaceableEvents(
+  unplaceable: Set<string>,
+  mode: EnsureMode,
+): void {
+  const byProduct = new Map<string, string[]>();
+  for (const t of unplaceable) {
+    const p = productFor(t);
+    byProduct.set(p, [...(byProduct.get(p) ?? []), t]);
+  }
+  console.error(
+    `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
+  );
+  for (const [product, types] of byProduct) {
+    console.error(
+      `\n  product '${product}' — no hook on this app is scoped to it:`,
+    );
+    for (const t of [...types].sort(compareStringsByCodeUnit)) {
+      console.error(`    · ${t}`);
+      if (mode === "check") {
+        annotate(
+          `Stream webhook drift: no '${product}' hook can carry ${t}, so the ` +
+            `dispatcher handles an event that is never delivered`,
+        );
+      }
+    }
+    console.error(
+      `  Create a '${product}' webhook in the Stream dashboard pointing at <origin>/api/stream/webhooks.`,
+    );
+  }
+}
+
+function parseCliMode(argv: string[]): EnsureMode {
+  if (argv.includes("--apply")) return "apply";
+  if (argv.includes("--check")) return "check";
+  return "dry-run";
 }
 
 export async function ensureWebhookSubscription(
@@ -106,10 +185,7 @@ export async function ensureWebhookSubscription(
       hookAccepts(hook, t),
     );
     for (const t of eligible) unplaceable.delete(t);
-
-    if (eligible.length === 0) {
-      continue;
-    }
+    if (eligible.length === 0) continue;
 
     const drift = evaluateHookDrift(hook, eligible);
     const currentSize = hook.event_types?.length ?? 0;
@@ -129,50 +205,23 @@ export async function ensureWebhookSubscription(
       continue;
     }
 
-    if (drift.receivesAll) {
-      console.log(
-        `  WILDCARD detected (unfiltered delivery across all events)`,
-      );
-    }
-    if (drift.missing.length > 0) {
-      console.log(`  MISSING (${drift.missing.length}):`);
-      for (const t of drift.missing) console.log(`    + ${t}`);
-    }
-    if (drift.extra.length > 0) {
-      console.log(`  EXTRA (${drift.extra.length}):`);
-      for (const t of drift.extra) console.log(`    - ${t}`);
-    }
-
-    if (mode === "check") {
-      const reasons = [
-        drift.receivesAll ? "wildcard subscription active" : null,
-        drift.missing.length > 0
-          ? `missing [${drift.missing.join(", ")}]`
-          : null,
-        drift.extra.length > 0 ? `extra [${drift.extra.join(", ")}]` : null,
-      ]
-        .filter((s): s is string => s !== null)
-        .join("; ");
-      annotate(
-        `Stream webhook drift: hook ${hook.id} (${drift.product}) has ${reasons}. ` +
-          `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
-      );
-    }
+    logHookDriftDetails(hook, drift, mode);
     changed++;
 
-    if (!apply) continue;
-
-    reconciled.set(hook.id, [...eligible]);
-    console.log(`  → will set exact ${eligible.length} event types`);
+    if (apply) {
+      reconciled.set(hook.id, [...eligible]);
+      console.log(`  → will set exact ${eligible.length} event types`);
+    }
   }
 
-  const legacyEvents = app.app?.webhook_events ?? [];
-  const hasLegacyWildcard = legacyEvents.includes("*");
-  if (hasLegacyWildcard) {
-    console.log(`\nlegacy app.webhook_events contains wildcard "*"`);
+  const legacyUrlActive = Boolean(app.app?.webhook_url?.trim());
+  const legacyWildcard =
+    legacyUrlActive && (app.app?.webhook_events ?? []).includes("*");
+  if (legacyWildcard) {
+    console.log(`\nlegacy V1 webhook_url is active with wildcard "*"`);
     if (mode === "check") {
       annotate(
-        `Stream webhook drift: legacy app.webhook_events carries wildcard "*". ` +
+        `Stream webhook drift: legacy V1 webhook_url is active with wildcard "*". ` +
           `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
       );
     }
@@ -180,43 +229,17 @@ export async function ensureWebhookSubscription(
   }
 
   if (unplaceable.size > 0) {
-    const byProduct = new Map<string, string[]>();
-    for (const t of unplaceable) {
-      const p = productFor(t);
-      byProduct.set(p, [...(byProduct.get(p) ?? []), t]);
-    }
-    console.error(
-      `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
-    );
-    for (const [product, types] of byProduct) {
-      console.error(
-        `\n  product '${product}' — no hook on this app is scoped to it:`,
-      );
-      for (const t of [...types].sort(compareStringsByCodeUnit)) {
-        console.error(`    · ${t}`);
-        if (mode === "check") {
-          annotate(
-            `Stream webhook drift: no '${product}' hook can carry ${t}, so the ` +
-              `dispatcher handles an event that is never delivered`,
-          );
-        }
-      }
-      console.error(
-        `  Create a '${product}' webhook in the Stream dashboard pointing at <origin>/api/stream/webhooks.`,
-      );
-    }
+    reportUnplaceableEvents(unplaceable, mode);
   }
 
-  if (apply && (reconciled.size > 0 || hasLegacyWildcard)) {
+  if (apply && (reconciled.size > 0 || legacyWildcard)) {
     const nextHooks = allHooks.map((h) => {
       const next = h.id ? reconciled.get(h.id) : undefined;
       return next ? { ...h, event_types: next } : h;
     });
     await client.updateAppSettings({
       event_hooks: nextHooks,
-      ...(hasLegacyWildcard
-        ? { webhook_events: legacyEvents.filter((t) => t !== "*") }
-        : {}),
+      ...(legacyWildcard ? { webhook_url: "" } : {}),
     });
     console.log(
       `\n✅ applied — ${reconciled.size} hook(s) updated, ${allHooks.length} preserved`,
@@ -233,12 +256,7 @@ export async function ensureWebhookSubscription(
 }
 
 if (require.main === module) {
-  const argv = process.argv;
-  const mode: EnsureMode = argv.includes("--apply")
-    ? "apply"
-    : argv.includes("--check")
-      ? "check"
-      : "dry-run";
+  const mode = parseCliMode(process.argv);
   ensureWebhookSubscription(mode)
     .then((code) => {
       process.exitCode = code;

@@ -2,85 +2,45 @@ import crypto from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 
-import prisma from "@/lib/prisma";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   isDbHealthy,
   logWebhookEvent,
   markWebhookEventProcessed,
 } from "@/lib/webhooks/event-log";
+import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import {
   MAX_WEBHOOK_BODY_BYTES,
   readBodyWithinCap,
 } from "@/lib/webhooks/read-body";
 import {
-  extractNovuChannel,
-  extractNovuErrorMessage,
-  extractNovuSubscriberId,
   extractNovuTransactionId,
-  isNovuDeliveredEvent,
-  isNovuFailureEvent,
   novuWebhookPayloadSchema,
   resolveNovuEventType,
-  resolveNovuStatus,
   verifyNovuWebhook,
   type NovuWebhookPayload,
 } from "@/schemas/webhooks/novu";
 
 export const runtime = "nodejs";
 
-/**
- * Applies delivery outcome updates to `NotificationOutbox` and emits operational warnings
- * on failure events (`message.failed`, `message.bounced`, `execution_detail.failed`, etc.).
- */
-export async function processNovuWebhookPayload(
-  payload: NovuWebhookPayload,
-  resolvedEventId?: string,
-): Promise<void> {
-  const eventType = resolveNovuEventType(payload);
-  const transactionId = extractNovuTransactionId(payload);
-  const subscriberId = extractNovuSubscriberId(payload);
-  const channel = extractNovuChannel(payload);
-  const status = resolveNovuStatus(payload);
-  const deliveryError = extractNovuErrorMessage(payload);
-  const eventId = resolvedEventId ?? payload.id ?? payload.eventId ?? null;
+function deriveNovuEventId(
+  event: NovuWebhookPayload,
+  eventType: string,
+  transactionId: string | undefined,
+  verifiedSvixId: string | null,
+  bodyHash: string,
+): string {
+  if (verifiedSvixId) return verifiedSvixId;
+  if (event.id) return event.id;
+  if (event.eventId) return event.eventId;
+  if (transactionId) return `${eventType}:${transactionId}:${bodyHash}`;
+  return `${eventType}:body_${bodyHash}`;
+}
 
-  if (isNovuFailureEvent(eventType, status)) {
-    const errorText = deliveryError ?? `Novu delivery failure (${eventType})`;
-    if (transactionId) {
-      await prisma.notificationOutbox.updateMany({
-        where: { transactionId },
-        data: {
-          lastError: errorText,
-        },
-      });
-    }
-    await recordSystemEvent({
-      category: "WEBHOOK",
-      severity: "WARN",
-      message: `Novu notification delivery failed: ${eventType}`,
-      context: {
-        provider: "novu",
-        eventId,
-        eventType,
-        channel: channel ?? null,
-        transactionId: transactionId ?? null,
-        subscriberId: subscriberId ?? null,
-        workflowId: payload.workflowId ?? payload.data?.workflowId ?? null,
-        error: errorText,
-      },
-    });
-  } else if (transactionId && isNovuDeliveredEvent(eventType, status)) {
-    await prisma.notificationOutbox.updateMany({
-      where: { transactionId, status: "PENDING" },
-      data: {
-        status: "SENT",
-        sentAt: new Date(),
-        nextRetryAt: null,
-        lastError: null,
-      },
-    });
-  }
+function formatError(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  return JSON.stringify(err) ?? "Unknown error";
 }
 
 export async function POST(req: NextRequest) {
@@ -147,7 +107,6 @@ export async function POST(req: NextRequest) {
   const event = parsedResult.data;
   const eventType = resolveNovuEventType(event);
   const transactionId = extractNovuTransactionId(event);
-
   const bodyHash = crypto
     .createHash("sha256")
     .update(body)
@@ -156,14 +115,13 @@ export async function POST(req: NextRequest) {
   const verifiedSvixId = req.headers.get("svix-signature")
     ? req.headers.get("svix-id")
     : null;
-  const eventId =
-    verifiedSvixId ??
-    event.id ??
-    event.eventId ??
-    (transactionId
-      ? `${eventType}:${transactionId}:${bodyHash}`
-      : `${eventType}:body_${bodyHash}`);
-
+  const eventId = deriveNovuEventId(
+    event,
+    eventType,
+    transactionId,
+    verifiedSvixId,
+    bodyHash,
+  );
   const signature =
     req.headers.get("svix-signature") ??
     req.headers.get("x-novu-signature") ??
@@ -184,7 +142,7 @@ export async function POST(req: NextRequest) {
   try {
     await processNovuWebhookPayload(event, eventId);
   } catch (err) {
-    const processingError = err instanceof Error ? err.message : String(err);
+    const processingError = formatError(err);
     Sentry.captureException(err, {
       tags: { subsystem: "notifications", provider: "novu" },
       contexts: { webhook: { eventId, eventType, transactionId } },

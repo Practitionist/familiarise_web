@@ -42,7 +42,8 @@ import type { PrismaLike } from "@/lib/prisma";
  * everything else stays.
  */
 
-import { Agent as HttpsAgent } from "node:https";
+import { randomInt } from "node:crypto";
+import vm from "node:vm";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   SIGNATURE_HEADER,
@@ -54,6 +55,9 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
 export const DELIVERY_ID_HEADER = "X-Familiarise-Delivery-Id";
 export const EVENT_HEADER = "X-Familiarise-Event";
+
+const NATIVE_FETCH = globalThis.fetch;
+const UNDICI_DISPATCHER_SYMBOL = Symbol.for("undici.globalDispatcher.1");
 
 interface PinnedDispatcher {
   close?: () => Promise<void> | void;
@@ -70,27 +74,57 @@ type BuiltinUndiciAgentCtor = new (opts: {
   connect: { lookup: PinnedLookupFn };
 }) => PinnedDispatcher;
 
-function createPinnedDispatcher(resolved: {
-  address: string;
-  family: 4 | 6;
-}): PinnedDispatcher {
-  const lookup: PinnedLookupFn = (_hostname, _opts, cb) =>
-    cb(null, resolved.address, resolved.family);
+type UndiciModule = { Agent: BuiltinUndiciAgentCtor };
 
-  const builtInDispatcher = Reflect.get(
-    globalThis,
-    Symbol.for("undici.globalDispatcher.1"),
-  );
+function isUndiciAgentCtor(value: unknown): value is BuiltinUndiciAgentCtor {
+  return typeof value === "function";
+}
+
+function extractGlobalDispatcherCtor(): BuiltinUndiciAgentCtor | undefined {
+  const builtInDispatcher =
+    Reflect.get(globalThis, UNDICI_DISPATCHER_SYMBOL) ??
+    Reflect.get(vm.runInThisContext("globalThis"), UNDICI_DISPATCHER_SYMBOL);
   if (
     typeof builtInDispatcher === "object" &&
     builtInDispatcher !== null &&
     "constructor" in builtInDispatcher &&
-    typeof builtInDispatcher.constructor === "function"
+    isUndiciAgentCtor(builtInDispatcher.constructor)
   ) {
-    const AgentCtor = builtInDispatcher.constructor as BuiltinUndiciAgentCtor;
-    return new AgentCtor({ connect: { lookup } });
+    return builtInDispatcher.constructor;
   }
-  return new HttpsAgent({ lookup });
+  return undefined;
+}
+
+async function resolveUndiciAgentCtor(): Promise<BuiltinUndiciAgentCtor> {
+  const builtinUndici: Partial<UndiciModule> | undefined =
+    process.getBuiltinModule("undici");
+  if (builtinUndici && isUndiciAgentCtor(builtinUndici.Agent)) {
+    return builtinUndici.Agent;
+  }
+
+  let ctor = extractGlobalDispatcherCtor();
+  if (!ctor && typeof NATIVE_FETCH === "function") {
+    const ac = new AbortController();
+    ac.abort();
+    await NATIVE_FETCH("http://localhost", { signal: ac.signal }).catch(
+      () => undefined,
+    );
+    ctor = extractGlobalDispatcherCtor();
+  }
+  if (!ctor) {
+    throw new Error("Built-in Undici Agent constructor unavailable");
+  }
+  return ctor;
+}
+
+async function createPinnedDispatcher(resolved: {
+  address: string;
+  family: 4 | 6;
+}): Promise<PinnedDispatcher> {
+  const lookup: PinnedLookupFn = (_hostname, _opts, cb) =>
+    cb(null, resolved.address, resolved.family);
+  const AgentCtor = await resolveUndiciAgentCtor();
+  return new AgentCtor({ connect: { lookup } });
 }
 
 const MAX_BATCH = 50;
@@ -112,33 +146,33 @@ async function maybeAutoDisableEndpoint(
     },
     data: { status: "DISABLED" },
   });
-  if (flipped.count > 0) {
-    if (prisma.systemEvent) {
-      await recordSystemEvent({
-        db: prisma,
+  if (flipped.count === 0) return;
+
+  if (prisma.systemEvent) {
+    await recordSystemEvent({
+      db: prisma,
+      organizationId: endpoint.organizationId,
+      category: "WEBHOOK",
+      severity: "WARN",
+      message: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
+      context: { endpointId: endpoint.id, url: endpoint.url },
+    });
+  }
+  if (prisma.orgAuditLog) {
+    await prisma.orgAuditLog.create({
+      data: {
         organizationId: endpoint.organizationId,
         category: "WEBHOOK",
-        severity: "WARN",
-        message: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
-        context: { endpointId: endpoint.id, url: endpoint.url },
-      });
-    }
-    if (prisma.orgAuditLog) {
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationId: endpoint.organizationId,
-          category: "WEBHOOK",
-          action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
-          description: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
-          details: {
-            endpointId: endpoint.id,
-            url: endpoint.url,
-            autoDisabled: true,
-            failureCount: ENDPOINT_AUTO_DISABLE_FAILURES,
-          },
+        action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
+        description: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
+        details: {
+          endpointId: endpoint.id,
+          url: endpoint.url,
+          autoDisabled: true,
+          failureCount: ENDPOINT_AUTO_DISABLE_FAILURES,
         },
-      });
-    }
+      },
+    });
   }
 }
 
@@ -165,6 +199,268 @@ export interface WorkerRunResult {
   errors: string[];
 }
 
+type DeadLetterSummary = {
+  deliveryId: string;
+  endpointId: string;
+  eventType: string;
+  attempts: number;
+  httpStatusCode: number | null;
+  lastError: string;
+};
+
+type DeliveryEndpointInfo = {
+  id: string;
+  url: string;
+  secret: string;
+  status: string;
+  organizationId: string;
+  secretRotatedAt: Date | null;
+  previousSecretHash: string | null;
+};
+
+type DeliveryRow = {
+  id: string;
+  eventType: string;
+  payload: unknown;
+  status: import("@prisma/client").DeliveryStatus;
+  attempts: number;
+  createdAt: Date;
+  endpoint: DeliveryEndpointInfo;
+};
+
+async function closeDispatcher(dispatcher: PinnedDispatcher | undefined) {
+  if (dispatcher?.close) {
+    await Promise.resolve(dispatcher.close()).catch(() => {});
+  } else if (dispatcher?.destroy) {
+    dispatcher.destroy();
+  }
+}
+
+async function executeWebhookHttpAttempt(args: {
+  url: string;
+  body: string;
+  signature: string;
+  deliveryId: string;
+  eventType: string;
+  fetchImpl: typeof fetch;
+  hasCustomFetch: boolean;
+  assertUrl: (url: string) => Promise<void>;
+}): Promise<{ httpStatusCode?: number; networkError?: string }> {
+  let dispatcher: PinnedDispatcher | undefined;
+  try {
+    if (args.hasCustomFetch) {
+      await args.assertUrl(args.url);
+    } else {
+      const resolved = await resolvePublicUrl(args.url);
+      dispatcher = await createPinnedDispatcher(resolved);
+    }
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await args.fetchImpl(args.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [SIGNATURE_HEADER]: args.signature,
+          [DELIVERY_ID_HEADER]: args.deliveryId,
+          [EVENT_HEADER]: args.eventType,
+          "User-Agent": "Familiarise-Webhooks/1.0",
+        },
+        body: args.body,
+        signal: ac.signal,
+        redirect: "manual",
+        ...(dispatcher ? { dispatcher } : {}),
+      });
+      await res.body?.cancel().catch(() => {});
+      return { httpStatusCode: res.status };
+    } finally {
+      clearTimeout(timer);
+      await closeDispatcher(dispatcher);
+    }
+  } catch (err) {
+    return {
+      networkError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function recordSucceededDelivery(args: {
+  prisma: PrismaLike;
+  row: DeliveryRow;
+  httpStatusCode: number;
+  signature: string;
+  attemptNumber: number;
+  nowDate: Date;
+}): Promise<void> {
+  await args.prisma.outboundWebhookDelivery.update({
+    where: { id: args.row.id },
+    data: {
+      status: "SUCCESS",
+      httpStatusCode: args.httpStatusCode,
+      signature: args.signature,
+      attempts: args.attemptNumber,
+      deliveredAt: args.nowDate,
+      lastError: null,
+    },
+  });
+  await args.prisma.webhookEndpoint.update({
+    where: { id: args.row.endpoint.id },
+    data: { lastSuccessAt: args.nowDate, failureCount: 0 },
+  });
+}
+
+async function recordTerminalFailureAudit(
+  prisma: PrismaLike,
+  row: DeliveryRow,
+  description: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  if (!prisma.orgAuditLog) return;
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationId: row.endpoint.organizationId,
+      category: "WEBHOOK",
+      action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
+      description,
+      details,
+    },
+  });
+}
+
+async function recordRetryOrTerminalFailure(args: {
+  prisma: PrismaLike;
+  row: DeliveryRow;
+  httpStatusCode?: number;
+  networkError?: string;
+  signature: string;
+  attemptNumber: number;
+  nowDate: Date;
+  nowMs: number;
+  hasCustomClock: boolean;
+  deadLettered: DeadLetterSummary[];
+}): Promise<"retried" | "failed"> {
+  const {
+    prisma,
+    row,
+    httpStatusCode,
+    networkError,
+    signature,
+    attemptNumber,
+  } = args;
+
+  const isPermanentClientError =
+    httpStatusCode !== undefined &&
+    httpStatusCode >= 400 &&
+    httpStatusCode < 500 &&
+    httpStatusCode !== 408 &&
+    httpStatusCode !== 429;
+
+  if (isPermanentClientError) {
+    await prisma.outboundWebhookDelivery.update({
+      where: { id: row.id },
+      data: {
+        status: "FAILED",
+        httpStatusCode,
+        signature,
+        attempts: attemptNumber,
+        lastError: `Permanent client error: ${httpStatusCode}`,
+      },
+    });
+    await prisma.webhookEndpoint.update({
+      where: { id: row.endpoint.id },
+      data: {
+        lastFailureAt: args.nowDate,
+        failureCount: { increment: 1 },
+      },
+    });
+    await recordTerminalFailureAudit(
+      prisma,
+      row,
+      `Webhook delivery permanently rejected with HTTP ${httpStatusCode}`,
+      {
+        deliveryId: row.id,
+        endpointId: row.endpoint.id,
+        eventType: row.eventType,
+        httpStatusCode,
+        attempts: attemptNumber,
+      },
+    );
+    await maybeAutoDisableEndpoint(prisma, row.endpoint);
+    return "failed";
+  }
+
+  if (attemptNumber >= MAX_ATTEMPTS) {
+    const deadLetterError =
+      networkError ??
+      `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`;
+    const resolvedStatus = httpStatusCode ?? null;
+    await prisma.outboundWebhookDelivery.update({
+      where: { id: row.id },
+      data: {
+        status: "DEAD_LETTER",
+        httpStatusCode: resolvedStatus,
+        signature,
+        attempts: attemptNumber,
+        lastError: deadLetterError,
+      },
+    });
+    await prisma.webhookEndpoint.update({
+      where: { id: row.endpoint.id },
+      data: {
+        lastFailureAt: args.nowDate,
+        failureCount: { increment: 1 },
+      },
+    });
+    await recordTerminalFailureAudit(
+      prisma,
+      row,
+      `Webhook delivery dead-lettered after ${attemptNumber} attempts`,
+      {
+        deliveryId: row.id,
+        endpointId: row.endpoint.id,
+        eventType: row.eventType,
+        httpStatusCode: resolvedStatus,
+        attempts: attemptNumber,
+        lastError: deadLetterError,
+      },
+    );
+    await maybeAutoDisableEndpoint(prisma, row.endpoint);
+    args.deadLettered.push({
+      deliveryId: row.id,
+      endpointId: row.endpoint.id,
+      eventType: row.eventType,
+      attempts: attemptNumber,
+      httpStatusCode: resolvedStatus,
+      lastError: deadLetterError,
+    });
+    return "failed";
+  }
+
+  const baseBackoff =
+    BACKOFF_MS[Math.min(attemptNumber, BACKOFF_MS.length - 1)];
+  const jitter = args.hasCustomClock ? 1 : 0.85 + randomInt(0, 3001) / 10_000;
+  const backoff = Math.round(baseBackoff * jitter);
+  await prisma.outboundWebhookDelivery.update({
+    where: { id: row.id },
+    data: {
+      status: "RETRY",
+      httpStatusCode: httpStatusCode ?? null,
+      signature,
+      attempts: attemptNumber,
+      nextRetryAt: new Date(args.nowMs + backoff),
+      lastError: networkError ?? `Transient ${httpStatusCode ?? "network"}`,
+    },
+  });
+  await prisma.webhookEndpoint.update({
+    where: { id: row.endpoint.id },
+    data: {
+      lastFailureAt: args.nowDate,
+    },
+  });
+  return "retried";
+}
+
 export async function runDispatchTick(params: {
   prisma: PrismaLike;
   fetchFn?: typeof fetch;
@@ -188,14 +484,7 @@ export async function runDispatchTick(params: {
     errors: [],
   };
 
-  const deadLettered: Array<{
-    deliveryId: string;
-    endpointId: string;
-    eventType: string;
-    attempts: number;
-    httpStatusCode: number | null;
-    lastError: string;
-  }> = [];
+  const deadLettered: DeadLetterSummary[] = [];
 
   const nowDate = new Date(now());
   const inFlightStaleBefore = new Date(now() - IN_FLIGHT_STALE_MS);
@@ -224,9 +513,7 @@ export async function runDispatchTick(params: {
     },
   });
 
-  type DueRow = (typeof dueRows)[number];
-
-  async function processOneDelivery(row: DueRow): Promise<void> {
+  async function processOneDelivery(row: DeliveryRow): Promise<void> {
     result.scanned += 1;
     if (row.endpoint.status !== "ACTIVE") {
       await prisma.outboundWebhookDelivery.update({
@@ -246,6 +533,7 @@ export async function runDispatchTick(params: {
     });
     if (claim.count === 0) return;
 
+    const currentNowMs = now();
     const body = JSON.stringify({
       id: row.id,
       type: row.eventType,
@@ -255,204 +543,61 @@ export async function runDispatchTick(params: {
     const inRotationGrace = Boolean(
       row.endpoint.secretRotatedAt &&
       row.endpoint.previousSecretHash &&
-      now() - row.endpoint.secretRotatedAt.getTime() <=
+      currentNowMs - row.endpoint.secretRotatedAt.getTime() <=
         WEBHOOK_ROTATION_GRACE_MS,
     );
     const signature = signPayload(
       row.endpoint.secret,
       body,
-      Math.floor(now() / 1000),
+      Math.floor(currentNowMs / 1000),
       inRotationGrace ? row.endpoint.previousSecretHash : null,
     );
     const attemptNumber = row.attempts + 1;
 
-    let httpStatusCode: number | undefined;
-    let networkError: string | undefined;
+    const { httpStatusCode, networkError } = await executeWebhookHttpAttempt({
+      url: row.endpoint.url,
+      body,
+      signature,
+      deliveryId: row.id,
+      eventType: row.eventType,
+      fetchImpl,
+      hasCustomFetch: Boolean(params.fetchFn),
+      assertUrl,
+    });
 
-    try {
-      let dispatcher: PinnedDispatcher | undefined;
-      if (params.fetchFn) {
-        await assertUrl(row.endpoint.url);
-      } else {
-        const resolved = await resolvePublicUrl(row.endpoint.url);
-        dispatcher = createPinnedDispatcher(resolved);
-      }
-
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
-      try {
-        const res = await fetchImpl(row.endpoint.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            [SIGNATURE_HEADER]: signature,
-            [DELIVERY_ID_HEADER]: row.id,
-            [EVENT_HEADER]: row.eventType,
-            "User-Agent": "Familiarise-Webhooks/1.0",
-          },
-          body,
-          signal: ac.signal,
-          redirect: "manual",
-          ...(dispatcher ? { dispatcher } : {}),
-        });
-        httpStatusCode = res.status;
-        await res.body?.cancel().catch(() => {});
-      } finally {
-        clearTimeout(timer);
-        if (dispatcher?.close) {
-          await Promise.resolve(dispatcher.close()).catch(() => {});
-        } else if (dispatcher?.destroy) {
-          dispatcher.destroy();
-        }
-      }
-    } catch (err) {
-      networkError = err instanceof Error ? err.message : String(err);
-    }
-
-    const isSuccess =
+    if (
       httpStatusCode !== undefined &&
       httpStatusCode >= 200 &&
-      httpStatusCode < 300;
-    const isPermanentClientError =
-      httpStatusCode !== undefined &&
-      httpStatusCode >= 400 &&
-      httpStatusCode < 500 &&
-      httpStatusCode !== 408 &&
-      httpStatusCode !== 429;
-
-    if (isSuccess) {
-      await prisma.outboundWebhookDelivery.update({
-        where: { id: row.id },
-        data: {
-          status: "SUCCESS",
-          httpStatusCode,
-          signature,
-          attempts: attemptNumber,
-          deliveredAt: nowDate,
-          lastError: null,
-        },
-      });
-      await prisma.webhookEndpoint.update({
-        where: { id: row.endpoint.id },
-        data: { lastSuccessAt: nowDate, failureCount: 0 },
+      httpStatusCode < 300
+    ) {
+      await recordSucceededDelivery({
+        prisma,
+        row,
+        httpStatusCode,
+        signature,
+        attemptNumber,
+        nowDate,
       });
       result.succeeded += 1;
       return;
     }
 
-    if (isPermanentClientError) {
-      const permanentError = `Permanent client error: ${httpStatusCode}`;
-      await prisma.outboundWebhookDelivery.update({
-        where: { id: row.id },
-        data: {
-          status: "FAILED",
-          httpStatusCode,
-          signature,
-          attempts: attemptNumber,
-          lastError: permanentError,
-        },
-      });
-      await prisma.webhookEndpoint.update({
-        where: { id: row.endpoint.id },
-        data: {
-          lastFailureAt: nowDate,
-          failureCount: { increment: 1 },
-        },
-      });
-      if (prisma.orgAuditLog) {
-        await prisma.orgAuditLog.create({
-          data: {
-            organizationId: row.endpoint.organizationId,
-            category: "WEBHOOK",
-            action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
-            description: `Webhook delivery permanently rejected with HTTP ${httpStatusCode}`,
-            details: {
-              deliveryId: row.id,
-              endpointId: row.endpoint.id,
-              eventType: row.eventType,
-              httpStatusCode,
-              attempts: attemptNumber,
-            },
-          },
-        });
-      }
-      await maybeAutoDisableEndpoint(prisma, row.endpoint);
-      result.failed += 1;
-      return;
-    }
-
-    if (attemptNumber >= MAX_ATTEMPTS) {
-      const deadLetterError =
-        networkError ??
-        `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`;
-      await prisma.outboundWebhookDelivery.update({
-        where: { id: row.id },
-        data: {
-          status: "DEAD_LETTER",
-          httpStatusCode: httpStatusCode ?? null,
-          signature,
-          attempts: attemptNumber,
-          lastError: deadLetterError,
-        },
-      });
-      await prisma.webhookEndpoint.update({
-        where: { id: row.endpoint.id },
-        data: {
-          lastFailureAt: nowDate,
-          failureCount: { increment: 1 },
-        },
-      });
-      if (prisma.orgAuditLog) {
-        await prisma.orgAuditLog.create({
-          data: {
-            organizationId: row.endpoint.organizationId,
-            category: "WEBHOOK",
-            action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
-            description: `Webhook delivery dead-lettered after ${attemptNumber} attempts`,
-            details: {
-              deliveryId: row.id,
-              endpointId: row.endpoint.id,
-              eventType: row.eventType,
-              httpStatusCode: httpStatusCode ?? null,
-              attempts: attemptNumber,
-              lastError: deadLetterError,
-            },
-          },
-        });
-      }
-      await maybeAutoDisableEndpoint(prisma, row.endpoint);
-      deadLettered.push({
-        deliveryId: row.id,
-        endpointId: row.endpoint.id,
-        eventType: row.eventType,
-        attempts: attemptNumber,
-        httpStatusCode: httpStatusCode ?? null,
-        lastError: deadLetterError,
-      });
-      result.failed += 1;
-    } else {
-      const baseBackoff =
-        BACKOFF_MS[Math.min(attemptNumber, BACKOFF_MS.length - 1)];
-      const jitter = params.now ? 1 : 0.85 + Math.random() * 0.3;
-      const backoff = Math.round(baseBackoff * jitter);
-      await prisma.outboundWebhookDelivery.update({
-        where: { id: row.id },
-        data: {
-          status: "RETRY",
-          httpStatusCode: httpStatusCode ?? null,
-          signature,
-          attempts: attemptNumber,
-          nextRetryAt: new Date(now() + backoff),
-          lastError: networkError ?? `Transient ${httpStatusCode ?? "network"}`,
-        },
-      });
-      await prisma.webhookEndpoint.update({
-        where: { id: row.endpoint.id },
-        data: {
-          lastFailureAt: nowDate,
-        },
-      });
+    const failureOutcome = await recordRetryOrTerminalFailure({
+      prisma,
+      row,
+      httpStatusCode,
+      networkError,
+      signature,
+      attemptNumber,
+      nowDate,
+      nowMs: currentNowMs,
+      hasCustomClock: Boolean(params.now),
+      deadLettered,
+    });
+    if (failureOutcome === "retried") {
       result.retried += 1;
+    } else {
+      result.failed += 1;
     }
   }
 

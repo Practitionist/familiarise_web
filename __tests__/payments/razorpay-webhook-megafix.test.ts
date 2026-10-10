@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { Prisma } from "@prisma/client";
+import { PaymentGateway, Prisma } from "@prisma/client";
 import {
   disputeUpdateEntitySchema,
   razorpayNotesSchema,
@@ -72,6 +72,25 @@ jest.mock("../../lib/novu/org-workflows", () => ({
   notifyOrgWalletTopupConfirmed: jest.fn(async () => undefined),
 }));
 
+import prismaMockDefault from "../../lib/prisma";
+
+interface MockDbShape {
+  $transaction: jest.Mock;
+  __tx: Record<string, unknown>;
+  payoutAccount: { updateMany: jest.Mock };
+  organizationPayoutAccount: { updateMany: jest.Mock };
+  payment: Record<string, jest.Mock>;
+  organizationInvoice: Record<string, jest.Mock>;
+  orgAuditLog: Record<string, jest.Mock>;
+  organization: Record<string, jest.Mock>;
+  organizationPayout: Record<string, jest.Mock>;
+  consultantPayout: Record<string, jest.Mock>;
+}
+
+function getMockDb(): MockDbShape {
+  return prismaMockDefault as unknown as MockDbShape;
+}
+
 describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -96,24 +115,32 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       });
     });
 
-    it("extracts fund_account.validation entity and dispute respond_by fields cleanly", () => {
+    it("extracts fund_account.validation entity (including nullish fields) and dispute respond_by cleanly", () => {
       const parsed = razorpayWebhookEnvelopeSchema.parse({
-        event: "fund_account.validation.completed",
+        event: "fund_account.validation.failed",
         payload: {
           "fund_account.validation": {
             entity: {
-              id: "fav_test_123",
-              fund_account: { id: "fa_acct_999" },
-              status: "completed",
-              utr: "UTR123456789",
+              id: "fav_test_nulls",
+              reference_id: "org_acct_42",
+              fund_account: null,
+              results: null,
+              validation_results: null,
+              status_details: null,
+              status: "failed",
             },
           },
         },
       });
       expect(parsed.payload?.["fund_account.validation"]?.entity).toMatchObject(
         {
-          id: "fav_test_123",
-          status: "completed",
+          id: "fav_test_nulls",
+          reference_id: "org_acct_42",
+          fund_account: undefined,
+          results: undefined,
+          validation_results: undefined,
+          status_details: undefined,
+          status: "failed",
         },
       );
 
@@ -150,11 +177,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
 
   describe("2. Reverse Penny Drop Webhook Handler", () => {
     it("marks consultant and organization payout accounts verified on completed validation", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        payoutAccount: { updateMany: jest.Mock };
-        organizationPayoutAccount: { updateMany: jest.Mock };
-      };
+      const db = getMockDb();
       db.payoutAccount = { updateMany: jest.fn(async () => ({ count: 1 })) };
       db.organizationPayoutAccount = {
         updateMany: jest.fn(async () => ({ count: 1 })),
@@ -193,12 +216,8 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       );
     });
 
-    it("marks organization payout account FAILED_VERIFICATION when validation fails", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        payoutAccount: { updateMany: jest.Mock };
-        organizationPayoutAccount: { updateMany: jest.Mock };
-      };
+    it("marks organization payout account FAILED_VERIFICATION when validation fails with fund_account.id", async () => {
+      const db = getMockDb();
       db.payoutAccount = { updateMany: jest.fn(async () => ({ count: 0 })) };
       db.organizationPayoutAccount = {
         updateMany: jest.fn(async () => ({ count: 1 })),
@@ -223,15 +242,39 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         },
       });
     });
+
+    it("falls back to referenceId when fund_account is null on failed validation", async () => {
+      const db = getMockDb();
+      db.payoutAccount = { updateMany: jest.fn(async () => ({ count: 0 })) };
+      db.organizationPayoutAccount = {
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      };
+
+      await handleFundAccountValidationWebhook(
+        "fund_account.validation.failed",
+        {
+          id: "fav_null_fa",
+          reference_id: "org_payout_acct_99",
+          fund_account: undefined,
+          status: "failed",
+        },
+      );
+
+      expect(db.organizationPayoutAccount.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "org_payout_acct_99",
+          status: "PENDING_VERIFICATION",
+        },
+        data: {
+          status: "FAILED_VERIFICATION",
+        },
+      });
+    });
   });
 
   describe("3. Hold-Window Failure Protection & Fast-Path Idempotency", () => {
     it("retains active checkout hold window on retryable payment failure without canceling booking", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-        __tx: Record<string, unknown>;
-      };
+      const db = getMockDb();
       const futureExpiry = new Date(Date.now() + 10 * 60 * 1000);
       const paymentMock = {
         findUnique: jest.fn(async () => ({
@@ -264,11 +307,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
     });
 
     it("backfills missing gatewayPaymentId on already SUCCEEDED payment via CAS without opening $transaction", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        payment: { findUnique: jest.Mock; updateMany: jest.Mock };
-        $transaction: jest.Mock;
-      };
+      const db = getMockDb();
       db.payment = {
         findUnique: jest.fn(async () => ({
           id: "pay_done_1",
@@ -305,11 +344,32 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       );
     });
 
-    it("returns DeferSignal when dispute.updated arrives before dispute.created", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        __tx: Record<string, unknown>;
+    it("returns DeferSignal when payment.dispute.created arrives before payment capture", async () => {
+      const db = getMockDb();
+      db.payment = {
+        findFirst: jest.fn(async () => null),
       };
+      db.__tx.payment = {
+        findFirst: jest.fn(async () => null),
+      };
+
+      const { handleDisputeCreated } =
+        await import("../../app/api/webhooks/utils");
+      const res = await handleDisputeCreated(
+        "disp_early_1",
+        "pay_unwritten_1",
+        25000,
+        "INR",
+        "fraudulent",
+        "open",
+        null,
+        true,
+      );
+      expect(res).toBeInstanceOf(DeferSignal);
+    });
+
+    it("returns DeferSignal when dispute.updated arrives before dispute.created", async () => {
+      const db = getMockDb();
       db.__tx.dispute = {
         findUnique: jest.fn(async () => null),
       };
@@ -321,10 +381,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
     });
 
     it("keeps earnings HELD when one dispute wins while a sibling dispute remains open", async () => {
-      const prismaMod = await import("../../lib/prisma");
-      const db = prismaMod.default as unknown as {
-        __tx: Record<string, unknown>;
-      };
+      const db = getMockDb();
       const consultantUpdateMany = jest.fn(async () => ({ count: 0 }));
       const orgUpdateMany = jest.fn(async () => ({ count: 0 }));
 
@@ -357,15 +414,9 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
 
   describe("5. Enterprise Outbound Webhooks & RazorpayX Payout Routing", () => {
     it("emits invoice.paid outbound webhook atomically inside handleOrgPaymentSuccess", async () => {
-      const prismaMod = await import("../../lib/prisma");
+      const db = getMockDb();
       const webhooksMod =
         await import("../../lib/enterprise/outbound-webhooks/dispatch");
-      const db = prismaMod.default as unknown as {
-        organizationInvoice: { findUnique: jest.Mock };
-        orgAuditLog: { create: jest.Mock };
-        organization: { findUnique: jest.Mock };
-        __tx: Record<string, unknown>;
-      };
       db.orgAuditLog = { create: jest.fn(async () => ({})) };
       db.organization = { findUnique: jest.fn(async () => null) };
       db.organizationInvoice = {
@@ -420,15 +471,8 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
     });
 
     it("resolves OrganizationPayout via reference_id when gatewayPayoutId is null and handles payout.cancelled", async () => {
-      const prismaMod = await import("../../lib/prisma");
+      const db = getMockDb();
       const payoutsMod = await import("../../lib/payments/payouts");
-      const db = prismaMod.default as unknown as {
-        organizationPayout: {
-          findUnique: jest.Mock;
-          findFirst: jest.Mock;
-          updateMany: jest.Mock;
-        };
-      };
       db.organizationPayout = {
         findUnique: jest.fn(async () => null),
         findFirst: jest.fn(async () => ({
@@ -455,6 +499,56 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       expect(payoutsMod.markOrgPayoutFailed).toHaveBeenCalledWith(
         "org_payout_1",
         "Cancelled on dashboard",
+      );
+    });
+
+    it("preserves PROCESSING status on consultant payout when non-terminal queued status arrives", async () => {
+      const db = getMockDb();
+      const updateManyMock = jest.fn(async () => ({ count: 1 }));
+      db.consultantPayout = {
+        findFirst: jest.fn(async () => ({
+          id: "cp_processing_1",
+          consultantProfileId: "prof_1",
+          providerPayoutId: "pout_queued_1",
+          amount: 75000,
+          tdsDeducted: 7500,
+          netAmount: 67500,
+          tdsRateAppliedBps: 1000,
+          tdsFinancialYear: "2026-27",
+          method: "UPI",
+          currency: "INR",
+          status: "PROCESSING",
+          consultantProfile: {
+            user: { id: "u_1", email: "c@example.com", name: "C" },
+          },
+        })),
+      };
+      db.__tx.consultantPayout = {
+        updateMany: updateManyMock,
+        findFirst: jest.fn(async () => ({ status: "PROCESSING" })),
+      };
+
+      const { handlePayoutWebhook: realHandlePayoutWebhook } =
+        await import("../../lib/payments/payouts/payout-service");
+      await realHandlePayoutWebhook(
+        PaymentGateway.RAZORPAY,
+        "pout_queued_1",
+        "PENDING",
+        undefined,
+        undefined,
+        "cp_processing_1",
+      );
+
+      expect(updateManyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "cp_processing_1",
+            status: { in: ["PROCESSING"] },
+          }),
+          data: expect.objectContaining({
+            status: "PROCESSING",
+          }),
+        }),
       );
     });
   });

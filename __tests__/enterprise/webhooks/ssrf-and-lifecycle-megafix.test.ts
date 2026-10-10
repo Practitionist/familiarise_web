@@ -269,32 +269,28 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
 
   it("includes role and previousStatus on DPDP scrubUser member.removed webhook payload", async () => {
     const dispatched: Array<Record<string, unknown>> = [];
+    const zeroCount = () => ({
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    });
+    const emptyFind = () => ({ findMany: jest.fn().mockResolvedValue([]) });
+
     const txStub = {
       user: {
         findUnique: jest.fn().mockResolvedValue({ consultantProfileId: null }),
         update: jest.fn().mockResolvedValue({}),
       },
       membership: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-      programAssignment: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      payoutAccount: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      consultantProfile: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      },
-      consulteeProfile: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      },
-      trial: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      consultation: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+      programAssignment: { ...zeroCount(), ...emptyFind() },
+      payoutAccount: zeroCount(),
+      consultantProfile: zeroCount(),
+      consulteeProfile: zeroCount(),
+      trial: zeroCount(),
+      consultation: zeroCount(),
+      collaborator: emptyFind(),
       erasureRequest: { findFirst: jest.fn().mockResolvedValue(null) },
       session: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       account: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      consentArtifact: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      },
+      consentArtifact: zeroCount(),
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       webhookEndpoint: {
         findMany: jest.fn().mockResolvedValue([{ id: "ep-1" }]),
@@ -325,11 +321,9 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
           },
         ]),
       },
-      payoutAccount: { findMany: jest.fn().mockResolvedValue([]) },
-      recording: { findMany: jest.fn().mockResolvedValue([]) },
-      recordingConsent: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      },
+      payoutAccount: emptyFind(),
+      recording: emptyFind(),
+      recordingConsent: zeroCount(),
       $transaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) =>
         fn(txStub),
       ),

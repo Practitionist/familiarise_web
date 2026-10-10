@@ -20,7 +20,8 @@ flowchart LR
     Guard -->|"Allowlisted / Live"| Outbox["FailedEmail Outbox + Resend API"]
     Guard -->|"Outside Allowlist"| Held["Held in Outbox (DEAD_LETTER: held:pre-launch)"]
     Outbox -->|"Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
-    Webhook -->|"Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist + SystemEvent"]
+    Webhook -->|"Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
+    Webhook -->|"Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
 ```
 
 ---
@@ -74,22 +75,21 @@ Resend delivers webhooks over Svix (`standardwebhooks.com`) signed with `RESEND_
 
 ### 2. Atomic Single-Transaction Persistence Under `PG_POOL_MAX=1`
 
-Both `EmailEvent` creation (`@unique` on `svixId`) and all domain side effects execute inside **one atomic `prisma.$transaction(async (tx) => ...)`** passing `tx` to every helper:
+Both `EmailEvent` creation (`@unique` on `svixId`) and recipient suppression / waitlist side effects execute inside **one atomic `prisma.$transaction(async (tx) => ...)`** passing `tx` to every helper:
 
 - Duplicate redeliveries hit `EmailEvent.svixId` unique constraint (`isUniqueViolation`) and immediately return HTTP `200 { received: true, duplicate: true }`.
 - If any database write fails mid-transaction, the entire transaction rolls back (`EmailEvent` is **not** committed) and the route returns **HTTP `500`** so Resend/Svix retries the delivery cleanly.
 
 ### 3. Complete Handled Resend Event Catalog
 
-| Event Family                   | Event Name(s)                                                                                              | Transactional Action (`tx`)                                                                                                                                                                                            |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Delivery & Bounce**          | `email.bounced`                                                                                            | When `data.bounce?.type === "Permanent"`, upserts `EmailSuppression` (`HARD_BOUNCE`) via `tx` and transitions `Waitlist` (`PENDING`/`SUBSCRIBED` → `BOUNCED`). Transient bounces log `EmailEvent` only.                |
-| **Spam Complaints**            | `email.complained`                                                                                         | Upserts `EmailSuppression` (`COMPLAINT`) via `tx` and transitions `Waitlist` to `UNSUBSCRIBED`.                                                                                                                        |
-| **Pre-Send Suppression Block** | `email.suppressed`                                                                                         | Fired when Resend blocks an outbound message due to upstream suppression; synchronizes `EmailSuppression` locally and marks `Waitlist` (`BOUNCED`) so future sends short-circuit locally without hitting Resend's API. |
-| **Suppression List Sync**      | `suppression.added` / `suppression.removed`                                                                | Bidirectionally syncs team-level Resend suppression changes (Dashboard or API manual suppressions and un-suppressions) into `EmailSuppression` (`upsert` on `added`, `deleteMany` on `removed`).                       |
-| **Audience / Contact Sync**    | `contact.updated` / `contact.deleted`                                                                      | Synchronizes `Waitlist` opt-in / unsubscribed state when subscribers update preferences or are deleted in Resend Contacts/Audiences.                                                                                   |
-| **Sending Domain Health**      | `domain.updated` / `domain.deleted`                                                                        | Records structured error via `recordSystemErrorSafe` (`db: tx`) when `domain.status` transitions to `"failed"` / `"not_started"` or a verified sending domain is deleted.                                              |
-| **Telemetry Events**           | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed` | Persisted idempotently on `EmailEvent` for delivery auditing; `archive-webhook-events` prunes `EmailEvent` rows older than **90 days** every Sunday UTC midnight.                                                      |
+| Event Family                   | Event Name(s)                                                                                                                                   | Action                                                                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Delivery & Bounce**          | `email.bounced`                                                                                                                                 | When `data.bounce?.type === "Permanent"`, upserts `EmailSuppression` (`HARD_BOUNCE`) via `tx` and transitions `Waitlist` (`PENDING`/`SUBSCRIBED` → `BOUNCED`). Transient bounces log `EmailEvent` only.                 |
+| **Spam Complaints**            | `email.complained`                                                                                                                              | Upserts `EmailSuppression` (`COMPLAINT`) via `tx` and transitions `Waitlist` to `UNSUBSCRIBED`.                                                                                                                         |
+| **Pre-Send Suppression Block** | `email.suppressed`                                                                                                                              | Fired when Resend blocks an outbound message due to upstream suppression; synchronizes `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`BOUNCED`) so future sends short-circuit locally without API calls. |
+| **Audience / Contact Sync**    | `contact.created`, `contact.updated`, `contact.deleted`, `contact.topics.updated`                                                               | When `type === "contact.deleted"` or `type === "contact.updated"` with `unsubscribed === true`, upserts `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`UNSUBSCRIBED`).                                   |
+| **Sending Domain Health**      | `domain.created`, `domain.updated`, `domain.deleted`                                                                                            | Calls `recordSystemErrorSafe` **after transaction commit** when `domain.updated` reports `status` as `"failed"` or `"not_started"`, or when `domain.deleted` fires.                                                     |
+| **Telemetry & Inbound Events** | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.received` | Persisted idempotently on `EmailEvent` for delivery auditing; `archive-webhook-events` prunes `EmailEvent` rows older than **90 days** every Sunday UTC midnight.                                                       |
 
 ---
 
@@ -118,5 +118,5 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 ## Deprecated & Superseded Approaches
 
 - **Non-Transactional `EmailEvent.create` Followed by Separate `suppressRecipient` Writes**: Superseded by a single Prisma `$transaction(tx)` in `app/api/webhooks/resend/route.ts` because committing `EmailEvent` outside a transaction caused transient DB errors on `EmailSuppression` / `Waitlist` writes to still answer HTTP `200`, permanently dropping hard-bounce suppressions on retry (`duplicate: true`).
-- **Handling Only `email.bounced` and `email.complained` While Ignoring `email.suppressed`, `suppression.*`, `contact.*`, and `domain.*`**: Superseded by full Svix lifecycle coverage keeping local `EmailSuppression`, `Waitlist`, and domain health events synchronized with Resend.
+- **Handling Only `email.bounced` and `email.complained` While Ignoring `email.suppressed`, `contact.*`, and `domain.*`**: Superseded by official Resend event coverage keeping local `EmailSuppression`, `Waitlist`, and domain health events synchronized with Resend.
 - **Unbounded `EmailEvent` Growth**: Superseded by weekly 90-day pruning in `archive-webhook-events` alongside `WebhookEvent` and 30-day terminal `OutboundWebhookDelivery` rows.

@@ -103,6 +103,25 @@ describe("the FAILED -> retry path", () => {
       error: { not: null },
     });
   });
+
+  it("never reclaims terminal permanent: or gave up: webhook errors", async () => {
+    for (const terminalError of [
+      "permanent: schema mismatch",
+      "gave up: payment never arrived",
+    ]) {
+      mockFindUnique.mockResolvedValueOnce({
+        id: "r1",
+        processed: false,
+        error: terminalError,
+        receivedAt: SIX_MINUTES_AGO,
+      });
+
+      const res = await logWebhookEvent("stream", "e1", "call.ended", {});
+
+      expect(res).toEqual({ isNew: false, eventRecordId: "r1" });
+    }
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("the IN-PROGRESS staleness escape", () => {

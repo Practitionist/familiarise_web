@@ -138,7 +138,6 @@ export const novuWebhookPayloadSchema = z
 
 export type NovuWebhookPayload = z.infer<typeof novuWebhookPayloadSchema>;
 export const novuWebhookEventSchema = novuWebhookPayloadSchema;
-export type NovuWebhookEvent = NovuWebhookPayload;
 
 export function extractNovuSubscriberId(
   payload: NovuWebhookPayload,

@@ -13,7 +13,7 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
 | **Razorpay & RazorpayX** | `POST /api/webhooks/razorpay` | `x-razorpay-signature` (`HMAC-SHA256` hex); `RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`, and `RAZORPAYX_WEBHOOK_SECRET` (`payout.*` & `fund_account.*`) | **5 s** timeout; exponential backoff for **24 hours**, then **auto-disables endpoint**                  | Pre-flight `isDbHealthy()` returns **HTTP `503`** so Razorpay retries without counting as a permanent client error.                                                                                                                                                  |
 | **Stream Video & Chat**  | `POST /api/stream/webhooks`   | `X-Signature` (`HMAC-SHA256` over **uncompressed UTF-8 body** even when gzip-compressed `>256B`) + `X-Api-Key` check                                                      | **6 s** timeout per attempt, **0 ms** backoff, up to **5 attempts** inside **15 seconds total**         | Pre-flight `isDbHealthy()` returns **HTTP `503`**; because Stream's entire 5-retry budget expires in **15 seconds**, `transfer-recordings`, `auto-complete-appointments`, and `reconcile-orphaned-confirmations` heal missed call/recording events via REST polling. |
 | **Resend**               | `POST /api/webhooks/resend`   | Svix Standard Webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, `whsec_` secret, **5-minute** timestamp replay window)                                             | Svix exponential backoff across multiple days                                                           | Single atomic `$transaction(tx)` writes `EmailEvent` + suppression/waitlist/contact/domain mutations; any DB error rolls back and returns **HTTP `500`** so Svix retries cleanly.                                                                                    |
-| **Novu**                 | `POST /api/webhooks/novu`     | Svix Standard Webhooks (`svix-id` / `webhook-id`, **5-minute** tolerance) with channel `x-novu-signature` HMAC fallback                                                   | **15 s** timeout; 8 attempts (`0s, 5s, 5m, 30m, 2h, 5h, 10h, +10h`) over **5 days** before auto-disable | Pre-flight `isDbHealthy()` returns **HTTP `503`**; in-flight DB errors record onto `WebhookEvent` for `sweep-stuck-webhook-events`.                                                                                                                                  |
+| **Novu**                 | `POST /api/webhooks/novu`     | Svix Standard Webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, **5-minute** tolerance) with channel `x-novu-signature` HMAC fallback                              | **15 s** timeout; 8 attempts (`0s, 5s, 5m, 30m, 2h, 5h, 10h, +10h`) over **5 days** before auto-disable | Pre-flight `isDbHealthy()` returns **HTTP `503`**; in-flight DB errors record onto `WebhookEvent` for `sweep-stuck-webhook-events`.                                                                                                                                  |
 | **Stripe**               | `POST /api/webhooks/stripe`   | `stripe-signature` via `stripe.webhooks.constructEvent()`                                                                                                                 | **20 s** timeout; exponential backoff up to **3 days** (~15 attempts)                                   | Returns **HTTP `500`/`503`** on DB unavailability so Stripe retries.                                                                                                                                                                                                 |
 
 ---
@@ -28,14 +28,14 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
 
 ### Resend (`POST /api/webhooks/resend`)
 
-- Executes `EmailEvent` creation (`@unique` on `svixId`) and all domain side effects inside **one atomic Prisma `$transaction(tx)`** under `PG_POOL_MAX=1`:
+- Executes `EmailEvent` creation (`@unique` on `svixId`) and recipient side effects inside **one atomic Prisma `$transaction(tx)`** under `PG_POOL_MAX=1`:
   - `email.bounced` (`Permanent`), `email.complained`, `email.suppressed`: upserts `EmailSuppression` and marks `Waitlist` (`BOUNCED` / `UNSUBSCRIBED`).
-  - `suppression.added` / `suppression.removed`: synchronizes team-level Resend suppressions with local `EmailSuppression`.
-  - `contact.updated` / `contact.deleted` & `domain.updated` / `domain.deleted`: reconciles `Waitlist` subscription state and records `SystemEvent` alerts if sending domain DNS verification degrades.
+  - `contact.deleted` & `contact.updated` (when `unsubscribed === true`): suppresses the recipient and marks `Waitlist` (`UNSUBSCRIBED`).
+  - `domain.updated` / `domain.deleted`: calls `recordSystemErrorSafe` after transaction commit if sending domain DNS verification degrades (`failed` / `not_started`) or is deleted.
 
 ### Novu (`POST /api/webhooks/novu`)
 
-- Supports both Novu platform Svix outbound webhooks (`svix-id` / `webhook-id` + nested `data.object.{subscriberId, channel, transactionId, status, error}` envelope) and legacy workflow channel HMAC signatures (`x-novu-signature` / `novu-signature`), advancing `NotificationOutbox` (`PENDING -> SENT` or stamping `lastError`).
+- Supports both Novu platform Svix outbound webhooks (`svix-id`, `svix-timestamp`, `svix-signature` + nested `data.object.{subscriberId, channel, transactionId, status, error}` envelope) and legacy workflow channel HMAC signatures (`x-novu-signature` / `novu-signature`), advancing `NotificationOutbox` (`PENDING -> SENT` or stamping `lastError`).
 
 ---
 
@@ -49,7 +49,7 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
    - Always apply additive expand-and-contract DDL changes on `WebhookEvent`, `Payment`, `Refund`, `Dispute`, `EmailEvent`, and `Payout` tables; never acquire long-running `ACCESS EXCLUSIVE` locks that would stall `isDbHealthy()` past Razorpay's 5-second timeout.
    - Run `reconcile-payment-status`, `reconcile-pending-refunds`, `reconcile-disputes`, and `reconcile-payout-status` immediately after concluding any maintenance window.
 3. **Weekly Multi-Table Retention (`archive-webhook-events`)**:
-   - Deletes processed `WebhookEvent` rows (>30d), failed `WebhookEvent` rows (>90d), aged `EmailEvent` rows (>30d), and terminal `OutboundWebhookDelivery` rows (>30d) every Sunday UTC midnight.
+   - Prunes processed `WebhookEvent` rows, terminal unprocessed `WebhookEvent` rows (`processed = false` with `permanent:` / `gave up:` error), and terminal `OutboundWebhookDelivery` rows after **30 days**, and prunes non-terminal failed `WebhookEvent` rows plus `EmailEvent` rows after **90 days** every Sunday UTC midnight.
 
 ---
 

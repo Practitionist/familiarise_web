@@ -9,7 +9,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { Resend } from "resend";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { suppressRecipient } from "@/lib/email/suppression";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -20,6 +20,7 @@ import {
 import {
   extractResendRecipients,
   resendWebhookEventSchema,
+  type ResendWebhookEvent,
 } from "@/schemas/webhooks/resend";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,16 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
     }
     return out;
   }
-  return String(value ?? "");
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return "";
+}
+
+function toErrorInstance(error: unknown): Error {
+  if (error instanceof Error) return error;
+  if (typeof error === "string") return new Error(error);
+  return new Error(JSON.stringify(error) ?? "Unknown error");
 }
 
 function notConfigured() {
@@ -56,6 +66,107 @@ function notConfigured() {
     { error: "webhook not configured" },
     { status: 503 },
   );
+}
+
+async function suppressRecipientsInTx(
+  tx: PrismaLike,
+  recipients: string[],
+  reason: "HARD_BOUNCE" | "COMPLAINT" | "MANUAL",
+  eventRowId: string,
+): Promise<void> {
+  for (const recipient of recipients) {
+    await suppressRecipient(recipient, reason, eventRowId, tx);
+  }
+}
+
+async function applyRecipientEffects(
+  tx: PrismaLike,
+  eventRowId: string,
+  type: string,
+  data: ResendWebhookEvent["data"],
+  recipients: string[],
+): Promise<void> {
+  if (recipients.length === 0) return;
+
+  const emailFilter =
+    recipients.length === 1 ? recipients[0] : { in: recipients };
+
+  if (type === "email.bounced" && data?.bounce?.type === "Permanent") {
+    await suppressRecipientsInTx(tx, recipients, "HARD_BOUNCE", eventRowId);
+    await tx.waitlist.updateMany({
+      where: {
+        email: emailFilter,
+        status: { in: ["PENDING", "SUBSCRIBED"] },
+      },
+      data: { status: "BOUNCED" },
+    });
+    return;
+  }
+
+  if (type === "email.complained") {
+    await suppressRecipientsInTx(tx, recipients, "COMPLAINT", eventRowId);
+    await tx.waitlist.updateMany({
+      where: {
+        email: emailFilter,
+        status: { in: ["PENDING", "SUBSCRIBED"] },
+      },
+      data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
+    });
+    return;
+  }
+
+  if (type === "email.suppressed") {
+    await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
+    await tx.waitlist.updateMany({
+      where: {
+        email: emailFilter,
+        status: { in: ["PENDING", "SUBSCRIBED"] },
+      },
+      data: { status: "BOUNCED" },
+    });
+    return;
+  }
+
+  if (
+    type === "contact.deleted" ||
+    (type === "contact.updated" && data?.unsubscribed === true)
+  ) {
+    await suppressRecipientsInTx(tx, recipients, "MANUAL", eventRowId);
+    await tx.waitlist.updateMany({
+      where: {
+        email: emailFilter,
+        status: { in: ["PENDING", "SUBSCRIBED"] },
+      },
+      data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
+    });
+  }
+}
+
+async function reportDegradedDomainIfNeeded(
+  svixId: string,
+  type: string,
+  data: NonNullable<ResendWebhookEvent["data"]>,
+): Promise<void> {
+  const isDegradedUpdate =
+    type === "domain.updated" &&
+    (data.status === "failed" || data.status === "not_started");
+  if (type !== "domain.deleted" && !isDegradedUpdate) {
+    return;
+  }
+
+  await recordSystemErrorSafe({
+    category: "WEBHOOK",
+    summary: `Resend sending domain degraded (${type})`,
+    err: new Error(`Domain status reported as ${data.status ?? "deleted"}`),
+    context: {
+      provider: "resend",
+      svixId,
+      type,
+      domainId: data.id ?? null,
+      domainName: data.name ?? null,
+      status: data.status ?? "deleted",
+    },
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -110,8 +221,6 @@ export async function POST(req: NextRequest) {
   const resendId = data.email_id ?? "";
   const recipients = extractResendRecipients(event);
   const primaryRecipient = recipients[0] ?? "";
-  const emailFilter =
-    recipients.length === 1 ? recipients[0] : { in: recipients };
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -126,100 +235,20 @@ export async function POST(req: NextRequest) {
         select: { id: true },
       });
 
-      if (
-        recipients.length > 0 &&
-        type === "email.bounced" &&
-        data.bounce?.type === "Permanent"
-      ) {
-        for (const recipient of recipients) {
-          await suppressRecipient(recipient, "HARD_BOUNCE", eventRow.id, tx);
-        }
-        await tx.waitlist.updateMany({
-          where: {
-            email: emailFilter,
-            status: { in: ["PENDING", "SUBSCRIBED"] },
-          },
-          data: { status: "BOUNCED" },
-        });
-      } else if (recipients.length > 0 && type === "email.complained") {
-        for (const recipient of recipients) {
-          await suppressRecipient(recipient, "COMPLAINT", eventRow.id, tx);
-        }
-        await tx.waitlist.updateMany({
-          where: {
-            email: emailFilter,
-            status: { in: ["PENDING", "SUBSCRIBED"] },
-          },
-          data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
-        });
-      } else if (
-        recipients.length > 0 &&
-        (type === "email.suppressed" || type === "suppression.added")
-      ) {
-        for (const recipient of recipients) {
-          await suppressRecipient(recipient, "MANUAL", eventRow.id, tx);
-        }
-        await tx.waitlist.updateMany({
-          where: {
-            email: emailFilter,
-            status: { in: ["PENDING", "SUBSCRIBED"] },
-          },
-          data: { status: "BOUNCED" },
-        });
-      } else if (recipients.length > 0 && type === "suppression.removed") {
-        await tx.emailSuppression.deleteMany({
-          where: { email: emailFilter },
-        });
-      } else if (
-        recipients.length > 0 &&
-        (type === "contact.deleted" ||
-          (type === "contact.updated" && data.unsubscribed === true))
-      ) {
-        for (const recipient of recipients) {
-          await suppressRecipient(recipient, "MANUAL", eventRow.id, tx);
-        }
-        await tx.waitlist.updateMany({
-          where: {
-            email: emailFilter,
-            status: { in: ["PENDING", "SUBSCRIBED"] },
-          },
-          data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
-        });
-      }
+      await applyRecipientEffects(tx, eventRow.id, type, data, recipients);
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
       return NextResponse.json({ received: true, duplicate: true });
     }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "email" },
-        fingerprint: ["resend-webhook", "store"],
-      },
-    );
+    Sentry.captureException(toErrorInstance(error), {
+      tags: { subsystem: "email" },
+      fingerprint: ["resend-webhook", "store"],
+    });
     return NextResponse.json({ error: "event not stored" }, { status: 500 });
   }
 
-  if (
-    type === "domain.deleted" ||
-    (type === "domain.updated" &&
-      (data.status === "failed" || data.status === "not_started"))
-  ) {
-    await recordSystemErrorSafe({
-      category: "WEBHOOK",
-      summary: `Resend sending domain degraded (${type})`,
-      err: new Error(`Domain status reported as ${data.status ?? "deleted"}`),
-      context: {
-        provider: "resend",
-        svixId: id,
-        type,
-        domainId: data.id ?? null,
-        domainName: data.name ?? null,
-        status: data.status ?? "deleted",
-      },
-    });
-  }
+  await reportDegradedDomainIfNeeded(id, type, data);
 
   return NextResponse.json({ received: true });
 }

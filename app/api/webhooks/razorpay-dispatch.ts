@@ -375,7 +375,7 @@ export async function processRazorpayWebhookEvent(
         const disputeCreatedEvent = disputeEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeCreated(
+        const createdResult = await handleDisputeCreated(
           disputeCreatedEvent.id,
           disputeCreatedEvent.payment_id,
           disputeCreatedEvent.amount,
@@ -387,6 +387,9 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
         );
+        if (createdResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 

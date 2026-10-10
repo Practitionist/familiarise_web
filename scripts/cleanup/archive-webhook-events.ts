@@ -4,7 +4,7 @@
  * Retention policy:
  * - Processed `WebhookEvent` (`processed = true, error = null`): 30 days
  * - Terminal unreplayable `WebhookEvent` (`processed = false, error IS NOT NULL`): 30 days
- * - Failed / aged `WebhookEvent` (`processed = false OR error IS NOT NULL`): 90 days
+ * - Failed / aged `WebhookEvent` (`processed = false, error IS NOT NULL`): 90 days
  * - `EmailEvent` delivery audit rows: 90 days
  * - Terminal `OutboundWebhookDelivery` (`SUCCESS`, `FAILED`, `DEAD_LETTER`): 30 days
  */
@@ -15,6 +15,12 @@ import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
 
 const PROCESSED_RETENTION_DAYS = 30;
 const FAILED_RETENTION_DAYS = 90;
+
+function formatArchiveError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return JSON.stringify(error) ?? "Unknown error";
+}
 
 export interface WebhookArchiveResult {
   success: boolean;
@@ -57,7 +63,7 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
       const res = await fn();
       return res.count;
     } catch (error) {
-      const msg = `Failed to archive ${label}: ${error}`;
+      const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
       console.error(`❌ ${msg}`);
       errors.push(msg);
       return 0;
@@ -91,7 +97,8 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
   failedEventsDeleted = await runStep("aged failed webhook events", () =>
     prisma.webhookEvent.deleteMany({
       where: {
-        OR: [{ processed: false }, { error: { not: null } }],
+        processed: false,
+        error: { not: null },
         receivedAt: { lt: failedRetention },
       },
     }),

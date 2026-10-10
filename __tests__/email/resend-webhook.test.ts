@@ -12,7 +12,6 @@
 const mockVerify = jest.fn();
 const mockEventCreate = jest.fn();
 const mockSuppressionUpsert = jest.fn();
-const mockSuppressionDeleteMany = jest.fn();
 const mockWaitlistUpdateMany = jest.fn();
 const mockRecordSystemErrorSafe = jest.fn();
 
@@ -27,7 +26,6 @@ jest.mock("../../lib/prisma", () => {
     emailEvent: { create: (...args: unknown[]) => mockEventCreate(...args) },
     emailSuppression: {
       upsert: (...args: unknown[]) => mockSuppressionUpsert(...args),
-      deleteMany: (...args: unknown[]) => mockSuppressionDeleteMany(...args),
     },
     waitlist: {
       updateMany: (...args: unknown[]) => mockWaitlistUpdateMany(...args),
@@ -90,7 +88,6 @@ beforeEach(() => {
   process.env.RESEND_WEBHOOK_SECRET = "whsec_test";
   mockEventCreate.mockResolvedValue({ id: "ev-1" });
   mockSuppressionUpsert.mockResolvedValue({});
-  mockSuppressionDeleteMany.mockResolvedValue({ count: 1 });
   mockWaitlistUpdateMany.mockResolvedValue({ count: 1 });
   mockRecordSystemErrorSafe.mockResolvedValue(undefined);
 });
@@ -215,35 +212,30 @@ describe("POST /api/webhooks/resend", () => {
     expect(update.data.unsubscribedAt).toBeInstanceOf(Date);
   });
 
-  it("handles suppression.added and suppression.removed lifecycle events", async () => {
-    const added = {
-      type: "suppression.added",
-      created_at: "2026-09-15T10:00:00Z",
-      data: { email: "OptOut@Example.com", type: "manual" },
-    };
-    mockVerify.mockReturnValue(added);
-    const resAdded = await POST(request(added));
-    expect(resAdded.status).toBe(200);
-    expect(mockSuppressionUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { email: "optout@example.com" },
-      }),
-    );
+  it("handles email.suppressed pre-send suppression events", async () => {
+    const suppressed = event("email.suppressed", {
+      to: ["Blocked@Example.com"],
+    });
+    mockVerify.mockReturnValue(suppressed);
 
-    jest.clearAllMocks();
-    mockEventCreate.mockResolvedValue({ id: "ev-2" });
-    mockSuppressionDeleteMany.mockResolvedValue({ count: 1 });
+    const res = await POST(request(suppressed));
 
-    const removed = {
-      type: "suppression.removed",
-      created_at: "2026-09-15T10:01:00Z",
-      data: { email: "OptOut@Example.com" },
-    };
-    mockVerify.mockReturnValue(removed);
-    const resRemoved = await POST(request(removed));
-    expect(resRemoved.status).toBe(200);
-    expect(mockSuppressionDeleteMany).toHaveBeenCalledWith({
-      where: { email: "optout@example.com" },
+    expect(res.status).toBe(200);
+    expect(mockSuppressionUpsert).toHaveBeenCalledWith({
+      where: { email: "blocked@example.com" },
+      create: {
+        email: "blocked@example.com",
+        reason: "MANUAL",
+        sourceEventId: "ev-1",
+      },
+      update: {},
+    });
+    expect(mockWaitlistUpdateMany).toHaveBeenCalledWith({
+      where: {
+        email: "blocked@example.com",
+        status: { in: ["PENDING", "SUBSCRIBED"] },
+      },
+      data: { status: "BOUNCED" },
     });
   });
 

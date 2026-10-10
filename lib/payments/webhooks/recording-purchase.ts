@@ -591,8 +591,7 @@ export async function handleRecordingPurchaseSuccess(
       },
     });
     if (
-      existing &&
-      existing.paymentStatus === "SUCCEEDED" &&
+      existing?.paymentStatus === "SUCCEEDED" &&
       (capturedPaise === undefined || capturedPaise === existing.amount) &&
       (!gatewayPaymentId ||
         !existing.gatewayPaymentId ||

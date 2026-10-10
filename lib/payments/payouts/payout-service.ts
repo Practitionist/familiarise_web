@@ -1940,7 +1940,7 @@ export async function handlePayoutWebhook(
               : { in: [PayoutStatus.PROCESSING] },
           },
           data: {
-            status: payoutStatus,
+            status: terminalIncoming ? payoutStatus : PayoutStatus.PROCESSING,
             processedAt:
               payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
             failureReason: failureReason,
@@ -1954,11 +1954,12 @@ export async function handlePayoutWebhook(
 
         if (count === 0) {
           if (payoutStatus === PayoutStatus.COMPLETED) {
-            const current = await tx.consultantPayout.findUnique({
-              where: { id: matched.id },
-              select: { status: true },
-            });
-            if (current?.status === PayoutStatus.FAILED) {
+            const current =
+              (await tx.consultantPayout.findFirst({
+                where: { id: matched.id },
+                select: { status: true },
+              })) ?? matched;
+            if (current.status === PayoutStatus.FAILED) {
               await recordSystemEventSafe({
                 db: tx,
                 category: "PAYOUT",

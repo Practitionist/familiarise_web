@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  */
-import crypto from "crypto";
-import zlib from "zlib";
+import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { NextRequest } from "next/server";
 
 jest.mock("../../lib/prisma", () => {
@@ -112,6 +112,7 @@ import {
   logWebhookEvent,
   markWebhookEventProcessed,
 } from "../../lib/webhooks/event-log";
+import { streamLogger } from "../../lib/stream-logger";
 import { notifyRecordingFailed } from "../../lib/novu/service";
 import { getEventAttendeeIds } from "../../lib/stream/recording-utils";
 import { getStreamChatClient } from "../../lib/stream-client";
@@ -168,6 +169,27 @@ function makeWebhookRequest(
   });
 }
 
+function postSignedJsonWebhook(
+  payload: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+) {
+  const buf = Buffer.from(JSON.stringify(payload));
+  return POST(
+    makeWebhookRequest(buf, {
+      "x-signature": signRaw(buf),
+      "x-api-key": API_KEY,
+      ...extraHeaders,
+    }),
+  );
+}
+
+function recordStep<T>(steps: string[], label: string, result: T) {
+  return async () => {
+    steps.push(label);
+    return result;
+  };
+}
+
 describe("Stream Webhook Megafix Regression Suite", () => {
   const origSecret = process.env.STREAM_WEBHOOK_SECRET;
   const origApiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -198,7 +220,9 @@ describe("Stream Webhook Megafix Regression Suite", () => {
 
       expect(verifyStreamApiKeyHeader(API_KEY, API_KEY)).toBe(true);
       expect(verifyStreamApiKeyHeader("wrong-key", API_KEY)).toBe(false);
-      expect(verifyStreamApiKeyHeader(null, API_KEY)).toBe(true);
+      expect(verifyStreamApiKeyHeader(null, API_KEY)).toBe(false);
+      expect(verifyStreamApiKeyHeader("", API_KEY)).toBe(false);
+      expect(verifyStreamApiKeyHeader(null, "")).toBe(true);
     });
 
     it("rejects missing or non-hex X-Signature with 401 before touching body stream", async () => {
@@ -213,16 +237,18 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       expect(getReaderSpy).not.toHaveBeenCalled();
     });
 
-    it("rejects mismatched X-Api-Key with 401 before touching body stream", async () => {
-      const req = makeWebhookRequest(Buffer.from("{}"), {
-        "x-signature": "a".repeat(64),
-        "x-api-key": "different-app-key",
-      });
-      const getReaderSpy = jest.spyOn(req.body!, "getReader");
+    it("rejects missing or mismatched X-Api-Key with 401 before touching body stream", async () => {
+      for (const headers of [
+        { "x-signature": "a".repeat(64) } as Record<string, string>,
+        { "x-signature": "a".repeat(64), "x-api-key": "different-app-key" },
+      ]) {
+        const req = makeWebhookRequest(Buffer.from("{}"), headers);
+        const getReaderSpy = jest.spyOn(req.body!, "getReader");
 
-      const res = await POST(req);
-      expect(res.status).toBe(401);
-      expect(getReaderSpy).not.toHaveBeenCalled();
+        const res = await POST(req);
+        expect(res.status).toBe(401);
+        expect(getReaderSpy).not.toHaveBeenCalled();
+      }
     });
 
     it("rejects Content-Length > 512 KiB with 413 before reading body", async () => {
@@ -280,20 +306,12 @@ describe("Stream Webhook Megafix Regression Suite", () => {
   });
 
   describe("2. Zero-DB out-of-window drop & X-Webhook-Id eventId", () => {
-    it("drops out-of-window (>7d) and clock-skewed (>5m future) deliveries with 200 without DB writes", async () => {
-      const stalePayload = Buffer.from(
-        JSON.stringify({
-          type: "call.recording_stopped",
-          call_cid: "default:call-stale",
-          created_at: new Date(Date.now() - 8 * 86_400_000).toISOString(),
-        }),
-      );
-      const staleRes = await POST(
-        makeWebhookRequest(stalePayload, {
-          "x-signature": signRaw(stalePayload),
-          "x-api-key": API_KEY,
-        }),
-      );
+    it("enforces exact 10m past and 2m future replay window boundaries", async () => {
+      const staleRes = await postSignedJsonWebhook({
+        type: "call.recording_stopped",
+        call_cid: "default:call-stale",
+        created_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+      });
       expect(staleRes.status).toBe(200);
       await expect(staleRes.json()).resolves.toMatchObject({
         status: "ok",
@@ -302,19 +320,11 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       });
       expect(logWebhookEvent).not.toHaveBeenCalled();
 
-      const futurePayload = Buffer.from(
-        JSON.stringify({
-          type: "call.recording_stopped",
-          call_cid: "default:call-future",
-          created_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-        }),
-      );
-      const futureRes = await POST(
-        makeWebhookRequest(futurePayload, {
-          "x-signature": signRaw(futurePayload),
-          "x-api-key": API_KEY,
-        }),
-      );
+      const futureRes = await postSignedJsonWebhook({
+        type: "call.recording_stopped",
+        call_cid: "default:call-future",
+        created_at: new Date(Date.now() + 3 * 60_000).toISOString(),
+      });
       expect(futureRes.status).toBe(200);
       await expect(futureRes.json()).resolves.toMatchObject({
         status: "ok",
@@ -322,6 +332,27 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         accepted: false,
       });
       expect(logWebhookEvent).not.toHaveBeenCalled();
+
+      (logWebhookEvent as jest.Mock).mockResolvedValue({
+        isNew: true,
+        claim: { claimedAt: new Date() },
+      });
+      (markWebhookEventProcessed as jest.Mock).mockResolvedValue(undefined);
+      (prisma.meeting.findUnique as jest.Mock).mockResolvedValue(null);
+
+      for (const offsetMs of [-9 * 60_000, 90_000]) {
+        const validRes = await postSignedJsonWebhook({
+          type: "call.recording_stopped",
+          call_cid: "default:call-in-window",
+          created_at: new Date(Date.now() + offsetMs).toISOString(),
+        });
+        expect(validRes.status).toBe(200);
+        await expect(validRes.json()).resolves.toMatchObject({
+          status: "ok",
+          accepted: true,
+        });
+      }
+      expect(logWebhookEvent).toHaveBeenCalledTimes(2);
     });
 
     it("uses stream_${X-Webhook-Id} and skips redundant isDbHealthy() inside dispatch", async () => {
@@ -364,7 +395,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
   });
 
   describe("3. Exact 8-event subscription & wildcard drift pruning", () => {
-    it("excludes call.session_started from DESIRED_EVENT_TYPES and detects [] / * / extra drift", async () => {
+    it("ignores legacy webhook_events wildcard when webhook_url is empty, and clears active legacy webhook_url on apply", async () => {
       expect(DESIRED_EVENT_TYPES).toHaveLength(8);
       expect(DESIRED_EVENT_TYPES).toEqual(HANDLED_EVENT_TYPES);
       expect(DESIRED_EVENT_TYPES).not.toContain("call.session_started");
@@ -374,7 +405,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         hook_type: "webhook",
         enabled: true,
         webhook_url: "https://familiarise.com/api/stream/webhooks",
-        event_types: [],
+        event_types: [...DESIRED_EVENT_TYPES],
       };
 
       expect(
@@ -398,9 +429,20 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       ).toEqual(["call.session_started"]);
 
       const updateAppSettings = jest.fn().mockResolvedValue({});
-      (getStreamChatClient as jest.Mock).mockReturnValue({
-        getAppSettings: jest.fn().mockResolvedValue({
+      const getAppSettings = jest
+        .fn()
+        // 1. Dormant legacy wildcard with empty webhook_url -> no drift
+        .mockResolvedValueOnce({
           app: {
+            webhook_url: "",
+            webhook_events: ["*"],
+            event_hooks: [baseHook],
+          },
+        })
+        // 2 & 3. Active legacy webhook_url + extra hook event -> drift, then cleared on apply
+        .mockResolvedValue({
+          app: {
+            webhook_url: "https://familiarise.com/api/stream/legacy-hook",
             webhook_events: ["*"],
             event_hooks: [
               {
@@ -409,12 +451,17 @@ describe("Stream Webhook Megafix Regression Suite", () => {
               },
             ],
           },
-        }),
+        });
+
+      (getStreamChatClient as jest.Mock).mockReturnValue({
+        getAppSettings,
         updateAppSettings,
       });
 
-      const checkCode = await ensureWebhookSubscription("check");
-      expect(checkCode).toBe(DRIFT_EXIT_CODE);
+      await expect(ensureWebhookSubscription("check")).resolves.toBe(0);
+      await expect(ensureWebhookSubscription("check")).resolves.toBe(
+        DRIFT_EXIT_CODE,
+      );
 
       const applyCode = await ensureWebhookSubscription("apply");
       expect(applyCode).toBe(0);
@@ -425,7 +472,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
             event_types: [...DESIRED_EVENT_TYPES].sort(),
           }),
         ],
-        webhook_events: [],
+        webhook_url: "",
       });
     });
   });
@@ -541,30 +588,18 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         endedReason: null,
         appointmentOccurrenceId: "occ-1",
       });
+      // Simulate left webhook having arrived BEFORE joined webhook for same session
       (prisma.meetingPresence.createMany as jest.Mock).mockImplementation(
-        async () => {
-          callOrder.push("create_presence");
-          // Simulate left webhook having arrived BEFORE joined webhook for same session
-          return { count: 0 };
-        },
+        recordStep(callOrder, "create_presence", { count: 0 }),
       );
       (prisma.meetingPresence.updateMany as jest.Mock).mockImplementation(
-        async () => {
-          callOrder.push("clamp_presence_joinedAt");
-          return { count: 1 };
-        },
+        recordStep(callOrder, "clamp_presence_joinedAt", { count: 1 }),
       );
       (prisma.meetingAttendance.upsert as jest.Mock).mockImplementation(
-        async () => {
-          callOrder.push("upsert_attendance");
-          return {};
-        },
+        recordStep(callOrder, "upsert_attendance", {}),
       );
       (prisma.meetingAttendance.updateMany as jest.Mock).mockImplementation(
-        async () => {
-          callOrder.push("clamp_attendance_firstJoinedAt");
-          return { count: 1 };
-        },
+        recordStep(callOrder, "clamp_attendance_firstJoinedAt", { count: 1 }),
       );
 
       await handleSessionParticipantJoined({
@@ -591,14 +626,18 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       );
     });
 
-    it("closes joined-after-ended interval immediately with leftAt = meeting.endedAt without clearing lastLeftAt", async () => {
+    it("closes joined-after-ended interval immediately when initial read or concurrent call.ended sets endedAt", async () => {
       const endedAt = new Date("2026-10-10T10:30:00Z");
-      (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
-        id: "mtg-ended",
-        endedAt,
-        endedReason: "call_ended",
-        appointmentOccurrenceId: "occ-2",
-      });
+      // Concurrent race: initial read sees non-deliberate endedAt=10:20, reopen updateMany returns count=0 because call.ended stamped 10:30
+      (prisma.meeting.findUnique as jest.Mock)
+        .mockResolvedValueOnce({
+          id: "mtg-ended",
+          endedAt: new Date("2026-10-10T10:20:00Z"),
+          endedReason: "session_ended",
+          appointmentOccurrenceId: "occ-2",
+        })
+        .mockResolvedValueOnce({ endedAt });
+      (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
       (prisma.meetingPresence.createMany as jest.Mock).mockResolvedValue({
         count: 1,
       });
@@ -630,20 +669,49 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       );
     });
 
-    it("runs reconcileWebinarAttendance on handleSessionEnded even if call.ended is dropped", async () => {
+    it("scopes reconcileWebinarAttendance to webinar/class meetings and preserves end stamp on Stream errors", async () => {
       const joinedAt = new Date("2026-10-10T10:02:00Z");
       const endedAt = new Date("2026-10-10T11:05:00Z");
-      (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
-        id: "mtg-web",
-        streamCallId: "webinar-call",
-        appointmentOccurrenceId: "occ-web",
-        endedAt: null,
-        occurrence: {
-          id: "occ-web",
-          startsAt: new Date("2026-10-10T10:00:00Z"),
-          endsAt: new Date("2026-10-10T11:00:00Z"),
-        },
-      });
+      (prisma.meeting.findUnique as jest.Mock)
+        // 1. Webinar meeting -> reconciles participants
+        .mockResolvedValueOnce({
+          id: "mtg-web",
+          streamCallId: "webinar-call",
+          appointmentOccurrenceId: "occ-web",
+          endedAt: null,
+          occurrence: {
+            id: "occ-web",
+            startsAt: new Date("2026-10-10T10:00:00Z"),
+            endsAt: new Date("2026-10-10T11:00:00Z"),
+            appointment: { webinar: { id: "web-1" }, class: null },
+          },
+        })
+        // 2. 1-on-1 consultation -> skips Stream participant query
+        .mockResolvedValueOnce({
+          id: "mtg-consult",
+          streamCallId: "consult-call",
+          appointmentOccurrenceId: "occ-consult",
+          endedAt: null,
+          occurrence: {
+            id: "occ-consult",
+            startsAt: new Date("2026-10-10T10:00:00Z"),
+            endsAt: new Date("2026-10-10T11:00:00Z"),
+            appointment: { webinar: null, class: null },
+          },
+        })
+        // 3. Webinar retry when Stream API rejects -> warns without failing handler
+        .mockResolvedValueOnce({
+          id: "mtg-web-retry",
+          streamCallId: "webinar-retry",
+          appointmentOccurrenceId: "occ-web-retry",
+          endedAt,
+          occurrence: {
+            id: "occ-web-retry",
+            startsAt: new Date("2026-10-10T10:00:00Z"),
+            endsAt: new Date("2026-10-10T11:00:00Z"),
+            appointment: { webinar: null, class: { id: "cls-1" } },
+          },
+        });
       (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
       (prisma.meetingPresence.createMany as jest.Mock).mockResolvedValue({
         count: 1,
@@ -651,16 +719,16 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       (prisma.meetingPresence.updateMany as jest.Mock).mockResolvedValue({
         count: 1,
       });
-      (getCallParticipantSessionsFromStream as jest.Mock).mockResolvedValueOnce(
-        [
+      (getCallParticipantSessionsFromStream as jest.Mock)
+        .mockResolvedValueOnce([
           {
             userId: "attendee-1",
             userSessionId: "sess-a1",
             joinedAt,
             leftAt: null,
           },
-        ],
-      );
+        ])
+        .mockRejectedValueOnce(new Error("Stream rate limit"));
       (prisma.meetingAttendance.upsert as jest.Mock).mockResolvedValue({});
       (prisma.meetingAttendance.updateMany as jest.Mock).mockResolvedValue({
         count: 1,
@@ -684,6 +752,25 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           }),
         }),
       );
+
+      await handleSessionEnded({
+        type: "call.session_ended",
+        call_cid: "default:consult-call",
+        created_at: endedAt.toISOString(),
+      });
+      expect(getCallParticipantSessionsFromStream).toHaveBeenCalledTimes(1);
+
+      await expect(
+        handleSessionEnded({
+          type: "call.session_ended",
+          call_cid: "default:webinar-retry",
+          created_at: endedAt.toISOString(),
+        }),
+      ).resolves.toBeUndefined();
+      expect(streamLogger.warn).toHaveBeenCalledWith(
+        "Webinar attendance backfill failed; end stamp preserved",
+        expect.objectContaining({ meetingId: "mtg-web-retry" }),
+      );
     });
 
     it("executes handleSessionParticipantLeft in strict MeetingPresence -> MeetingAttendance order inside $transaction", async () => {
@@ -695,28 +782,16 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         appointmentOccurrenceId: "occ-left",
       });
       (prisma.meetingPresence.createMany as jest.Mock).mockImplementation(
-        async () => {
-          order.push("create_presence");
-          return { count: 1 };
-        },
+        recordStep(order, "create_presence", { count: 1 }),
       );
       (prisma.meetingPresence.updateMany as jest.Mock).mockImplementation(
-        async () => {
-          order.push("update_presence_leftAt");
-          return { count: 1 };
-        },
+        recordStep(order, "update_presence_leftAt", { count: 1 }),
       );
       (prisma.meetingAttendance.upsert as jest.Mock).mockImplementation(
-        async () => {
-          order.push("upsert_attendance");
-          return {};
-        },
+        recordStep(order, "upsert_attendance", {}),
       );
       (prisma.meetingAttendance.updateMany as jest.Mock).mockImplementation(
-        async () => {
-          order.push("advance_attendance_lastLeftAt");
-          return { count: 1 };
-        },
+        recordStep(order, "advance_attendance_lastLeftAt", { count: 1 }),
       );
 
       await handleSessionParticipantLeft({
@@ -747,10 +822,10 @@ describe("Stream Webhook Megafix Regression Suite", () => {
       expect(parseSlotIdFromCallId("unrelated-call")).toBeNull();
     });
 
-    it("always updates recordingStartedAt on handleRecordingStarted and transitions RECORDING -> PROCESSING on stop", async () => {
+    it("advances recordingStartedAt monotonically on handleRecordingStarted and transitions RECORDING -> PROCESSING on stop", async () => {
       (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
         id: "mtg-rec",
-        recordingStartedAt: new Date("2026-10-10T10:00:00Z"),
+        recordingStartedAt: new Date("2026-10-10T10:10:00Z"),
         recordingStartedBy: "host-1",
       });
       (prisma.meeting.update as jest.Mock).mockResolvedValue({});
@@ -758,13 +833,24 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         count: 1,
       });
 
+      // Out-of-order older started timestamp does not move recordingStartedAt backwards
+      await handleRecordingStarted({
+        type: "call.recording_started",
+        call_cid: "default:call-rec",
+        created_at: "2026-10-10T10:05:00Z",
+      });
+      expect(prisma.meeting.update).toHaveBeenLastCalledWith({
+        where: { id: "mtg-rec" },
+        data: { isRecording: true },
+      });
+
+      // Newer started timestamp advances recordingStartedAt
       await handleRecordingStarted({
         type: "call.recording_started",
         call_cid: "default:call-rec",
         created_at: "2026-10-10T10:15:00Z",
       });
-
-      expect(prisma.meeting.update).toHaveBeenCalledWith({
+      expect(prisma.meeting.update).toHaveBeenLastCalledWith({
         where: { id: "mtg-rec" },
         data: {
           isRecording: true,

@@ -33,7 +33,7 @@ Official citations:
 
 From [Official RazorpayX Account Validation Docs](https://razorpay.com/docs/api/x/account-validation/bank-account/):
 
-> _"The `completed` status does not determine if a fund account is valid or not. It only notifies you that the validation process has been completed. Refer to the `results` parameter in the response to know the validation outcome."_
+> _"The `completed` status does not determine whether a fund account is valid. It only notifies you that the validation process has been completed. Refer to the `results` parameter in the response to know the validation outcome."_
 
 - When a bank account or VPA is **invalid** or inactive, the validation process still finishes with:
   - `status: "completed"` (firing `fund_account.validation.completed`)
@@ -75,7 +75,7 @@ To guarantee zero-loss payout account onboarding:
    - Verified at `POST /api/webhooks/razorpay` via `isPayoutEventName(body)` (`event.startsWith("fund_account.")`) under `RAZORPAYX_WEBHOOK_SECRET` (or `RAZORPAY_WEBHOOK_SECRET`), deduplicated on `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}`.
    - Normalizes both standard penny-drop (`results`) and RPD (`validation_results`) payloads through `summariseFundAccountValidation` (`lib/payments/payouts/razorpay-payouts.ts`), requiring `eventType === "fund_account.validation.completed"` **and** explicit `accountStatus === "valid"` (`account_status === "active"`).
    - Matches authoritatively on `razorpayFundAccId` (`PayoutAccount`) / `razorpayFundAccountId` (`OrganizationPayoutAccount`) when present — never joining `razorpayFundAccId` and `consultantProfileId` via `OR` — so swapping bank accounts mid-validation never marks an unvalidated replacement account as verified.
-   - On `fund_account.validation.failed` (or non-active validation outcome): transitions `OrganizationPayoutAccount` (`PENDING_VERIFICATION -> FAILED_VERIFICATION`) via CAS `updateMany` without verifying invalid accounts.
+   - On `fund_account.validation.failed` (or non-active validation outcome): transitions `OrganizationPayoutAccount` (`PENDING_VERIFICATION -> FAILED_VERIFICATION`) via CAS `updateMany`, matching on `razorpayFundAccountId` when `fund_account.id` is present and falling back to `{ id: referenceId, status: "PENDING_VERIFICATION" }` when `entity.fund_account` is `null`.
 
 ---
 

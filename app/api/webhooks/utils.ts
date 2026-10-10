@@ -6,7 +6,7 @@ import {
   isLegalDisputeTransition,
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
-import { Prisma, PaymentGateway } from "@prisma/client";
+import { Prisma, PaymentGateway, DisputeStatus } from "@prisma/client";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
@@ -1377,9 +1377,6 @@ export async function handleDisputeCreated(
           // earnings stay payable until the 6h reconcile-disputes cron — page on it,
           // unless the lookup-failure catch above already paged for this incident.
           if (!unlinkAlertRecorded) {
-            // Staged, not written — see `stagedUnlinkAlert`. Writing through the
-            // tx meant a CRITICAL page was rolled back with everything else, on
-            // precisely the failure it was raised to catch.
             stagedUnlinkAlert = {
               category: "WEBHOOK",
               summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
@@ -1388,7 +1385,7 @@ export async function handleDisputeCreated(
               correlationId: disputeId,
             };
           }
-          return;
+          return new DeferSignal(`dispute_before_payment:${disputeId}`);
         }
 
         // Check if dispute already exists
@@ -1994,24 +1991,132 @@ export async function settleLostDispute(
 /**
  * Handle dispute updated event (status change, evidence submitted, etc.)
  */
+const TERMINAL_DISPUTE_STATUSES: DisputeStatus[] = [
+  "WON",
+  "LOST",
+  "CHARGE_REFUNDED",
+  "CLOSED",
+  "WARNING_CLOSED",
+];
+
+async function releaseHeldEarningsOnDisputeWon(
+  tx: Tx,
+  paymentId: string,
+  disputeRowId: string,
+  disputeId: string,
+): Promise<void> {
+  const openSiblingDisputes = tx.dispute.count
+    ? await tx.dispute.count({
+        where: {
+          paymentId,
+          id: { not: disputeRowId },
+          status: { notIn: TERMINAL_DISPUTE_STATUSES },
+        },
+      })
+    : 0;
+  if (openSiblingDisputes > 0) return;
+
+  const relPending = await tx.consultantEarnings.updateMany({
+    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING" },
+    data: { status: "PENDING", preDisputeStatus: null },
+  });
+  const relTrust = await tx.consultantEarnings.updateMany({
+    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING_TRUST" },
+    data: { status: "PENDING_TRUST", preDisputeStatus: null },
+  });
+  const released = await tx.consultantEarnings.updateMany({
+    where: { paymentId, status: "HELD" },
+    data: { status: "READY", preDisputeStatus: null },
+  });
+  if (relPending.count + released.count + relTrust.count > 0) {
+    console.log(
+      `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
+    );
+  }
+
+  const orgRelPending = await tx.organizationEarnings.updateMany({
+    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING" },
+    data: { status: "PENDING", preDisputeStatus: null },
+  });
+  const orgRelTrust = await tx.organizationEarnings.updateMany({
+    where: { paymentId, status: "HELD", preDisputeStatus: "PENDING_TRUST" },
+    data: { status: "PENDING_TRUST", preDisputeStatus: null },
+  });
+  const orgReleased = await tx.organizationEarnings.updateMany({
+    where: { paymentId, status: "HELD" },
+    data: { status: "READY", preDisputeStatus: null },
+  });
+  if (orgReleased.count + orgRelPending.count + orgRelTrust.count > 0) {
+    console.log(
+      `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
+    );
+  }
+}
+
+async function stageDisputeUpdatedNotification(
+  tx: Tx,
+  dispute: {
+    paymentId: string;
+    amountPaise: number;
+    currency: string;
+    reason: string | null;
+  },
+  priorStatus: DisputeStatus,
+  mappedStatus: DisputeStatus,
+  disputeId: string,
+): Promise<StagedTrigger | null> {
+  if (priorStatus === "UNDER_REVIEW" && mappedStatus === "NEEDS_RESPONSE") {
+    const disputePayment = await tx.payment.findUnique({
+      where: { id: dispute.paymentId },
+    });
+    if (!disputePayment) return null;
+    const notifications = await notifyDisputeCreated(
+      [disputePayment.userId],
+      {
+        disputeId,
+        amount: dispute.amountPaise,
+        currency: dispute.currency,
+        reason: dispute.reason || "",
+        status: mappedStatus,
+        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+      },
+      { tx, entityRef: `dispute:${disputeId}:reopened` },
+    );
+    return notifications?.[0]?.staged ?? null;
+  }
+
+  if (TERMINAL_DISPUTE_STATUSES.includes(mappedStatus)) {
+    const disputePayment = await tx.payment.findUnique({
+      where: { id: dispute.paymentId },
+    });
+    if (!disputePayment) return null;
+    const notifications = await notifyDisputeResolved(
+      [disputePayment.userId],
+      {
+        disputeId,
+        amount: dispute.amountPaise,
+        currency: dispute.currency,
+        reason: dispute.reason || undefined,
+        status: mappedStatus,
+        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+      },
+      { tx, entityRef: `dispute:${disputeId}` },
+    );
+    return notifications?.[0]?.staged ?? null;
+  }
+
+  return null;
+}
+
 export async function handleDisputeUpdated(
   disputeId: string,
   status: string,
-  evidence: Record<string, unknown> | null,
+  evidence: Prisma.InputJsonValue | null,
   respondBy?: number | null,
 ) {
-  // #1020-2 — staged inside the tx, dispatched only after COMMIT (declared
-  // here because the tx callback assigns it).
-  let consultantClawbackPage: LostDisputeSettlement["consultantClawbackPage"] =
-    null;
-  // #1654 — the bell is staged inside the tx and sent only after COMMIT.
-  let stagedNotification: StagedTrigger | null = null;
-
-  const result = await withSerializableRetry(() =>
+  const txOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        consultantClawbackPage = null;
-        stagedNotification = null;
         const dispute = await tx.dispute.findUnique({
           where: { disputeId },
           include: {
@@ -2027,7 +2132,11 @@ export async function handleDisputeUpdated(
 
         if (!dispute) {
           console.warn(`Dispute not found: ${disputeId}`);
-          return new DeferSignal("dispute_not_created_yet");
+          return {
+            deferred: new DeferSignal("dispute_not_created_yet"),
+            notification: null,
+            clawbackPage: null,
+          };
         }
 
         const mappedStatus = mapDisputeStatus(status);
@@ -2035,25 +2144,21 @@ export async function handleDisputeUpdated(
           console.warn(
             `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
           );
-          return;
+          return { notification: null, clawbackPage: null };
         }
 
         const priorStatus = dispute.status;
-        if (priorStatus === mappedStatus) {
-          console.log(`Dispute ${disputeId} already ${mappedStatus} — no-op`);
-          return;
-        }
-        if (!isLegalDisputeTransition(priorStatus, mappedStatus)) {
-          console.warn(
-            `Illegal dispute transition ${priorStatus} → ${mappedStatus} for ${disputeId} — skipping`,
-          );
-          return;
+        if (
+          priorStatus === mappedStatus ||
+          !isLegalDisputeTransition(priorStatus, mappedStatus)
+        ) {
+          return { notification: null, clawbackPage: null };
         }
 
         const updateData = {
           status: mappedStatus,
           ...(respondBy ? { dueBy: new Date(respondBy * 1000) } : {}),
-          ...(evidence && { evidence: evidence as Prisma.InputJsonValue }),
+          ...(evidence ? { evidence } : {}),
           updatedAt: new Date(),
         };
         if (tx.dispute.updateMany) {
@@ -2062,7 +2167,7 @@ export async function handleDisputeUpdated(
             data: updateData,
           });
           if (updated.count === 0) {
-            return;
+            return { notification: null, clawbackPage: null };
           }
         } else {
           await tx.dispute.update({
@@ -2071,149 +2176,36 @@ export async function handleDisputeUpdated(
           });
         }
 
-        console.log(
-          `✅ Dispute ${disputeId} updated to status ${mappedStatus}`,
-        );
-
-        if (
-          priorStatus === "UNDER_REVIEW" &&
-          mappedStatus === "NEEDS_RESPONSE"
-        ) {
-          const disputePayment = await tx.payment.findUnique({
-            where: { id: dispute.paymentId },
-          });
-          if (disputePayment) {
-            const notifications = await notifyDisputeCreated(
-              [disputePayment.userId],
-              {
-                disputeId,
-                amount: dispute.amountPaise,
-                currency: dispute.currency,
-                reason: dispute.reason || "",
-                status: mappedStatus,
-                dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-              },
-              { tx, entityRef: `dispute:${disputeId}:reopened` },
-            );
-            stagedNotification = notifications?.[0]?.staged ?? null;
-          }
-        }
-
+        let clawbackPage: LostDisputeSettlement["consultantClawbackPage"] =
+          null;
         if (
           mappedStatus === "WON" ||
           mappedStatus === "WARNING_CLOSED" ||
           mappedStatus === "CLOSED"
         ) {
-          const openSiblingDisputes = tx.dispute.count
-            ? await tx.dispute.count({
-                where: {
-                  paymentId: dispute.paymentId,
-                  id: { not: dispute.id },
-                  status: {
-                    notIn: [
-                      "WON",
-                      "LOST",
-                      "CHARGE_REFUNDED",
-                      "CLOSED",
-                      "WARNING_CLOSED",
-                    ],
-                  },
-                },
-              })
-            : 0;
-          if (openSiblingDisputes === 0) {
-            const relPending = await tx.consultantEarnings.updateMany({
-              where: {
-                paymentId: dispute.paymentId,
-                status: "HELD",
-                preDisputeStatus: "PENDING",
-              },
-              data: { status: "PENDING", preDisputeStatus: null },
-            });
-            const relTrust = await tx.consultantEarnings.updateMany({
-              where: {
-                paymentId: dispute.paymentId,
-                status: "HELD",
-                preDisputeStatus: "PENDING_TRUST",
-              },
-              data: { status: "PENDING_TRUST", preDisputeStatus: null },
-            });
-            const released = await tx.consultantEarnings.updateMany({
-              where: { paymentId: dispute.paymentId, status: "HELD" },
-              data: { status: "READY", preDisputeStatus: null },
-            });
-            if (relPending.count + released.count + relTrust.count > 0) {
-              console.log(
-                `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-              );
-            }
-            const orgRelPending = await tx.organizationEarnings.updateMany({
-              where: {
-                paymentId: dispute.paymentId,
-                status: "HELD",
-                preDisputeStatus: "PENDING",
-              },
-              data: { status: "PENDING", preDisputeStatus: null },
-            });
-            const orgRelTrust = await tx.organizationEarnings.updateMany({
-              where: {
-                paymentId: dispute.paymentId,
-                status: "HELD",
-                preDisputeStatus: "PENDING_TRUST",
-              },
-              data: { status: "PENDING_TRUST", preDisputeStatus: null },
-            });
-            const orgReleased = await tx.organizationEarnings.updateMany({
-              where: { paymentId: dispute.paymentId, status: "HELD" },
-              data: { status: "READY", preDisputeStatus: null },
-            });
-            if (
-              orgReleased.count + orgRelPending.count + orgRelTrust.count >
-              0
-            ) {
-              console.log(
-                `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-              );
-            }
-          }
+          await releaseHeldEarningsOnDisputeWon(
+            tx,
+            dispute.paymentId,
+            dispute.id,
+            disputeId,
+          );
         } else if (
           mappedStatus === "LOST" ||
           mappedStatus === "CHARGE_REFUNDED"
         ) {
           const settlement = await settleLostDispute(tx, dispute);
-          consultantClawbackPage = settlement.consultantClawbackPage;
+          clawbackPage = settlement.consultantClawbackPage;
         }
 
-        // --- Novu notification for resolved disputes (fire-and-forget) ---
-        const resolvedStatuses = [
-          "WON",
-          "LOST",
-          "CHARGE_REFUNDED",
-          "WARNING_CLOSED",
-          "CLOSED",
-        ];
-        if (resolvedStatuses.includes(mappedStatus)) {
-          const disputePayment = await tx.payment.findUnique({
-            where: { id: dispute.paymentId },
-          });
+        const notification = await stageDisputeUpdatedNotification(
+          tx,
+          dispute,
+          priorStatus,
+          mappedStatus,
+          disputeId,
+        );
 
-          if (disputePayment) {
-            const notifications = await notifyDisputeResolved(
-              [disputePayment.userId],
-              {
-                disputeId,
-                amount: dispute.amountPaise,
-                currency: dispute.currency,
-                reason: dispute.reason || undefined,
-                status: mappedStatus,
-                // #1527 — the recipient is always the payer.
-                dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-              },
-              { tx, entityRef: `dispute:${disputeId}` },
-            );
-            stagedNotification = notifications?.[0]?.staged ?? null;
-          }
-        }
+        return { notification, clawbackPage };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -2223,30 +2215,20 @@ export async function handleDisputeUpdated(
     ),
   );
 
-  // #1654 — post-commit inline attempt; a timeout leaves the row for the drain.
-  await attemptStaged(stagedNotification);
+  await attemptStaged(txOutcome.notification);
 
-  const stagedClawbackPage = consultantClawbackPage as {
-    disputeId: string;
-    paymentId: string;
-    /** NET auto-booked as receivable — the figure an operator can collect. */
-    amountPaise: number;
-    /** GROSS share reversed on the earnings. Higher than `amountPaise` by the TDS. */
-    grossReversedPaise: number;
-    earnings: number;
-    clawbackKeys: string[];
-  } | null;
-  if (stagedClawbackPage) {
+  if (txOutcome.clawbackPage) {
+    const page = txOutcome.clawbackPage;
     void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYOUT",
-      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) on dispute ${stagedClawbackPage.disputeId} — ${stagedClawbackPage.amountPaise} paise auto-booked as receivable(s) ${stagedClawbackPage.clawbackKeys.join(", ") || "none — collect by hand"}. The gross share reversed is ${stagedClawbackPage.grossReversedPaise} paise; the receivable is NET of TDS because the transfer was net, so collect the NET figure and do not pursue the withheld tax (it is reversed separately by recordTdsReversal).`,
+      summary: `Chargeback clawback needed: ${page.earnings} PAID consultant earning(s) on dispute ${page.disputeId} — ${page.amountPaise} paise auto-booked as receivable(s) ${page.clawbackKeys.join(", ") || "none — collect by hand"}. The gross share reversed is ${page.grossReversedPaise} paise; the receivable is NET of TDS because the transfer was net, so collect the NET figure and do not pursue the withheld tax (it is reversed separately by recordTdsReversal).`,
       err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
-      context: { ...stagedClawbackPage },
+      context: { ...page },
     });
   }
 
-  return result;
+  return txOutcome.deferred;
 }
 
 /**

@@ -29,7 +29,7 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 jest.mock("../../lib/stream/webhook-dispatch", () => ({
   processStreamEvent: jest.fn(),
 }));
-jest.mock("../../app/api/webhooks/novu/route", () => ({
+jest.mock("../../lib/webhooks/novu-handler", () => ({
   processNovuWebhookPayload: jest.fn(),
 }));
 
@@ -48,7 +48,7 @@ jest.mock("../../lib/observability/report", () => ({
 
 import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
-import { processNovuWebhookPayload } from "../../app/api/webhooks/novu/route";
+import { processNovuWebhookPayload } from "../../lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
@@ -187,7 +187,7 @@ describe("sweepStuckWebhookEvents", () => {
     );
   });
 
-  it("a throw mid-dispatch is caught and CAS-updated with processed: false + error", async () => {
+  it("a throw mid-dispatch is caught and CAS-updated with rotated claimedAt + error", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockRejectedValue(new Error("kaboom"));
 
@@ -204,6 +204,7 @@ describe("sweepStuckWebhookEvents", () => {
         data: expect.objectContaining({
           processed: false,
           processedAt: null,
+          claimedAt: expect.any(Date),
           error: "sweep-failed: kaboom",
         }),
       }),
@@ -237,7 +238,7 @@ describe("sweepStuckWebhookEvents", () => {
     expect(mockWe.update).not.toHaveBeenCalled();
   });
 
-  it("a deferred event past the give-up cap is terminally marked via CAS updateMany + counted", async () => {
+  it("a deferred event past the give-up cap is terminally marked via CAS updateMany with rotated claimedAt", async () => {
     const old = new Date(Date.now() - 200 * 60 * 60_000);
     mockWe.findMany.mockResolvedValue([
       stuckRow({ eventId: "refund.created:rfnd_2", receivedAt: old }),
@@ -258,6 +259,7 @@ describe("sweepStuckWebhookEvents", () => {
         data: expect.objectContaining({
           processed: false,
           processedAt: null,
+          claimedAt: expect.any(Date),
           error: "gave up: payment never arrived",
         }),
       }),

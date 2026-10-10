@@ -111,7 +111,7 @@ LIMIT 20;
 | `RAZORPAYX_WEBHOOK_SECRET`             | RazorpayX | Dedicated HMAC-SHA256 secret tried **only** when `isPayoutEventName(body)` matches `payout.*` or `fund_account.*`.                      |
 | `STREAM_API_KEY` / `STREAM_API_SECRET` | Stream    | Verifies `X-Api-Key` and `X-Signature` over uncompressed UTF-8 payload bytes.                                                           |
 | `RESEND_WEBHOOK_SECRET`                | Resend    | Svix `whsec_...` secret verifying `svix-id`, `svix-timestamp` (5m window), and `svix-signature`.                                        |
-| `NOVU_WEBHOOK_SECRET`                  | Novu      | Verifies Svix outbound webhooks (`svix-id` / `webhook-id`, 5m window) or channel HMAC (`x-novu-signature`).                             |
+| `NOVU_WEBHOOK_SECRET`                  | Novu      | Verifies Svix outbound webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, 5m window) or channel HMAC (`x-novu-signature`).        |
 
 ---
 
@@ -123,7 +123,7 @@ Executed weekly on Sunday at 00:00 UTC via `scripts/cleanup/archive-webhook-even
 | ------------------------- | ---------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `WebhookEvent`            | `processed = true AND error IS NULL`                             | **30 days**      | Retains clean idempotency history far past every provider's retry window (max 5 days on Novu, 3 days on Stripe, 24h on Razorpay). |
 | `WebhookEvent`            | `processed = false AND error LIKE 'permanent:%' \| 'gave up:%'`  | **30 days**      | Prunes unreplayable terminal payloads (`TERMINAL_ERROR_PREFIXES`) after monthly inspection window.                                |
-| `WebhookEvent`            | Other failed rows (`processed = false OR error IS NOT NULL`)     | **90 days**      | Retains non-terminal failed/errored payloads for quarterly financial audit inspection.                                            |
+| `WebhookEvent`            | Other failed rows (`processed = false AND error IS NOT NULL`)    | **90 days**      | Retains non-terminal failed/errored payloads for quarterly financial audit inspection.                                            |
 | `EmailEvent`              | All recorded Resend delivery events                              | **90 days**      | Retains delivery audit logs for 90 days while permanent `EmailSuppression` records persist indefinitely.                          |
 | `OutboundWebhookDelivery` | Terminal rows (`status IN ('SUCCESS', 'FAILED', 'DEAD_LETTER')`) | **30 days**      | Prunes completed enterprise tenant webhook delivery logs without touching active retry queue entries.                             |
 

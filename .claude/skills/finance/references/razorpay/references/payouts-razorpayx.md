@@ -88,23 +88,28 @@ Official citations:
 | `updated`             | `payout.updated`                      | Current mapped status                     | Deduplicated via `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}` so consecutive `status_details` updates and delayed `utr` assignments both apply onto `ConsultantPayout` and `OrganizationPayout`.                           |
 | `failed` / `rejected` | `payout.failed` / `payout.rejected`   | `FAILED`                                  | Un-batches `ConsultantEarnings` / `OrganizationEarnings` back to `READY` and reverses TDS.                                                                                                                                               |
 | `cancelled`           | `payout.cancelled`                    | `CANCELLED`                               | Handled for both consultant and organization payouts; transitions non-terminal payout rows to `CANCELLED`, un-batches linked earnings back to `READY`, and reverses TDS.                                                                 |
-| `reversed`            | `payout.reversed`                     | `FAILED`                                  | Partner bank returned funds after dispatch or after `COMPLETED` (up to T+3 working days on IMPS/NEFT). Runs single-transaction atomic reversal (`markConsultantPayoutReversed` / `markOrgPayoutReversed`).                               |
+| `reversed`            | `payout.reversed`                     | `REVERSED`                                | Partner bank returned funds pre-settlement or post-settlement (up to T+3 working days on IMPS/NEFT). Runs single-transaction atomic reversal (`markConsultantPayoutReversed` / `markOrgPayoutReversed`).                                 |
 
 ### Critical Payout Webhook & Reconciler Invariants
 
 1. **Single-Transaction Atomic `markConsultantPayoutReversed` & `markOrgPayoutReversed` (`PG_POOL_MAX=1` Safe)**:
-   - Partner banks can reject and credit funds back (`payout.reversed`) days **after** `payout.processed` already marked the payout `COMPLETED`, settled earnings as `PAID`, and posted the disbursement ledger entry.
-   - Both `markConsultantPayoutReversed` (`payout-service.ts`) and `markOrgPayoutReversed` (`org-payout-service.ts`) execute **all four steps atomically inside a single `prisma.$transaction(async (tx) => ...)`** passing `tx` to every helper (never touching global `prisma` under `PG_POOL_MAX=1`):
-     1. Conditional CAS transition on the payout row (`where: { id, status: { not: "FAILED" } }`) to `status: "FAILED"` with failure reason.
-     2. Inverse ledger posting (`postLedgerTxn(tx, ...)` keyed on `payout-reversal:<payoutId>`) restoring cash/payable balances if the original payout ledger entry had been posted.
-     3. Un-batching and re-opening linked `ConsultantEarnings` / `OrganizationEarnings` (`where: { payoutId, status: { in: ["PAID", "READY", "PROCESSING"] } }` → `status: "READY", payoutId: null`).
-     4. Reversing Section 194J / 194-O tax deductions (`recordTdsReversal(tx, ...)`) so re-disbursing the earnings does not deduct TDS twice.
-2. **`FAILED` Exclusion From `COMPLETED` Transitions**:
-   - Because webhook delivery order is not guaranteed across retries, a delayed `payout.processed` or `payout.updated` webhook can arrive _after_ `payout.reversed` (or after an operator/reconciler marked the payout `FAILED`).
-   - Both `markConsultantPayoutCompleted` and `markOrgPayoutCompleted` enforce `status: { in: ["PENDING", "PROCESSING"] }` in their conditional `updateMany` `WHERE` clause, ensuring a `FAILED` / reversed payout can **never** flip back to `COMPLETED` after its earnings were already un-batched to `READY`.
+   - Partner banks can return funds either **after** `payout.processed` settled (`COMPLETED -> REVERSED`) or while a batch is still in flight (`PENDING` / `PROCESSING` / `APPROVED` -> `REVERSED`).
+   - Both `markConsultantPayoutReversed` (`payout-service.ts`) and `markOrgPayoutReversed` (`org-payout-service.ts`) handle both branches inside a single `prisma.$transaction(async (tx) => ...)` passing `tx` to every helper (never touching global `prisma` under `PG_POOL_MAX=1`):
+     - **Post-Settlement Branch (`COMPLETED -> REVERSED`)**:
+       1. Conditional CAS transition on the payout row (`where: { id, status: "COMPLETED" }`) to `status: "REVERSED"` with failure reason.
+       2. Re-opening settled earnings (`where: { payoutId, status: "PAID" }` -> `status: "READY", payoutId: null`).
+       3. Inverse ledger posting (`postLedgerTxn(tx, ...)` keyed on `payout-reversal:<payoutId>` / `orgpayout-reversal:<payoutId>`) restoring cash and payable balances.
+       4. Reversing Section 194J / 194-O tax deductions (`recordTdsReversal(tx, ...)` / `recordOrgTdsReversal(tx, ...)`).
+       5. Releasing netted clawback recoveries (`releaseClawbackRecovery(tx, payoutId)`).
+     - **Pre-Settlement Branch (`PENDING` / `PROCESSING` [/ `APPROVED` on org] -> `REVERSED`)**:
+       1. Conditional CAS transition on the payout row to `status: "REVERSED"`.
+       2. Detaching `BATCHED -> READY` earnings (`payoutId: null` / `orgPayoutId: null`) and removing pending non-reversal TDS records — with **no** inverse disbursement journal posted because completion never settled.
+2. **Non-Regression & Terminal Exclusion Guards on `handlePayoutWebhook`**:
+   - Non-terminal webhooks (`payout.queued`, `payout.pending`, `payout.initiated`) preserve `PayoutStatus.PROCESSING` on submitted consultant payouts so queued/pending gateway events never regress a submitted batch back to `PENDING`.
+   - Terminal `COMPLETED` transitions strictly exclude terminal rows (`COMPLETED`, `CANCELLED`, `REVERSED`, `FAILED`) in their CAS `WHERE` guard, ensuring a reversed or failed payout can never flip to `COMPLETED` after its earnings were reopened to `READY`.
 3. **`OrganizationPayout` `reference_id` Fallback & Post-Completion Reversal Reconciliation**:
-   - In `handleRazorpayPayoutWebhook`, organization payouts resolve by `gatewayPayoutId: payout.id` **first**, falling back to `id: payout.reference_id` (`where: { id: payout.reference_id, gatewayPayoutId: null }`) and atomically binding `gatewayPayoutId = payout.id` — closing the lost-HTTP-reply window identically for both `OrganizationPayout` and `ConsultantPayout`.
-   - Furthermore, `reconcile-payout-status` scans recent `COMPLETED` consultant and organization payouts alongside `PENDING`/`PROCESSING` payouts so even if a `payout.reversed` webhook is missed, post-completion bank reversals are detected via `getRazorpayPayoutStatus` and settled atomically.
+   - In `handleRazorpayPayoutWebhook`, organization payouts resolve by `gatewayPayoutId: payout.id` **first**, falling back to `id: payout.reference_id` (`where: { id: payout.reference_id, gatewayPayoutId: null }`) and atomically binding `gatewayPayoutId = payout.id` — closing the lost-HTTP-reply window across both `OrganizationPayout` and `ConsultantPayout`.
+   - Furthermore, `reconcile-payout-status` runs bounded scans (`orderBy: { processedAt: "asc" }, take: 100`) across recent `COMPLETED` `ConsultantPayout` (`providerPayoutId`) and `OrganizationPayout` (`gatewayPayoutId`) records so missed `payout.reversed` webhooks are detected via `getRazorpayPayoutStatus` and settled atomically through `markConsultantPayoutReversed` and `markOrgPayoutReversed`.
 4. **Deprecated `failure_reason` Fallback**:
    - Reads `payout.failure_reason ?? payout.status_details?.description ?? payout.status_details?.reason`.
 
@@ -112,6 +117,6 @@ Official citations:
 
 ## Deprecated & Superseded Approaches
 
-- **Multi-Step Non-Atomic Reversal Across Separate Queries**: Superseded by single-transaction `markConsultantPayoutReversed(tx)` and `markOrgPayoutReversed(tx)` so a serverless crash mid-reversal cannot leave a payout marked `FAILED` while its ledger posting and `PAID` earnings remain unreversed.
-- **Unconditional `update({ where: { id }, data: { status: "COMPLETED" } })`**: Superseded by CAS `updateMany` excluding `FAILED` so out-of-order `payout.processed` deliveries cannot resurrect an already-reversed payout.
+- **Multi-Step Non-Atomic Reversal Across Separate Queries**: Superseded by single-transaction `markConsultantPayoutReversed` and `markOrgPayoutReversed` so a serverless crash mid-reversal cannot leave a payout marked `REVERSED` while its ledger posting and `PAID` earnings remain unreversed.
+- **Unconditional `update({ where: { id }, data: { status: "COMPLETED" } })`**: Superseded by CAS `updateMany` excluding terminal statuses so out-of-order `payout.processed` deliveries cannot resurrect an already-reversed payout.
 - **Matching `OrganizationPayout` Solely by `gatewayPayoutId` and Ignoring `payout.cancelled` / `payout.updated`**: Superseded by `reference_id` fallback binding and full lifecycle handling across both consultant and org payouts.

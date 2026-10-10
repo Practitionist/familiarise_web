@@ -12,12 +12,12 @@ Official citations:
 
 ## Where It Lives in This Repo
 
-| File                                                                                                                                                                      | Responsibility                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts)                                                                                           | `postRefund` (raw `fetch` with `X-Refund-Idempotency` and HTTP 409 conflict handling), `capturedPaymentIdOfOrder`, `createRazorpayRefund`, `getRazorpayRefund`, `listRazorpayRefunds`, `isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`.                                                                                           |
-| [`lib/payments/operations/refund.ts`](../../../../../lib/payments/operations/refund.ts)                                                                                   | Two-phase refund reservation (`pending_<uuid>`), `applyRefundCascade` (ledger reversal, `ConsultantEarnings` / `OrganizationEarnings` CAS clawback, TDS 194-O reversal, GST `CreditNote` minting).                                                                                                                                                |
-| [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) & [`app/api/webhooks/utils.ts`](../../../../../app/api/webhooks/utils.ts) | Routes `refund.created`, `refund.processed`, `refund.failed`, and `refund.speed_changed`. Resolves `payment_id` (`pay_...`) → `order_id` (`order_...`) via `Payment.gatewayPaymentId` index and executes `handleRefundCreated` with in-place `pending_<uuid>` placeholder adoption via `metadata.reservationId` and before-capture `DeferSignal`. |
-| [`scripts/refunds/reconcile-pending-refunds.ts`](../../../../../scripts/refunds/reconcile-pending-refunds.ts)                                                             | Three-pass refund reconciler: (1) binds/retires `pending_<uuid>` placeholders via `notes.reservationId`, (2) polls real `rfnd_...` `PENDING` rows via `getRefund`, (3) re-drives stranded `SUCCEEDED` rows with `cascadedAt: null`.                                                                                                               |
+| File                                                                                                                                                                      | Responsibility                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts)                                                                                           | `postRefund` (raw `fetch` with `X-Refund-Idempotency` and HTTP 409 conflict handling), `capturedPaymentIdOfOrder`, `createRazorpayRefund`, `getRazorpayRefund`, `listRazorpayRefunds`, `isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`.                                                                                 |
+| [`lib/payments/operations/refund.ts`](../../../../../lib/payments/operations/refund.ts)                                                                                   | Two-phase refund reservation (`pending_<uuid>`), `applyRefundCascade` (ledger reversal, `ConsultantEarnings` / `OrganizationEarnings` CAS clawback, TDS 194-O reversal, GST `CreditNote` minting).                                                                                                                                      |
+| [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) & [`app/api/webhooks/utils.ts`](../../../../../app/api/webhooks/utils.ts) | Routes `refund.created`, `refund.processed`, `refund.failed`, and `refund.speed_changed`. Resolves `payment_id` (`pay_...`) → `order_id` (`order_...`) via `Payment.gatewayPaymentId` index and executes `handleRefundCreated` with placeholder adoption (`pending_<uuid>`) via `notes.reservationId` and before-capture `DeferSignal`. |
+| [`scripts/refunds/reconcile-pending-refunds.ts`](../../../../../scripts/refunds/reconcile-pending-refunds.ts)                                                             | Three-pass refund reconciler: (1) binds/retires `pending_<uuid>` placeholders via `notes.reservationId`, (2) polls real `rfnd_...` `PENDING` rows via `getRefund`, (3) replays stranded `SUCCEEDED` rows with `cascadedAt: null`.                                                                                                       |
 
 ---
 
@@ -39,7 +39,7 @@ From [Official Razorpay Idempotent Refunds Docs](https://razorpay.com/docs/api/r
 1. **Key Format (`IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{10,}$/`)**:
    - **Minimum length**: **10 characters** (shorter keys fail with `400 BAD_REQUEST_ERROR: "The idempotency key must be at least 10 characters long."`).
    - **Allowed characters**: **Alphanumeric (`A-Za-z0-9`), hyphens (`-`), and underscores (`_`) only**.
-   - **Caller contract**: We pass `Refund.id` (the Prisma row ID created in Phase 1) as `idempotencyKey` and embed `metadata: { reservationId: Refund.id }` (`notes.reservationId` on Razorpay). `postRefund` validates `IDEMPOTENCY_KEY_PATTERN` and fails closed (`REFUND_IDEMPOTENCY_KEY_INVALID`).
+   - **Caller contract**: We pass `Refund.id` (the Prisma row ID created in Phase 1) as `idempotencyKey` and embed `metadata: { reservationId: Refund.id }` (serialized on Razorpay as `notes.reservationId`). `postRefund` validates `IDEMPOTENCY_KEY_PATTERN` and fails closed (`REFUND_IDEMPOTENCY_KEY_INVALID`).
 2. **Duplicate Request Behavior & Two Distinct `409 Conflict` Cases**:
    - **Completed duplicate (same key + same body)**: Returns `200 OK` with the original refund entity.
    - **In-flight concurrent duplicate (`409 Conflict`)**: `"Another request with the same idempotency key is still in progress."` `postRefund` waits `1,000 ms` and retries once so a race resolves to the original refund.
@@ -83,27 +83,27 @@ From [Official Razorpay Refund Entity Docs](https://razorpay.com/docs/api/refund
 
 ---
 
-## 6. Two-Phase Reservation, In-Place Webhook Adoption & 3-Pass Reconciliation
+## 6. Two-Phase Reservation, Placeholder Adoption & 3-Pass Reconciliation
 
-### Two-Phase Reservation & In-Place Placeholder Adoption (`handleRefundCreated`)
+### Two-Phase Reservation & Placeholder Adoption (`handleRefundCreated`)
 
 1. **Phase 1 (Serializable DB Tx)**: Validates remaining refundable balance and creates a `Refund` row with `status: PENDING` and `refundId: "pending_<uuid>"`.
 2. **Phase 2 (External Gateway Call)**: Calls `createRazorpayRefund` with `idempotencyKey = Refund.id` and `metadata: { reservationId: Refund.id }` (persisted by Razorpay in `refund.entity.notes.reservationId`).
-3. **In-Place Adoption on Webhook Race (`handleRefundCreated`)**:
+3. **Placeholder Adoption on Webhook Race (`handleRefundCreated`)**:
    - Because Razorpay frequently fires `refund.created` / `refund.processed` **before** the post-gateway bind step of the outbound HTTP call finishes writing `rfnd_...` (or when that final DB update crashes after Razorpay accepts the request), inserting a fresh `Refund` row on the webhook would leave both `pending_<uuid>` and `rfnd_...` in Postgres — double-counting refunded paise against the payment's refundable ceiling!
-   - Inside its Serializable transaction (`tx`), `handleRefundCreated` checks `refund.entity.notes?.reservationId` (and unambiguous `pending_%` rows matching `paymentId` + `amount`) before creating any new record. When a matching `pending_<uuid>` placeholder exists, `handleRefundCreated` **adopts it in place** by updating `refundId = rfnd_...`, advancing `status` via CAS, and executing `applyRefundCascade(tx, ...)` atomically under `PG_POOL_MAX=1`.
+   - Inside its Serializable transaction (`tx`), `handleRefundCreated` checks `notes?.reservationId` (`where: { id: reservationId, paymentId: payment.id, amount: refundAmountPaise, refundId: { startsWith: "pending_" } }`) before creating any new record. When a matching `pending_<uuid>` placeholder exists, `handleRefundCreated` adopts that reservation row directly by updating `refundId = rfnd_...`, advancing `status` via CAS, and executing `applyRefundCascade(tx, ...)` atomically under `PG_POOL_MAX=1`.
 4. **Out-of-Order Before-Capture Deferral (`DeferSignal`)**:
-   - If `refund.created` or `refund.processed` arrives before `payment.captured` writes the `Payment` row, `handleRefundCreated` returns `new DeferSignal(...)` so `sweep-stuck-webhook-events` re-drives it cleanly once capture settles.
+   - If `refund.created` or `refund.processed` arrives before `payment.captured` writes the `Payment` row, `handleRefundCreated` returns `new DeferSignal(...)` so `sweep-stuck-webhook-events` replays it cleanly once capture settles.
 
 ### 3-Pass Reconciler (`scripts/refunds/reconcile-pending-refunds.ts`)
 
 1. **Pass 1 (`pending_<uuid>` Placeholders > 1h old)**: Matches via `gr.metadata?.reservationId === refund.id`, binds `rfnd_...` (or deletes the placeholder on `P2002` if a concurrent webhook already bound it), and expires unmatched placeholders after 24h.
 2. **Pass 2 (Real `rfnd_...` `PENDING` Rows > 1h old)**: Polls `getRazorpayRefund(refund.refundId)` without artificial local aging while bank rails report `"pending"`; marks `FAILED` only on gateway `"failed"` or `isRazorpayUnknownRefundIdError`.
-3. **Pass 3 (`redriveStrandedRefunds`)**: Re-drives `SUCCEEDED` rows with `cascadedAt: null` (>10 min old) through `applyRefundCascade`.
+3. **Pass 3 (`redriveStrandedRefunds`)**: Replays `SUCCEEDED` rows with `cascadedAt: null` (>10 min old) through `applyRefundCascade`.
 
 ---
 
 ## Deprecated & Superseded Approaches
 
-- **Creating a Separate `rfnd_...` Row in `handleRefundCreated` Without Checking `metadata.reservationId`**: Superseded by in-place adoption of `pending_<uuid>` rows (`notes.reservationId === Refund.id`), eliminating duplicate `Refund` records and false over-refund ceiling violations during webhook-before-HTTP-return races.
+- **Creating a Separate `rfnd_...` Row in `handleRefundCreated` Without Checking `notes.reservationId`**: Superseded by direct adoption of `pending_<uuid>` rows (`notes.reservationId === Refund.id`), eliminating duplicate `Refund` records and false over-refund ceiling violations during webhook-before-HTTP-return races.
 - **Throwing on Refund-Before-Capture Arrival**: Superseded by `DeferSignal` so early refund webhooks wait cleanly for `payment.captured` rather than recording false processing errors.

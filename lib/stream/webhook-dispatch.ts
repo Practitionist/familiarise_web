@@ -195,8 +195,8 @@ export {
   reclaimStaleProcessingWebhookEvent,
 } from "@/lib/stream/webhook-receipt";
 
-export const STREAM_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-export const STREAM_CLOCK_SKEW_MS = 5 * 60 * 1000;
+export const STREAM_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+export const STREAM_CLOCK_SKEW_MS = 2 * 60 * 1000;
 
 export function classifyStreamDeliveryAge(
   createdAt: Date,
@@ -204,7 +204,7 @@ export function classifyStreamDeliveryAge(
 ): string | null {
   const age = now - createdAt.getTime();
   if (age > STREAM_REPLAY_WINDOW_MS) {
-    return `permanent: replay_window_exceeded (age ${Math.round(age / 3_600_000)}h)`;
+    return `permanent: replay_window_exceeded (age ${Math.round(age / 1000)}s)`;
   }
   if (age < -STREAM_CLOCK_SKEW_MS) {
     return `permanent: created_at_in_future (${Math.round(-age / 1000)}s ahead)`;

@@ -29,7 +29,24 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
     }
     return out;
   }
-  return String(value ?? "");
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return "";
+}
+
+/** Terminal error prefixes skipped by background retry sweeps. */
+export const TERMINAL_ERROR_PREFIXES = ["gave up:", "permanent:"] as const;
+
+/** Formats a permanent unprocessable error marker for `WebhookEvent.error`. */
+export function permanentFailure(reason: string): string {
+  return `permanent: ${reason}`;
+}
+
+/** Returns true when `error` carries a terminal prefix that must never be retried. */
+export function isTerminalWebhookError(error: string | null): boolean {
+  if (error === null) return false;
+  return TERMINAL_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix));
 }
 
 /**
@@ -49,6 +66,97 @@ export async function isDbHealthy(): Promise<boolean> {
   }
 }
 
+async function resolveExistingWebhookEvent(
+  existing: {
+    id: string;
+    processed: boolean;
+    error: string | null;
+    claimedAt: Date | null;
+    receivedAt: Date;
+  },
+  eventId: string,
+  payload: unknown,
+): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+  if (existing.processed && existing.error === null) {
+    console.log(
+      `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
+    );
+    return { isNew: false, eventRecordId: existing.id };
+  }
+
+  if (isTerminalWebhookError(existing.error)) {
+    return { isNew: false, eventRecordId: existing.id };
+  }
+
+  if (existing.error !== null) {
+    const claimedAt = new Date();
+    const claimed = await prisma.webhookEvent.updateMany({
+      where: { eventId, error: { not: null } },
+      data: {
+        processed: false,
+        processedAt: null,
+        error: null,
+        claimedAt,
+        payload: toInputJson(payload),
+      },
+    });
+    if (claimed.count === 0) {
+      console.log(
+        `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+      );
+      return { isNew: false, eventRecordId: existing.id };
+    }
+    console.log(
+      `🔄 Webhook event ${eventId} previously failed, allowing retry`,
+    );
+    return {
+      isNew: true,
+      eventRecordId: existing.id,
+      claim: { claimedAt },
+    };
+  }
+
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+  const claimStamp = existing.claimedAt ?? existing.receivedAt;
+  const age = Date.now() - new Date(claimStamp).getTime();
+  if (age > STALE_THRESHOLD_MS) {
+    const claimedAt = new Date();
+    const claimed = await prisma.webhookEvent.updateMany({
+      where: {
+        eventId,
+        processed: false,
+        claimedAt: existing.claimedAt,
+      },
+      data: {
+        processed: false,
+        processedAt: null,
+        error: null,
+        claimedAt,
+        payload: toInputJson(payload),
+      },
+    });
+    if (claimed.count === 0) {
+      console.log(
+        `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+      );
+      return { isNew: false, eventRecordId: existing.id };
+    }
+    console.log(
+      `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
+    );
+    return {
+      isNew: true,
+      eventRecordId: existing.id,
+      claim: { claimedAt },
+    };
+  }
+
+  console.log(
+    `⚠️ Webhook event ${eventId} currently being processed, skipping`,
+  );
+  return { isNew: false, eventRecordId: existing.id };
+}
+
 /**
  * Records an inbound webhook delivery and claims execution rights atomically.
  * Concurrent workers facing active leases (< 5m) or unique violations receive `isNew: false`.
@@ -66,80 +174,7 @@ export async function logWebhookEvent(
     });
 
     if (existing) {
-      if (existing.processed && existing.error === null) {
-        console.log(
-          `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
-        );
-        return { isNew: false, eventRecordId: existing.id };
-      }
-
-      if (existing.error !== null) {
-        const claimedAt = new Date();
-        const claimed = await prisma.webhookEvent.updateMany({
-          where: { eventId, error: { not: null } },
-          data: {
-            processed: false,
-            processedAt: null,
-            error: null,
-            claimedAt,
-            payload: toInputJson(payload),
-          },
-        });
-        if (claimed.count === 0) {
-          console.log(
-            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
-          );
-          return { isNew: false, eventRecordId: existing.id };
-        }
-        console.log(
-          `🔄 Webhook event ${eventId} previously failed, allowing retry`,
-        );
-        return {
-          isNew: true,
-          eventRecordId: existing.id,
-          claim: { claimedAt },
-        };
-      }
-
-      const STALE_THRESHOLD_MS = 5 * 60 * 1000;
-      const claimStamp = existing.claimedAt ?? existing.receivedAt;
-      const age = Date.now() - new Date(claimStamp).getTime();
-      if (age > STALE_THRESHOLD_MS) {
-        const claimedAt = new Date();
-        const claimed = await prisma.webhookEvent.updateMany({
-          where: {
-            eventId,
-            processed: false,
-            claimedAt: existing.claimedAt,
-          },
-          data: {
-            processed: false,
-            processedAt: null,
-            error: null,
-            claimedAt,
-            payload: toInputJson(payload),
-          },
-        });
-        if (claimed.count === 0) {
-          console.log(
-            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
-          );
-          return { isNew: false, eventRecordId: existing.id };
-        }
-        console.log(
-          `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
-        );
-        return {
-          isNew: true,
-          eventRecordId: existing.id,
-          claim: { claimedAt },
-        };
-      }
-
-      console.log(
-        `⚠️ Webhook event ${eventId} currently being processed, skipping`,
-      );
-      return { isNew: false, eventRecordId: existing.id };
+      return resolveExistingWebhookEvent(existing, eventId, payload);
     }
 
     const event = await prisma.webhookEvent.create({
@@ -164,20 +199,6 @@ export async function logWebhookEvent(
     }
     throw error;
   }
-}
-
-/** Terminal error prefixes skipped by background retry sweeps. */
-export const TERMINAL_ERROR_PREFIXES = ["gave up:", "permanent:"] as const;
-
-/** Formats a permanent unprocessable error marker for `WebhookEvent.error`. */
-export function permanentFailure(reason: string): string {
-  return `permanent: ${reason}`;
-}
-
-/** Returns true when `error` carries a terminal prefix that must never be retried. */
-export function isTerminalWebhookError(error: string | null): boolean {
-  if (error === null) return false;
-  return TERMINAL_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix));
 }
 
 /**

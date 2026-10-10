@@ -71,18 +71,18 @@ Inside Razorpay Checkout, all payment attempts within one checkout session share
 
 ### 4. Dispute Lifecycle & Multi-Dispute Earnings Guard
 
-- All 6 dispute events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`) are routed cleanly.
+- All 6 dispute events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`) are routed cleanly, and out-of-order deliveries (`payment.dispute.created` arriving before `payment.captured`, or `payment.dispute.*` updates arriving before `payment.dispute.created`) return `DeferSignal` for automatic re-drive by `sweep-stuck-webhook-events`.
 - `respond_by` and `created_at` are Unix epoch **seconds** (multiply by `1000` for JS `Date`). No `comments` field exists on Razorpay Dispute entities (`reason_code`, `reason_description`, and `evidence.summary` carry dispute text).
 - `payment.dispute.action_required` (including `pre_arbitration` escalations) legally transitions `UNDER_REVIEW -> NEEDS_RESPONSE` and refreshes `dueBy`.
 - Winning or closing one dispute releases `HELD` earnings **only** when `tx.dispute.count({ where: { paymentId, id: { not: dispute.id }, status: { notIn: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED", "WARNING_CLOSED"] } } }) === 0`.
 
 ### 5. RazorpayX `payout.*` & `fund_account.validation.*` Entities
 
-- `payout.initiated` marks transition into `processing` (`payout.processing` does not exist).
+- `payout.initiated` marks transition into `processing` (`payout.processing` does not exist), while non-terminal events (`payout.queued`, `payout.pending`, `payout.initiated`) preserve `PayoutStatus.PROCESSING` on submitted consultant payouts.
 - `failure_reason` is deprecated and often `null`; always read `failure_reason ?? status_details?.description ?? status_details?.reason`.
-- `markConsultantPayoutCompleted` and `markOrgPayoutCompleted` exclude `FAILED` rows in their CAS `WHERE` guard so delayed `payout.processed` / `payout.updated` events never resurrect reversed payouts, while raising `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED` error alerts if RazorpayX disburses a payout previously marked `FAILED`.
-- `markConsultantPayoutReversed` and `markOrgPayoutReversed` execute payout CAS status update, inverse ledger posting (`postLedgerTxn`), earnings un-batching (`READY`), and TDS reversal inside **one atomic Prisma transaction (`tx`)**.
-- `fund_account.validation.completed` requires checking **both** `status === "completed"` and `(validation_results ?? results)?.account_status === "active"` (`summariseFundAccountValidation`), verifying existing `PayoutAccount` / `OrganizationPayoutAccount` rows strictly when `fund_account.id` matches `razorpayFundAccId` / `razorpayFundAccountId`.
+- Terminal `COMPLETED` transitions exclude terminal statuses via CAS `WHERE` so delayed `payout.processed` / `payout.updated` events never resurrect reversed payouts, while raising `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED` error alerts if RazorpayX disburses a payout previously marked `FAILED`.
+- `markConsultantPayoutReversed` and `markOrgPayoutReversed` handle both `COMPLETED -> REVERSED` (inverse ledger journal + reopening `PAID -> READY` earnings + TDS reversal) and pre-settlement `PENDING`/`PROCESSING`(/`APPROVED`) -> `REVERSED` (detaching `BATCHED -> READY` earnings with no inverse journal) inside **one atomic Prisma transaction (`tx`)**.
+- `fundAccountValidationEntitySchema` normalizes `null` values on `fund_account`, `results`, `validation_results`, and `status_details` to `undefined`. `handleFundAccountValidationWebhook` requires **both** `status === "completed"` and `summary.accountStatus === "valid"` (`account_status === "active"`), verifying `PayoutAccount` / `OrganizationPayoutAccount` strictly by `fund_account.id` and falling back to `{ id: referenceId, status: "PENDING_VERIFICATION" }` -> `"FAILED_VERIFICATION"` when `fund_account` is `null` on failed validations.
 
 ---
 
