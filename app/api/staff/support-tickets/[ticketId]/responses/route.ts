@@ -119,7 +119,7 @@ async function mirrorStaffReplyToThread(
   }
 }
 
-async function executeTicketResponseTx(params: {
+function executeTicketResponseTx(params: {
   ticketId: string;
   ticketStatus: Prisma.SupportTicketGetPayload<object>["status"];
   ticketAssignedToId: string | null;
@@ -196,6 +196,57 @@ async function executeTicketResponseTx(params: {
   );
 }
 
+function renderTxFailureResponse(
+  code: PublicReplyGuardFailure["code"],
+): NextResponse {
+  if (code === "NEW_CUSTOMER_MESSAGE") {
+    return NextResponse.json(
+      {
+        code: "NEW_CUSTOMER_MESSAGE",
+        error:
+          "Customer replied since you opened this case. Review their message before sending.",
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    { error: "Cannot send a public reply to a closed ticket" },
+    { status: 409 },
+  );
+}
+
+async function dispatchPublicTicketReplyNotice(params: {
+  ticket: {
+    id: string;
+    userId: string;
+    referenceNumber: string | null;
+    title: string;
+    organizationId: string | null;
+    appointmentSupportThread: { organizationId: string | null } | null;
+  };
+  responseId: string;
+  responderName: string | null | undefined;
+  message: string;
+}): Promise<void> {
+  const { ticket, responseId, responderName, message } = params;
+  await notifySupportTicketResponse(
+    ticket.userId,
+    {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message,
+      respondedBy: responderName ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        ticket.appointmentSupportThread?.organizationId,
+      ),
+      ...notificationScope(ticket.organizationId),
+    },
+    `ticket-resp:${responseId}`,
+  );
+}
+
 /**
  * POST /api/staff/support-tickets/[ticketId]/responses
  * Staff/Admin can respond to any support ticket
@@ -225,11 +276,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         appointmentSupportThread: { select: { organizationId: true } },
       },
     });
-
     if (!ticket) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
-
     if (ticket.status === "CLOSED" && !validatedData.isInternal) {
       return NextResponse.json(
         { error: "Cannot send a public reply to a closed ticket" },
@@ -242,20 +291,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       !validatedData.isInternal && validatedData.expectedLastMessageAt
         ? new Date(validatedData.expectedLastMessageAt)
         : undefined;
-
     if (
       expectedDate &&
       ticket.lastMessageAt &&
       ticket.lastMessageAt.getTime() > expectedDate.getTime()
     ) {
-      return NextResponse.json(
-        {
-          code: "NEW_CUSTOMER_MESSAGE",
-          error:
-            "Customer replied since you opened this case. Review their message before sending.",
-        },
-        { status: 409 },
-      );
+      return renderTxFailureResponse("NEW_CUSTOMER_MESSAGE");
     }
 
     const txOutcome = await executeTicketResponseTx({
@@ -269,44 +310,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       expectedDate,
       now,
     });
-
     if (!txOutcome.ok) {
-      if (txOutcome.code === "NEW_CUSTOMER_MESSAGE") {
-        return NextResponse.json(
-          {
-            code: "NEW_CUSTOMER_MESSAGE",
-            error:
-              "Customer replied since you opened this case. Review their message before sending.",
-          },
-          { status: 409 },
-        );
-      }
-      return NextResponse.json(
-        { error: "Cannot send a public reply to a closed ticket" },
-        { status: 409 },
-      );
+      return renderTxFailureResponse(txOutcome.code);
     }
 
     const response = txOutcome.created;
-
-    // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {
-      await notifySupportTicketResponse(
-        ticket.userId,
-        {
-          ticketId: ticket.id,
-          reference: ticket.referenceNumber ?? undefined,
-          ticketTitle: ticket.title || "Support Ticket",
-          message: validatedData.message,
-          respondedBy: response.user?.name ?? "Support",
-          dashboardUrl: supportRequestHref(
-            caseKeyOf({ kind: "ticket", id: ticket.id }),
-            ticket.appointmentSupportThread?.organizationId,
-          ),
-          ...notificationScope(ticket.organizationId),
-        },
-        `ticket-resp:${response.id}`,
-      );
+      await dispatchPublicTicketReplyNotice({
+        ticket,
+        responseId: response.id,
+        responderName: response.user?.name,
+        message: validatedData.message,
+      });
     }
 
     return NextResponse.json(response, { status: 201 });
