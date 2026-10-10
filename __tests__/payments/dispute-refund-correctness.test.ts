@@ -45,6 +45,7 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   getRazorpayClient: () => ({
     payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
   }),
+  withRazorpaySdkTimeout: (_op: string, fn: () => unknown) => fn(),
 }));
 
 // Minimal stubs for the rest of utils.ts's import graph so module load works.

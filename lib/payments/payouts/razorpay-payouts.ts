@@ -124,6 +124,7 @@ export interface RazorpayPayout {
   batchId?: string;
   /** @deprecated RazorpayX marks top-level `failure_reason` deprecated in favor of `status_details`. */
   failureReason?: string;
+  failure_reason?: string | null;
   status_details?: {
     description?: string | null;
     source?: string | null;
@@ -708,7 +709,13 @@ export class RazorpayPayoutsService {
         purpose: request.purpose,
         queue_if_low_balance: request.queueIfLowBalance ?? true,
         reference_id: request.referenceId,
-        narration: request.narration,
+        narration: request.narration
+          ? request.narration
+              .replace(/[^A-Za-z0-9 ]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 30)
+          : undefined,
         notes: request.notes,
       },
       {
@@ -789,14 +796,12 @@ export class RazorpayPayoutsService {
       .update(payload)
       .digest("hex");
 
-    // timingSafeEqual THROWS on a length mismatch, so an attacker-controlled
-    // header could turn signature rejection into an unhandled exception.
-    // Compare lengths first, exactly as app/api/webhooks/utils.ts does.
-    if (signature.length !== expectedSignature.length) {
-      // Internet-facing and hostile traffic can drive this arbitrarily high —
-      // captured at warning/expected so it never reads as a platform fault.
-      // Candidate for a Sentry inbound rate-limit on this event if volume
-      // ever needs bounding.
+    const sigBuf = Buffer.from(signature, "hex");
+    const expectedBuf = Buffer.from(expectedSignature, "hex");
+    if (
+      signature.length !== expectedSignature.length ||
+      sigBuf.byteLength !== expectedBuf.byteLength
+    ) {
       reportSentryMessage("RazorpayX webhook signature length mismatch", {
         subsystem: "payments",
         tags: { provider: "razorpay" },
@@ -806,12 +811,8 @@ export class RazorpayPayoutsService {
       return false;
     }
 
-    const valid = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature),
-    );
+    const valid = crypto.timingSafeEqual(sigBuf, expectedBuf);
     if (!valid) {
-      // Same rate-limit candidacy note as above.
       reportSentryMessage("RazorpayX webhook signature mismatch", {
         subsystem: "payments",
         tags: { provider: "razorpay" },
@@ -836,14 +837,6 @@ export class RazorpayPayoutsService {
    * `cancelled`, `reversed` and `failed`; `queued`, `pending` and `processing`
    * are intermediate.
    * https://razorpay.com/docs/x/payouts/status-details/
-   *
-   * #1377 — `failed` used to fall through to the `default` arm and be read as
-   * PENDING, i.e. as "still in flight". A payout that the bank refused would
-   * therefore never reach FAILED, so its earnings stayed BATCHED instead of
-   * being returned to READY and the consultant was never paid and never
-   * re-queued. The default arm is kept for genuinely unknown strings, where
-   * PENDING is the right answer because it keeps the reconciler polling
-   * instead of settling state on a guess.
    */
   mapPayoutStatus(
     status: RazorpayPayoutStatus,
@@ -874,7 +867,6 @@ export class RazorpayPayoutsService {
   /**
    * Generate idempotency key for payout
    */
-  // M4 FIX: Deterministic key so retries hit the same RazorpayX idempotency slot
   generateIdempotencyKey(payoutId: string): string {
     return `payout_${payoutId}`;
   }
@@ -883,22 +875,24 @@ export class RazorpayPayoutsService {
    * Determine payout mode based on amount
    * - IMPS: Instant, up to ₹5L per transaction
    * - NEFT: Settled in batches, no limit
-   * - RTGS: For amounts > ₹2L, real-time
-   * - UPI: For VPA fund accounts
+   * - UPI: For VPA fund accounts up to ₹1L per transaction
    */
   determinePayoutMode(
     amount: number,
     accountType: "bank_account" | "vpa",
   ): "IMPS" | "NEFT" | "UPI" {
     if (accountType === "vpa") {
+      if (amount > 10_000_000) {
+        throw new Error(
+          `UPI payout amount (${amount} paise) exceeds ₹1,00,000 limit; bank_account required`,
+        );
+      }
       return "UPI";
     }
 
-    // Amount in paise
     const amountInRupees = amount / 100;
 
     if (amountInRupees <= 500000) {
-      // ₹5L limit for IMPS
       return "IMPS";
     }
 

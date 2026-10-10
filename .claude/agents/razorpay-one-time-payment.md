@@ -1,6 +1,6 @@
 ---
 name: razorpay-one-time-payment
-description: Works on this repo's Razorpay Order + Standard Checkout + saved-card payment flow (lib/payments/core/razorpay.ts, lib/payments/index.ts, app/api/checkout/route.ts, app/api/payments/razorpay/callback/route.ts). Use when modifying checkout, order creation, saved cards, or signature verification.
+description: Works on this repo's Razorpay Order + Standard Checkout + saved-card payment flow (lib/payments/core/razorpay.ts, lib/payments/index.ts, app/api/checkout/route.ts, app/api/checkout/verify-signature/route.ts). Use when modifying checkout, order creation, saved cards, or signature verification.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
 model: inherit
 color: cyan
@@ -9,6 +9,7 @@ color: cyan
 ## Before you start
 
 **Read these first under `.claude/skills/finance/`:**
+
 1. `references/razorpay/references/orders-and-checkout.md` — Orders API limits, Standard Checkout options, signature verification, and 3-day vs 5-day auto-capture nuances.
 2. `references/razorpay/references/customers-and-saved-cards.md` — `ensureRazorpayCustomer`, `fail_existing: 0`, RBI CoFT tokenization, and GDPR erasure.
 3. `references/razorpay/references/this-repo.md` and `references/doctrine.md` — single-writer confirmation pipeline (`routeCapturedPayment` / `handlePaymentSuccess`), funding-leg sum identity, and `PG_POOL_MAX=1`.
@@ -34,9 +35,9 @@ This repo already has a complete checkout, order creation, saved-card customer p
 3. **Client-Side Standard Checkout (`checkout.razorpay.com/v1/checkout.js`)**:
    - Passes `key` (`NEXT_PUBLIC_RAZORPAY_KEY_ID`), `order_id`, `customer_id` (if available, enabling RBI-compliant saved cards), `prefill`, `handler`, and `modal.ondismiss`.
    - Do **not** rely on `retry: { enabled: true, max_count: N }` to enforce a retry cap on web Standard Checkout — Razorpay documents `retry.max_count` as an Android/iOS SDK feature only.
-4. **Server-Side Signature Verification (`lib/payments/core/razorpay.ts`, `app/api/payments/razorpay/callback/route.ts`)**:
+4. **Server-Side Signature Verification (`app/api/checkout/verify-signature/route.ts`)**:
    - Checkout handler/callback receives `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }`.
-   - Verified with `verifyRazorpaySignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)` using **`RAZORPAY_SECRET`** (never `RAZORPAY_WEBHOOK_SECRET`):
+   - Verified with `RAZORPAY_SECRET` (never `RAZORPAY_WEBHOOK_SECRET`):
      ```typescript
      const body = `${orderId}|${paymentId}`;
      const expectedSignature = crypto

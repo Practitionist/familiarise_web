@@ -923,7 +923,7 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
     mode,
     purpose: "payout",
     referenceId: payoutId,
-    narration: `Familiarise org payout ${payoutId}`,
+    narration: "Familiarise org payout",
     queueIfLowBalance: true,
     idempotencyKey,
   });
@@ -1044,7 +1044,11 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
         case "failed":
           await markOrgPayoutFailed(
             p.id,
-            remote.failureReason ?? "Gateway reports the payout failed",
+            remote.failure_reason ??
+              remote.failureReason ??
+              remote.status_details?.description ??
+              remote.status_details?.reason ??
+              "Gateway reports the payout failed",
           );
           result.advanced++;
           break;

@@ -7,7 +7,10 @@ import {
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway, DisputeStatus } from "@prisma/client";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
 import { applyCappedOrgEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
@@ -271,9 +274,22 @@ export async function handleOrgPaymentSuccess(
       console.error(`[Webhook] invoice_payment ${invoiceId} not found`);
       return;
     }
-    if (invoiceRow.totalPaise !== gatewayAmountPaise) {
+    const issuedCredits = prisma.creditNote?.aggregate
+      ? await prisma.creditNote.aggregate({
+          where: { invoiceId },
+          _sum: { totalPaise: true },
+        })
+      : null;
+    const expectedNetPaise = Math.max(
+      0,
+      invoiceRow.totalPaise - Number(issuedCredits?._sum?.totalPaise ?? 0),
+    );
+    const matchesCaptureAmount =
+      gatewayAmountPaise === expectedNetPaise ||
+      gatewayAmountPaise === invoiceRow.totalPaise;
+    if (!matchesCaptureAmount) {
       console.error(
-        `[Webhook] invoice_payment ${invoiceId} totalPaise=${invoiceRow.totalPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
+        `[Webhook] invoice_payment ${invoiceId} net=${expectedNetPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
       );
       if (organizationId) {
         await prisma.orgAuditLog
@@ -283,11 +299,12 @@ export async function handleOrgPaymentSuccess(
               actorMembershipId: null,
               category: "INVOICE",
               action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-              description: `Invoice ${invoiceId} captured amount mismatch: billed=${invoiceRow.totalPaise}p, captured=${gatewayAmountPaise}p`,
+              description: `Invoice ${invoiceId} captured amount mismatch: expected=${expectedNetPaise}p, captured=${gatewayAmountPaise}p`,
               details: {
                 invoiceId,
                 providerPaymentId: razorpayPaymentId ?? null,
                 totalPaise: invoiceRow.totalPaise,
+                expectedNetPaise,
                 gatewayAmountPaise,
               },
             },
@@ -304,13 +321,6 @@ export async function handleOrgPaymentSuccess(
 
     const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
 
-    // LED-1: invoice claim + INVOICE_PAID settlement write must be atomic.
-    // Before this PR the settlement write was a fire-and-forget after the
-    // updateMany — so a transient DB error on the settlement insert left
-    // the invoice marked PAID with no ledger row, and the nightly
-    // reconciler would flag drift it could not auto-remediate. Both writes
-    // now share a transaction. Audit + Novu notifications stay best-effort
-    // outside the tx — they're operator surfaces, not ledger.
     let claimedCount = 0;
     try {
       const txResult = await prisma.$transaction(async (tx) => {
@@ -330,10 +340,7 @@ export async function handleOrgPaymentSuccess(
           return { count: 0 as const };
         }
         if (resolvedOrgId) {
-          // #771 D1/D5 — double-entry (dual-write): org pays the invoice; clear
-          // the receivable accrued at booking time (INR underlying).
-          //   Dr CASH   Cr ORG_RECEIVABLE(org)
-          if (invoiceRow.totalPaise > 0) {
+          if (gatewayAmountPaise > 0) {
             await postLedgerTxn(tx, {
               idempotencyKey: `invoicepaid:${invoiceId}`,
               kind: "INVOICE_PAID",
@@ -342,7 +349,7 @@ export async function handleOrgPaymentSuccess(
                 {
                   account: { kind: "CASH" },
                   direction: "DEBIT",
-                  amountPaise: invoiceRow.totalPaise,
+                  amountPaise: gatewayAmountPaise,
                 },
                 {
                   account: {
@@ -350,7 +357,7 @@ export async function handleOrgPaymentSuccess(
                     organizationId: resolvedOrgId,
                   },
                   direction: "CREDIT",
-                  amountPaise: invoiceRow.totalPaise,
+                  amountPaise: gatewayAmountPaise,
                 },
               ],
             });
@@ -362,14 +369,12 @@ export async function handleOrgPaymentSuccess(
             payload: {
               invoiceId: invoiceRow.id,
               invoiceNumber: invoiceRow.invoiceNumber,
-              paidPaise: Number(invoiceRow.totalPaise),
+              paidPaise: Number(gatewayAmountPaise),
               paymentId: razorpayPaymentId ?? invoiceRow.id,
               settledAt: paidAt.toISOString(),
             },
           });
         }
-        // #775 — CHARGE_ORG overage events on this invoice's lines were ACCRUED
-        // at rollup; the org has now paid, so flip them ACCRUED → CHARGED.
         await tx.overageEvent.updateMany({
           where: {
             overageBehavior: "CHARGE_ORG",
@@ -380,7 +385,10 @@ export async function handleOrgPaymentSuccess(
         });
         if (resolvedOrgId) {
           await tx.organizationEarnings.updateMany({
-            where: { organizationId: resolvedOrgId, status: "PENDING_TRUST" },
+            where: {
+              payment: { organizationId: resolvedOrgId },
+              status: "PENDING_TRUST",
+            },
             data: { status: "PENDING" },
           });
           await tx.consultantEarnings?.updateMany({
@@ -495,20 +503,18 @@ export async function handleOrgPaymentFailure(
       );
       return;
     }
-    // Only delete placeholders that were never confirmed. A confirmed
-    // top-up has status=CONFIRMED + providerPaymentId set; a pending
-    // placeholder has status=PENDING.
-    const deleted = await prisma.walletTopUp.deleteMany({
+    const pendingTopUp = await prisma.walletTopUp.findFirst({
       where: {
         providerOrderId: walletEntryOrderId,
         status: "PENDING",
         providerPaymentId: null,
       },
+      select: { id: true },
     });
     console.log(
-      `[Webhook] credit_purchase.failed placeholder deleted (count=${deleted.count}) order=${walletEntryOrderId}`,
+      `[Webhook] credit_purchase.failed recorded (pendingPreserved=${Boolean(pendingTopUp)}) order=${walletEntryOrderId}`,
     );
-    if (organizationId && deleted.count > 0) {
+    if (organizationId && pendingTopUp) {
       await prisma.orgAuditLog
         .create({
           data: {
@@ -1306,7 +1312,9 @@ export async function handleDisputeCreated(
     resolvedPaymentIntent = existingLocalPayment.paymentIntent;
   } else if (razorpayClient) {
     try {
-      const rzpPayment = await razorpayClient.payments.fetch(chargeId);
+      const rzpPayment = await withRazorpaySdkTimeout("payments.fetch", () =>
+        razorpayClient.payments.fetch(chargeId),
+      );
       if (rzpPayment.order_id) {
         resolvedPaymentIntent = rzpPayment.order_id;
       }

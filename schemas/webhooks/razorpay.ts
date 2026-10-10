@@ -240,6 +240,8 @@ export const razorpayWebhookEnvelopeSchema = z
                 amount: z.number().optional(),
                 currency: z.string().optional(),
                 status: z.string().optional(),
+                speed_requested: z.string().nullable().optional(),
+                speed_processed: z.string().nullable().optional(),
                 notes: razorpayNotesSchema,
               })
               .passthrough()
@@ -277,6 +279,16 @@ export const razorpayWebhookEnvelopeSchema = z
                 reference_id: z.string().nullable().optional(),
                 status_details: z
                   .object({
+                    description: z.string().nullable().optional(),
+                    source: z.string().nullable().optional(),
+                    reason: z.string().nullable().optional(),
+                  })
+                  .passthrough()
+                  .nullable()
+                  .optional(),
+                error: z
+                  .object({
+                    code: z.string().nullable().optional(),
                     description: z.string().nullable().optional(),
                     source: z.string().nullable().optional(),
                     reason: z.string().nullable().optional(),

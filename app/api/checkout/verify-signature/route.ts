@@ -33,7 +33,10 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
@@ -160,7 +163,9 @@ export async function POST(req: NextRequest) {
       if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
       // A malformed gateway answer throws into the catch below and defers.
       const gatewayPayment = razorpayFetchedPaymentSchema.parse(
-        await razorpayClient.payments.fetch(razorpay_payment_id),
+        await withRazorpaySdkTimeout("payments.fetch", () =>
+          razorpayClient.payments.fetch(razorpay_payment_id),
+        ),
       );
       notes = gatewayPayment.notes;
       capturedAmountPaise = gatewayPayment.amount;

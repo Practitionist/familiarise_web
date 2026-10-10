@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   createRazorpayOrder,
   getRazorpayClient,
+  withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -140,7 +141,9 @@ export async function POST(
   const razorpayClient = getRazorpayClient();
   if (razorpayClient && existingOrderId?.startsWith("order_")) {
     try {
-      const existingOrder = await razorpayClient.orders.fetch(existingOrderId);
+      const existingOrder = await withRazorpaySdkTimeout("orders.fetch", () =>
+        razorpayClient.orders.fetch(existingOrderId),
+      );
       const amountMatches =
         Number(existingOrder.amount) === event.marginalPaise;
 

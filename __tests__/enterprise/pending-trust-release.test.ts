@@ -181,7 +181,10 @@ describe("Inline PENDING_TRUST -> PENDING earnings promotion (#1915 P3)", () => 
     );
 
     expect(orgEarningsUpdateMany).toHaveBeenCalledWith({
-      where: { organizationId: "org_1", status: "PENDING_TRUST" },
+      where: {
+        payment: { organizationId: "org_1" },
+        status: "PENDING_TRUST",
+      },
       data: { status: "PENDING" },
     });
     expect(consultantEarningsUpdateMany).toHaveBeenCalledWith({

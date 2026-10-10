@@ -15,7 +15,10 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parseMintedOrderId } from "@/lib/api/organizations/wallet";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { verifyRazorpaySignature } from "@/app/api/webhooks/razorpay/signature";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -97,7 +100,9 @@ export async function POST(
     const client = getRazorpayClient();
     if (!client) throw new Error("RAZORPAY_NOT_INITIALIZED");
     const gatewayPayment = razorpayFetchedPaymentSchema.parse(
-      await client.payments.fetch(paymentId),
+      await withRazorpaySdkTimeout("payments.fetch", () =>
+        client.payments.fetch(paymentId),
+      ),
     );
     if (
       gatewayPayment.order_id !== orderId ||

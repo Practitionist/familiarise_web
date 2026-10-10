@@ -699,9 +699,9 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
       ctx.findings.push({
         kind: "EARNINGS_LEDGER_DRIFT",
         paymentId: txn.paymentId,
-        expectedPaise: cacheEarnings,
-        actualPaise: journalEarnings,
-        deltaPaise: journalEarnings - cacheEarnings,
+        expectedPaise: journalEarnings,
+        actualPaise: cacheEarnings,
+        deltaPaise: cacheEarnings - journalEarnings,
         details: {
           unit: "paise",
           note: "Cached Earnings amounts (ConsultantEarnings.platformFee+consultantShare + OrganizationEarnings.orgShare) do not match the booking journal's PLATFORM_FEE+CONSULTANT_PAYABLE+ORG_PAYABLE credits.",
@@ -1370,7 +1370,7 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
         status: "PENDING_TRUST",
         createdAt: { lte: cutoff },
         ...(ctx.opts.organizationId
-          ? { organizationId: ctx.opts.organizationId }
+          ? { payment: { organizationId: ctx.opts.organizationId } }
           : {}),
       },
       select: {
@@ -1378,6 +1378,7 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
         organizationId: true,
         orgSharePaise: true,
         createdAt: true,
+        payment: { select: { organizationId: true } },
       },
     }),
   ]);
@@ -1396,7 +1397,7 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
   for (const oe of orgParks) {
     rows.push({
       earningId: oe.id,
-      sponsorOrganizationId: oe.organizationId,
+      sponsorOrganizationId: oe.payment.organizationId ?? oe.organizationId,
       amountPaise: sumPaise(oe.orgSharePaise),
       createdAt: oe.createdAt,
     });
