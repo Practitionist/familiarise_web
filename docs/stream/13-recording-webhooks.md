@@ -710,7 +710,8 @@ Sync recordings from Stream API for the current user.
 
 ### Recording Consent Routes
 
-Consent is asked for before anyone joins, not while a recording is running. Both
+Consent is asked for in the lobby before anyone joins, and a 1:1 participant
+can also decline from inside the call while a recording is running. Both
 handlers are gated by `resolveMeetingAccess`, the same resolver the join gate
 uses, so only somebody actually on this appointment can read the notice or
 record a decision about it. Without that gate the endpoint would leak which
@@ -771,12 +772,16 @@ The choice between 404 and 403 comes from `access.reason === "not_found"`, never
 from comparing `access.message` against a string. Rewording a user-facing
 message must not be able to change a status code.
 
-Enforcement is at recording start only. The `DECLINED` check lives inside the
-atomic claim in `POST /api/stream/recordings/start`, so a decline arriving
-between the read and the write loses the race rather than being ignored. A
-decline made _after_ recording has begun has no effect, because what should
-happen to the recording that already exists is an open product question rather
-than an implementation gap. It is tracked in #1146.
+Enforcement covers the whole session. Before recording starts, the `DECLINED`
+check lives inside the atomic claim in `POST /api/stream/recordings/start`, so a
+decline arriving between the read and the write loses the race rather than
+being ignored. A `DECLINED` posted while a recording is running stops it
+server-side, the response carries `recordingStopped: true`, and the file is
+discarded when it lands (see [Mid-session decline](#mid-session-decline)). For
+`ACKNOWLEDGE` sessions the route answers a `DECLINED` with 409, because the
+recording is part of what attendees bought; the only way out is cancelling the
+booking for a refund. See the
+[ADR](../decisions/2026-08-13-mid-session-recording-decline.md).
 
 **Client.** `useRecordingConsent` in
 `app/meetings/[id]/components/RecordingConsentNotice.tsx` returns a
@@ -786,6 +791,16 @@ window from a genuinely outstanding decision — `satisfied` is false in both, a
 the Join button is disabled in both. `MeetingSetup` reads it and labels the
 button "Checking recording notice..." rather than leaving it disabled with
 nothing on screen accounting for it.
+
+Both the lobby and the in-call control post through
+`useRecordingConsentDecision` (`app/meetings/[id]/hooks/`), which allows one
+request in flight, parses the response with Zod, and shows the decliner the
+"Recording stopped. It will be discarded at your request." toast when the route
+reports `recordingStopped`. In the call, `RecordingControls` renders
+`DeclineRecordingButton` ("Stop recording me") beside the REC indicator only for
+a non-host in a session that is not a webinar or class. The button opens a
+confirmation dialog that explains the recording stops and is discarded, and a
+failure surfaces the server's message in an error toast.
 
 ---
 

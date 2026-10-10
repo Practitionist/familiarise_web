@@ -11,7 +11,7 @@ export function OfferingsTabs({
   const pathname = usePathname();
   const base = `/dashboard/consultant/${consultantId}/offerings`;
   const tabs = [
-    { href: base, label: "Offerings" },
+    { href: base, label: "My offerings" },
     { href: `${base}/collaborations`, label: "Collaborations" },
   ];
   return (

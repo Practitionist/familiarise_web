@@ -39,10 +39,12 @@ export function UrlTabs({
   tabs,
   paramName = "tab",
   className,
+  onTabChange,
 }: {
   tabs: UrlTab[];
   paramName?: string;
   className?: string;
+  onTabChange?: (value: string) => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -64,9 +66,16 @@ export function UrlTabs({
     setLocalActive(null);
   }, [requested]);
 
+  useEffect(() => {
+    if (active) {
+      onTabChange?.(active);
+    }
+  }, [active, onTabChange]);
+
   const onValueChange = useCallback(
     (value: string) => {
       setLocalActive(value);
+      onTabChange?.(value);
       const params = new URLSearchParams(window.location.search);
       params.set(paramName, value);
       // Panels that paginate all read the same `?page=`. Without this, moving
@@ -80,7 +89,7 @@ export function UrlTabs({
         replaceUrl(target);
       }
     },
-    [paramName, pathname],
+    [onTabChange, paramName, pathname],
   );
 
   if (!active) return null;

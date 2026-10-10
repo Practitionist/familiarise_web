@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { FeedbackPanel } from "./FeedbackPanel";
@@ -17,10 +16,9 @@ export interface SupportRequestsPageProps {
 }
 
 /**
- * Support requests (#1527): your private conversations with the Familiarise
- * team, as URL tabs — Requests (Sessions · Platform) and Feedback. Articles
- * live only in the public Help Center; this page links a few beside the
- * request entry points. The old `help` route and `?tab=help` go to `/support`.
+ * Support requests: private conversations with the Familiarise team as URL tabs
+ * — Requests (Sessions · Platform) and Feedback — alongside contextual links
+ * to Help Center articles.
  */
 export function SupportRequestsPage({
   profileId,
@@ -28,7 +26,7 @@ export function SupportRequestsPage({
   suggested,
 }: Readonly<SupportRequestsPageProps>) {
   return (
-    <DashboardErrorBoundary>
+    <>
       <PageHeader
         title="Support requests"
         description="Your conversations with the Familiarise team — about a session or the platform."
@@ -56,6 +54,6 @@ export function SupportRequestsPage({
           },
         ]}
       />
-    </DashboardErrorBoundary>
+    </>
   );
 }
