@@ -48,12 +48,11 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
-const proxy =
-  (fn: jest.Mock) =>
-  (...args: unknown[]) =>
-    fn(...args);
-
 jest.mock("../../lib/prisma", () => {
+  const proxy =
+    (fn: jest.Mock) =>
+    (...args: unknown[]) =>
+      fn(...args);
   const txClient: Record<string, unknown> = {
     consentArtifact: {
       findFirst: jest.fn().mockResolvedValue({ id: "consent-1" }),
