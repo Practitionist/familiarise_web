@@ -79,14 +79,15 @@ booking change: `stream-webhook-drift.yml` fires only on a `paths:` filter over
 three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
 and `claude.yml` only when a comment or review body contains `@claude`.
 
-CI's `test-and-build` job is the gate: `npx tsc --noEmit`, `npx prisma generate`,
-the SSO invariant script, the money-column and workflow-hygiene guards,
-`npm run test`, and `npm run build`. The `db-guards` job runs the DB-sidecar and
-DB-drift guards against a throwaway Postgres. There is no `typecheck`
+CI's `test-and-build` job is the gate: it passes only when the `typecheck`
+job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
+auth-schema and workflow-hygiene guards), the `unit-tests` job (`npm run test`)
+and the `build` job (`npm run build`) all pass. The `db-guards` job runs the
+DB-sidecar guard against a throwaway Postgres. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
-The separate `lint` job is advisory: both the ESLint and Prettier steps carry
-`continue-on-error: true`, and the summary prints "non-blocking". There is no
+In the separate `lint` job ESLint errors fail the job; the Prettier step carries
+`continue-on-error: true`, so formatting is advisory in CI. There is no
 `--max-warnings` anywhere, and the config marks almost everything `warn`; only
 `react-hooks/rules-of-hooks` and `no-restricted-imports` are errors. That
 layering guard is the one lint rule that catches a bad booking refactor — it

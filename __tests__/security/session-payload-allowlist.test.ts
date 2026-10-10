@@ -2,8 +2,8 @@
  * Session payload allowlist (#1856, ADR 35).
  *
  * A session TOKEN is a bearer credential for the whole account, and
- * BetterAuth's `listSessions` returns the raw token per device (1.6.5
- * and 1.7.6 alike). Every session list in this app — the user's own,
+ * BetterAuth's `listSessions` returns the raw token per device (1.7.7).
+ * Every session list in this app — the user's own,
  * the staff support view — reads through SESSION_PUBLIC_SELECT instead.
  * Adding `token` (or any new column) to the select or to the mapper
  * output fails this suite, the same tripwire ADR 20 sets for org

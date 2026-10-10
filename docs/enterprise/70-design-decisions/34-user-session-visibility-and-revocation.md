@@ -3,7 +3,7 @@ title: A user sees their own sessions; nobody else sees the tokens
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-10-09
+last-reviewed: 2026-10-10
 ---
 
 # ADR 35 — User session visibility, lifetime and revocation
@@ -45,7 +45,7 @@ lookup is never a sign-out.**
 | -------------------------------------- | ---------------------------------------------- |
 | Consumer                               | 30 days, sliding (`updateAge` 1 day)           |
 | Enrolled operator (STAFF, ADMIN + 2FA) | 12 h absolute from the original authentication |
-| Enrolled operator, idle                | Ends after 2 h without a read                  |
+| Any operator, idle                     | Ends after 2 h without a read                  |
 | Unenrolled operator                    | 1 h absolute (long enough to enrol)            |
 | SSO session for an enforced domain     | 24 h absolute                                  |
 
@@ -274,7 +274,8 @@ load, and reloads the tab on 409 `IDENTITY_CHANGED`.
 - Every session read is a database lookup. Capped (operator and SSO) sessions
   also write on every read, because the row always sits inside the refresh
   window. That write is the idle timer.
-- About 127 call sites still use raw `getSession()` instead of a guard. They
+- About 178 call sites in 127 files still use raw `getSession()` instead of a
+  guard. They
   now throw `SessionLookupFailedError` on a failed lookup instead of answering
   401: a 503 when the route uses `apiError()`, otherwise a 500. Moving them to
   the guards is tracked as a GitHub issue.

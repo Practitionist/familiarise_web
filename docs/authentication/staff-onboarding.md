@@ -4,7 +4,7 @@
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status        | Live                                                                                                                                                                                                                                                    |
 | Audience      | Engineers, ADMINs, on-call                                                                                                                                                                                                                              |
-| Last reviewed | 2026-10-09                                                                                                                                                                                                                                              |
+| Last reviewed | 2026-10-10                                                                                                                                                                                                                                              |
 | Source        | `lib/auth/operators.ts`, `lib/auth/operator-session-policy.ts`, `lib/auth/two-factor-policy.ts`, `lib/auth/passkey-policy.ts`, `lib/auth/step-up.ts`, `app/api/admin/team/members/**`, `scripts/bootstrap-admin.ts`, `lib/auth.ts`, `lib/auth-guard.ts` |
 
 An **operator** is a user with role `STAFF` or `ADMIN`. Operators can read
@@ -15,7 +15,7 @@ customer data and move money, so they get a stricter regime than consumers:
 | Sign-in methods      | Email + password + authenticator code, or a registered passkey      | Password, Google, GitHub, SSO               |
 | Second factor        | Mandatory TOTP and 10 single-use backup codes; optional passkeys    | None                                        |
 | Sensitive actions    | Re-authenticate within 15 minutes: password + TOTP code, or passkey | Re-authenticate within 15 minutes: password |
-| Session lifetime     | 12 hours from sign-in, however active                               | 30 days, sliding                            |
+| Session lifetime     | 12 h from sign-in, ended by 2 idle hours; 1 h until 2FA is enrolled | 30 days, sliding                            |
 | Linked social or SSO | Refused                                                             | Allowed (verified emails only)              |
 | Created by           | An ADMIN on the Team page, or the bootstrap script                  | Self sign-up                                |
 
@@ -37,11 +37,11 @@ sequenceDiagram
   API->>BA: requestPasswordReset (30 min link, worded as an invite)
   BA-->>S: "Set your Familiarise staff password" email
   S->>BA: set password, then sign in
-  BA-->>S: session (12 h cap), password and profile changes refused
+  BA-->>S: session (1 h cap), password and profile changes refused
   S->>BO: open back office
   BO-->>S: redirect to /auth/two-factor/setup
   S->>BA: enrol TOTP (password required), save backup codes
-  BA->>BA: end every other session, "authenticator added" email
+  BA->>BA: end every session, re-issue this one (12 h from sign-in), "authenticator added" email
   S->>BO: open back office
   BO-->>S: OperatorConsentGate: give own DPDP consent
   S->>BO: work
@@ -72,9 +72,10 @@ sequenceDiagram
    (`allowPasswordless` is off), shows a QR code and the secret, verifies one
    code, then shows the backup codes once.
 5. **Seal.** The `verify-totp` call that flips `twoFactorEnabled` ends every
-   other session of the operator (`isTwoFactorEnrolment` in
-   `lib/auth/two-factor-policy.ts`), so a session opened with the password
-   alone never inherits the second factor. The operator gets an "authenticator
+   session of the operator (`user.update.after` with `isTwoFactorEnrolment` in
+   `lib/auth/two-factor-policy.ts`) and the plugin issues the enrolling device a
+   new one, so a session opened with the password alone never inherits the
+   second factor. The operator gets an "authenticator
    added" email.
 6. **Consent.** Nobody consents on an operator's behalf: `user.create.after`
    skips the signup consent rows and the consumer welcome email for
@@ -128,7 +129,9 @@ for the sequence. The rules:
 - The challenge page (`/auth/two-factor`) explains an exhausted or expired
   challenge and offers **Sign in again**. If another tab has already finished
   the challenge, it goes straight to the destination.
-- The session ends 12 hours after sign-in.
+- The session ends 12 hours after sign-in, or after 2 hours without a
+  request, whichever comes first (`lib/auth/session-lifetime.ts`). A password
+  change or 2FA enrolment does not restart the 12 hours.
 
 ## 3. Passkeys
 
@@ -171,9 +174,10 @@ Gated for operators:
 | BetterAuth (`hooks.before`)       | `/two-factor/generate-backup-codes`, `/change-password`, `/change-email`, `/passkey/generate-register-options` |
 | `withOpsAction({ stepUp: true })` | Team: add, suspend, reactivate, resend setup link, reset 2FA                                                   |
 | `withOpsAction({ stepUp: true })` | Refunds and credits, payout override, SSO provider approval and enforcement                                    |
+| `requireFreshSession`             | Back-office payout processing and refund routes                                                                |
 
 The same window guards consumer and consultant account deletion and payout
-writes; see [architecture.md §5.7](./architecture.md#57-step-up-re-authentication).
+writes; see [architecture.md §5.5](./architecture.md#55-step-up-re-authentication).
 
 ## 5. Team page actions
 
@@ -259,6 +263,8 @@ Until those land, a QA run that needs a back-office session enrols one staff and
 - **Password-only reset.** A 2FA reset used to leave the old password valid, so
   whoever held it enrolled next. Resets now rotate the password and email a
   setup link.
+- **STAFF/ADMIN branches of the onboarding wizard.** Operators never onboard
+  through `/form/onboarding`; `createOperator()` marks them onboarded.
 - **Dropped from the original 2FA plan:** trusted devices, email or SMS OTP,
   hashed backup codes, and mandatory 2FA for org owners or payout consultants.
 - **Self-service 2FA removal for operators**: refused by design; the only removals are the ADMIN reset and a database-level recovery of the last admin.

@@ -289,9 +289,8 @@ export const auth = betterAuth({
     updateAccountOnSignIn: true,
   },
 
-  // Previously unset, so every cookie and IP attribute was BetterAuth's
-  // implicit default. Each key below is now stated so it is reviewable and a
-  // default change upstream cannot move it silently.
+  // Every cookie and IP attribute is stated so it is reviewable and a default
+  // change upstream cannot move it silently.
   advanced: {
     // Netlify serves over https, so this is already what BetterAuth derives —
     // but "already correct by coincidence" is not the same as asserted, and the
@@ -441,11 +440,10 @@ export const auth = betterAuth({
         },
       },
     },
-    // Server-side SSO veto (issue #673). Runs on every session creation path
-    // — credential signin, OAuth signin, SSO signin, signup — just before the
-    // cookie is issued, making this THE enforcement gate: a direct POST to
-    // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
-    // at the source rather than flagged reactively.
+    // Server-side SSO veto. Runs on every session creation path (credential,
+    // OAuth, SSO, verification) just before the cookie is issued, so it is THE
+    // enforcement gate: a direct POST to `/api/auth/sign-in/email` that
+    // bypasses the sign-in UI is rejected here.
     //
     // For an enforced email domain only an approved provider covering that
     // domain may mint the session, through its SSO callback. Domains no
@@ -645,7 +643,7 @@ export const auth = betterAuth({
         banExpires?: Date | null;
       };
 
-      // #693 defense-in-depth: sessions are deleted at ban time and sign-in
+      // Defense in depth: sessions are deleted at ban time and sign-in
       // is plugin-gated, but a session minted in the race window must still
       // resolve as banned. `user` is the row BetterAuth just read (the cookie
       // cache is off), so it is current.
@@ -686,10 +684,6 @@ export const auth = betterAuth({
       // authenticated request reads it — so we keep the payload flat
       // and small, and resolve labels at render time via
       // lib/labels/org-labels.ts instead of precomputing them here.
-      // Legacy fields (kind / billingMode / creditBalance /
-      // organizationProfileId / contractEndDate) were removed in
-      // Checkpoint 8; the dashboard now consumes the capability
-      // booleans + fundingSource directly.
       const organizationMemberships = memberships
         .filter((m) => m.organization.status === "ACTIVE")
         .map((m) => ({
@@ -705,20 +699,9 @@ export const auth = betterAuth({
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
         }));
 
-      // SSO enforcement: the primary gate lives in
-      // `databaseHooks.session.create.before` (above) — every session-creation
-      // path (credential, OAuth, SSO, signup) is vetoed there when the user's
-      // email domain is under an enforced org and the session did not come
-      // through that org's SSO callback (issue #673).
-      //
-      // A read-time recheck that flagged bypassed sessions via
-      // `ssoEnforcementFailed` used to live here. It was removed: no layout,
-      // guard, or component ever consumed the flag (docs claimed layouts
-      // redirect on it — none did), so it cost two DB round-trips
-      // (lookupEnforcedOrg + account probe) on EVERY session resolution —
-      // the hottest read in the app — for a value nobody read. Re-introduce
-      // enforcement-at-read-time only with an actual consumer; see the SSO
-      // enforcement lifecycle issue for the full plan.
+      // SSO enforcement is decided once, in `session.create.before`; this
+      // hot read does not re-check it. Add a read-time check only together
+      // with a consumer for it.
 
       return {
         user: {

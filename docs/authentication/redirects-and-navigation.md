@@ -17,7 +17,14 @@ flowchart LR
   DEST -- yes --> CB["callbackUrl or /dashboard"]
   DEST -- no --> ON["/form/onboarding?callbackUrl="]
   SI -- "replace, operator without 2FA" --> TFS["/auth/two-factor/setup"]
+  CB -- "requireOnboarded, not onboarded,<br/>active org membership" --> GATE["/onboarding/gate?callbackUrl="]
+  GATE -- "DOB + consent" --> CB
 ```
+
+Org members (invite accept, SSO JIT) who are not yet onboarded are sent by
+`requireOnboarded` (`lib/auth-guard.ts`) to `/onboarding/gate`, which collects
+date of birth and consent and returns to `callbackUrl`; everyone else finishes
+in the `/form/onboarding` wizard. See [`docs/onboarding/`](../onboarding/).
 
 ## The rules
 
@@ -101,13 +108,46 @@ not validate sessions or redirect cookie-present users off `/auth/*`: a stale
 cookie plus edge validation is the classic infinite-loop recipe. Real
 validation lives in server guards and layouts.
 
+### Rule 8: leaving a session uses `location.replace` and keeps the return path
+
+All sign-out and revocation navigation lives in `lib/auth/sign-out.ts`:
+
+- `signOutEverywhere(to)` tears down Stream, calls sign-out, posts **one**
+  `BroadcastChannel("auth")` `{ type: "signed-out" }` message on success, then
+  `location.replace(to)`. The signed-in page never stays in history, so Back
+  cannot restore it; a bfcache restore (`pageshow` with `persisted`) makes
+  `AuthSyncProvider` revalidate immediately.
+- Receiving tabs only clear local state and either `location.replace` to
+  sign-in (protected page) or reload (public page). They never POST
+  `/sign-out` again.
+- A confirmed revocation (identity ping 401/403) calls `leaveEndedSession`
+  with `signInHref("session-revoked")`, which carries the current page as a
+  `safeSameOriginPath` `callbackUrl`.
+- A remembered-but-expired session on a public page is forgotten silently;
+  only protected pages (`lib/navigation/protected-routes.ts`, shared with
+  `middleware.ts`) ask the server and redirect.
+- A different user id (session store or the `/api/user/sessions/current`
+  ping) hard-reloads the tab.
+
+```mermaid
+sequenceDiagram
+  participant A as Tab A
+  participant BC as BroadcastChannel auth
+  participant B as Tab B
+  A->>A: signOut() succeeds
+  A->>BC: signed-out
+  A->>A: location.replace(/auth/signin)
+  BC->>B: signed-out
+  B->>B: clear state, replace or reload (no POST)
+```
+
 ## Related context
 
 - [`architecture.md`](./architecture.md): the sign-up → verify sequence, the
-  session read path and why the cookie cache is off.
-- Every dashboard tab switch pays one force-fresh server `getSession` (about
-  four Prisma ops), deduped per request by `React.cache`. This is
-  revocation-safety insurance; read `lib/auth-server.ts` before changing it.
+  session read path, why the cookie cache is off, and multi-tab sync (§5.9).
+- Every dashboard navigation pays one database session read (about four Prisma
+  ops), deduped per render by `React.cache` in `lib/auth-server.ts`. That is
+  what makes a revoke apply on the next request.
 
 ## Regression checklist for auth and dashboard changes
 
@@ -116,7 +156,7 @@ validation lives in server guards and layouts.
    render.
 3. Any user-supplied URL in a redirect goes through `safeSameOriginPath`.
 4. New route segment? Add `loading.tsx`.
-5. `bash scripts/verify-sso-invariants.sh` passes.
+5. Sign-out and revocation go through `lib/auth/sign-out.ts` (Rule 8).
 6. Manual: sign up → verify page in the same tab → enter the code → onboarding
    with no intermediate flash; press Back from the dashboard → no bounce
    forward through `/auth/*`.
@@ -134,3 +174,8 @@ validation lives in server guards and layouts.
   branch.
 - **"Check your email" panel on sign-up.** Replaced by the same-tab hand-off to
   the verify page.
+- **`window.location.href` sign-out and the sign-out cascade.** The old
+  sign-out left the signed-in page in history, and every open tab POSTed
+  `/sign-out` again after BetterAuth's storage ping.
+- **Forced `/auth/signin?reason=session-revoked` on public pages** for a
+  returning visitor whose session had expired.

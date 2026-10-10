@@ -4,7 +4,7 @@
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status        | Live                                                                                                                                                                                  |
 | Audience      | Engineers, ADMINs, enterprise support                                                                                                                                                 |
-| Last reviewed | 2026-10-09                                                                                                                                                                            |
+| Last reviewed | 2026-10-10                                                                                                                                                                            |
 | Versions      | `better-auth` 1.7.7, `@better-auth/sso` 1.7.7                                                                                                                                         |
 | Source        | `lib/sso/*`, `lib/prisma-sso-secret-extension.ts`, `app/api/organizations/[orgId]/sso/**`, `app/api/admin/organizations/[orgId]/sso-providers/**`, `scripts/rotate-sso-secret-key.ts` |
 
@@ -185,6 +185,12 @@ has not wired up.
 | Domain verified, or domain added to a provider, while enforced | Every user on that domain, except the caller                                      |
 | Member removed by an admin, or suspended                       | That user's sessions, when their email is on one of the org's verified domains    |
 
+**Session cap.** A session minted by `/sso/callback/:providerId` for an
+enforced domain lasts at most 24 hours from sign-in, however active
+(`lib/auth/session-lifetime.ts`), so a user disabled at the IdP loses access
+within a day even without SCIM. Unenforced SSO sessions follow the consumer
+30-day slide.
+
 Self-leave does not end the leaver's sessions. Removing an outside identity,
 such as a gmail.com expert, does not sign them out of their personal use.
 
@@ -239,15 +245,18 @@ The limits are per IP, sized for an office behind one NAT address:
 
 ## 6. Failure answers
 
-| Symptom                          | Code                         | Cause and fix                                                                                   |
-| -------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------- |
-| "Your organization requires SSO" | `SSO_REQUIRED`               | Working as designed; the user must use the org's IdP. The org audit log has a row               |
-| Personal Google account refused  | `SSO_HOSTED_DOMAIN_MISMATCH` | Use the Workspace account                                                                       |
-| Entra user refused               | `SSO_EMAIL_NOT_VERIFIED`     | Add the `xms_edov` optional claim to the app registration's ID token                            |
-| Enforce-on answers 409           | `SSO_NOT_PROVEN`             | An org OWNER signs in once through the approved provider                                        |
-| Provider settings cannot be read | `SSO_PROVIDER_MISCONFIGURED` | `key_unavailable`: restore the key. Anything else: the OWNER deletes and recreates the provider |
-| Registration fails at discovery  | `OIDC_DISCOVERY_FAILED`      | Wrong issuer or discovery URL, or the IdP blocks us; the response names the reason              |
-| Provider never signs anyone in   | none                         | Not approved yet. It is in the back-office Pending SSO approvals queue                          |
+| Symptom                          | Code                         | Cause and fix                                                                                       |
+| -------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| "Your organization requires SSO" | `SSO_REQUIRED`               | Working as designed; the user must use the org's IdP. The org audit log has a row                   |
+| Personal Google account refused  | `SSO_HOSTED_DOMAIN_MISMATCH` | Use the Workspace account                                                                           |
+| Entra user refused               | `SSO_EMAIL_NOT_VERIFIED`     | Add the `xms_edov` optional claim to the app registration's ID token                                |
+| No id_token from the IdP         | `SSO_ID_TOKEN_MISSING`       | Provider is not returning an OpenID id_token; check the app registration's scopes and response type |
+| Email outside covered domains    | `SSO_EMAIL_DOMAIN_MISMATCH`  | The IdP asserted an address on a domain the provider does not cover, or the org lost the claim      |
+| Second identity from one IdP     | `SSO_ACCOUNT_ALREADY_LINKED` | The user already has an account from this provider; one identity per provider per user              |
+| Enforce-on answers 409           | `SSO_NOT_PROVEN`             | An org OWNER signs in once through the approved provider                                            |
+| Provider settings cannot be read | `SSO_PROVIDER_MISCONFIGURED` | `key_unavailable`: restore the key. Anything else: the OWNER deletes and recreates the provider     |
+| Registration fails at discovery  | `OIDC_DISCOVERY_FAILED`      | Wrong issuer or discovery URL, or the IdP blocks us; the response names the reason                  |
+| Provider never signs anyone in   | none                         | Not approved yet. It is in the back-office Pending SSO approvals queue                              |
 
 ## 7. Tests and open items
 

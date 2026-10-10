@@ -4,7 +4,7 @@
 | ------------- | --------------------------------------------------------------------------------------------- |
 | Status        | Live                                                                                          |
 | Audience      | Engineers, on-call                                                                            |
-| Last reviewed | 2026-10-09                                                                                    |
+| Last reviewed | 2026-10-10                                                                                    |
 | Source        | `lib/auth/rate-limit.ts`, `lib/auth/password-policy.ts`, `lib/rate-limit.ts`, `middleware.ts` |
 
 ## 1. Two limiters, no overlap
@@ -49,8 +49,8 @@ normalisation.
 | `/reset-password/*`                    | 10 / hour     | Token in the path, so effectively per token                         |
 | `/email-otp/verify-email`              | 10 / 15 min   | Code guessing; the code itself also locks after 5 wrong tries       |
 | `/sign-in/social`, `/callback/*`       | 30 / 15 min   | IdP retries on flaky networks; a 429 reads as "Google is broken"    |
-| `/sign-in/sso`                         | 20 / 15 min   | Same                                                                |
-| `/sso/callback`, `/sso/callback/*`     | 30 / 15 min   | Same                                                                |
+| `/sign-in/sso`                         | 300 / 15 min  | Enforce-on signs a whole office out at once behind one NAT address  |
+| `/sso/callback/*`                      | 1000 / 15 min | Same; state and PKCE are single-use, so this only stops floods      |
 | `/get-session`, `/sign-out`            | unlimited     | Read on every page and focus; never strand a user signing out       |
 | anything else                          | 100 / min     | Default                                                             |
 
@@ -116,7 +116,8 @@ Our own BetterAuth plugin, `breachedPasswordCheck`, wraps password hashing on
 | Unverified-account purge                       | `purge-unverified-users` registry job, daily from GitHub Actions                                        |
 | No auto-link on unverified email               | No `trustedProviders`                                                                                   |
 | Generic sign-in errors                         | [errors.md](./errors.md)                                                                                |
-| 2FA lockout                                    | twoFactor plugin: 10 consecutive wrong codes, 15-minute pause                                           |
+| 2FA lockouts                                   | twoFactor plugin: 5 wrong codes void one challenge; 10 consecutive wrong codes pause 2FA for 15 minutes |
+| Step-up                                        | Credential, factor, payout, refund and IAM changes need a proof from the last 15 minutes                |
 | Hashed tokens at rest                          | Reset and verification identifiers stored as SHA-256                                                    |
 | CSP                                            | Report-only to Sentry, see [security headers](../enterprise/20-iam-and-security/04-security-headers.md) |
 
@@ -145,7 +146,7 @@ attacker's account. Mitigations:
 
 - The victim's sign-up attempt sends the existing-account notice, which steers
   them to password reset. A reset verifies the address, rotates the password,
-  revokes every session and deletes outstanding tokens (`onPasswordChanged`).
+  revokes every session and deletes outstanding tokens (`onPasswordReset`).
 - `purge-unverified-users` deletes never-verified, credential-only consumer
   accounts with nothing attached after 7 days, freeing the address.
 - Turnstile on sign-up and per-account throttles are a later change.
@@ -160,7 +161,14 @@ attacker's account. Mitigations:
 | Break-glass account | A standing bypass is a standing target. Operator recovery is the ADMIN 2FA reset                                     |
 | Account-state hints | Graded disclosure is an enumeration oracle                                                                           |
 
-## 7. Adding a limit
+## 7. Accepted risks
+
+| Risk                 | What can happen                                                                                                                                  | Why it is accepted                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TOTP replay window   | The twoFactor plugin verifies ±1 step with no used-code guard, so a code stays valid for about 90 s and can complete a second challenge          | The password is still required, and the per-challenge budget (5 codes) plus the account lock (10 straight failures, 15 minutes) bound guessing. Passkeys are the phishing-resistant answer |
+| 2FA lockout as a DoS | Anyone holding an operator's password can spend 10 wrong codes, restarting challenges, and pause that operator's 2FA verification for 15 minutes | It needs the password, and the operator gets a lockout email, so the attempt is visible                                                                                                    |
+
+## 8. Adding a limit
 
 - **A BetterAuth path:** add a rule to `AUTH_RATE_LIMIT_RULES`, more specific
   patterns first. Nothing else is needed.
@@ -176,5 +184,7 @@ attacker's account. Mitigations:
 - **Awaited auth mail:** sign-up and reset used to wait on Resend inline, which
   made response time an account-existence oracle. Mail now runs in
   `advanced.backgroundTasks`.
+- **SSO budgets of 20 and 30 per 15 minutes**, which an enforce-on sweep of a
+  whole office behind one NAT address could exhaust; raised to 300 and 1000.
 - **First-hop `x-forwarded-for` keys** on the referral check: client-controlled
   on Netlify, so the limit was bypassable. Use `getClientIp`.

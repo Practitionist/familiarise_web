@@ -3,7 +3,7 @@ title: SSO and authentication
 band: 20-iam-and-security
 audience: sde3
 status: partial
-last-reviewed: 2026-10-09
+last-reviewed: 2026-10-10
 ---
 
 # SSO and authentication
@@ -16,7 +16,9 @@ The canonical, code-level description is
 claim checks, secret encryption, callback URLs and failure handling. The wider
 sign-in stack is in the [authentication overview](../../authentication/README.md).
 
-SSO is OIDC-only on `@better-auth/sso` 1.7.7. SAML and SCIM are not supported.
+Auth runs on `better-auth` 1.7.7 with the `@better-auth/sso` 1.7.7 and
+`@better-auth/passkey` 1.7.7 plugins. SSO is OIDC-only; SAML and SCIM are not
+supported.
 
 ## The path to an enforced SSO tenant
 
@@ -139,6 +141,23 @@ Role changes after that reach the session without a forced logout; see
 Deprovisioning has no SCIM. When an admin removes or suspends a member whose
 email is on one of the org's verified domains, all of that user's sessions end
 in the same transaction. The SSO session lifetime cap bounds the rest.
+
+## Sessions
+
+Session lifetimes are set in `lib/auth/session-lifetime.ts`. A session created
+by an SSO sign-in for an enforced domain ends 24 hours after sign-in, however
+active it is, so an IdP deprovisioning reaches the platform within a day.
+Consumers keep the 30-day sliding session (`updateAge` 1 day); platform
+operators get 12 hours absolute plus a 2-hour idle timeout, or 1 hour before
+they enrol 2FA.
+
+The cookie cache is off, so every request re-reads the session row and the
+user's memberships. A failed lookup is not read as signed out: `getSession()`
+and `lookupSession()` throw `SessionLookupFailedError`, which answers
+`503 SESSION_LOOKUP_FAILED` with `Retry-After: 2`, and `/api/auth/get-session`
+answers the same 503. See
+[ADR 34](../70-design-decisions/34-user-session-visibility-and-revocation.md)
+for lifetimes, the tri-state lookup and revocation.
 
 ## Typed error codes
 
