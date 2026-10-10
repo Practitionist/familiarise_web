@@ -270,7 +270,7 @@ export async function POST(
     hsnCode: org.taxInfo?.hsnDefault,
   });
 
-  const issuedAt = body.issueImmediately ? new Date() : new Date();
+  const issuedAt = new Date();
 
   let invoice;
   try {
