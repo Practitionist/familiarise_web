@@ -544,4 +544,44 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
 
     expectBalancedJournalWithDebits(50_000);
   });
+
+  it("5. Ownerless org catalog plan with zero consultant earnings: refundEarnings still reverses OrganizationEarnings on partial and full refunds", async () => {
+    const { refundEarnings } =
+      await import("@/lib/payments/payouts/earnings-service");
+
+    const zeroTx = {
+      consultantEarnings: { findMany: jest.fn(async () => []) },
+      organizationEarnings: { count: jest.fn(async () => 1) },
+    } as never;
+
+    await refundEarnings("pay-ownerless-zero", { refundAmount: 0, tx: zeroTx });
+
+    const partialUpdate = jest.fn(async () => ({ count: 1 }));
+    const partialTx = {
+      consultantEarnings: { findMany: jest.fn(async () => []) },
+      organizationEarnings: {
+        count: jest.fn(async () => 1),
+        findMany: jest.fn(async () => [
+          {
+            id: "oe-ownerless-1",
+            paymentId: "pay-ownerless-partial",
+            organizationId: "org_1",
+            grossAmountPaise: 100_000,
+            orgSharePaise: 90_000,
+            status: "HELD",
+          },
+        ]),
+        updateMany: partialUpdate,
+      },
+      payment: {
+        findUnique: jest.fn(async () => ({ amount: 100_000 })),
+      },
+    } as never;
+
+    await refundEarnings("pay-ownerless-partial", {
+      refundAmount: 50_000,
+      tx: partialTx,
+    });
+    expect(partialUpdate).toHaveBeenCalledTimes(1);
+  });
 });

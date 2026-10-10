@@ -421,7 +421,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           const { expireStaleCollaboratorInvites } =
             await import("@/lib/collaborators/cleanup");
           return expireStaleCollaboratorInvites(
-            parseLimitParamOrDefault(req, 200),
+            parseLimitParamOrDefault(req, 50),
           );
         },
         summarize: (r) => ({ expired: r.expired, scanned: r.scanned }),

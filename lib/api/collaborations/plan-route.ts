@@ -241,7 +241,7 @@ async function authorizeRevenueSplitReader(
   planId: string,
   userId: string,
   consultantProfileId: string | null | undefined,
-): Promise<NextResponse | null> {
+): Promise<{ denied: NextResponse | null; canSeeAll: boolean }> {
   const plan =
     planType === "webinar"
       ? await prisma.webinarPlan.findUnique({
@@ -253,16 +253,19 @@ async function authorizeRevenueSplitReader(
           select: { consultantProfileId: true, organizationId: true },
         });
   if (!plan) {
-    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    return {
+      denied: NextResponse.json({ error: "Plan not found" }, { status: 404 }),
+      canSeeAll: false,
+    };
   }
 
   const isOwner =
     Boolean(consultantProfileId) &&
     consultantProfileId === plan.consultantProfileId;
-  if (isOwner) return null;
+  if (isOwner) return { denied: null, canSeeAll: true };
 
   if (await isOrgCatalogAdmin(userId, plan.organizationId)) {
-    return null;
+    return { denied: null, canSeeAll: true };
   }
 
   const collab = consultantProfileId
@@ -278,10 +281,13 @@ async function authorizeRevenueSplitReader(
     : null;
 
   if (!collab) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return {
+      denied: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+      canSeeAll: false,
+    };
   }
 
-  return null;
+  return { denied: null, canSeeAll: false };
 }
 
 export async function handlePlanRevenueSplitGet(
@@ -295,14 +301,16 @@ export async function handlePlanRevenueSplitGet(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (!isPrivileged(session.user.role)) {
-      const denied = await authorizeRevenueSplitReader(
+    let canSeeAll = isPrivileged(session.user.role);
+    if (!canSeeAll) {
+      const auth = await authorizeRevenueSplitReader(
         planType,
         planId,
         session.user.id,
         session.user.consultantProfileId,
       );
-      if (denied) return denied;
+      if (auth.denied) return auth.denied;
+      canSeeAll = auth.canSeeAll;
     }
 
     const rawAmount = req?.nextUrl.searchParams.get("amount");
@@ -316,11 +324,16 @@ export async function handlePlanRevenueSplitGet(
       );
     }
 
-    const splits = await calculateRevenueSplit(
+    const allSplits = await calculateRevenueSplit(
       planType,
       planId,
       amountParsed.data,
     );
+    const splits = canSeeAll
+      ? allSplits
+      : allSplits.filter(
+          (s) => s.consultantProfileId === session.user.consultantProfileId,
+        );
     return NextResponse.json({ data: splits });
   } catch (error) {
     Sentry.captureException(

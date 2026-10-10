@@ -2648,7 +2648,12 @@ export async function refundEarnings(
     where: { paymentId },
   });
 
-  if (allEarnings.length === 0) {
+  const orgEarningsCount =
+    allEarnings.length === 0 && db.organizationEarnings?.count
+      ? await db.organizationEarnings.count({ where: { paymentId } })
+      : 0;
+
+  if (allEarnings.length === 0 && orgEarningsCount === 0) {
     console.warn(`No earnings found for payment ${paymentId}`);
     return false;
   }
@@ -2673,6 +2678,7 @@ export async function refundEarnings(
   }
 
   await reverseOrgEarningsForPayment(db, paymentId, prorateRefundPaise);
+  if (allEarnings.length === 0) return true;
 
   const trancheRows = allEarnings.filter(
     (e) => typeof e.cycleOrdinal === "number",

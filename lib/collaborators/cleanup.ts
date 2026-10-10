@@ -15,9 +15,9 @@ export interface ExpireStaleCollaboratorInvitesResult {
  * via conditional CAS update and notifies inviter and invitee.
  */
 export async function expireStaleCollaboratorInvites(
-  limit = 25,
+  limit = 50,
 ): Promise<ExpireStaleCollaboratorInvitesResult> {
-  const effectiveLimit = Math.min(Math.max(1, limit), 25);
+  const effectiveLimit = Math.min(Math.max(1, limit), 50);
   return withCronLock(
     "expire-stale-collaborator-invites",
     { failMode: "open" },

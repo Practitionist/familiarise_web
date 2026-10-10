@@ -60,6 +60,7 @@ import {
   createCollaboratorChannel,
   createDirectMessageChannel,
 } from "@/actions/stream/chat/channel.action";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import {
   addUserToEventChannel,
   isEventParticipant,
@@ -151,6 +152,7 @@ async function isAuthorizedForCollabChannel(
         organizationId: plan.organizationId,
         userId,
         status: "ACTIVE",
+        organization: { status: { not: "DEACTIVATED" } },
       },
       select: { role: true },
     });
@@ -334,6 +336,11 @@ async function handleCollabChannelOpen(
   }
 
   const channelId = collabChannelId(planType, planId);
+  await upsertUsersToStream([userId]);
+  await getStreamChatClient()
+    .channel("messaging", channelId)
+    .addMembers([userId])
+    .catch(() => {});
   return NextResponse.json({ channelType: "messaging", channelId });
 }
 

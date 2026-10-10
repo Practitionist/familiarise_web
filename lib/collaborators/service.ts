@@ -462,6 +462,8 @@ async function syncOpenCallPresenterRole(
           meeting: { is: { endedAt: null } },
         },
         select: {
+          startsAt: true,
+          endsAt: true,
           meeting: { select: { streamCallId: true } },
         },
       }),
@@ -481,11 +483,22 @@ async function syncOpenCallPresenterRole(
     const callRole = PRESENTER_ROLES.includes(role)
       ? "co_presenter"
       : CALL_MEMBER_ROLE;
+    const appointmentType = planType === "webinar" ? "WEBINAR" : "CLASS";
+    const { buildCallSettingsOverride } =
+      await import("@/lib/meetings/room-ready");
     const video = getStreamVideoClient().video;
 
     const results = await Promise.allSettled(
-      occurrences.flatMap(({ meeting }) => {
+      occurrences.flatMap(({ startsAt, endsAt, meeting }) => {
         if (!meeting) return [];
+        const maxDurationSeconds = Math.max(
+          900,
+          Math.ceil((endsAt.getTime() - startsAt.getTime()) / 1000) + 900,
+        );
+        const settingsOverride = buildCallSettingsOverride(
+          appointmentType,
+          maxDurationSeconds,
+        );
         const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
         return [
           (async () => {
@@ -493,6 +506,9 @@ async function syncOpenCallPresenterRole(
               data: {
                 created_by_id: hostUserId,
                 members: [{ user_id: userId, role: callRole }],
+                ...(settingsOverride
+                  ? { settings_override: settingsOverride }
+                  : {}),
               },
             });
             await call.updateCallMembers({

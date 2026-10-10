@@ -219,7 +219,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const resolvedOrgId =
       recording.organizationId ??
       recording.meeting?.organizationId ??
-      appointment?.organizationId ??
       appointment?.webinar?.webinarPlan?.organizationId ??
       appointment?.class?.classPlan?.organizationId ??
       null;
@@ -241,6 +240,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         ])
       ) {
         hasAccess = true;
+        viaOperatorGrant = true;
       }
     }
 
@@ -511,7 +511,6 @@ async function resolveRecordingWriteAccess(
   const orgId =
     recording.organizationId ??
     recording.meeting?.organizationId ??
-    appointment?.organizationId ??
     appointment?.webinar?.webinarPlan?.organizationId ??
     appointment?.class?.classPlan?.organizationId ??
     null;

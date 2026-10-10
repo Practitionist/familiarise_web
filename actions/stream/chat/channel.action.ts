@@ -789,6 +789,7 @@ export async function createCollaboratorChannel(
 
   await channel.create();
   await addRemainingMembers(channel, roster);
+  await channel.updatePartial({ set: { frozen: false } }).catch(() => {});
   markChannelExists("messaging", channelId);
 
   await grantChannelModerator(channel, creatorUserId, channelId);

@@ -81,17 +81,7 @@ export function ActiveCollaborationCard({
     (c) => c.id !== collab.id,
   );
 
-  // Host receives the remainder after PENDING and ACCEPTED collaborators.
-  const countedCollaborators = allCollaboratorsOnPlan.filter(
-    (c) => c.status === "PENDING" || c.status === "ACCEPTED",
-  );
-  const totalCollabShare =
-    countedCollaborators.reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-  const hostShare = Number((100 - totalCollabShare).toFixed(2));
   const youShare = Number((collab.revenueShareBps / 100).toFixed(2));
-  const otherShare = Number(
-    Math.max(0, totalCollabShare - youShare).toFixed(2),
-  );
 
   const hasExpandableDetails =
     (collab.planType === "webinar" &&
@@ -252,36 +242,15 @@ export function ActiveCollaborationCard({
                 className: "bg-teal-600",
               },
               {
-                key: "host",
-                percent: hostShare,
-                className: "bg-zinc-800",
-              },
-              {
-                key: "others",
-                percent: otherShare,
-                className: "bg-zinc-300",
+                key: "remaining",
+                percent: Number(Math.max(0, 100 - youShare).toFixed(2)),
+                className: "bg-zinc-200",
               },
             ]}
             label={
-              <>
-                <span className="font-semibold text-zinc-800">
-                  You {youShare}%
-                </span>
-                {owner && (
-                  <>
-                    <span className="text-zinc-400"> · </span>
-                    <span>
-                      {owner.user.name} {hostShare}%
-                    </span>
-                  </>
-                )}
-                {otherShare > 0 && (
-                  <>
-                    <span className="text-zinc-400"> · </span>
-                    <span>Others {otherShare}%</span>
-                  </>
-                )}
-              </>
+              <span className="font-semibold text-zinc-800">
+                Your share: {youShare}%
+              </span>
             }
           />
         </div>
@@ -305,9 +274,7 @@ export function ActiveCollaborationCard({
                     <p className="truncate text-sm font-medium text-zinc-900">
                       {owner.user.name ?? "Unknown"}
                     </p>
-                    <p className="truncate text-xs text-zinc-500">
-                      Host · {hostShare}% share
-                    </p>
+                    <p className="truncate text-xs text-zinc-500">Host</p>
                   </div>
                 </div>
                 <Badge

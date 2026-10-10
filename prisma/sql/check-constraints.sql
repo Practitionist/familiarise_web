@@ -326,6 +326,21 @@ ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
 -- SPLIT
 DO $$
 BEGIN
+  UPDATE "Collaborator"
+  SET "role" = CASE WHEN "role" = 'CO_INSTRUCTOR' THEN 'CO_HOST' ELSE 'GUEST_SPEAKER' END
+  WHERE "collaboratorType" = 'WEBINAR'
+    AND "role" NOT IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT');
+
+  UPDATE "Collaborator"
+  SET "role" = CASE WHEN "role" = 'CO_HOST' THEN 'CO_INSTRUCTOR' ELSE 'GUEST_LECTURER' END
+  WHERE "collaboratorType" = 'CLASS'
+    AND "role" NOT IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR');
+
+  UPDATE "Collaborator"
+  SET "tier" = CASE WHEN "role" IN ('CO_HOST', 'CO_INSTRUCTOR') THEN 'PRESENTER' ELSE 'CREW' END
+  WHERE ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'PRESENTER')
+     OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'CREW');
+
   ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_role_matches_plan_type"
     CHECK (
       ("collaboratorType" = 'WEBINAR' AND "role" IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT'))
