@@ -15,6 +15,11 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { authClient } from "@/lib/auth-client";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_RULE_HINT,
+  passwordTooLong,
+} from "@/lib/auth/password-rules";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
@@ -37,8 +42,9 @@ function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  // Better Auth redirects here with ?error=INVALID_TOKEN when the link's
-  // token fails before the form is ever shown.
+  // Lets password managers file the new password under the right account.
+  const accountEmail = searchParams.get("email") ?? "";
+  // Better Auth redirects here with `?error=` when the link's token is bad.
   const linkError = searchParams.get("error");
 
   const [password, setPassword] = useState("");
@@ -46,10 +52,7 @@ function ResetPasswordContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  // The catalog's "what to do next" for the last failure — on this page it
-  // is almost always `request-new-link`, which the effect below only reaches
-  // after a 3-second auto-redirect; the affordance lets the customer skip
-  // the wait.
+  // The catalog's "what to do next" for the last failure.
   const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
   const retryAfter = useRetryAfterCapture();
 
@@ -65,9 +68,8 @@ function ResetPasswordContent() {
         description: copy.description,
         variant: "destructive",
       });
-      // Auto-redirect to forgot-password after 3 seconds
       const timer = setTimeout(() => {
-        router.push("/auth/forgot-password");
+        router.replace("/auth/forgot-password");
       }, 3000);
       return () => clearTimeout(timer);
     }
@@ -84,8 +86,8 @@ function ResetPasswordContent() {
       toast({ title: "Passwords do not match", variant: "destructive" });
       return;
     }
-    if (password.length < 8 || password.length > 128) {
-      setError("Use 8 to 128 characters.");
+    if (password.length < PASSWORD_MIN_LENGTH || passwordTooLong(password)) {
+      setError(PASSWORD_RULE_HINT);
       return;
     }
 
@@ -100,9 +102,7 @@ function ResetPasswordContent() {
       const { error: resetError } = await authClient.resetPassword({
         newPassword: password,
         token,
-        // Reads `Retry-After` off the response — see
-        // `components/auth/useRetryAfterCapture.ts`.
-        ...retryAfter.fetchOptions,
+        fetchOptions: retryAfter.fetchOptions,
       });
       if (resetError) {
         const copy = humanizeAuthError("reset", resetError, {
@@ -119,7 +119,8 @@ function ResetPasswordContent() {
         const successMessage = "Password has been reset successfully.";
         setMessage(successMessage);
         settle({ title: "Success", description: successMessage });
-        setTimeout(() => router.push("/auth/signin"), 3000);
+        // Replace so the single-use token URL leaves history.
+        setTimeout(() => router.replace("/auth/signin"), 3000);
       }
     } catch (err: unknown) {
       Sentry.captureException(
@@ -140,19 +141,6 @@ function ResetPasswordContent() {
     }
   };
 
-  /**
-   * Which catalog actions this page can service.
-   *
-   * `request-new-link` is the one that matters — it is the answer to every
-   * `INVALID_TOKEN` / `TOKEN_EXPIRED` / `PASSWORD_ALREADY_SET` on this page,
-   * and pointing it at the forgot-password route is what turns the passive
-   * "Redirecting … in 3 seconds" into something the customer drives.
-   *
-   * `sign-in` is here because a reset link that is already spent is also a
-   * link whose owner may not know they are signed in; the catalog reaches for
-   * it on `EMAIL_ALREADY_VERIFIED` and the session codes. `retry` is never
-   * renderable (see `AuthErrorAffordance`) — the submit button is the retry.
-   */
   const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
     "request-new-link": { kind: "link", href: "/auth/forgot-password" },
     "sign-in": { kind: "link", href: "/auth/signin" },
@@ -165,7 +153,6 @@ function ResetPasswordContent() {
     <div className="flex min-h-screen items-center justify-center bg-neutral-950 p-6 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col">
         <div className="text-center">
-          {/* Reusing GlobeIcon style from SignIn */}
           <svg
             xmlns="http://www.w3.org/2000/svg"
             width="24"
@@ -217,18 +204,30 @@ function ResetPasswordContent() {
 
         {token && (
           <form className="mt-8 space-y-6" onSubmit={handleResetPassword}>
+            <input
+              type="email"
+              name="username"
+              autoComplete="username"
+              value={accountEmail}
+              readOnly
+              tabIndex={-1}
+              aria-hidden="true"
+              className="sr-only"
+            />
             <div className="grid gap-2">
               <Label htmlFor="password">New Password</Label>
               <Input
                 id="password"
                 name="password"
                 type="password"
+                autoComplete="new-password"
                 required
                 placeholder="New password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
               />
+              <p className="text-xs text-zinc-400">{PASSWORD_RULE_HINT}</p>
             </div>
 
             <div className="grid gap-2">
@@ -237,6 +236,7 @@ function ResetPasswordContent() {
                 id="confirm-password"
                 name="confirm-password"
                 type="password"
+                autoComplete="new-password"
                 required
                 placeholder="Confirm new password"
                 value={confirmPassword}
@@ -256,7 +256,7 @@ function ResetPasswordContent() {
             <Button
               type="submit"
               className="w-full bg-white text-black hover:bg-white/90"
-              disabled={isLoading || !!message} // Disable button after success message
+              disabled={isLoading || !!message}
             >
               {isLoading ? "Resetting..." : "Reset Password"}
             </Button>

@@ -27,48 +27,53 @@ only a route handler can delete cookies.
 ```mermaid
 flowchart TD
   REQ["/api/auth/* request"] --> RL["rateLimit<br/>Upstash store, per IP + path"]
-  RL --> HB["hooks.before<br/>404 on /sso/saml2/*<br/>400 on organizationSlug, trustDevice<br/>403 operator /two-factor/disable<br/>403 non-operator 2FA enable, passkey register<br/>403 unenrolled operator credential change<br/>403 REAUTH_REQUIRED on a stale session"]
+  RL --> HB["hooks.before<br/>404 on /sso/saml2/*<br/>400 on organizationSlug, trustDevice<br/>403 operator /two-factor/disable"]
   HB --> DP{"Path in disabledPaths?"}
   DP -- yes --> X404["404"]
   DP -- no --> EP["Endpoint"]
 
   subgraph Plugins["Plugins, in order"]
-    P1["breachedPasswordCheck<br/>HIBP on sign-up, change, reset"]
+    P1["breachedPasswordCheck<br/>HIBP + 72-byte cap on sign-up, change, reset"]
+    P1a["corePolicy<br/>display name, OTP type, one sign-up answer"]
+    P1b["accountLifecycle<br/>password-changed mail, token cleanup"]
+    P1c["emailOTP<br/>6-digit email verification only"]
     P2["twoFactor<br/>TOTP + 10 backup codes"]
-    P3["passkey<br/>operators only, user verification required"]
-    P4["admin<br/>role, ban columns; HTTP disabled"]
-    P5["sso<br/>OIDC, domainVerification, provisionUser"]
-    P6["customSession<br/>memberships, banned, twoFactorEnabled;<br/>token stripped"]
-    P7["nextCookies<br/>must be last"]
+    P3["admin<br/>role, ban columns; HTTP disabled"]
+    P4["sso<br/>OIDC, domainVerification, provisionUser"]
+    P5["customSession<br/>memberships, banned, twoFactorEnabled;<br/>token stripped"]
+    P6["nextCookies<br/>must be last"]
   end
 
   EP --> Plugins
   EP --> DBH
 
   subgraph DBH["databaseHooks"]
-    H1["user.create.after<br/>prefs, DPDP consent (not SSO or operator),<br/>welcome email, Novu"]
+    H1["user.create.after<br/>prefs, Novu; consent + welcome only<br/>if already verified (social)"]
     H2["session.create.before<br/>operator path allowlist,<br/>SSO enforcement veto,<br/>operator 12h cap"]
     H3["session.update.before<br/>re-clamp operator expiry"]
     H4["account.create.before<br/>no social or SSO account for operators"]
-    H5["account.create.after<br/>account-linked email"]
+    H5["account.create.after<br/>account-linked email<br/>(not for a new user's first account)"]
   end
+
+  EP --> EV["emailVerification.afterEmailVerification<br/>DPDP consent + welcome email"]
 
   DBH --> RESP["Response + Set-Cookie<br/>__Secure-better-auth.session_token"]
 ```
 
 Key settings, all stated explicitly in `lib/auth.ts`:
 
-| Setting           | Value                                                                                                                                                                                                                                                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Passwords         | bcrypt cost 12, 8 to 128 characters, email verification required before a credential sign-in                                                                                                                                                                                                                            |
-| Reset link        | 30 minutes, single use; a reset deletes every session for the user                                                                                                                                                                                                                                                      |
-| Verification link | 1 hour; signs the user in on click (`autoSignInAfterVerification`)                                                                                                                                                                                                                                                      |
-| Token storage     | Reset and verification identifiers stored as SHA-256 (`verification.storeIdentifier: "hashed"`)                                                                                                                                                                                                                         |
-| Social            | Google and GitHub. Account linking on, **no `trustedProviders`**; OAuth tokens encrypted at rest                                                                                                                                                                                                                        |
-| Cookies           | `__Secure-` prefix, `httpOnly`, `SameSite=Lax` (the OAuth and SSO callbacks are top-level GETs)                                                                                                                                                                                                                         |
-| Client IP         | `x-nf-client-connection-ip` first (set by Netlify, unforgeable); IPv6 keyed on the /64                                                                                                                                                                                                                                  |
-| Session           | 30-day expiry, refreshed at most once a day (`updateAge`), `cookieCache` **off**                                                                                                                                                                                                                                        |
-| `disabledPaths`   | `/list-sessions`, `/revoke-session(s)`, `/revoke-other-sessions`; `/get-access-token`, `/account-info`, `/refresh-token`, `/update-session`; the OTP 2FA pair and `/two-factor/get-totp-uri`; every `/admin/*` endpoint; `/sso/register`, provider CRUD, domain verification, SAML metadata, the shared `/sso/callback` |
+| Setting           | Value                                                                                                                                                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Passwords         | bcrypt cost 12, at least 8 characters and at most 72 bytes (`lib/auth/password-rules.ts`), email verification required before a credential sign-in                                                                                                                                   |
+| Reset link        | 30 minutes, single use; a reset deletes every session for the user                                                                                                                                                                                                                   |
+| Verification code | 6 digits, 10 minutes, 5 wrong tries (`emailOTP`, `overrideDefaultEmailVerification`); verifying signs the user in (`autoSignInAfterVerification`)                                                                                                                                    |
+| Token storage     | Reset identifiers and verification codes stored as SHA-256 (`verification.storeIdentifier: "hashed"`, `storeOTP: "hashed"`)                                                                                                                                                          |
+| Auth mail         | Sent after the response through `advanced.backgroundTasks` → `scheduleAfter` (Netlify `waitUntil`), so timing does not reveal accounts                                                                                                                                               |
+| Social            | Google and GitHub, each only when its client id and secret are set (`lib/auth/social-providers.ts`). Account linking on, **no `trustedProviders`**; OAuth tokens encrypted at rest                                                                                                   |
+| Cookies           | `__Secure-` prefix, `httpOnly`, `SameSite=Lax` (the OAuth and SSO callbacks are top-level GETs)                                                                                                                                                                                      |
+| Client IP         | `x-nf-client-connection-ip` first (set by Netlify, unforgeable); IPv6 keyed on the /64                                                                                                                                                                                               |
+| Session           | 30-day expiry, refreshed at most once a day (`updateAge`), `cookieCache` **off**                                                                                                                                                                                                     |
+| `disabledPaths`   | `/list-sessions`; `/get-access-token`, `/account-info`, `/refresh-token`, `/update-session`; the OTP 2FA pair; every emailOTP path except send and verify; every `/admin/*` endpoint; `/sso/register`, provider CRUD, domain verification, SAML metadata, the shared `/sso/callback` |
 
 `disabledPaths` blocks HTTP only. Server code can still call `auth.api.*`,
 which is how staff onboarding calls `createUser`.
@@ -84,24 +89,17 @@ which is how staff onboarding calls `createUser`.
   `createdAt + 12h` and `session.update.before` re-applies the cap on every
   refresh (`lib/auth/operator-session-policy.ts`).
 - No cap on sessions per user. Expired rows are deleted nightly by
-  `lib/auth/cleanup-auth-tokens.ts`, which `.github/workflows/cron-daily.yml`
-  calls via `POST /api/cleanup/auth-tokens`.
+  `.github/workflows/cleanup-auth-tokens.yml` (`jobs/cleanup/cleanup-auth-tokens.ts`).
 - `customSession` returns the user with role, profile ids, a `banned` flag
   (honouring `banExpires`, from the row BetterAuth just read),
   `twoFactorEnabled` and `organizationMemberships` from the typed `Membership`
   table. It returns the session **without** its token.
-- A session carries **no 2FA claim**. Every gate reads the user flag
-  `twoFactorEnabled`, so the `verify-totp` call that enrols an operator ends
-  every other session of that user; a session opened with the password alone
-  never inherits the second factor.
-- `Session.reauthenticatedAt` records the last step-up. A session is fresh for
-  15 minutes from the later of `createdAt` and `reauthenticatedAt` (§5.7).
 
 ### Session read path
 
 ```mermaid
 flowchart LR
-  A["RSC page or route handler"] --> L["lookupSession()<br/>lib/auth-session-lookup.ts"]
+  A["RSC page or route handler"] --> L["lookupSession(force-fresh)<br/>lib/auth-session-lookup.ts"]
   L --> BA["auth.api.getSession"]
   BA --> DB["SELECT Session by token + User"]
   DB --> CS["customSession<br/>User flags + Memberships"]
@@ -139,7 +137,10 @@ such an operator straight to `/auth/two-factor/setup`.
 
 ## 5. Flows
 
-### 5.1 Consumer sign-up and email sign-in
+### 5.1 Consumer sign-up, email verification and email sign-in
+
+Verification is a 6-digit code typed into the same tab that chose the
+password, so whoever verifies holds both the inbox and the password.
 
 ```mermaid
 sequenceDiagram
@@ -150,39 +151,82 @@ sequenceDiagram
   participant DB as Postgres
   participant M as Resend
 
-  B->>BA: POST /sign-up/email
+  B->>BA: POST /sign-up/email { name, email, password }
+  BA->>BA: corePolicy: DisplayNameSchema (NAME_INVALID)
   BA->>H: SHA-1 prefix (2 s timeout, fails open)
-  alt password breached
-    BA-->>B: 400 PASSWORD_COMPROMISED
+  alt password breached or over 72 bytes
+    BA-->>B: 400 PASSWORD_COMPROMISED / PASSWORD_TOO_LONG
   end
-  BA->>DB: INSERT User + credential Account
-  BA->>DB: user.create.after: prefs, DPDP consent
-  BA->>M: verification link (1 h) + welcome email
-  BA-->>B: 200, no session (verification required)
-  B->>BA: GET /verify-email?token=...
-  BA->>DB: emailVerified = true, INSERT Session
-  BA-->>B: Set-Cookie, redirect to /auth/verify-email
+  alt new address
+    BA->>DB: INSERT User (emailVerified false) + credential Account
+    BA->>DB: user.create.after: prefs, Novu (no consent, no welcome yet)
+    BA-)M: verification code (background task)
+  else address already registered
+    BA-)M: "someone tried to sign up" notice, 2 / h per recipient
+  end
+  BA-->>B: 200 { token: null, user } (same shape either way)
+  B->>B: router.push /auth/verify-email?email=...
+  B->>BA: POST /email-otp/verify-email { email, otp }
+  alt wrong, expired or 5 tries used
+    BA-->>B: 400 INVALID_OTP / OTP_EXPIRED / TOO_MANY_ATTEMPTS
+  else ok
+    BA->>DB: emailVerified = true, INSERT Session
+    BA->>DB: afterEmailVerification: DPDP ConsentArtifact
+    BA-)M: welcome email
+    BA-->>B: Set-Cookie (autoSignInAfterVerification)
+    B->>B: router.replace onboarding, or callbackUrl if onboarded
+  end
   Note over B,BA: Later sign-ins
   B->>BA: POST /sign-in/email
   alt wrong email or password
     BA-->>B: 401 INVALID_EMAIL_OR_PASSWORD (generic)
-  else unverified
-    BA-->>B: 403 EMAIL_NOT_VERIFIED (UI offers resend)
+  else correct password, unverified
+    BA-)M: fresh verification code (sendOnSignIn)
+    BA-->>B: 403 EMAIL_NOT_VERIFIED, page opens /auth/verify-email
   else ok
     BA->>DB: session.create.before (SSO veto), INSERT Session
     BA-->>B: Set-Cookie
   end
 ```
 
-In local development without `RESEND_API_KEY`, the verification link is
-logged to the server console (`[verify-email] <email> -> <url>`).
+```mermaid
+stateDiagram-v2
+  [*] --> SignedUp: POST /sign-up/email
+  SignedUp --> SignedUp: resend code (5 / h per IP) or sign-in with password
+  SignedUp --> Verified: correct 6-digit code
+  SignedUp --> Verified: completed password reset
+  SignedUp --> Purged: 7 days unverified, nothing attached
+  Verified --> [*]
+  Purged --> [*]
+```
+
+- **Lifecycle code** lives in `lib/auth/account-lifecycle.ts`:
+  `provisionNewUser` (`user.create.after`), `welcomeVerifiedUser` (consent and
+  welcome at the first proven address), `sendVerificationCode` (codes only for
+  existing unverified accounts), `notifyExistingAccountSignUp`,
+  `notifyAccountLinked`, `onPasswordChanged`.
+- **Consent and welcome.** A credential sign-up gets its DPDP
+  `ConsentArtifact` and welcome mail in `emailVerification.afterEmailVerification`,
+  or on the first verification through a completed password reset. Social
+  users arrive verified, so `user.create.after` does it at creation. SSO users
+  skip the sign-up consent and grant it themselves; operators get a setup mail.
+- **Account-linked mail** is skipped for a brand-new user's first account; it
+  fires only when a provider is added to an account that already had one.
+- **Purge.** `purge-unverified-users` (registry job, daily from
+  `.github/workflows/cron-daily.yml`) deletes never-verified, credential-only
+  consumers older than 7 days with no profile, booking, payment, invoice,
+  referral credit or membership (`lib/auth/purge-unverified-users.ts`).
+- In local development the code is logged to the server console
+  (`[verify-email] <email> -> <code>`).
 
 ### 5.2 Social sign-in (Google, GitHub)
 
 1. `POST /sign-in/social` redirects to the provider; the callback is
    `/api/auth/callback/<provider>`.
-2. A new email creates a user with no password; the DPDP consent and welcome
-   email follow from `user.create.after`.
+2. A new email creates a verified user with no password; the DPDP consent and
+   welcome email follow from `user.create.after`. A social sign-in onto an
+   existing unverified credential account is refused with `ACCOUNT_NOT_LINKED`,
+   whose copy sends the user to password reset.
 3. An existing email links only when the provider asserts `email_verified`
    **and** the local email is verified. There is no `trustedProviders`
    shortcut, so an unverified provider email cannot take over an account.
@@ -197,7 +241,7 @@ vars), to `lib/auth-providers.ts` (the buttons and the reserved SSO ids) and to
 `components/auth/auth-icons.tsx`. Only add providers that assert a verified
 email, and never add `trustedProviders`.
 
-### 5.3 Staff sign-in: password plus TOTP, or a passkey
+### 5.3 Staff sign-in: password plus TOTP
 
 ```mermaid
 sequenceDiagram
@@ -221,33 +265,18 @@ sequenceDiagram
     B->>G: any back-office page or operator API
     G-->>B: redirect to /auth/two-factor/setup, or 428 TWO_FACTOR_REQUIRED
     B->>BA: /two-factor/enable (needs password) then verify-totp
-    BA->>DB: end every other session of the user
   end
-  Note over B,BA: Or, once a passkey is registered
-  B->>BA: POST /passkey/verify-authentication (user verification required)
-  BA->>DB: owner must be an enrolled operator; 12 h cap
-  BA-->>B: Set-Cookie, no TOTP prompt
 ```
 
 - Allowed session-creating paths for an operator: `/sign-in/email`,
-  `/two-factor/verify-totp`, `/two-factor/verify-backup-code`,
-  `/passkey/verify-authentication` and `/change-password` (which re-issues an
-  already-verified session). Anything else, including any future plugin path,
-  is refused.
-- Until enrolment, `/change-password`, `/change-email` and `/update-user`
-  answer 403 `TWO_FACTOR_REQUIRED`, so the password alone cannot take the
-  account.
+  `/two-factor/verify-totp`, `/two-factor/verify-backup-code` and
+  `/change-password` (which re-issues an already-verified session). Anything
+  else, including any future plugin path, is refused.
 - An operator cannot disable 2FA (`/two-factor/disable` answers 403
   `TWO_FACTOR_REQUIRED`). Recovery is a backup code or an ADMIN reset, see
   [staff-onboarding.md](./staff-onboarding.md).
-- Two plugin lockouts bound code guessing, whatever the source IP: one
-  challenge allows 5 wrong codes before its cookie is void
-  (`TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE`), and 10 consecutive wrong codes lock
-  verification for 15 minutes (`ACCOUNT_TEMPORARILY_LOCKED`). There is no
-  password lockout. Accepted risks (TOTP replay, lockout DoS) are in
-  [rate-limiting-and-abuse.md §7](./rate-limiting-and-abuse.md#7-accepted-risks).
-- Passkeys (operators who already enrolled TOTP only) and the security emails
-  are in [staff-onboarding.md](./staff-onboarding.md).
+- The twoFactor plugin locks verification for 15 minutes after 10 consecutive
+  wrong codes, whatever the source IP. That is the only lockout in the system.
 
 ### 5.4 Enterprise SSO (OIDC) with JIT membership
 
@@ -281,11 +310,15 @@ Registration, staff approval, enforcement and secret encryption are in
 ### 5.5 Password reset and change
 
 - `POST /request-password-reset` always answers the same way, sends a 30-minute
-  link, and is limited to 5 an hour per IP.
-- `POST /reset-password` checks the new password against HIBP, then deletes
-  **every** session for the user (`revokeSessionsOnPasswordReset`).
+  link carrying `&email=` (for password-manager autofill), and is limited to 3
+  an hour per IP.
+- `POST /reset-password` checks the new password against HIBP and the 72-byte
+  cap, then deletes **every** session for the user
+  (`revokeSessionsOnPasswordReset`) and every outstanding token, verifies an
+  unverified address, and sends `PASSWORD_CHANGED`.
 - `POST /change-password` checks HIBP and uses `revokeOtherSessions: true`, so
-  the current device stays signed in and every other device is signed out.
+  the current device stays signed in and every other device is signed out; it
+  also sends `PASSWORD_CHANGED`.
 
 ### 5.6 Session lifecycle and multi-device
 
@@ -298,7 +331,6 @@ stateDiagram-v2
   Active --> Gone: "sign out other devices"
   Active --> Gone: password reset or change elsewhere
   Active --> Gone: suspended, or admin 2FA reset
-  Active --> Gone: operator enrols 2FA in another session
   Active --> Expired: expiresAt passes
   Expired --> Gone: nightly cleanup
   Gone --> [*]
@@ -353,47 +385,6 @@ The probe is exempt from the edge limiter and uses `requireApiSession`, so an
 operator who has not enrolled 2FA yet is not misread as signed out. Any server
 request after a revoke also fails at once, because there is no cookie cache.
 
-### 5.7 Step-up re-authentication
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant B as Browser
-  participant G as Gated action
-  participant R as POST /api/user/reauthenticate
-  participant DB as Postgres
-
-  B->>G: sensitive write
-  G->>G: isFreshSession: now - max(createdAt, reauthenticatedAt) < 15 min?
-  alt stale
-    G-->>B: 403 REAUTH_REQUIRED
-    B->>B: ReauthDialog
-    B->>R: password (+ TOTP code for operators)
-    R->>DB: verify, then stamp Session.reauthenticatedAt
-    R-->>B: 200
-    B->>G: retry once
-  end
-  G-->>B: result
-```
-
-- **Proof.** Consumers and consultants give their password; social-only
-  accounts (`NO_PASSWORD`, 409) are told to sign in again. Operators give the
-  password plus a TOTP code, or sign in again with a passkey, which mints a
-  session that is fresh by creation. The route is rate limited per user
-  (5 per 15 minutes).
-- **Gated.** BetterAuth `hooks.before` (`assertSensitiveAuthAction` in
-  `lib/auth/step-up.ts`): `/two-factor/disable`,
-  `/two-factor/generate-backup-codes`, `/change-password`, `/change-email`,
-  `/passkey/generate-register-options`. App routes (`requireFreshSession`):
-  self-deletion (`DELETE /api/user/[id]`), consultant payout account and
-  instant payout writes, org payout account, routing and payout writes.
-  Back office (`withOpsAction({ stepUp: true })`): team member create,
-  suspend, reactivate, setup link and 2FA reset; refunds and credits; payout
-  override; SSO provider approval and enforcement.
-- **Client.** `fetchWithReauth` / `withReauth` (`lib/auth/reauth-client.ts`)
-  open the re-auth dialog (`ReauthProvider` in `components/auth/ReauthDialog.tsx`) on
-  `REAUTH_REQUIRED` and retry the original call once.
-
 ## 6. Data model
 
 ```mermaid
@@ -401,7 +392,6 @@ erDiagram
   User ||--o{ Session : has
   User ||--o{ Account : "credential, google, github, or SSO providerId"
   User ||--o| TwoFactor : "operators enrol"
-  User ||--o{ Passkey : "operators with TOTP"
   User ||--o{ Membership : "typed org membership"
   Organization ||--o{ Membership : has
   Organization ||--o{ OrgDomainClaim : "DNS-verified domains"
@@ -423,7 +413,6 @@ erDiagram
     string token UK
     string userId FK
     datetime expiresAt
-    datetime reauthenticatedAt "step-up"
     string ipAddress
     string userAgent
     string impersonatedBy "kept, unused"
@@ -444,16 +433,9 @@ erDiagram
     string id PK
     string userId UK
     string secret
-    string backupCodes "JSON array, AES-encrypted"
+    string backupCodes "encrypted"
     int failedVerificationCount
     datetime lockedUntil
-  }
-  Passkey {
-    string id PK
-    string userId FK
-    string credentialID UK
-    string publicKey
-    int counter
   }
   SsoProvider {
     string id PK
@@ -481,27 +463,36 @@ changes are additive only, and CI checks Prisma against what BetterAuth writes.
 
 ## 7. Where the code lives
 
-| Concern                      | File                                                           |
-| ---------------------------- | -------------------------------------------------------------- |
-| BetterAuth config and hooks  | `lib/auth.ts`                                                  |
-| Operator session rules       | `lib/auth/operator-session-policy.ts`                          |
-| 2FA and passkey policy       | `lib/auth/two-factor-policy.ts`, `lib/auth/passkey-policy.ts`  |
-| Step-up                      | `lib/auth/step-up.ts`, `app/api/user/reauthenticate/route.ts`  |
-| Operator creation            | `lib/auth/operators.ts`, `scripts/bootstrap-admin.ts`          |
-| Rate limiter store and rules | `lib/auth/rate-limit.ts`                                       |
-| Breached-password check      | `lib/auth/password-policy.ts`                                  |
-| Session lookup tri-state     | `lib/auth-session-lookup.ts`                                   |
-| API and page guards          | `lib/auth-helpers.ts`, `lib/auth-guard.ts`                     |
-| Device list and revoke       | `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`     |
-| Revocation probe             | `providers/AuthSyncProvider.tsx`, `lib/auth-remembered.ts`     |
-| SSO                          | `lib/sso/*`, `lib/prisma-sso-secret-extension.ts`              |
-| Error codes and copy         | `lib/labels/auth-error-codes.ts`, `lib/labels/auth-errors*.ts` |
-| Schema guard                 | `scripts/ci/check-auth-schema.ts`                              |
+| Concern                      | File                                                        |
+| ---------------------------- | ----------------------------------------------------------- |
+| BetterAuth config and hooks  | `lib/auth.ts`                                               |
+| Operator session rules       | `lib/auth/operator-session-policy.ts`                       |
+| Operator creation            | `lib/auth/operators.ts`, `scripts/bootstrap-admin.ts`       |
+| Rate limiter store and rules | `lib/auth/rate-limit.ts`                                    |
+| Breached-password check      | `lib/auth/password-policy.ts`, `lib/auth/password-rules.ts` |
+| Sign-up policy, lifecycle    | `lib/auth/core-policy.ts`, `lib/auth/account-lifecycle.ts`  |
+| Unverified purge             | `lib/auth/purge-unverified-users.ts`                        |
+| Session lookup tri-state     | `lib/auth-session-lookup.ts`                                |
+| API and page guards          | `lib/auth-helpers.ts`, `lib/auth-guard.ts`                  |
+| Device list and revoke       | `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`  |
+| Revocation probe             | `providers/AuthSyncProvider.tsx`, `lib/auth-remembered.ts`  |
+| SSO                          | `lib/sso/*`, `lib/prisma-sso-secret-extension.ts`           |
+| Error codes and copy         | `lib/labels/auth-errors.ts`                                 |
+| Schema guard                 | `scripts/ci/check-auth-schema.ts`                           |
 
 ## Deprecated & Superseded Approaches
 
-- **Consumer TOTP.** Any credential user could once call `/two-factor/enable`
-  with no UI, recovery or reset; it now answers 403 for non-operators.
-- **Open enrolment window.** An unenrolled operator could once change the
-  password, email or profile, and enrolling left earlier password-only
-  sessions alive. Both are now refused or revoked (§5.3).
+- **Link verification.** BetterAuth's 1-hour JWT verification link,
+  `GET /verify-email?token=`, `/send-verification-email` and sign-in on click
+  were replaced by the 6-digit code: a link could be opened by a mail scanner
+  or on another device, signing in whoever clicked it. Delete any
+  `?token=`/`?error=` handling on `/auth/verify-email` and any client
+  `sendVerificationEmail` call (the server sender of that name now mails the
+  code).
+- **Force-fresh session dance.** The auth pages used to re-read the session with
+  `getSession({ query: { disableCookieCache: true } })` before redirecting.
+  `cookieCache` is off, so `useSession` data is already fresh; the pages
+  redirect from it with one `router.replace`.
+- **Pre-verification welcome and consent.** Stamping DPDP consent and sending
+  the welcome mail in `user.create.after` for credential sign-ups welcomed
+  addresses nobody had proven; both now wait for verification.

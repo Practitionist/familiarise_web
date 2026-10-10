@@ -174,6 +174,14 @@ export const inviteAcceptIpLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
+/** 10 per minute per IP — GET /api/referrals/code/check/[code] */
+export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
+/** 2 per hour per recipient — the "someone tried to sign up" notice */
+export const existingAccountNoticeLimiter = makeLimiter(
+  2,
+  "1 h",
+  "rl:existing-account-notice",
+);
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
 export const staffCreateLimiter = makeLimiter(
   20,

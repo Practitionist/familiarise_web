@@ -7,8 +7,8 @@
  * now or earlier. One tick:
  *
  *   1. Picks up to `MAX_BATCH` rows ordered by `nextRetryAt ASC NULLS FIRST`.
- *   2. Dead-letters a row whose link has expired (EMAIL_TTL_MS) without a
- *      send — the token is useless by now (#1298).
+ *   2. Dead-letters a row that carried a single-use code or link without a
+ *      send: its body is stored redacted (lib/email/classify.ts).
  *   3. RE-SENDS the stored message verbatim — `resend.emails.send` with the
  *      persisted html/text/subject/from/replyTo. NO dispatcher, NO re-render:
  *      the row IS the rendered message, so retry can't drift from the original.
@@ -56,8 +56,7 @@ import {
 } from "resend";
 import { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS } from "@/lib/email/config";
 import {
-  EMAIL_TTL_MS,
-  isExpiredForReplay,
+  carriesCredential,
   resendErrorText,
   terminalSendReason,
 } from "@/lib/email/classify";
@@ -223,24 +222,22 @@ export async function runEmailRetryTick(params: {
         continue;
       }
 
-      // #1654 — pace the drain under the provider's rate limit; the first send
-      // goes out at once, every later one waits the gap.
-      if (index > 0) await sleep(SEND_GAP_MS);
-
-      // #1298 — a verification or reset link outlives its token only as spam:
-      // dead-letter it without a send (and without paging) once the TTL passed.
-      if (isExpiredForReplay(row.emailType, row.createdAt, nowDate)) {
-        const minutes = Math.round(EMAIL_TTL_MS[row.emailType] / 60_000);
+      // The stored body is redacted; the user requests a fresh code or link.
+      if (carriesCredential(row.emailType)) {
         await prisma.failedEmail.update({
           where: { id: row.id },
           data: {
             status: "DEAD_LETTER",
-            lastError: `expired before delivery: ${row.emailType} links are valid for ${minutes} minutes`,
+            lastError: `not replayed: ${row.emailType} carried a single-use credential`,
           },
         });
         result.deadLettered += 1;
         continue;
       }
+
+      // #1654 — pace the drain under the provider's rate limit; the first send
+      // goes out at once, every later one waits the gap.
+      if (index > 0) await sleep(SEND_GAP_MS);
 
       let sendError: string | undefined;
       let resendId: string | null = null;

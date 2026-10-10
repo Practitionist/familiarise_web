@@ -124,16 +124,18 @@ export const AUTH_RATE_LIMIT_RULES: NonNullable<
   "/two-factor/*": { window: MINUTE, max: 10 },
 
   // Account creation and the mail-sending endpoints: each call costs sending
-  // reputation and can be aimed at anyone's inbox.
-  "/sign-up/email": { window: HOUR, max: 10 },
-  "/request-password-reset": { window: HOUR, max: 5 },
-  "/send-verification-email": { window: HOUR, max: 10 },
+  // reputation and can be aimed at anyone's inbox. One household or office
+  // NAT still fits a few sign-ups and resets an hour.
+  "/sign-up/email": { window: HOUR, max: 5 },
+  "/request-password-reset": { window: HOUR, max: 3 },
+  "/email-otp/send-verification-otp": { window: HOUR, max: 5 },
 
   // Single-use tokens. The GET form carries the token in the path, so its
-  // bucket is per token as well as per IP.
+  // bucket is per token as well as per IP. A verification code also locks
+  // after 5 wrong tries (emailOTP allowedAttempts), whichever IP sent them.
   "/reset-password": { window: HOUR, max: 20 },
   "/reset-password/*": { window: HOUR, max: 10 },
-  "/verify-email": { window: HOUR, max: 30 },
+  "/email-otp/verify-email": { window: 15 * MINUTE, max: 10 },
 
   // Delegated sign-in. Users on flaky connections retry the IdP round trip,
   // and a 429 here reads as "Google sign-in is broken", so these stay loose.

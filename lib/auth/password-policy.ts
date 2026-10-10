@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { PASSWORD_MAX_BYTES, passwordTooLong } from "@/lib/auth/password-rules";
 
 /**
  * Where a user picks a password. Admin create-user is left out on purpose:
@@ -51,6 +52,16 @@ export function chosenPassword(body: unknown): string | null {
   return typeof password === "string" && password.length > 0 ? password : null;
 }
 
+/** bcrypt ignores bytes past the 72nd, so a longer password is refused outright. */
+export function rejectOverlongPassword(password: string): void {
+  if (passwordTooLong(password)) {
+    throw new APIError("BAD_REQUEST", {
+      code: "PASSWORD_TOO_LONG",
+      message: `Password must be at most ${PASSWORD_MAX_BYTES} bytes.`,
+    });
+  }
+}
+
 /** Throws PASSWORD_COMPROMISED for a breached password; fails open on outage. */
 export async function rejectBreachedPassword(password: string): Promise<void> {
   let count = 0;
@@ -77,6 +88,7 @@ export async function rejectBreachedPassword(password: string): Promise<void> {
  *
  * Runs as a `before` hook, ahead of the endpoint: /reset-password consumes its
  * token before hashing, so a check inside `password.hash` would burn the link.
+ * The 72-byte bcrypt cap is enforced here too, for the same reason.
  */
 export const breachedPasswordCheck = {
   id: "breached-password-check",
@@ -86,7 +98,9 @@ export const breachedPasswordCheck = {
         matcher: (ctx) => CHECKED_PATHS.includes(ctx.path ?? ""),
         handler: createAuthMiddleware(async (ctx) => {
           const password = chosenPassword(ctx.body);
-          if (password) await rejectBreachedPassword(password);
+          if (!password) return;
+          rejectOverlongPassword(password);
+          await rejectBreachedPassword(password);
         }),
       },
     ],

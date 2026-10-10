@@ -1,13 +1,13 @@
 import type { AuthHookContext } from "@/lib/auth/security-event-hook";
 
 const ISSUES_SESSION =
-  /^\/(sign-in|sign-up|change-password|two-factor\/verify-|passkey\/verify-authentication)/;
+  /^\/(sign-in|sign-up|change-password|two-factor\/verify-|passkey\/verify-authentication|email-otp\/verify-email)/;
 
 /**
- * `hooks.after`: sign-in, sign-up, change-password, two-factor verify and
- * passkey sign-in put the new session's token (the cookie's bearer value) in
- * their JSON, top-level or under `session`. The browser only needs the cookie,
- * so the body loses it; Set-Cookie is untouched.
+ * `hooks.after`: sign-in, sign-up, change-password, two-factor verify, passkey
+ * sign-in and email-code verification put the new session's token (the
+ * cookie's bearer value) in their JSON, top-level or under `session`. The
+ * browser only needs the cookie, so the body loses it; Set-Cookie is untouched.
  */
 export async function stripSessionToken(ctx: AuthHookContext) {
   const returned = ctx.context.returned;

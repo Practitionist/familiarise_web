@@ -1,6 +1,7 @@
 import { createAuthClient } from "better-auth/react";
 import {
   customSessionClient,
+  emailOTPClient,
   twoFactorClient,
 } from "better-auth/client/plugins";
 import { ssoClient } from "@better-auth/sso/client";
@@ -32,15 +33,14 @@ export const authClient = createAuthClient({
     ssoClient(),
     twoFactorClient(),
     passkeyClient(),
+    emailOTPClient(),
   ],
-  // NOTE (#1856): no `sessionOptions.refetchInterval` here, deliberately.
-  // BetterAuth's built-in poll cannot skip hidden tabs and re-renders
-  // every consumer on each tick. AuthSyncProvider re-checks on tab focus
-  // instead, and server guards read the database on every request.
+  // No `sessionOptions.refetchInterval`: BetterAuth's poll cannot skip hidden
+  // tabs and re-renders every consumer on each tick. AuthSyncProvider
+  // re-checks on tab focus, and server guards read the database per request.
 });
 
-export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =
-  authClient;
+export const { signIn, signUp, useSession, getSession, emailOtp } = authClient;
 
 /**
  * `signOut` is wrapped so the navbar's remembered auth state (name + avatar in

@@ -125,8 +125,8 @@ describe("auth rate-limit config", () => {
     "/request-password-reset",
     "/reset-password",
     "/reset-password/*",
-    "/send-verification-email",
-    "/verify-email",
+    "/email-otp/send-verification-otp",
+    "/email-otp/verify-email",
     "/change-password",
     "/two-factor/verify-*",
     "/two-factor/*",
@@ -138,6 +138,18 @@ describe("auth rate-limit config", () => {
     expect(AUTH_RATE_LIMIT_RULES[p]).toEqual(
       expect.objectContaining({ window: expect.any(Number) }),
     );
+  });
+
+  it("holds the mail-sending paths to a few calls an hour per IP", () => {
+    for (const p of [
+      "/sign-up/email",
+      "/request-password-reset",
+      "/email-otp/send-verification-otp",
+    ]) {
+      const rule = AUTH_RATE_LIMIT_RULES[p];
+      if (!rule || typeof rule === "function") throw new Error(`no rule: ${p}`);
+      expect(rule.max / (rule.window / 3600)).toBeLessThanOrEqual(5);
+    }
   });
 
   it("lists the 2FA verify rule before the broader /two-factor/* rule", () => {

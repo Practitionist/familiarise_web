@@ -536,6 +536,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "System job execution prune failed",
       }),
 
+    // @cleanup-twin purge-unverified-users
+    "purge-unverified-users": () =>
+      cleanupRoute({
+        job: "purge-unverified-users",
+        run: async (req) => {
+          const { purgeUnverifiedUsers, DEFAULT_PURGE_LIMIT } =
+            await import("@/lib/auth/purge-unverified-users");
+          return purgeUnverifiedUsers({
+            limit: parseLimitParamOrDefault(req, DEFAULT_PURGE_LIMIT),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          purged: r.purged,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to purge unverified users",
+      }),
+
     // @cleanup-twin reconcile-disputes
     "reconcile-disputes": () =>
       cleanupRoute({

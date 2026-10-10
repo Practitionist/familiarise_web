@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { useToast } from "@/hooks/use-toast";
 import {
   humanizeAuthError,
@@ -13,20 +14,24 @@ import {
   AuthErrorAffordance,
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
-import {
-  sendVerificationEmail,
-  useSession,
-  getSession,
-} from "@/lib/auth-client";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { emailOtp, useSession } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { z } from "zod";
 import { AuthCardSkeleton } from "../AuthCardSkeleton";
 
 /** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
 const SUPPORT_EMAIL =
   process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
+
+const CODE_LENGTH = 6;
+const RESEND_COOLDOWN_SECONDS = 60;
+const EmailSchema = z.string().trim().email();
+// The verify response's user carries the additional fields untyped.
+const OnboardedSchema = z.object({ onboardingCompleted: z.literal(true) });
 
 export default function VerifyEmail() {
   return (
@@ -36,139 +41,142 @@ export default function VerifyEmail() {
   );
 }
 
-// Better Auth appends the failing code to the callbackURL when the
-// verification link is bad (see api/routes/email-verification redirectOnError),
-// so the whole copy for this page is derived once, from the code, in the
-// catalog — including which affordance to offer. The returned object is the
-// catalog entry, not a pre-joined string, so the action survives to the
-// renderer below.
-function copyFromCallbackError(code: string | null): AuthErrorCopy | null {
-  if (!code) return null;
-  return humanizeAuthError("verify", { code });
-}
-
 function VerifyEmailContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
-  const errorCopy = copyFromCallbackError(searchParams.get("error"));
-  const error = errorCopy
-    ? `${errorCopy.title}. ${errorCopy.description}`
-    : null;
-  // Preserve an upstream invite/deep-link destination through verification.
-  // E2E-audit fix — hardened validator: the naive prefix check passed
-  // "/\attacker.example" (WHATWG backslash normalization → off-origin).
-  const safeCallbackUrl = safeSameOriginPath(searchParams.get("callbackUrl"));
-  const onboardingUrl = safeCallbackUrl
-    ? `/form/onboarding?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+  const callbackUrl = safeSameOriginPath(searchParams.get("callbackUrl"));
+  const onboardingUrl = callbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
     : "/form/onboarding";
-  const [email, setEmail] = useState("");
+  const signInUrl = callbackUrl
+    ? `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/auth/signin";
+  const emailParam = EmailSchema.safeParse(searchParams.get("email") ?? "");
+  const presetEmail = emailParam.success ? emailParam.data : null;
+
+  const [email, setEmail] = useState(presetEmail ?? "");
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verified, setVerified] = useState(false);
   const [resending, setResending] = useState(false);
+  // Sign-up and sign-in send a code before linking here with `?email=`.
+  const [cooldown, setCooldown] = useState(
+    presetEmail ? RESEND_COOLDOWN_SECONDS : 0,
+  );
+  const [errorCopy, setErrorCopy] = useState<AuthErrorCopy | null>(null);
+  const verifyRetryAfter = useRetryAfterCapture();
+  const resendRetryAfter = useRetryAfterCapture();
 
-  // Success path: after the link is clicked, BetterAuth verifies + auto-signs-in
-  // (autoSignInAfterVerification) and redirects here authenticated. Send the
-  // user on to onboarding — the referral capture (if any) is applied there.
-  //
-  // The session store can trail the server, so re-read the session before
-  // committing, and keep the navigation idempotent (single replace).
-  const navigatedRef = useRef<string | null>(null);
+  const sessionUser = session?.user;
   useEffect(() => {
-    if (isPending || !session?.user) return;
-    const cachedCompleted = !!session.user.onboardingCompleted;
+    if (verified || !sessionUser?.emailVerified) return;
+    router.replace(
+      sessionUser.onboardingCompleted
+        ? callbackUrl || "/dashboard"
+        : onboardingUrl,
+    );
+  }, [verified, sessionUser, router, callbackUrl, onboardingUrl]);
 
-    let cancelled = false;
-    const resolveAndGo = (completed: boolean) => {
-      if (cancelled) return;
-      const target = completed
-        ? safeCallbackUrl || "/dashboard"
-        : onboardingUrl;
-      if (navigatedRef.current === target) return;
-      navigatedRef.current = target;
-      router.replace(target);
-    };
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
-    getSession()
-      .then(({ data, error: sessionError }) => {
-        // Better Auth resolves (rather than rejects) HTTP-level failures as
-        // `{ data: null, error }` — fall back to the cached value instead of
-        // stranding the page on the skeleton until the next store update.
-        if (sessionError) {
-          resolveAndGo(cachedCompleted);
-          return;
-        }
-        // Session revoked between paint and check — no protected redirect.
-        if (!data?.user) return;
-        resolveAndGo(!!data.user.onboardingCompleted);
-      })
-      .catch(() => {
-        resolveAndGo(cachedCompleted);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isPending, session, router, safeCallbackUrl, onboardingUrl]);
+  const parsedEmail = (): string | null => {
+    const parsed = EmailSchema.safeParse(email);
+    if (parsed.success) return parsed.data;
+    setErrorCopy(humanizeAuthError("verify", { code: "INVALID_EMAIL" }));
+    return null;
+  };
 
   const handleResend = async () => {
-    if (!email || !email.includes("@")) {
-      toast({ title: "Enter your email address", variant: "destructive" });
-      return;
-    }
+    if (cooldown > 0 || resending) return;
+    const target = parsedEmail();
+    if (!target) return;
     setResending(true);
+    setErrorCopy(null);
+    resendRetryAfter.clear();
     try {
-      const verificationCallbackUrl = safeCallbackUrl
-        ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
-        : "/auth/verify-email";
-      await sendVerificationEmail({
-        email,
-        callbackURL: verificationCallbackUrl,
+      const { error } = await emailOtp.sendVerificationOtp({
+        email: target,
+        type: "email-verification",
+        fetchOptions: resendRetryAfter.fetchOptions,
       });
+      if (error) {
+        const wait = resendRetryAfter.take();
+        if (wait) setCooldown(wait);
+        setErrorCopy(
+          humanizeAuthError("verify", error, { retryAfterSeconds: wait }),
+        );
+        return;
+      }
+      setCode("");
+      setCooldown(RESEND_COOLDOWN_SECONDS);
       toast({
-        title: "Verification email sent",
-        description: `If ${email} belongs to an unverified account, the link is on its way. It expires in 1 hour.`,
+        title: "Code sent",
+        description: `If ${target} is waiting to be verified, a new code is on its way. It expires in 10 minutes.`,
       });
     } catch {
-      toast({
-        title: "Couldn't send the email",
-        description: "Please try again in a moment.",
-        variant: "destructive",
-      });
+      setErrorCopy(humanizeAuthError("verify", { status: 0 }));
     } finally {
       setResending(false);
     }
   };
 
-  /**
-   * Which catalog actions this page can service.
-   *
-   * `resend-verification` is the whole point of this page: the
-   * `verify`-flow overrides in the catalog rewrite `INVALID_TOKEN` and
-   * `TOKEN_EXPIRED` to name the 1-hour window and answer with *this* action,
-   * so a bad link now says "request a fresh one" in words and in one click.
-   * The button below the form is that affordance's permanent twin; the copy
-   * no longer has to describe it.
-   *
-   * `request-new-link` is absent for the same reason — it means the same
-   * thing here, and two controls for one action is noise. `sign-in` is
-   * `EMAIL_ALREADY_VERIFIED`'s answer, and the link at the foot of the card
-   * is already it; it is mapped anyway so the failure names its own exit.
-   */
-  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
-    "resend-verification": {
-      kind: "callback",
-      onClick: () => void handleResend(),
-      disabled: resending,
-    },
-    "sign-in": { kind: "link", href: "/auth/signin" },
-    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  const handleVerify = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (code.length !== CODE_LENGTH || verifying) return;
+    const target = parsedEmail();
+    if (!target) return;
+    setVerifying(true);
+    setErrorCopy(null);
+    verifyRetryAfter.clear();
+    try {
+      const { data, error } = await emailOtp.verifyEmail({
+        email: target,
+        otp: code,
+        fetchOptions: verifyRetryAfter.fetchOptions,
+      });
+      if (error) {
+        const copy = humanizeAuthError("verify", error, {
+          retryAfterSeconds: verifyRetryAfter.take(),
+        });
+        setErrorCopy(copy);
+        if (copy.field === "code") setCode("");
+        return;
+      }
+      setVerified(true);
+      const onboarded = OnboardedSchema.safeParse(data.user);
+      router.replace(
+        onboarded.success ? callbackUrl || "/dashboard" : onboardingUrl,
+      );
+    } catch {
+      setErrorCopy(humanizeAuthError("verify", { status: 0 }));
+    } finally {
+      setVerifying(false);
+    }
   };
 
+  // The permanent resend button services `resend-verification`.
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "sign-in": { kind: "link", href: signInUrl },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
   const errorTarget = errorCopy?.action
     ? actionTargets[errorCopy.action]
     : undefined;
+  const codeError =
+    errorCopy?.field === "code" ? errorCopy.description : undefined;
+  const emailError =
+    !presetEmail && errorCopy?.field === "email"
+      ? errorCopy.description
+      : undefined;
+  const formError = errorCopy && !codeError && !emailError ? errorCopy : null;
 
-  if (isPending || session?.user) {
+  if (isPending || verified || sessionUser?.emailVerified) {
     return <AuthCardSkeleton />;
   }
 
@@ -176,44 +184,105 @@ function VerifyEmailContent() {
     <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
       <div className="w-full max-w-md text-white">
         <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
-          {error ? "Link expired or invalid" : "Verify your email"}
+          Verify your email
         </h1>
         <p className="text-sm md:text-base text-zinc-400 mb-6">
-          {error ??
-            "Check your inbox for the verification link we sent. It expires in 1 hour. Enter your email below to send a new one."}
+          {presetEmail ? (
+            <>
+              We emailed a 6-digit code to{" "}
+              <span className="font-medium text-white">{presetEmail}</span>. It
+              expires in 10 minutes.
+            </>
+          ) : (
+            "Enter your email and the 6-digit code we sent you. Codes expire in 10 minutes."
+          )}
         </p>
 
-        <div className="grid gap-2">
-          <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            placeholder="name@example.com"
-            autoCapitalize="none"
-            autoComplete="email"
-            autoCorrect="off"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={resending}
-          />
-        </div>
+        <form onSubmit={handleVerify} className="grid gap-4">
+          {!presetEmail && (
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                name="email"
+                placeholder="name@example.com"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect="off"
+                autoFocus
+                required
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setErrorCopy(null);
+                }}
+                disabled={verifying}
+                {...invalidProps(emailError, "email-error")}
+              />
+              <FieldError id="email-error" message={emailError} />
+            </div>
+          )}
+          <div className="grid gap-2">
+            <Label htmlFor="code">Verification code</Label>
+            <Input
+              id="code"
+              name="code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={CODE_LENGTH}
+              autoFocus={!!presetEmail}
+              required
+              placeholder="123456"
+              className="tracking-[0.5em] text-lg"
+              value={code}
+              onChange={(e) => {
+                setCode(
+                  e.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH),
+                );
+                setErrorCopy(null);
+              }}
+              disabled={verifying}
+              {...invalidProps(codeError, "code-error")}
+            />
+            <FieldError id="code-error" message={codeError} />
+          </div>
+          {formError && (
+            <div role="alert" className="text-sm text-red-400">
+              <p className="font-medium">{formError.title}</p>
+              <p>{formError.description}</p>
+            </div>
+          )}
+          <Button
+            type="submit"
+            className="w-full bg-white text-black hover:bg-white/90"
+            disabled={verifying || code.length !== CODE_LENGTH}
+          >
+            {verifying ? "Verifying…" : "Verify email"}
+          </Button>
+        </form>
+
         <Button
           type="button"
           className="w-full mt-4 bg-zinc-800 hover:bg-zinc-700"
-          onClick={handleResend}
-          disabled={resending}
+          onClick={() => void handleResend()}
+          disabled={resending || cooldown > 0}
         >
-          {resending ? "Sending…" : "Resend verification email"}
+          {resending
+            ? "Sending…"
+            : cooldown > 0
+              ? `Resend code in ${cooldown}s`
+              : "Resend code"}
         </Button>
 
-        {/* The catalog's next step for the bad-link copy above, when it is not
-            already the button directly above. */}
         <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
 
         <p className="mt-6 text-xs text-zinc-400">
           Already verified?{" "}
           <Link
-            href="/auth/signin"
+            href={signInUrl}
             className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
           >
             Sign in

@@ -1,21 +1,15 @@
-import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { admin, customSession, twoFactor } from "better-auth/plugins";
+import { admin, customSession, emailOTP, twoFactor } from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
-import {
-  sendWelcomeEmail,
-  sendAccountLinkedEmail,
-  sendPasswordResetEmail,
-  sendVerificationEmail,
-} from "@/lib/email";
-import { syncSubscriber } from "@/lib/novu/subscriber";
+import { scheduleAfter } from "@/lib/api/after-safe";
+import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
@@ -23,8 +17,19 @@ import {
   assertSsoEmailOnDomain,
   isSsoProviderId,
 } from "@/lib/sso/account-domain";
-import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
+import {
+  VERIFICATION_CODE_TTL_SECONDS,
+  accountLifecycle,
+  notifyAccountLinked,
+  notifyExistingAccountSignUp,
+  onPasswordReset,
+  provisionNewUser,
+  sendVerificationCode,
+  userFlags,
+  welcomeVerifiedUser,
+} from "@/lib/auth/account-lifecycle";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
+import { corePolicy } from "@/lib/auth/core-policy";
 import {
   isOperatorRole,
   refusesOperatorAccount,
@@ -38,6 +43,10 @@ import {
 } from "@/lib/auth/session-lifetime";
 import { supersededSessionRevocation } from "@/lib/auth/supersede-session";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
+import {
+  PASSWORD_MAX_BYTES,
+  PASSWORD_MIN_LENGTH,
+} from "@/lib/auth/password-rules";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
 import { notifySecurityEvents } from "@/lib/auth/security-event-hook";
@@ -45,6 +54,7 @@ import {
   revokeAllUserSessions,
   revokeSessionById,
 } from "@/lib/auth/session-revoke";
+import { socialProviderConfig } from "@/lib/auth/social-providers";
 import {
   assertOperatorMayEnableTwoFactor,
   assertTwoFactorRequestPolicy,
@@ -62,18 +72,8 @@ import {
   resolveSentryUserId,
 } from "@/lib/observability/identity";
 
-// STAFF = moderator: read users (a subset of the full admin AC). Shares
-// defaultAc so statements line up. No `session:*`: the plugin's session
-// endpoints return raw tokens, and staff revoke goes through
-// app/api/admin/users/[userId]/sessions/revoke instead.
-//
-// #1132 — `set-role` and `ban` are deliberately NOT granted here. The admin
-// plugin's /admin/set-role authorises on the caller's `user:["set-role"]`
-// permission alone and never compares actor rank to target rank, so holding it
-// let STAFF assign themselves ADMIN — which lib/auth-helpers.ts then treats as
-// OWNER on every organization. This mirrors BACKOFFICE_PERMISSIONS, where
-// `users.moderate` is ADMIN_ONLY. Ban writes already go through lib/moderation
-// via Prisma rather than auth.api.banUser, so nothing legitimate needed it.
+// STAFF = moderator: read users only. No `session:*` (those endpoints return
+// raw tokens) and no `set-role`/`ban`: /admin/set-role never compares ranks.
 const staffAc = defaultAc.newRole({
   user: ["list", "get"],
 });
@@ -81,16 +81,13 @@ const staffAc = defaultAc.newRole({
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
-  trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS
-    ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
-    : [],
+  trustedOrigins: (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 
-  // #1856 — BetterAuth swallows endpoint exceptions into 500 responses
-  // (nothing ever throws out of `app/api/auth/[...all]`), and schema
-  // errors take a message-only log branch. Without this, an auth-wide
-  // outage is invisible: it lands on console (Netlify function logs)
-  // and never reaches Sentry. Only `error` forwards; every level keeps
-  // its console behavior — see `lib/auth/auth-logger.ts`.
+  // BetterAuth swallows endpoint exceptions into 500s; this forwards its
+  // `error` logs to Sentry (lib/auth/auth-logger.ts).
   logger: {
     log: reportAuthLogToSentry,
   },
@@ -139,6 +136,17 @@ export const auth = betterAuth({
     "/admin/remove-user",
     "/admin/set-user-password",
     "/admin/has-permission",
+    // Verification is a 6-digit code (emailOTP below). The link endpoints and
+    // the plugin's OTP sign-in, reset and email-change flows stay unmounted.
+    "/verify-email",
+    "/send-verification-email",
+    "/sign-in/email-otp",
+    "/email-otp/check-verification-otp",
+    "/email-otp/request-password-reset",
+    "/forget-password/email-otp",
+    "/email-otp/reset-password",
+    "/email-otp/request-email-change",
+    "/email-otp/change-email",
     // SSO provider lifecycle. Registration, edits and deletes go through
     // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
     // server-generated providerId), and approval through the ADMIN door
@@ -192,25 +200,22 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
 
-  // #1487 / #1878 — Two-layer rate-limiting architecture:
-  // 1. BetterAuth endpoints (`/api/auth/*`) use `authRateLimit` (lib/auth/rate-limit.ts),
-  //    backed by shared Upstash Redis via customStorage so counters persist across
-  //    serverless function instances instead of resetting per cold start.
-  // 2. Non-BetterAuth routes use Edge (`middleware.ts`) and route-level (`lib/rate-limit.ts`)
-  //    `@upstash/ratelimit` sliding-window limiters. Middleware excludes `/api/auth/*`
-  //    from edge rate-limit rules so auth requests are never double-counted.
+  // Per-IP budgets in Upstash (lib/auth/rate-limit.ts); middleware.ts skips
+  // /api/auth/* so nothing is counted twice.
   rateLimit: authRateLimit,
 
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 8,
-    maxPasswordLength: 128,
-    // #673 — a credential signup must prove email ownership before it can hold
-    // a session. Without this an attacker can pre-register a victim's address; a
-    // later OAuth login (see accountLinking below) would then auto-link the
-    // real user into the attacker-seeded account (pre-hijacking).
-    // OAuth/SSO are unaffected — the IdP already asserts a verified email.
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    // bcrypt reads 72 bytes; password-policy.ts also caps the UTF-8 byte length.
+    maxPasswordLength: PASSWORD_MAX_BYTES,
+    // No session until the address is proven, so a pre-registered victim
+    // address cannot be auto-linked into on a later OAuth sign-in. This also
+    // makes a duplicate sign-up answer exactly like a new one.
     requireEmailVerification: true,
+    onExistingUserSignUp: async ({ user }) => {
+      await notifyExistingAccountSignUp(user);
+    },
     password: {
       hash: (password) => bcrypt.hash(password, 12),
       verify: async ({ password, hash }) => {
@@ -238,43 +243,31 @@ export const auth = betterAuth({
     // holds no session, so nothing needs preserving. (changePassword keeps
     // the current session via `revokeOtherSessions: true` instead.)
     revokeSessionsOnPasswordReset: true,
-  },
-
-  emailVerification: {
-    // Send the link on signup. An unverified sign-in attempt is still rejected
-    // (EMAIL_NOT_VERIFIED); the signin UI offers an explicit resend that lands
-    // on /auth/verify-email — sendOnSignIn is left off so we don't also fire a
-    // second link whose callbackURL would be "/".
-    sendOnSignUp: true,
-    // After clicking the link, drop the user straight into an authenticated
-    // session so they land on the callbackURL (our verify-email page) — no
-    // second login.
-    autoSignInAfterVerification: true,
-    expiresIn: 60 * 60, // 1 hour
-    sendVerificationEmail: async ({ user, url }) => {
-      await sendVerificationEmail({
-        email: user.email,
-        name: user.name || "User",
-        verificationUrl: url,
-        userId: user.id,
-      });
+    onPasswordReset: async ({ user }) => {
+      await onPasswordReset(user);
     },
   },
 
-  // Reset and verification tokens are stored as SHA-256, so a leaked
-  // verifications table yields no usable links.
+  // The sender is emailOTP's (overrideDefaultEmailVerification): the code is
+  // typed into the tab that chose the password, so whoever verifies holds both.
+  emailVerification: {
+    sendOnSignUp: true,
+    // Only reached after the password matched, so it proves the password too.
+    sendOnSignIn: true,
+    autoSignInAfterVerification: true,
+    // Credential sign-ups get consent and the welcome mail only now.
+    afterEmailVerification: async (user) => {
+      if (isOperatorRole(userFlags(user).role)) return;
+      await welcomeVerifiedUser(user, { stampConsent: true });
+    },
+  },
+
+  // Reset tokens and OTP identifiers are stored as SHA-256, so a leaked
+  // verifications table yields no usable links or codes.
   verification: { storeIdentifier: "hashed" },
 
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-    },
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID ?? "",
-      clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
-    },
-  },
+  // Only providers whose client id and secret are configured.
+  socialProviders: socialProviderConfig(),
 
   account: {
     accountLinking: {
@@ -286,17 +279,10 @@ export const auth = betterAuth({
       // email_verified AND the local user's email is verified
       // (requireLocalEmailVerified, default true).
     },
-    // #1861 S1 / #1529 — Account.accessToken/refreshToken are encrypted with
-    // the Better Auth secret; nothing in the app reads them directly. Legacy
-    // plaintext rows keep reading via Better Auth's own fallback
-    // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
-    // vanish at the pre-MVP reset.
+    // OAuth tokens are encrypted with the Better Auth secret; nothing in the
+    // app reads them directly.
     encryptOAuthTokens: true,
-    // #1876 §3 — Explicitly enable OAuth token rotation on every re-sign-in
-    // (BetterAuth's default, stated here so an upstream default change cannot
-    // silently disable it). Ensures accessToken/refreshToken/idToken and
-    // accessTokenExpiresAt are refreshed and re-encrypted under
-    // `encryptOAuthTokens: true` whenever a user signs in via Google/GitHub.
+    // Stated so an upstream default change cannot stop token rotation.
     updateAccountOnSignIn: true,
   },
 
@@ -334,6 +320,11 @@ export const auth = betterAuth({
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
     },
+    // Auth mail is sent after the response (Netlify waitUntil), so response
+    // time no longer reveals whether an address has an account.
+    backgroundTasks: {
+      handler: (promise) => scheduleAfter(() => promise, "auth:background"),
+    },
   },
 
   session: {
@@ -363,17 +354,22 @@ export const auth = betterAuth({
         defaultValue: false,
         input: false,
       },
+      // Written server-side by onboarding and profile routes, never through
+      // /sign-up/email or /update-user.
       phone: {
         type: "string",
         required: false,
+        input: false,
       },
       timezone: {
         type: "string",
         required: false,
+        input: false,
       },
       address: {
         type: "string",
         required: false,
+        input: false,
       },
       consultantProfileId: {
         type: "string",
@@ -428,133 +424,7 @@ export const auth = betterAuth({
           }
         },
         after: async (user, ctx) => {
-          try {
-            // NOTE: ConsulteeProfile used to be auto-created here for every
-            // signup. It is now lazy — created on the first consumer action
-            // (booking, trial, invite-accept as LEARNER, onboarding when
-            // role=CONSULTEE) via `ensureConsulteeProfile` in
-            // lib/profiles/ensure-consultee-profile.ts. This prevents
-            // org-operators (UserRole.ORG_WORKSPACE) and consultants from
-            // carrying a dangling consumer profile they never use.
-
-            // Upserts, not creates (#1697 item 4): a re-run of this hook
-            // (an SSO auto-provision retry, a replayed signup) used to die
-            // on the userId unique and skip every step below it.
-            await prisma.cookiePreference.upsert({
-              where: { userId: user.id },
-              create: { userId: user.id },
-              update: {},
-            });
-            await prisma.notificationPreference.upsert({
-              where: { userId: user.id },
-              create: { userId: user.id },
-              update: {},
-            });
-
-            // DPDP Act 2023: stamp a ConsentArtifact for the essential
-            // purposes covered by the signup action (account creation
-            // requires data processing for service delivery + video/chat
-            // handoff to Stream.io). MARKETING_COMMS / ANALYTICS consent
-            // is not stamped here — those require an explicit checkbox
-            // on the signup form (P1 follow-up; see #701). When a user
-            // hits the in-app withdrawal flow (/api/.../consent), this
-            // artifact is superseded and `checkConsent` fails closed.
-            //
-            // #1846 — an account created by an SSO sign-in (JIT) was not
-            // made by the person on a signup form, so nothing is stamped
-            // for them here. Their first sign-in into the org shows the
-            // consent step (JoinConsentGate), and accepting an invitation
-            // shows it inline (#1854); both write these same rows.
-            //
-            // An operator account created by an admin (lib/auth/operators.ts,
-            // through `auth.api.createUser`) is not that person's signup
-            // either; they give consent themselves on first sign-in.
-            const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
-            const operatorCreated = ctx?.path === "/admin/create-user";
-            try {
-              const drafts =
-                ssoProvisioned || operatorCreated
-                  ? []
-                  : buildSignupConsentArtifacts(user.id);
-              for (const draft of drafts) {
-                await prisma.consentArtifact.create({ data: draft });
-              }
-            } catch (consentError) {
-              // Fail open on consent stamping — the user-create hook
-              // shouldn't sink a signup over an audit-trail glitch.
-              //
-              // There is NO backfill job. An earlier version of this comment
-              // claimed a "/consent backfill cron (#701)" would re-create the
-              // rows; that cron was never built, so the comment promised a
-              // recovery path that did not exist and this failure was
-              // permanently unrecoverable for the user.
-              //
-              // The real recovery path, and it is deliberate: `ConsentSection`
-              // renders every purpose with a "Give consent" button, and the
-              // gates are fail-closed, so a user with no artifact is denied at
-              // checkout and at video/chat until they grant it themselves.
-              // That is a degraded experience, not a compliance hole — the
-              // alternative (failing the signup) would trade a recoverable
-              // missing row for a lost account.
-              //
-              // If you want genuine backfill, it has to be built and
-              // documented. Do not restore a reference to it until it exists.
-              console.error(
-                "[AUTH_HOOK] DPDP consent stamp error:",
-                consentError,
-              );
-              Sentry.captureException(
-                consentError instanceof Error
-                  ? consentError
-                  : new Error(String(consentError)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            }
-
-            // #1298 — awaited: an un-awaited send is dropped when the instance
-            // freezes after the response (same class as #1616). Operators get
-            // the setup email instead of the consumer welcome.
-            try {
-              if (!operatorCreated) {
-                await sendWelcomeEmail({
-                  email: user.email,
-                  name: user.name || "User",
-                  userId: user.id,
-                });
-              }
-            } catch (err) {
-              console.error("[AUTH_HOOK] Welcome email error:", err);
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            }
-
-            // Sync Novu subscriber (fire and forget with error logging).
-            // routingMode is the operator default; workspace owners who later
-            // pick EMAIL_ONLY/BELL_ONLY re-sync via the workspace settings
-            // PATCH + the subscriber hook.
-            const nameParts = (user.name || "User").split(" ");
-            syncSubscriber({
-              userId: user.id,
-              email: user.email,
-              firstName: nameParts[0],
-              lastName: nameParts.slice(1).join(" ") || undefined,
-              routingMode: "BELL_AND_EMAIL",
-            }).catch((err) => {
-              console.error("[AUTH_HOOK] Novu subscriber sync error:", err);
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            });
-          } catch (error) {
-            console.error("[AUTH_HOOK] user.create.after error:", error);
-            Sentry.captureException(
-              error instanceof Error ? error : new Error(String(error)),
-              { tags: { subsystem: "auth" } },
-            );
-          }
+          await provisionNewUser(user, ctx?.path);
         },
       },
       update: {
@@ -669,47 +539,38 @@ export const auth = betterAuth({
           }
         },
         after: async (account) => {
-          // Send account-linked email for non-credential providers
-          if (account.providerId !== "credential") {
-            try {
-              const user = await prisma.user.findUnique({
-                where: { id: account.userId },
-                select: { email: true, name: true },
-              });
-              if (user?.email) {
-                // #1298 — awaited: an un-awaited send is dropped when the
-                // instance freezes after the response (same class as #1616).
-                try {
-                  await sendAccountLinkedEmail({
-                    email: user.email,
-                    name: user.name || "User",
-                    provider: account.providerId,
-                    userId: account.userId,
-                  });
-                } catch (err) {
-                  console.error("[AUTH_HOOK] Account linked email error:", err);
-                  Sentry.captureException(
-                    err instanceof Error ? err : new Error(String(err)),
-                    { tags: { subsystem: "auth" }, level: "warning" },
-                  );
-                }
-              }
-            } catch (error) {
-              console.error("[AUTH_HOOK] account.create.after error:", error);
-              Sentry.captureException(
-                error instanceof Error ? error : new Error(String(error)),
-                { tags: { subsystem: "auth" } },
-              );
-            }
-          }
+          await notifyAccountLinked(account);
         },
       },
     },
   },
 
   plugins: [
-    // Rejects breached passwords on sign-up, reset and change.
+    // Rejects breached and over-72-byte passwords on sign-up, reset and change.
     breachedPasswordCheck,
+
+    // Display-name rules, OTP type restriction, sign-up race answer.
+    corePolicy,
+
+    // Password-changed notice and token cleanup after /change-password.
+    accountLifecycle,
+
+    // Email verification only: the sign-in, reset and email-change flows the
+    // plugin also mounts are listed in `disabledPaths`.
+    emailOTP({
+      overrideDefaultEmailVerification: true,
+      sendVerificationOnSignUp: true,
+      otpLength: 6,
+      expiresIn: VERIFICATION_CODE_TTL_SECONDS,
+      allowedAttempts: 5,
+      storeOTP: "hashed",
+      disableSignUp: true,
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type === "email-verification") {
+          await sendVerificationCode(email, otp);
+        }
+      },
+    }),
 
     // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
     // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
@@ -742,10 +603,9 @@ export const auth = betterAuth({
     // hooks.before, and TOTP stays the recovery factor.
     passkey(operatorPasskeyOptions(process.env.BETTER_AUTH_URL)),
 
-    // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
-    // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in
-    // once banExpires passes (lazy suspension expiry — no cron). Ban writes
-    // happen directly via Prisma in lib/moderation, not auth.api.banUser.
+    // Moderation: provides User.banned/banReason/banExpires, blocks sign-in
+    // for banned users and auto-unbans once banExpires passes. Ban writes go
+    // through lib/moderation via Prisma, not auth.api.banUser.
     // defaultRole must be a valid UserRole enum value — the plugin's
     // user.create.before hook otherwise writes "user" and breaks signup.
     admin({
