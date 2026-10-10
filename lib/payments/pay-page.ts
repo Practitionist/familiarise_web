@@ -26,6 +26,8 @@ export interface PayPageOrder {
   paymentId: string;
   amount: number;
   currency: string;
+  /** Mirrors Payment.paymentStatus so the sheet can refuse a stale order. */
+  status: string;
 }
 
 export interface PayPageSummary {
@@ -198,6 +200,7 @@ function openState(row: PayPageRow): PayPageState {
       paymentId: row.id,
       amount: row.amount,
       currency: row.currency,
+      status: row.paymentStatus,
     },
     summary: {
       amount: row.amount,
