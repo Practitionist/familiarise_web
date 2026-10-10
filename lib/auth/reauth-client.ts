@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 /** Opens the re-auth dialog; resolves true once the user has re-authenticated. */
 type ReauthHandler = () => Promise<boolean>;
@@ -26,17 +27,18 @@ async function isReauthRequired(res: Response): Promise<boolean> {
 }
 
 /**
- * `fetch` for step-up-gated routes: on 403 REAUTH_REQUIRED it opens the
+ * `fetch` for step-up-gated routes, which are all money or IAM writes: sends
+ * the expected user (fetchWithIdentity) and, on 403 REAUTH_REQUIRED, opens the
  * re-auth dialog and retries once. The body must be replayable (string/JSON).
  */
 export async function fetchWithReauth(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const res = await fetch(input, init);
+  const res = await fetchWithIdentity(input, init);
   if (!(await isReauthRequired(res))) return res;
   if (!(await requestReauth())) return res;
-  return fetch(input, init);
+  return fetchWithIdentity(input, init);
 }
 
 /** {@link fetchWithReauth} for BetterAuth client calls (`{ data, error }`). */

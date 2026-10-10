@@ -25,7 +25,7 @@ import * as Sentry from "@sentry/nextjs";
 import { authClient, useSession } from "@/lib/auth-client";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
-import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { signInHref, signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   humanizeAuthError,
   normalizeAuthErrorCode,
@@ -153,7 +153,7 @@ export function PasswordSection() {
             description: copy.description,
             variant: "destructive",
           });
-          await signOutEverywhere("/auth/signin");
+          await signOutEverywhere(signInHref());
           return;
         }
         return;
@@ -241,7 +241,12 @@ interface DeviceSession {
   lastSeenAt: string;
   expiresAt: string;
   isCurrent: boolean;
-  isImpersonated: boolean;
+}
+
+interface SessionsPage {
+  sessions: DeviceSession[];
+  total: number;
+  nextCursor: string | null;
 }
 
 /**
@@ -269,8 +274,7 @@ function reportRevokeFailure(
 
 /**
  * "Last active" — the session row's `updatedAt`, which BetterAuth bumps at
- * most once per `updateAge` (1 day). So it is day-granular: "in the last
- * day" or "N days ago", never minutes.
+ * most once a day for a consumer, so the copy stays day-granular.
  */
 function formatLastActive(iso: string): string {
   const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -291,6 +295,8 @@ type SessionsLoadError = "signed-out" | "retryable";
 export function SessionsSection() {
   const { toast } = useToast();
   const [sessions, setSessions] = useState<DeviceSession[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<SessionsLoadError | null>(null);
   const [pendingRevoke, setPendingRevoke] = useState<DeviceSession | null>(
@@ -340,8 +346,10 @@ export function SessionsSection() {
       }
       status = res.status;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { sessions: DeviceSession[] };
+      const body = (await res.json()) as SessionsPage;
       setSessions(body.sessions);
+      setTotal(body.total);
+      setNextCursor(body.nextCursor);
       hasLoadedRef.current = true;
     } catch (error) {
       reportLoadFailure(status, error);
@@ -365,6 +373,25 @@ export function SessionsSection() {
     void load();
   }, [load]);
 
+  const loadMore = useCallback(async () => {
+    if (!nextCursor) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/user/sessions?cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as SessionsPage;
+      setSessions((prev) => [...(prev ?? []), ...body.sessions]);
+      setTotal(body.total);
+      setNextCursor(body.nextCursor);
+    } catch {
+      toast({ title: "Couldn't load more sessions", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [nextCursor, toast]);
+
   const revokeOne = useCallback(
     async (target: DeviceSession) => {
       // ConfirmDialog keeps the dialog open with the thrown message shown
@@ -382,7 +409,7 @@ export function SessionsSection() {
       // failing the dialog would strand the user — sign out cleanly.
       if (res.status === 401) {
         toast({ title: "Your session ended. Signing you out." });
-        await signOutEverywhere("/auth/signin");
+        await signOutEverywhere(signInHref());
         return;
       }
       if (res.status === 429) {
@@ -423,7 +450,7 @@ export function SessionsSection() {
       // Dead session: nothing else to end that matters — sign out here.
       if (res.status === 401) {
         toast({ title: "Your session ended. Signing you out." });
-        await signOutEverywhere("/auth/signin");
+        await signOutEverywhere(signInHref());
         return;
       }
       if (res.status === 429) {
@@ -506,7 +533,7 @@ export function SessionsSection() {
               </span>
               <span className="text-muted-foreground">
                 {formatLastActive(s.lastSeenAt)}
-                {s.ipAddress ? ` · ${s.ipAddress}` : ""}
+                {s.ipAddress ? ` · Signed in from ${s.ipAddress}` : ""}
               </span>
             </span>
             {!s.isCurrent && (
@@ -520,6 +547,18 @@ export function SessionsSection() {
             )}
           </li>
         ))}
+        {nextCursor && (
+          <li className="pt-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isLoading}
+              onClick={() => void loadMore()}
+            >
+              Show more ({total - sessions.length} more)
+            </Button>
+          </li>
+        )}
       </ul>
     );
   }
@@ -535,7 +574,7 @@ export function SessionsSection() {
         <Button
           variant="outline"
           size="sm"
-          disabled={isLoading || (sessions?.length ?? 0) < 2}
+          disabled={isLoading || total < 2}
           onClick={() => {
             // Unlike the ConfirmDialog paths, nothing here catches a
             // rejection — surface it as a toast instead of an unhandled

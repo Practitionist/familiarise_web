@@ -32,20 +32,17 @@ import {
   EXPERT_VIA_COOKIE,
   parseViaToken,
 } from "@/lib/referrals/attribution-token-shape";
+import {
+  matchesPrefix,
+  PROTECTED_PAGE_PREFIXES,
+} from "@/lib/navigation/protected-routes";
 
 const URLS = {
   SIGNIN: "/auth/signin",
 };
 
 const ROUTE_PATTERNS = {
-  PROTECTED_PREFIXES: [
-    "/form/",
-    "/dashboard/",
-    "/settings/",
-    "/profile/",
-    "/checkout/",
-    "/meetings/",
-  ],
+  PROTECTED_PREFIXES: [...PROTECTED_PAGE_PREFIXES],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
   AUTHENTICATED_API_PREFIXES: [
     "/api/form/onboarding/",
@@ -75,13 +72,8 @@ const ROUTE_PATTERNS = {
   ],
 };
 
-const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  for (const prefix of prefixes) {
-    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
-    if (pathname === base || pathname.startsWith(`${base}/`)) return true;
-  }
-  return false;
-};
+const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean =>
+  prefixes.some((prefix) => matchesPrefix(pathname, prefix));
 
 function maintenanceRetryAfterHeaders(
   estimatedEnd: string | null,

@@ -18,6 +18,7 @@ import {
   mintClientIdempotencyKey,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 interface RazorpayPaymentResponse {
   razorpay_payment_id: string;
@@ -184,7 +185,7 @@ export default function RazorpayCheckout({
     // dedupe-safe.
     const response = await fetchCheckoutWithBusyRetry(
       () =>
-        fetch("/api/checkout", {
+        fetchWithIdentity("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

@@ -40,14 +40,9 @@ const SUPPORT_EMAIL =
   process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 /**
- * Resolve the redirect target for an already-authenticated visitor.
- *
- * `useSession()` can serve the ≤5-min cookie-cache payload, and acting on a
- * stale `onboardingCompleted` sent us one way while the server guard (always
- * force-fresh) immediately bounced the user back — the intermittent
- * signin↔dashboard↔onboarding flicker. Re-reading the session with
- * `disableCookieCache` aligns the client's decision with what the server
- * guard will decide.
+ * Resolve the redirect target for an already-authenticated visitor. The
+ * session store can trail the server (another tab finished onboarding), so
+ * the decision re-reads the session once, as the server guard will.
  *
  * - Fresh read returns a user → trust its onboarding status.
  * - Fresh read FAILS (network) → fall back to the cached value.
@@ -82,7 +77,7 @@ function useAuthenticatedRedirectTarget(
     const resolveAndGo = (completed: boolean) =>
       go(completed ? callbackUrl || "/dashboard" : onboardingUrl);
 
-    getSession({ query: { disableCookieCache: true } })
+    getSession()
       .then(({ data, error: sessionError }) => {
         // Better Auth resolves (rather than rejects) HTTP-level failures as
         // `{ data: null, error }` — fall back to the cached value instead of
@@ -209,10 +204,8 @@ function SignInContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message. Deliberately generic:
-  // the cached `onboardingCompleted` can be ≤5-min stale, and naming the
-  // destination from it flashed "dashboard" one frame before the force-fresh
-  // check above sent the user to onboarding (or vice-versa).
+  // If already logged in, show a generic redirecting message: the store's
+  // `onboardingCompleted` can be stale until the re-read above settles.
   if (session?.user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">

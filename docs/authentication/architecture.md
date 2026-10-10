@@ -84,7 +84,8 @@ which is how staff onboarding calls `createUser`.
   `createdAt + 12h` and `session.update.before` re-applies the cap on every
   refresh (`lib/auth/operator-session-policy.ts`).
 - No cap on sessions per user. Expired rows are deleted nightly by
-  `.github/workflows/cleanup-auth-tokens.yml` (`jobs/cleanup/cleanup-auth-tokens.ts`).
+  `lib/auth/cleanup-auth-tokens.ts`, which `.github/workflows/cron-daily.yml`
+  calls via `POST /api/cleanup/auth-tokens`.
 - `customSession` returns the user with role, profile ids, a `banned` flag
   (honouring `banExpires`, from the row BetterAuth just read),
   `twoFactorEnabled` and `organizationMemberships` from the typed `Membership`
@@ -100,7 +101,7 @@ which is how staff onboarding calls `createUser`.
 
 ```mermaid
 flowchart LR
-  A["RSC page or route handler"] --> L["lookupSession(force-fresh)<br/>lib/auth-session-lookup.ts"]
+  A["RSC page or route handler"] --> L["lookupSession()<br/>lib/auth-session-lookup.ts"]
   L --> BA["auth.api.getSession"]
   BA --> DB["SELECT Session by token + User"]
   DB --> CS["customSession<br/>User flags + Memberships"]

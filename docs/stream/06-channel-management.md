@@ -90,7 +90,7 @@ Five properties of this contract are load-bearing:
 1. **It reports failure by resolving, not by rejecting.** A missing user or unauthenticated session returns `{ success: false, error: "..." }` rather than throwing. Callers must branch on `result.success` before marking session sync complete.
 2. **It can no-op.** A recent successful sync for the same user returns `{ success: true, skipped: true }` without doing work unless `force` is passed.
 3. **It revokes rather than adds, paging at Stream's 30-channel ceiling.** Channels are provisioned eagerly at booking confirmation and on-demand via `POST /api/stream/channels/open`. `syncUserEventChannels` walks every channel the user belongs to via `queryChannelsPaged` (`lib/stream/batch.ts`, 30 channels per page sorted by `created_at` ascending) and removes memberships with a managed prefix (`MANAGED_CHANNEL_PREFIXES`) that are absent from the Postgres expected-set.
-4. **It is session-gated.** `actions/stream/chat/event-channel.action.ts` reads the session fresh from the database (`getSession(true)`), rejects banned accounts, and allows only self or privileged (`ADMIN`/`STAFF`) callers before touching the sync cache.
+4. **It is session-gated.** `actions/stream/chat/event-channel.action.ts` reads the session fresh from the database (`getSession()`), rejects banned accounts, and allows only self or privileged (`ADMIN`/`STAFF`) callers before touching the sync cache.
 5. **Its expected-set includes `ACCEPTED` collaborators and excludes events past retention.** `getWebinarIdsForUser` and `getClassIdsForUser` include webinars and classes where the user is the host, a live `AppointmentParticipant`, or an `ACCEPTED` `PlanCollaborator` (`consultantProfile.deletedAt: null`), so co-hosts are never evicted during reconciliation. Events whose latest slot `endsAt` has passed the owning organization's retention window (`isPastRetention` in `lib/stream/channel-lifecycle.ts`) are excluded so the sync never resurrects channels hard-deleted by the retention cron.
 
 ---
@@ -129,7 +129,7 @@ Because repeat bookings between the same consultant and consultee share a single
 Stream's server-side API bypasses its own permission system whenever a valid API secret is presented, so every membership mutation is authorized in the application layer before calling Stream:
 
 - `actions/stream/chat/channel.action.ts` and `lib/stream/event-channel-service.ts` do **not** have `"use server"` directives and cannot be invoked as browser RPCs.
-- `actions/stream/chat/event-channel.action.ts` (`"use server"`) gates `addUserToEventChannel`, `removeUserFromEventChannel`, and `syncUserEventChannels` via `getSession(true)` + participant/host/admin checks.
+- `actions/stream/chat/event-channel.action.ts` (`"use server"`) gates `addUserToEventChannel`, `removeUserFromEventChannel`, and `syncUserEventChannels` via `getSession()` + participant/host/admin checks.
 - `POST /api/stream/channels/open` enforces `requireApiAuth()`, `streamApiLimiter`, `canDirectMessage` / `isEventParticipant`, and `pairBookingContexts` (preventing cross-organization `organizationId` forgery).
 
 ### Participant Sources

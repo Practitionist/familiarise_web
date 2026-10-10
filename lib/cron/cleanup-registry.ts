@@ -223,13 +223,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "cleanup-auth-tokens",
         run: async () => {
           const { cleanupAuthTokens } =
-            await import("@/scripts/cleanup/cleanup-auth-tokens");
+            await import("@/lib/auth/cleanup-auth-tokens");
           return cleanupAuthTokens();
         },
         summarize: (r) => ({
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
-          passwordResetTokensCleared: r.passwordResetTokensCleared,
+          idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
+          staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
         }),
         failureMessage: "Failed to cleanup auth tokens",

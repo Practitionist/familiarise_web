@@ -26,16 +26,25 @@ import {
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import {
-  capOperatorExpiry,
   isOperatorRole,
   refusesOperatorAccount,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
+import {
+  authenticationStart,
+  cappedSessionFields,
+  refreshSessionLifetime,
+  sessionMaxAgeMs,
+} from "@/lib/auth/session-lifetime";
+import { supersededSessionRevocation } from "@/lib/auth/supersede-session";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
 import { notifySecurityEvents } from "@/lib/auth/security-event-hook";
-import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  revokeAllUserSessions,
+  revokeSessionById,
+} from "@/lib/auth/session-revoke";
 import {
   assertOperatorMayEnableTwoFactor,
   assertTwoFactorRequestPolicy,
@@ -331,10 +340,8 @@ export const auth = betterAuth({
     expiresIn: 30 * 24 * 60 * 60, // 30 days
     updateAge: 24 * 60 * 60, // 24 hours
     // Off: every session read hits the database, so a revoke, ban or role
-    // change applies on the very next request instead of up to 5 minutes
-    // later. customSession already queries Prisma on every read, so the
-    // cache saved one indexed lookup. Re-enabling it brings back the stale
-    // window that getCachedSession() and the eslint freshness rule guard.
+    // change applies on the very next request. Lifetime caps for operators
+    // and SSO sessions live in lib/auth/session-lifetime.ts.
     cookieCache: { enabled: false },
     // Stamped by app/api/user/reauthenticate; read by lib/auth/step-up.ts.
     additionalFields: {
@@ -573,14 +580,15 @@ export const auth = betterAuth({
     //
     // The same hook keeps operators on password + TOTP: the twoFactor plugin
     // never challenges a social or SSO callback, so those are refused here
-    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also caps an
-    // operator session at 12 hours; `update.before` holds that on refresh.
+    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also applies
+    // the lifetime caps (lib/auth/session-lifetime.ts); `update.before` holds
+    // them on refresh.
     session: {
       create: {
         before: async (session, ctx) => {
           const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { email: true, role: true },
+            select: { email: true, role: true, twoFactorEnabled: true },
           });
 
           if (refusesOperatorSession(user?.role, ctx?.path)) {
@@ -591,42 +599,53 @@ export const auth = betterAuth({
             });
           }
 
-          await assertSsoSessionAllowed(prisma, {
+          const enforcedOrg = await assertSsoSessionAllowed(prisma, {
             email: user?.email,
             path: ctx?.path,
             providerId: ctx?.params?.providerId,
           });
 
-          if (isOperatorRole(user?.role)) {
-            return {
-              data: {
-                expiresAt: capOperatorExpiry(
-                  session.createdAt ?? new Date(),
-                  session.expiresAt,
-                ),
-              },
-            };
-          }
+          const ssoEnforced =
+            ctx?.path === "/sso/callback/:providerId" &&
+            (enforcedOrg?.registeredProviderIds.length ?? 0) > 0;
+          const maxAgeMs = sessionMaxAgeMs(user, { ssoEnforced });
+          if (maxAgeMs === null) return;
+          const authStart = authenticationStart(
+            ctx?.path,
+            session.userId,
+            ctx?.context.session?.session,
+            new Date(),
+          );
+          return {
+            data: cappedSessionFields(session.expiresAt, authStart, maxAgeMs),
+          };
         },
       },
       update: {
         // Only get-session's sliding refresh writes `expiresAt`, and it has
         // just loaded this session and its user into `ctx.context.session`,
-        // so the clamp needs no query. For an operator the refresh therefore
-        // runs on every read (12h is always within the 30d-minus-1d window);
-        // the write is one row by token, and operators are few.
+        // so the policy needs no query. Returning false makes BetterAuth drop
+        // the cookie and answer no session; the row is revoked first.
         before: async (data, ctx) => {
           const current = ctx?.context.session;
           if (!data.expiresAt || !current) return;
-          if (!isOperatorRole((current.user as { role?: string }).role)) return;
-          return {
-            data: {
-              expiresAt: capOperatorExpiry(
-                new Date(current.session.createdAt),
-                new Date(data.expiresAt),
-              ),
-            },
-          };
+          const decision = refreshSessionLifetime(
+            current.user as { role?: string; twoFactorEnabled?: boolean },
+            current.session,
+            new Date(data.expiresAt),
+            new Date(),
+          );
+          if (decision.kind === "end") {
+            await revokeSessionById(
+              prisma,
+              current.session.userId,
+              current.session.id,
+            );
+            return false;
+          }
+          if (decision.expiresAt) {
+            return { data: { expiresAt: decision.expiresAt } };
+          }
         },
       },
     },
@@ -717,6 +736,8 @@ export const auth = betterAuth({
       },
     }),
 
+    // After twoFactor(), which clears `newSession` while a challenge is pending.
+    supersededSessionRevocation,
     // Operator passkeys: registration is limited to enrolled operators in
     // hooks.before, and TOTP stays the recovery factor.
     passkey(operatorPasskeyOptions(process.env.BETTER_AUTH_URL)),
@@ -859,19 +880,21 @@ export const auth = betterAuth({
           twoFactorEnabled: user.twoFactorEnabled === true,
           organizationMemberships,
         },
-        // The token is the cookie's value — a bearer credential. The
-        // browser already holds it (httpOnly); it never needs it in JSON.
-        session: sessionWithoutToken(session),
+        session: publicSession(session),
       };
     }),
     nextCookies(), // Must be last
   ],
 });
 
-function sessionWithoutToken<T extends { token: string }>(
+/**
+ * The token is the cookie's value, a bearer credential the browser already
+ * holds. Impersonation is off, so its column never reaches the client either.
+ */
+function publicSession<T extends { token: string; impersonatedBy?: unknown }>(
   session: T,
-): Omit<T, "token"> {
-  const { token: _token, ...rest } = session;
+): Omit<T, "token" | "impersonatedBy"> {
+  const { token: _token, impersonatedBy: _impersonatedBy, ...rest } = session;
   return rest;
 }
 

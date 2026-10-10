@@ -71,7 +71,7 @@ export async function updateOnboardingInformationAction(
     "Server Action: updateOnboardingInformationAction - Delegating to central utils",
   );
 
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
@@ -111,10 +111,6 @@ export async function updateOnboardingInformationAction(
   }
 
   // Use the central processing function
-  // No cookie-cache refresh here: requireOnboarded() reads force-fresh, so it
-  // already sees onboardingCompleted / profile ids. A refresh would also be the
-  // wrong tool — getSession reads the CALLER's headers, and this action lets an
-  // ADMIN/STAFF update someone else, whose session it could not refresh anyway.
   return processOnboardingData(userId, body);
 }
 // #endregion
@@ -139,7 +135,7 @@ export async function addConsultantIdentityAction(
   verificationWarning?: string;
   verificationDeferred?: boolean;
 }> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
@@ -193,7 +189,7 @@ export async function loadIdentitySeedAction(): Promise<
     }
   | { success: false; error: string }
 > {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) return { success: false, error: "Unauthorized" };
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -248,7 +244,7 @@ export async function setOnboardingRoleAction(
     dateOfBirth?: Date | string;
   },
 ): Promise<{ success: boolean; error?: string }> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
@@ -333,7 +329,7 @@ export async function setOnboardingRoleAction(
 export async function resetOnboardingRoleAction(
   userId: string,
 ): Promise<{ success: boolean; reverted?: boolean; error?: string }> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
@@ -370,7 +366,7 @@ export async function completeOrgWorkspaceOnboardingAction(
   userId: string,
   options?: { acceptTermsAndPrivacy?: boolean },
 ): Promise<{ success: boolean; error?: string }> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
@@ -395,9 +391,8 @@ export async function completeOrgWorkspaceOnboardingAction(
 
   if (options?.acceptTermsAndPrivacy) {
     const now = new Date();
-    const { buildSignupConsentArtifacts } = await import(
-      "@/lib/compliance/dpdp"
-    );
+    const { buildSignupConsentArtifacts } =
+      await import("@/lib/compliance/dpdp");
     const { SIGNUP_PURPOSES } = await import("@/lib/compliance/purpose-codes");
     await prisma.$transaction(async (tx) => {
       await tx.user.update({

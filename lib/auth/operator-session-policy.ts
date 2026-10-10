@@ -53,16 +53,3 @@ export function refusesOperatorAccount(
 ): boolean {
   return isOperatorRole(role) && providerId !== "credential";
 }
-
-/**
- * An operator session lives at most 12 hours from sign-in, however active it
- * is. The consumer settings (30-day expiry, daily sliding refresh) would
- * otherwise keep a stolen operator cookie alive for as long as it is used.
- */
-export const OPERATOR_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-/** `expiresAt`, pulled back to `createdAt` + 12h if it lands later. */
-export function capOperatorExpiry(createdAt: Date, expiresAt: Date): Date {
-  const cap = new Date(createdAt.getTime() + OPERATOR_SESSION_MAX_AGE_MS);
-  return expiresAt > cap ? cap : expiresAt;
-}

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
@@ -52,7 +53,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -91,7 +92,7 @@ export async function PUT(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -183,7 +184,7 @@ export async function PATCH(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -447,7 +448,7 @@ async function executeUserHardDeleteOrFallbackScrub(
         auditRetainedUntil,
       },
     });
-    await tx.session.deleteMany({ where: { userId: id } });
+    await revokeAllUserSessions(tx, id);
     await tx.user.delete({ where: { id } });
     return removed;
   });
@@ -503,7 +504,7 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

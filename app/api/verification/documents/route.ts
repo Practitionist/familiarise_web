@@ -50,9 +50,7 @@ class UploadRefusedError extends Error {
 export async function POST(request: NextRequest) {
   let uploadedStoragePath: string | null = null;
   try {
-    // Force-fresh: a revoked/erased/banned user must lose upload within the
-    // call, not up to 5 minutes later on the cookie cache.
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -258,7 +256,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

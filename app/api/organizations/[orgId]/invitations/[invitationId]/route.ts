@@ -57,6 +57,7 @@ export async function DELETE(
   const { orgId, invitationId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
+    expectUser: true,
     // Unverified orgs may revoke founding-team invitations (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;

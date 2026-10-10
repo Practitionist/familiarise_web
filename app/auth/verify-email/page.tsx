@@ -70,10 +70,7 @@ function VerifyEmailContent() {
   // (autoSignInAfterVerification) and redirects here authenticated. Send the
   // user on to onboarding — the referral capture (if any) is applied there.
   //
-  // `useSession()` can serve the ≤5-min cookie-cache payload, and acting on a
-  // stale `onboardingCompleted` sent us one way while the server guard (always
-  // force-fresh) immediately bounced us back — the same signin↔dashboard↔
-  // onboarding flicker fixed on signin/signup. Re-read force-fresh before
+  // The session store can trail the server, so re-read the session before
   // committing, and keep the navigation idempotent (single replace).
   const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -91,7 +88,7 @@ function VerifyEmailContent() {
       router.replace(target);
     };
 
-    getSession({ query: { disableCookieCache: true } })
+    getSession()
       .then(({ data, error: sessionError }) => {
         // Better Auth resolves (rather than rejects) HTTP-level failures as
         // `{ data: null, error }` — fall back to the cached value instead of

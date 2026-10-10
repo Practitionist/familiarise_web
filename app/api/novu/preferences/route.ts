@@ -11,7 +11,7 @@ import { getSession } from "@/lib/auth-server";
  */
 export async function GET() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -49,7 +49,10 @@ export async function GET() {
 
     return NextResponse.json(preferences);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to fetch notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch preferences" },
@@ -64,7 +67,7 @@ export async function GET() {
  */
 export async function PUT(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -114,7 +117,10 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json(updated);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to update notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to update preferences" },

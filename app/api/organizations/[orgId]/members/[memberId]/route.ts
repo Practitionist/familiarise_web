@@ -281,7 +281,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, { requireActive: true });
+  const access = await requireOrgAccess(orgId, {
+    requireActive: true,
+    expectUser: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -518,6 +521,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "members.manage",
     requireActive: true,
+    expectUser: true,
   });
   if (access.error) return access.error;
 

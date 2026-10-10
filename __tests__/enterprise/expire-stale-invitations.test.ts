@@ -3,8 +3,7 @@
  */
 
 /**
- * Pin the stale-invitation cleanup contract (folded into cleanup-auth-tokens
- * per #1487):
+ * Pin the stale-invitation cleanup contract (part of cleanup-auth-tokens):
  *
  *   - Only rows with `status = PENDING` AND `expiresAt < now` get
  *     flipped to 'expired'. Already-expired, accepted, or revoked rows
@@ -19,7 +18,7 @@
  *   - Idempotent: a second invocation with no stale rows returns
  *     `{ expired: 0 }` and writes no new audit rows.
  *   - `cleanupAuthTokens()` invokes stale-invitation expiry as part of the
- *     daily auth-token housekeeping sweep (#1487).
+ *     daily auth-token housekeeping sweep.
  */
 
 jest.mock("../../lib/prisma", () => {
@@ -46,7 +45,6 @@ jest.mock("../../lib/prisma", () => {
         findMany: jest.fn().mockResolvedValue(candidates),
         findUnique: jest.fn(),
         update: jest.fn(),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn(),
@@ -58,14 +56,13 @@ import prisma from "@/lib/prisma";
 import {
   cleanupAuthTokens,
   cleanupStaleInvitations,
-} from "@/scripts/cleanup/cleanup-auth-tokens";
+} from "@/lib/auth/cleanup-auth-tokens";
 
 const mockedPrisma = prisma as unknown as {
   invitation: {
     findMany: jest.Mock;
     findUnique: jest.Mock;
     update: jest.Mock;
-    updateMany: jest.Mock;
   };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
@@ -81,7 +78,7 @@ function wireTxShim() {
   });
 }
 
-describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () => {
+describe("cleanupStaleInvitations (part of cleanup-auth-tokens)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     wireTxShim();
@@ -176,7 +173,7 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
     expect(result.success).toBe(false);
   });
 
-  it("runs stale invitation expiry as part of cleanupAuthTokens (#1487)", async () => {
+  it("runs stale invitation expiry as part of cleanupAuthTokens", async () => {
     const candidate = {
       id: "inv-folded",
       organizationId: "org-1",

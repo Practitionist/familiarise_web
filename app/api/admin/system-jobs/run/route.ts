@@ -48,7 +48,7 @@ import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
 // Cleanup
-import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
+import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
@@ -212,7 +212,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
       sessionsDeleted: result.sessionsDeleted,
-      passwordResetTokensCleared: result.passwordResetTokensCleared,
+      idempotencyRecordsDeleted: result.idempotencyRecordsDeleted,
+      staleInvitationsExpired: result.staleInvitationsExpired,
     };
   },
   "reconcile-payment-status": async () => {

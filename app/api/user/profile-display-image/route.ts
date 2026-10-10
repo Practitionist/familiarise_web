@@ -15,7 +15,7 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -89,7 +89,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile display image upload error:", error);
     return NextResponse.json(
       {
@@ -110,7 +113,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -164,7 +167,10 @@ export async function DELETE(request: NextRequest) {
       message: "Profile display image deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile display image delete error:", error);
     return NextResponse.json(
       {
@@ -212,7 +218,10 @@ export async function GET(request: NextRequest) {
       data: { profileDisplayImage: user.profileDisplayImage },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Get profile display image error:", error);
     return NextResponse.json(
       {

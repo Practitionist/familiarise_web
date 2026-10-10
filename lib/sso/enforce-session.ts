@@ -121,16 +121,21 @@ export async function shouldRejectSession(
   };
 }
 
-/** `session.create.before` gate: throws SSO_REQUIRED and records the refusal. */
+/**
+ * `session.create.before` gate: throws SSO_REQUIRED and records the refusal.
+ * Returns the enforcing org for the user's domain (null when not enforced).
+ */
 export async function assertSsoSessionAllowed(
   prisma: PrismaLike,
   input: Omit<EnforceInputs, "lookupEnforcedOrg">,
-): Promise<void> {
+): Promise<EnforcedOrgInfo | null> {
+  let enforced: EnforcedOrgInfo | null = null;
   const decision = await shouldRejectSession({
     ...input,
-    lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
+    lookupEnforcedOrg: async (domain) =>
+      (enforced = await lookupEnforcedOrg(prisma, domain)),
   });
-  if (!decision.reject) return;
+  if (!decision.reject) return enforced;
   if (input.email) {
     await recordSsoRefusal({
       organizationId: decision.organizationId,

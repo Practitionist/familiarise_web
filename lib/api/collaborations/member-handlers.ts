@@ -97,7 +97,7 @@ export async function patchCollaborator(
   { params }: RouteContext,
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -155,7 +155,7 @@ export async function deleteCollaborator(
   { params }: RouteContext,
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

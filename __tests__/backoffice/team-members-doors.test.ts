@@ -115,7 +115,12 @@ describe("POST /api/admin/team/members", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith("users.moderate");
+    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith(
+      "users.moderate",
+      {
+        expectUser: true,
+      },
+    );
     const call = mockCreateUser.mock.calls[0][0];
     expect(call.headers).toBeUndefined();
     expect(call.body).toMatchObject({
@@ -277,7 +282,12 @@ describe("POST /api/admin/team/members/[userId]/setup-link", () => {
     const res = await resendSetupLink(request("POST", body), params);
 
     expect(res.status).toBe(200);
-    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith("users.moderate");
+    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith(
+      "users.moderate",
+      {
+        expectUser: true,
+      },
+    );
     expect(mockRequestPasswordReset).toHaveBeenCalledWith({
       body: { email: "op@example.com", redirectTo: "/auth/reset-password" },
     });

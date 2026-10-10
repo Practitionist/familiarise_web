@@ -3,10 +3,8 @@ import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
-import {
-  lookupSession,
-  SessionLookupFailedError,
-} from "@/lib/auth-session-lookup";
+import { lookupSession } from "@/lib/auth-session-lookup";
+import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
 import prisma from "@/lib/prisma";
 import { setSentryIdentityFromSession } from "@/lib/observability/identity";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
@@ -52,7 +50,7 @@ type GuardOptions = { allowUnenrolledOperator?: boolean };
 async function resolveGuardSession({
   allowUnenrolledOperator = false,
 }: GuardOptions = {}) {
-  const lookup = await lookupSession(true);
+  const lookup = await lookupSession();
   if (lookup.kind === "failed")
     throw new SessionLookupFailedError(lookup.cause);
   if (lookup.kind === "none") {

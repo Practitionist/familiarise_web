@@ -10,7 +10,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -41,7 +41,10 @@ export async function PATCH(
     }
 
     // Same bucket as the server-action twin so both paths share one quota.
-    const limited = await applyRateLimit(onboardingSubmitLimiter, session.user.id);
+    const limited = await applyRateLimit(
+      onboardingSubmitLimiter,
+      session.user.id,
+    );
     if (limited) return limited;
 
     // Use central utility function directly
@@ -56,7 +59,10 @@ export async function PATCH(
       user: result.user,
     });
   } catch (error: unknown) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "form" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "form" } },
+    );
     console.error("Error updating onboarding information:", error);
     if (error instanceof Error) {
       console.error("Error message:", error.message);

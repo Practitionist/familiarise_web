@@ -37,27 +37,22 @@ render where possible, and always guard with the same idempotency pattern.
 See `useAuthenticatedRedirectTarget` in `app/auth/signin/page.tsx` for the
 reference implementation (signup duplicates it inline).
 
-### Rule 3 — Destination decisions re-verify with a force-fresh session
+### Rule 3 — Destination decisions re-read the session once
 
-Client `useSession()` holds whatever it last fetched, which can be stale
-after a mutation (and would be up to `cookieCache.maxAge` stale if the cookie
-cache in `lib/auth.ts`, currently off, were re-enabled). Server guards
-(`requireOnboarded`, `requireNotOnboarded` in `lib/auth-guard.ts`) **always**
-read force-fresh (`disableCookieCache: true`).
+Client `useSession()` holds whatever it last fetched, which can trail the
+server after a mutation in another tab. Server guards (`requireOnboarded`,
+`requireNotOnboarded` in `lib/auth-guard.ts`) always read the database (the
+cookie cache is off). Acting on a stale `onboardingCompleted` sends the client
+one way while the guard counter-redirects the other way.
 
-Acting on stale cached `onboardingCompleted` sends the client one way while
-the server guard immediately counter-redirects the other way — the
-intermittent signin↔dashboard↔onboarding bounce.
-
-So the client helpers call
-`getSession({ query: { disableCookieCache: true } })` before committing a
+So the client helpers call `getSession()` once before committing a
 destination:
 
 | Fresh read result                     | Behavior                                                                                 |
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
 | Returns a user                        | Trust its `onboardingCompleted`; navigate                                                |
 | Returns no user (**revoked session**) | **Do not navigate** into protected routes — stay put; the session store update drives UI |
-| Network error                         | Fall back to the cached value (best effort beats dead end)                               |
+| Error (network, 503)                  | Fall back to the cached value (best effort beats dead end)                               |
 
 ### Rule 4 — Callback URLs go through `safeSameOriginPath()`
 
@@ -109,6 +104,39 @@ infinite-loop recipe (documented in the middleware header block). Real
 validation lives server-side in guards/layouts. If you need role data in
 middleware, the answer is "you don't" — extend a server guard instead.
 
+### Rule 8 — Leaving a session uses `location.replace` and keeps the return path
+
+All sign-out and revocation navigation lives in `lib/auth/sign-out.ts`:
+
+- `signOutEverywhere(to)` tears down Stream, calls sign-out, posts **one**
+  `BroadcastChannel("auth")` `{ type: "signed-out" }` message on success, then
+  `location.replace(to)`. The signed-in page never stays in history, so Back
+  cannot restore it; a bfcache restore (`pageshow` with `persisted`) makes
+  `AuthSyncProvider` revalidate immediately.
+- Receiving tabs only clear local state and either `location.replace` to
+  sign-in (protected page) or reload (public page). They never POST
+  `/sign-out` again.
+- A confirmed revocation (identity ping 401/403) calls `leaveEndedSession`
+  with `signInHref("session-revoked")`, which carries the current page as a
+  `safeSameOriginPath` `callbackUrl`.
+- A remembered-but-expired session on a public page is forgotten silently;
+  only protected pages (`lib/navigation/protected-routes.ts`, shared with
+  `middleware.ts`) ask the server and redirect.
+- A different user id (session store or the `/api/user/sessions/current`
+  ping) hard-reloads the tab.
+
+```mermaid
+sequenceDiagram
+  participant A as Tab A
+  participant BC as BroadcastChannel auth
+  participant B as Tab B
+  A->>A: signOut() succeeds
+  A->>BC: signed-out
+  A->>A: location.replace(/auth/signin)
+  BC->>B: signed-out
+  B->>B: clear state, replace or reload (no POST)
+```
+
 ## Related context
 
 - [`architecture.md`](./architecture.md) — the session read path, why the
@@ -117,10 +145,9 @@ middleware, the answer is "you don't" — extend a server guard instead.
   SSO enforcement lifecycle: the read-time `ssoEnforcementFailed` flag was
   removed in #1242 because nothing consumed it; if you want read-time SSO
   enforcement back, implement it WITH its consumer per that spec.
-- Known accepted trade-off: every dashboard tab switch pays one
-  force-fresh `getSession(true)` (~4 Prisma ops), deduped per request by
-  `React.cache`. This is revocation-safety insurance — don't downgrade it to
-  cached reads without reading `lib/auth-server.ts` first.
+- Known accepted trade-off: every dashboard navigation pays one database
+  session read (~4 Prisma ops), deduped per render by `React.cache` in
+  `lib/auth-server.ts`. That is what makes a revoke apply on the next request.
 
 ## Regression checklist for auth/dashboard PRs
 
@@ -131,3 +158,14 @@ middleware, the answer is "you don't" — extend a server guard instead.
 5. `bash scripts/verify-sso-invariants.sh` passes (8 checks).
 6. Manual: sign in → land on role home with NO intermediate screen flash;
    press Back from dashboard → does NOT bounce forward through `/auth/*`.
+
+## Deprecated & Superseded Approaches
+
+- `getSession(true)` / `disableCookieCache` "force-fresh" reads and
+  `getCachedSession()`: the cookie cache is off for good, so the flag and its
+  eslint rule were deleted.
+- `window.location.href` sign-out (left the authed page in history) and the
+  cascade where every open tab POSTed `/sign-out` again after BetterAuth's
+  storage ping.
+- Forcing `/auth/signin?reason=session-revoked` on public pages for a
+  returning visitor whose session had expired.

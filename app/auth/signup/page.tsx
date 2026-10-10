@@ -143,11 +143,8 @@ function SignUpContent() {
 
   // Redirect authenticated users based on onboarding status.
   //
-  // `useSession()` can serve the ≤5-min cookie-cache payload; acting on a
-  // stale `onboardingCompleted` sent the client one way while the server
-  // guard (always force-fresh) bounced the user back — an intermittent
-  // flicker. Re-verify with a force-fresh read before committing, and keep
-  // the navigation idempotent (single replace, never push: leaving /auth/*
+  // The session store can trail the server, so re-read the session before
+  // committing, and keep the navigation idempotent (single replace, never push: leaving /auth/*
   // in history made Back from the dashboard ping-pong forward again).
   const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -164,7 +161,7 @@ function SignUpContent() {
       router.replace(target);
     };
 
-    getSession({ query: { disableCookieCache: true } })
+    getSession()
       .then(({ data, error: sessionError }) => {
         // Better Auth resolves (rather than rejects) HTTP-level failures as
         // `{ data: null, error }` — fall back to the cached value instead of
@@ -202,7 +199,7 @@ function SignUpContent() {
   }
 
   // If already logged in, show redirecting message. Generic on purpose —
-  // the cached `onboardingCompleted` can be stale (see the force-fresh effect
+  // the store's `onboardingCompleted` can be stale (see the re-read effect
   // above); naming the destination flashed the wrong one for a frame.
   if (session?.user) {
     return (

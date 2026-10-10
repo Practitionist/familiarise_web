@@ -28,7 +28,7 @@ export default async function OrgDashboardLayout({
   // A seed that throws renders the error boundary, never the shell.
   const details = await getOrgDetailsForSeed(orgId);
   if (!details) {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       redirect("/auth/signin");
     }

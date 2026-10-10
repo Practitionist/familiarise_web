@@ -33,7 +33,7 @@ function unauthorized(): { success: false; error: string } {
 export async function saveOnboardingDraftAction(
   input: unknown,
 ): Promise<DraftActionResult> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) return unauthorized();
 
   // The wizard autosaves on every step transition (+ pagehide flush), so a
@@ -41,7 +41,10 @@ export async function saveOnboardingDraftAction(
   // never touches a human; a loop trips it immediately.
   const limited = await applyRateLimit(onboardingDraftLimiter, session.user.id);
   if (limited) {
-    return { success: false, error: "Too many requests. Please try again later." };
+    return {
+      success: false,
+      error: "Too many requests. Please try again later.",
+    };
   }
 
   // Server-action arguments arrive as untyped JSON regardless of the static
@@ -81,7 +84,7 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
   // run — the user finished onboarding with nothing persisted and no signal.
   // Resolve a failure into the ordinary "no draft" answer instead.
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) return unauthorized();
 
     const draft = await prisma.onboardingDraft.findUnique({
@@ -113,7 +116,7 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
 /** Idempotent by design — called after successful completion and whenever the
  *  wizard restarts from step 0 with no meaningful state to keep. */
 export async function clearOnboardingDraftAction(): Promise<DraftActionResult> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) return unauthorized();
 
   await prisma.onboardingDraft.deleteMany({

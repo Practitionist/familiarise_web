@@ -157,9 +157,7 @@ export function TwoFactorSettings({
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await authClient.getSession({
-        query: { disableCookieCache: true },
-      });
+      const { data } = await authClient.getSession();
       setEnabled(data?.user?.twoFactorEnabled === true);
     } catch {
       // A session that cannot be read is the `SESSION_LOOKUP_FAILED` case,

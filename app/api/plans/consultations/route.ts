@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     // nor drafts, except to the owner's planner (the only consultantId caller).
     // A failed session read degrades to the public list, never a 500.
     const viewer = consultantId
-      ? await getSession(true).catch((error: unknown) => {
+      ? await getSession().catch((error: unknown) => {
           Sentry.captureException(error, { tags: { subsystem: "plans" } });
           return null;
         })
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

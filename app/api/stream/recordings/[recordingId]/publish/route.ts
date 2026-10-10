@@ -170,7 +170,7 @@ function checkPublishGates(
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -269,7 +269,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

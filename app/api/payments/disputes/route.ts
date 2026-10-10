@@ -37,7 +37,7 @@ import * as Sentry from "@sentry/nextjs";
 async function requireDisputesReader(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
@@ -62,7 +62,7 @@ async function requireDisputesReader(): Promise<
 async function requireDisputesManager(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),

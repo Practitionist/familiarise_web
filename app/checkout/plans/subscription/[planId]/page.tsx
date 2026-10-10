@@ -56,6 +56,7 @@ import {
   type PurchaseFunding,
 } from "@/components/booking/CancellationPolicyNote";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -284,7 +285,7 @@ export default function SubscriptionCheckoutPage({
   // Common API request logic
   const makeCheckoutRequest = useCallback(
     async (checkoutData: CheckoutInput, isMockPayment: boolean = false) => {
-      return fetch("/api/checkout", {
+      return fetchWithIdentity("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

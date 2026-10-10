@@ -122,7 +122,7 @@ export function withOpsAction<S extends z.ZodRawShape>(
 ) {
   const schema = z.object(shape).extend({ reason: opsReasonSchema });
   return async (req: NextRequest, route: RouteContext) => {
-    const auth = await requireBackofficeSurface(surface);
+    const auth = await requireBackofficeSurface(surface, { expectUser: true });
     if (auth.error) return auth.error;
     if (options.stepUp) {
       const stale = requireFreshSession(auth.session);
