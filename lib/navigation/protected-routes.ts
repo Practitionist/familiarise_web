@@ -1,6 +1,7 @@
 /** Page prefixes that require a session; the edge middleware and the client share them. */
 export const PROTECTED_PAGE_PREFIXES = [
   "/form/",
+  "/onboarding/",
   "/dashboard/",
   "/settings/",
   "/profile/",

@@ -101,6 +101,7 @@ export function ReviewStep({
   onBack,
   onGoToStep,
   initialData,
+  onboarding,
   afterLaunch,
   finalRedirectPath,
 }: StepProps) {
@@ -172,6 +173,7 @@ export function ReviewStep({
                   gstStateCode: initialData.gstStateCode,
                 }
               : {}),
+            ...(onboarding ? { onboarding } : {}),
           },
         );
         const createRes = await fetch("/api/organizations", {
@@ -281,22 +283,13 @@ export function ReviewStep({
         await new Promise((r) => setTimeout(r, 1500));
       }
 
-      // Onboarding caller uses this to flip `user.onboardingCompleted`
-      // atomically with the launch. We deliberately don't block the
-      // redirect on failure: the org + invitations are already
-      // persisted, and the user is much better served by landing on
-      // their new dashboard than by being trapped on the Review screen
-      // with a confusing error. The onboarding flag will be flipped on
-      // the next dashboard load (or via a follow-up server action) and
-      // the failure is captured in the console for ops.
+      // Onboarding already committed with the org; this hook is cleanup only,
+      // so a failure here never blocks landing on the new dashboard.
       if (afterLaunch) {
         try {
           await afterLaunch(orgId);
-        } catch (afterErr) {
-          console.error(
-            "afterLaunch hook failed — proceeding to dashboard anyway",
-            afterErr,
-          );
+        } catch {
+          // Best-effort: the draft row expires on its own.
         }
       }
 

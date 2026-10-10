@@ -29,6 +29,8 @@ import { z } from "zod";
 interface Props {
   onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
+  /** Field-level autosave: unsubmitted edits on this tab. */
+  onDraftChange?: (partial: Record<string, unknown>) => void;
   initialData: Partial<OnboardingFormData>;
   personalInfo: PersonalInfoAndRole;
 }
@@ -38,6 +40,7 @@ type FormData = z.infer<typeof ConsultantProfileFormSchema>;
 const ConsultantProfileForm: React.FC<Props> = ({
   onNext,
   onBack,
+  onDraftChange,
   initialData,
   personalInfo: _personalInfo,
 }) => {
@@ -78,6 +81,22 @@ const ConsultantProfileForm: React.FC<Props> = ({
   });
 
   const selectedDomain = watch("domain");
+
+  // Availability belongs to a later step; its defaults here must not
+  // overwrite the slots already in the draft.
+  useEffect(() => {
+    if (!onDraftChange) return;
+    const subscription = watch((values) => {
+      const {
+        weeklySlots: _weekly,
+        customSlots: _custom,
+        scheduleType: _scheduleType,
+        ...profile
+      } = values;
+      onDraftChange(profile);
+    });
+    return () => subscription.unsubscribe();
+  }, [watch, onDraftChange]);
 
   // Filter subdomains and tags based on selected domain
   const filteredSubDomains = useMemo(() => {

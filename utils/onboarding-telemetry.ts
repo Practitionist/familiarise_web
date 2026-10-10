@@ -1,18 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 
 /**
- * Onboarding funnel instrumentation.
- *
- * Deliberately breadcrumb-based: the funnel events land on every Sentry error
- * and are queryable in Performance traces without adding a third-party
- * analytics dependency or a network call per step. When a real product
- * analytics provider lands, this is the single file to swap.
- *
- * Never log field values — only step labels and outcome codes.
+ * Client-side onboarding breadcrumbs: context attached to the next Sentry
+ * error, not a funnel (see docs/onboarding for the funnel query). Never log
+ * field values — only step labels and outcome codes.
  */
 export function trackOnboardingEvent(
   event:
-    | "wizard_start"
     | "draft_restored"
     | "step_advance"
     | "step_back"
@@ -20,6 +14,7 @@ export function trackOnboardingEvent(
     | "draft_save_skipped"
     | "draft_load_failed"
     | "draft_quarantined"
+    | "draft_conflict"
     | "submit_success"
     | "submit_error"
     // A client-side Zod refusal: the payload failed the form schema, so the
@@ -29,9 +24,7 @@ export function trackOnboardingEvent(
     | "submit_validation_failed"
     | "verification_deferred"
     | "invite_bypassed"
-    | "invite_check_skipped"
-    | "pending_invite_at_submit"
-    | "identity_added",
+    | "invite_check_skipped",
   data?: Record<string, string | number | boolean | null>,
 ): void {
   try {

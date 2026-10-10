@@ -6,13 +6,7 @@
  */
 
 export type OnboardingStepKey =
-  | "personal"
-  | "professional"
-  | "availability"
-  | "agreement"
-  | "roleDetails"
-  | "review"
-  | "org";
+  "personal" | "professional" | "availability" | "agreement" | "review" | "org";
 
 /** [owning step, on-screen label] per top-level payload field. */
 const FIELDS: Record<string, [OnboardingStepKey, string]> = {
@@ -52,18 +46,12 @@ const FIELDS: Record<string, [OnboardingStepKey, string]> = {
   // Agreement (+ verification for consultants; + profile for consultees).
   termsAccepted: ["agreement", "Terms of service"],
   privacyAccepted: ["agreement", "Privacy policy"],
-  termsAcceptedAt: ["agreement", "Terms of service"],
-  privacyAcceptedAt: ["agreement", "Privacy policy"],
+  marketingConsent: ["agreement", "Marketing emails"],
   verificationLinkedinUrl: ["agreement", "LinkedIn profile for verification"],
   verificationNotes: ["agreement", "Verification notes"],
   verificationDocuments: ["agreement", "Verification documents"],
   aboutMe: ["agreement", "About me"],
   skillsToDevelop: ["agreement", "Skills to develop"],
-  consulteeInlineEducation: ["agreement", "Education"],
-  consulteeInlineWorkExperience: ["agreement", "Work experience"],
-  // Staff.
-  department: ["roleDetails", "Department"],
-  position: ["roleDetails", "Position"],
 };
 
 /** The step that owns a top-level payload field, or null for an unknown one. */

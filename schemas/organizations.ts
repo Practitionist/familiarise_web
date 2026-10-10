@@ -12,6 +12,7 @@
 // `components/organization/create-wizard/schemas.ts`.
 
 import { z } from "zod";
+import { OrgOnboardingSchema } from "@/utils/onboarding";
 import {
   HostInvitableMemberRoleSchema,
   MemberRoleSchema,
@@ -56,6 +57,8 @@ export const CreateOrganizationPayloadSchema = z.object({
     .string()
     .regex(/^\d{2}$/)
     .optional(),
+  /** First-time owner: completes onboarding in the org-create transaction. */
+  onboarding: OrgOnboardingSchema.optional(),
 });
 
 // PATCH /api/organizations/[orgId] — fields the dashboard surfaces.

@@ -34,6 +34,8 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
+/** Abandoned onboarding drafts are deleted after this many idle days. */
+const ONBOARDING_DRAFT_TTL_DAYS = 90;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -352,6 +354,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r),
         failureMessage: "Recording retention sweep failed",
+      }),
+
+    // @cleanup-twin expire-onboarding-drafts
+    "expire-onboarding-drafts": () =>
+      cleanupRoute({
+        job: "expire-onboarding-drafts",
+        run: async () => {
+          const { default: prisma } = await import("@/lib/prisma");
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          return withCronLock(
+            "expire-onboarding-drafts",
+            { failMode: "open" },
+            async () => {
+              const cutoff = new Date(
+                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
+              );
+              const { count } = await prisma.onboardingDraft.deleteMany({
+                where: { updatedAt: { lt: cutoff } },
+              });
+              return { success: true, deleted: count };
+            },
+          );
+        },
+        summarize: (r) => ({ deleted: r.deleted }),
+        failureMessage: "Failed to expire onboarding drafts",
       }),
 
     // @cleanup-twin expire-referral-credits

@@ -16,7 +16,6 @@ import type { StagedTrigger } from "@/lib/novu";
 import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
-import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
   assertWeeklyWindows,
@@ -33,12 +32,15 @@ import {
   buildUserUpdateData,
   buildConsultantScalarData,
   buildConsulteeScalarData,
-  buildStaffScalarData,
-  buildAdminScalarData,
+  isFullyOnboarded,
   validateProfessionalBackground,
   shouldSubmitVerification,
   isPersistableVerificationDoc,
 } from "./onboarding-shared";
+import {
+  claimOnboardingCompletion,
+  recordOnboardingConsent,
+} from "./onboarding-completion";
 
 // A contract refusal names its window; the wizard needs the field too.
 function toRefusal(error: unknown, field: "weeklySlots" | "customSlots") {
@@ -79,9 +81,30 @@ interface VerificationBody {
 // ============================================================================
 
 async function assertUserExists(id: string) {
-  const user = await prisma.user.findUnique({ where: { id } });
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true },
+  });
   if (!user)
     throw new OnboardingRefusedError("USER_NOT_FOUND", "User not found");
+}
+
+/** A P2002 on `User.phone`, routed to the phone field. */
+function phoneTakenRefusal(error: unknown): OnboardingRefusedError | null {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2002"
+  ) {
+    return null;
+  }
+  const target = error.meta?.target;
+  const fields = Array.isArray(target) ? target.map(String) : [String(target)];
+  if (!fields.some((f) => f.includes("phone"))) return null;
+  return new OnboardingRefusedError(
+    "PHONE_TAKEN",
+    "This phone number is already linked to another account.",
+    "phone",
+  );
 }
 
 // ============================================================================
@@ -265,34 +288,6 @@ async function upsertConsulteeProfile(
   return { consulteeProfileId: profile.id };
 }
 
-async function upsertStaffProfile(
-  userId: string,
-  profileData: Parameters<typeof buildStaffScalarData>[0],
-  tx: Tx,
-) {
-  const scalarData = buildStaffScalarData(profileData);
-  const profile = await tx.staffProfile.upsert({
-    where: { userId },
-    create: { userId, ...scalarData },
-    update: scalarData,
-  });
-  return { staffProfileId: profile.id };
-}
-
-async function upsertAdminProfile(
-  userId: string,
-  profileData: Parameters<typeof buildAdminScalarData>[0],
-  tx: Tx,
-) {
-  const scalarData = buildAdminScalarData(profileData);
-  const profile = await tx.adminProfile.upsert({
-    where: { userId },
-    create: { userId, ...scalarData },
-    update: scalarData,
-  });
-  return { adminProfileId: profile.id };
-}
-
 /**
  * Add a consultant identity to an onboarded CONSULTEE / ORG_WORKSPACE account.
  * Same validation, profile upsert, availability contract, professional
@@ -362,6 +357,7 @@ export async function addConsultantIdentity(
             profileFkData.consultantProfileId,
           );
         }
+        await recordOnboardingConsent(tx, userId, validatedBody);
         // CAS on the empty link: two tabs adding at once cannot both win.
         const linked = await tx.user.updateMany({
           where: { id: userId, consultantProfileId: null },
@@ -390,10 +386,6 @@ export async function addConsultantIdentity(
       { maxWait: 15000, timeout: 45000 },
     );
 
-    trackOnboardingEvent("identity_added", {
-      previousRole: String(current.role),
-    });
-
     const verification = await maybeSubmitConsultantVerification(
       userId,
       updatedUser,
@@ -407,9 +399,9 @@ export async function addConsultantIdentity(
       verificationDeferred: verification?.deferred,
     };
   } catch (error: unknown) {
-    console.error("Error in addConsultantIdentity:", error);
+    reportUnexpected(error, "add-identity");
     return refusalResult(
-      error,
+      phoneTakenRefusal(error) ?? error,
       "An unknown error occurred while adding the expert profile.",
     );
   }
@@ -422,8 +414,6 @@ async function upsertProfileByRole(
 ): Promise<{
   consultantProfileId?: string;
   consulteeProfileId?: string;
-  staffProfileId?: string;
-  adminProfileId?: string;
 }> {
   switch (validatedBody.role) {
     case UserRole.CONSULTANT:
@@ -439,20 +429,6 @@ async function upsertProfileByRole(
         validatedBody.consulteeProfile.create,
         tx,
       );
-    case UserRole.STAFF:
-      return upsertStaffProfile(userId, validatedBody.staffProfile.create, tx);
-    case UserRole.ADMIN:
-      if (validatedBody.adminProfile?.create) {
-        return upsertAdminProfile(
-          userId,
-          validatedBody.adminProfile.create,
-          tx,
-        );
-      }
-      return {};
-    case UserRole.ORG_WORKSPACE:
-      // No personal profile — org creation happens post-transaction.
-      return {};
     default: {
       const _exhaustiveCheck: never = validatedBody;
       throw new Error(
@@ -628,8 +604,6 @@ const onboardingUserInclude = {
   workExperiences: true,
   education: true,
   certifications: true,
-  staffProfile: true,
-  adminProfile: true,
 } satisfies Prisma.UserInclude;
 
 type OnboardingUser = Prisma.UserGetPayload<{
@@ -657,6 +631,14 @@ type OnboardingResult = {
   verificationDeferred?: boolean;
 };
 
+/** Lost the claim: another request completed onboarding first. */
+class OnboardingClaimLostError extends Error {
+  constructor() {
+    super("onboarding already completed");
+    this.name = "OnboardingClaimLostError";
+  }
+}
+
 async function runOnboardingTransaction(
   userId: string,
   validatedBody: OnboardingData,
@@ -664,14 +646,14 @@ async function runOnboardingTransaction(
 ): Promise<OnboardingUser> {
   return prisma.$transaction(
     async (tx) => {
-      const baseUserData: Prisma.UserUpdateInput = {
-        ...buildUserUpdateData(validatedBody),
-        // Reset profile IDs (will be set by profileFkData)
-        consultantProfileId: null,
-        consulteeProfileId: null,
-        staffProfileId: null,
-        adminProfileId: null,
-      };
+      // Claim first: holds the user-row lock, so a racing submit waits here
+      // and then sees count 0 instead of rewriting profile rows.
+      const claimed = await claimOnboardingCompletion(
+        tx,
+        userId,
+        buildUserUpdateData(validatedBody),
+      );
+      if (!claimed) throw new OnboardingClaimLostError();
 
       const profileFkData = await upsertProfileByRole(
         userId,
@@ -686,78 +668,44 @@ async function runOnboardingTransaction(
         tx,
       );
 
-      // #698 OB-1 — the score is computed, not seeded; every input above is
-      // now in place for a consultant.
       if (profileFkData.consultantProfileId) {
         await recomputeProfileCompletion(tx, profileFkData.consultantProfileId);
       }
 
-      const user = await tx.user.update({
-        // #724, #840: CAS guard — only apply the role/profile transition
-        // while the user is still un-onboarded, so two devices onboarding
-        // the same email can't last-write-wins each other. A no-match
-        // throws P2025 and rolls back the whole tx (incl. profile upserts).
-        where: { id: userId, onboardingCompleted: { not: true } },
-        data: { ...baseUserData, ...profileFkData },
+      await recordOnboardingConsent(tx, userId, validatedBody);
+
+      return tx.user.update({
+        where: { id: userId },
+        data: profileFkData,
         include: onboardingUserInclude,
       });
-
-      if (
-        validatedBody.termsAcceptedAt &&
-        validatedBody.privacyAcceptedAt &&
-        tx.consentArtifact?.findFirst
-      ) {
-        const { buildSignupConsentArtifacts } =
-          await import("@/lib/compliance/dpdp");
-        const { SIGNUP_PURPOSES } =
-          await import("@/lib/compliance/purpose-codes");
-        const existingConsent = await tx.consentArtifact.findFirst({
-          where: {
-            userId,
-            dataFiduciary: "Familiarise",
-            withdrawnAt: null,
-            purposeCodes: { hasEvery: [...SIGNUP_PURPOSES] },
-          },
-          select: { id: true },
-        });
-        if (!existingConsent) {
-          await tx.consentArtifact.createMany({
-            data: buildSignupConsentArtifacts(userId),
-          });
-        }
-      }
-
-      return user;
     },
     { maxWait: 15000, timeout: 45000 },
   );
 }
 
-// Another device already completed onboarding for this user. That is success
-// only when it chose the same role and that role's profile exists; any other
-// state is a typed refusal so this device's answers are not silently dropped.
-// Returns null to signal a rethrow.
+/**
+ * Another request completed onboarding for this user. Success only when it
+ * chose the same role and is fully onboarded; otherwise a typed refusal so
+ * this device's answers are not silently dropped. Null means rethrow.
+ */
 async function recoverIdempotentOnboarding(
   userId: string,
   submittedRole: OnboardingData["role"],
   error: unknown,
 ): Promise<OnboardingResult | null> {
-  if (
-    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-    error.code !== "P2025"
-  ) {
-    return null;
-  }
+  const lostRace =
+    error instanceof OnboardingClaimLostError ||
+    (error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      phoneTakenRefusal(error) === null);
+  if (!lostRace) return null;
   const existing = await prisma.user.findUnique({
     where: { id: userId },
     include: onboardingUserInclude,
   });
   if (!existing?.onboardingCompleted) return null;
-  const profileReady =
-    existing.role === UserRole.CONSULTANT
-      ? !!existing.consultantProfileId
-      : existing.role === UserRole.CONSULTEE;
-  if (existing.role === submittedRole && profileReady) {
+  if (existing.role === submittedRole && isFullyOnboarded(existing)) {
     return { success: true, user: existing };
   }
   return {
@@ -766,6 +714,19 @@ async function recoverIdempotentOnboarding(
     error:
       "Your account finished setup on another device. Reload to continue from there.",
   };
+}
+
+/** One Sentry event per failed request, only for non-refusal failures. */
+function reportUnexpected(error: unknown, op: string) {
+  if (error instanceof OnboardingRefusedError || phoneTakenRefusal(error)) {
+    return;
+  }
+  Sentry.captureException(
+    new Error(
+      `onboarding_${op}_failed: ${error instanceof Error ? error.name : "unknown"}`,
+    ),
+    { tags: { subsystem: "onboarding", op } },
+  );
 }
 
 /**
@@ -827,7 +788,6 @@ async function maybeSubmitConsultantVerification(
         extra: { userId, consultantProfileId: updatedUser.consultantProfileId },
       },
     );
-    console.error("Failed to create verification request:", verificationError);
     return {
       deferred: true,
       warning:
@@ -845,9 +805,6 @@ export async function processOnboardingData(
   try {
     const validationResult = validateOnboardingData(body);
     if (!validationResult.success) {
-      console.error("Validation Error:", validationResult.error);
-      // The schema's issue is routed to the wizard field it is about, the
-      // same way a contract or verification refusal is (qa-1730 defect 2).
       return refusalResult(
         refusalFromIssues(validationResult.issues, validationResult.error),
         validationResult.error,
@@ -855,53 +812,7 @@ export async function processOnboardingData(
     }
 
     const validatedBody = validationResult.data;
-
-    // STAFF and ADMIN roles are invite-only — reject from public onboarding
-    if (
-      validatedBody.role === UserRole.STAFF ||
-      validatedBody.role === UserRole.ADMIN
-    ) {
-      return {
-        success: false,
-        error:
-          "Staff and Admin accounts are invite-only. Please contact an administrator.",
-      };
-    }
-
     await assertUserExists(userId);
-
-    // Server-side counterpart to the step-0 invite gate (client-only, and
-    // now with a "continue without" escape): finishing B2C onboarding while
-    // an org invite is still pending is ALLOWED — invites are enforced at
-    // accept-time by email match — but record it so the funnel can see how
-    // often the escape (or a mid-wizard invite arrival) fires. Deliberately
-    // non-blocking: a hard block here would reintroduce the stray-invite
-    // lockout the escape hatch exists to prevent.
-    try {
-      const pendingInvite = await prisma.invitation.findFirst({
-        where: {
-          email: validatedBody.email.toLowerCase(),
-          status: "PENDING",
-          expiresAt: { gt: new Date() },
-        },
-        select: { role: true },
-      });
-      if (pendingInvite) {
-        trackOnboardingEvent("pending_invite_at_submit", {
-          inviteRole: String(pendingInvite.role),
-          submittedRole: validatedBody.role,
-        });
-      }
-    } catch {
-      // Visibility only — never fail a submit over telemetry.
-    }
-
-    // ORG_WORKSPACE onboarding no longer flows through this transaction. The
-    // role + personal info are committed by `setOnboardingRoleAction` at
-    // step 0, the org is created via `POST /api/organizations` during the
-    // shared wizard, and `completeOrgWorkspaceOnboardingAction` flips the
-    // onboardingCompleted flag at launch. This path now only handles
-    // CONSULTANT / CONSULTEE / STAFF / ADMIN profiles.
 
     let updatedUser: OnboardingUser;
     try {
@@ -930,15 +841,9 @@ export async function processOnboardingData(
       verificationDeferred: verification?.deferred,
     };
   } catch (error: unknown) {
-    console.error("Error in processOnboardingData:", error);
-    if (error instanceof Error) {
-      console.error("Error details:", {
-        message: error.message,
-        stack: error.stack,
-      });
-    }
+    reportUnexpected(error, "submit");
     return refusalResult(
-      error,
+      phoneTakenRefusal(error) ?? error,
       "An unknown error occurred while updating onboarding information.",
     );
   }

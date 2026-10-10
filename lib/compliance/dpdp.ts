@@ -92,6 +92,7 @@ import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   SIGNUP_PURPOSES,
+  TERMS_VERSION,
   purposeCodeAliases,
   type PurposeCode,
 } from "./purpose-codes";
@@ -218,9 +219,39 @@ export function buildSignupConsentArtifacts(
       purposeCodes: [purposeCode],
       language: "en-IN",
       consentManager: null,
-      version: 1,
+      version: TERMS_VERSION,
     }),
   );
+}
+
+/**
+ * Write one platform consent artifact for each purpose that has no live one.
+ * Must receive the transaction client when called inside `$transaction`.
+ */
+export async function ensureConsentPurposes(
+  db: Tx,
+  userId: string,
+  purposes: readonly PurposeCode[],
+): Promise<void> {
+  const missing: PurposeCode[] = [];
+  for (const purposeCode of purposes) {
+    if (!(await checkConsent({ userId, purposeCode }, db))) {
+      missing.push(purposeCode);
+    }
+  }
+  if (missing.length === 0) return;
+  await db.consentArtifact.createMany({
+    data: missing.map((purposeCode) =>
+      buildConsentArtifact({
+        userId,
+        dataFiduciary: "Familiarise",
+        purposeCodes: [purposeCode],
+        language: "en-IN",
+        consentManager: null,
+        version: TERMS_VERSION,
+      }),
+    ),
+  });
 }
 
 /**

@@ -100,8 +100,7 @@ export async function PUT(
     // Never `role` or `email`, whatever the body says. A self-edit that set
     // role made any consultee an ADMIN, and an email rewrite skips
     // verification (an account-takeover primitive). Operator roles change on
-    // the Team page; onboarding sets the consumer role through
-    // setOnboardingRoleAction (actions/forms/onboarding.action.ts).
+    // the Team page; onboarding sets the role in its completion transaction.
     const body = await req.json();
     const {
       name,

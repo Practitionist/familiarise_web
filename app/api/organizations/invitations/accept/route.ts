@@ -15,11 +15,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import {
-  buildSignupConsentArtifacts,
-  checkConsent,
-} from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { checkConsent, ensureConsentPurposes } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES, SIGNUP_PURPOSES } from "@/lib/compliance/purpose-codes";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { transitionMembership } from "@/lib/enterprise/transitions";
@@ -92,6 +89,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "Invitation has expired" },
       { status: 410 },
+    );
+  }
+
+  // Accept never onboards anyone: a new account completes the gate (DOB 18+
+  // and consent) first and comes back here, for every role.
+  if (auth.session.user.onboardingCompleted !== true) {
+    return NextResponse.json(
+      {
+        error: "Finish setting up your account to join this organization.",
+        code: "ONBOARDING_REQUIRED",
+        gateHref: `/onboarding/gate?callbackUrl=${encodeURIComponent(
+          `/organizations/invite/${inv.id}`,
+        )}`,
+      },
+      { status: 403 },
     );
   }
 
@@ -197,9 +209,7 @@ export async function POST(req: NextRequest) {
       }
       // #1854 — consent commits with the join or rolls back with it.
       if (needsConsent) {
-        await tx.consentArtifact.createMany({
-          data: buildSignupConsentArtifacts(userId),
-        });
+        await ensureConsentPurposes(tx, userId, SIGNUP_PURPOSES);
       }
 
       // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
@@ -294,8 +304,7 @@ export async function POST(req: NextRequest) {
           // carries domain/rates/verification/payout prerequisites no invite
           // click can substitute for. Emits the NOT_A_CONSULTANT code (not
           // free-form copy) so lib/labels/org-errors.ts humanizes it; the
-          // invite page tells the user to finish consultant onboarding and
-          // accept again from the emailed link.
+          // invite page links the (already onboarded) user to add mode.
           throw Object.assign(new Error("NOT_A_CONSULTANT"), {
             httpStatus: 400,
           });
@@ -325,19 +334,6 @@ export async function POST(req: NextRequest) {
         ? await rejoin(tx, existing.id, roleData)
         : await createMembership(tx, roleData);
 
-      // #1867 — Accepting an organization invitation as a learner or operator
-      // satisfies consumer onboarding so the user isn't redirected to /form
-      // after joining their organization.
-      if (
-        normalizedRole !== "EXPERT" &&
-        typeof tx.user?.update === "function"
-      ) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { onboardingCompleted: true },
-        });
-      }
-
       await tx.orgAuditLog.create({
         data: {
           organizationId: inv.organizationId,
@@ -354,20 +350,18 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      if (typeof tx.webhookEndpoint?.findMany === "function") {
-        await dispatchWebhookEvent({
-          prisma: tx,
-          organizationId: inv.organizationId,
-          eventType: "member.added",
-          payload: {
-            membershipId: created.id,
-            userId,
-            role: normalizedRole,
-            source: "INVITATION",
-            invitationId: inv.id,
-          },
-        });
-      }
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: inv.organizationId,
+        eventType: "member.added",
+        payload: {
+          membershipId: created.id,
+          userId,
+          role: normalizedRole,
+          source: "INVITATION",
+          invitationId: inv.id,
+        },
+      });
 
       // Staged HERE so the roster bell and the joiner's welcome commit with
       // the membership or roll back with it (review round 2 on #1700); the

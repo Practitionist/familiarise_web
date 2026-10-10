@@ -45,7 +45,6 @@ const ROUTE_PATTERNS = {
   PROTECTED_PREFIXES: [...PROTECTED_PAGE_PREFIXES],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
   AUTHENTICATED_API_PREFIXES: [
-    "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
     "/api/bookings/",

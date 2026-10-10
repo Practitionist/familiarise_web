@@ -18,6 +18,7 @@ import {
   type UploadedDocument,
 } from "@/components/verification/VerificationDocumentUpload";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { MAX_VERIFICATION_DOCUMENTS } from "@/utils/onboarding";
 
 interface ConsultantVerificationFormProps {
   onNext: (data: {
@@ -191,7 +192,7 @@ export default function ConsultantVerificationForm({
           onDocumentsChange={setDocuments}
           onUpload={handleUpload}
           onRemove={handleRemove}
-          maxFiles={5}
+          maxFiles={MAX_VERIFICATION_DOCUMENTS}
           disabled={isUploading}
         />
       </div>
