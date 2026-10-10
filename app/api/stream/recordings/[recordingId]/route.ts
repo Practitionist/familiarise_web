@@ -379,8 +379,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (streamCopyLapsed) return recordingGoneResponse();
 
-    // Get the best available URL (async — generates presigned URL for Supabase)
-    const playbackUrl = await getBestRecordingUrl(recording);
+    const playbackUrl = getBestRecordingUrl(recording);
 
     return NextResponse.json({
       recording: {

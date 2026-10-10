@@ -42,8 +42,8 @@ jest.mock("../../lib/stream/recording-service", () => ({
 
 jest.mock("../../lib/stream/recording-storage", () => ({
   __esModule: true,
-  getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-  generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  getBestRecordingUrl: jest.fn(() => "https://signed.example/play.mp4"),
+  generateSignedUrl: jest.fn(() => "https://signed.example/play.mp4"),
   isDurablyOurs: jest.fn(() => true),
   durablyOursWhere: jest.fn(() => ({})),
 }));
@@ -141,7 +141,7 @@ beforeEach(() => {
   db.recordingPurchase.findFirst.mockResolvedValue(null);
   db.orgAuditLog.create.mockResolvedValue({ id: "audit-1" });
   db.systemEvent.create.mockResolvedValue({ id: "evt-1" });
-  mockedBestUrl.mockResolvedValue("https://signed.example/play.mp4");
+  mockedBestUrl.mockReturnValue("https://signed.example/play.mp4");
 });
 
 describe("the recordings permission matrix", () => {
@@ -286,7 +286,7 @@ describe("every privileged recording read is audited", () => {
       order.push("audit");
       return { id: "audit-1" };
     });
-    mockedBestUrl.mockImplementation(async () => {
+    mockedBestUrl.mockImplementation(() => {
       order.push("url");
       return "https://signed.example/play.mp4";
     });

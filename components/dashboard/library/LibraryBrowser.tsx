@@ -103,7 +103,6 @@ export function toLibraryPlayerItem(
     title: recording.title,
     recordedAt: recording.recordedAt,
     durationInMinutes: recording.durationInMinutes,
-    playbackUrl: recording.playbackUrl,
     planTitle: session?.title ?? null,
     planType: session?.kind
       ? (EVENT_TYPE_LABELS[session.kind] ?? session.kind)
@@ -119,7 +118,7 @@ function FileCell({
   onWatchRecording?: (recording: LibraryRecording) => void;
 }>) {
   if (!isDocument(file)) {
-    if (!file.playbackUrl || !onWatchRecording) {
+    if (!file.playable || !onWatchRecording) {
       return <span className="text-foreground">{file.title}</span>;
     }
     return (
