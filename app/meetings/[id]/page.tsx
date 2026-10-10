@@ -96,8 +96,8 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  // Loading states — lobby anatomy matches MeetingSetup to avoid spinner flash
-  if (isSessionPending || isCallLoading) {
+  // Loading states — keep gate card mounted during retryJoin so Check Again never flashes blank
+  if (isSessionPending || (isCallLoading && !access)) {
     return <MeetingRoomSkeleton />;
   }
 

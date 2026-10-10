@@ -47,6 +47,7 @@ function buildConflictScope(
 ) {
   const participantClause = {
     appointment: {
+      deletedAt: null,
       participants: {
         some: {
           userId: { in: participantUserIds },
@@ -400,9 +401,16 @@ export async function POST(
       occurrence.consultantProfileId,
       appt,
     );
-    const participantUserIds = (occurrence.appointment?.participants ?? [])
-      .map((p) => p.userId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    const isGroupCohort = Boolean(
+      occurrence.appointment?.webinar || occurrence.appointment?.class,
+    );
+    const participantUserIds = isGroupCohort
+      ? []
+      : (occurrence.appointment?.participants ?? [])
+          .map((p) => p.userId)
+          .filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          );
 
     const slotEndsAt = new Date(occurrence.endsAt);
     const slotStartsAt = new Date(occurrence.startsAt);

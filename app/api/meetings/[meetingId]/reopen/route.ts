@@ -17,7 +17,11 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  STREAM_CALL_TYPE,
+  parseOccurrenceIdFromCallId,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
 async function isAuthorizedReopenHost(
@@ -149,61 +153,85 @@ export async function POST(
       );
     }
 
-    const meeting = await prisma.meeting.findUnique({
-      where: { streamCallId: callId },
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                consultation: {
-                  select: {
-                    status: true,
-                    consultationPlan: {
-                      select: {
-                        consultantProfileId: true,
+    const reopenInclude = {
+      occurrence: {
+        include: {
+          appointment: {
+            include: {
+              consultation: {
+                select: {
+                  status: true,
+                  requestedBy: { select: { user: { select: { name: true } } } },
+                  consultationPlan: {
+                    select: {
+                      title: true,
+                      consultantProfileId: true,
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                subscription: {
-                  select: {
-                    status: true,
-                    subscriptionPlan: {
-                      select: {
-                        consultantProfileId: true,
+              },
+              subscription: {
+                select: {
+                  status: true,
+                  requestedBy: { select: { user: { select: { name: true } } } },
+                  subscriptionPlan: {
+                    select: {
+                      title: true,
+                      consultantProfileId: true,
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                webinar: {
-                  select: {
-                    status: true,
-                    webinarPlan: {
-                      select: {
-                        id: true,
-                        consultantProfileId: true,
+              },
+              webinar: {
+                select: {
+                  status: true,
+                  webinarPlan: {
+                    select: {
+                      id: true,
+                      title: true,
+                      consultantProfileId: true,
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                class: {
-                  select: {
-                    status: true,
-                    classPlan: {
-                      select: {
-                        id: true,
-                        consultantProfileId: true,
+              },
+              class: {
+                select: {
+                  status: true,
+                  classPlan: {
+                    select: {
+                      id: true,
+                      title: true,
+                      consultantProfileId: true,
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                trial: {
-                  select: {
-                    status: true,
-                    consultantProfileId: true,
-                    subscriptionPlan: {
-                      select: { consultantProfileId: true },
+              },
+              trial: {
+                select: {
+                  status: true,
+                  consultantProfileId: true,
+                  consulteeProfile: {
+                    select: { user: { select: { name: true } } },
+                  },
+                  subscriptionPlan: {
+                    select: {
+                      title: true,
+                      consultantProfileId: true,
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
+                      },
                     },
                   },
                 },
@@ -212,7 +240,20 @@ export async function POST(
           },
         },
       },
-    });
+    } as const;
+
+    const occurrenceIdFallback = parseOccurrenceIdFromCallId(callId);
+    const meeting =
+      (await prisma.meeting.findUnique({
+        where: { streamCallId: callId },
+        include: reopenInclude,
+      })) ??
+      (occurrenceIdFallback
+        ? await prisma.meeting.findUnique({
+            where: { appointmentOccurrenceId: occurrenceIdFallback },
+            include: reopenInclude,
+          })
+        : null);
 
     if (!meeting) {
       return NextResponse.json(
@@ -296,6 +337,28 @@ export async function POST(
       });
     }
 
+    const appt = meeting.occurrence.appointment;
+    const planTitle =
+      appt.consultation?.consultationPlan?.title ??
+      appt.subscription?.subscriptionPlan?.title ??
+      appt.webinar?.webinarPlan?.title ??
+      appt.class?.classPlan?.title ??
+      appt.trial?.subscriptionPlan?.title;
+    const consultantName =
+      appt.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+      appt.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+      appt.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+      appt.class?.classPlan?.consultantProfile?.user?.name ??
+      appt.trial?.subscriptionPlan?.consultantProfile?.user?.name;
+    const consulteeName =
+      appt.consultation?.requestedBy?.user?.name ??
+      appt.subscription?.requestedBy?.user?.name ??
+      appt.trial?.consulteeProfile?.user?.name;
+    const maxDurationSeconds = Math.max(
+      300,
+      Math.ceil((endsAt.getTime() - startsAt.getTime()) / 1000),
+    );
+
     await withStreamCircuitBreaker(() =>
       getStreamVideoClient()
         .video.call(STREAM_CALL_TYPE, nextCallId)
@@ -303,7 +366,17 @@ export async function POST(
           data: {
             created_by_id: user.id,
             starts_at: startsAt,
+            settings_override: {
+              limits: {
+                max_duration_seconds: maxDurationSeconds,
+              },
+            },
             custom: {
+              appointmentId: appt.id,
+              appointmentType: appt.appointmentsType,
+              ...(planTitle ? { planTitle } : {}),
+              ...(consultantName ? { consultantName } : {}),
+              ...(consulteeName ? { consulteeName } : {}),
               sessionStartsAt: startsAt.toISOString(),
               sessionEndsAt: endsAt.toISOString(),
             },

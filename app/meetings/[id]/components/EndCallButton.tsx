@@ -132,8 +132,8 @@ export function CallExitButton({
           type="button"
           data-testid="host-exit-call-trigger"
           className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
-          title="End or leave session"
-          aria-label="End or leave session"
+          title="Leave or end call"
+          aria-label="Leave or end call"
         >
           <Phone className="w-5 h-5 rotate-[135deg] text-white" />
         </button>
@@ -141,6 +141,8 @@ export function CallExitButton({
       <DropdownMenuContent
         align="center"
         sideOffset={12}
+        role="dialog"
+        aria-label="Leave or end call options"
         className="w-80 bg-zinc-900 border-zinc-800 p-3.5 rounded-xl text-white shadow-2xl space-y-3"
       >
         <div>
@@ -154,7 +156,10 @@ export function CallExitButton({
         </div>
 
         {remainingMinutes > 0 && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200">
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200"
+          >
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
             <span>
               <strong>{remainingMinutes} min remaining</strong> in this booked
@@ -173,12 +178,12 @@ export function CallExitButton({
               setOpen(false);
               void onLeaveForSelf();
             }}
-            className="w-full justify-start gap-2.5 border-zinc-700 bg-zinc-800/80 text-zinc-100 hover:bg-zinc-800 hover:text-white"
+            className="h-auto w-full items-start justify-start gap-2.5 whitespace-normal px-3 py-2.5 text-left border-zinc-700 bg-zinc-800/80 text-zinc-100 hover:bg-zinc-800 hover:text-white"
           >
-            <LogOut className="h-4 w-4 text-zinc-300" />
+            <LogOut className="h-4 w-4 shrink-0 mt-0.5 text-zinc-300" />
             <div className="flex flex-col items-start text-left">
               <span className="text-xs font-medium">Leave call</span>
-              <span className="text-[11px] font-normal text-zinc-400">
+              <span className="text-[11px] font-normal text-zinc-400 leading-snug">
                 Keep session open for others · Rejoin anytime
               </span>
             </div>
@@ -190,18 +195,18 @@ export function CallExitButton({
             disabled={isEnding}
             data-testid="host-end-for-everyone-button"
             onClick={() => void handleEndForEveryone()}
-            className="w-full justify-start gap-2.5 bg-red-600 text-white hover:bg-red-700"
+            className="h-auto w-full items-start justify-start gap-2.5 whitespace-normal px-3 py-2.5 text-left bg-red-600 text-white hover:bg-red-700"
           >
             {isEnding ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 shrink-0 mt-0.5 animate-spin" />
             ) : (
-              <PhoneOff className="h-4 w-4" />
+              <PhoneOff className="h-4 w-4 shrink-0 mt-0.5" />
             )}
             <div className="flex flex-col items-start text-left">
               <span className="text-xs font-medium">
                 {isEnding ? "Ending session..." : "End session for everyone"}
               </span>
-              <span className="text-[11px] font-normal text-red-100/85">
+              <span className="text-[11px] font-normal text-red-100/85 leading-snug">
                 Disconnects all participants &amp; stops recording
               </span>
             </div>
