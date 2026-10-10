@@ -8,7 +8,10 @@ import { ModerationReportStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-import { readReviewReportContext } from "@/lib/moderation/review-context";
+import {
+  readExclusionDropsBelowGate,
+  readReviewReportContext,
+} from "@/lib/moderation/review-context";
 import * as Sentry from "@sentry/nextjs";
 
 const patchReportSchema = z.object({
@@ -93,14 +96,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const bookingContext = report.review?.appointmentId
-      ? await readReviewReportContext(report.review.appointmentId)
-      : null;
+    const [bookingContext, exclusionDropsBelowGate] = await Promise.all([
+      report.review?.appointmentId
+        ? readReviewReportContext(report.review.appointmentId)
+        : null,
+      report.review ? readExclusionDropsBelowGate(report.review.id) : false,
+    ]);
 
     return NextResponse.json({
       report: {
         ...report,
         bookingContext,
+        exclusionDropsBelowGate,
       },
     });
   } catch (error) {

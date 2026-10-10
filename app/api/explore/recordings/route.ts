@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
 const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -31,11 +32,13 @@ export async function GET(request: NextRequest) {
     }
 
     const result = await listPublicRecordings(parsed.data);
+    // Listing data is ISR-grade; let the CDN cache it briefly, per query.
     return NextResponse.json(result, {
-      headers: {
-        // Listing data is ISR-grade; let the CDN cache it briefly.
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-      },
+      headers: publicCacheHeaders({
+        sMaxAge: 60,
+        staleWhileRevalidate: 300,
+        varyQuery: Object.keys(QuerySchema.shape),
+      }),
     });
   } catch (error) {
     console.error("Error listing public recordings:", error);

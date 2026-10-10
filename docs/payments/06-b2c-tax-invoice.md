@@ -97,6 +97,8 @@ Both PDFs register Noto Sans Devanagari from `public/fonts/` and apply it to the
 
 The invoice number and a download link appear on the admin payment list and detail pages; on the consultee's own payments tab the row's "View receipt" link resolves to the invoice when one was issued (`receiptHref` in `lib/appointments/payment-display.ts`). A row without one means the payment was org-funded, which is the correct answer rather than a missing document.
 
+The supplier block comes from `getPlatformSupplier()`, whose fail-closed contract, hardcoded legal name and address, and the `pdfkit` font tracing that keeps the render from crashing are described in [required secrets](../enterprise/50-operations/07-required-secrets.md#the-supplier-identity-on-statutory-documents).
+
 ## The outward-supplies register
 
 `jobs/compliance/gst-outward-register-export.ts` runs on the third of each month for the previous IST calendar month, well ahead of the eleventh-of-the-month GSTR-1 deadline. `GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END` override the period and must be set together; the workflow exposes them as dispatch inputs.

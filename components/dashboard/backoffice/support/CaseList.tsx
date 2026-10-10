@@ -41,7 +41,7 @@ function CaseRow({
       >
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-sm font-medium text-foreground">
-            {row.requester.name ?? row.requester.email ?? "Unknown user"}
+            {row.requester.name ?? "Unknown user"}
           </span>
           <time
             dateTime={row.lastActivityAt}

@@ -3,12 +3,16 @@
  *
  * The server's error envelope is `{ error, code, detail? }` where `error` is
  * already user-safe. This mapper prefers CODE-specific copy (richer, action-
- * oriented), falls back to the server's message, and never surfaces `detail` —
- * that's developer material: log the raw payload to the console and let Sentry
- * carry it (see lib/api/support-http.ts).
+ * oriented), falls back to the server's message, and surfaces from `detail`
+ * only the schema's per-field messages, which are written for the user.
  */
 
+import { z } from "zod";
 import { formatRetryAfter } from "@/lib/labels/auth-errors";
+
+const FieldErrorsDetail = z.object({
+  fieldErrors: z.record(z.string(), z.array(z.string()).optional()),
+});
 
 const FRIENDLY_COPY: Record<string, string> = {
   UNAUTHORIZED: "Please sign in and try again.",
@@ -67,6 +71,8 @@ export class SupportRequestError extends Error {
     message: string,
     readonly status: number,
     readonly code: string | undefined,
+    /** First server message per invalid field, for inline display. */
+    readonly fieldErrors: Readonly<Record<string, string>> = {},
   ) {
     super(message);
   }
@@ -74,6 +80,17 @@ export class SupportRequestError extends Error {
   get isDefinite(): boolean {
     return this.status === 403 || this.status === 404 || this.status === 400;
   }
+}
+
+/** The first message per field from a Zod `flatten()` detail; empty for any other shape. */
+export function fieldErrorsOf(detail: unknown): Record<string, string> {
+  const parsed = FieldErrorsDetail.safeParse(detail);
+  if (!parsed.success) return {};
+  const out: Record<string, string> = {};
+  for (const [field, messages] of Object.entries(parsed.data.fieldErrors)) {
+    if (messages?.[0]) out[field] = messages[0];
+  }
+  return out;
 }
 
 /** A write lost its compare-and-set because the case changed underneath it. */
@@ -91,5 +108,6 @@ export async function throwSupportError(
     describeSupportError(payload),
     res.status,
     payload.code,
+    fieldErrorsOf(payload.detail),
   );
 }
