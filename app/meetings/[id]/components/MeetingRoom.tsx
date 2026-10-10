@@ -26,6 +26,7 @@ import {
   Phone,
   MoreVertical,
   Radio,
+  MessageCircle,
   MessageSquareText,
 } from "lucide-react";
 
@@ -40,6 +41,7 @@ import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { StageControls } from "./StageControls";
 import { StagePinnedBannerOverlay } from "./StagePinnedBannerOverlay";
+import { StageChatDrawer } from "./StageChatDrawer";
 import { StageQaDrawer } from "./StageQaDrawer";
 import { OverrunBanner } from "./OverrunBanner";
 import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
@@ -68,13 +70,7 @@ import {
   isInCallChatAllowed,
   isOneToManyAppointmentType,
 } from "@/lib/meetings/room-ready";
-import {
-  normalizeStageBannerFromCustomData,
-  STAGE_QA_EVENT_TYPES,
-  stageQuestionSchema,
-  type StagePinnedBanner,
-  type StageQuestion,
-} from "@/lib/meetings/stage-qa";
+import { useRoomQaAndChat, type SideDrawerTab } from "./useRoomQaAndChat";
 
 export { isInCallChatAllowed };
 
@@ -161,15 +157,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
-  const [activeSideTab, setActiveSideTab] = useState<
-    "participants" | "qa" | null
-  >(null);
-  const [questions, setQuestions] = useState<StageQuestion[]>([]);
-  const [activeBanner, setActiveBanner] = useState<StagePinnedBanner | null>(
-    null,
-  );
-  const [qaError, setQaError] = useState<string | null>(null);
-  const [isQaSubmitting, setIsQaSubmitting] = useState(false);
+  const [activeSideTab, setActiveSideTab] = useState<SideDrawerTab>(null);
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
@@ -190,7 +178,6 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const callSettings = useCallSettings();
   const callCustomData = useCallCustomData();
 
-  // Set Stream disconnection timeout so dropped connections emit participant_left events.
   useEffect(() => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
@@ -209,151 +196,30 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     ? "720p"
     : "480p";
 
-  // Hydrate and sync active ON SCREEN banner from server-authoritative call.state.custom.
-  useEffect(() => {
-    if (!inCallChatAllowed) return;
-    const syncedBanner = normalizeStageBannerFromCustomData(
-      callCustomData as Record<string, unknown> | undefined,
-    );
-    setActiveBanner(syncedBanner);
-  }, [callCustomData, inCallChatAllowed]);
+  const {
+    questions,
+    chatMessages,
+    unreadChatCount,
+    activeBanner,
+    qaError,
+    isQaSubmitting,
+    isChatSubmitting,
+    handleSendChatMessage,
+    handleToggleChatReaction,
+    handleAskQuestion,
+    handleToggleUpvote,
+    handleAnswerQuestion,
+    handleReopenQuestion,
+    handlePinQuestion,
+    handleUnpinQuestion,
+  } = useRoomQaAndChat({
+    call,
+    callCustomData,
+    inCallChatAllowed,
+    isHost,
+    activeSideTab,
+  });
 
-  // Subscribe to real-time Q&A and ON SCREEN stage banner events over Stream WebSocket.
-  useEffect(() => {
-    if (!call || !inCallChatAllowed || typeof call.on !== "function") return;
-
-    const handleCustomEvent = (event: { custom?: Record<string, unknown> }) => {
-      const custom = event?.custom;
-      if (!custom || typeof custom.type !== "string") return;
-
-      if (custom.type === STAGE_QA_EVENT_TYPES.QUESTION_ASKED) {
-        const parsedQuestion = stageQuestionSchema.safeParse(custom.question);
-        if (!parsedQuestion.success) return;
-        const incoming = parsedQuestion.data;
-        setQuestions((prev) =>
-          prev.some((item) => item.id === incoming.id)
-            ? prev
-            : [...prev, incoming],
-        );
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED) {
-        const normalized = normalizeStageBannerFromCustomData({
-          activeStageBanner: custom.banner,
-        });
-        if (normalized) {
-          setActiveBanner(normalized);
-        }
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_UNPINNED) {
-        setActiveBanner(null);
-      }
-    };
-
-    const unsubscribe = call.on("custom", handleCustomEvent as never);
-    return () => {
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
-      }
-    };
-  }, [call, inCallChatAllowed]);
-
-  const targetQaMeetingId = meetingId ?? call?.id ?? "";
-
-  const handleAskQuestion = useCallback(
-    async (text: string) => {
-      if (!targetQaMeetingId) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "ask", text }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(body?.error ?? "Failed to send question");
-        }
-        if (body?.question) {
-          setQuestions((prev) =>
-            prev.some((q) => q.id === body.question.id)
-              ? prev
-              : [...prev, body.question],
-          );
-        }
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetQaMeetingId],
-  );
-
-  const handlePinQuestion = useCallback(
-    async (question: StageQuestion) => {
-      if (!targetQaMeetingId || !isHost) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "pin",
-              questionId: question.id,
-            }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to pin question");
-          return;
-        }
-        if (body?.banner) {
-          setActiveBanner(body.banner);
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error ? err.message : "Failed to pin question",
-        );
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetQaMeetingId, isHost],
-  );
-
-  const handleUnpinQuestion = useCallback(async () => {
-    if (!targetQaMeetingId || !isHost) return;
-    setQaError(null);
-    setIsQaSubmitting(true);
-    try {
-      const res = await fetch(
-        `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "unpin" }),
-        },
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setQaError(body?.error ?? "Failed to unpin question");
-        return;
-      }
-      setActiveBanner(null);
-    } catch (err) {
-      setQaError(
-        err instanceof Error ? err.message : "Failed to unpin question",
-      );
-    } finally {
-      setIsQaSubmitting(false);
-    }
-  }, [targetQaMeetingId, isHost]);
-
-  // Enforce default incoming video cap on join (480p for 1:1 sessions, 720p for webinars/classes).
   useEffect(() => {
     if (
       call &&
@@ -436,6 +302,10 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     );
   }
 
+  const openQuestionsCount = questions.filter(
+    (q) => q.status !== "answered",
+  ).length;
+
   return (
     <StreamVideoErrorBoundary>
       <section
@@ -480,18 +350,62 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
 
           <div
+            inert={!activeSideTab || undefined}
+            aria-hidden={!activeSideTab}
             className={cn(
-              "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              "fixed right-0 top-0 flex h-full w-full flex-col pb-20 sm:w-80 sm:pb-0 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
               activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
-            <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800">
+            <div className="flex shrink-0 items-center justify-between px-3 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("chat")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "chat"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>Chat</span>
+                    {unreadChatCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {unreadChatCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("qa")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "qa"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" />
+                    <span>Q&amp;A</span>
+                    {openQuestionsCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {openQuestionsCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setActiveSideTab("participants")}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
                     activeSideTab === "participants"
                       ? "bg-zinc-800 text-white"
                       : "text-zinc-400 hover:text-zinc-200",
@@ -500,50 +414,56 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                   <Users className="w-3.5 h-3.5" />
                   <span>People ({participantCount})</span>
                 </button>
-                {inCallChatAllowed && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveSideTab("qa")}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                      activeSideTab === "qa"
-                        ? "bg-zinc-800 text-white"
-                        : "text-zinc-400 hover:text-zinc-200",
-                    )}
-                  >
-                    <MessageSquareText className="w-3.5 h-3.5" />
-                    <span>Q&A</span>
-                    {questions.length > 0 && (
-                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
-                        {questions.length}
-                      </span>
-                    )}
-                  </button>
-                )}
               </div>
               <button
+                type="button"
+                aria-label="Close panel"
                 onClick={() => setActiveSideTab(null)}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
-            {activeSideTab === "qa" && inCallChatAllowed ? (
-              <StageQaDrawer
-                questions={questions}
-                activeBanner={activeBanner}
-                isHost={isHost}
-                onAskQuestion={handleAskQuestion}
-                onPinQuestion={handlePinQuestion}
-                onUnpinQuestion={handleUnpinQuestion}
-                isSubmitting={isQaSubmitting}
-                error={qaError}
-              />
-            ) : (
-              <div className="h-[calc(100%-60px)] overflow-y-auto">
-                <CallParticipantsList onClose={() => setActiveSideTab(null)} />
-              </div>
-            )}
+
+            {(() => {
+              if (activeSideTab === "chat" && inCallChatAllowed) {
+                return (
+                  <StageChatDrawer
+                    messages={chatMessages}
+                    currentUserId={session?.user?.id}
+                    onSendMessage={handleSendChatMessage}
+                    onToggleReaction={handleToggleChatReaction}
+                    isSubmitting={isChatSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              if (activeSideTab === "qa" && inCallChatAllowed) {
+                return (
+                  <StageQaDrawer
+                    questions={questions}
+                    activeBanner={activeBanner}
+                    isHost={isHost}
+                    currentUserId={session?.user?.id}
+                    onAskQuestion={handleAskQuestion}
+                    onToggleUpvote={handleToggleUpvote}
+                    onAnswerQuestion={handleAnswerQuestion}
+                    onReopenQuestion={handleReopenQuestion}
+                    onPinQuestion={handlePinQuestion}
+                    onUnpinQuestion={handleUnpinQuestion}
+                    isSubmitting={isQaSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              return (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <CallParticipantsList
+                    onClose={() => setActiveSideTab(null)}
+                  />
+                </div>
+              );
+            })()}
           </div>
 
           {activeSideTab && (
@@ -554,9 +474,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
-            <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
               </SpeakingWhileMutedNotification>
@@ -577,6 +497,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               )}
 
               <button
+                type="button"
+                aria-label="Leave call"
                 onClick={async () => {
                   await cleanupAndNavigate(getDashboardUrl());
                 }}
@@ -590,7 +512,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">
+                  <button
+                    type="button"
+                    aria-label="Change layout"
+                    className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                  >
                     <LayoutList className="w-5 h-5 text-white" />
                   </button>
                 </DropdownMenuTrigger>
@@ -629,6 +555,32 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               {inCallChatAllowed && (
                 <button
                   type="button"
+                  title="Session Chat"
+                  data-testid="toggle-chat-drawer"
+                  onClick={() =>
+                    setActiveSideTab((prev) =>
+                      prev === "chat" ? null : "chat",
+                    )
+                  }
+                  className={cn(
+                    "p-3 rounded-xl transition-colors relative",
+                    activeSideTab === "chat"
+                      ? "bg-white text-zinc-950"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-white",
+                  )}
+                >
+                  <MessageCircle className="w-5 h-5" />
+                  {unreadChatCount > 0 && activeSideTab !== "chat" && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
+                      {unreadChatCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {inCallChatAllowed && (
+                <button
+                  type="button"
                   title="Live Q&A"
                   data-testid="toggle-qa-drawer"
                   onClick={() =>
@@ -642,9 +594,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                   )}
                 >
                   <MessageSquareText className="w-5 h-5" />
-                  {questions.length > 0 && (
+                  {openQuestionsCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
-                      {questions.length}
+                      {openQuestionsCount}
                     </span>
                   )}
                 </button>
