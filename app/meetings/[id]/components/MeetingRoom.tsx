@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CallParticipantsList,
   CallStatsButton,
@@ -26,6 +26,7 @@ import {
   Phone,
   MoreVertical,
   Radio,
+  MessageCircle,
   MessageSquareText,
 } from "lucide-react";
 
@@ -40,6 +41,7 @@ import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { StageControls } from "./StageControls";
 import { StagePinnedBannerOverlay } from "./StagePinnedBannerOverlay";
+import { StageChatDrawer } from "./StageChatDrawer";
 import { StageQaDrawer } from "./StageQaDrawer";
 import { OverrunBanner } from "./OverrunBanner";
 import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
@@ -71,7 +73,10 @@ import {
 import {
   normalizeStageBannerFromCustomData,
   STAGE_QA_EVENT_TYPES,
+  stageChatMessageSchema,
   stageQuestionSchema,
+  type ChatReactionEmoji,
+  type StageChatMessage,
   type StagePinnedBanner,
   type StageQuestion,
 } from "@/lib/meetings/stage-qa";
@@ -162,9 +167,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [activeSideTab, setActiveSideTab] = useState<
-    "participants" | "qa" | null
+    "participants" | "chat" | "qa" | null
   >(null);
   const [questions, setQuestions] = useState<StageQuestion[]>([]);
+  const [chatMessages, setChatMessages] = useState<StageChatMessage[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [activeBanner, setActiveBanner] = useState<StagePinnedBanner | null>(
     null,
   );
@@ -190,7 +197,6 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const callSettings = useCallSettings();
   const callCustomData = useCallCustomData();
 
-  // Set Stream disconnection timeout so dropped connections emit participant_left events.
   useEffect(() => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
@@ -209,7 +215,73 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     ? "720p"
     : "480p";
 
-  // Hydrate and sync active ON SCREEN banner from server-authoritative call.state.custom.
+  // Always address meeting API routes with Stream call.id, never DB Meeting.id.
+  const targetCallId = call?.id ?? "";
+  const activeSideTabRef = useRef<"participants" | "chat" | "qa" | null>(null);
+
+  useEffect(() => {
+    activeSideTabRef.current = activeSideTab;
+    if (activeSideTab === "chat") {
+      setUnreadChatCount(0);
+    }
+  }, [activeSideTab]);
+
+  // Hydrate existing room Q&A questions and chat messages on mount or rejoin.
+  useEffect(() => {
+    if (!targetCallId || !inCallChatAllowed) return;
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+        );
+        if (!res.ok || cancelled) return;
+        const body = await res.json().catch(() => null);
+        if (!body || cancelled) return;
+
+        if (Array.isArray(body.questions)) {
+          const validQuestions = body.questions
+            .map((item: unknown) => stageQuestionSchema.safeParse(item))
+            .filter((r: { success: boolean }) => r.success)
+            .map((r: { data: StageQuestion }) => r.data);
+
+          setQuestions((prev) => {
+            const byId = new Map<string, StageQuestion>();
+            for (const q of validQuestions) byId.set(q.id, q);
+            for (const q of prev) if (!byId.has(q.id)) byId.set(q.id, q);
+            return Array.from(byId.values()).sort((a, b) =>
+              a.createdAt.localeCompare(b.createdAt),
+            );
+          });
+        }
+
+        if (Array.isArray(body.messages)) {
+          const validMessages = body.messages
+            .map((item: unknown) => stageChatMessageSchema.safeParse(item))
+            .filter((r: { success: boolean }) => r.success)
+            .map((r: { data: StageChatMessage }) => r.data);
+
+          setChatMessages((prev) => {
+            const byId = new Map<string, StageChatMessage>();
+            for (const m of validMessages) byId.set(m.id, m);
+            for (const m of prev) if (!byId.has(m.id)) byId.set(m.id, m);
+            return Array.from(byId.values()).sort((a, b) =>
+              a.createdAt.localeCompare(b.createdAt),
+            );
+          });
+        }
+      } catch {
+        // Real-time events remain active even if initial hydration fails transiently.
+      }
+    };
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [targetCallId, inCallChatAllowed]);
+
   useEffect(() => {
     if (!inCallChatAllowed) return;
     const syncedBanner = normalizeStageBannerFromCustomData(
@@ -218,7 +290,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     setActiveBanner(syncedBanner);
   }, [callCustomData, inCallChatAllowed]);
 
-  // Subscribe to real-time Q&A and ON SCREEN stage banner events over Stream WebSocket.
+  // Subscribe to real-time Q&A, chat messages, emoji reactions, and stage banner events.
   useEffect(() => {
     if (!call || !inCallChatAllowed || typeof call.on !== "function") return;
 
@@ -234,6 +306,35 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           prev.some((item) => item.id === incoming.id)
             ? prev
             : [...prev, incoming],
+        );
+      } else if (custom.type === STAGE_QA_EVENT_TYPES.QUESTION_UPDATED) {
+        const parsedQuestion = stageQuestionSchema.safeParse(custom.question);
+        if (!parsedQuestion.success) return;
+        const updated = parsedQuestion.data;
+        setQuestions((prev) =>
+          prev.some((item) => item.id === updated.id)
+            ? prev.map((item) => (item.id === updated.id ? updated : item))
+            : [...prev, updated],
+        );
+      } else if (custom.type === STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_SENT) {
+        const parsedMessage = stageChatMessageSchema.safeParse(custom.message);
+        if (!parsedMessage.success) return;
+        const incoming = parsedMessage.data;
+        setChatMessages((prev) => {
+          if (prev.some((item) => item.id === incoming.id)) return prev;
+          return [...prev, incoming];
+        });
+        if (activeSideTabRef.current !== "chat") {
+          setUnreadChatCount((c) => c + 1);
+        }
+      } else if (custom.type === STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_UPDATED) {
+        const parsedMessage = stageChatMessageSchema.safeParse(custom.message);
+        if (!parsedMessage.success) return;
+        const updated = parsedMessage.data;
+        setChatMessages((prev) =>
+          prev.some((item) => item.id === updated.id)
+            ? prev.map((item) => (item.id === updated.id ? updated : item))
+            : [...prev, updated],
         );
       } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED) {
         const normalized = normalizeStageBannerFromCustomData({
@@ -255,16 +356,84 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     };
   }, [call, inCallChatAllowed]);
 
-  const targetQaMeetingId = meetingId ?? call?.id ?? "";
-
-  const handleAskQuestion = useCallback(
+  const handleSendChatMessage = useCallback(
     async (text: string) => {
-      if (!targetQaMeetingId) return;
+      if (!targetCallId) return;
       setQaError(null);
       setIsQaSubmitting(true);
       try {
         const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "send_chat", text }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body?.error ?? "Failed to send message");
+        }
+        const parsed = stageChatMessageSchema.safeParse(body?.message);
+        if (parsed.success) {
+          setChatMessages((prev) =>
+            prev.some((m) => m.id === parsed.data.id)
+              ? prev
+              : [...prev, parsed.data],
+          );
+        }
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetCallId],
+  );
+
+  const handleToggleChatReaction = useCallback(
+    async (messageId: string, emoji: ChatReactionEmoji) => {
+      if (!targetCallId) return;
+      setQaError(null);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "toggle_reaction",
+              messageId,
+              emoji,
+            }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setQaError(body?.error ?? "Failed to update reaction");
+          return;
+        }
+        const parsed = stageChatMessageSchema.safeParse(body?.message);
+        if (parsed.success) {
+          setChatMessages((prev) =>
+            prev.map((m) => (m.id === parsed.data.id ? parsed.data : m)),
+          );
+        }
+      } catch (err) {
+        setQaError(
+          err instanceof Error ? err.message : "Failed to update reaction",
+        );
+      }
+    },
+    [targetCallId],
+  );
+
+  const handleAskQuestion = useCallback(
+    async (text: string) => {
+      if (!targetCallId) return;
+      setQaError(null);
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -275,28 +444,143 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
         if (!res.ok) {
           throw new Error(body?.error ?? "Failed to send question");
         }
-        if (body?.question) {
+        const parsed = stageQuestionSchema.safeParse(body?.question);
+        if (parsed.success) {
           setQuestions((prev) =>
-            prev.some((q) => q.id === body.question.id)
+            prev.some((q) => q.id === parsed.data.id)
               ? prev
-              : [...prev, body.question],
+              : [...prev, parsed.data],
           );
         }
       } finally {
         setIsQaSubmitting(false);
       }
     },
-    [targetQaMeetingId],
+    [targetCallId],
   );
 
-  const handlePinQuestion = useCallback(
-    async (question: StageQuestion) => {
-      if (!targetQaMeetingId || !isHost) return;
+  const handleToggleUpvote = useCallback(
+    async (questionId: string) => {
+      if (!targetCallId) return;
       setQaError(null);
       setIsQaSubmitting(true);
       try {
         const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "toggle_upvote", questionId }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setQaError(body?.error ?? "Failed to update vote");
+          return;
+        }
+        const parsed = stageQuestionSchema.safeParse(body?.question);
+        if (parsed.success) {
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
+          );
+        }
+      } catch (err) {
+        setQaError(
+          err instanceof Error ? err.message : "Failed to update vote",
+        );
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetCallId],
+  );
+
+  const handleAnswerQuestion = useCallback(
+    async (questionId: string, answerText?: string) => {
+      if (!targetCallId || !isHost) return;
+      setQaError(null);
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "answer",
+              questionId,
+              answerText,
+            }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setQaError(body?.error ?? "Failed to mark question answered");
+          return;
+        }
+        const parsed = stageQuestionSchema.safeParse(body?.question);
+        if (parsed.success) {
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
+          );
+        }
+      } catch (err) {
+        setQaError(
+          err instanceof Error
+            ? err.message
+            : "Failed to mark question answered",
+        );
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetCallId, isHost],
+  );
+
+  const handleReopenQuestion = useCallback(
+    async (questionId: string) => {
+      if (!targetCallId || !isHost) return;
+      setQaError(null);
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "reopen", questionId }),
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setQaError(body?.error ?? "Failed to reopen question");
+          return;
+        }
+        const parsed = stageQuestionSchema.safeParse(body?.question);
+        if (parsed.success) {
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
+          );
+        }
+      } catch (err) {
+        setQaError(
+          err instanceof Error ? err.message : "Failed to reopen question",
+        );
+      } finally {
+        setIsQaSubmitting(false);
+      }
+    },
+    [targetCallId, isHost],
+  );
+
+  const handlePinQuestion = useCallback(
+    async (question: StageQuestion) => {
+      if (!targetCallId || !isHost) return;
+      setQaError(null);
+      setIsQaSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -322,16 +606,16 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
         setIsQaSubmitting(false);
       }
     },
-    [targetQaMeetingId, isHost],
+    [targetCallId, isHost],
   );
 
   const handleUnpinQuestion = useCallback(async () => {
-    if (!targetQaMeetingId || !isHost) return;
+    if (!targetCallId || !isHost) return;
     setQaError(null);
     setIsQaSubmitting(true);
     try {
       const res = await fetch(
-        `/api/meetings/${encodeURIComponent(targetQaMeetingId)}/qa`,
+        `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -351,9 +635,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     } finally {
       setIsQaSubmitting(false);
     }
-  }, [targetQaMeetingId, isHost]);
+  }, [targetCallId, isHost]);
 
-  // Enforce default incoming video cap on join (480p for 1:1 sessions, 720p for webinars/classes).
   useEffect(() => {
     if (
       call &&
@@ -436,6 +719,10 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     );
   }
 
+  const openQuestionsCount = questions.filter(
+    (q) => q.status !== "answered",
+  ).length;
+
   return (
     <StreamVideoErrorBoundary>
       <section
@@ -487,11 +774,53 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           >
             <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("chat")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "chat"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>Chat</span>
+                    {unreadChatCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {unreadChatCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("qa")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "qa"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" />
+                    <span>Q&amp;A</span>
+                    {openQuestionsCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {openQuestionsCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setActiveSideTab("participants")}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
                     activeSideTab === "participants"
                       ? "bg-zinc-800 text-white"
                       : "text-zinc-400 hover:text-zinc-200",
@@ -500,26 +829,6 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                   <Users className="w-3.5 h-3.5" />
                   <span>People ({participantCount})</span>
                 </button>
-                {inCallChatAllowed && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveSideTab("qa")}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                      activeSideTab === "qa"
-                        ? "bg-zinc-800 text-white"
-                        : "text-zinc-400 hover:text-zinc-200",
-                    )}
-                  >
-                    <MessageSquareText className="w-3.5 h-3.5" />
-                    <span>Q&A</span>
-                    {questions.length > 0 && (
-                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
-                        {questions.length}
-                      </span>
-                    )}
-                  </button>
-                )}
               </div>
               <button
                 onClick={() => setActiveSideTab(null)}
@@ -528,12 +837,26 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
-            {activeSideTab === "qa" && inCallChatAllowed ? (
+
+            {activeSideTab === "chat" && inCallChatAllowed ? (
+              <StageChatDrawer
+                messages={chatMessages}
+                currentUserId={session?.user?.id}
+                onSendMessage={handleSendChatMessage}
+                onToggleReaction={handleToggleChatReaction}
+                isSubmitting={isQaSubmitting}
+                error={qaError}
+              />
+            ) : activeSideTab === "qa" && inCallChatAllowed ? (
               <StageQaDrawer
                 questions={questions}
                 activeBanner={activeBanner}
                 isHost={isHost}
+                currentUserId={session?.user?.id}
                 onAskQuestion={handleAskQuestion}
+                onToggleUpvote={handleToggleUpvote}
+                onAnswerQuestion={handleAnswerQuestion}
+                onReopenQuestion={handleReopenQuestion}
                 onPinQuestion={handlePinQuestion}
                 onUnpinQuestion={handleUnpinQuestion}
                 isSubmitting={isQaSubmitting}
@@ -629,6 +952,32 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               {inCallChatAllowed && (
                 <button
                   type="button"
+                  title="Session Chat"
+                  data-testid="toggle-chat-drawer"
+                  onClick={() =>
+                    setActiveSideTab((prev) =>
+                      prev === "chat" ? null : "chat",
+                    )
+                  }
+                  className={cn(
+                    "p-3 rounded-xl transition-colors relative",
+                    activeSideTab === "chat"
+                      ? "bg-white text-zinc-950"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-white",
+                  )}
+                >
+                  <MessageCircle className="w-5 h-5" />
+                  {unreadChatCount > 0 && activeSideTab !== "chat" && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
+                      {unreadChatCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {inCallChatAllowed && (
+                <button
+                  type="button"
                   title="Live Q&A"
                   data-testid="toggle-qa-drawer"
                   onClick={() =>
@@ -642,9 +991,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                   )}
                 >
                   <MessageSquareText className="w-5 h-5" />
-                  {questions.length > 0 && (
+                  {openQuestionsCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
-                      {questions.length}
+                      {openQuestionsCount}
                     </span>
                   )}
                 </button>

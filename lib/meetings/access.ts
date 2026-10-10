@@ -139,10 +139,19 @@ const MEETING_SESSION_INCLUDE = {
 } satisfies Prisma.MeetingInclude;
 
 function loadMeeting(callId: string) {
-  return prisma.meeting.findUnique({
-    where: { streamCallId: callId },
-    include: MEETING_SESSION_INCLUDE,
-  });
+  return prisma.meeting
+    .findUnique({
+      where: { streamCallId: callId },
+      include: MEETING_SESSION_INCLUDE,
+    })
+    .then(
+      (matched) =>
+        matched ??
+        prisma.meeting.findUnique({
+          where: { id: callId },
+          include: MEETING_SESSION_INCLUDE,
+        }),
+    );
 }
 
 /** Verifies whether the user holds active DPDP consent for Stream video/chat processing. */
