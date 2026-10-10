@@ -223,10 +223,12 @@ export async function handlePaymentSuccess(
       },
     });
     if (
-      existing &&
-      existing.paymentStatus === PaymentStatus.SUCCEEDED &&
+      existing?.paymentStatus === PaymentStatus.SUCCEEDED &&
       (gatewayAmountPaise === undefined ||
-        gatewayAmountPaise === existing.amount)
+        gatewayAmountPaise === existing.amount) &&
+      (!gatewayPaymentId ||
+        !existing.gatewayPaymentId ||
+        existing.gatewayPaymentId === gatewayPaymentId)
     ) {
       if (gatewayPaymentId && !existing.gatewayPaymentId) {
         await prisma.payment.updateMany({
@@ -1258,6 +1260,7 @@ export async function handlePaymentFailure(
       select: {
         id: true,
         paymentStatus: true,
+        gatewayPaymentId: true,
         userId: true,
         appointmentId: true,
         amount: true,
@@ -1337,23 +1340,20 @@ export async function handlePaymentFailure(
 
     // Keep tentative slot hold and consumed credits intact while the order hold window is still active.
     if (payment.expiresAt && payment.expiresAt > new Date()) {
-      const attemptNote = [
-        gatewayPaymentId ? `attempt=${gatewayPaymentId}` : null,
-        failureReason ?? null,
-      ]
-        .filter(Boolean)
-        .join(": ");
-      const noteSuffix = attemptNote
-        ? `Payment attempt failed (${attemptNote})`
-        : "Payment attempt failed";
-      await tx.payment.updateMany({
-        where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-        data: {
-          description: payment.description
-            ? `${payment.description} | ${noteSuffix}`
-            : noteSuffix,
-        },
-      });
+      console.warn(
+        `[webhook] Payment attempt failed during active hold window for ${paymentIntentId}`,
+        { gatewayPaymentId, failureReason },
+      );
+      if (gatewayPaymentId && !payment.gatewayPaymentId) {
+        await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            paymentStatus: PaymentStatus.PENDING,
+            gatewayPaymentId: null,
+          },
+          data: { gatewayPaymentId },
+        });
+      }
       return;
     }
 

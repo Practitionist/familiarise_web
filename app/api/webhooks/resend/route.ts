@@ -7,12 +7,12 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { Resend } from "resend";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { suppressRecipient } from "@/lib/email/suppression";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { toInputJson } from "@/lib/webhooks/event-log";
 import {
   MAX_WEBHOOK_BODY_BYTES,
   readBodyWithinCap,
@@ -25,30 +25,6 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function toInputJson(value: unknown): Prisma.InputJsonValue {
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(toInputJson);
-  }
-  if (typeof value === "object" && value !== null) {
-    const out: { [key: string]: Prisma.InputJsonValue | null } = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = v === null ? null : toInputJson(v);
-    }
-    return out;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  return "";
-}
 
 function toErrorInstance(error: unknown): Error {
   if (error instanceof Error) return error;

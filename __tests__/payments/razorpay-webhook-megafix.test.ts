@@ -298,10 +298,13 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       );
 
       expect(paymentMock.updateMany).toHaveBeenCalledWith({
-        where: { id: "pay_row_1", paymentStatus: "PENDING" },
+        where: {
+          id: "pay_row_1",
+          paymentStatus: "PENDING",
+          gatewayPaymentId: null,
+        },
         data: {
-          description:
-            "Payment attempt failed (attempt=pay_attempt_1: Insufficient funds)",
+          gatewayPaymentId: "pay_attempt_1",
         },
       });
     });
@@ -334,6 +337,31 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         data: { gatewayPaymentId: "pay_captured_99" },
       });
       expect(db.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does NOT short-circuit fast path when a distinct second gatewayPaymentId arrives on an already SUCCEEDED order", async () => {
+      const db = getMockDb();
+      const succeededRow = {
+        id: "pay_done_2",
+        paymentIntent: "order_done_2",
+        paymentStatus: "SUCCEEDED",
+        amount: 50000,
+        gatewayPaymentId: "pay_first_1",
+      };
+      db.payment = {
+        findUnique: jest.fn(async () => succeededRow),
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      };
+      db.__tx.payment = {
+        findUnique: jest.fn(async () => succeededRow),
+      };
+      db.$transaction.mockClear();
+
+      const { handlePaymentSuccess } =
+        await import("../../lib/payments/webhooks/handlers");
+      await handlePaymentSuccess("order_done_2", {}, undefined, "pay_second_2");
+
+      expect(db.$transaction).toHaveBeenCalled();
     });
   });
 

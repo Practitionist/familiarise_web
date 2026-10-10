@@ -297,7 +297,7 @@ export async function processRazorpayWebhookEvent(
           refundEvent.payment_id,
           refundEvent.notes,
         );
-        if (Boolean(DeferSignal) && refundResult instanceof DeferSignal) {
+        if (refundResult instanceof DeferSignal) {
           deferred = true;
           console.log(
             `⏳ Deferring refund ${refundEvent.id} for re-drive: ${refundResult.reason}`,
@@ -355,7 +355,7 @@ export async function processRazorpayWebhookEvent(
           failedRefundEvent.payment_id,
           failedRefundEvent.notes,
         );
-        if (Boolean(DeferSignal) && failedRefundResult instanceof DeferSignal) {
+        if (failedRefundResult instanceof DeferSignal) {
           deferred = true;
           console.log(
             `⏳ Deferring refund ${failedRefundEvent.id} for re-drive: ${failedRefundResult.reason}`,
@@ -412,10 +412,7 @@ export async function processRazorpayWebhookEvent(
                 disputeProgressEvent.status,
                 null,
               );
-        if (
-          Boolean(DeferSignal) &&
-          disputeProgressResult instanceof DeferSignal
-        ) {
+        if (disputeProgressResult instanceof DeferSignal) {
           deferred = true;
         }
         break;
@@ -435,7 +432,7 @@ export async function processRazorpayWebhookEvent(
                 disputeWonEvent.respond_by,
               )
             : await handleDisputeUpdated(disputeWonEvent.id, "won", null);
-        if (Boolean(DeferSignal) && disputeWonResult instanceof DeferSignal) {
+        if (disputeWonResult instanceof DeferSignal) {
           deferred = true;
         }
         break;
@@ -455,7 +452,7 @@ export async function processRazorpayWebhookEvent(
                 disputeLostEvent.respond_by,
               )
             : await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
-        if (Boolean(DeferSignal) && disputeLostResult instanceof DeferSignal) {
+        if (disputeLostResult instanceof DeferSignal) {
           deferred = true;
         }
         break;
@@ -479,10 +476,7 @@ export async function processRazorpayWebhookEvent(
                 disputeClosedEvent.status,
                 null,
               );
-        if (
-          Boolean(DeferSignal) &&
-          disputeClosedResult instanceof DeferSignal
-        ) {
+        if (disputeClosedResult instanceof DeferSignal) {
           deferred = true;
         }
         break;

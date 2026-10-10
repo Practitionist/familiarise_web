@@ -672,8 +672,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         data: {
           refundId: gateway.refundId,
           // Merge, not replace: Phase 1's audit keys (initiatedByUserId,
-          // source) must survive gateway-id binding — the Razorpay path always
-          // returns notes, so a bare assign wiped them (release #1014 review).
+          // source) must survive gateway-id binding when gateway notes arrive.
           ...(gateway.metadata
             ? {
                 metadata: {
@@ -699,13 +698,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         // integrity fault — rethrow rather than silently adopt it.
         throw err;
       }
-      // Retire our placeholder: it is a pure reservation (cascadedAt null, no
-      // legs reference it), and leaving it PENDING would double-count against
-      // the refundable balance until the reconciler failed it at 24h.
-      // #1205-triage — carry Phase 1's audit keys onto the surviving row:
-      // the webhook that minted it had no knowledge of initiatedByUserId/
-      // source, and without this merge the adopt path is the one bind path
-      // that loses them.
+      // Retire our placeholder and merge Phase 1 audit keys onto the surviving webhook row.
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
@@ -861,6 +854,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
     reportSentryError(err, { subsystem: "payments", expected: true });
+    const current = await prisma.refund.findUnique({
+      where: { id: boundRefundRowId },
+      select: { status: true },
+    });
     settled = {
       refundId: boundRefundRowId,
       amountRefundedPaise: requested,
@@ -869,7 +866,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
       memberOverageRefundDue: null,
-      status: "PENDING" as const,
+      status:
+        current?.status === RefundStatus.SUCCEEDED
+          ? ("SUCCEEDED" as const)
+          : ("PENDING" as const),
       gatewayRefundId: gateway.refundId || undefined,
     };
   }

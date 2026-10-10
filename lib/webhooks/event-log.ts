@@ -11,7 +11,7 @@ import {
 
 export type WebhookClaim = { claimedAt: Date | null };
 
-function toInputJson(value: unknown): Prisma.InputJsonValue {
+export function toInputJson(value: unknown): Prisma.InputJsonValue {
   if (
     typeof value === "string" ||
     typeof value === "number" ||
@@ -91,7 +91,15 @@ async function resolveExistingWebhookEvent(
   if (existing.error !== null) {
     const claimedAt = new Date();
     const claimed = await prisma.webhookEvent.updateMany({
-      where: { eventId, error: { not: null } },
+      where: {
+        eventId,
+        error: { not: null },
+        processed: false,
+        claimedAt: existing.claimedAt,
+        NOT: TERMINAL_ERROR_PREFIXES.map((p) => ({
+          error: { startsWith: p },
+        })),
+      },
       data: {
         processed: false,
         processedAt: null,
@@ -202,8 +210,8 @@ export async function logWebhookEvent(
 }
 
 /**
- * Closes out a webhook delivery attempt with a non-null `claimedAt` stamp so completed
- * or errored rows can never match unclaimed stale-processing predicates.
+ * Closes out a webhook delivery attempt with a strictly advancing `claimedAt` stamp so completed
+ * or errored rows can never match unclaimed stale-processing predicates or duplicate claims.
  */
 export async function markWebhookEventProcessed(
   eventId: string,
@@ -211,10 +219,13 @@ export async function markWebhookEventProcessed(
   claim?: WebhookClaim,
 ): Promise<void> {
   const hasError = error !== undefined;
+  const nextClaimedAt = new Date(
+    Math.max(Date.now(), (claim?.claimedAt?.getTime() ?? 0) + 1),
+  );
   const data = {
     processed: !hasError,
     processedAt: hasError ? null : new Date(),
-    claimedAt: claim?.claimedAt ?? new Date(),
+    claimedAt: nextClaimedAt,
     error: hasError ? error : null,
   };
   if (!claim) {

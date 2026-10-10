@@ -107,14 +107,14 @@ const eventId = `${eventType}:${entityId}:${bodyDigest}`;
 
 ### `razorpayNotesSchema` (PHP `notes: []` Serialization Quirk)
 
-Razorpay's backend serializes empty associative arrays in PHP as JSON `[]` (`"notes": []`) instead of `{}` whenever an order, payment, refund, or payout is created without custom notes, and may echo numeric or boolean values unquoted. `razorpayNotesSchema` normalizes `[]`, `null`, `undefined`, and primitive map values into a uniform `Record<string, string>` (or `Record<string, unknown>`) across all webhook entity schemas so empty notes never trigger Zod schema failures.
+Razorpay's backend serializes empty associative arrays in PHP as JSON `[]` (`"notes": []`) instead of `{}` whenever an order, payment, refund, or payout is created without custom notes, and may echo numeric or boolean values unquoted. `razorpayNotesSchema` (`z.unknown().transform(...)`) normalizes `[]`, `null`, `undefined`, and primitive map values into a uniform `Record<string, string>` across all webhook entity schemas so empty notes never trigger Zod schema failures.
 
 ### `payment.failed` Multi-Attempt Modal Semantics (`handlePaymentFailure`)
 
 Inside Razorpay Checkout, a single `order_id` (`Payment.paymentIntent`) spans multiple payment attempts while the checkout modal stays open:
 
-1. **Fast-Path Pre-Transaction `SUCCEEDED` Guard**: Before opening a database transaction under `PG_POOL_MAX=1`, `handlePaymentFailure` reads `Payment.paymentStatus` and exits immediately if the order is already `SUCCEEDED` (protecting against late-arriving `payment.failed` webhooks from an earlier failed card/UPI attempt after a retry on the same order already succeeded).
-2. **Active Hold Preservation (`expiresAt > now()`)**: While the appointment or checkout hold has not yet expired (`expiresAt > now()`), an intermediate `payment.failed` attempt **preserves** the slot hold and **never restores applied wallet or referral credits** on that `order_id`:
+1. **In-Transaction `SUCCEEDED` Guard**: Inside its transaction under `PG_POOL_MAX=1`, `handlePaymentFailure` checks `payment.paymentStatus === "SUCCEEDED"` and exits immediately if the order is already `SUCCEEDED` (protecting against late-arriving `payment.failed` webhooks from an earlier failed card/UPI attempt after a retry on the same order already succeeded).
+2. **Active Hold Preservation (`expiresAt > now()`)**: While the appointment or checkout hold has not yet expired (`expiresAt > now()`), an intermediate `payment.failed` attempt **preserves** the slot hold, keeps customer-facing `Payment.description` untouched, and **never restores applied wallet or referral credits** on that `order_id`:
    - Destroying the hold mid-modal caused attempt #2's `payment.captured` to land on a released slot and trigger an unintended auto-refund.
    - Restoring applied wallet/referral credits on attempt #1 while `order_id` remained payable allowed a malicious buyer to spend the restored wallet balance on a second booking and still complete attempt #2 on the original order.
    - Only when the hold has already expired (`expiresAt <= now()`) or cleanup reaps the expired checkout are applied wallet/referral credits reversed.

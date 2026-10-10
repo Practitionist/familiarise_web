@@ -119,7 +119,7 @@ async function assignSingleMembershipInTx(
   const { orgId, programId, singleMembershipId, body } = args;
   const membership = await tx.membership.findFirst({
     where: { id: singleMembershipId, organizationId: orgId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, userId: true },
   });
   if (!membership) {
     return {
@@ -157,6 +157,7 @@ async function assignSingleMembershipInTx(
         assignmentId: assignment.id,
         programId,
         membershipId: singleMembershipId,
+        userId: membership.userId,
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },
@@ -198,7 +199,7 @@ async function assignBulkMembershipsInTx(
   const { orgId, programId, targetMembershipIds, body } = args;
   const foundMemberships = await tx.membership.findMany({
     where: { id: { in: targetMembershipIds }, organizationId: orgId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, userId: true },
   });
   const membershipById = new Map(foundMemberships.map((m) => [m.id, m]));
   for (const targetMembershipId of targetMembershipIds) {
@@ -299,6 +300,7 @@ async function assignBulkMembershipsInTx(
         assignmentId: created.id,
         programId,
         membershipId: created.membershipId,
+        userId: membershipById.get(created.membershipId)?.userId,
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },

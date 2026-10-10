@@ -105,6 +105,7 @@ describe("sweepStuckWebhookEvents", () => {
     expect(claim[0].data).toEqual({
       claimedAt: expect.any(Date),
       error: null,
+      deferCount: { increment: 1 },
     });
     expect(claim[0].where.receivedAt).toBeUndefined();
     expect(claim[0].data.receivedAt).toBeUndefined();

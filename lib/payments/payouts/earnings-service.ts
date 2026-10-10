@@ -1796,13 +1796,12 @@ async function postBookingLedgerJournal(
       console.error(
         `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await recordSystemErrorSafe({
+      void recordSystemErrorSafe({
         organizationId: payment.organizationId ?? null,
         category: "LEDGER",
         summary: `Booking ledger posting failed for payment ${payment.id}`,
         err,
         context: { paymentId: payment.id },
-        db: tx,
       });
     } else {
       reportSentryError(err, {

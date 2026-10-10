@@ -189,6 +189,7 @@ describe("reclaimStaleProcessingWebhookEvent CAS modes", () => {
       data: {
         claimedAt: expect.any(Date),
         error: null,
+        deferCount: { increment: 1 },
       },
     });
   });

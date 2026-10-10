@@ -1294,7 +1294,6 @@ export async function handleDisputeCreated(
   const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
   let resolvedPaymentIntent: string | undefined;
-  let unlinkAlertRecorded = false;
 
   const existingLocalPayment = prisma.payment?.findFirst
     ? await prisma.payment.findFirst({
@@ -1315,50 +1314,13 @@ export async function handleDisputeCreated(
         `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
         error,
       );
-      await recordSystemErrorSafe({
-        category: "WEBHOOK",
-        summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
-        err: error,
-        context: { disputeId, chargeId, gateway },
-        correlationId: disputeId,
-      });
-      unlinkAlertRecorded = true;
     }
   }
 
-  // Serializable + bounded retry (handleDisputeUpdated ran raw until #1582
-  // C-P1-01d; both are wrapped now). The earnings
-  // HELD writes are CAS'd, but this tx also reads Payment and Dispute before
-  // deciding, and a concurrent refund reservation (refundPayment Phase 1, also
-  // Serializable) reads the same dispute rows. Under READ COMMITTED both could
-  // pass their pre-checks against a stale snapshot and commit; under SSI the
-  // rw-antidependency aborts one and the retry sees the winner's effect.
-  // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
-
-  // #1868 — same shape as `stagedNotification` and for the same reason. The
-  // CRITICAL_DISPUTE_UNLINKED page used to be written THROUGH the tx, so a
-  // later rollback silently discarded it: exactly the case where a critical
-  // page matters most, the one where it would have vanished. Staged inside the
-  // tx, written after COMMIT. The write deliberately does NOT pass `db: tx` —
-  // the transaction has closed by then, and reaching for the global client
-  // from inside an open tx is the PG_POOL_MAX=1 deadlock. Telemetry only; no
-  // money outcome depends on it.
-  type UnlinkAlert = Parameters<typeof recordSystemErrorSafe>[0];
-  let stagedUnlinkAlert: UnlinkAlert | null = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        // #1353 — either id resolves the disputed payment: the order id when
-        // the gateway lookup above succeeded, or `chargeId` (the `pay_…` id the
-        // webhook itself carried) against the column the capture pipeline now
-        // persists. The second key is what keeps a dispute linkable when that
-        // gateway fetch fails — until now such a failure meant no link at all,
-        // a CRITICAL_DISPUTE_UNLINKED page, and disputed earnings left payable
-        // until the six-hourly reconcile cron noticed. As on the refund path,
-        // no `deletedAt` filter: this replaced a `findUnique` that reached
-        // soft-deleted rows, and a chargeback against one still has to be
-        // recorded and still has to hold the earnings.
         const payment = await tx.payment.findFirst({
           where: {
             OR: [
@@ -1372,19 +1334,6 @@ export async function handleDisputeCreated(
 
         if (!payment) {
           console.warn(`Payment not found for dispute: ${disputeId}`);
-          // PM-4 — dispute couldn't be linked to a payment (lookup miss, or the
-          // gateway fetch above threw). Dropping it silently means disputed
-          // earnings stay payable until the 6h reconcile-disputes cron — page on it,
-          // unless the lookup-failure catch above already paged for this incident.
-          if (!unlinkAlertRecorded) {
-            stagedUnlinkAlert = {
-              category: "WEBHOOK",
-              summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
-              err: new Error("dispute payment not found"),
-              context: { disputeId, chargeId, gateway },
-              correlationId: disputeId,
-            };
-          }
           return new DeferSignal(`dispute_before_payment:${disputeId}`);
         }
 
@@ -1634,12 +1583,6 @@ export async function handleDisputeCreated(
     ),
   );
   await attemptStaged(stagedNotification);
-  if (stagedUnlinkAlert) {
-    // Post-commit and awaited: the tx is closed, so the global client is safe
-    // here, and awaiting means the page cannot be lost to the invocation
-    // ending. `*Safe` still guarantees a recorder failure cannot throw.
-    await recordSystemErrorSafe(stagedUnlinkAlert);
-  }
   return result;
 }
 

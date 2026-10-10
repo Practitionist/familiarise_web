@@ -35,6 +35,7 @@ export async function reclaimStaleProcessingWebhookEvent(
       data: {
         claimedAt,
         error: null,
+        deferCount: { increment: 1 },
       },
     });
     return {

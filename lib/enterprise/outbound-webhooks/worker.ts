@@ -293,8 +293,8 @@ async function recordSucceededDelivery(args: {
   attemptNumber: number;
   nowDate: Date;
 }): Promise<void> {
-  await args.prisma.outboundWebhookDelivery.update({
-    where: { id: args.row.id },
+  await args.prisma.outboundWebhookDelivery.updateMany({
+    where: { id: args.row.id, status: "IN_FLIGHT" },
     data: {
       status: "SUCCESS",
       httpStatusCode: args.httpStatusCode,
@@ -357,8 +357,8 @@ async function recordRetryOrTerminalFailure(args: {
     httpStatusCode !== 429;
 
   if (isPermanentClientError) {
-    await prisma.outboundWebhookDelivery.update({
-      where: { id: row.id },
+    await prisma.outboundWebhookDelivery.updateMany({
+      where: { id: row.id, status: "IN_FLIGHT" },
       data: {
         status: "FAILED",
         httpStatusCode,
@@ -395,8 +395,8 @@ async function recordRetryOrTerminalFailure(args: {
       networkError ??
       `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`;
     const resolvedStatus = httpStatusCode ?? null;
-    await prisma.outboundWebhookDelivery.update({
-      where: { id: row.id },
+    await prisma.outboundWebhookDelivery.updateMany({
+      where: { id: row.id, status: "IN_FLIGHT" },
       data: {
         status: "DEAD_LETTER",
         httpStatusCode: resolvedStatus,
@@ -441,8 +441,8 @@ async function recordRetryOrTerminalFailure(args: {
     BACKOFF_MS[Math.min(attemptNumber, BACKOFF_MS.length - 1)];
   const jitter = args.hasCustomClock ? 1 : 0.85 + randomInt(0, 3001) / 10_000;
   const backoff = Math.round(baseBackoff * jitter);
-  await prisma.outboundWebhookDelivery.update({
-    where: { id: row.id },
+  await prisma.outboundWebhookDelivery.updateMany({
+    where: { id: row.id, status: "IN_FLIGHT" },
     data: {
       status: "RETRY",
       httpStatusCode: httpStatusCode ?? null,
@@ -516,8 +516,14 @@ export async function runDispatchTick(params: {
   async function processOneDelivery(row: DeliveryRow): Promise<void> {
     result.scanned += 1;
     if (row.endpoint.status !== "ACTIVE") {
-      await prisma.outboundWebhookDelivery.update({
-        where: { id: row.id },
+      await prisma.outboundWebhookDelivery.updateMany({
+        where: {
+          id: row.id,
+          status: row.status,
+          ...(row.status === "IN_FLIGHT"
+            ? { updatedAt: { lt: inFlightStaleBefore } }
+            : {}),
+        },
         data: {
           status: "FAILED",
           lastError: `Endpoint is ${row.endpoint.status}; aborted delivery.`,
@@ -527,13 +533,20 @@ export async function runDispatchTick(params: {
       return;
     }
 
+    const nowMs = now();
     const claim = await prisma.outboundWebhookDelivery.updateMany({
-      where: { id: row.id, status: row.status },
-      data: { status: "IN_FLIGHT" },
+      where: {
+        id: row.id,
+        status: row.status,
+        ...(row.status === "IN_FLIGHT"
+          ? { updatedAt: { lt: inFlightStaleBefore } }
+          : {}),
+      },
+      data: { status: "IN_FLIGHT", updatedAt: new Date(nowMs) },
     });
     if (claim.count === 0) return;
 
-    const currentNowMs = now();
+    const currentNowMs = nowMs;
     const body = JSON.stringify({
       id: row.id,
       type: row.eventType,

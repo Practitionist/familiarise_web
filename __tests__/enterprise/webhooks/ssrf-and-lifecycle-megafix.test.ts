@@ -67,7 +67,12 @@ function makeWorkerPrisma(rows: Array<ReturnType<typeof makeDeliveryRow>>) {
     prisma: {
       outboundWebhookDelivery: {
         findMany: jest.fn().mockResolvedValue(rows),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        updateMany: jest.fn().mockImplementation((args) => {
+          if (args.data?.status !== "IN_FLIGHT") {
+            deliveryUpdates.push(args);
+          }
+          return Promise.resolve({ count: 1 });
+        }),
         update: jest.fn().mockImplementation((args) => {
           deliveryUpdates.push(args);
           return Promise.resolve({ id: args.where.id });
@@ -109,10 +114,15 @@ describe("SSRF guard IPv6 CIDR closures & resolvePublicUrl", () => {
     "https://169.254.169.254/latest/meta-data",
     "https://100.64.0.1/hook",
     "https://[::ffff:127.0.0.1]/hook",
+    "https://[::ffff:0:127.0.0.1]/hook",
     "https://[::0.0.0.2]/hook",
     "https://[::0.255.255.255]/hook",
+    "https://[::93.184.216.34]/hook",
+    "https://[0001::1]/hook",
     "https://[64:ff9b:1::1]/hook",
     "https://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]/hook",
+    "https://[2001:2::1]/hook",
+    "https://[2001:10::1]/hook",
     "https://[2001:db8::1]/hook",
     "https://[100::1]/hook",
     "https://[::1]/hook",
@@ -183,6 +193,56 @@ describe("Outbound webhook worker security, backoff, Sentry & OrgAuditLog", () =
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("fences stale IN_FLIGHT claims with updatedAt < inFlightStaleBefore and bumps updatedAt on claim", async () => {
+    const staleRow = makeDeliveryRow({
+      id: "del-stale-inflight",
+      status: "IN_FLIGHT",
+      updatedAt: new Date(FROZEN_NOW_MS - 15 * 60_000),
+    });
+    const claimCalls: Array<Record<string, unknown>> = [];
+    const stub = makeWorkerPrisma([staleRow]);
+    stub.prisma.outboundWebhookDelivery.updateMany.mockImplementation(
+      (args: Record<string, unknown>) => {
+        const data = args.data as { status?: string };
+        if (data?.status === "IN_FLIGHT") {
+          claimCalls.push(args);
+        } else {
+          stub.deliveryUpdates.push(args);
+        }
+        return Promise.resolve({ count: 1 });
+      },
+    );
+
+    const fetchFn = jest.fn(
+      async () => new Response("", { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    const res = await runDispatchTick({
+      prisma: stub.prisma as unknown as PrismaLike,
+      fetchFn,
+      assertUrlFn: async () => {},
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(res.succeeded).toBe(1);
+    expect(claimCalls).toHaveLength(1);
+    expect(claimCalls[0]).toEqual({
+      where: {
+        id: "del-stale-inflight",
+        status: "IN_FLIGHT",
+        updatedAt: { lt: new Date(FROZEN_NOW_MS - 10 * 60_000) },
+      },
+      data: {
+        status: "IN_FLIGHT",
+        updatedAt: new Date(FROZEN_NOW_MS),
+      },
+    });
+    expect(stub.deliveryUpdates[0]).toMatchObject({
+      where: { id: "del-stale-inflight", status: "IN_FLIGHT" },
+      data: expect.objectContaining({ status: "SUCCESS" }),
+    });
   });
 
   it("records lastFailureAt without incrementing failureCount on transient 5xx, applies bounded jitter when clock is live, and does not write OrgAuditLog on RETRY", async () => {

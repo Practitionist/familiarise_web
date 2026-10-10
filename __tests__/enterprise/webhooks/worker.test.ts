@@ -67,8 +67,12 @@ function makePrismaStub(
         findMany: jest.fn().mockResolvedValue([initialRow]),
         // #812 — the IN_FLIGHT soft lock is now a guarded atomic claim.
         updateMany: jest.fn().mockImplementation((args) => {
-          claims.push(args);
-          return Promise.resolve({ count: claimCount });
+          if (args.data?.status === "IN_FLIGHT") {
+            claims.push(args);
+            return Promise.resolve({ count: claimCount });
+          }
+          updates.push(args);
+          return Promise.resolve({ count: 1 });
         }),
         update: jest.fn().mockImplementation((args) => {
           updates.push(args);

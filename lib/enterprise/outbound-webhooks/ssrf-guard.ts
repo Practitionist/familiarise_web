@@ -139,62 +139,62 @@ function ipv6ToBytes(ip: string): Uint8Array | null {
   return Uint8Array.from(bytes);
 }
 
-function isBlockedV6(ip: string): boolean {
-  const b = ipv6ToBytes(ip);
-  if (b === null) return true; // unparseable → fail closed
-
-  const allZeroUpTo = (n: number) => b.slice(0, n).every((x) => x === 0);
-
-  // ::  (unspecified) and ::1 (loopback)
-  if (allZeroUpTo(15) && (b[15] === 0 || b[15] === 1)) return true;
-
-  // ::ffff:a.b.c.d — IPv4-mapped. Classify the embedded v4 address.
-  if (allZeroUpTo(10) && b[10] === 0xff && b[11] === 0xff) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
-  }
-  // 64:ff9b::/96 — well-known NAT64 prefix wrapping an IPv4 address.
-  if (
+function extractEmbeddedV4FromV6(b: Uint8Array): string | null {
+  const isV4Mapped =
+    b.slice(0, 10).every((x) => x === 0) && b[10] === 0xff && b[11] === 0xff;
+  const isSiitTranslated =
+    b.slice(0, 8).every((x) => x === 0) &&
+    b[8] === 0xff &&
+    b[9] === 0xff &&
+    b[10] === 0 &&
+    b[11] === 0;
+  const isNat64WellKnown =
     b[0] === 0x00 &&
     b[1] === 0x64 &&
     b[2] === 0xff &&
     b[3] === 0x9b &&
-    b.slice(4, 12).every((x) => x === 0)
-  ) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+    b.slice(4, 12).every((x) => x === 0);
+
+  if (isV4Mapped || isSiitTranslated || isNat64WellKnown) {
+    return `${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
   }
-  // 64:ff9b:1::/48 — local-use NAT64 translation prefix (RFC 8215).
-  if (
-    b[0] === 0x00 &&
-    b[1] === 0x64 &&
-    b[2] === 0xff &&
-    b[3] === 0x9b &&
-    b[4] === 0x00 &&
-    b[5] === 0x01
-  ) {
+  return null;
+}
+
+function isSpecialPurpose2001V6(b: Uint8Array): boolean {
+  if (b[0] !== 0x20 || b[1] !== 0x01) return false;
+  // 2001::/32 Teredo tunneling
+  if (b[2] === 0x00 && b[3] === 0x00) return true;
+  // 2001:0002::/48 benchmarking (RFC 5180)
+  if (b[2] === 0x00 && b[3] === 0x02 && b[4] === 0x00 && b[5] === 0x00) {
     return true;
   }
-  // ::/96 embeds an IPv4 address in bytes 12..15 (including ::0.0.0.2..::0.255.255.255).
-  if (allZeroUpTo(12)) {
-    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+  // 2001:0010::/28 ORCHID
+  if (b[2] === 0x00 && (b[3] & 0xf0) === 0x10) return true;
+  // 2001:db8::/32 documentation (RFC 3849)
+  return b[2] === 0x0d && b[3] === 0xb8;
+}
+
+function isBlockedV6(ip: string): boolean {
+  const b = ipv6ToBytes(ip);
+  if (b === null) return true;
+
+  const embeddedV4 = extractEmbeddedV4FromV6(b);
+  if (embeddedV4 !== null) {
+    return isBlockedV4(embeddedV4);
   }
 
-  // 100::/64 discard prefix (RFC 6666).
+  // Remaining 0000::/8 reserved block (covers ::, ::1, ::/96, 64:ff9b:1::/48, etc.)
+  if (b[0] === 0x00) return true;
+  // 100::/64 discard prefix (RFC 6666)
   if (b[0] === 0x01 && b[1] === 0x00 && b.slice(2, 8).every((x) => x === 0)) {
     return true;
   }
-  // 2001::/32 Teredo tunneling prefix.
-  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) {
-    return true;
-  }
-  // 2001:db8::/32 documentation prefix (RFC 3849).
-  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) {
-    return true;
-  }
+  if (isSpecialPurpose2001V6(b)) return true;
+  if (b[0] === 0x20 && b[1] === 0x02) return true; // 2002::/16 6to4
   if ((b[0] & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
   if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return true; // fe80::/10 link-local
-  if (b[0] === 0xff) return true; // ff00::/8 multicast
-  if (b[0] === 0x20 && b[1] === 0x02) return true; // 2002::/16 6to4
-  return false;
+  return b[0] === 0xff; // ff00::/8 multicast
 }
 
 function isBlockedAddress(ip: string): boolean {

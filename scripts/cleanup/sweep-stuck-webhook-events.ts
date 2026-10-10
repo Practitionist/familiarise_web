@@ -13,6 +13,7 @@ import { novuWebhookPayloadSchema } from "@/schemas/webhooks/novu";
 import { razorpayWebhookEnvelopeSchema } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
+  isTerminalWebhookError,
   permanentFailure,
   TERMINAL_ERROR_PREFIXES,
   type WebhookClaim,
@@ -246,6 +247,30 @@ async function dispatchClaimedStuckEvent(
   return null;
 }
 
+async function markWebhookEventFailed(
+  ev: StuckWebhookRow,
+  claim: WebhookClaim,
+  msg: string,
+): Promise<void> {
+  const rotatedClaimedAt = new Date();
+  await prisma.webhookEvent
+    .updateMany({
+      where: {
+        eventId: ev.eventId,
+        processed: false,
+        claimedAt: claim.claimedAt,
+      },
+      data: {
+        processed: false,
+        processedAt: null,
+        claimedAt: rotatedClaimedAt,
+        error: `sweep-failed: ${msg}`,
+        ...(ev.provider !== "razorpay" ? { deferCount: { increment: 1 } } : {}),
+      },
+    })
+    .catch(() => {});
+}
+
 async function settleDispatchedEventOutcome(
   ev: StuckWebhookRow,
   claim: WebhookClaim,
@@ -259,6 +284,17 @@ async function settleDispatchedEventOutcome(
   });
 
   if (after?.error !== null && after?.error !== undefined) {
+    if (ev.provider !== "razorpay" && !isTerminalWebhookError(after.error)) {
+      await prisma.webhookEvent
+        .updateMany({
+          where: {
+            eventId: ev.eventId,
+            processed: false,
+          },
+          data: { deferCount: { increment: 1 } },
+        })
+        .catch(() => {});
+    }
     counts.stillFailing++;
     counts.errors.push(`${ev.eventId}: ${after.error}`);
     return;
@@ -288,6 +324,19 @@ async function settleDispatchedEventOutcome(
         `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
       );
       return;
+    }
+
+    if (ev.provider !== "razorpay") {
+      await prisma.webhookEvent
+        .updateMany({
+          where: {
+            eventId: ev.eventId,
+            processed: false,
+            claimedAt: claim.claimedAt,
+          },
+          data: { deferCount: { increment: 1 } },
+        })
+        .catch(() => {});
     }
 
     counts.deferred++;
@@ -349,22 +398,7 @@ async function processOneStuckEvent(
     counts.stillFailing++;
     const msg = toErrorMessage(e);
     counts.errors.push(`${ev.eventId}: ${msg}`);
-    const rotatedClaimedAt = new Date();
-    await prisma.webhookEvent
-      .updateMany({
-        where: {
-          eventId: ev.eventId,
-          processed: false,
-          claimedAt: claim.claimedAt,
-        },
-        data: {
-          processed: false,
-          processedAt: null,
-          claimedAt: rotatedClaimedAt,
-          error: `sweep-failed: ${msg}`,
-        },
-      })
-      .catch(() => {});
+    await markWebhookEventFailed(ev, claim, msg);
   }
 
   return true;

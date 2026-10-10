@@ -49,20 +49,33 @@ When an order, payment, refund, or payout is created without metadata notes, Raz
 
 ```typescript
 export const razorpayNotesSchema = z
-  .union([
-    z.record(z.union([z.string(), z.number(), z.boolean()]).transform(String)),
-    z.array(z.unknown()).transform((): Record<string, string> => ({})),
-  ])
-  .nullish()
-  .transform((notes): Record<string, string> => notes ?? {});
+  .unknown()
+  .transform((val): Record<string, string> => {
+    if (!val || typeof val !== "object" || Array.isArray(val)) {
+      return {};
+    }
+    const normalized: Record<string, string> = {};
+    for (const [key, raw] of Object.entries(val)) {
+      if (
+        typeof raw === "string" ||
+        typeof raw === "number" ||
+        typeof raw === "boolean"
+      ) {
+        normalized[key] = String(raw);
+      } else if (raw === null || raw === undefined) {
+        normalized[key] = "";
+      }
+    }
+    return normalized;
+  });
 ```
 
 ### 2. Multi-Attempt Checkout Modal Semantics on `payment.failed`
 
 Inside Razorpay Checkout, all payment attempts within one checkout session share a single `order_id` (`Payment.paymentIntent`):
 
-- **Pre-Transaction `SUCCEEDED` Fast-Path**: `handlePaymentFailure` checks `Payment.paymentStatus` before opening a database transaction under `PG_POOL_MAX=1`; if a subsequent retry on the same `order_id` already settled `SUCCEEDED`, late-arriving `payment.failed` webhooks from an earlier attempt return immediately as a no-op.
-- **Active Hold Preservation (`expiresAt > now()`)**: While the booking hold has not expired (`expiresAt > now()`), `payment.failed` preserves the active slot reservation and **never restores applied wallet or referral credits** (preventing both mid-checkout slot cancellation and wallet double-spend exploits while the buyer retries inside the modal).
+- **In-Transaction `SUCCEEDED` Guard**: `handlePaymentFailure` checks `payment.paymentStatus === "SUCCEEDED"` inside its transaction; if a retry on the same `order_id` already settled `SUCCEEDED`, late-arriving `payment.failed` webhooks from an earlier attempt return immediately as a no-op.
+- **Active Hold Preservation (`expiresAt > now()`)**: While the booking hold has not expired (`expiresAt > now()`), `payment.failed` preserves the active slot reservation, never overwrites customer-facing `Payment.description`, and **never restores applied wallet or referral credits** (preventing both mid-checkout slot cancellation and wallet double-spend exploits while the buyer retries inside the modal).
 
 ### 3. `refund.entity.speed_requested` vs `speed_processed` & In-Place Placeholder Adoption
 
