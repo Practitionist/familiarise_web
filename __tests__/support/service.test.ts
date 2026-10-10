@@ -449,6 +449,35 @@ describe("runSupportTurn", () => {
     });
   });
 
+  it("raises the reused ticket to HIGH when the re-escalation is urgent", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({
+        activeChannel: "HUMAN",
+        status: "RESOLVED",
+        supportTicketId: "ticket-existing",
+      }),
+    );
+    mockPrisma.supportTicket.findUnique.mockResolvedValue({
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+    });
+
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "OTHER",
+      urgent: true,
+    });
+
+    expect(r?.supportTicketId).toBe("ticket-existing");
+    expect(mockPrisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ticket-existing",
+        status: { not: "CLOSED" },
+        priority: { in: ["LOW", "MEDIUM"] },
+      },
+      data: { priority: "HIGH" },
+    });
+  });
+
   it("reopens from the row, not the pre-transaction read, on a human reply", async () => {
     // The thread was read as ESCALATED; if staff resolve it before the
     // transaction runs, the reply must still reopen it and its ticket. The

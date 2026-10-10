@@ -42,6 +42,7 @@ import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useListParams } from "@/hooks/useListParams";
 import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
+import { REVIEW_REPORT_REASONS } from "@/lib/labels/report-reasons";
 import { cn } from "@/utils/tailwind";
 import { SocialShareDialog } from "./SocialShareDialog";
 
@@ -159,13 +160,6 @@ const TRACK_OPTIONS = [
   { value: "GROUP", label: "Group" },
 ] as const;
 
-const REPORT_REASONS = [
-  { value: "SPAM_OR_FAKE", label: "Spam or unverified claim" },
-  { value: "HARASSMENT_OR_ABUSE", label: "Harassment or abusive language" },
-  { value: "OFF_TOPIC", label: "Irrelevant or off-topic" },
-  { value: "OTHER", label: "Other policy concern" },
-] as const;
-
 function Stars({ rating }: Readonly<{ rating: number }>) {
   return (
     <span
@@ -278,7 +272,7 @@ function ReviewCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState<string>(
-    REPORT_REASONS[0].value,
+    REVIEW_REPORT_REASONS[0].value,
   );
   const [reportDetails, setReportDetails] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
@@ -327,7 +321,7 @@ function ReviewCard({
       ),
     onSuccess: (data) => {
       setReportOpen(false);
-      setReportReason(REPORT_REASONS[0].value);
+      setReportReason(REVIEW_REPORT_REASONS[0].value);
       setReportDetails("");
       const reference = reportReceiptSchema.safeParse(data);
       toast({
@@ -511,7 +505,7 @@ function ReviewCard({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {REPORT_REASONS.map((opt) => (
+                  {REVIEW_REPORT_REASONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>

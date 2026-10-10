@@ -321,6 +321,8 @@ export async function GET(request: Request) {
     {
       headers: {
         "Cache-Control": cacheControl,
+        // Keyed on the flag, or a cached plain probe answers a `?includeBetterStack=1` call.
+        "Netlify-Vary": "query=includeBetterStack",
       },
     },
   );

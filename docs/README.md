@@ -204,8 +204,9 @@ intake, org triage, ticket references, SLA clocks, and the deflection counter.
 - [03-ticket-references-and-sla.md](./support/03-ticket-references-and-sla.md) - The `FAM-` reference series and the statutory SLA model
 - [04-deflection-and-support-csat.md](./support/04-deflection-and-support-csat.md) - What fraction the tree resolves, and the two halves of support CSAT
 - [05-schema-reference.md](./support/05-schema-reference.md) - Every support column and index, and why
-- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Eleven invariants to know before editing, and the test map
-- [07-engineering-log-2026-08-29.md](./support/07-engineering-log-2026-08-29.md) - The support-drawer turn loss: eight causes, the schema they required, and two stale audit claims
+- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Sixteen invariants to know before editing, the test map, and how to run the end-to-end QA suite
+- [07-ticket-lifecycle-and-concurrency.md](./support/07-ticket-lifecycle-and-concurrency.md) - Ticket statuses, reopening rules, thread mirroring and the compare-and-set guards
+- [08-intake-callbacks-attachments-and-limits.md](./support/08-intake-callbacks-attachments-and-limits.md) - Intake doors, validated callbacks, receipts, private attachments and per-route rate limits
 
 ---
 

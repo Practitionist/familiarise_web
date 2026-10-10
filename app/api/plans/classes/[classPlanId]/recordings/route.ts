@@ -116,8 +116,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       recordedAt: recording.recordedAt,
       status: recording.status,
       storageType: recording.storageType,
-      // Playback URLs are minted per play by GET /api/stream/recordings/[id], which re-checks access.
-      playbackUrl: null,
       thumbnailUrl: recording.thumbnailUrl,
       resolution: recording.resolution,
       previewClipUrl: recording.previewClipUrl,

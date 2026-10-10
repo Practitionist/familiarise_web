@@ -281,6 +281,7 @@ function TicketRequest({
     );
   }
   const closed = data.status === "CLOSED";
+  const resolved = data.status === "RESOLVED";
   return (
     <>
       <PageHeader
@@ -355,12 +356,27 @@ function TicketRequest({
                     if (msg && !reply.isPending) reply.mutate(msg);
                   }}
                 >
+                  {resolved && (
+                    <p
+                      id="support-reply-reopens"
+                      className="text-xs text-muted-foreground"
+                    >
+                      This request is marked resolved. Replying reopens it.
+                    </p>
+                  )}
                   <Textarea
                     aria-label="Reply"
+                    aria-describedby={
+                      resolved ? "support-reply-reopens" : undefined
+                    }
                     rows={3}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Write a reply to our team…"
+                    placeholder={
+                      resolved
+                        ? "Reply to reopen this request…"
+                        : "Write a reply to our team…"
+                    }
                   />
                   <div className="flex justify-end">
                     <Button

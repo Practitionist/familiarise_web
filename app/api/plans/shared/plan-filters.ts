@@ -3,6 +3,28 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma, type OrgPlanVisibility } from "@prisma/client";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
+
+/** Every query key the webinar and class list routes read, so the CDN caches one entry per filter set. */
+const PLAN_LIST_CACHE_HEADERS = publicCacheHeaders({
+  sMaxAge: 60,
+  staleWhileRevalidate: 300,
+  varyQuery: [
+    "page",
+    "limit",
+    "consultantId",
+    "topicIds",
+    "language",
+    "domainId",
+    "sort",
+    "minPrice",
+    "maxPrice",
+    "search",
+    "level",
+    "include",
+    "includeRegistration",
+  ],
+});
 
 export interface PlanFilterParams {
   consultantId: string | null;
@@ -174,9 +196,7 @@ export function paginatedResponse(
     },
     {
       status: 200,
-      headers: {
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-      },
+      headers: PLAN_LIST_CACHE_HEADERS,
     },
   );
 }

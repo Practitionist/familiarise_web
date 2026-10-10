@@ -7,6 +7,8 @@ const mockUpdateMany = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  flush: jest.fn(async () => true),
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
@@ -45,6 +47,7 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
 import { PATCH } from "../../app/api/staff/support-tickets/[ticketId]/route";
 import {
   SupportRequestError,
@@ -63,7 +66,23 @@ const patch = (body: object) =>
 describe("PATCH /api/staff/support-tickets/[ticketId] CAS", () => {
   beforeEach(() => mockUpdateMany.mockReset().mockResolvedValue({ count: 0 }));
 
-  it("CASes on the rendered updatedAt and refuses edits on a closed ticket", async () => {
+  it("says a closed ticket's assignee and priority are frozen instead of reporting a conflict", async () => {
+    const res = await patch({
+      assignedToId: null,
+      expectedUpdatedAt: "2026-10-01T10:00:00.000Z",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("TICKET_CLOSED");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("CASes on the rendered updatedAt and refuses edits on a ticket closed meanwhile", async () => {
+    (prisma.supportTicket.findUnique as jest.Mock).mockResolvedValueOnce({
+      id: "t1",
+      status: "OPEN",
+      resolvedAt: null,
+      awaitingUserSince: null,
+    });
     const stamp = "2026-10-01T10:00:00.123Z";
     const res = await patch({ priority: "HIGH", expectedUpdatedAt: stamp });
     expect(res.status).toBe(409);

@@ -82,7 +82,7 @@ const formatDate = (dateString: string) => {
 
 /** #1771 K-7 — a Razorpay draft sits in `evidence` with no submission stamp. */
 const isRazorpayDraft = (d: {
-  evidence: unknown;
+  evidence?: unknown;
   evidenceSubmittedAt?: string | null;
 }) =>
   !d.evidenceSubmittedAt &&

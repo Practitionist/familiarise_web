@@ -288,6 +288,7 @@ export async function POST(req: NextRequest) {
       consultationId: links.consultationId,
       subscriptionId: links.subscriptionId,
       paymentId: validatedData.paymentId,
+      filedBy: "requester",
     });
 
     return NextResponse.json(ticket, { status: 201 });
