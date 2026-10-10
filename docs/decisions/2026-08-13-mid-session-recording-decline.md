@@ -1,7 +1,7 @@
 # ADR: A mid-session recording decline stops the recording and discards it
 
 - **Status**: Accepted
-- **Implementation**: the discard runs in the `recording_ready` webhook handler and the sync path through `discardDeclinedRecording` (`lib/stream/recording-decline.ts`); see the [storage, retention and visibility ADR](2026-10-09-recording-storage-retention-visibility.md).
+- **Implementation**: a non-host in a recorded 1:1 declines from the call itself through the "Stop recording me" control beside the REC indicator (`app/meetings/[id]/components/DeclineRecordingButton.tsx`), which posts `DECLINED` to the consent route through the same `useRecordingConsentDecision` hook the lobby uses; the route stops the recording, and the discard runs in the `recording_ready` webhook handler and the sync path through `discardDeclinedRecording` (`lib/stream/recording-decline.ts`). Group sessions get no in-call control because the route refuses their declines with a 409. See the [storage, retention and visibility ADR](2026-10-09-recording-storage-retention-visibility.md).
 - **Date**: 2026-08-13
 - **Author**: teetangh
 - **Part of**: #1134, #1146
@@ -106,8 +106,8 @@ which is not consent.
 
 ## Follow-ups
 
-The in-call decline, the server-side stop and the discard of Stream's copy and
-any stored asset are implemented. Pre-join copy stating that a decline can
+The in-call decline control, the server-side stop and the discard of Stream's
+copy and any stored asset are implemented. Pre-join copy stating that a decline can
 arrive at any time remains to be written.
 
 ## References
