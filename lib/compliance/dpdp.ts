@@ -90,7 +90,6 @@
 
 import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
-import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   SIGNUP_PURPOSES,
   TERMS_VERSION,
@@ -434,6 +433,7 @@ export async function withdrawConsent(
   // After the response, so it never takes the pool's one connection from a
   // caller's open transaction.
   if (purposeCode === "SESSION_BOOKING" && count > 0) {
+    const { scheduleAfter } = await import("@/lib/api/after-safe");
     scheduleAfter(async () => {
       const { recordSystemEvent } =
         await import("@/lib/enterprise/system-events");
