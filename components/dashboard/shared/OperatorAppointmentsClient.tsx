@@ -120,9 +120,10 @@ function appointmentsKey(args: {
 }
 
 export function OperatorAppointmentsClient({
+  beforeContent,
   renderOps,
 }: Readonly<{
-  /** #1771 — the tree's per-booking Ops actions panel, supplied by app/. */
+  beforeContent?: ReactNode;
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
@@ -268,6 +269,8 @@ export function OperatorAppointmentsClient({
           </Button>
         }
       />
+
+      {beforeContent}
 
       {/* Global counts within the filters (#897), not the current page. */}
       <StatRow>

@@ -6,7 +6,6 @@ import {
 import { PauseCircle } from "lucide-react";
 import Link from "next/link";
 
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { RequestsInbox } from "@/components/dashboard/shared/requests/RequestsInbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -27,7 +26,7 @@ type PageProps = {
 };
 
 /**
- * /dashboard/consultant/[consultantId]/requests — the Requests inbox (#1775).
+ * /dashboard/consultant/[consultantId]/requests — the Requests inbox.
  *
  * A server component: the ownership guard runs before the read, the read
  * seeds react-query under the SAME key `RequestsInbox` queries, and the URL
@@ -75,7 +74,7 @@ export default async function RequestsPage({
     .catch(() => undefined);
 
   return (
-    <DashboardErrorBoundary>
+    <>
       <DashboardHeader
         title="Requests"
         subtitle="Everything waiting on an answer, a payment or a next cycle"
@@ -105,6 +104,6 @@ export default async function RequestsPage({
           />
         </HydrationBoundary>
       </div>
-    </DashboardErrorBoundary>
+    </>
   );
 }
