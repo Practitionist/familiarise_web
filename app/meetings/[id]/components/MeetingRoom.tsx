@@ -353,11 +353,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
             inert={!activeSideTab || undefined}
             aria-hidden={!activeSideTab}
             className={cn(
-              "fixed right-0 top-0 h-full w-full sm:w-80 pb-20 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              "fixed right-0 top-0 flex h-full w-full flex-col pb-20 sm:w-80 sm:pb-0 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
               activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
-            <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-800">
+            <div className="flex shrink-0 items-center justify-between px-3 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
                 {inCallChatAllowed && (
                   <button
@@ -457,7 +457,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 );
               }
               return (
-                <div className="h-[calc(100%-60px)] overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-y-auto">
                   <CallParticipantsList
                     onClose={() => setActiveSideTab(null)}
                   />

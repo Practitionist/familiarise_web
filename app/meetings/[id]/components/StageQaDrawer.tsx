@@ -126,7 +126,7 @@ export function StageQaDrawer({
   return (
     <div
       data-testid="stage-qa-drawer"
-      className="flex h-[calc(100%-60px)] flex-col justify-between"
+      className="flex min-h-0 flex-1 flex-col justify-between"
     >
       {questions.length > 0 && (
         <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">

@@ -94,7 +94,7 @@ export function StageChatDrawer({
   return (
     <div
       data-testid="stage-chat-drawer"
-      className="flex h-[calc(100%-60px)] flex-col justify-between"
+      className="flex min-h-0 flex-1 flex-col justify-between"
     >
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
         {messages.length === 0 ? (

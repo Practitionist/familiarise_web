@@ -10,7 +10,11 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  parseSlotIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
@@ -138,20 +142,26 @@ const MEETING_SESSION_INCLUDE = {
   },
 } satisfies Prisma.MeetingInclude;
 
-function loadMeeting(callId: string) {
-  return prisma.meeting
-    .findUnique({
-      where: { streamCallId: callId },
-      include: MEETING_SESSION_INCLUDE,
-    })
-    .then(
-      (matched) =>
-        matched ??
-        prisma.meeting.findUnique({
-          where: { id: callId },
-          include: MEETING_SESSION_INCLUDE,
-        }),
-    );
+async function loadMeeting(callId: string) {
+  const direct = await prisma.meeting.findUnique({
+    where: { streamCallId: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (direct) return direct;
+
+  const byId = await prisma.meeting.findUnique({
+    where: { id: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (byId) return byId;
+
+  const occurrenceId = parseSlotIdFromCallId(callId);
+  if (!occurrenceId) return null;
+
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: occurrenceId },
+    include: MEETING_SESSION_INCLUDE,
+  });
 }
 
 /** Verifies whether the user holds active DPDP consent for Stream video/chat processing. */
