@@ -43,7 +43,9 @@ async function OrganisationsDirectory() {
   // to everyone (#1119).
   const [meta, firstPage] = await Promise.all([
     withBuildTimeRetry(getOrganisationsMetadata),
-    withBuildTimeRetry(() => getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS)),
+    withBuildTimeRetry(() =>
+      getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS),
+    ),
   ]);
 
   return (

@@ -67,13 +67,15 @@ export default function ExpertDetailsSheet({
       () => {
         toast({
           title: "Couldn't copy the link",
-          description: "Copy it from the address bar after opening the profile.",
+          description:
+            "Copy it from the address bar after opening the profile.",
         });
       },
     );
   };
   const plans = consultant?.subscriptionPlans ?? [];
-  const cheapest = plans.length > 0 ? [...plans].sort((a, b) => a.price - b.price)[0] : null;
+  const cheapest =
+    plans.length > 0 ? [...plans].sort((a, b) => a.price - b.price)[0] : null;
   // Cheapest 1:1 session — one headline line so the drawer answers "what does
   // a single session cost" where the Book button lives. Full 1:1 catalog
   // stays on the profile page.
@@ -113,7 +115,8 @@ export default function ExpertDetailsSheet({
         // footer stays in view.
         style={{
           top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
-          height: "calc(100dvh - var(--maintenance-banner-height, 0px) - var(--header-height, 5rem))",
+          height:
+            "calc(100dvh - var(--maintenance-banner-height, 0px) - var(--header-height, 5rem))",
         }}
       >
         {consultant && (
@@ -152,7 +155,10 @@ export default function ExpertDetailsSheet({
                       <span className="text-muted-foreground">New expert</span>
                     )}
                     <span className="text-muted-foreground">
-                      {consultant.reviewCount ?? consultant.reviews?.length ?? 0} reviews
+                      {consultant.reviewCount ??
+                        consultant.reviews?.length ??
+                        0}{" "}
+                      reviews
                     </span>
                     {consultant.organizationBadge && (
                       <Link
@@ -179,14 +185,14 @@ export default function ExpertDetailsSheet({
               <dl className="space-y-3 text-sm">
                 {consultant.experience !== null &&
                   consultant.experience !== undefined && (
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground/70" />
-                    <dt className="text-muted-foreground">Experience:</dt>
-                    <dd className="font-medium text-foreground">
-                      {consultant.experience} years
-                    </dd>
-                  </div>
-                )}
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-muted-foreground/70" />
+                      <dt className="text-muted-foreground">Experience:</dt>
+                      <dd className="font-medium text-foreground">
+                        {consultant.experience} years
+                      </dd>
+                    </div>
+                  )}
                 {consultant.languages && consultant.languages.length > 0 && (
                   <div className="flex items-center gap-2">
                     <Globe className="h-4 w-4 text-muted-foreground/70" />
@@ -248,7 +254,8 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
-              {(consultant.domain?.name || consultant.subDomains.length > 0) && (
+              {(consultant.domain?.name ||
+                consultant.subDomains.length > 0) && (
                 <div className="mt-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Field
@@ -260,7 +267,11 @@ export default function ExpertDetailsSheet({
                       </Badge>
                     )}
                     {consultant.subDomains.slice(0, 4).map((sd) => (
-                      <Badge key={sd.id} variant="outline" className="px-3 py-1">
+                      <Badge
+                        key={sd.id}
+                        variant="outline"
+                        className="px-3 py-1"
+                      >
                         {sd.name}
                       </Badge>
                     ))}

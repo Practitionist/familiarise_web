@@ -12,7 +12,7 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
-import { toCallId } from "@/lib/stream/call-cid";
+import { parseOccurrenceIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -264,7 +264,10 @@ export async function handleCallEnded(
 export async function recordMeetingEndedSynchronously(
   streamCallId: string,
   endedAt: Date = new Date(),
-): Promise<{ endedReason: "ended_early" | "call_ended" } | null> {
+): Promise<{
+  endedReason: "ended_early" | "call_ended";
+  nextStreamCallId: string;
+} | null> {
   const meeting = await prisma.meeting.findUnique({
     where: { streamCallId },
     include: { occurrence: true },
@@ -278,8 +281,24 @@ export async function recordMeetingEndedSynchronously(
   const slotStartsAt = meeting.occurrence.startsAt;
   const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
   const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
-  await stampEnd(meeting, endedAt, endedReason);
-  return { endedReason };
+
+  if (endedBeforeStart) {
+    const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
+    const updated = await prisma.meeting.updateMany({
+      where: { id: meeting.id, endedAt: meeting.endedAt },
+      data: {
+        endedAt,
+        endedReason,
+        streamCallId: nextStreamCallId,
+        isRecording: false,
+      },
+    });
+    if (updated.count === 0) return null;
+    return { endedReason, nextStreamCallId };
+  }
+
+  if (!(await stampEnd(meeting, endedAt, endedReason))) return null;
+  return { endedReason, nextStreamCallId: meeting.streamCallId };
 }
 
 /**
@@ -288,15 +307,25 @@ export async function recordMeetingEndedSynchronously(
  * events for ad-hoc calls that may never have been persisted; those are skipped.
  */
 async function resolveMeeting(streamCallId: string) {
-  return prisma.meeting.findUnique({
+  const select = {
+    id: true,
+    endedAt: true,
+    endedReason: true,
+    appointmentOccurrenceId: true,
+  } as const;
+
+  const direct = await prisma.meeting.findUnique({
     where: { streamCallId },
-    // #1554 — attendance rows carry the call they belong to.
-    select: {
-      id: true,
-      endedAt: true,
-      endedReason: true,
-      appointmentOccurrenceId: true,
-    },
+    select,
+  });
+  if (direct) return direct;
+
+  const occurrenceId = parseOccurrenceIdFromCallId(streamCallId);
+  if (!occurrenceId) return null;
+
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: occurrenceId },
+    select,
   });
 }
 

@@ -93,7 +93,7 @@ export const tokenProvider = async (userId: string): Promise<string>
 ```typescript
 export const tokenProvider = async (userId: string) => {
   try {
-    // 0. Session bind (#899): a token may only be minted for the authenticated
+    // 0. Session bind : a token may only be minted for the authenticated
     //    session user; staff/admins may mint for anyone. Stream's server-side
     //    API skips permission checks, so this is the only guard against spoofing.
     await assertCanMintToken(userId);
@@ -142,7 +142,7 @@ export const tokenProvider = async (userId: string) => {
 import { tokenProvider } from "@/actions/stream/chat/stream.action";
 
 // Generate video token for the authenticated session user.
-// Passing another user's ID throws unless the caller is staff/admin (#899).
+// Passing another user's ID throws unless the caller is staff/admin .
 try {
   const token = await tokenProvider(sessionUser.id);
   console.log("Video token generated successfully");
@@ -172,7 +172,7 @@ export const chatTokenProvider = async (userId: string): Promise<string>
 ```typescript
 export const chatTokenProvider = async (userId: string) => {
   try {
-    // 0. Session bind (#899): mint only for the authenticated session user
+    // 0. Session bind : mint only for the authenticated session user
     //    (staff/admins may mint for anyone).
     await assertCanMintToken(userId);
 
@@ -204,7 +204,7 @@ export const chatTokenProvider = async (userId: string) => {
 import { chatTokenProvider } from "@/actions/stream/chat/stream.action";
 
 // Generate chat token for the authenticated session user.
-// Passing another user's ID throws unless the caller is staff/admin (#899).
+// Passing another user's ID throws unless the caller is staff/admin .
 try {
   const token = await chatTokenProvider(sessionUser.id);
   console.log("Chat token generated successfully");
@@ -436,7 +436,7 @@ Stream accepts a string token and a `tokenProvider` together: the string serves 
 
 The connector in `providers/StreamProviderImpl.tsx` reads that context and, once per user id, seeds its token cache through the pure helper `seedFromInitialTokens` in `lib/stream/seed-token-cache.ts`. The helper returns `null` when the tokens were minted for a different user or when their cache horizon has already passed, which is what happens to a tab restored hours later, so the connector then falls back to the token action exactly as before. Because the seed lands in the cache before the prefetch effect and the connect effects run, a direct landing on a meeting or a dashboard page performs no token round trip before the first `connectUser`. The refresh path is unchanged: when the cached token ages past the fifty-minute window, `getCachedToken` calls `tokenProvider` or `chatTokenProvider`, and a tab without a session still receives the action's refusal rather than a token.
 
-The mint costs a few milliseconds of HMAC inside a render that is already running and never throws; when Stream is not configured or minting fails it logs a warning and returns `null`, and the client behaves as it did before the seed existed. The motivating failure was `Call to tokenProvider failed with message: TypeError: Failed to fetch` on the consultant appointments page and on `/meetings` (Sentry FAMILIARISE_WEB-4A and FAMILIARISE_WEB-3N): the page had rendered, but the browser's first server-action call for the token died on a stalled Netlify instance (#1124). The same change reports the fifth consecutive retryable connect failure as a Sentry warning tagged `expected` and `platform: cold-instance` under one fingerprint, so the stall stops counting as an application error while the person in front of it still sees the Retry action.
+The mint costs a few milliseconds of HMAC inside a render that is already running and never throws; when Stream is not configured or minting fails it logs a warning and returns `null`, and the client behaves as it did before the seed existed. The motivating failure was `Call to tokenProvider failed with message: TypeError: Failed to fetch` on the consultant appointments page and on `/meetings` (Sentry FAMILIARISE_WEB-4A and FAMILIARISE_WEB-3N): the page had rendered, but the browser's first server-action call for the token died on a stalled Netlify instance . The same change reports the fifth consecutive retryable connect failure as a Sentry warning tagged `expected` and `platform: cold-instance` under one fingerprint, so the stall stops counting as an application error while the person in front of it still sees the Retry action.
 
 The lifetime and the cache window live together in `lib/stream/token-ttl.ts` (`STREAM_TOKEN_TTL_SECONDS` and `STREAM_TOKEN_CACHE_MS`) because the server action module is declared `"use server"` and may export only async functions, so the constant the action and the connector share has to live in a plain module.
 
@@ -656,9 +656,9 @@ This is implemented in the `tokenProvider` and `chatTokenProvider` server action
 
 ### Moderation: Revocation and Deactivation
 
-When staff suspend a user, the moderation pipeline (`lib/moderation/side-effects.ts`, #693) calls `revokeUserToken(userId, new Date())`, which expires every token issued before that moment. Suspension recovery is automatic: once `banExpires` passes, the sign-in gate lifts and the token provider mints a fresh token that post-dates the revocation timestamp, so no un-revoke call is needed. A permanent ban additionally calls `deactivateUser` (with `mark_messages_deleted: false`), which blocks the user from connecting to Stream at all while preserving their message history for other channel members.
+When staff suspend a user, the moderation pipeline (`lib/moderation/side-effects.ts`) calls `revokeUserToken(userId, new Date())`, which expires every token issued before that moment. Suspension recovery is automatic: once `banExpires` passes, the sign-in gate lifts and the token provider mints a fresh token that post-dates the revocation timestamp, so no un-revoke call is needed. A permanent ban additionally calls `deactivateUser` (with `mark_messages_deleted: false`), which blocks the user from connecting to Stream at all while preserving their message history for other channel members.
 
-Reinstating a banned user is now a real path (#1270). `POST /api/staff/moderation/reports/[reportId]/unban` clears the ban columns and calls `restoreStreamAccess`, which un-revokes the token cutoff and reactivates the Stream user; it is ADMIN-only, and it runs the Stream half whether or not the database half had anything left to clear, because an account whose columns were already cleared by hand is exactly the case it exists to repair. Both halves of the enforcement — the ban's revocation and deactivation, and the reinstatement's restore — record their outcome in `ModerationAction.sideEffects`, and a failure there is retried by `scripts/cleanup/retry-moderation-enforcement.ts` rather than being left for someone to notice.
+Reinstating a banned user is now a real path. `POST /api/staff/moderation/reports/[reportId]/unban` clears the ban columns and calls `restoreStreamAccess`, which un-revokes the token cutoff and reactivates the Stream user; it is ADMIN-only, and it runs the Stream half whether or not the database half had anything left to clear, because an account whose columns were already cleared by hand is exactly the case it exists to repair. Both halves of the enforcement — the ban's revocation and deactivation, and the reinstatement's restore — record their outcome in `ModerationAction.sideEffects`, and a failure there is retried by `scripts/cleanup/retry-moderation-enforcement.ts` rather than being left for someone to notice.
 
 ### Use Environment Variables
 
@@ -774,3 +774,11 @@ async function logout(userId: string) {
 - [User Management](./07-user-management.md)
 - [Background Sync](./09-background-sync.md)
 - [API Endpoints](./10-api-endpoints.md)
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Tokens Minted Without `iat` Claims**: Superseded by explicit `iat = now - 60s` + `exp` claims (`lib/stream-client.ts`) so `revoke_tokens_issued_before` immediately invalidates prior tokens.
+- **Client-Only Token Fetching on Initial Page Load**: Superseded by server-rendered token seeding (`mintInitialStreamTokens`) eliminating cold-start server-action fetch stalls.
+- **Unbacked Moderation Token Revocations**: Superseded by persisted side-effect tracking (`ModerationAction.sideEffects` + `StreamRevocationRetry`).

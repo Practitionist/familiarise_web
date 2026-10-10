@@ -34,6 +34,7 @@ export interface SessionInfo {
   typeLabel: string | null;
   startsAt: Date | null;
   endsAt: Date | null;
+  baseEndsAt: Date | null;
   durationMinutes: number | null;
   extendedSeconds: number;
   extensionsUsed: number;
@@ -77,6 +78,7 @@ export function useSessionInfo(
 
   const startsAt = date(custom?.sessionStartsAt);
   const endsAt = date(custom?.sessionEndsAt);
+  const baseEndsAt = date(custom?.sessionBaseEndsAt);
   const stampedDuration =
     typeof custom?.sessionDurationMinutes === "number"
       ? custom.sessionDurationMinutes
@@ -98,6 +100,7 @@ export function useSessionInfo(
     typeLabel: toTypeLabel(custom?.appointmentType),
     startsAt,
     endsAt,
+    baseEndsAt,
     durationMinutes:
       stampedDuration ??
       (startsAt && endsAt
@@ -135,16 +138,15 @@ export function formatScheduledAt(
     "UTC";
   const tz = zoneLabel(startsAt, resolvedZone);
   const time = `${formatInViewerZone(startsAt, resolvedZone, "h:mm a")} ${tz}`;
+  const dayNumber = (key: string): number => {
+    const [year, month, day] = key.split("-").map(Number);
+    return Date.UTC(year, month - 1, day) / 86_400_000;
+  };
   const dayKey = formatInViewerZone(startsAt, resolvedZone, "yyyy-MM-dd");
-  const nowMs = Date.now();
-  const todayKey = formatInViewerZone(nowMs, resolvedZone, "yyyy-MM-dd");
-  const tomorrowKey = formatInViewerZone(
-    nowMs + 86_400_000,
-    resolvedZone,
-    "yyyy-MM-dd",
-  );
-  if (dayKey === todayKey) return `Today at ${time}`;
-  if (dayKey === tomorrowKey) return `Tomorrow at ${time}`;
+  const todayKey = formatInViewerZone(Date.now(), resolvedZone, "yyyy-MM-dd");
+  const dayDelta = dayNumber(dayKey) - dayNumber(todayKey);
+  if (dayDelta === 0) return `Today at ${time}`;
+  if (dayDelta === 1) return `Tomorrow at ${time}`;
   return `${formatInViewerZone(startsAt, resolvedZone, "EEE d MMM")} at ${time}`;
 }
 

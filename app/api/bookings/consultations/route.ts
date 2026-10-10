@@ -290,7 +290,11 @@ export async function PATCH(request: NextRequest) {
         to: status,
         data: { pendingPaymentUrl: null },
       });
-      await releaseDeclinedRequestHold(tx, { consultationId: id }, session.user.id);
+      await releaseDeclinedRequestHold(
+        tx,
+        { consultationId: id },
+        session.user.id,
+      );
     });
 
     // #1004 — a rejected request that was already paid has to give the money

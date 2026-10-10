@@ -100,7 +100,9 @@ export default function PricingPage() {
           {/* Service Categories */}
           <Card className="shadow-elevation-1">
             <CardHeader>
-              <CardTitle className="text-fluid-2xl">Service Categories</CardTitle>
+              <CardTitle className="text-fluid-2xl">
+                Service Categories
+              </CardTitle>
               <CardDescription>
                 Explore the different types of services available on our
                 platform

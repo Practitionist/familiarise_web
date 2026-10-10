@@ -5,7 +5,15 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
+import {
+  User,
+  Star,
+  StarHalf,
+  ArrowRight,
+  Award,
+  BadgeCheck,
+  Globe,
+} from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -158,7 +166,9 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                                   <CompanyLogo
                                     key={`${expert.id}-company-${i}`}
                                     companyName={exp.company}
-                                    companyDomain={exp.companyDomain ?? undefined}
+                                    companyDomain={
+                                      exp.companyDomain ?? undefined
+                                    }
                                     size={22}
                                     className="border-border"
                                   />

@@ -20,7 +20,7 @@ import {
   getEventAttendeeIds,
   streamCopyExpiresAt,
 } from "@/lib/stream/recording-utils";
-import { toCallId } from "@/lib/stream/call-cid";
+import { parseOccurrenceIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import {
   discardDeclinedRecording,
   wasDeclinedDuringRecording,
@@ -310,65 +310,61 @@ export async function handleRecordingReady(
   });
 
   try {
-    // Find meeting session by streamCallId
-    const meeting = await prisma.meeting.findUnique({
-      where: { streamCallId },
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                consultation: {
-                  include: {
-                    consultationPlan: {
-                      include: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
+    const readyInclude = {
+      occurrence: {
+        include: {
+          appointment: {
+            include: {
+              consultation: {
+                include: {
+                  consultationPlan: {
+                    include: {
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                subscription: {
-                  include: {
-                    subscriptionPlan: {
-                      include: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
+              },
+              subscription: {
+                include: {
+                  subscriptionPlan: {
+                    include: {
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                trial: {
-                  include: {
-                    subscriptionPlan: {
-                      include: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
+              },
+              trial: {
+                include: {
+                  subscriptionPlan: {
+                    include: {
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                webinar: {
-                  include: {
-                    webinarPlan: {
-                      include: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
+              },
+              webinar: {
+                include: {
+                  webinarPlan: {
+                    include: {
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
                 },
-                class: {
-                  include: {
-                    classPlan: {
-                      include: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
+              },
+              class: {
+                include: {
+                  classPlan: {
+                    include: {
+                      consultantProfile: {
+                        select: { user: { select: { name: true } } },
                       },
                     },
                   },
@@ -378,7 +374,20 @@ export async function handleRecordingReady(
           },
         },
       },
-    });
+    } as const;
+
+    const occurrenceId = parseOccurrenceIdFromCallId(streamCallId);
+    const meeting =
+      (await prisma.meeting.findUnique({
+        where: { streamCallId },
+        include: readyInclude,
+      })) ??
+      (occurrenceId
+        ? await prisma.meeting.findUnique({
+            where: { appointmentOccurrenceId: occurrenceId },
+            include: readyInclude,
+          })
+        : null);
 
     if (!meeting) {
       streamLogger.warn("Meeting session not found for recording ready event", {
@@ -575,21 +584,30 @@ export async function handleRecordingFailed(
   );
 
   try {
-    const meeting = await prisma.meeting.findUnique({
-      where: { streamCallId },
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                webinar: { select: { id: true } },
-                class: { select: { id: true } },
-              },
+    const failedInclude = {
+      occurrence: {
+        include: {
+          appointment: {
+            include: {
+              webinar: { select: { id: true } },
+              class: { select: { id: true } },
             },
           },
         },
       },
-    });
+    } as const;
+    const occurrenceId = parseOccurrenceIdFromCallId(streamCallId);
+    const meeting =
+      (await prisma.meeting.findUnique({
+        where: { streamCallId },
+        include: failedInclude,
+      })) ??
+      (occurrenceId
+        ? await prisma.meeting.findUnique({
+            where: { appointmentOccurrenceId: occurrenceId },
+            include: failedInclude,
+          })
+        : null);
 
     if (!meeting) {
       streamLogger.warn(

@@ -25,8 +25,5 @@ export const getParticipantManagementUrl = (
 export const supportsParticipantManagement = (
   appointment: TAppointment,
 ): boolean => {
-  return !!(
-    appointment.webinarId ||
-    appointment.classId
-  );
+  return !!(appointment.webinarId || appointment.classId);
 };

@@ -7,10 +7,7 @@
  */
 
 export type NotificationRoutingMode =
-  | "BELL_AND_EMAIL"
-  | "BELL_ONLY"
-  | "EMAIL_ONLY"
-  | "NEITHER";
+  "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER";
 
 interface OrgWorkspaceSettings {
   id: string;

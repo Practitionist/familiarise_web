@@ -71,7 +71,9 @@ export async function POST(
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.VERIFICATION_RESUBMITTED,
           description: "Verification resubmitted",
-          details: { resubmittedAt: next.verificationSubmittedAt?.toISOString() },
+          details: {
+            resubmittedAt: next.verificationSubmittedAt?.toISOString(),
+          },
         },
       });
 
@@ -81,8 +83,7 @@ export async function POST(
     return NextResponse.json({ verification: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;

@@ -30,9 +30,7 @@ export interface ReachablePath {
 }
 
 export type PermutationGuidanceTier =
-  | "RECOMMENDED"
-  | "ADVANCED"
-  | "DISCOURAGED";
+  "RECOMMENDED" | "ADVANCED" | "DISCOURAGED";
 
 export interface PermutationGuidance {
   tier: PermutationGuidanceTier;
@@ -52,22 +50,82 @@ export const REACHABLE_ORG_FUNDING_PATHS: ReadonlyArray<ReachablePath> = [
   { capability: "HOST", fundingSource: null, programType: null },
   { capability: "SPONSOR", fundingSource: null, programType: null },
   { capability: "HYBRID", fundingSource: null, programType: null },
-  { capability: "SPONSOR", fundingSource: "WALLET", programType: "CREDIT_POOL" },
-  { capability: "SPONSOR", fundingSource: "WALLET", programType: "LICENSED_SEAT" },
-  { capability: "SPONSOR", fundingSource: "INVOICE", programType: "CREDIT_POOL" },
-  { capability: "SPONSOR", fundingSource: "INVOICE", programType: "LICENSED_SEAT" },
-  { capability: "SPONSOR", fundingSource: "LICENSE", programType: "LICENSED_SEAT" },
-  { capability: "SPONSOR", fundingSource: "LICENSE", programType: "CREDIT_POOL" },
-  { capability: "SPONSOR", fundingSource: "PERSONAL", programType: "CREDIT_POOL" },
-  { capability: "SPONSOR", fundingSource: "PERSONAL", programType: "LICENSED_SEAT" },
+  {
+    capability: "SPONSOR",
+    fundingSource: "WALLET",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "WALLET",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "INVOICE",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "INVOICE",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "LICENSE",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "LICENSE",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "PERSONAL",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "SPONSOR",
+    fundingSource: "PERSONAL",
+    programType: "LICENSED_SEAT",
+  },
   { capability: "HYBRID", fundingSource: "WALLET", programType: "CREDIT_POOL" },
-  { capability: "HYBRID", fundingSource: "WALLET", programType: "LICENSED_SEAT" },
-  { capability: "HYBRID", fundingSource: "INVOICE", programType: "CREDIT_POOL" },
-  { capability: "HYBRID", fundingSource: "INVOICE", programType: "LICENSED_SEAT" },
-  { capability: "HYBRID", fundingSource: "LICENSE", programType: "LICENSED_SEAT" },
-  { capability: "HYBRID", fundingSource: "LICENSE", programType: "CREDIT_POOL" },
-  { capability: "HYBRID", fundingSource: "PERSONAL", programType: "CREDIT_POOL" },
-  { capability: "HYBRID", fundingSource: "PERSONAL", programType: "LICENSED_SEAT" },
+  {
+    capability: "HYBRID",
+    fundingSource: "WALLET",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "INVOICE",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "INVOICE",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "LICENSE",
+    programType: "LICENSED_SEAT",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "LICENSE",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "PERSONAL",
+    programType: "CREDIT_POOL",
+  },
+  {
+    capability: "HYBRID",
+    fundingSource: "PERSONAL",
+    programType: "LICENSED_SEAT",
+  },
 ] as const;
 
 /**
@@ -403,4 +461,3 @@ export function capabilityOf(
   if (canHost) return "HOST";
   return null;
 }
-

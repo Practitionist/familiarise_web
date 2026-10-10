@@ -40,10 +40,7 @@ export const INBOX_SORTS = [
 export type InboxSort = (typeof INBOX_SORTS)[number];
 
 export type InboxRowKind =
-  | "consultation"
-  | "subscription"
-  | "trial"
-  | "next-cycle";
+  "consultation" | "subscription" | "trial" | "next-cycle";
 
 /**
  * Where a row sits inside its tab. "Answer today" is under 24 h (or overdue)

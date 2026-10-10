@@ -34,7 +34,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ isDuplicate: !!existingClass }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error checking duplicate class title:", error);
     return NextResponse.json(
       { error: "An error occurred while checking for duplicate class titles" },

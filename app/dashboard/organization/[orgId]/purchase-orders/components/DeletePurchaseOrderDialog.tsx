@@ -57,10 +57,9 @@ export function DeletePurchaseOrderDialog({
           <AlertDialogTitle>Delete PO?</AlertDialogTitle>
           <AlertDialogDescription>
             Permanently delete PO{" "}
-            <span className="font-medium">{po?.poNumber}</span>? This is
-            only possible because no contracts or invoices reference it.
-            If you change your mind later you’ll need to register a new
-            PO number.
+            <span className="font-medium">{po?.poNumber}</span>? This is only
+            possible because no contracts or invoices reference it. If you
+            change your mind later you’ll need to register a new PO number.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

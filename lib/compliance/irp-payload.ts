@@ -104,16 +104,23 @@ export function buildIrpPayload(
   const docType = input.docType ?? "INV";
 
   // CRN payloads must reference the adjusted document (NIC v1.1 OrigDocDtls).
-  if (docType === "CRN" && (!input.originalInvoiceNumber || !input.originalInvoiceDate)) {
+  if (
+    docType === "CRN" &&
+    (!input.originalInvoiceNumber || !input.originalInvoiceDate)
+  ) {
     return {
       ok: false,
-      reason: "docType CRN requires originalInvoiceNumber and originalInvoiceDate",
+      reason:
+        "docType CRN requires originalInvoiceNumber and originalInvoiceDate",
     };
   }
 
   // B2B e-invoice requires the buyer GSTIN (the whole point of the IRP).
   if (!buyer.gstin) {
-    return { ok: false, reason: "buyer GSTIN missing (B2B e-invoice requires it)" };
+    return {
+      ok: false,
+      reason: "buyer GSTIN missing (B2B e-invoice requires it)",
+    };
   }
   if (!invoice.invoiceNumber) {
     return { ok: false, reason: "invoiceNumber missing" };
@@ -125,7 +132,10 @@ export function buildIrpPayload(
     return { ok: false, reason: "no line items" };
   }
   if (!seller.gstin) {
-    return { ok: false, reason: "seller GSTIN missing (PLATFORM_GSTIN env unset)" };
+    return {
+      ok: false,
+      reason: "seller GSTIN missing (PLATFORM_GSTIN env unset)",
+    };
   }
 
   const sellerStcd = numericStateCode(seller.gstin, seller.stateCode);
@@ -145,9 +155,7 @@ export function buildIrpPayload(
   const isInterState = invoice.igstPaise > 0;
 
   // Assessable (taxable) base in paise — line totals must sum to this.
-  const lineAssessable = lineItems.map(
-    (li) => li.quantity * li.unitPricePaise,
-  );
+  const lineAssessable = lineItems.map((li) => li.quantity * li.unitPricePaise);
   const assessableTotalFromLines = lineAssessable.reduce((a, b) => a + b, 0);
 
   // The invoice's stored subtotal is the source of truth for ValDtls.AssVal.

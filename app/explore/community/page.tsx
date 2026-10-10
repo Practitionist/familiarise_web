@@ -246,8 +246,12 @@ export default function CommunityPage() {
                 className="flex items-center justify-between gap-3 p-5 rounded-2xl border border-border bg-muted"
               >
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-foreground">{event.title}</h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">{event.host}</p>
+                  <h3 className="font-semibold text-foreground">
+                    {event.title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {event.host}
+                  </p>
                 </div>
                 <Badge
                   variant="outline"

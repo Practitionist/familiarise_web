@@ -112,7 +112,10 @@ export async function GET(
       participants,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -171,7 +174,10 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

@@ -715,6 +715,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               callId={call?.id ?? null}
               startsAt={info.startsAt}
               endsAt={info.endsAt}
+              baseEndsAt={info.baseEndsAt}
               extendedSeconds={info.extendedSeconds}
               extensionsUsed={info.extensionsUsed}
               isHost={isHost}

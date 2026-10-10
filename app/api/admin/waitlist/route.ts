@@ -9,10 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { WaitlistSource, WaitlistStatus } from "@prisma/client";
 import { z } from "zod";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-import {
-  exportSubscribersCsv,
-  listSubscribers,
-} from "@/lib/waitlist/service";
+import { exportSubscribersCsv, listSubscribers } from "@/lib/waitlist/service";
 
 const querySchema = z.object({
   status: z.nativeEnum(WaitlistStatus).optional(),

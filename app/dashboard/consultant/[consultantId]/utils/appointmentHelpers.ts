@@ -434,32 +434,27 @@ export const getAppointmentStatus = (
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
   if (diffMinutes <= 15 && diffMinutes > 5) return "Starting soon";
 
-  const targetDayKey = formatInViewerZone(effectiveTime, zone, "yyyy-MM-dd");
-  const todayKey = formatInViewerZone(now, zone, "yyyy-MM-dd");
-  const tomorrowKey = formatInViewerZone(
-    now.getTime() + 86_400_000,
-    zone,
-    "yyyy-MM-dd",
-  );
-
-  if (targetDayKey === todayKey) {
-    return "Today";
-  }
-
-  if (targetDayKey === tomorrowKey) {
-    return "Tomorrow";
-  }
-
   const dayNumber = (key: string): number => {
     const [year, month, day] = key.split("-").map(Number);
     return Date.UTC(year, month - 1, day) / 86_400_000;
   };
-  const diffDays = Math.max(1, dayNumber(targetDayKey) - dayNumber(todayKey));
+  const targetDayKey = formatInViewerZone(effectiveTime, zone, "yyyy-MM-dd");
+  const todayKey = formatInViewerZone(now, zone, "yyyy-MM-dd");
+  const diffDays = dayNumber(targetDayKey) - dayNumber(todayKey);
 
-  if (diffDays < 7) return `In ${diffDays} days`;
+  if (diffDays === 0) {
+    return "Today";
+  }
+
+  if (diffDays === 1) {
+    return "Tomorrow";
+  }
+
+  const boundedDays = Math.max(1, diffDays);
+  if (boundedDays < 7) return `In ${boundedDays} days`;
 
   // For weekly intervals, show exact week number
-  const exactWeeks = Math.ceil(diffDays / 7);
+  const exactWeeks = Math.ceil(boundedDays / 7);
   return `In ${exactWeeks} ${exactWeeks === 1 ? "week" : "weeks"}`;
 };
 

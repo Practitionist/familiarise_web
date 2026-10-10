@@ -41,9 +41,7 @@ const PatchBodySchema = z
     // distinction between "key absent" (don't touch) and "key=null"
     // (clear) is preserved via Zod's optional+nullable composition.
     defaultLandingOrganizationId: z.string().min(1).nullable().optional(),
-    notificationRoutingMode: z
-      .nativeEnum(NotificationRoutingMode)
-      .optional(),
+    notificationRoutingMode: z.nativeEnum(NotificationRoutingMode).optional(),
     // Light validation only — Intl.NumberFormat will tolerate most BCP-47
     // strings. We reject obvious garbage but don't enumerate every locale.
     locale: z

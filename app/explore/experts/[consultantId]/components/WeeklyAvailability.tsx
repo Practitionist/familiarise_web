@@ -47,9 +47,7 @@ function getBookedSlotDate(
       ? rawDaySlots.filter((raw) => {
           if (!raw.startsAt) return false;
           const rawStart = new Date(raw.startsAt).getTime();
-          const rawEnd = raw.endsAt
-            ? new Date(raw.endsAt).getTime()
-            : rawStart;
+          const rawEnd = raw.endsAt ? new Date(raw.endsAt).getTime() : rawStart;
           return rawStart >= slotStartMs && rawEnd <= slotEndMs;
         })
       : [];

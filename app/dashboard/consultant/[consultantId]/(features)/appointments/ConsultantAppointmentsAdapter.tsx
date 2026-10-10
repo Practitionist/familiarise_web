@@ -176,6 +176,58 @@ export function useConsultantAppointmentsAdapter(
       },
     );
 
+  const resolveTrialJoinSlot = (
+    vm: AppointmentVM,
+    force: boolean,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
+    const slots = trialSlotsOf(vm);
+    if (targetOccurrence) {
+      return (
+        slots.find((s) => s.id === targetOccurrence.occurrenceId) ?? slots[0]
+      );
+    }
+    if (force) {
+      return slots[0];
+    }
+    return joinableSlotOf(vm) ?? slots[0];
+  };
+
+  const resolveAppointmentJoinTarget = (
+    vm: AppointmentVM,
+    primaryAppointment: NonNullable<AppointmentVM["raw"]["appointment"]>,
+    force: boolean,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
+    const candidates = vm.raw.groupAppointments?.length
+      ? vm.raw.groupAppointments
+      : [primaryAppointment];
+    if (targetOccurrence) {
+      for (const candidate of candidates) {
+        const matched = candidate.occurrences?.find(
+          (s) => s.id === targetOccurrence.occurrenceId,
+        );
+        if (matched) {
+          return { appointment: candidate, slot: matched };
+        }
+      }
+      return {
+        appointment: primaryAppointment,
+        slot: joinableSlotOf(vm) ?? undefined,
+      };
+    }
+    if (force) {
+      return {
+        appointment: primaryAppointment,
+        slot: primaryAppointment.occurrences?.[0],
+      };
+    }
+    return {
+      appointment: primaryAppointment,
+      slot: joinableSlotOf(vm) ?? undefined,
+    };
+  };
+
   const joinVm = async (
     vm: AppointmentVM,
     force = false,
@@ -186,47 +238,32 @@ export function useConsultantAppointmentsAdapter(
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike | undefined;
       const apptId = trial?.appointment?.id ?? vm.raw.appointment?.id;
-      const slots = trialSlotsOf(vm);
-      const slot = targetOccurrence
-        ? (slots.find((s) => s.id === targetOccurrence.occurrenceId) ??
-          slots[0])
-        : force
-          ? slots[0]
-          : (joinableSlotOf(vm) ?? slots[0]);
+      const slot = resolveTrialJoinSlot(vm, force, targetOccurrence);
       if (apptId && slot) {
+        const trialSlot = {
+          id: slot.id,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          isTentative: slot.isTentative,
+          appointmentId: apptId,
+        };
         navigating = await joinMeeting(
           {
             id: apptId,
             appointmentType: "TRIAL",
-            occurrences: [
-              {
-                id: slot.id,
-                startsAt: slot.startsAt,
-                endsAt: slot.endsAt,
-                isTentative: slot.isTentative,
-                appointmentId: apptId,
-              },
-            ],
+            occurrences: [trialSlot],
           },
-          {
-            id: slot.id,
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            isTentative: slot.isTentative,
-            appointmentId: apptId,
-          },
+          trialSlot,
         );
       }
     } else if (vm.raw.appointment) {
-      const slots = vm.raw.appointment.occurrences ?? [];
-      const slot = targetOccurrence
-        ? (slots.find((s) => s.id === targetOccurrence.occurrenceId) ??
-          joinableSlotOf(vm) ??
-          undefined)
-        : force
-          ? slots[0]
-          : (joinableSlotOf(vm) ?? undefined);
-      navigating = await joinMeeting(vm.raw.appointment, slot);
+      const target = resolveAppointmentJoinTarget(
+        vm,
+        vm.raw.appointment,
+        force,
+        targetOccurrence,
+      );
+      navigating = await joinMeeting(target.appointment, target.slot);
     }
     if (!navigating) setJoiningId(null);
   };

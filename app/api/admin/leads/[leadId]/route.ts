@@ -37,7 +37,6 @@ const ALLOWED_FROM: Record<LeadStatus, LeadStatus[]> = {
   [LeadStatus.NEW]: [],
 };
 
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ leadId: string }> },

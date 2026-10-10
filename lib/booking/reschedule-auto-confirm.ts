@@ -31,8 +31,7 @@ import {
 } from "@/utils/appointmentlock";
 
 export type AutoConfirmOutcome =
-  | { confirmed: true }
-  | { confirmed: false; reason: string };
+  { confirmed: true } | { confirmed: false; reason: string };
 
 /**
  * @param rescheduleRequestId the proposal to try

@@ -16,12 +16,7 @@
  */
 
 export type Tone =
-  | "neutral"
-  | "info"
-  | "success"
-  | "caution"
-  | "warning"
-  | "critical";
+  "neutral" | "info" | "success" | "caution" | "warning" | "critical";
 
 export interface ToneStyle {
   /** Pill surface: background, text and border. */

@@ -77,7 +77,9 @@ const BUILD_RETRY_DELAYS_MS = [500, 2000];
  * — strictly worse than the fast 500 the rethrow already gives. Do not reinstate
  * it without a per-render budget and fault-injected evidence. Tracked on #1124.
  */
-export async function withBuildTimeRetry<T>(read: () => Promise<T>): Promise<T> {
+export async function withBuildTimeRetry<T>(
+  read: () => Promise<T>,
+): Promise<T> {
   if (!isProductionBuild()) return read();
 
   let lastError: unknown;
@@ -88,7 +90,10 @@ export async function withBuildTimeRetry<T>(read: () => Promise<T>): Promise<T> 
       lastError = err;
       // Only the transient class is worth retrying; a mapper bug fails identically
       // every time and should surface immediately.
-      if (!isTransientDbError(err) || attempt === BUILD_RETRY_DELAYS_MS.length) {
+      if (
+        !isTransientDbError(err) ||
+        attempt === BUILD_RETRY_DELAYS_MS.length
+      ) {
         throw err;
       }
       // Visible in the CI build log, so a build that burned time retrying does

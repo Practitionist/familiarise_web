@@ -72,11 +72,7 @@ function StaticTopRowsImpl({
           icon={<Clock className="w-5 h-5 text-white" />}
           seeAllHref="/explore/programs?sort=newest"
         />
-        <ProgramRow
-          programs={newPrograms}
-          badge="new"
-          isLoading={newLoading}
-        />
+        <ProgramRow programs={newPrograms} badge="new" isLoading={newLoading} />
       </div>
 
       {/* Browse by Category */}

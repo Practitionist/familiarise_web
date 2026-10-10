@@ -4,7 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { isDbHealthy, logWebhookEvent, markWebhookEventProcessed } from "@/lib/webhooks/event-log";
+import {
+  isDbHealthy,
+  logWebhookEvent,
+  markWebhookEventProcessed,
+} from "@/lib/webhooks/event-log";
 import {
   MAX_WEBHOOK_BODY_BYTES,
   readBodyWithinCap,
@@ -119,9 +123,11 @@ export async function POST(req: NextRequest) {
   let processingError: string | undefined;
   try {
     if (isNovuFailureEvent(eventType, status)) {
-      const errorText =
-        deliveryError ?? `Novu delivery failure (${eventType})`;
-      if (transactionId && typeof prisma.notificationOutbox?.updateMany === "function") {
+      const errorText = deliveryError ?? `Novu delivery failure (${eventType})`;
+      if (
+        transactionId &&
+        typeof prisma.notificationOutbox?.updateMany === "function"
+      ) {
         await prisma.notificationOutbox.updateMany({
           where: { transactionId },
           data: {

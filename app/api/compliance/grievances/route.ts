@@ -60,7 +60,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ grievance }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "compliance" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "compliance" } },
+    );
     console.error("Grievance intake error:", error);
     return NextResponse.json(
       { error: "Failed to file grievance" },

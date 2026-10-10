@@ -332,7 +332,11 @@ export async function PATCH(request: NextRequest) {
           to: status,
           data: { pendingPaymentUrl: null },
         });
-        await releaseDeclinedRequestHold(tx, { subscriptionId: id }, session.user.id);
+        await releaseDeclinedRequestHold(
+          tx,
+          { subscriptionId: id },
+          session.user.id,
+        );
       });
 
       // #1004 — rejection refund through the front door, after commit.

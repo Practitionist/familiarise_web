@@ -193,7 +193,7 @@ const MeetingPage = () => {
           {!isSetupComplete ? (
             <MeetingSetup
               setIsSetupComplete={setIsSetupComplete}
-              meetingId={id as string}
+              meetingId={call.id}
               role={access?.role ?? null}
             />
           ) : (

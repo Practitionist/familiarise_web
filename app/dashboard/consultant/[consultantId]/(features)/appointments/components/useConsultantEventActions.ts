@@ -28,11 +28,7 @@ interface UseConsultantEventActionsOptions {
 /** Shape of `/api/appointments/[id]/cancel`'s `refund` field (1:1 bookings). */
 interface CancelRefundResult {
   status:
-    | "REFUNDED"
-    | "PENDING"
-    | "FAILED"
-    | "NOTHING_REFUNDABLE"
-    | "POLICY_ZERO";
+    "REFUNDED" | "PENDING" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
 }
 
 /** Shape of the same route's `eventRefund` field (class/webinar). */

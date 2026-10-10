@@ -256,7 +256,10 @@ const data: UseCasePageData = {
       },
       {
         criterion: "Backing out",
-        alternatives: ["Not applicable.", "Refund windows, clauses and notice."],
+        alternatives: [
+          "Not applicable.",
+          "Refund windows, clauses and notice.",
+        ],
         ours: "Full refund up to 24 hours before the session, on terms fixed at checkout.",
       },
     ],
@@ -270,11 +273,20 @@ const data: UseCasePageData = {
     intro:
       "Every listing shows the price, the session length, and reviews left by people who actually completed a session.",
     links: [
-      { label: "Career switching", href: "/explore/experts?search=Career+Switching" },
+      {
+        label: "Career switching",
+        href: "/explore/experts?search=Career+Switching",
+      },
       { label: "System design", href: "/explore/experts?search=System+Design" },
       { label: "DSA", href: "/explore/experts?search=DSA" },
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
-      { label: "Machine learning", href: "/explore/experts?search=Machine+Learning" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
+      {
+        label: "Machine learning",
+        href: "/explore/experts?search=Machine+Learning",
+      },
       { label: "Cloud architecture", href: "/explore/experts?search=Cloud" },
       { label: "DevOps", href: "/explore/experts?search=DevOps" },
       { label: "Business", href: "/explore/experts?search=Business" },

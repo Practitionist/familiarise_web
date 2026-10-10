@@ -439,11 +439,7 @@ export function signInHref(currentPath: string): string {
 }
 
 export type ValidationFailureKind =
-  | "session-ended"
-  | "forbidden"
-  | "indeterminate"
-  | "retry-later"
-  | "refused";
+  "session-ended" | "forbidden" | "indeterminate" | "retry-later" | "refused";
 
 /**
  * What a failed validate call means for the dialog. A 401 is now reserved

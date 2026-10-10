@@ -68,7 +68,10 @@ export function curriculumCreateNested(items: CurriculumInput[] | undefined) {
 /** See {@link faqReplaceNested} for the undefined-means-untouched contract. */
 export function curriculumReplaceNested(items: CurriculumInput[] | undefined) {
   if (items === undefined) return undefined;
-  return { deleteMany: {}, create: items.map((item, i) => curriculumRow(item, i)) };
+  return {
+    deleteMany: {},
+    create: items.map((item, i) => curriculumRow(item, i)),
+  };
 }
 
 /** Standard include for reading a plan's buyer-facing content back out. */

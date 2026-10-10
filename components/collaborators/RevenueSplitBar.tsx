@@ -49,7 +49,9 @@ export function RevenueSplitBar({
             <div
               key={segment.key}
               className={`h-full ${segment.className}`}
-              style={{ width: `${Math.min(100, Math.max(0, segment.percent))}%` }}
+              style={{
+                width: `${Math.min(100, Math.max(0, segment.percent))}%`,
+              }}
             />
           ))}
         </div>

@@ -208,10 +208,7 @@ export function NotificationInbox() {
                 .catch(() => {});
               // Redirect first; the wire copy (`payload.href`) and the
               // event's own field behind it, for a redirect Novu dropped.
-              const data = (notification.data ?? {}) as Record<
-                string,
-                unknown
-              >;
+              const data = (notification.data ?? {}) as Record<string, unknown>;
               const raw =
                 notification.redirect?.url ??
                 (typeof data.href === "string" ? data.href : undefined) ??
@@ -249,8 +246,7 @@ export function NotificationInbox() {
               } catch {
                 toast({
                   title: "Invalid link",
-                  description:
-                    "This notification's link could not be opened.",
+                  description: "This notification's link could not be opened.",
                 });
               }
             }}

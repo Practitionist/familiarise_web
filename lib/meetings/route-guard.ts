@@ -32,6 +32,28 @@ export type MeetingRouteGrant = {
   access: Extract<MeetingAccess, { streamCallId: string }>;
 };
 
+function buildAccessRefusalBody(
+  access: Exclude<MeetingAccess, { hasAccess: true }>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    error: access.message,
+    reason: access.reason,
+  };
+  if ("code" in access && access.code) {
+    body.code = access.code;
+  }
+  if ("startsAt" in access && access.startsAt) {
+    body.startsAt = access.startsAt;
+  }
+  if ("endsAt" in access && access.endsAt) {
+    body.endsAt = access.endsAt;
+  }
+  if ("canReopen" in access && typeof access.canReopen === "boolean") {
+    body.canReopen = access.canReopen;
+  }
+  return body;
+}
+
 export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
   /** Named in the two log lines this emits, so a refusal says which route. */
@@ -72,20 +94,7 @@ export async function guardMeetingRoute(
       reason: access.reason,
     });
     return refuse(
-      {
-        error: access.message,
-        reason: access.reason,
-        ...("code" in access && access.code ? { code: access.code } : {}),
-        ...("startsAt" in access && access.startsAt
-          ? { startsAt: access.startsAt }
-          : {}),
-        ...("endsAt" in access && access.endsAt
-          ? { endsAt: access.endsAt }
-          : {}),
-        ...("canReopen" in access && typeof access.canReopen === "boolean"
-          ? { canReopen: access.canReopen }
-          : {}),
-      },
+      buildAccessRefusalBody(access),
       access.reason === "not_found" ? 404 : 403,
     );
   }

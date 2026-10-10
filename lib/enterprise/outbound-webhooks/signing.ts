@@ -111,10 +111,12 @@ export function verifySignature(
   // collect ALL of them and accept the body if it matches any one,
   // mirroring how Stripe/Svix verifiers iterate every listed signature.
   const v1s = parts.filter((p) => p.startsWith("v1=")).map((p) => p.slice(3));
-  if (!t || v1s.length === 0) return { valid: false, reason: "MALFORMED_HEADER" };
+  if (!t || v1s.length === 0)
+    return { valid: false, reason: "MALFORMED_HEADER" };
 
   const ts = Number(t);
-  if (!Number.isFinite(ts)) return { valid: false, reason: "MALFORMED_TIMESTAMP" };
+  if (!Number.isFinite(ts))
+    return { valid: false, reason: "MALFORMED_TIMESTAMP" };
 
   // Replay window check — the timestamp is BEFORE the signature
   // verification because rejecting on clock drift is cheaper than the
@@ -124,9 +126,7 @@ export function verifySignature(
     return { valid: false, reason: "REPLAY_WINDOW_EXCEEDED" };
   }
 
-  const expected = createHmac("sha256", secret)
-    .update(`${t}.${body}`)
-    .digest();
+  const expected = createHmac("sha256", secret).update(`${t}.${body}`).digest();
   for (const v1 of v1s) {
     let received: Buffer;
     try {

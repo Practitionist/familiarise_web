@@ -145,9 +145,12 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
-      streamLogger.warn("Meeting stage update unavailable — Stream circuit open", {
-        meetingId: meetingIdForLog,
-      });
+      streamLogger.warn(
+        "Meeting stage update unavailable — Stream circuit open",
+        {
+          meetingId: meetingIdForLog,
+        },
+      );
       return NextResponse.json(
         { error: "Video is temporarily unavailable. Please try again." },
         { status: 503 },

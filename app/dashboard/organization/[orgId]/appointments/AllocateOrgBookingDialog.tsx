@@ -67,9 +67,7 @@ export function AllocateOrgBookingDialog({
     setError(null);
     const trimmedReason = overrideReason.trim();
     if (trimmedReason.length < 5) {
-      setError(
-        "Please enter an audit justification of at least 5 characters.",
-      );
+      setError("Please enter an audit justification of at least 5 characters.");
       return;
     }
 

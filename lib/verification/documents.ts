@@ -19,9 +19,7 @@ export const MAX_DOCS_PER_VERIFICATION = 10;
 export const UNLINKED_UPLOAD_TTL_DAYS = 7;
 
 export type UploadRefusalCode =
-  | "QUOTA_EXCEEDED"
-  | "TOO_MANY_OUTSTANDING"
-  | "TOO_MANY_PER_REQUEST";
+  "QUOTA_EXCEEDED" | "TOO_MANY_OUTSTANDING" | "TOO_MANY_PER_REQUEST";
 
 export interface UploadRefusal {
   code: UploadRefusalCode;

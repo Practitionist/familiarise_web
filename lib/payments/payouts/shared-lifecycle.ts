@@ -190,9 +190,7 @@ export class PayoutMakerCheckerError extends Error {
  */
 export function resolvePayoutMsmeDeadline(
   msmeStatus:
-    | Parameters<
-        typeof computeMsmePaymentDeadline
-      >[0]["counterpartyMsmeStatus"]
+    | Parameters<typeof computeMsmePaymentDeadline>[0]["counterpartyMsmeStatus"]
     | null
     | undefined,
   writtenAgreement: boolean | null | undefined,
@@ -206,8 +204,7 @@ export function resolvePayoutMsmeDeadline(
 }
 
 export type GatewaySubmissionFailureClass =
-  | "PERMANENT_4XX"
-  | "TRANSIENT_OR_UNKNOWN";
+  "PERMANENT_4XX" | "TRANSIENT_OR_UNKNOWN";
 
 /**
  * Classifies a gateway payout submission error as a definitive 4xx rejection

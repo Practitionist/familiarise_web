@@ -10,7 +10,11 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  parseOccurrenceIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
@@ -141,9 +145,18 @@ const MEETING_SESSION_INCLUDE = {
   },
 } satisfies Prisma.MeetingInclude;
 
-function loadMeeting(callId: string) {
-  return prisma.meeting.findUnique({
+async function loadMeeting(callId: string) {
+  const direct = await prisma.meeting.findUnique({
     where: { streamCallId: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (direct) return direct;
+
+  const occurrenceId = parseOccurrenceIdFromCallId(callId);
+  if (!occurrenceId) return null;
+
+  return prisma.meeting.findUnique({
+    where: { appointmentOccurrenceId: occurrenceId },
     include: MEETING_SESSION_INCLUDE,
   });
 }

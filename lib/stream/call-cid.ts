@@ -48,6 +48,21 @@ export function toCallId(callCidOrId: string): string {
     : callCidOrId.slice(separator + 1) || callCidOrId;
 }
 
+const OCCURRENCE_CALL_ID_PATTERN =
+  /^occurrence-([0-9a-f-]{36})(?:-r[a-z0-9]+)?$/i;
+
+/**
+ * Extracts the underlying `AppointmentOccurrence.id` from a canonical or
+ * reopened Stream call identifier (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`).
+ */
+export function parseOccurrenceIdFromCallId(
+  callCidOrId: string,
+): string | null {
+  const bare = toCallId(callCidOrId);
+  const match = OCCURRENCE_CALL_ID_PATTERN.exec(bare);
+  return match ? match[1] : null;
+}
+
 /** cid → call type, falling back to the app default for a bare id. */
 export function callTypeFromCid(callCidOrId: string): string {
   const separator = callCidOrId.indexOf(":");

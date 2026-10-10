@@ -138,9 +138,7 @@ export default function ConsultationPricingToggle({
       ...slot,
       isAllocated: slot.isAllocated || false,
       bookingStatus: (slot.bookingStatus || "available") as
-        | "available"
-        | "partially-booked"
-        | "fully-booked",
+        "available" | "partially-booked" | "fully-booked",
     }));
 
     // Use breakDownSlotsPreservingStatus to create duration windows

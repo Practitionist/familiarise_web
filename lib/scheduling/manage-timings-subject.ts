@@ -13,10 +13,7 @@ import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
  */
 
 export type ManageTimingsAppointmentType =
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "WEBINAR"
-  | "CLASS";
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
 
 export interface ManageTimingsAppointmentLike {
   appointmentType: ManageTimingsAppointmentType;
@@ -102,11 +99,11 @@ function getEventDetails(
         durationInMonths:
           appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
         durationInHours:
-          appointment.subscription?.subscriptionPlan
-            ?.sessionDurationInHours || 1,
+          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
+          1,
         sessionDurationInHours:
-          appointment.subscription?.subscriptionPlan
-            ?.sessionDurationInHours || 1,
+          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
+          1,
         totalSessions:
           appointment.subscription?.subscriptionPlan?.totalSessions ??
           undefined,
@@ -119,8 +116,7 @@ function getEventDetails(
         eventId: appointment.webinar?.id || "",
         sessionsPerWeek: 1,
         durationInMonths: 1,
-        durationInHours:
-          appointment.webinar?.webinarPlan?.durationInHours || 1,
+        durationInHours: appointment.webinar?.webinarPlan?.durationInHours || 1,
         title: appointment.webinar?.webinarPlan?.title || "Webinar",
       };
     case "CLASS": {

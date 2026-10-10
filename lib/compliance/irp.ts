@@ -60,15 +60,14 @@ export interface IrpResponse {
 export function isClearTaxConfigured(): boolean {
   return Boolean(
     process.env.CLEARTAX_API_KEY &&
-      process.env.CLEARTAX_GSP_TOKEN &&
-      process.env.CLEARTAX_GSTIN,
+    process.env.CLEARTAX_GSP_TOKEN &&
+    process.env.CLEARTAX_GSTIN,
   );
 }
 
 function clearTaxBaseUrl(): string {
   const envName = (process.env.CLEARTAX_ENV ?? "sandbox") as
-    | "sandbox"
-    | "production";
+    "sandbox" | "production";
   return CLEARTAX_BASE_URLS[envName] ?? CLEARTAX_BASE_URLS.sandbox;
 }
 

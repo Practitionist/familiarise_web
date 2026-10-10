@@ -41,7 +41,7 @@ The provider wraps its children in `<Chat>` and `<StreamVideo>` only once a clie
 
 The user-visible symptom was a join button that appeared to do nothing: the click started a join, the dashboard remounted underneath it as the second client connected, and the in-flight join was destroyed. People pressed it repeatedly.
 
-Committing both clients in one `setClients` makes the tree shape a pure function of one value, so it changes exactly once per session: unwrapped while connecting, then wrapped once both connects settle. A connect that genuinely _fails_ can still cost a second change if a later retry succeeds; that is accepted, because withholding the client that did connect would break the sidebar's chat-unread badge on every route (#248).
+Committing both clients in one `setClients` makes the tree shape a pure function of one value, so it changes exactly once per session: unwrapped while connecting, then wrapped once both connects settle. A connect that genuinely _fails_ can still cost a second change if a later retry succeeds; that is accepted, because withholding the client that did connect would break the sidebar's chat-unread badge on every route.
 
 The nesting order is fixed — `<Chat>` outside, `<StreamVideo>` inside — for the same reason. Order must not depend on arrival order.
 
@@ -1170,7 +1170,7 @@ return () => {
 
 **Cleanup process:**
 
-1. Cancel the deferred `requestIdleCallback` connect (#248)
+1. Cancel the deferred `requestIdleCallback` connect
 2. Clear the retry backoff timer
 3. Leave the clients connected
 
@@ -1354,6 +1354,14 @@ sudo ntpdate pool.ntp.org
 
 - [12. Error Handling](./12-error-handling.md) - Error boundaries and recovery
 - [Troubleshooting](./troubleshooting.md) - Common issues and workarounds
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Dual Independent `useState` Client Hooks**: Superseded by single-commit `setClients` state transitions in `StreamProviderImpl.tsx` so dashboard subtrees mount once rather than remounting mid-click.
+- **Eager Synchronous SDK Bundles in Root Layout**: Superseded by `providers/StreamProvider.tsx` (SDK-free shell) + lazy `next/dynamic(..., { ssr: false })` and `requestIdleCallback` deferred connection.
+- **Unmounting WebSockets on Route Changes**: Superseded by module-scoped client persistence (`lib/stream/disconnect.ts`) tearing down only on explicit logout or principal swap.
 
 ---
 

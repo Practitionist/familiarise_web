@@ -14,11 +14,7 @@ export interface IDocument {
   storagePath?: string;
   description: string | null;
   reviewStatus:
-    | "PENDING"
-    | "IN_REVIEW"
-    | "APPROVED"
-    | "REJECTED"
-    | "NEEDS_REVISION";
+    "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
   reviewedById?: string | null;

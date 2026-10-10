@@ -114,8 +114,14 @@ export async function POST(
       });
       razorpayOrderId = order.id;
     } catch (err) {
-      if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
-        Sentry.logger.warn("[invoice/pay] Razorpay gateway not configured", { tags: { subsystem: "enterprise" }, extra: { orgId, invoiceId } });
+      if (
+        err instanceof PaymentError &&
+        err.code === "RAZORPAY_NOT_INITIALIZED"
+      ) {
+        Sentry.logger.warn("[invoice/pay] Razorpay gateway not configured", {
+          tags: { subsystem: "enterprise" },
+          extra: { orgId, invoiceId },
+        });
         return NextResponse.json(
           {
             error:
@@ -125,7 +131,10 @@ export async function POST(
           { status: 503 },
         );
       }
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" }, extra: { orgId, invoiceId } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "enterprise" }, extra: { orgId, invoiceId } },
+      );
       console.error("[invoice/pay] createRazorpayOrder failed:", err);
       return NextResponse.json(
         {
@@ -176,7 +185,13 @@ export async function POST(
     } catch (err) {
       // Gateway order already live — log but return it so the client
       // can proceed. The webhook still honours the order on capture.
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" }, extra: { orgId, invoiceId, razorpayOrderId } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          tags: { subsystem: "enterprise" },
+          extra: { orgId, invoiceId, razorpayOrderId },
+        },
+      );
       console.error(
         "[invoice/pay] failed to persist providerPaymentOrderId/audit log:",
         err,

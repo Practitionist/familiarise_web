@@ -6,10 +6,7 @@ import {
 } from "@/lib/stream/dm-eligibility-statuses";
 
 export type StreamEventType =
-  | "webinar"
-  | "class"
-  | "consultation"
-  | "subscription";
+  "webinar" | "class" | "consultation" | "subscription";
 
 /**
  * Verify that `userId` is an active participant, host, or accepted collaborator

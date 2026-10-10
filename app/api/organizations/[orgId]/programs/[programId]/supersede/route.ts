@@ -153,8 +153,7 @@ export async function POST(
 
           assertMergedOverageConfigValid({
             programType: old.type,
-            fundingSource:
-              old.contract?.billingAccount?.fundingSource ?? null,
+            fundingSource: old.contract?.billingAccount?.fundingSource ?? null,
             overageBehavior: mergedOverage.overageBehavior,
             overageSurchargeBps: mergedOverage.overageSurchargeBps,
             maxOveragePerCyclePaise: mergedOverage.maxOveragePerCyclePaise,

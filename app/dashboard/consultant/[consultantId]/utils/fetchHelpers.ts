@@ -4,12 +4,7 @@ import {
   TSubscription,
 } from "@/types/appointment";
 import { TConsultantProfile } from "@/types/consultant";
-import {
-  ApiResponse,
-  DocumentsPage,
-  IActivity,
-  IApproval,
-} from "../types";
+import { ApiResponse, DocumentsPage, IActivity, IApproval } from "../types";
 
 /**
  * Query params accepted by the consultant documents API (issue #346).
@@ -245,7 +240,9 @@ export async function fetchDocuments(
       }
 
       // Create an enhanced error with both technical and user-friendly messages
-      const enhancedError = new Error(userFriendlyMessage) as DocumentFetchError;
+      const enhancedError = new Error(
+        userFriendlyMessage,
+      ) as DocumentFetchError;
       enhancedError.name = "DocumentFetchError";
       enhancedError.technicalMessage = errorMessage;
       enhancedError.status = response.status;
@@ -328,7 +325,9 @@ export async function fetchDocuments(
           "An unexpected error occurred while loading documents. Please try again.";
       }
 
-      const enhancedError = new Error(userFriendlyMessage) as DocumentFetchError;
+      const enhancedError = new Error(
+        userFriendlyMessage,
+      ) as DocumentFetchError;
       enhancedError.name = "DocumentFetchError";
       enhancedError.technicalMessage = error.message;
       enhancedError.originalError = error;

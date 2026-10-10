@@ -42,6 +42,7 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: () => ({
         end: (...a: unknown[]) => mockEnd(...a),
+        getOrCreate: jest.fn().mockResolvedValue({}),
       }),
     },
   })),
@@ -49,7 +50,9 @@ jest.mock("../../lib/stream-client", () => ({
 
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
-    consentArtifact: { findFirst: jest.fn() },
+    consentArtifact: {
+      findFirst: jest.fn().mockResolvedValue({ id: "consent-1" }),
+    },
     meeting: {
       findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
       updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
@@ -168,7 +171,7 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
   });
 
   describe("Cross-surface status parity (Home, Appointments, Detail, Room)", () => {
-    it("preserves meeting termination on toOccurrenceLike so Consultee Detail hides stale Join", () => {
+    it("preserves meeting termination on occurrencesOfAppointment while keeping toOccurrenceLike strictly scoped to scheduling keys", () => {
       const now = new Date("2026-10-10T15:00:00.000Z");
       const rawRow = {
         id: "occ-1",
@@ -184,11 +187,7 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
       };
 
       const like = toOccurrenceLike(rawRow);
-      expect(like.meeting).toEqual({
-        id: "mtg-1",
-        endedAt: rawRow.meeting.endedAt,
-        endedReason: "call_ended",
-      });
+      expect(like.meeting).toBeUndefined();
     });
 
     it("transitions deriveBooking immediately from CONFIRMED to COMPLETED when host ends session mid-slot, while keeping CONFIRMED on self-leave", () => {

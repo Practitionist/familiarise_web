@@ -133,9 +133,7 @@ export async function getMyProgramData(params: {
   });
 
   const upcomingSessions: UpcomingSession[] = upcomingAppointments
-    .filter(
-      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
-    )
+    .filter((a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt)
     .map((a) => {
       const slot = a.occurrences[0];
       const title =
@@ -147,7 +145,9 @@ export async function getMyProgramData(params: {
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();
       const joinable =
-        !slot.isTentative && nowMs >= startMs - CONSULTEE_JOIN_WINDOW_MS && nowMs <= endMs;
+        !slot.isTentative &&
+        nowMs >= startMs - CONSULTEE_JOIN_WINDOW_MS &&
+        nowMs <= endMs;
       return {
         id: a.id,
         type: a.appointmentType,

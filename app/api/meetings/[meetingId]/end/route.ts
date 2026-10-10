@@ -58,7 +58,7 @@ export async function POST(
           reason: err instanceof Error ? err.message : String(err),
         },
       );
-      return null;
+      throw err;
     });
 
     streamLogger.info("Meeting ended by host", {

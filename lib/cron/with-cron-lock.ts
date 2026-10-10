@@ -118,8 +118,7 @@ async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null
   try {
     const mod = await import("@/lib/prisma");
     const prisma = mod.default as unknown as
-      | { systemJobExecution?: SystemJobExecutionDelegate }
-      | undefined;
+      { systemJobExecution?: SystemJobExecutionDelegate } | undefined;
     return prisma?.systemJobExecution ?? null;
   } catch {
     return null;
@@ -130,8 +129,7 @@ async function touchRedisHeartbeat(): Promise<void> {
   try {
     const mod = await import("@/lib/redis");
     const redis = mod.default as
-      | { set?: (key: string, value: string) => Promise<unknown> }
-      | undefined;
+      { set?: (key: string, value: string) => Promise<unknown> } | undefined;
     if (redis && typeof redis.set === "function") {
       await Promise.resolve(
         redis.set("cron:heartbeat:last", new Date().toISOString()),

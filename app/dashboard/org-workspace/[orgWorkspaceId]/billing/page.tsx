@@ -1,4 +1,8 @@
-import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
 import { requireAuth } from "@/lib/auth-guard";
 import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
 import { workspaceBillingQueryKey } from "../workspace-billing-keys";

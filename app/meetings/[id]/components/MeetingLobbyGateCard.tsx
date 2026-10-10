@@ -38,11 +38,15 @@ function formatOpenCountdown(msUntilOpen: number): string {
  * - `SESSION_ENDED`: Clean session-concluded card with Host "Reopen Session Room" safety valve inside window.
  * - Default: Security Access Denied shield for unauthorized callers.
  */
+const MAX_AUTO_RETRIES = 3;
+const AUTO_RETRY_BACKOFF_MS = 5_000;
+const autoRetryAttemptsByWindow = new Map<string, number>();
+
 export function MeetingLobbyGateCard({
   meetingId,
   access,
   onRetryJoin,
-}: MeetingLobbyGateCardProps) {
+}: Readonly<MeetingLobbyGateCardProps>) {
   const router = useRouter();
   const { data: session } = useSession();
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -56,16 +60,22 @@ export function MeetingLobbyGateCard({
 
   useEffect(() => {
     if (access.code !== "TOO_EARLY" || openAtMs === null) return;
+    const windowKey = `${meetingId}:${openAtMs}`;
+    const priorAttempts = autoRetryAttemptsByWindow.get(windowKey) ?? 0;
+    if (priorAttempts >= MAX_AUTO_RETRIES) return;
+
+    const retryAtMs = openAtMs + priorAttempts * AUTO_RETRY_BACKOFF_MS;
     const id = window.setInterval(() => {
       const current = Date.now();
       setNowMs(current);
-      if (current >= openAtMs) {
+      if (current >= retryAtMs) {
         window.clearInterval(id);
+        autoRetryAttemptsByWindow.set(windowKey, priorAttempts + 1);
         onRetryJoin();
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [access.code, openAtMs, onRetryJoin]);
+  }, [access.code, meetingId, openAtMs, onRetryJoin]);
 
   const scheduledLabel = formatScheduledAt(
     startsAt,

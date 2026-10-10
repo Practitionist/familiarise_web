@@ -1,12 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  ChevronsUpDown,
-  Check,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { ChevronsUpDown, Check, ChevronDown, ChevronUp } from "lucide-react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 
 import { cn } from "@/utils/tailwind";

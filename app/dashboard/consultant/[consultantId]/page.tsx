@@ -11,7 +11,9 @@ type PageProps = {
  * (the old client stub flashed skeletons on every direct visit to
  * /dashboard/consultant/<id>).
  */
-export default async function ConsultantDashboard({ params }: Readonly<PageProps>) {
+export default async function ConsultantDashboard({
+  params,
+}: Readonly<PageProps>) {
   const { consultantId } = await params;
   redirect(`/dashboard/consultant/${consultantId}/home`);
 }

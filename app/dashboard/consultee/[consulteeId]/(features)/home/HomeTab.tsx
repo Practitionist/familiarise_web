@@ -35,6 +35,7 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import {
   toOccurrenceVM,
   type NeedsActionReason,

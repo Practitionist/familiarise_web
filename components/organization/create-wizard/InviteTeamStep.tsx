@@ -121,11 +121,7 @@ export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
           </Label>
           <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto p-2 border border-zinc-200 rounded-lg bg-zinc-50">
             {emails.map((email) => (
-              <Badge
-                key={email}
-                variant="secondary"
-                className="gap-1 pr-1"
-              >
+              <Badge key={email} variant="secondary" className="gap-1 pr-1">
                 {email}
                 <button
                   type="button"

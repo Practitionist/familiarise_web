@@ -7,12 +7,104 @@ import {
   isDeadOccurrence,
   isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
+import { isCancelledLikeStatus } from "@/lib/appointments/status";
 import { isPresenterRole } from "@/lib/collaborators/roles";
+import { hasStreamConsent } from "@/lib/meetings/access";
 import { meetingIdParamSchema } from "@/lib/meetings/route-guard";
-import { isStreamConfigured } from "@/lib/stream-client";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { toCallId } from "@/lib/stream/call-cid";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
+
+async function isAuthorizedReopenHost(
+  userId: string,
+  occurrenceConsultantProfileId: string | null | undefined,
+  appt: {
+    consultation?: {
+      consultationPlan?: { consultantProfileId?: string | null } | null;
+    } | null;
+    subscription?: {
+      subscriptionPlan?: { consultantProfileId?: string | null } | null;
+    } | null;
+    webinar?: {
+      webinarPlan?: {
+        id: string;
+        consultantProfileId?: string | null;
+      } | null;
+    } | null;
+    class?: {
+      classPlan?: {
+        id: string;
+        consultantProfileId?: string | null;
+      } | null;
+    } | null;
+    trial?: {
+      consultantProfileId?: string | null;
+      subscriptionPlan?: { consultantProfileId?: string | null } | null;
+    } | null;
+  },
+): Promise<boolean> {
+  const userRecord = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { consultantProfileId: true },
+  });
+  const profileId = userRecord?.consultantProfileId;
+  if (!profileId) return false;
+
+  const planOwnerId =
+    appt.consultation?.consultationPlan?.consultantProfileId ??
+    appt.subscription?.subscriptionPlan?.consultantProfileId ??
+    appt.webinar?.webinarPlan?.consultantProfileId ??
+    appt.class?.classPlan?.consultantProfileId ??
+    appt.trial?.consultantProfileId ??
+    appt.trial?.subscriptionPlan?.consultantProfileId ??
+    null;
+
+  if (
+    profileId === planOwnerId ||
+    profileId === occurrenceConsultantProfileId
+  ) {
+    return true;
+  }
+
+  const webinarPlanId = appt.webinar?.webinarPlan?.id;
+  const classPlanId = appt.class?.classPlan?.id;
+  if (!webinarPlanId && !classPlanId) return false;
+
+  const collab = await prisma.collaborator.findFirst({
+    where: {
+      consultantProfileId: profileId,
+      status: "ACCEPTED",
+      consultantProfile: { deletedAt: null },
+      ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
+    },
+    select: { role: true },
+  });
+  return Boolean(collab && isPresenterRole(collab.role));
+}
+
+function isAppointmentInactiveForReopen(appt: {
+  deletedAt?: Date | null;
+  consultation?: { status?: string | null } | null;
+  subscription?: { status?: string | null } | null;
+  webinar?: { status?: string | null } | null;
+  class?: { status?: string | null } | null;
+  trial?: { status?: string | null } | null;
+}): boolean {
+  if (appt.deletedAt) return true;
+  const bookingStatus =
+    appt.consultation?.status ??
+    appt.subscription?.status ??
+    appt.webinar?.status ??
+    appt.class?.status ??
+    appt.trial?.status ??
+    null;
+  return Boolean(bookingStatus && isCancelledLikeStatus(bookingStatus));
+}
 
 /**
  * POST /api/meetings/[meetingId]/reopen
@@ -48,6 +140,15 @@ export async function POST(
       );
     }
 
+    if (!(await hasStreamConsent(user.id))) {
+      return NextResponse.json(
+        {
+          error: "Stream data-processing consent is required to reopen calls.",
+        },
+        { status: 403 },
+      );
+    }
+
     const meeting = await prisma.meeting.findUnique({
       where: { streamCallId: callId },
       include: {
@@ -56,7 +157,8 @@ export async function POST(
             appointment: {
               include: {
                 consultation: {
-                  include: {
+                  select: {
+                    status: true,
                     consultationPlan: {
                       select: {
                         consultantProfileId: true,
@@ -65,7 +167,8 @@ export async function POST(
                   },
                 },
                 subscription: {
-                  include: {
+                  select: {
+                    status: true,
                     subscriptionPlan: {
                       select: {
                         consultantProfileId: true,
@@ -74,7 +177,8 @@ export async function POST(
                   },
                 },
                 webinar: {
-                  include: {
+                  select: {
+                    status: true,
                     webinarPlan: {
                       select: {
                         id: true,
@@ -84,7 +188,8 @@ export async function POST(
                   },
                 },
                 class: {
-                  include: {
+                  select: {
+                    status: true,
                     classPlan: {
                       select: {
                         id: true,
@@ -95,7 +200,11 @@ export async function POST(
                 },
                 trial: {
                   select: {
+                    status: true,
                     consultantProfileId: true,
+                    subscriptionPlan: {
+                      select: { consultantProfileId: true },
+                    },
                   },
                 },
               },
@@ -112,42 +221,11 @@ export async function POST(
       );
     }
 
-    const userRecord = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { consultantProfileId: true },
-    });
-    const appt = meeting.occurrence.appointment;
-    const ownerProfileId =
-      appt.consultation?.consultationPlan?.consultantProfileId ??
-      appt.subscription?.subscriptionPlan?.consultantProfileId ??
-      appt.webinar?.webinarPlan?.consultantProfileId ??
-      appt.class?.classPlan?.consultantProfileId ??
-      appt.trial?.consultantProfileId ??
-      meeting.occurrence.consultantProfileId ??
-      null;
-
-    let isAuthorizedHost = Boolean(
-      ownerProfileId && userRecord?.consultantProfileId === ownerProfileId,
+    const isAuthorizedHost = await isAuthorizedReopenHost(
+      user.id,
+      meeting.occurrence.consultantProfileId,
+      meeting.occurrence.appointment,
     );
-
-    if (!isAuthorizedHost && userRecord?.consultantProfileId) {
-      const webinarPlanId = appt.webinar?.webinarPlan?.id;
-      const classPlanId = appt.class?.classPlan?.id;
-      if (webinarPlanId || classPlanId) {
-        const collab = await prisma.collaborator.findFirst({
-          where: {
-            consultantProfileId: userRecord.consultantProfileId,
-            status: "ACCEPTED",
-            consultantProfile: { deletedAt: null },
-            ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
-          },
-          select: { role: true },
-        });
-        if (collab && isPresenterRole(collab.role)) {
-          isAuthorizedHost = true;
-        }
-      }
-    }
 
     if (!isAuthorizedHost) {
       return NextResponse.json(
@@ -156,7 +234,10 @@ export async function POST(
       );
     }
 
-    if (isDeadOccurrence(meeting.occurrence)) {
+    if (
+      isDeadOccurrence(meeting.occurrence) ||
+      isAppointmentInactiveForReopen(meeting.occurrence.appointment)
+    ) {
       return NextResponse.json(
         { error: "This session slot is no longer active." },
         { status: 409 },
@@ -214,6 +295,21 @@ export async function POST(
         streamCallId: current?.streamCallId ?? meeting.streamCallId,
       });
     }
+
+    await withStreamCircuitBreaker(() =>
+      getStreamVideoClient()
+        .video.call(STREAM_CALL_TYPE, nextCallId)
+        .getOrCreate({
+          data: {
+            created_by_id: user.id,
+            starts_at: startsAt,
+            custom: {
+              sessionStartsAt: startsAt.toISOString(),
+              sessionEndsAt: endsAt.toISOString(),
+            },
+          },
+        }),
+    );
 
     streamLogger.info("Closed meeting room reopened by host", {
       userId: user.id,

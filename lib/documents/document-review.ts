@@ -99,7 +99,9 @@ export function isReviewTransitionAllowed(
  * can compute the same next versionNo; the sidecar unique index turns the
  * loser into P2002, which re-runs the whole resolve-and-insert.
  */
-export async function withVersionConflictRetry<T>(fn: () => Promise<T>): Promise<T> {
+export async function withVersionConflictRetry<T>(
+  fn: () => Promise<T>,
+): Promise<T> {
   let attempt = 0;
   for (;;) {
     try {

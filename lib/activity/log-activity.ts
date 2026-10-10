@@ -54,7 +54,10 @@ export async function logActivity({
     });
   } catch (error) {
     // Non-fatal — activity logging should not break main flows
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "activity" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "activity" } },
+    );
     console.warn("Failed to log activity:", error);
     return null;
   }

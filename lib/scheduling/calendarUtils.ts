@@ -390,10 +390,7 @@ export function groupSelectedIntoSessions(
       slot.endTime.getTime() > open.end.getTime() &&
       (schedulingTimezone
         ? ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
-          ScheduleCalculationService.dayKey(
-            slot.startTime,
-            schedulingTimezone,
-          )
+          ScheduleCalculationService.dayKey(slot.startTime, schedulingTimezone)
         : open.start.toISOString().slice(0, 10) ===
           slot.startTime.toISOString().slice(0, 10))
     ) {

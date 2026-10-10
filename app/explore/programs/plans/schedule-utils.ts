@@ -40,8 +40,7 @@ export function buildSessionsFromAppointment(
         o.completionStatus !== "RESCHEDULED",
     )
     .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
 
   return sorted.map((occurrence, idx) => {

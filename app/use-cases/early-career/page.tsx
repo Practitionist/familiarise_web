@@ -4,7 +4,8 @@ import UseCasePageLayout from "../UseCasePageLayout";
 import type { UseCasePageData } from "../UseCasePageLayout";
 
 export const metadata: Metadata = {
-  title: "Career Guidance for Early-Career Professionals in India | Familiarise",
+  title:
+    "Career Guidance for Early-Career Professionals in India | Familiarise",
   description:
     "CTC versus in-hand, variable pay, clawbacks, notice periods and whether your role is actually compounding. Book an hour with someone five years ahead of you. Rupee pricing, full refund 24 hours ahead.",
 };
@@ -238,8 +239,14 @@ const data: UseCasePageData = {
       "Every listing shows price, session length and reviews from people who actually completed a session.",
     links: [
       { label: "System design", href: "/explore/experts?search=System+Design" },
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
-      { label: "Machine learning", href: "/explore/experts?search=Machine+Learning" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
+      {
+        label: "Machine learning",
+        href: "/explore/experts?search=Machine+Learning",
+      },
       { label: "Cloud", href: "/explore/experts?search=Cloud" },
       { label: "DevOps", href: "/explore/experts?search=DevOps" },
       { label: "Technology", href: "/explore/experts?search=Technology" },

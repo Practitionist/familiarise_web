@@ -48,11 +48,7 @@ import {
 } from "./transitions";
 
 export type AbandonKind =
-  | "consultation"
-  | "subscription"
-  | "trial"
-  | "webinar"
-  | "class";
+  "consultation" | "subscription" | "trial" | "webinar" | "class";
 
 export type AbandonResult =
   | {

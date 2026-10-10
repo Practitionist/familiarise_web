@@ -54,9 +54,7 @@ export interface ProgramLockSignals {
 
 /** A program's money config is locked once anything rides on it. */
 export function isProgramMoneyConfigLocked(s: ProgramLockSignals): boolean {
-  return (
-    s.assignmentCount > 0 || s.bookingCount > 0 || s.overageEventCount > 0
-  );
+  return s.assignmentCount > 0 || s.bookingCount > 0 || s.overageEventCount > 0;
 }
 
 export interface ContractLockSignals {
@@ -117,7 +115,10 @@ export async function getProgramLockState(
 export async function getContractLockState(
   contractId: string,
   status: ContractStatus,
-  client: Pick<typeof prisma, "organizationInvoice" | "programAssignment"> = prisma,
+  client: Pick<
+    typeof prisma,
+    "organizationInvoice" | "programAssignment"
+  > = prisma,
 ): Promise<{ locked: boolean; signals: ContractLockSignals }> {
   const [invoiceCount, liveAssignmentCount] = await Promise.all([
     client.organizationInvoice.count({ where: { contractId } }),

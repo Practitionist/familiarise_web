@@ -54,13 +54,7 @@ export interface CustomWindowInput {
 }
 
 export type AvailabilityRefusalCode =
-  | "EMPTY"
-  | "RANGE"
-  | "ORDER"
-  | "DURATION"
-  | "GRID"
-  | "OVERLAP"
-  | "PAST";
+  "EMPTY" | "RANGE" | "ORDER" | "DURATION" | "GRID" | "OVERLAP" | "PAST";
 
 export interface AvailabilityRefusal {
   code: AvailabilityRefusalCode;

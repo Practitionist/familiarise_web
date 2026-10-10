@@ -11,6 +11,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { useSessionInfo } from "../session-info";
@@ -37,11 +38,12 @@ export function CallExitButton({
   isHost,
   onLeaveForSelf,
   onEnding,
-}: CallExitButtonProps) {
+}: Readonly<CallExitButtonProps>) {
   const call = useCall();
   const router = useRouter();
   const { data: session } = useSession();
   const info = useSessionInfo();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
   const endingRef = useRef(false);
@@ -83,6 +85,12 @@ export function CallExitButton({
       }
     } catch (error) {
       console.error("Error ending call:", error);
+      toast({
+        title: "Could not close room cleanly",
+        description:
+          "Leaving locally instead — the room will close automatically shortly.",
+        variant: "destructive",
+      });
     } finally {
       try {
         await leaveCallAndReleaseMedia(call);
@@ -94,7 +102,7 @@ export function CallExitButton({
       setOpen(false);
       router.push(getDashboardUrl());
     }
-  }, [call, getDashboardUrl, onEnding, router]);
+  }, [call, getDashboardUrl, onEnding, router, toast]);
 
   if (!isHost) {
     return (

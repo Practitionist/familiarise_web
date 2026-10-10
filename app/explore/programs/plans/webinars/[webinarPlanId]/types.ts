@@ -39,7 +39,4 @@ export type TWebinarPlanData = Omit<
 };
 
 export type TSessionStatus =
-  | "Upcoming"
-  | "Happening Now"
-  | "Completed"
-  | "To be announced";
+  "Upcoming" | "Happening Now" | "Completed" | "To be announced";

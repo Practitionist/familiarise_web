@@ -26,7 +26,11 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
  * historic roster (review F-HIGH-2), and because the freeze ledger was stamped
  * before deletion, the resurrected channel would never be re-frozen.
  */
-export function isPastRetention(latestEndsAt: Date | null, retentionDays: number, now = Date.now()): boolean {
+export function isPastRetention(
+  latestEndsAt: Date | null,
+  retentionDays: number,
+  now = Date.now(),
+): boolean {
   if (!latestEndsAt) return false;
   return now - latestEndsAt.getTime() >= retentionDays * DAY_MS;
 }

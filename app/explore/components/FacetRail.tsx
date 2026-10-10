@@ -69,7 +69,10 @@ export default function FacetRail({
               )}
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-[88%] max-w-sm overflow-y-auto">
+          <SheetContent
+            side="left"
+            className="w-[88%] max-w-sm overflow-y-auto"
+          >
             <SheetHeader>
               <SheetTitle>Filters</SheetTitle>
             </SheetHeader>

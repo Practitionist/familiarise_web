@@ -218,10 +218,12 @@ async function applyStreamCallExtension(
   resolvedCallId: string,
   baseCapSeconds: number,
   appointmentType: string | null,
+  slotEndsAt: Date,
 ): Promise<{
   alreadyExtended: boolean;
   updatedCapSeconds: number;
   extensionsUsed: number;
+  targetEndsAt: Date;
 }> {
   return withStreamCircuitBreaker(async () => {
     const call = getStreamVideoClient().video.call(
@@ -254,6 +256,15 @@ async function applyStreamCallExtension(
         ? (currentState.call.custom as Record<string, unknown>)
         : {};
 
+    const rawBaseEndsAt =
+      typeof existingCustom.sessionBaseEndsAt === "string"
+        ? new Date(existingCustom.sessionBaseEndsAt)
+        : slotEndsAt;
+    const baseEndsAt = Number.isNaN(rawBaseEndsAt.getTime())
+      ? slotEndsAt
+      : rawBaseEndsAt;
+    const targetEndsAt = new Date(baseEndsAt.getTime() + EXTENSION_MS);
+
     const prevExtended =
       typeof existingCustom.extendedSeconds === "number"
         ? existingCustom.extendedSeconds
@@ -268,6 +279,7 @@ async function applyStreamCallExtension(
         alreadyExtended: true,
         updatedCapSeconds: currentCapSeconds,
         extensionsUsed,
+        targetEndsAt,
       };
     }
 
@@ -289,6 +301,8 @@ async function applyStreamCallExtension(
         ...existingCustom,
         extendedSeconds: prevExtended + EXTENSION_SECONDS,
         extensionsUsed: nextExtensionsUsed,
+        sessionBaseEndsAt: baseEndsAt.toISOString(),
+        sessionEndsAt: targetEndsAt.toISOString(),
       },
     });
 
@@ -296,6 +310,7 @@ async function applyStreamCallExtension(
       alreadyExtended: false,
       updatedCapSeconds,
       extensionsUsed: nextExtensionsUsed,
+      targetEndsAt,
     };
   });
 }
@@ -422,13 +437,30 @@ export async function POST(
       resolvedCallId,
       baseCapSeconds,
       resolveAppointmentType(appt),
+      slotEndsAt,
     );
+
+    const { targetEndsAt } = extendResult;
+    let persistedEndsAt = occurrence.endsAt ?? targetEndsAt;
+    if (
+      !occurrence.endsAt ||
+      occurrence.endsAt.getTime() < targetEndsAt.getTime()
+    ) {
+      const updated = await prisma.appointmentOccurrence.updateMany({
+        where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
+        data: { endsAt: targetEndsAt },
+      });
+      if (updated.count > 0) {
+        persistedEndsAt = targetEndsAt;
+      }
+    }
 
     if (extendResult.alreadyExtended) {
       return NextResponse.json(
         {
           extended: false,
           alreadyExtended: true,
+          endsAt: persistedEndsAt.toISOString(),
           hasConflictingNextBooking: false,
           error: "Free +15m extension has already been used for this session.",
         },
@@ -436,19 +468,13 @@ export async function POST(
       );
     }
 
-    const extendedEndsAt = new Date(slotEndsAt.getTime() + EXTENSION_MS);
-    await prisma.appointmentOccurrence.updateMany({
-      where: { id: occurrence.id, endsAt: slotEndsAt },
-      data: { endsAt: extendedEndsAt },
-    });
-
     streamLogger.info("Meeting duration extended by host", {
       userId,
       meetingId: resolvedCallId,
       addedSeconds: EXTENSION_SECONDS,
       maxDurationSeconds: extendResult.updatedCapSeconds,
       extensionsUsed: extendResult.extensionsUsed,
-      extendedEndsAt: extendedEndsAt.toISOString(),
+      extendedEndsAt: persistedEndsAt.toISOString(),
     });
 
     return NextResponse.json({
@@ -456,7 +482,7 @@ export async function POST(
       addedSeconds: EXTENSION_SECONDS,
       maxDurationSeconds: extendResult.updatedCapSeconds,
       extensionsUsed: extendResult.extensionsUsed,
-      endsAt: extendedEndsAt.toISOString(),
+      endsAt: persistedEndsAt.toISOString(),
       hasConflictingNextBooking: false,
     });
   } catch (error) {

@@ -20,7 +20,8 @@ export function refundedPaise(refunds: RefundLike[]): number {
   return refunds
     .filter(
       (r) =>
-        r.status === RefundStatus.SUCCEEDED || r.status === RefundStatus.PENDING,
+        r.status === RefundStatus.SUCCEEDED ||
+        r.status === RefundStatus.PENDING,
     )
     .reduce((acc, r) => acc + r.amountPaise, 0);
 }

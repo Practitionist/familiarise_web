@@ -15,10 +15,7 @@ import { isValidTimeZone } from "@/lib/time/viewer-zone";
  */
 
 export type ClientEventType =
-  | "subscription"
-  | "class"
-  | "webinar"
-  | "consultation";
+  "subscription" | "class" | "webinar" | "consultation";
 
 /** The subset of hook options the validators need (structurally compatible
  * with UseEventSlotAllocationOptions). */
@@ -750,7 +747,8 @@ function validateSubscriptionSelection(
   if (!result.weeklyDistributionValid) {
     result.isValid = false;
     result.errors.push(
-      subscriptionValidation.weeklyCallsError || "Weekly session limit exceeded",
+      subscriptionValidation.weeklyCallsError ||
+        "Weekly session limit exceeded",
     );
   }
 
@@ -859,7 +857,14 @@ export function validateEventSlots(
       validateWebinarSelection(slots, limits, result);
       break;
     case "class":
-      validateClassSelection(slots, constraints, limits, options, result, timeZone);
+      validateClassSelection(
+        slots,
+        constraints,
+        limits,
+        options,
+        result,
+        timeZone,
+      );
       break;
     case "subscription":
       validateSubscriptionSelection(slots, options, limits, result);
@@ -901,4 +906,3 @@ export function resolveGridZone(
   }
   return isValidTimeZone(viewerZone) ? viewerZone : browserZone;
 }
-

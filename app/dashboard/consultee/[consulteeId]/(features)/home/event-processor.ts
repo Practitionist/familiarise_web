@@ -567,8 +567,7 @@ function processTrial(
       payLinkHref({
         paymentId: payablePaymentId(
           (trial.appointment as { payment?: unknown } | null)?.payment as
-            | Parameters<typeof payablePaymentId>[0]
-            | undefined,
+            Parameters<typeof payablePaymentId>[0] | undefined,
         ),
         checkoutUrl: trial.pendingPaymentUrl,
       }) ??
@@ -613,8 +612,7 @@ export function groupSlotsIntoSessions(
     startTime: row.startsAt,
     endTime: row.endsAt,
     status: (row.endsAt < now ? "completed" : "upcoming") as
-      | "completed"
-      | "upcoming",
+      "completed" | "upcoming",
   }));
 }
 

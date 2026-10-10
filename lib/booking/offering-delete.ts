@@ -27,10 +27,7 @@ import {
 } from "@/utils/appointmentlock";
 
 export type OfferingKind =
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "WEBINAR"
-  | "CLASS";
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
 
 export class OfferingInUseError extends Error {
   readonly httpStatus = 409 as const;

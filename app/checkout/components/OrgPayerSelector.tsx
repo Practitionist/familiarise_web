@@ -276,7 +276,8 @@ export function OrgPayerSelector({
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
           <div className="space-y-0.5 leading-relaxed">
             <p className="font-medium">
-              Personal Card + Reimbursement Tracking ({selectedMembership.organizationName})
+              Personal Card + Reimbursement Tracking (
+              {selectedMembership.organizationName})
             </p>
             <p className="text-amber-900">
               You pay 100% with your personal card or UPI at checkout. Your

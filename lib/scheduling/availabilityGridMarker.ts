@@ -338,10 +338,7 @@ export function availabilityGridEtag(
 }
 
 function stripWeakAndQuotes(token: string): string {
-  return token
-    .trim()
-    .replace(/^W\//i, "")
-    .replace(/^"|"$/g, "");
+  return token.trim().replace(/^W\//i, "").replace(/^"|"$/g, "");
 }
 
 function stripWeakAndCdnSuffix(token: string): string {

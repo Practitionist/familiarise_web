@@ -54,7 +54,9 @@ export function readPlatformLut(now: Date = new Date()): PlatformLutStatus {
       dayStartUtc.getUTCMonth() + 1 === m &&
       dayStartUtc.getUTCDate() === d;
     if (isRealCalendarDate) {
-      validTill = new Date(dayStartUtc.getTime() + (18 * 60 + 30) * 60 * 1000 - 1);
+      validTill = new Date(
+        dayStartUtc.getTime() + (18 * 60 + 30) * 60 * 1000 - 1,
+      );
     }
   }
 

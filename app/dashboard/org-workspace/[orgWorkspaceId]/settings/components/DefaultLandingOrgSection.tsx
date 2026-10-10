@@ -71,7 +71,9 @@ export function DefaultLandingOrgSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Default landing organisation</CardTitle>
+        <CardTitle className="text-base">
+          Default landing organisation
+        </CardTitle>
         <CardDescription>
           Open this org by default when you reach the workspace dashboard
           without a specific org in the URL. You can always switch via the
@@ -99,8 +101,8 @@ export function DefaultLandingOrgSection({
           </Select>
           {candidates.length === 0 && (
             <p className="text-xs text-zinc-500">
-              You don’t OWN any organisations yet. Create one from the
-              workspace home to enable this setting.
+              You don’t OWN any organisations yet. Create one from the workspace
+              home to enable this setting.
             </p>
           )}
         </div>

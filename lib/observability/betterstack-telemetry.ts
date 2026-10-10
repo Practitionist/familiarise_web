@@ -81,7 +81,10 @@ export async function emitTelemetryLog(log: TelemetryLog): Promise<void> {
     }
   } catch (err) {
     // Ingest is best-effort; the DB SystemEvent row is the source of truth.
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "betterstack" }, level: "warning" });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "betterstack" }, level: "warning" },
+    );
     console.error("[BetterStack Telemetry] ingest failed:", err);
   }
 }

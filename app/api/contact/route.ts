@@ -119,12 +119,10 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      if (
-        !(
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        )
-      ) {
+      if (!(
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      )) {
         throw err;
       }
       // Duplicate of an existing lead — still answer success so the retry

@@ -295,9 +295,7 @@ export const sendOrgOverageDueEmail =
               orgName: args.orgName,
               programTitle: args.programTitle,
               amountText,
-              dueByText: args.dueBy
-                ? dateText(args.dueBy, r.zone)
-                : undefined,
+              dueByText: args.dueBy ? dateText(args.dueBy, r.zone) : undefined,
               payUrl: args.payUrl,
               unsubscribeUrl: r.unsubscribeUrl,
             }),

@@ -8,12 +8,7 @@ import type { AppointmentKind } from "@/lib/appointments/view-model";
 import { cn } from "@/utils/tailwind";
 
 export type TypeFilter =
-  | "ALL"
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "TRIAL"
-  | "WEBINAR"
-  | "CLASS";
+  "ALL" | "CONSULTATION" | "SUBSCRIPTION" | "TRIAL" | "WEBINAR" | "CLASS";
 
 export function matchesTypeFilter(
   kind: AppointmentKind,

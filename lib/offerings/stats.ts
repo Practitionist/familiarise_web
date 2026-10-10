@@ -4,10 +4,7 @@
  */
 
 export type OfferingPlanType =
-  | "consultation"
-  | "subscription"
-  | "webinar"
-  | "class";
+  "consultation" | "subscription" | "webinar" | "class";
 
 export interface OfferingStat {
   planType: OfferingPlanType;

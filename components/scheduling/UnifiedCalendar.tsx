@@ -711,11 +711,7 @@ function wrapCellWithSlotTooltip(
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-        <TooltipContent
-          className="max-w-xs text-xs"
-          side="top"
-          align="center"
-        >
+        <TooltipContent className="max-w-xs text-xs" side="top" align="center">
           <div className="flex flex-col gap-1">
             {isCurrentEventSlot ? (
               <div>

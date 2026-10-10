@@ -96,7 +96,9 @@ function EducationCard({ education }: { education: Education }) {
         <h4 className="font-semibold text-foreground">{education.degree}</h4>
         <p className="text-muted-foreground">{education.institution}</p>
         {education.fieldOfStudy && (
-          <p className="text-sm text-muted-foreground">{education.fieldOfStudy}</p>
+          <p className="text-sm text-muted-foreground">
+            {education.fieldOfStudy}
+          </p>
         )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm text-muted-foreground">
           <span className="flex items-center gap-1">
@@ -156,7 +158,9 @@ export function ExperienceSection({
         <div>
           <div className="flex items-center gap-2 mb-4">
             <Briefcase className="w-5 h-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold text-foreground">Experience</h3>
+            <h3 className="text-lg font-semibold text-foreground">
+              Experience
+            </h3>
             <Badge variant="secondary" className="ml-auto">
               {workExperiences.length}
             </Badge>

@@ -17,8 +17,7 @@ const DEAD_COMPLETION_STATUSES: OccurrenceCompletionStatus[] = [
 ];
 
 export type LiveEventAppointmentFilter =
-  | { webinarId: string }
-  | { classId: string };
+  { webinarId: string } | { classId: string };
 
 export async function findLiveEventSlot(
   appointment: LiveEventAppointmentFilter,

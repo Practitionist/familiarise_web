@@ -26,9 +26,8 @@ export default function OrgDashboardNotFound() {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            We couldn&apos;t find what you were looking for. The
-            organization may have been deleted, or you may no longer be a
-            member.
+            We couldn&apos;t find what you were looking for. The organization
+            may have been deleted, or you may no longer be a member.
           </p>
         </CardContent>
         <CardFooter className="justify-center space-x-4">

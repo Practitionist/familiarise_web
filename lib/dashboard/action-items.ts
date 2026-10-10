@@ -35,7 +35,7 @@ export interface ImminentSession {
   startsAt: Date | string;
   endsAt?: Date | string | null;
   title: string;
-  meeting?: JoinableOccurrence["meeting"];
+  meeting?: NonNullable<JoinableOccurrence["meeting"]> | null;
 }
 
 function sessionTitle(

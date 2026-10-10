@@ -124,7 +124,9 @@ function BlurredCard({ post }: { post: BlogPost }) {
           <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
             {post.teaser}
           </p>
-          <span className="text-xs text-muted-foreground/70">{post.readTime}</span>
+          <span className="text-xs text-muted-foreground/70">
+            {post.readTime}
+          </span>
         </div>
       </div>
     </div>

@@ -424,8 +424,7 @@ export async function DELETE() {
   // REPORTED and returned — a silent unfreeze failure is indistinguishable from
   // success, and being invisible is the entire problem with a frozen channel.
   let chat:
-    | Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>>
-    | undefined;
+    Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>> | undefined;
   try {
     chat = await unfreezeChannelsAfterMaintenance();
     if (chat.errors.length > 0) {

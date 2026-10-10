@@ -230,7 +230,10 @@ export async function GET(req: NextRequest) {
       availableReasons: Object.values(CancellationReason),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },

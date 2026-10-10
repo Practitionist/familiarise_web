@@ -17,13 +17,18 @@ import type { NeedsYouSummary } from "@/lib/data/needs-you";
  * Renders nothing when there is nothing waiting, so a purely B2C consultant
  * never sees an org concept they have no use for.
  */
-export function NeedsYouCard({ summary }: Readonly<{ summary: NeedsYouSummary }>) {
+export function NeedsYouCard({
+  summary,
+}: Readonly<{ summary: NeedsYouSummary }>) {
   if (summary.total === 0) return null;
 
   // With only a personal context there is nothing cross-context to reconcile,
   // and the Requests nav entry already says this. The card earns its space only
   // once the work is genuinely spread across dashboards.
-  if (summary.contexts.length === 1 && summary.contexts[0].organizationId === null) {
+  if (
+    summary.contexts.length === 1 &&
+    summary.contexts[0].organizationId === null
+  ) {
     return null;
   }
 

@@ -35,7 +35,8 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     return days.map((day) => {
       const sorted = day.slots.slice().sort((a, b) => {
         return (
-          timeToMinutes12h(a.localStartTime) - timeToMinutes12h(b.localStartTime)
+          timeToMinutes12h(a.localStartTime) -
+          timeToMinutes12h(b.localStartTime)
         );
       });
       return {
@@ -140,9 +141,11 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                                 isFullyBooked
                                   ? SLOT_STATUS_TOKENS.fullyBooked.className
                                   : isPartiallyBooked
-                                    ? SLOT_STATUS_TOKENS.partiallyBooked.className
+                                    ? SLOT_STATUS_TOKENS.partiallyBooked
+                                        .className
                                     : slot.isAllocated
-                                      ? SLOT_STATUS_TOKENS.rescheduling.className
+                                      ? SLOT_STATUS_TOKENS.rescheduling
+                                          .className
                                       : SLOT_STATUS_TOKENS.available.className
                               }
                             `}

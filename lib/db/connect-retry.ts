@@ -50,7 +50,10 @@ export async function withDbConnectRetry<T>(
       return await fn();
     } catch (error) {
       if (!isDbConnectError(error) || attempt >= attempts) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "db" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "db" } },
+        );
         throw error;
       }
       // Exponential: baseMs * 2^(attempt-1) + jitter — with the default 3

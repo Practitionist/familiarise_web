@@ -47,8 +47,7 @@ function normalizeSlotForBreakdown(
   const endsAt =
     slot.endsAt ?? new Date(startMs + 30 * 60 * 1000).toISOString();
   const bookingStatus: BookingStatus = slot.bookingStatus ?? "available";
-  const isAllocated =
-    slot.isAllocated ?? bookingStatus !== "available";
+  const isAllocated = slot.isAllocated ?? bookingStatus !== "available";
   return {
     slotId: slot.slotId ?? `day-mark-${index}-${startMs}`,
     dateInISO: slot.startsAt,
@@ -143,16 +142,16 @@ export function dayState(
   maybeDuration?: number,
 ): DayState {
   const timezone =
-    typeof timezoneOrDuration === "string" ? timezoneOrDuration || "UTC" : "UTC";
+    typeof timezoneOrDuration === "string"
+      ? timezoneOrDuration || "UTC"
+      : "UTC";
   const durationInHours =
     typeof timezoneOrDuration === "number"
       ? timezoneOrDuration
       : (maybeDuration ?? 0.5);
 
-  const now =
-    nowOrSlots instanceof Date ? nowOrSlots : (slotsOrNow as Date);
-  const rawSlots =
-    nowOrSlots instanceof Date ? slotsOrNow : nowOrSlots;
+  const now = nowOrSlots instanceof Date ? nowOrSlots : (slotsOrNow as Date);
+  const rawSlots = nowOrSlots instanceof Date ? slotsOrNow : nowOrSlots;
 
   const daySlots = resolveDaySlots(date, rawSlots, timezone);
   const today = isSameDay(date, now);
