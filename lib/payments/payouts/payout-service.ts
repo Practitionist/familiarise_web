@@ -482,8 +482,9 @@ export async function approvePayout(
       const makerCheckerRequired =
         process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
       const activeAdminCount =
-        typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
-          .user?.count === "function"
+        typeof (
+          prisma as { user?: { count?: (args: unknown) => Promise<number> } }
+        ).user?.count === "function"
           ? await prisma.user.count({ where: { role: "ADMIN" } })
           : 2;
       if (makerCheckerRequired && activeAdminCount > 1) {
@@ -950,9 +951,8 @@ async function isMakerCheckerDisbursementBlocked(
   const makerCheckerRequired =
     process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
   const activeAdminCount =
-    typeof (
-      prisma as { user?: { count?: (args: unknown) => Promise<number> } }
-    ).user?.count === "function"
+    typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
+      .user?.count === "function"
       ? await prisma.user.count({ where: { role: "ADMIN" } })
       : 2;
   if (!makerCheckerRequired || activeAdminCount <= 1) {
@@ -1237,8 +1237,7 @@ async function handleProcessSinglePayoutError(
   providerPayoutId: string | undefined,
   submittedToGateway: boolean,
 ): Promise<PayoutResult> {
-  const errorMessage =
-    error instanceof Error ? error.message : "Unknown error";
+  const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
   // If the gateway already accepted the transfer, quarantine in PROCESSING with earnings linked to prevent double-disbursement.
   if (providerPayoutId) {
@@ -1917,176 +1916,236 @@ export async function handlePayoutWebhook(
   const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
   const stampData = stampProviderId ? { providerPayoutId } : {};
 
-  const didTransition = await prisma.$transaction(async (tx) => {
-    // Terminal events claim any non-terminal row; non-terminal events only update PROCESSING rows.
-    // Exclude FAILED when the incoming event is FAILED or CANCELLED so duplicate
-    // failure webhooks do not re-trigger notifications.
-    const terminalIncoming =
-      payoutStatus === PayoutStatus.COMPLETED ||
-      payoutStatus === PayoutStatus.FAILED ||
-      payoutStatus === PayoutStatus.CANCELLED;
-    const excludedStatuses: PayoutStatus[] =
-      payoutStatus === PayoutStatus.COMPLETED
-        ? [
-            PayoutStatus.COMPLETED,
-            PayoutStatus.CANCELLED,
-            PayoutStatus.REVERSED,
-          ]
-        : [
-            PayoutStatus.COMPLETED,
-            PayoutStatus.CANCELLED,
-            PayoutStatus.REVERSED,
-            PayoutStatus.FAILED,
-          ];
-    const { count } = await tx.consultantPayout.updateMany({
-      where: {
-        id: matched.id,
-        ...stampWhere,
-        status: terminalIncoming
-          ? {
-              notIn: excludedStatuses,
+  const didTransition = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const terminalIncoming =
+          payoutStatus === PayoutStatus.COMPLETED ||
+          payoutStatus === PayoutStatus.FAILED ||
+          payoutStatus === PayoutStatus.CANCELLED;
+        const excludedStatuses: PayoutStatus[] = [
+          PayoutStatus.COMPLETED,
+          PayoutStatus.CANCELLED,
+          PayoutStatus.REVERSED,
+          PayoutStatus.FAILED,
+        ];
+        const { count } = await tx.consultantPayout.updateMany({
+          where: {
+            id: matched.id,
+            ...stampWhere,
+            status: terminalIncoming
+              ? {
+                  notIn: excludedStatuses,
+                }
+              : { in: [PayoutStatus.PROCESSING] },
+          },
+          data: {
+            status: payoutStatus,
+            processedAt:
+              payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
+            failureReason: failureReason,
+            gatewayUtr:
+              payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
+                ? gatewayUtr
+                : undefined,
+            ...stampData,
+          },
+        });
+
+        if (count === 0) {
+          if (payoutStatus === PayoutStatus.COMPLETED) {
+            const current = await tx.consultantPayout.findUnique({
+              where: { id: matched.id },
+              select: { status: true },
+            });
+            if (current?.status === PayoutStatus.FAILED) {
+              await recordSystemEventSafe({
+                db: tx,
+                category: "PAYOUT",
+                severity: "ERROR",
+                message: `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED: gateway processed ${providerPayoutId} for payout ${matched.id} already marked FAILED`,
+                context: { payoutId: matched.id, providerPayoutId },
+              });
+              reportSentryMessage("PAYOUT_COMPLETED_AFTER_LOCAL_FAILED", {
+                subsystem: "payments",
+                level: "error",
+                extra: { payoutId: matched.id, providerPayoutId },
+              });
+              return false;
             }
-          : { in: [PayoutStatus.PROCESSING] },
+          }
+          console.log(
+            `Payout ${matched.id} already in terminal state, skipping duplicate ${status} webhook`,
+          );
+          reportSentryMessage("Payout webhook idempotency short-circuit", {
+            subsystem: "payments",
+            expected: true,
+            extra: { payoutId: matched.id, status },
+          });
+          return false;
+        }
+
+        if (payoutStatus === PayoutStatus.COMPLETED) {
+          await completeConsultantPayoutInTx(tx, matched);
+          return true;
+        }
+
+        if (
+          payoutStatus === PayoutStatus.FAILED ||
+          payoutStatus === PayoutStatus.CANCELLED
+        ) {
+          await failOrCancelConsultantPayoutInTx(tx, matched.id);
+        }
+        return true;
       },
-      data: {
-        status: payoutStatus,
-        processedAt:
-          payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
-        failureReason: failureReason,
-        gatewayUtr:
-          payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
-            ? gatewayUtr
-            : undefined,
-        ...stampData,
-      },
-    });
-
-    if (count === 0) {
-      console.log(
-        `Payout ${matched.id} already in terminal state, skipping duplicate ${status} webhook`,
-      );
-      reportSentryMessage("Payout webhook idempotency short-circuit", {
-        subsystem: "payments",
-        expected: true,
-        extra: { payoutId: matched.id, status },
-      });
-      return false;
-    }
-
-    if (payoutStatus === PayoutStatus.COMPLETED) {
-      await completeConsultantPayoutInTx(tx, matched);
-      return true;
-    }
-
-    if (
-      payoutStatus === PayoutStatus.FAILED ||
-      payoutStatus === PayoutStatus.CANCELLED
-    ) {
-      await failOrCancelConsultantPayoutInTx(tx, matched.id);
-    }
-    return true;
-  });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   if (didTransition) {
     await notifyConsultantPayoutWebhookOutcome(payoutStatus, matched);
   }
 }
 
-/**
- * Atomically transitions COMPLETED → REVERSED when a bank reversal arrives
- * after completion, posting the inverse journal and reopening PAID earnings to READY.
- */
 export async function markConsultantPayoutReversed(
   providerPayoutId: string,
   reason: string,
+  referenceId?: string,
 ): Promise<{ wasNoOp: boolean }> {
-  const result = await prisma.$transaction(async (tx) => {
-    const payout = await tx.consultantPayout.findFirst({
-      where: { providerPayoutId },
-      select: {
-        id: true,
-        consultantProfileId: true,
-        amount: true,
-        tdsDeducted: true,
-        currency: true,
-      },
-    });
-    if (!payout) {
-      console.warn(
-        `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
-      );
-      reportSentryMessage(
-        "markConsultantPayoutReversed: payout not found for provider ID",
-        {
-          subsystem: "payments",
-          level: "warning",
-          extra: { providerPayoutId },
-        },
-      );
-      return { wasNoOp: true, notify: null };
-    }
+  const result = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const selectShape = {
+          id: true,
+          consultantProfileId: true,
+          amount: true,
+          tdsDeducted: true,
+          currency: true,
+        } as const;
+        let payout = await tx.consultantPayout.findFirst({
+          where: { providerPayoutId },
+          select: selectShape,
+        });
+        let stampProviderId = false;
+        if (!payout && referenceId) {
+          payout = await tx.consultantPayout.findFirst({
+            where: { id: referenceId, providerPayoutId: null },
+            select: selectShape,
+          });
+          if (payout) {
+            stampProviderId = true;
+          }
+        }
+        if (!payout) {
+          console.warn(
+            `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
+          );
+          reportSentryMessage(
+            "markConsultantPayoutReversed: payout not found for provider ID",
+            {
+              subsystem: "payments",
+              level: "warning",
+              extra: { providerPayoutId, referenceId },
+            },
+          );
+          return { wasNoOp: true };
+        }
 
-    const claim = await tx.consultantPayout.updateMany({
-      where: { id: payout.id, status: PayoutStatus.COMPLETED },
-      data: {
-        status: PayoutStatus.REVERSED,
-        failureReason: reason.slice(0, 500),
-      },
-    });
-    if (claim.count === 0) {
-      reportSentryMessage(
-        "markConsultantPayoutReversed: no-op (not COMPLETED)",
-        {
+        const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
+        const stampData = stampProviderId ? { providerPayoutId } : {};
+
+        // 1. Post-settlement reversal (COMPLETED → REVERSED): post inverse journal and reopen PAID → READY.
+        const claimCompleted = await tx.consultantPayout.updateMany({
+          where: {
+            id: payout.id,
+            status: PayoutStatus.COMPLETED,
+            ...stampWhere,
+          },
+          data: {
+            status: PayoutStatus.REVERSED,
+            failureReason: reason.slice(0, 500),
+            ...stampData,
+          },
+        });
+        if (claimCompleted.count > 0) {
+          await tx.consultantEarnings.updateMany({
+            where: { payoutId: payout.id, status: EarningStatus.PAID },
+            data: {
+              status: EarningStatus.READY,
+              payoutId: null,
+              paidAt: null,
+            },
+          });
+
+          const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
+          if (payout.amount - recoveredPaise > 0) {
+            const tdsPaise = payout.tdsDeducted ?? 0;
+            const cashPaise = payout.amount - tdsPaise - recoveredPaise;
+            await postLedgerTxn(tx, {
+              idempotencyKey: `payout-reversal:${payout.id}`,
+              kind: "PAYOUT",
+              payoutId: payout.id,
+              postings: buildPayoutReversalPostings({
+                payableAccount: {
+                  kind: "CONSULTANT_PAYABLE",
+                  consultantProfileId: payout.consultantProfileId,
+                },
+                grossPayablePaise: payout.amount - recoveredPaise,
+                netCashPaise: cashPaise,
+                tdsPaise,
+              }),
+            });
+          }
+
+          if ((payout.tdsDeducted ?? 0) > 0 && tx.tDSRecord) {
+            await recordTdsReversal(tx, {
+              payoutId: payout.id,
+              consultantProfileId: payout.consultantProfileId,
+              refundAmountPaise: payout.amount,
+              paymentAmountPaise: payout.amount,
+            });
+          }
+
+          await releaseClawbackRecovery(tx, payout.id);
+
+          console.log(
+            `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
+          );
+
+          return { wasNoOp: false };
+        }
+
+        // 2. Pre-settlement reversal ([PENDING, PROCESSING] → REVERSED): detach BATCHED → READY without inverse journal.
+        const claimPreSettlement = await tx.consultantPayout.updateMany({
+          where: {
+            id: payout.id,
+            status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
+            ...stampWhere,
+          },
+          data: {
+            status: PayoutStatus.REVERSED,
+            failureReason: reason.slice(0, 500),
+            ...stampData,
+          },
+        });
+        if (claimPreSettlement.count > 0) {
+          await failOrCancelConsultantPayoutInTx(tx, payout.id);
+          console.log(
+            `↩️  Consultant payout ${payout.id} reversed prior to completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
+          );
+          return { wasNoOp: false };
+        }
+
+        reportSentryMessage("markConsultantPayoutReversed: no-op (terminal)", {
           subsystem: "payments",
           expected: true,
           extra: { payoutId: payout.id },
-        },
-      );
-      return { wasNoOp: true, notify: null };
-    }
-
-    await tx.consultantEarnings.updateMany({
-      where: { payoutId: payout.id, status: EarningStatus.PAID },
-      data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
-    });
-
-    const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
-    if (payout.amount - recoveredPaise > 0) {
-      const tdsPaise = payout.tdsDeducted ?? 0;
-      const cashPaise = payout.amount - tdsPaise - recoveredPaise;
-      await postLedgerTxn(tx, {
-        idempotencyKey: `payout-reversal:${payout.id}`,
-        kind: "PAYOUT",
-        payoutId: payout.id,
-        postings: buildPayoutReversalPostings({
-          payableAccount: {
-            kind: "CONSULTANT_PAYABLE",
-            consultantProfileId: payout.consultantProfileId,
-          },
-          grossPayablePaise: payout.amount - recoveredPaise,
-          netCashPaise: cashPaise,
-          tdsPaise,
-        }),
-      });
-    }
-
-    if ((payout.tdsDeducted ?? 0) > 0 && tx.tDSRecord) {
-      await recordTdsReversal(tx, {
-        payoutId: payout.id,
-        consultantProfileId: payout.consultantProfileId,
-        refundAmountPaise: payout.amount,
-        paymentAmountPaise: payout.amount,
-      });
-    }
-
-    await releaseClawbackRecovery(tx, payout.id);
-
-    console.log(
-      `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
-    );
-
-    return { wasNoOp: false, notify: null };
-  });
+        });
+        return { wasNoOp: true };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   return { wasNoOp: result.wasNoOp };
 }

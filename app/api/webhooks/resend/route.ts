@@ -1,51 +1,61 @@
 /**
  * POST /api/webhooks/resend
  *
- * #1647 — Resend's delivery-event receiver. Every signed event becomes an
- * `EmailEvent` row (idempotent on the svix id); a permanent bounce or a
- * complaint also lands the address on `EmailSuppression` and settles its
- * `Waitlist` row, so no sender writes to it again.
+ * Resend Svix webhook receiver. Persists `EmailEvent` and recipient suppression / waitlist
+ * state transitions atomically inside a single transaction.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import type { WebhookEventPayload } from "resend";
+import { Resend } from "resend";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
-import { getResendClient } from "@/lib/email/deliver";
-import { normaliseEmail, suppressRecipient } from "@/lib/email/suppression";
+import { suppressRecipient } from "@/lib/email/suppression";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   MAX_WEBHOOK_BODY_BYTES,
   readBodyWithinCap,
 } from "@/lib/webhooks/read-body";
+import {
+  extractResendRecipients,
+  resendWebhookEventSchema,
+} from "@/schemas/webhooks/resend";
 
 export const dynamic = "force-dynamic";
-// Signature verification is Node-only (the SDK's standardwebhooks dependency).
 export const runtime = "nodejs";
 
-function notConfigured(reason: "not_configured" | "no_api_key") {
-  Sentry.captureMessage(
-    reason === "no_api_key"
-      ? "Resend webhook cannot verify: RESEND_API_KEY missing"
-      : "Resend webhook secret missing",
-    {
-      level: "error",
-      fingerprint: ["resend-webhook", reason],
-      tags: { subsystem: "email" },
-    },
-  );
+function toInputJson(value: unknown): Prisma.InputJsonValue {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(toInputJson);
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: { [key: string]: Prisma.InputJsonValue | null } = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = v === null ? null : toInputJson(v);
+    }
+    return out;
+  }
+  return String(value ?? "");
+}
+
+function notConfigured() {
+  Sentry.captureMessage("Resend webhook secret missing", {
+    level: "error",
+    fingerprint: ["resend-webhook", "not_configured"],
+    tags: { subsystem: "email" },
+  });
   return NextResponse.json(
     { error: "webhook not configured" },
     { status: 503 },
   );
-}
-
-// The event fields the side effects read; every other type is stored as-is.
-interface EmailEventData {
-  email_id?: string;
-  to?: string[];
-  bounce?: { type?: string };
 }
 
 export async function POST(req: NextRequest) {
@@ -73,14 +83,14 @@ export async function POST(req: NextRequest) {
   }
 
   const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
-  if (!webhookSecret) return notConfigured("not_configured");
-  const client = getResendClient();
-  if (!client) return notConfigured("no_api_key");
+  if (!webhookSecret) return notConfigured();
 
-  // The body is never logged on a rejection: an unsigned payload is untrusted input.
-  let event: WebhookEventPayload;
+  let verifiedRaw: unknown;
   try {
-    event = client.webhooks.verify({
+    const verifier = new Resend(
+      process.env.RESEND_API_KEY ?? "re_webhook_verify_only",
+    );
+    verifiedRaw = verifier.webhooks.verify({
       payload: raw,
       headers: { id, timestamp, signature },
       webhookSecret,
@@ -89,30 +99,98 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
-  const type = event.type;
-  const data = (event.data ?? {}) as EmailEventData;
-  // Some non-email event types carry no email id; the column is required.
-  const resendId = data.email_id ?? "";
-  const recipient = normaliseEmail(data.to?.[0] ?? "");
+  const parsed = resendWebhookEventSchema.safeParse(verifiedRaw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid payload" }, { status: 400 });
+  }
 
-  let eventRow: { id: string };
+  const event = parsed.data;
+  const type = event.type;
+  const data = event.data ?? {};
+  const resendId = data.email_id ?? "";
+  const recipients = extractResendRecipients(event);
+  const primaryRecipient = recipients[0] ?? "";
+  const emailFilter =
+    recipients.length === 1 ? recipients[0] : { in: recipients };
+
   try {
-    eventRow = await prisma.emailEvent.create({
-      data: {
-        svixId: id,
-        resendId,
-        type,
-        recipient,
-        payload: event as unknown as Prisma.InputJsonValue,
-      },
-      select: { id: true },
+    await prisma.$transaction(async (tx) => {
+      const eventRow = await tx.emailEvent.create({
+        data: {
+          svixId: id,
+          resendId,
+          type,
+          recipient: primaryRecipient,
+          payload: toInputJson(event),
+        },
+        select: { id: true },
+      });
+
+      if (
+        recipients.length > 0 &&
+        type === "email.bounced" &&
+        data.bounce?.type === "Permanent"
+      ) {
+        for (const recipient of recipients) {
+          await suppressRecipient(recipient, "HARD_BOUNCE", eventRow.id, tx);
+        }
+        await tx.waitlist.updateMany({
+          where: {
+            email: emailFilter,
+            status: { in: ["PENDING", "SUBSCRIBED"] },
+          },
+          data: { status: "BOUNCED" },
+        });
+      } else if (recipients.length > 0 && type === "email.complained") {
+        for (const recipient of recipients) {
+          await suppressRecipient(recipient, "COMPLAINT", eventRow.id, tx);
+        }
+        await tx.waitlist.updateMany({
+          where: {
+            email: emailFilter,
+            status: { in: ["PENDING", "SUBSCRIBED"] },
+          },
+          data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
+        });
+      } else if (
+        recipients.length > 0 &&
+        (type === "email.suppressed" || type === "suppression.added")
+      ) {
+        for (const recipient of recipients) {
+          await suppressRecipient(recipient, "MANUAL", eventRow.id, tx);
+        }
+        await tx.waitlist.updateMany({
+          where: {
+            email: emailFilter,
+            status: { in: ["PENDING", "SUBSCRIBED"] },
+          },
+          data: { status: "BOUNCED" },
+        });
+      } else if (recipients.length > 0 && type === "suppression.removed") {
+        await tx.emailSuppression.deleteMany({
+          where: { email: emailFilter },
+        });
+      } else if (
+        recipients.length > 0 &&
+        (type === "contact.deleted" ||
+          (type === "contact.updated" && data.unsubscribed === true))
+      ) {
+        for (const recipient of recipients) {
+          await suppressRecipient(recipient, "MANUAL", eventRow.id, tx);
+        }
+        await tx.waitlist.updateMany({
+          where: {
+            email: emailFilter,
+            status: { in: ["PENDING", "SUBSCRIBED"] },
+          },
+          data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
+        });
+      }
     });
   } catch (error) {
-    // A redelivery or a dashboard replay carries the same svix id: already stored.
     if (isUniqueViolation(error)) {
       return NextResponse.json({ received: true, duplicate: true });
     }
-    // Nothing is durable yet, so a 500 is right: Resend retries the delivery.
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       {
@@ -123,36 +201,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "event not stored" }, { status: 500 });
   }
 
-  // #1647 — a Transient bounce (full mailbox, greylisting) is not a dead
-  // address, so only a Permanent bounce or a complaint suppresses.
-  try {
-    if (
-      recipient &&
-      type === "email.bounced" &&
-      data.bounce?.type === "Permanent"
-    ) {
-      await suppressRecipient(recipient, "HARD_BOUNCE", eventRow.id);
-      await prisma.waitlist.updateMany({
-        where: { email: recipient, status: { in: ["PENDING", "SUBSCRIBED"] } },
-        data: { status: "BOUNCED" },
-      });
-    } else if (recipient && type === "email.complained") {
-      await suppressRecipient(recipient, "COMPLAINT", eventRow.id);
-      await prisma.waitlist.updateMany({
-        where: { email: recipient, status: { in: ["PENDING", "SUBSCRIBED"] } },
-        data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
-      });
-    }
-  } catch (error) {
-    // The event row is durable, so answer 200: a retry from Resend would only
-    // hit the duplicate path and never re-run this write.
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        tags: { subsystem: "email" },
-        fingerprint: ["resend-webhook", "side-effect"],
+  if (
+    type === "domain.deleted" ||
+    (type === "domain.updated" &&
+      (data.status === "failed" || data.status === "not_started"))
+  ) {
+    await recordSystemErrorSafe({
+      category: "WEBHOOK",
+      summary: `Resend sending domain degraded (${type})`,
+      err: new Error(`Domain status reported as ${data.status ?? "deleted"}`),
+      context: {
+        provider: "resend",
+        svixId: id,
+        type,
+        domainId: data.id ?? null,
+        domainName: data.name ?? null,
+        status: data.status ?? "deleted",
       },
-    );
+    });
   }
 
   return NextResponse.json({ received: true });

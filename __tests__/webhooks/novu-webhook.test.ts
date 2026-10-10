@@ -4,6 +4,7 @@
 
 import crypto from "node:crypto";
 import type { NextRequest } from "next/server";
+import { Webhook as StandardWebhook } from "standardwebhooks";
 
 jest.mock("@sentry/nextjs", () => ({
   setTag: jest.fn(),
@@ -65,7 +66,7 @@ function signHmac(rawBody: string, secret = SECRET): string {
   return crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
 }
 
-describe("POST /api/webhooks/novu (#399)", () => {
+describe("POST /api/webhooks/novu", () => {
   const OLD_ENV = process.env;
 
   beforeEach(() => {
@@ -82,10 +83,10 @@ describe("POST /api/webhooks/novu (#399)", () => {
     process.env = OLD_ENV;
   });
 
-  it("returns 500 when NOVU_WEBHOOK_SECRET is not configured", async () => {
+  it("returns 503 when NOVU_WEBHOOK_SECRET is not configured", async () => {
     delete process.env.NOVU_WEBHOOK_SECRET;
     const res = await POST(makeRequest({ type: "message.sent" }));
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
   });
 
   it("returns 401 and records a WARN system event when signature header is missing or invalid", async () => {
@@ -104,6 +105,69 @@ describe("POST /api/webhooks/novu (#399)", () => {
       }),
     );
     expect(logWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it("verifies Svix standardwebhooks headers when NOVU_WEBHOOK_SECRET uses whsec_ format", async () => {
+    const rawKey = crypto.randomBytes(24).toString("base64");
+    const whsec = `whsec_${rawKey}`;
+    process.env.NOVU_WEBHOOK_SECRET = whsec;
+
+    const payload = {
+      id: "evt_svix_1",
+      type: "message.sent",
+      data: {
+        object: {
+          transactionId: "tx_svix_1",
+          subscriberId: "sub_svix_1",
+          channel: "email",
+        },
+      },
+    };
+    const rawBody = JSON.stringify(payload);
+    const msgId = "msg_svix_1";
+    const now = new Date();
+    const wh = new StandardWebhook(whsec);
+    const sig = wh.sign(msgId, now, rawBody);
+
+    const res = await POST(
+      makeRequest(payload, {
+        "svix-id": msgId,
+        "svix-timestamp": String(Math.floor(now.getTime() / 1000)),
+        "svix-signature": sig,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.notificationOutbox.updateMany).toHaveBeenCalledWith({
+      where: { transactionId: "tx_svix_1", status: "PENDING" },
+      data: expect.objectContaining({
+        status: "SENT",
+        lastError: null,
+      }),
+    });
+  });
+
+  it("accepts retried x-novu-signature payloads with older body timestamps while ignoring unauthenticated svix-id headers", async () => {
+    const retriedPayload = {
+      id: "evt_retried_1",
+      type: "message.sent",
+      timestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    };
+    const raw = JSON.stringify(retriedPayload);
+    const res = await POST(
+      makeRequest(retriedPayload, {
+        "x-novu-signature": signHmac(raw),
+        "svix-id": "msg_unauthenticated_spoof",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(logWebhookEvent).toHaveBeenCalledWith(
+      "novu",
+      "evt_retried_1",
+      "message.sent",
+      expect.any(Object),
+      signHmac(raw),
+    );
   });
 
   it("skips duplicate events via logWebhookEvent deduplication", async () => {
@@ -126,14 +190,19 @@ describe("POST /api/webhooks/novu (#399)", () => {
     expect(prisma.notificationOutbox.updateMany).not.toHaveBeenCalled();
   });
 
-  it("updates NotificationOutbox.lastError, records system event, and marks processed on delivery failure", async () => {
+  it("updates NotificationOutbox.lastError regardless of SENT status, records system event, and marks processed on delivery failure", async () => {
     const payload = {
       id: "evt_fail_1",
       type: "message.failed",
-      transactionId: "tx_fail_1",
-      subscriberId: "user_1",
-      workflowId: "booking-confirmed",
-      error: "Provider rejected message",
+      data: {
+        object: {
+          transactionId: "tx_fail_1",
+          subscriberId: "user_1",
+          channel: "email",
+          workflowId: "booking-confirmed",
+          error: "Provider rejected message",
+        },
+      },
     };
     const raw = JSON.stringify(payload);
     const res = await POST(
@@ -155,6 +224,8 @@ describe("POST /api/webhooks/novu (#399)", () => {
           provider: "novu",
           eventId: "evt_fail_1",
           transactionId: "tx_fail_1",
+          subscriberId: "user_1",
+          channel: "email",
         }),
       }),
     );
@@ -190,6 +261,29 @@ describe("POST /api/webhooks/novu (#399)", () => {
     expect(markWebhookEventProcessed).toHaveBeenCalledWith(
       "evt_sent_1",
       undefined,
+      expect.objectContaining({ claimedAt: expect.any(Date) }),
+    );
+  });
+
+  it("returns 500 JSON response and marks failure when downstream DB update throws", async () => {
+    (prisma.notificationOutbox.updateMany as jest.Mock).mockRejectedValueOnce(
+      new Error("db connection lost"),
+    );
+    const payload = {
+      id: "evt_boom_1",
+      type: "message.sent",
+      transactionId: "tx_boom_1",
+    };
+    const raw = JSON.stringify(payload);
+    const res = await POST(
+      makeRequest(payload, { "x-novu-signature": signHmac(raw) }),
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Processing failed" });
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith(
+      "evt_boom_1",
+      "db connection lost",
       expect.objectContaining({ claimedAt: expect.any(Date) }),
     );
   });

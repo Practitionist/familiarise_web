@@ -580,6 +580,34 @@ export async function handleRecordingPurchaseSuccess(
   /** Captured paise from the payment entity; the purchase amount when absent. */
   capturedPaise?: number,
 ): Promise<void> {
+  if (prisma.payment?.findUnique) {
+    const existing = await prisma.payment.findUnique({
+      where: { paymentIntent: orderId },
+      select: {
+        id: true,
+        paymentStatus: true,
+        amount: true,
+        gatewayPaymentId: true,
+      },
+    });
+    if (
+      existing &&
+      existing.paymentStatus === "SUCCEEDED" &&
+      (capturedPaise === undefined || capturedPaise === existing.amount) &&
+      (!gatewayPaymentId ||
+        !existing.gatewayPaymentId ||
+        existing.gatewayPaymentId === gatewayPaymentId)
+    ) {
+      if (gatewayPaymentId && !existing.gatewayPaymentId) {
+        await prisma.payment.updateMany({
+          where: { id: existing.id, gatewayPaymentId: null },
+          data: { gatewayPaymentId },
+        });
+      }
+      return;
+    }
+  }
+
   const outcome = await prisma.$transaction(
     async (tx): Promise<CaptureOutcome | null> => {
       const purchase = await tx.recordingPurchase.findUnique({

@@ -1,72 +1,107 @@
 import { z } from "zod";
 
-// Basic entity schemas
-const razorpayPaymentEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("payment"),
-  amount: z.number().int().positive(),
-  currency: z.string(),
-  status: z.string(),
-  order_id: z.string(),
-  invoice_id: z.string().nullable(),
-  international: z.boolean(),
-  method: z.string(),
-  amount_refunded: z.number(),
-  refund_status: z.string().nullable(),
-  captured: z.boolean(),
-  description: z.string().nullable(),
-  card_id: z.string().nullable(),
-  bank: z.string().nullable(),
-  wallet: z.string().nullable(),
-  vpa: z.string().nullable(),
-  email: z.string().email(),
-  contact: z.string(),
-  notes: z.record(z.string()).optional(),
-  fee: z.number().nullable(),
-  tax: z.number().nullable(),
-  error_code: z.string().nullable(),
-  error_description: z.string().nullable(),
-  error_source: z.string().nullable(),
-  error_step: z.string().nullable(),
-  error_reason: z.string().nullable(),
-  created_at: z.number(),
-});
+export const razorpayNotesSchema = z
+  .unknown()
+  .transform((val): Record<string, string> => {
+    if (!val || typeof val !== "object" || Array.isArray(val)) {
+      return {};
+    }
+    const normalized: Record<string, string> = {};
+    for (const [key, raw] of Object.entries(val)) {
+      if (
+        typeof raw === "string" ||
+        typeof raw === "number" ||
+        typeof raw === "boolean"
+      ) {
+        normalized[key] = String(raw);
+      } else if (raw === null || raw === undefined) {
+        normalized[key] = "";
+      }
+    }
+    return normalized;
+  });
 
-const razorpayOrderEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("order"),
-  amount: z.number(),
-  amount_paid: z.number(),
-  amount_due: z.number(),
-  currency: z.string(),
-  receipt: z.string().nullable(),
-  offer_id: z.string().nullable(),
-  status: z.string(),
-  attempts: z.number(),
-  notes: z.record(z.string()).optional(),
-  created_at: z.number(),
-});
+export const razorpayPaymentEntitySchema = z
+  .object({
+    id: z.string(),
+    amount: z.number().int().positive(),
+    currency: z.string(),
+    status: z.string(),
+    order_id: z.string().nullable().optional(),
+    notes: razorpayNotesSchema,
+    error_description: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type RazorpayPaymentEntity = z.infer<typeof razorpayPaymentEntitySchema>;
+
+export const razorpayOrderEntitySchema = z
+  .object({
+    id: z.string(),
+    amount: z.number(),
+    currency: z.string(),
+    status: z.string(),
+    notes: razorpayNotesSchema,
+  })
+  .passthrough();
+
+export type RazorpayOrderEntity = z.infer<typeof razorpayOrderEntitySchema>;
 
 /**
- * A `payments.fetch` answer: the gateway's word on capture state, amount and
- * notes. Razorpay sends empty notes as `[]` and may echo numbers, so notes
- * normalise to a string map.
+ * A `payments.fetch` answer: capture state, amount, and normalized notes map.
  */
-export const razorpayFetchedPaymentSchema = z.object({
-  order_id: z.string(),
-  status: z.string(),
-  amount: z.number().int().positive(),
-  currency: z.string(),
-  notes: z
-    .union([
-      z.record(
-        z.union([z.string(), z.number(), z.boolean()]).transform(String),
-      ),
-      z.array(z.never()).transform((): Record<string, string> => ({})),
-    ])
-    .nullish()
-    .transform((notes): Record<string, string> => notes ?? {}),
-});
+export const razorpayFetchedPaymentSchema = z
+  .object({
+    order_id: z.string(),
+    status: z.string(),
+    amount: z.number().int().positive(),
+    currency: z.string(),
+    notes: razorpayNotesSchema,
+  })
+  .passthrough();
+
+export const fundAccountValidationEntitySchema = z
+  .object({
+    id: z.string(),
+    reference_id: z.string().nullable().optional(),
+    fund_account: z
+      .object({
+        id: z.string(),
+        account_type: z.string().optional(),
+        vpa: z
+          .object({
+            address: z.string().optional(),
+          })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+    status: z.string().optional(),
+    results: z.record(z.unknown()).optional(),
+    notes: razorpayNotesSchema,
+  })
+  .passthrough();
+
+export type RazorpayFundAccountValidationEntity = z.infer<
+  typeof fundAccountValidationEntitySchema
+>;
+
+export const disputeUpdateEntitySchema = z
+  .object({
+    id: z.string(),
+    status: z.string(),
+    respond_by: z.number().nullable().optional(),
+    phase: z.string().nullable().optional(),
+    amount: z.number().optional(),
+    reason_code: z.string().nullable().optional(),
+    reason_description: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type RazorpayDisputeUpdateEntity = z.infer<
+  typeof disputeUpdateEntitySchema
+>;
 
 // Event payload schemas
 const paymentEventPayloadSchema = z.object({
@@ -75,15 +110,10 @@ const paymentEventPayloadSchema = z.object({
   }),
 });
 
-// #1582 F-P0-01 — `order.paid` ships `payload.payment.entity` too; declaring
-// it stops Zod stripping the `pay_*` id the org branch needs to mark PAID.
 const orderEventPayloadSchema = z.object({
   order: z.object({
     entity: razorpayOrderEntitySchema,
   }),
-  // Loose on purpose: only the id (and amount, when present) is used, and a
-  // provider field that varies by method must not turn a real capture into a
-  // permanent parse failure (CodeRabbit on #1753).
   payment: z
     .object({
       entity: z.object({ id: z.string(), amount: z.number().int().optional() }),
@@ -125,10 +155,7 @@ export const razorpayBaseEventSchema = z.object({
   event: z.string(),
 });
 
-// A loose envelope schema used for idempotency key derivation and for
-// extracting optional entity identifiers before narrowing to a specific
-// event schema downstream. All `payload.*` fields are optional because
-// different event types populate different payload shapes.
+// Loose envelope schema for idempotency key derivation and entity extraction.
 export const razorpayWebhookEnvelopeSchema = z
   .object({
     event: z.string(),
@@ -140,8 +167,8 @@ export const razorpayWebhookEnvelopeSchema = z
             entity: z
               .object({
                 id: z.string().optional(),
-                order_id: z.string().optional(),
-                notes: z.record(z.unknown()).optional(),
+                order_id: z.string().nullable().optional(),
+                notes: razorpayNotesSchema,
               })
               .passthrough()
               .optional(),
@@ -153,7 +180,7 @@ export const razorpayWebhookEnvelopeSchema = z
             entity: z
               .object({
                 id: z.string().optional(),
-                notes: z.record(z.unknown()).optional(),
+                notes: razorpayNotesSchema,
               })
               .passthrough()
               .optional(),
@@ -169,6 +196,7 @@ export const razorpayWebhookEnvelopeSchema = z
                 amount: z.number().optional(),
                 currency: z.string().optional(),
                 status: z.string().optional(),
+                notes: razorpayNotesSchema,
               })
               .passthrough()
               .optional(),
@@ -183,8 +211,8 @@ export const razorpayWebhookEnvelopeSchema = z
                 payment_id: z.string().optional(),
                 amount: z.number().optional(),
                 currency: z.string().optional(),
-                reason_code: z.string().optional(),
-                reason_description: z.string().optional(),
+                reason_code: z.string().nullable().optional(),
+                reason_description: z.string().nullable().optional(),
                 status: z.string().optional(),
                 respond_by: z.number().nullable().optional(),
                 deduct_at_onset: z.boolean().optional(),
@@ -212,6 +240,34 @@ export const razorpayWebhookEnvelopeSchema = z
                   .passthrough()
                   .nullable()
                   .optional(),
+              })
+              .passthrough()
+              .optional(),
+          })
+          .passthrough()
+          .optional(),
+        "fund_account.validation": z
+          .object({
+            entity: z
+              .object({
+                id: z.string(),
+                reference_id: z.string().nullable().optional(),
+                fund_account: z
+                  .object({
+                    id: z.string(),
+                    account_type: z.string().optional(),
+                    vpa: z
+                      .object({
+                        address: z.string().optional(),
+                      })
+                      .passthrough()
+                      .optional(),
+                  })
+                  .passthrough()
+                  .optional(),
+                status: z.string().optional(),
+                results: z.record(z.unknown()).optional(),
+                notes: razorpayNotesSchema,
               })
               .passthrough()
               .optional(),

@@ -18,11 +18,13 @@ import prisma from "@/lib/prisma";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { Refusal } from "@/lib/errors/refusal";
 import { PaymentError } from "@/lib/payments/core/types";
-import { PaymentGateway, PayoutAccountType } from "@prisma/client";
+import { PaymentGateway, PayoutAccountType, Prisma } from "@prisma/client";
 import { PAYOUT_ACCOUNT_SAFE_SELECT } from "@/lib/data/consultant-payout-setup";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
+  summariseFundAccountValidation,
+  type FundAccountValidationEntity,
   type FundAccountValidationSummary,
 } from "./razorpay-payouts";
 
@@ -245,4 +247,111 @@ async function persistVerifiedAccount(
     });
   });
   return { status: "verified", account };
+}
+
+export async function handleFundAccountValidationWebhook(
+  eventType:
+    "fund_account.validation.completed" | "fund_account.validation.failed",
+  entity: {
+    id: string;
+    reference_id?: string | null;
+    fund_account?: {
+      id: string;
+      account_type?: string;
+      vpa?: { address?: string };
+    };
+    status?: string;
+    results?: Record<string, unknown>;
+    validation_results?: Record<string, unknown>;
+    notes?: Record<string, string>;
+  },
+): Promise<void> {
+  const fundAccountId = entity.fund_account?.id;
+  const vpaAddress = entity.fund_account?.vpa?.address;
+  const referenceId =
+    entity.reference_id ||
+    entity.notes?.consultantProfileId ||
+    entity.notes?.organizationPayoutAccountId ||
+    null;
+
+  const summary = summariseFundAccountValidation({
+    id: entity.id,
+    entity: "fund_account.validation",
+    status:
+      entity.status === "completed" || entity.status === "failed"
+        ? entity.status
+        : eventType === "fund_account.validation.completed"
+          ? "completed"
+          : "failed",
+    reference_id: entity.reference_id ?? null,
+    results: entity.results as FundAccountValidationEntity["results"],
+    validation_results:
+      entity.validation_results as FundAccountValidationEntity["validation_results"],
+  });
+
+  const isCompletedAndActive =
+    eventType === "fund_account.validation.completed" &&
+    summary.accountStatus === "valid";
+
+  if (isCompletedAndActive) {
+    const consultantWhere = fundAccountId
+      ? {
+          isVerified: false,
+          razorpayFundAccId: fundAccountId,
+          ...(referenceId ? { consultantProfileId: referenceId } : {}),
+        }
+      : null;
+
+    if (consultantWhere) {
+      await prisma.payoutAccount.updateMany({
+        where: consultantWhere,
+        data: {
+          isVerified: true,
+          ...(summary.registeredName
+            ? { accountHolderName: summary.registeredName }
+            : {}),
+          ...(vpaAddress ? { upiId: vpaAddress } : {}),
+        },
+      });
+    }
+
+    const orgWhere: Prisma.OrganizationPayoutAccountWhereInput | null =
+      fundAccountId
+        ? {
+            status: { in: ["PENDING_VERIFICATION", "FAILED_VERIFICATION"] },
+            razorpayFundAccountId: fundAccountId,
+            ...(referenceId ? { id: referenceId } : {}),
+          }
+        : null;
+
+    if (orgWhere) {
+      await prisma.organizationPayoutAccount.updateMany({
+        where: orgWhere,
+        data: {
+          status: "VERIFIED",
+          verifiedAt: new Date(),
+          ...(vpaAddress ? { upiId: vpaAddress } : {}),
+        },
+      });
+    }
+    return;
+  }
+
+  const orgFailWhere: Prisma.OrganizationPayoutAccountWhereInput | null =
+    fundAccountId
+      ? {
+          status: "PENDING_VERIFICATION",
+          razorpayFundAccountId: fundAccountId,
+          ...(referenceId ? { id: referenceId } : {}),
+        }
+      : null;
+
+  if (orgFailWhere) {
+    await prisma.organizationPayoutAccount.updateMany({
+      where: orgFailWhere,
+      data: {
+        status: "FAILED_VERIFICATION",
+      },
+    });
+  }
 }

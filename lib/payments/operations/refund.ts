@@ -706,49 +706,49 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // the webhook that minted it had no knowledge of initiatedByUserId/
       // source, and without this merge the adopt path is the one bind path
       // that loses them.
-      const winnerFull = await prisma.refund.findUniqueOrThrow({
-        where: { id: winner.id },
-        select: { metadata: true },
-      });
-      // #1780 — the placeholder goes first so the winner can take its
-      // dedupeKey (unique) in the same transaction; the key must survive.
-      await prisma.$transaction([
-        prisma.refund.delete({ where: { id: reserved.id } }),
-        prisma.refund.update({
+      if (winner.id === reserved.id) {
+        boundRefundRowId = reserved.id;
+      } else {
+        const winnerFull = await prisma.refund.findUniqueOrThrow({
           where: { id: winner.id },
-          data: {
-            ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
-            metadata: {
-              ...(winnerFull.metadata &&
-              typeof winnerFull.metadata === "object" &&
-              !Array.isArray(winnerFull.metadata)
-                ? winnerFull.metadata
-                : {}),
-              ...(reserved.metadata &&
-              typeof reserved.metadata === "object" &&
-              !Array.isArray(reserved.metadata)
-                ? reserved.metadata
-                : {}),
-            } as Prisma.InputJsonValue,
+          select: { metadata: true },
+        });
+        await prisma.$transaction([
+          prisma.refund.delete({ where: { id: reserved.id } }),
+          prisma.refund.update({
+            where: { id: winner.id },
+            data: {
+              ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
+              metadata: {
+                ...(winnerFull.metadata &&
+                typeof winnerFull.metadata === "object" &&
+                !Array.isArray(winnerFull.metadata)
+                  ? winnerFull.metadata
+                  : {}),
+                ...(reserved.metadata &&
+                typeof reserved.metadata === "object" &&
+                !Array.isArray(reserved.metadata)
+                  ? reserved.metadata
+                  : {}),
+              } as Prisma.InputJsonValue,
+            },
+          }),
+        ]);
+        boundRefundRowId = winner.id;
+        reportSentryMessage(
+          `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
+          {
+            subsystem: "payments",
+            tags: { feature: "refund" },
+            extra: {
+              placeholderRowId: reserved.id,
+              gatewayRefundId: gateway.refundId,
+            },
           },
-        }),
-      ]);
-      boundRefundRowId = winner.id;
-      reportSentryMessage(
-        `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
-        {
-          subsystem: "payments",
-          tags: { feature: "refund" },
-          extra: {
-            placeholderRowId: reserved.id,
-            gatewayRefundId: gateway.refundId,
-          },
-        },
-      );
+        );
+      }
     }
   } else {
-    // No real gateway id (falsy keeps the pending_ placeholder, mirroring the
-    // FAILED branch) — just merge metadata onto the reservation row.
     if (gateway.metadata) {
       await prisma.refund
         .updateMany({
@@ -769,8 +769,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   }
 
   if (gateway.status !== "SUCCEEDED") {
-    // Money not settled yet — no cascade, row stays PENDING under its real
-    // gateway id so the webhook reconciles instead of duplicating.
     return {
       refundId: boundRefundRowId,
       amountRefundedPaise: requested,
@@ -783,82 +781,98 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     };
   }
 
-  // PHASE 3b — settle: cascade + SUCCEEDED atomically. A throw here rolls
-  // back the cascade AND the cascadedAt claim, leaving the row PENDING under
-  // its gateway id for the webhook redelivery / backstop cron to re-drive.
-  //
-  // Wrapped in withSerializableRetry (as the Phase 1 comment above already
-  // promised): this tx writes earnings/legs concurrently with dispute
-  // handling and other cascades, so P2034 is an expected outcome — unwrapped,
-  // a transient abort surfaced to the caller as a raw error AFTER the gateway
-  // refund had already landed, stranding the row in webhook-only recovery.
-  const settled = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const settledClaim = await tx.refund.updateMany({
-          where: { id: boundRefundRowId, status: RefundStatus.PENDING },
-          data: { status: RefundStatus.SUCCEEDED },
-        });
-        if (settledClaim.count === 0) {
-          // Concurrent webhook or reconciler already transitioned this row out of PENDING;
-          // only treat as settled if that writer landed SUCCEEDED (and already restored credits).
-          const current = await tx.refund.findUnique({
-            where: { id: boundRefundRowId },
-            select: { status: true },
+  let settled: {
+    refundId: string;
+    amountRefundedPaise: number;
+    legsReversed: number;
+    consultantEarningsReversed: number;
+    organizationEarningsReversed: number;
+    clawbackInitiated: boolean;
+    memberOverageRefundDue: { overagePaymentId: string } | null;
+    status: "SUCCEEDED" | "PENDING";
+    gatewayRefundId: string | undefined;
+  };
+  try {
+    settled = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const settledClaim = await tx.refund.updateMany({
+            where: { id: boundRefundRowId, status: RefundStatus.PENDING },
+            data: { status: RefundStatus.SUCCEEDED },
           });
+          if (settledClaim.count === 0) {
+            const current = await tx.refund.findUnique({
+              where: { id: boundRefundRowId },
+              select: { status: true },
+            });
+            return {
+              refundId: boundRefundRowId,
+              amountRefundedPaise: requested,
+              legsReversed: 0,
+              consultantEarningsReversed: 0,
+              organizationEarningsReversed: 0,
+              clawbackInitiated: false,
+              memberOverageRefundDue: null,
+              status:
+                current?.status === RefundStatus.SUCCEEDED
+                  ? ("SUCCEEDED" as const)
+                  : ("PENDING" as const),
+              gatewayRefundId: gateway.refundId || undefined,
+            };
+          }
+
+          const cascade = await applyRefundCascade(tx, {
+            paymentId: input.paymentId,
+            refundId: boundRefundRowId,
+            amountPaise: requested,
+            reason: input.reason,
+            initiatedByUserId: input.initiatedByUserId ?? null,
+          });
+
+          // Runs after SUCCEEDED transition so cumulative SUCCEEDED refund sum includes this row.
+          const restoredCredits = await reverseCreditsForPayment(
+            input.paymentId,
+            tx,
+            requested,
+            payment.amount,
+            boundRefundRowId,
+          );
+          if (restoredCredits > 0) {
+            console.log(
+              `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+            );
+          }
+
           return {
             refundId: boundRefundRowId,
             amountRefundedPaise: requested,
-            legsReversed: 0,
-            consultantEarningsReversed: 0,
-            organizationEarningsReversed: 0,
-            clawbackInitiated: false,
-            memberOverageRefundDue: null,
-            status:
-              current?.status === RefundStatus.SUCCEEDED
-                ? ("SUCCEEDED" as const)
-                : ("PENDING" as const),
+            ...cascade,
+            status: "SUCCEEDED" as const,
             gatewayRefundId: gateway.refundId || undefined,
           };
-        }
-
-        const cascade = await applyRefundCascade(tx, {
-          paymentId: input.paymentId,
-          refundId: boundRefundRowId,
-          amountPaise: requested,
-          reason: input.reason,
-          initiatedByUserId: input.initiatedByUserId ?? null,
-        });
-
-        // Runs after SUCCEEDED transition so cumulative SUCCEEDED refund sum includes this row.
-        const restoredCredits = await reverseCreditsForPayment(
-          input.paymentId,
-          tx,
-          requested,
-          payment.amount,
-          boundRefundRowId,
-        );
-        if (restoredCredits > 0) {
-          console.log(
-            `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
-          );
-        }
-
-        return {
-          refundId: boundRefundRowId,
-          amountRefundedPaise: requested,
-          ...cascade,
-          status: "SUCCEEDED" as const,
-          gatewayRefundId: gateway.refundId || undefined,
-        };
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 10_000,
-        timeout: 15_000,
-      },
-    ),
-  );
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      ),
+    );
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    reportSentryError(err, { subsystem: "payments", expected: true });
+    settled = {
+      refundId: boundRefundRowId,
+      amountRefundedPaise: requested,
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+      status: "PENDING" as const,
+      gatewayRefundId: gateway.refundId || undefined,
+    };
+  }
 
   await refundMemberOverageSidePayment({
     parentPaymentId: input.paymentId,

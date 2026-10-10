@@ -114,16 +114,18 @@ const streamSessionEndedSchema = streamCallBaseEventSchema.extend({
     .optional(),
 });
 
-// Call ended schema
-const streamCallEndedSchema = streamCallBaseEventSchema.extend({
+export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.ended"),
   call: z
     .object({
       id: z.string(),
       type: z.string(),
       created_by_user_id: z.string().optional(),
+      ended_by_user_id: z.string().optional(),
     })
     .optional(),
+  user: z.object({ id: z.string() }).passthrough().optional(),
+  reason: z.string().optional(),
   ended_by_user_id: z.string().optional(),
 });
 
@@ -348,7 +350,7 @@ export async function processStreamEvent(
   } = {},
 ): Promise<void> {
   try {
-    if (!(await isDbHealthy())) {
+    if (!opts.claim && !(await isDbHealthy())) {
       streamLogger.warn(
         `DB unhealthy — deferring Stream event ${eventId} to the sweeper`,
       );

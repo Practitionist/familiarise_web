@@ -52,7 +52,7 @@ export async function postConsultantPayoutClawback(
     console.error(
       `[ledger] consultant payout clawback posting FAILED for payout ${consultantPayoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
     );
-    void recordSystemErrorSafe({
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "LEDGER",
       summary: `Consultant payout clawback ledger posting failed for payout ${consultantPayoutId}`,

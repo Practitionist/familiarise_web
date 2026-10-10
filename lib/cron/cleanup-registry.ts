@@ -211,7 +211,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({
           processedEventsDeleted: r.processedEventsDeleted,
+          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
+          emailEventsDeleted: r.emailEventsDeleted,
+          outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
         failureMessage: "Failed to archive webhook events",

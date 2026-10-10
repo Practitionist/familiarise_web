@@ -44,6 +44,7 @@ import {
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable but un-PATCH-able
@@ -452,6 +453,42 @@ export async function PATCH(
             roleChanged,
             statusChanged,
           });
+
+          if (
+            statusChanged &&
+            current.status === "ACTIVE" &&
+            patch.status === "SUSPENDED"
+          ) {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "member.removed",
+              payload: {
+                membershipId: memberId,
+                userId: updated.userId,
+                role: updated.role,
+                previousStatus: "ACTIVE",
+                reason: "suspended",
+              },
+            });
+          } else if (
+            statusChanged &&
+            current.status === "SUSPENDED" &&
+            patch.status === "ACTIVE"
+          ) {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "member.added",
+              payload: {
+                membershipId: memberId,
+                userId: updated.userId,
+                role: updated.role,
+                previousStatus: "SUSPENDED",
+                source: "reactivated",
+              },
+            });
+          }
 
           // P3 email twin: a role change notifies the affected member. Staged
           // inside this transaction so the notice row commits with the change

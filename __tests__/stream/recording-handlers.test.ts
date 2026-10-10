@@ -173,7 +173,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       expect.objectContaining({
         where: {
           id: "rec-placeholder",
-          status: { in: ["RECORDING", "PROCESSING"] },
+          status: { in: ["RECORDING", "PROCESSING", "FAILED"] },
         },
         data: expect.objectContaining({
           status: "READY",

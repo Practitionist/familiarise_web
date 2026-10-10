@@ -1411,7 +1411,7 @@ async function postBookingLedgerJournal(
       console.error(
         `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
       );
-      void recordSystemErrorSafe({
+      await recordSystemErrorSafe({
         organizationId: payment.organizationId ?? null,
         category: "LEDGER",
         summary: `Booking ledger posting failed for payment ${payment.id}`,

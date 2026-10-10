@@ -386,7 +386,7 @@ export async function POST(
             invoiceNumber: created.invoiceNumber,
             totalPaise: created.totalPaise,
             displayCurrency: created.displayCurrency,
-            dueDate: created.dueDate,
+            dueDate: created.dueDate.toISOString(),
             purchaseOrderId: created.purchaseOrderId,
             contractId: created.contractId,
           },

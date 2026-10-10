@@ -42,27 +42,62 @@ import type { PrismaLike } from "@/lib/prisma";
  * everything else stays.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Agent as HttpsAgent } from "node:https";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   SIGNATURE_HEADER,
   signPayload,
   WEBHOOK_ROTATION_GRACE_MS,
 } from "./signing";
-import { assertPublicUrl } from "./ssrf-guard";
+import { assertPublicUrl, resolvePublicUrl } from "./ssrf-guard";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
+
+export const DELIVERY_ID_HEADER = "X-Familiarise-Delivery-Id";
+export const EVENT_HEADER = "X-Familiarise-Event";
+
+interface PinnedDispatcher {
+  close?: () => Promise<void> | void;
+  destroy?: () => void;
+}
+
+type PinnedLookupFn = (
+  hostname: string,
+  opts: unknown,
+  cb: (err: Error | null, address: string, family: number) => void,
+) => void;
+
+type BuiltinUndiciAgentCtor = new (opts: {
+  connect: { lookup: PinnedLookupFn };
+}) => PinnedDispatcher;
+
+function createPinnedDispatcher(resolved: {
+  address: string;
+  family: 4 | 6;
+}): PinnedDispatcher {
+  const lookup: PinnedLookupFn = (_hostname, _opts, cb) =>
+    cb(null, resolved.address, resolved.family);
+
+  const builtInDispatcher = Reflect.get(
+    globalThis,
+    Symbol.for("undici.globalDispatcher.1"),
+  );
+  if (
+    typeof builtInDispatcher === "object" &&
+    builtInDispatcher !== null &&
+    "constructor" in builtInDispatcher &&
+    typeof builtInDispatcher.constructor === "function"
+  ) {
+    const AgentCtor = builtInDispatcher.constructor as BuiltinUndiciAgentCtor;
+    return new AgentCtor({ connect: { lookup } });
+  }
+  return new HttpsAgent({ lookup });
+}
 
 const MAX_BATCH = 50;
 const REQUEST_TIMEOUT_MS = 4_500;
 const CONCURRENCY_CHUNK_SIZE = 5;
 const MAX_ATTEMPTS = 5;
 
-/**
- * Wave-3 (#1230) — consecutive-failure threshold at which an ACTIVE endpoint
- * is auto-disabled. Previously failureCount grew unread and a dead receiver
- * kept costing a full delivery attempt + backoff slot every tick forever.
- * Re-enable is the existing endpoint PATCH route (operator action after
- * fixing the receiver).
- */
 export const ENDPOINT_AUTO_DISABLE_FAILURES = 25;
 
 async function maybeAutoDisableEndpoint(
@@ -78,34 +113,49 @@ async function maybeAutoDisableEndpoint(
     data: { status: "DISABLED" },
   });
   if (flipped.count > 0) {
-    void recordSystemEvent({
-      organizationId: endpoint.organizationId,
-      category: "WEBHOOK",
-      severity: "WARN",
-      message: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
-      context: { endpointId: endpoint.id, url: endpoint.url },
-    });
+    if (prisma.systemEvent) {
+      await recordSystemEvent({
+        db: prisma,
+        organizationId: endpoint.organizationId,
+        category: "WEBHOOK",
+        severity: "WARN",
+        message: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
+        context: { endpointId: endpoint.id, url: endpoint.url },
+      });
+    }
+    if (prisma.orgAuditLog) {
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationId: endpoint.organizationId,
+          category: "WEBHOOK",
+          action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
+          description: `Webhook endpoint auto-disabled after ${ENDPOINT_AUTO_DISABLE_FAILURES} consecutive failures: ${endpoint.url}`,
+          details: {
+            endpointId: endpoint.id,
+            url: endpoint.url,
+            autoDisabled: true,
+            failureCount: ENDPOINT_AUTO_DISABLE_FAILURES,
+          },
+        },
+      });
+    }
   }
 }
 
-// #812: A row flipped to IN_FLIGHT (the soft lock below) but never resolved is a
-// worker that crashed mid-delivery. Nothing re-selects IN_FLIGHT, so without a
-// reaper window the row is orphaned forever. Anything older than this (> the
-// 4.5s request timeout by a wide margin) is treated as crashed and re-queued.
-const IN_FLIGHT_STALE_MS = 10 * 60 * 1000; // 10 min
+const IN_FLIGHT_STALE_MS = 10 * 60 * 1000;
 
 /**
- * Backoff lookup keyed by the attempt number AFTER incrementing. So if
- * a row currently has `attempts = 0` and we just tried once, we look up
- * `BACKOFF_MS[1]` to compute when to try next.
+ * Backoff slots indexed directly by completed `attemptNumber` (`row.attempts + 1`).
+ * Index 0 is unused padding so `BACKOFF_MS[1]` is 1 minute on the first retry.
  */
-const BACKOFF_MS: Record<number, number> = {
-  1: 60_000, // 1 min
-  2: 5 * 60_000, // 5 min
-  3: 30 * 60_000, // 30 min
-  4: 2 * 60 * 60_000, // 2 h
-  5: 8 * 60 * 60_000, // 8 h
-};
+const BACKOFF_MS = [
+  0,
+  60_000, // attempt 1 → 1 min
+  5 * 60_000, // attempt 2 → 5 min
+  30 * 60_000, // attempt 3 → 30 min
+  2 * 60 * 60_000, // attempt 4 → 2 h
+  8 * 60 * 60_000, // attempt 5 → 8 h
+] as const;
 
 export interface WorkerRunResult {
   scanned: number;
@@ -115,23 +165,11 @@ export interface WorkerRunResult {
   errors: string[];
 }
 
-/**
- * Single-tick worker. Idempotent — safe to call repeatedly (the
- * `status` flip from PENDING → IN_FLIGHT marks rows in-progress so a
- * second tick doesn't grab them).
- */
 export async function runDispatchTick(params: {
   prisma: PrismaLike;
-  /// Inject for testing — production uses globalThis.fetch.
   fetchFn?: typeof fetch;
-  /// Override the clock for deterministic tests.
   now?: () => number;
-  /// Batch ceiling override; defaults to MAX_BATCH.
   maxBatch?: number;
-  /// Inject for testing — production uses the real SSRF guard. Fixture
-  /// endpoints use reserved non-resolving hosts (`*.example`), which the guard
-  /// correctly refuses, so tests exercising delivery pass a no-op here. Never
-  /// override this in production code.
   assertUrlFn?: (url: string) => Promise<void>;
 }): Promise<WorkerRunResult> {
   const { prisma } = params;
@@ -150,10 +188,15 @@ export async function runDispatchTick(params: {
     errors: [],
   };
 
-  // Why we don't SELECT FOR UPDATE: Prisma's high-level client doesn't
-  // expose row locks, and the worker is single-tenant per cron tick.
-  // The status flip to IN_FLIGHT below is the soft lock — a second
-  // worker grabbing the same row would observe IN_FLIGHT and skip.
+  const deadLettered: Array<{
+    deliveryId: string;
+    endpointId: string;
+    eventType: string;
+    attempts: number;
+    httpStatusCode: number | null;
+    lastError: string;
+  }> = [];
+
   const nowDate = new Date(now());
   const inFlightStaleBefore = new Date(now() - IN_FLIGHT_STALE_MS);
   const dueRows = await prisma.outboundWebhookDelivery.findMany({
@@ -161,12 +204,6 @@ export async function runDispatchTick(params: {
       OR: [
         { status: "PENDING" },
         { status: "RETRY", nextRetryAt: { lte: nowDate } },
-        // #812: A stale IN_FLIGHT row is a crashed-mid-delivery orphan — the
-        // worker died after the soft-lock flip but before recording the
-        // outcome. Keyed on updatedAt (@updatedAt) so the staleness window
-        // tracks the last soft-lock touch, not enqueue. Re-queue it; the
-        // receiver-side idempotency keys make a re-POST safe even if the
-        // original request did land.
         { status: "IN_FLIGHT", updatedAt: { lt: inFlightStaleBefore } },
       ],
     },
@@ -191,9 +228,6 @@ export async function runDispatchTick(params: {
 
   async function processOneDelivery(row: DueRow): Promise<void> {
     result.scanned += 1;
-    // Skip rows whose endpoint was paused / disabled after the delivery
-    // was queued — the operator's explicit pause should win over our
-    // retry schedule. We mark as FAILED with a descriptive error.
     if (row.endpoint.status !== "ACTIVE") {
       await prisma.outboundWebhookDelivery.update({
         where: { id: row.id },
@@ -206,10 +240,6 @@ export async function runDispatchTick(params: {
       return;
     }
 
-    // #812 — guarded atomic claim: only flip to IN_FLIGHT if the row is STILL
-    // in the status we selected it under. An unguarded update-by-id let the
-    // stale-IN_FLIGHT reaper defeat the soft lock (two ticks re-claiming the
-    // same orphan). count===0 means another tick won the race — skip it.
     const claim = await prisma.outboundWebhookDelivery.updateMany({
       where: { id: row.id, status: row.status },
       data: { status: "IN_FLIGHT" },
@@ -222,17 +252,12 @@ export async function runDispatchTick(params: {
       createdAt: row.createdAt.toISOString(),
       data: row.payload,
     });
-    // Dual-sign during the 24h rotation grace window: if the operator
-    // rotated recently AND we still hold the prior secret value, emit a
-    // second `v1=` so receivers verifying with EITHER secret stay green
-    // across the cutover. `previousSecretHash` holds the prior secret
-    // VALUE during the window (see schema note #768). After the window
-    // we sign with the current secret only.
-    const inRotationGrace =
-      row.endpoint.secretRotatedAt != null &&
-      row.endpoint.previousSecretHash != null &&
+    const inRotationGrace = Boolean(
+      row.endpoint.secretRotatedAt &&
+      row.endpoint.previousSecretHash &&
       now() - row.endpoint.secretRotatedAt.getTime() <=
-        WEBHOOK_ROTATION_GRACE_MS;
+        WEBHOOK_ROTATION_GRACE_MS,
+    );
     const signature = signPayload(
       row.endpoint.secret,
       body,
@@ -245,16 +270,14 @@ export async function runDispatchTick(params: {
     let networkError: string | undefined;
 
     try {
-      // #1132 — re-verify immediately before dialling. Registration-time
-      // validation alone is defeated by DNS rebinding: a host that answered
-      // with a public address at create time can answer with 169.254.169.254
-      // now. Treated as a delivery failure, so it retries and eventually
-      // disables the endpoint rather than 500-ing the tick.
-      await assertUrl(row.endpoint.url);
+      let dispatcher: PinnedDispatcher | undefined;
+      if (params.fetchFn) {
+        await assertUrl(row.endpoint.url);
+      } else {
+        const resolved = await resolvePublicUrl(row.endpoint.url);
+        dispatcher = createPinnedDispatcher(resolved);
+      }
 
-      // AbortController + timer: fetch's default has no per-request
-      // timeout in the Node runtime. A receiver hanging at the TCP
-      // layer would stall the whole tick.
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
       try {
@@ -263,18 +286,24 @@ export async function runDispatchTick(params: {
           headers: {
             "Content-Type": "application/json",
             [SIGNATURE_HEADER]: signature,
+            [DELIVERY_ID_HEADER]: row.id,
+            [EVENT_HEADER]: row.eventType,
             "User-Agent": "Familiarise-Webhooks/1.0",
           },
           body,
           signal: ac.signal,
-          // Do not follow redirects: a public host must not be able to bounce
-          // us to a private one after assertPublicUrl has passed. A 3xx is
-          // surfaced as its own status and counts as a delivery failure.
           redirect: "manual",
+          ...(dispatcher ? { dispatcher } : {}),
         });
         httpStatusCode = res.status;
+        await res.body?.cancel().catch(() => {});
       } finally {
         clearTimeout(timer);
+        if (dispatcher?.close) {
+          await Promise.resolve(dispatcher.close()).catch(() => {});
+        } else if (dispatcher?.destroy) {
+          dispatcher.destroy();
+        }
       }
     } catch (err) {
       networkError = err instanceof Error ? err.message : String(err);
@@ -284,9 +313,6 @@ export async function runDispatchTick(params: {
       httpStatusCode !== undefined &&
       httpStatusCode >= 200 &&
       httpStatusCode < 300;
-    // 4xx that are NOT 408 / 429 are permanent: the receiver told us
-    // the request is malformed. Retrying the same body (freshly signed)
-    // won't change the outcome.
     const isPermanentClientError =
       httpStatusCode !== undefined &&
       httpStatusCode >= 400 &&
@@ -315,6 +341,7 @@ export async function runDispatchTick(params: {
     }
 
     if (isPermanentClientError) {
+      const permanentError = `Permanent client error: ${httpStatusCode}`;
       await prisma.outboundWebhookDelivery.update({
         where: { id: row.id },
         data: {
@@ -322,7 +349,7 @@ export async function runDispatchTick(params: {
           httpStatusCode,
           signature,
           attempts: attemptNumber,
-          lastError: `Permanent client error: ${httpStatusCode}`,
+          lastError: permanentError,
         },
       });
       await prisma.webhookEndpoint.update({
@@ -332,17 +359,29 @@ export async function runDispatchTick(params: {
           failureCount: { increment: 1 },
         },
       });
+      if (prisma.orgAuditLog) {
+        await prisma.orgAuditLog.create({
+          data: {
+            organizationId: row.endpoint.organizationId,
+            category: "WEBHOOK",
+            action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
+            description: `Webhook delivery permanently rejected with HTTP ${httpStatusCode}`,
+            details: {
+              deliveryId: row.id,
+              endpointId: row.endpoint.id,
+              eventType: row.eventType,
+              httpStatusCode,
+              attempts: attemptNumber,
+            },
+          },
+        });
+      }
       await maybeAutoDisableEndpoint(prisma, row.endpoint);
       result.failed += 1;
       return;
     }
 
-    // Retry path — 5xx / 408 / 429 / network error.
-    const nextAttemptNumber = attemptNumber + 1;
     if (attemptNumber >= MAX_ATTEMPTS) {
-      // DEAD_LETTER, not FAILED: delivery-starved (receiver may be fine
-      // tomorrow), operator-replayable via /redeliver. FAILED stays the
-      // receiver-rejected terminal (permanent 4xx / endpoint paused).
       const deadLetterError =
         networkError ??
         `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`;
@@ -363,26 +402,39 @@ export async function runDispatchTick(params: {
           failureCount: { increment: 1 },
         },
       });
-      await maybeAutoDisableEndpoint(prisma, row.endpoint);
-      Sentry.captureException(
-        new Error(`Webhook delivery dead-lettered: ${deadLetterError}`),
-        {
-          tags: { subsystem: "enterprise", component: "outbound-webhooks" },
-          level: "warning",
-          contexts: {
-            delivery: {
+      if (prisma.orgAuditLog) {
+        await prisma.orgAuditLog.create({
+          data: {
+            organizationId: row.endpoint.organizationId,
+            category: "WEBHOOK",
+            action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_DELIVERY_FAILED,
+            description: `Webhook delivery dead-lettered after ${attemptNumber} attempts`,
+            details: {
               deliveryId: row.id,
               endpointId: row.endpoint.id,
               eventType: row.eventType,
-              attempts: attemptNumber,
               httpStatusCode: httpStatusCode ?? null,
+              attempts: attemptNumber,
+              lastError: deadLetterError,
             },
           },
-        },
-      );
+        });
+      }
+      await maybeAutoDisableEndpoint(prisma, row.endpoint);
+      deadLettered.push({
+        deliveryId: row.id,
+        endpointId: row.endpoint.id,
+        eventType: row.eventType,
+        attempts: attemptNumber,
+        httpStatusCode: httpStatusCode ?? null,
+        lastError: deadLetterError,
+      });
       result.failed += 1;
     } else {
-      const backoff = BACKOFF_MS[nextAttemptNumber] ?? BACKOFF_MS[MAX_ATTEMPTS];
+      const baseBackoff =
+        BACKOFF_MS[Math.min(attemptNumber, BACKOFF_MS.length - 1)];
+      const jitter = params.now ? 1 : 0.85 + Math.random() * 0.3;
+      const backoff = Math.round(baseBackoff * jitter);
       await prisma.outboundWebhookDelivery.update({
         where: { id: row.id },
         data: {
@@ -392,6 +444,12 @@ export async function runDispatchTick(params: {
           attempts: attemptNumber,
           nextRetryAt: new Date(now() + backoff),
           lastError: networkError ?? `Transient ${httpStatusCode ?? "network"}`,
+        },
+      });
+      await prisma.webhookEndpoint.update({
+        where: { id: row.endpoint.id },
+        data: {
+          lastFailureAt: nowDate,
         },
       });
       result.retried += 1;
@@ -412,6 +470,25 @@ export async function runDispatchTick(params: {
         );
       }
     }
+  }
+
+  if (deadLettered.length > 0) {
+    Sentry.captureException(
+      new Error(
+        `Webhook deliveries dead-lettered (${deadLettered.length}): ${deadLettered[0].lastError}`,
+      ),
+      {
+        tags: { subsystem: "enterprise", component: "outbound-webhooks" },
+        level: "warning",
+        contexts: {
+          delivery: deadLettered[0],
+          batch: {
+            count: deadLettered.length,
+            deliveryIds: deadLettered.map((d) => d.deliveryId),
+          },
+        },
+      },
+    );
   }
 
   Sentry.logger.info("webhook-worker: tick finished", {

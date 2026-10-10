@@ -65,6 +65,31 @@ export async function handleOverageMemberSuccess(
   capturedPaise?: number,
   gatewayPaymentId?: string,
 ): Promise<void> {
+  if (prisma.payment?.findUnique) {
+    const existingSide = await prisma.payment.findUnique({
+      where: { paymentIntent: paymentIntentId },
+      select: {
+        id: true,
+        paymentStatus: true,
+        amount: true,
+        gatewayPaymentId: true,
+      },
+    });
+    if (
+      existingSide &&
+      existingSide.paymentStatus === PaymentStatus.SUCCEEDED &&
+      (capturedPaise === undefined || capturedPaise === existingSide.amount)
+    ) {
+      if (gatewayPaymentId && !existingSide.gatewayPaymentId) {
+        await prisma.payment.updateMany({
+          where: { id: existingSide.id, gatewayPaymentId: null },
+          data: { gatewayPaymentId },
+        });
+      }
+      return;
+    }
+  }
+
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
   const txOutcome: OverageTxOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
@@ -253,11 +278,8 @@ export async function handleOverageMemberSuccess(
         }
 
         if (moved === 0) {
-          // Capture raced a reversal: the booking refunded (event → REVERSED)
-          // after the order was minted but before this webhook landed. Money was
-          // collected for an obligation that no longer exists — do NOT credit the
-          // org; surface it for a manual side-payment refund instead (#782).
-          void recordSystemErrorSafe({
+          await recordSystemErrorSafe({
+            db: tx,
             organizationId: side.organizationId,
             category: "OVERAGE",
             summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
@@ -268,17 +290,16 @@ export async function handleOverageMemberSuccess(
         }
 
         if (side.parentPaymentId) {
-          const openDisputes =
-            typeof tx.dispute?.count === "function"
-              ? await tx.dispute.count({
-                  where: {
-                    paymentId: side.parentPaymentId,
-                    status: { notIn: ["WON", "LOST"] },
-                  },
-                })
-              : 0;
+          const openDisputes = tx.dispute?.count
+            ? await tx.dispute.count({
+                where: {
+                  paymentId: side.parentPaymentId,
+                  status: { notIn: ["WON", "LOST"] },
+                },
+              })
+            : 0;
           if (openDisputes === 0) {
-            if (typeof tx.consultantEarnings?.updateMany === "function") {
+            if (tx.consultantEarnings?.updateMany) {
               await tx.consultantEarnings.updateMany({
                 where: {
                   paymentId: side.parentPaymentId,
@@ -288,7 +309,7 @@ export async function handleOverageMemberSuccess(
                 data: { status: "PENDING", preDisputeStatus: null },
               });
             }
-            if (typeof tx.organizationEarnings?.updateMany === "function") {
+            if (tx.organizationEarnings?.updateMany) {
               await tx.organizationEarnings.updateMany({
                 where: {
                   paymentId: side.parentPaymentId,
@@ -379,14 +400,6 @@ export async function handleOverageMemberSuccess(
   }
 }
 
-/**
- * Correct a late member capture whose base the org was ALREADY invoiced for:
- * invoiced money must never also be credited to ORG_PAYABLE. In the caller's
- * tx: (1) `Dr ORG_PAYABLE / Cr ORG_RECEIVABLE` for the base, keyed
- * `overage-recarve-invoice:<sidePaymentId>`; (2) a GST credit note for the
- * grossed-up base via `mintInvoiceRefundCreditNote`, unique per OverageEvent.
- * Both keys are fixed per capture, so a redelivery applies once.
- */
 async function neutraliseInvoicedOverageBase(
   tx: Tx,
   args: {
@@ -406,8 +419,6 @@ async function neutraliseInvoicedOverageBase(
     invoiceId,
     overageEventId,
   } = args;
-  // Same key space for the journal and the document: this side-Payment's base
-  // is reversed exactly once, on either rail or both.
   const key = `overage-recarve-invoice:${sidePaymentId}`;
 
   if (organizationId) {
@@ -442,8 +453,6 @@ async function neutraliseInvoicedOverageBase(
       sgstPaise: true,
     },
   });
-  // Gross the tax-exclusive base up by the invoice's own rate; a DRAFT invoice
-  // is refused by the canonical writer's own guard.
   const taxPaise = invoice
     ? invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise
     : 0;
@@ -470,8 +479,6 @@ async function neutraliseInvoicedOverageBase(
     });
   }
 
-  // Awaited through the tx (#1582 B-P1-02) so a rollback drops it too; `*Safe`
-  // never throws.
   const creditNoteLabel = creditNoteId
     ? `credit note ${creditNoteId}`
     : outcome === "FULLY_CREDITED"
@@ -491,7 +498,7 @@ async function neutraliseInvoicedOverageBase(
     creditNoteOutcome: outcome ?? null,
     ledgerReversalKey: key,
   };
-  if (creditNoteId && typeof recordSystemEventSafe === "function") {
+  if (creditNoteId) {
     await recordSystemEventSafe({
       db: tx,
       organizationId,
@@ -515,11 +522,6 @@ async function neutraliseInvoicedOverageBase(
   }
 }
 
-/**
- * Gateway capture failed/abandoned for a CHARGE_MEMBER side-charge. Marks the
- * side-Payment FAILED + the OverageEvent FAILED so the dashboard can surface a
- * retry. The booking itself is unaffected (it already happened).
- */
 export async function handleOverageMemberFailure(
   paymentIntentId: string,
 ): Promise<void> {
@@ -529,14 +531,8 @@ export async function handleOverageMemberFailure(
       select: { id: true, paymentStatus: true, parentPaymentId: true },
     });
     if (!side || !side.parentPaymentId) return;
-    if (side.paymentStatus === PaymentStatus.SUCCEEDED) return; // don't undo a success
+    if (side.paymentStatus === PaymentStatus.SUCCEEDED) return;
 
-    // #1846 SM-B2 — the money predicate rides the WHERE. The SUCCEEDED
-    // pre-check above reads before the capture transaction commits, so a
-    // failure delivery racing it used to overwrite SUCCEEDED with FAILED while
-    // the OverageEvent stayed CHARGED and the org credit stayed posted. Only a
-    // PENDING side-charge can fail; zero rows means capture (or an earlier
-    // failure) got there first, and nothing below may run.
     const failed = await tx.payment.updateMany({
       where: { id: side.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
@@ -544,15 +540,12 @@ export async function handleOverageMemberFailure(
     if (failed.count === 0) return;
     const moved = await transitionOverage(tx, { paymentId: side.id }, "FAILED");
     if (moved > 0) {
-      // #812 §P0 — the member isn't paying basePaise; return it to the org's
-      // parent accrual in the same tx. "invoiced" (parent already rolled onto
-      // an invoice) is surfaced by the sweeps when they re-FAIL; here the
-      // charge stays retryable so a recarve on recovery rebalances it.
       const restore = await restoreOverageBaseCarve(tx, {
         sidePaymentId: side.id,
       });
       if (restore === "invoiced") {
-        void recordSystemErrorSafe({
+        await recordSystemErrorSafe({
+          db: tx,
           organizationId: null,
           category: "OVERAGE",
           summary: `Failed overage side-payment ${side.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,

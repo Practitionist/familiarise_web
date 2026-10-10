@@ -54,6 +54,7 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
   EMAIL_BUDGET_MS,
@@ -259,6 +260,7 @@ export async function handleOrgPaymentSuccess(
       where: { id: invoiceId },
       select: {
         id: true,
+        invoiceNumber: true,
         totalPaise: true,
         status: true,
         displayCurrency: true,
@@ -312,11 +314,12 @@ export async function handleOrgPaymentSuccess(
     let claimedCount = 0;
     try {
       const txResult = await prisma.$transaction(async (tx) => {
+        const paidAt = new Date();
         const claimed = await tx.organizationInvoice.updateMany({
           where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
           data: {
             status: "PAID",
-            paidAt: new Date(),
+            paidAt,
             providerPaymentOrderId: null,
             ...(razorpayPaymentId
               ? { providerPaymentId: razorpayPaymentId }
@@ -352,6 +355,18 @@ export async function handleOrgPaymentSuccess(
               ],
             });
           }
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: resolvedOrgId,
+            eventType: "invoice.paid",
+            payload: {
+              invoiceId: invoiceRow.id,
+              invoiceNumber: invoiceRow.invoiceNumber,
+              paidPaise: Number(invoiceRow.totalPaise),
+              paymentId: razorpayPaymentId ?? invoiceRow.id,
+              settledAt: paidAt.toISOString(),
+            },
+          });
         }
         // #775 — CHARGE_ORG overage events on this invoice's lines were ACCRUED
         // at rollup; the org has now paid, so flip them ACCRUED → CHARGED.
@@ -598,6 +613,7 @@ export async function handleRefundCreated(
   currency: string,
   status: string,
   providerPaymentId?: string,
+  notes?: Record<string, string>,
 ) {
   // Serializable + retry — the contract `applyRefundCascade` documents for
   // every driver ("Caller must pass a transaction client; the cascade itself
@@ -1109,6 +1125,71 @@ export async function handleRefundCreated(
         // an orphan FAILED Refund row attached to the B2C payment. No money moves
         // either way on a failed refund, so there's nothing to record — skip it.
         const mappedNewStatus = mapGatewayRefundStatus(status);
+        if (
+          typeof notes?.reservationId === "string" &&
+          notes.reservationId.length > 0 &&
+          tx.refund.findFirst
+        ) {
+          const reservation = await tx.refund.findFirst({
+            where: {
+              id: notes.reservationId,
+              paymentId: payment.id,
+              amountPaise: amount,
+              refundId: { startsWith: "pending_" },
+            },
+            select: { id: true, refundId: true },
+          });
+          if (reservation) {
+            const claimed = await tx.refund.updateMany({
+              where: {
+                id: reservation.id,
+                status: "PENDING",
+                refundId: reservation.refundId,
+              },
+              data: {
+                refundId,
+                status: mappedNewStatus,
+                updatedAt: new Date(),
+              },
+            });
+            if (claimed.count > 0) {
+              if (mappedNewStatus === "SUCCEEDED") {
+                await runRefundSideEffects(
+                  payment.id,
+                  status,
+                  reservation.id,
+                  amount,
+                  payment.amount,
+                );
+                const notification = await notifyRefundProcessed(
+                  payment.userId,
+                  {
+                    ...notificationScope(payment.organizationId),
+                    amount,
+                    currency,
+                    dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                  },
+                  { tx, entityRef: `payment:${payment.id}` },
+                );
+                stagedNotification = notification?.staged ?? null;
+                stagedEmails = await stageRefundProcessedEmail(tx, {
+                  userId: payment.userId,
+                  paymentId: payment.id,
+                  amountPaise: amount,
+                  currency,
+                });
+              }
+              return;
+            }
+            const rebound = await tx.refund.findUnique({
+              where: { refundId },
+              select: { id: true },
+            });
+            if (rebound) {
+              return;
+            }
+          }
+        }
         if (mappedNewStatus === "FAILED" && !existingRefund) {
           console.log(
             `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
@@ -1212,20 +1293,18 @@ export async function handleDisputeCreated(
 ) {
   const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
-  // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
-  // This lookup is an external HTTP call to Razorpay; leaving it
-  // inside the tx held a database transaction open across a network round trip,
-  // and made the tx unsafe to retry (an SSI retry would re-hit the gateway).
-  // Both matter now that this handler runs Serializable to match
-  // handleDisputeUpdated.
   let resolvedPaymentIntent: string | undefined;
-  // #873 — page once per dispute-unlink incident: the lookup catch and the
-  // !payment branch below must not both fire for the same webhook.
   let unlinkAlertRecorded = false;
 
-  if (razorpayClient) {
-    // For Razorpay, chargeId is the payment_id. We need to fetch the payment
-    // from Razorpay to get the order_id, which is stored as our paymentIntent.
+  const existingLocalPayment = prisma.payment?.findFirst
+    ? await prisma.payment.findFirst({
+        where: { gatewayPaymentId: chargeId },
+        select: { paymentIntent: true },
+      })
+    : null;
+  if (existingLocalPayment?.paymentIntent) {
+    resolvedPaymentIntent = existingLocalPayment.paymentIntent;
+  } else if (razorpayClient) {
     try {
       const rzpPayment = await razorpayClient.payments.fetch(chargeId);
       if (rzpPayment.order_id) {
@@ -1236,12 +1315,6 @@ export async function handleDisputeCreated(
         `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
         error,
       );
-      // PM-4 — without the gateway lookup we can't link the dispute, so
-      // earnings won't be held. The 6h reconcile-disputes cron is the only
-      // backstop; page so it isn't silently dropped for 6h.
-      // Awaited, not `void`: a floating write is lost whenever the invocation
-      // ends first, which is the failure `*Safe` exists to stop hiding. This one
-      // is outside the transaction, so the global client is fine here.
       await recordSystemErrorSafe({
         category: "WEBHOOK",
         summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
@@ -1375,7 +1448,7 @@ export async function handleDisputeCreated(
         });
 
         let heldBatchedCount = 0;
-        if (typeof tx.consultantEarnings.findMany === "function") {
+        if (tx.consultantEarnings.findMany) {
           const preflightBatched = await tx.consultantEarnings.findMany({
             where: {
               paymentId: payment.id,
@@ -1412,7 +1485,7 @@ export async function handleDisputeCreated(
                 },
                 data: { status: "READY", payoutId: null },
               });
-              if (typeof tx.consultantPayout?.updateMany === "function") {
+              if (tx.consultantPayout?.updateMany) {
                 await tx.consultantPayout.updateMany({
                   where: {
                     id: { in: batchedPayoutIds },
@@ -1463,7 +1536,7 @@ export async function handleDisputeCreated(
         });
 
         let orgHeldBatchedCount = 0;
-        if (typeof tx.organizationEarnings.findMany === "function") {
+        if (tx.organizationEarnings.findMany) {
           const preflightOrgBatched = await tx.organizationEarnings.findMany({
             where: {
               paymentId: payment.id,
@@ -1500,7 +1573,7 @@ export async function handleDisputeCreated(
                 },
                 data: { status: "READY", orgPayoutId: null },
               });
-              if (typeof tx.organizationPayout?.updateMany === "function") {
+              if (tx.organizationPayout?.updateMany) {
                 await tx.organizationPayout.updateMany({
                   where: {
                     id: { in: batchedOrgPayoutIds },
@@ -1925,6 +1998,7 @@ export async function handleDisputeUpdated(
   disputeId: string,
   status: string,
   evidence: Record<string, unknown> | null,
+  respondBy?: number | null,
 ) {
   // #1020-2 — staged inside the tx, dispatched only after COMMIT (declared
   // here because the tx callback assigns it).
@@ -1933,18 +2007,9 @@ export async function handleDisputeUpdated(
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
 
-  // #785 — Serializable so SSI detects a refund racing this lost-chargeback on
-  // the same payment: refundPayment (also Serializable) reads disputes + writes
-  // a Refund row while applyOrgChargeback below reads refunds + writes the
-  // dispute, so an interleaving forms a dangerous rw-structure and one tx aborts
-  // (retried by the gateway webhook redelivery) instead of both reversing the
-  // org for the same money. #1582 C-P1-01d — a first-attempt P2034 is retried
-  // in-process like handleDisputeCreated, not left to the redelivery.
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        // A retried attempt must not inherit a page or bell staged by the
-        // aborted one (CodeRabbit on #1753).
         consultantClawbackPage = null;
         stagedNotification = null;
         const dispute = await tx.dispute.findUnique({
@@ -1962,14 +2027,10 @@ export async function handleDisputeUpdated(
 
         if (!dispute) {
           console.warn(`Dispute not found: ${disputeId}`);
-          return;
+          return new DeferSignal("dispute_not_created_yet");
         }
 
         const mappedStatus = mapDisputeStatus(status);
-        // An unmapped status on the UPDATE path is skipped, not coerced: a
-        // default-to-NEEDS_RESPONSE here could legally mis-advance a
-        // warning-cluster dispute into the live cluster on a status we never
-        // understood. The reconcile cron re-reads the gateway later.
         if (mappedStatus === null) {
           console.warn(
             `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
@@ -1977,113 +2038,148 @@ export async function handleDisputeUpdated(
           return;
         }
 
-        // #776 — skip a redelivered no-op so the resolution side effects below (earnings
-        // flips, applyOrgChargeback) don't re-run on a webhook retry.
-        if (dispute.status === mappedStatus) {
+        const priorStatus = dispute.status;
+        if (priorStatus === mappedStatus) {
           console.log(`Dispute ${disputeId} already ${mappedStatus} — no-op`);
           return;
         }
-        // #776 — reject illegal transitions, most importantly re-driving a TERMINAL
-        // verdict (WON/LOST/CHARGE_REFUNDED). Log + skip rather than corrupt the state
-        // machine on a delayed/out-of-order gateway delivery.
-        if (!isLegalDisputeTransition(dispute.status, mappedStatus)) {
+        if (!isLegalDisputeTransition(priorStatus, mappedStatus)) {
           console.warn(
-            `Illegal dispute transition ${dispute.status} → ${mappedStatus} for ${disputeId} — skipping`,
+            `Illegal dispute transition ${priorStatus} → ${mappedStatus} for ${disputeId} — skipping`,
           );
           return;
         }
 
-        await tx.dispute.update({
-          where: { disputeId },
-          data: {
-            status: mappedStatus,
-            ...(evidence && { evidence: evidence as Prisma.InputJsonValue }),
-            updatedAt: new Date(),
-          },
-        });
+        const updateData = {
+          status: mappedStatus,
+          ...(respondBy ? { dueBy: new Date(respondBy * 1000) } : {}),
+          ...(evidence && { evidence: evidence as Prisma.InputJsonValue }),
+          updatedAt: new Date(),
+        };
+        if (tx.dispute.updateMany) {
+          const updated = await tx.dispute.updateMany({
+            where: { id: dispute.id, status: priorStatus },
+            data: updateData,
+          });
+          if (updated.count === 0) {
+            return;
+          }
+        } else {
+          await tx.dispute.update({
+            where: { disputeId },
+            data: updateData,
+          });
+        }
 
         console.log(
           `✅ Dispute ${disputeId} updated to status ${mappedStatus}`,
         );
 
-        // M1 FIX: Release or refund earnings based on dispute resolution.
-        // CLOSED releases too: anything still HELD wasn't consumed by a refund
-        // (the refund cascade flips those rows to REFUNDED first), so the
-        // updateMany is a no-op exactly when money already moved.
+        if (
+          priorStatus === "UNDER_REVIEW" &&
+          mappedStatus === "NEEDS_RESPONSE"
+        ) {
+          const disputePayment = await tx.payment.findUnique({
+            where: { id: dispute.paymentId },
+          });
+          if (disputePayment) {
+            const notifications = await notifyDisputeCreated(
+              [disputePayment.userId],
+              {
+                disputeId,
+                amount: dispute.amountPaise,
+                currency: dispute.currency,
+                reason: dispute.reason || "",
+                status: mappedStatus,
+                dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+              },
+              { tx, entityRef: `dispute:${disputeId}:reopened` },
+            );
+            stagedNotification = notifications?.[0]?.staged ?? null;
+          }
+        }
+
         if (
           mappedStatus === "WON" ||
           mappedStatus === "WARNING_CLOSED" ||
           mappedStatus === "CLOSED"
         ) {
-          // Dispute resolved in platform's favor — release held earnings.
-          // #1020-1 — restore each row's TRUE prior state from preDisputeStatus
-          // instead of force-maturing everything to READY: a PENDING earning
-          // that was mid-hold-period when the dispute landed must return to
-          // PENDING so its maturity clock stays honest. Rows with no recorded
-          // prior (held before the column shipped) keep the historical READY
-          // behavior. All three groups clear the marker; the null-prior group
-          // is also what makes a redelivered WON a no-op (nothing matches).
-          const relPending = await tx.consultantEarnings.updateMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: "HELD",
-              preDisputeStatus: "PENDING",
-            },
-            data: { status: "PENDING", preDisputeStatus: null },
-          });
-          // W1e — a HELD row whose prior was PENDING_TRUST returns to
-          // PENDING_TRUST, never READY: only moderation holds such a row, and
-          // force-readying it would bypass the invoice-fraud gate.
-          const relTrust = await tx.consultantEarnings.updateMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: "HELD",
-              preDisputeStatus: "PENDING_TRUST",
-            },
-            data: { status: "PENDING_TRUST", preDisputeStatus: null },
-          });
-          const released = await tx.consultantEarnings.updateMany({
-            where: { paymentId: dispute.paymentId, status: "HELD" },
-            data: { status: "READY", preDisputeStatus: null },
-          });
-          if (relPending.count + released.count + relTrust.count > 0) {
-            console.log(
-              `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-            );
-          }
-          // #1008 — release the org's held earnings too. No-op exactly when a
-          // refund already flipped them to REFUNDED (that path wins first).
-          const orgRelPending = await tx.organizationEarnings.updateMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: "HELD",
-              preDisputeStatus: "PENDING",
-            },
-            data: { status: "PENDING", preDisputeStatus: null },
-          });
-          const orgRelTrust = await tx.organizationEarnings.updateMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: "HELD",
-              preDisputeStatus: "PENDING_TRUST",
-            },
-            data: { status: "PENDING_TRUST", preDisputeStatus: null },
-          });
-          const orgReleased = await tx.organizationEarnings.updateMany({
-            where: { paymentId: dispute.paymentId, status: "HELD" },
-            data: { status: "READY", preDisputeStatus: null },
-          });
-          if (orgReleased.count + orgRelPending.count + orgRelTrust.count > 0) {
-            console.log(
-              `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
-            );
+          const openSiblingDisputes = tx.dispute.count
+            ? await tx.dispute.count({
+                where: {
+                  paymentId: dispute.paymentId,
+                  id: { not: dispute.id },
+                  status: {
+                    notIn: [
+                      "WON",
+                      "LOST",
+                      "CHARGE_REFUNDED",
+                      "CLOSED",
+                      "WARNING_CLOSED",
+                    ],
+                  },
+                },
+              })
+            : 0;
+          if (openSiblingDisputes === 0) {
+            const relPending = await tx.consultantEarnings.updateMany({
+              where: {
+                paymentId: dispute.paymentId,
+                status: "HELD",
+                preDisputeStatus: "PENDING",
+              },
+              data: { status: "PENDING", preDisputeStatus: null },
+            });
+            const relTrust = await tx.consultantEarnings.updateMany({
+              where: {
+                paymentId: dispute.paymentId,
+                status: "HELD",
+                preDisputeStatus: "PENDING_TRUST",
+              },
+              data: { status: "PENDING_TRUST", preDisputeStatus: null },
+            });
+            const released = await tx.consultantEarnings.updateMany({
+              where: { paymentId: dispute.paymentId, status: "HELD" },
+              data: { status: "READY", preDisputeStatus: null },
+            });
+            if (relPending.count + released.count + relTrust.count > 0) {
+              console.log(
+                `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
+              );
+            }
+            const orgRelPending = await tx.organizationEarnings.updateMany({
+              where: {
+                paymentId: dispute.paymentId,
+                status: "HELD",
+                preDisputeStatus: "PENDING",
+              },
+              data: { status: "PENDING", preDisputeStatus: null },
+            });
+            const orgRelTrust = await tx.organizationEarnings.updateMany({
+              where: {
+                paymentId: dispute.paymentId,
+                status: "HELD",
+                preDisputeStatus: "PENDING_TRUST",
+              },
+              data: { status: "PENDING_TRUST", preDisputeStatus: null },
+            });
+            const orgReleased = await tx.organizationEarnings.updateMany({
+              where: { paymentId: dispute.paymentId, status: "HELD" },
+              data: { status: "READY", preDisputeStatus: null },
+            });
+            if (
+              orgReleased.count + orgRelPending.count + orgRelTrust.count >
+              0
+            ) {
+              console.log(
+                `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
+              );
+            }
           }
         } else if (
           mappedStatus === "LOST" ||
           mappedStatus === "CHARGE_REFUNDED"
         ) {
-          // Money moves in settleLostDispute, shared with the
-          // reconcile-disputes poll so a polled LOST settles identically.
           const settlement = await settleLostDispute(tx, dispute);
           consultantClawbackPage = settlement.consultantClawbackPage;
         }
@@ -2130,11 +2226,6 @@ export async function handleDisputeUpdated(
   // #1654 — post-commit inline attempt; a timeout leaves the row for the drain.
   await attemptStaged(stagedNotification);
 
-  // Post-commit dispatch: the reversal rows are durable at this point, so
-  // exactly one page reaches ops per successful lost-dispute transition. An
-  // SSI abort never reaches this — no page for money not persisted.
-  // (The cast defeats TS's initializer narrowing: the only assignment happens
-  // inside the tx callback, which CFA cannot see past the await.)
   const stagedClawbackPage = consultantClawbackPage as {
     disputeId: string;
     paymentId: string;
@@ -2188,17 +2279,6 @@ async function applyOrgChargeback(
   });
   if (alreadyPosted) return;
 
-  // #785 — net against money already reversed by an app refund on this payment.
-  // A refund and a lost chargeback are two routes to the same "customer got the
-  // money back"; without this the org is debited twice (refund:<id> reverses the
-  // funding AND chargeback:<disputeId> debits again). Settle only the un-reversed
-  // remainder so the disputed amount hits the org's books exactly once.
-  // Net only against SUCCEEDED refunds: a PENDING refund hasn't moved money and
-  // may yet FAIL — netting against it would leave the org permanently
-  // under-debited (the idempotent chargeback post never recomputes). App refunds
-  // commit straight to SUCCEEDED, so this loses nothing for them; the concurrent
-  // mid-flight refund case is handled by the Serializable guard in
-  // handleDisputeUpdated.
   const priorRefundAgg = await tx.refund.aggregate({
     where: {
       paymentId: params.paymentId,
@@ -2206,7 +2286,6 @@ async function applyOrgChargeback(
     },
     _sum: { amountPaise: true },
   });
-  // #780 — _sum bypasses the result extension: bigint until sumPaise'd.
   const settlePaise = Math.max(
     0,
     amountPaise - sumPaise(priorRefundAgg._sum.amountPaise),
@@ -2275,25 +2354,6 @@ async function applyOrgChargeback(
   });
 }
 
-/**
- * #677 — B2C analog of `applyOrgChargeback`. A lost chargeback on a non-org
- * (B2C card) booking pulls the CASH back via the card network, and the dispute
- * handler flips the consultant earnings to REFUNDED — but, unlike the refund
- * cascade (`refund.ts`) and unlike the org path, the B2C path never posted the
- * REFUND ledger leg. The booking journal kept its CASH-in + payable, so the
- * reconcile cron flags `REVERSED_EARNING_WITHOUT_REFUND_TXN` ("the cash left but
- * the payable was never cleared in the journal").
- *
- * Reverse the original `booking:<paymentId>` journal by mirroring its posted
- * entries as their inverse — funding-leg-correct for ANY booking shape
- * (card-only, discounted, referral-credit-funded, collaborator host-org) without
- * re-deriving the fee/share/GST split. Idempotent on `chargeback:<disputeId>`;
- * netted against prior SUCCEEDED refunds so a refund-then-chargeback reverses the
- * journal exactly once (pairs with `refundPayment`'s dispute-netting). PLATFORM_FEE
- * absorbs the partial-refund rounding residual (matching the cascade's policy), so
- * the post is always balanced — and for a full chargeback the residual is 0, i.e.
- * the exact negation of the booking.
- */
 export async function applyB2cChargebackReversal(
   tx: Tx,
   params: {
@@ -2313,9 +2373,6 @@ export async function applyB2cChargebackReversal(
   });
   if (alreadyPosted) return;
 
-  // Net against money an app refund already returned on this payment so the
-  // booking journal reverses exactly once across the refund+chargeback pair
-  // (mirrors applyOrgChargeback + refundPayment's dispute-netting).
   const priorRefundAgg = await tx.refund.aggregate({
     where: { paymentId, status: { in: ["SUCCEEDED"] } },
     _sum: { amountPaise: true },
@@ -2338,10 +2395,8 @@ export async function applyB2cChargebackReversal(
     include: { entries: { include: { account: true } } },
   });
   if (!booking || booking.entries.length === 0) {
-    // Earnings were reversed but there's no booking journal to mirror — don't
-    // post an unbalanced guess. Page; the reconcile cron's
-    // EARNINGS_WITHOUT_BOOKING_TXN owns the upstream gap.
-    void recordSystemErrorSafe({
+    await recordSystemErrorSafe({
+      db: tx,
       organizationId: null,
       category: "LEDGER",
       summary: `B2C chargeback ${disputeId}: no booking ledger txn for payment ${paymentId} to reverse`,
@@ -2445,10 +2500,44 @@ export async function handleRazorpayPayoutWebhook(
   // Imported lazily to avoid a circular import (org-payout-service ->
   // org-workflows -> ... -> webhooks/utils when it grows).
   const { default: prismaClient } = await import("@/lib/prisma");
-  const orgPayout = await prismaClient.organizationPayout.findUnique({
+  let orgPayout = await prismaClient.organizationPayout.findUnique({
     where: { gatewayPayoutId: payoutData.id },
     select: { id: true, status: true, organizationId: true },
   });
+
+  if (!orgPayout && payoutData.reference_id) {
+    const candidate = prismaClient.organizationPayout.findFirst
+      ? await prismaClient.organizationPayout.findFirst({
+          where: { id: payoutData.reference_id, gatewayPayoutId: null },
+          select: { id: true, status: true, organizationId: true },
+        })
+      : await prismaClient.organizationPayout.findUnique({
+          where: { id: payoutData.reference_id },
+          select: { id: true, status: true, organizationId: true },
+        });
+    if (candidate) {
+      if (prismaClient.organizationPayout.updateMany) {
+        const bound = await prismaClient.organizationPayout.updateMany({
+          where: { id: candidate.id, gatewayPayoutId: null },
+          data: { gatewayPayoutId: payoutData.id },
+        });
+        if (bound.count > 0) {
+          orgPayout = candidate;
+        } else {
+          orgPayout = await prismaClient.organizationPayout.findUnique({
+            where: { gatewayPayoutId: payoutData.id },
+            select: { id: true, status: true, organizationId: true },
+          });
+        }
+      } else {
+        await prismaClient.organizationPayout.update({
+          where: { id: candidate.id },
+          data: { gatewayPayoutId: payoutData.id },
+        });
+        orgPayout = candidate;
+      }
+    }
+  }
 
   if (orgPayout) {
     const {
@@ -2459,8 +2548,6 @@ export async function handleRazorpayPayoutWebhook(
 
     switch (eventType) {
       case "payout.processed": {
-        // Persist the bank UTR before flipping to COMPLETED so the
-        // notification + audit log have the canonical reference.
         if (payoutData.utr) {
           await prismaClient.organizationPayout.update({
             where: { id: orgPayout.id },
@@ -2468,6 +2555,13 @@ export async function handleRazorpayPayoutWebhook(
           });
         }
         await markOrgPayoutCompleted(orgPayout.id);
+        break;
+      }
+      case "payout.cancelled": {
+        await markOrgPayoutFailed(
+          orgPayout.id,
+          payoutData.failure_reason ?? "RazorpayX cancelled",
+        );
         break;
       }
       case "payout.failed":
@@ -2492,14 +2586,28 @@ export async function handleRazorpayPayoutWebhook(
             data: { gatewayUtr: payoutData.utr },
           });
         }
+        if (payoutData.status === "processed") {
+          await markOrgPayoutCompleted(orgPayout.id);
+        } else if (
+          payoutData.status === "failed" ||
+          payoutData.status === "rejected" ||
+          payoutData.status === "cancelled"
+        ) {
+          await markOrgPayoutFailed(
+            orgPayout.id,
+            payoutData.failure_reason ?? `RazorpayX ${payoutData.status}`,
+          );
+        } else if (payoutData.status === "reversed") {
+          await markOrgPayoutReversed(
+            orgPayout.id,
+            payoutData.failure_reason ?? "RazorpayX reversal",
+          );
+        }
         console.log(
           `[orgPayoutWebhook] payout.updated for ${orgPayout.id} (utr=${payoutData.utr ? "updated" : "unchanged"})`,
         );
         break;
       }
-      // queued / initiated / pending / cancelled — informational only;
-      // the row already sits in PROCESSING and we wait for the terminal
-      // event. No state change here.
       default:
         console.log(
           `[orgPayoutWebhook] non-terminal event ${eventType} for ${orgPayout.id} — no-op`,
@@ -2523,28 +2631,19 @@ export async function handleRazorpayPayoutWebhook(
     processed: "COMPLETED",
     reversed: "FAILED",
     rejected: "FAILED",
-    // #1451 — RazorpayX answers a bank-level failure with `failed`, and the missing
-    // entry fell through to the `|| "PENDING"` default: a `payout.failed`
-    // delivery left the consultant payout in flight and its earnings BATCHED
-    // forever, because the un-batch back to READY only runs on the FAILED
-    // branch of handlePayoutWebhook.
     failed: "FAILED",
     cancelled: "CANCELLED",
   };
 
   const status = statusMap[payoutData.status];
 
-  // #813/#812 — a `payout.reversed` for an ALREADY-COMPLETED consultant payout
-  // must post the inverse journal + re-open earnings, mirroring the org branch.
-  // Attempt the reversal first; it no-ops via its COMPLETED claim if the payout
-  // hasn't settled yet, in which case we fall through to the FAILED mapping
-  // (handlePayoutWebhook only claims non-terminal rows, so no double-handling).
   if (eventType === "payout.reversed") {
     const { markConsultantPayoutReversed } =
       await import("@/lib/payments/payouts");
     const { wasNoOp } = await markConsultantPayoutReversed(
       payoutData.id,
       payoutData.failure_reason ?? "RazorpayX reversal",
+      payoutData.reference_id,
     );
     if (!wasNoOp) {
       console.log(

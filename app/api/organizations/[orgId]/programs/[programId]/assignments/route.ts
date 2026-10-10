@@ -13,7 +13,6 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -23,6 +22,7 @@ import {
 } from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const CreateBodySchema = z
@@ -200,30 +200,18 @@ export async function POST(
                 where: { id: programId, configLockedAt: null },
                 data: { configLockedAt: new Date() },
               });
-              const endpoints = await tx.webhookEndpoint.findMany({
-                where: {
-                  organizationId: orgId,
-                  status: "ACTIVE",
-                  eventSubscriptions: { has: "program.assigned" },
+              await dispatchWebhookEvent({
+                prisma: tx,
+                organizationId: orgId,
+                eventType: "program.assigned",
+                payload: {
+                  assignmentId: assignment.id,
+                  programId,
+                  membershipId: singleMembershipId,
+                  periodStart: body.periodStart.toISOString(),
+                  periodEnd: body.periodEnd.toISOString(),
                 },
-                select: { id: true },
               });
-              if (endpoints.length > 0) {
-                await tx.outboundWebhookDelivery.createMany({
-                  data: endpoints.map((endpoint) => ({
-                    webhookEndpointId: endpoint.id,
-                    eventType: "program.assigned",
-                    payload: {
-                      assignmentId: assignment.id,
-                      programId,
-                      membershipId: singleMembershipId,
-                      periodStart: body.periodStart.toISOString(),
-                      periodEnd: body.periodEnd.toISOString(),
-                    } satisfies Prisma.InputJsonValue,
-                    status: "PENDING" as const,
-                  })),
-                });
-              }
             }
             await tx.orgAuditLog.create({
               data: {
@@ -348,33 +336,19 @@ export async function POST(
           const newlyCreatedAssignments = createdAssignments.filter(
             (a) => !existingExactSet.has(a.membershipId),
           );
-          if (newlyCreatedAssignments.length > 0) {
-            const endpoints = await tx.webhookEndpoint.findMany({
-              where: {
-                organizationId: orgId,
-                status: "ACTIVE",
-                eventSubscriptions: { has: "program.assigned" },
+          for (const created of newlyCreatedAssignments) {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: orgId,
+              eventType: "program.assigned",
+              payload: {
+                assignmentId: created.id,
+                programId,
+                membershipId: created.membershipId,
+                periodStart: body.periodStart.toISOString(),
+                periodEnd: body.periodEnd.toISOString(),
               },
-              select: { id: true },
             });
-            if (endpoints.length > 0) {
-              await tx.outboundWebhookDelivery.createMany({
-                data: newlyCreatedAssignments.flatMap((created) =>
-                  endpoints.map((endpoint) => ({
-                    webhookEndpointId: endpoint.id,
-                    eventType: "program.assigned",
-                    payload: {
-                      assignmentId: created.id,
-                      programId,
-                      membershipId: created.membershipId,
-                      periodStart: body.periodStart.toISOString(),
-                      periodEnd: body.periodEnd.toISOString(),
-                    } satisfies Prisma.InputJsonValue,
-                    status: "PENDING" as const,
-                  })),
-                ),
-              });
-            }
           }
 
           if (createdCount > 0) {

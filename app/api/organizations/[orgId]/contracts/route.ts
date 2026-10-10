@@ -72,9 +72,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const statusRaw = url.searchParams.get("status");
-  const status = statusRaw
-    ? ContractStatusSchema.safeParse(statusRaw)
-    : null;
+  const status = statusRaw ? ContractStatusSchema.safeParse(statusRaw) : null;
 
   const contracts = await prisma.contract.findMany({
     where: {
@@ -165,7 +163,8 @@ export async function POST(
   // existing subscription via contract create (renewals are a separate
   // flow). Fail loud rather than silently dropping the operator's input.
   const wantsLicenseSubscription =
-    body.licenseFeePaise !== undefined || body.licenseRatePerSeatPaise !== undefined;
+    body.licenseFeePaise !== undefined ||
+    body.licenseRatePerSeatPaise !== undefined;
   if (wantsLicenseSubscription) {
     if (billingAccount.fundingSource !== "LICENSE") {
       return NextResponse.json(
@@ -236,13 +235,14 @@ export async function POST(
   }
 
   const contract = await prisma.$transaction(async (tx) => {
+    const signedAt = body.status === "ACTIVE" ? new Date() : undefined;
     const created = await tx.contract.create({
       data: {
         organizationId: orgId,
         billingAccountId: body.billingAccountId,
         purchaseOrderId: body.purchaseOrderId ?? null,
         status: body.status,
-        ...(body.status === "ACTIVE" && { signedAt: new Date() }),
+        ...(signedAt && { signedAt }),
         effectiveFrom: body.effectiveFrom,
         effectiveTo: body.effectiveTo ?? null,
         paymentTermsDays: body.paymentTermsDays,
@@ -306,10 +306,7 @@ export async function POST(
       },
     });
 
-    if (
-      body.status === "ACTIVE" &&
-      typeof tx.webhookEndpoint?.findMany === "function"
-    ) {
+    if (body.status === "ACTIVE") {
       await dispatchWebhookEvent({
         prisma: tx,
         organizationId: orgId,
@@ -318,8 +315,11 @@ export async function POST(
           contractId: created.id,
           billingAccountId: body.billingAccountId,
           status: created.status,
+          signedAt: (created.signedAt ?? signedAt ?? new Date()).toISOString(),
           effectiveFrom: body.effectiveFrom.toISOString(),
           effectiveTo: body.effectiveTo?.toISOString() ?? null,
+          supersededContractId: null,
+          reason: null,
         },
       });
     }

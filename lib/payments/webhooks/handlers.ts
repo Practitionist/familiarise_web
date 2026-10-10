@@ -212,12 +212,32 @@ export async function handlePaymentSuccess(
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
 
-  // #1758 — Pre-plan earnings context (rate card, consultant profile, trust-park
-  // status, collaborator splits, subscription tranches, and payment legs) before
-  // opening the Phase-1 Serializable transaction when payment.appointmentId is
-  // already known, so Phase 1 can commit ConsultantEarnings + booking journal
-  // atomically with appointment confirmation without holding Serializable locks
-  // across read-heavy rate-card resolution queries.
+  if (!recovering && prisma.payment?.findUnique) {
+    const existing = await prisma.payment.findUnique({
+      where: { paymentIntent: paymentIntentId },
+      select: {
+        id: true,
+        paymentStatus: true,
+        amount: true,
+        gatewayPaymentId: true,
+      },
+    });
+    if (
+      existing &&
+      existing.paymentStatus === PaymentStatus.SUCCEEDED &&
+      (gatewayAmountPaise === undefined ||
+        gatewayAmountPaise === existing.amount)
+    ) {
+      if (gatewayPaymentId && !existing.gatewayPaymentId) {
+        await prisma.payment.updateMany({
+          where: { id: existing.id, gatewayPaymentId: null },
+          data: { gatewayPaymentId },
+        });
+      }
+      return "confirmed";
+    }
+  }
+
   let preplannedEarnings: PreplannedEarningsContext | null = null;
   try {
     preplannedEarnings = await planEarningsForPayment(
@@ -1220,7 +1240,11 @@ export async function handlePaymentSuccess(
   return txResult.outcome;
 }
 
-export async function handlePaymentFailure(paymentIntentId: string) {
+export async function handlePaymentFailure(
+  paymentIntentId: string,
+  failureReason?: string,
+  gatewayPaymentId?: string,
+) {
   const staged = await prisma.$transaction(async (tx) => {
     const consultantUserSelect = {
       select: {
@@ -1239,6 +1263,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         amount: true,
         currency: true,
         description: true,
+        expiresAt: true,
         user: { select: { email: true, name: true } },
         appointment: {
           select: {
@@ -1310,6 +1335,28 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // Keep tentative slot hold and consumed credits intact while the order hold window is still active.
+    if (payment.expiresAt && payment.expiresAt > new Date()) {
+      const attemptNote = [
+        gatewayPaymentId ? `attempt=${gatewayPaymentId}` : null,
+        failureReason ?? null,
+      ]
+        .filter(Boolean)
+        .join(": ");
+      const noteSuffix = attemptNote
+        ? `Payment attempt failed (${attemptNote})`
+        : "Payment attempt failed";
+      await tx.payment.updateMany({
+        where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+        data: {
+          description: payment.description
+            ? `${payment.description} | ${noteSuffix}`
+            : noteSuffix,
+        },
+      });
+      return;
+    }
+
     const { count } = await tx.payment.updateMany({
       where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
@@ -1323,7 +1370,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
-    // Credits consumed at order creation go back under the same CAS, as on expiry.
+    // Credits consumed at order creation go back under the same CAS once hold has expired.
     await reverseCreditsForPayment(payment.id, tx);
 
     if (payment.appointment) {

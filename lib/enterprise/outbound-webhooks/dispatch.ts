@@ -31,7 +31,7 @@ import type { PrismaLike } from "@/lib/prisma";
  * === "ISSUED"` so a no-op PATCH doesn't re-emit `invoice.issued`).
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import type { OutboundWebhookEvent } from "./event-types";
 
 /**
@@ -56,6 +56,8 @@ export async function dispatchWebhookEvent<TPayload>(params: {
   // array contains this event type. The `has` predicate maps to a
   // Postgres `ANY (...)` filter — cheap given the
   // (organizationId, status) index.
+  if (!prisma.webhookEndpoint) return { enqueuedCount: 0 };
+
   const endpoints = await prisma.webhookEndpoint.findMany({
     where: {
       organizationId,

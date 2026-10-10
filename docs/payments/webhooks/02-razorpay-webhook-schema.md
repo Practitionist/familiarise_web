@@ -1,45 +1,99 @@
-# Razorpay & RazorpayX Webhook Schema Reference
+# Razorpay & RazorpayX Webhook Schema & Invariant Reference
 
-> **Canonical Source:** [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts) and [`app/api/webhooks/razorpay-dispatch.ts`](../../../app/api/webhooks/razorpay-dispatch.ts).  
-> **Organization / B2B Details:** See [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
-
-**Last Updated**: 2026-10-05
+> **Canonical Implementation:** [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts), [`app/api/webhooks/razorpay/signature.ts`](../../../app/api/webhooks/razorpay/signature.ts), [`app/api/webhooks/razorpay/route.ts`](../../../app/api/webhooks/razorpay/route.ts), and [`app/api/webhooks/razorpay-dispatch.ts`](../../../app/api/webhooks/razorpay-dispatch.ts).  
+> **Organization Ledger & Settlement Details:** See [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
 
 ---
 
-## Overview
+## 1. Signature Scope, Secret Resolution & Tamper-Proof `eventId`
 
-All inbound webhooks from both **Razorpay Payments** (orders, payments, refunds, disputes, settlements) and **RazorpayX** (payouts, fund account validations) arrive at `POST /api/webhooks/razorpay` ([`app/api/webhooks/razorpay/route.ts`](../../../app/api/webhooks/razorpay/route.ts)) and are validated against [`schemas/webhooks/razorpay.ts`](../../../schemas/webhooks/razorpay.ts).
+### Multi-Secret HMAC Verification (`signature.ts`)
 
-### Critical Official Razorpay Payload Nuances
+1. `RAZORPAY_WEBHOOK_SECRET` (`role: "current"`): Primary HMAC-SHA256 secret checked against the raw UTF-8 HTTP body (`x-razorpay-signature`, 64-char hex digest via `crypto.timingSafeEqual`).
+2. `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (`role: "previous"`): Checked during Dashboard secret rotation so in-flight retries signed prior to cutover succeed cleanly while logging a `WEBHOOK` `WARN` `SystemEvent`.
+3. `RAZORPAYX_WEBHOOK_SECRET` (RazorpayX Banking Fallback): Consulted **only** when `isPayoutEventName(rawBody)` returns `true` (`event.startsWith("payout.") || event.startsWith("fund_account.")`). Customer payment, order, refund, and dispute events can never authenticate against `RAZORPAYX_WEBHOOK_SECRET`.
 
-1. **`refund.entity.speed_requested` vs `speed_processed`**:
-   - `speed_requested` is `"normal" | "optimum"` (NEVER `"instant"` — Razorpay's Refunds API accepts `speed: "normal" | "optimum"`, and echoes that in `speed_requested`).
-   - `speed_processed` is `"normal" | "instant"` (indicating whether Razorpay was actually able to execute an instant refund or fell back to normal speed).
-2. **`order.paid` carries BOTH `order` and `payment` entities**:
-   - In `order.paid` events, `contains` is `["payment", "order"]` and `payload` includes both `payload.order.entity` and `payload.payment.entity`.
-3. **All 6 `payment.dispute.*` events**:
-   - `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, and `payment.dispute.action_required`.
-   - `respond_by` and `created_at` are Unix epoch **seconds** (multiply by `1000` for JS `Date`).
-   - Note: The official Razorpay Dispute webhook entity does **not** include a `comments` field (`reason_code`, `status`, `phase`, `amount_deducted`, and `respond_by` are the core fields).
-4. **RazorpayX `payout.*` events & `status_details`**:
-   - RazorpayX emits `payout.initiated` when a payout transitions into `processing` (not `payout.processed`, which fires on bank credit completion).
-   - Top-level `failure_reason` is deprecated on modern RazorpayX payloads and frequently `null`; always fall back to `status_details.description ?? status_details.reason`.
-5. **RazorpayX `fund_account.validation.*` (`fav_...`)**:
-   - `status: "completed"` only means the validation check finished — you **must** inspect `results.account_status === "active"` (vs `"invalid"`) and `results.registered_name`.
+### Tamper-Proof `eventId` Derivation (`route.ts`)
+
+Razorpay's `x-razorpay-signature` covers **only** the HTTP body bytes; HTTP headers (`x-razorpay-event-id`) are completely unsigned. Conversely, `${eventType}:${entityId}` without a body digest drops legitimate repeat updates on the same entity (such as sequential `payout.updated` webhooks when `status_details` changes followed later by bank `utr` assignment on the same `pout_...`, or multi-stage `payment.dispute.action_required` / `payment.dispute.under_review` transitions across `chargeback` and `pre_arbitration` on the same `disp_...`).
+
+Therefore, every Razorpay webhook synthesizes a tamper-proof composite key strictly from signature-authenticated bytes:
+
+```typescript
+const bodyDigest = crypto
+  .createHash("sha256")
+  .update(body)
+  .digest("hex")
+  .slice(0, 16);
+
+const entityId =
+  event.payload?.refund?.entity?.id ||
+  event.payload?.dispute?.entity?.id ||
+  event.payload?.payout?.entity?.id ||
+  event.payload?.["fund_account.validation"]?.entity?.id ||
+  event.payload?.payment?.entity?.id ||
+  event.payload?.order?.entity?.id ||
+  event.account_id ||
+  `body_${bodyDigest}`;
+
+const eventId = `${eventType}:${entityId}:${bodyDigest}`;
+```
 
 ---
 
-## Validated Event Catalog (24 Events)
+## 2. Official Wire Quirks & Zod Normalization (`schemas/webhooks/razorpay.ts`)
+
+### 1. PHP Empty Array `notes: []` Serialization Quirk (`razorpayNotesSchema`)
+
+When an order, payment, refund, or payout is created without metadata notes, Razorpay's PHP serializer emits `"notes": []` (empty JSON array) instead of `{}` and may echo unquoted numbers or booleans. `razorpayNotesSchema` normalizes `[]`, `null`, `undefined`, and primitive values into a strict `Record<string, string>`:
+
+```typescript
+export const razorpayNotesSchema = z
+  .union([
+    z.record(z.union([z.string(), z.number(), z.boolean()]).transform(String)),
+    z.array(z.unknown()).transform((): Record<string, string> => ({})),
+  ])
+  .nullish()
+  .transform((notes): Record<string, string> => notes ?? {});
+```
+
+### 2. Multi-Attempt Checkout Modal Semantics on `payment.failed`
+
+Inside Razorpay Checkout, all payment attempts within one checkout session share a single `order_id` (`Payment.paymentIntent`):
+
+- **Pre-Transaction `SUCCEEDED` Fast-Path**: `handlePaymentFailure` checks `Payment.paymentStatus` before opening a database transaction under `PG_POOL_MAX=1`; if a subsequent retry on the same `order_id` already settled `SUCCEEDED`, late-arriving `payment.failed` webhooks from an earlier attempt return immediately as a no-op.
+- **Active Hold Preservation (`expiresAt > now()`)**: While the booking hold has not expired (`expiresAt > now()`), `payment.failed` preserves the active slot reservation and **never restores applied wallet or referral credits** (preventing both mid-checkout slot cancellation and wallet double-spend exploits while the buyer retries inside the modal).
+
+### 3. `refund.entity.speed_requested` vs `speed_processed` & In-Place Placeholder Adoption
+
+- `speed_requested` is `"normal" | "optimum"` (never `"instant"`); `speed_processed` is `"normal" | "instant"`.
+- In `handleRefundCreated`, incoming `refund.created` / `refund.processed` webhooks inspect `refund.entity.notes?.reservationId` inside a Serializable transaction to **adopt existing `pending_<uuid>` reservation rows in place** (`refundId = rfnd_...`) instead of creating duplicate `Refund` rows when the webhook outraces Phase 3 of the outbound HTTP call.
+
+### 4. Dispute Lifecycle & Multi-Dispute Earnings Guard
+
+- All 6 dispute events (`created`, `under_review`, `action_required`, `won`, `lost`, `closed`) are routed cleanly.
+- `respond_by` and `created_at` are Unix epoch **seconds** (multiply by `1000` for JS `Date`). No `comments` field exists on Razorpay Dispute entities (`reason_code`, `reason_description`, and `evidence.summary` carry dispute text).
+- `payment.dispute.action_required` (including `pre_arbitration` escalations) legally transitions `UNDER_REVIEW -> NEEDS_RESPONSE` and refreshes `dueBy`.
+- Winning or closing one dispute releases `HELD` earnings **only** when `tx.dispute.count({ where: { paymentId, id: { not: dispute.id }, status: { notIn: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED", "WARNING_CLOSED"] } } }) === 0`.
+
+### 5. RazorpayX `payout.*` & `fund_account.validation.*` Entities
+
+- `payout.initiated` marks transition into `processing` (`payout.processing` does not exist).
+- `failure_reason` is deprecated and often `null`; always read `failure_reason ?? status_details?.description ?? status_details?.reason`.
+- `markConsultantPayoutCompleted` and `markOrgPayoutCompleted` exclude `FAILED` rows in their CAS `WHERE` guard so delayed `payout.processed` / `payout.updated` events never resurrect reversed payouts, while raising `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED` error alerts if RazorpayX disburses a payout previously marked `FAILED`.
+- `markConsultantPayoutReversed` and `markOrgPayoutReversed` execute payout CAS status update, inverse ledger posting (`postLedgerTxn`), earnings un-batching (`READY`), and TDS reversal inside **one atomic Prisma transaction (`tx`)**.
+- `fund_account.validation.completed` requires checking **both** `status === "completed"` and `(validation_results ?? results)?.account_status === "active"` (`summariseFundAccountValidation`), verifying existing `PayoutAccount` / `OrganizationPayoutAccount` rows strictly when `fund_account.id` matches `razorpayFundAccId` / `razorpayFundAccountId`.
+
+---
+
+## 3. Complete Validated Event Catalog (25 Events)
 
 ```typescript
 export const RazorpayEventTypeSchema = z.enum([
-  // Payment Events
+  // Payment & Order Events
   "payment.authorized",
   "payment.captured",
   "payment.failed",
-
-  // Order Events
   "order.paid",
 
   // Refund Events
@@ -50,17 +104,17 @@ export const RazorpayEventTypeSchema = z.enum([
 
   // Dispute Events (All 6 Official Events)
   "payment.dispute.created",
+  "payment.dispute.under_review",
+  "payment.dispute.action_required",
   "payment.dispute.won",
   "payment.dispute.lost",
   "payment.dispute.closed",
-  "payment.dispute.under_review",
-  "payment.dispute.action_required",
 
   // Settlement Events
   "settlement.processed",
   "settlement.failed",
 
-  // RazorpayX Payout Events
+  // RazorpayX Payout Events (All 9 Official Events)
   "payout.initiated",
   "payout.updated",
   "payout.processed",
@@ -69,220 +123,18 @@ export const RazorpayEventTypeSchema = z.enum([
   "payout.rejected",
   "payout.queued",
   "payout.pending",
+  "payout.cancelled",
 
-  // RazorpayX Fund Account Validation (Penny Drop) Events
+  // RazorpayX Fund Account Validation (Penny Drop & UPI RPD) Events
   "fund_account.validation.completed",
   "fund_account.validation.failed",
 ]);
 ```
 
-> **Why `subscription.*` and `invoice.*` are not in this list**: Familiarise manages recurring billing in-house (`BillingSubscription` + per-cycle Razorpay Orders) and generates GST tax invoices in-house (`lib/invoices/`, `lib/compliance/gst.ts`). Any unrecognized webhook event type is safely logged and acknowledged with HTTP `200` (`status: "ignored"`) so Razorpay does not retry or auto-disable the webhook endpoint.
-
 ---
 
-## Core Entity Schemas (`schemas/webhooks/razorpay.ts`)
+## Deprecated & Superseded Approaches
 
-### 1. Payment & Order Entities
-
-```typescript
-export const RazorpayPaymentEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("payment"),
-  amount: z.number(), // in paise
-  currency: z.string(),
-  status: z.enum(["created", "authorized", "captured", "refunded", "failed"]),
-  order_id: z.string().nullable(),
-  invoice_id: z.string().nullable().optional(),
-  international: z.boolean().optional(),
-  method: z.string(), // card, netbanking, wallet, emi, upi, bank_transfer
-  amount_refunded: z.number().optional(),
-  refund_status: z.enum(["partial", "full"]).nullable().optional(),
-  captured: z.boolean(),
-  description: z.string().nullable().optional(),
-  email: z.string().optional(),
-  contact: z.string().optional(),
-  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
-  fee: z.number().nullable().optional(),
-  tax: z.number().nullable().optional(),
-  error_code: z.string().nullable().optional(),
-  error_description: z.string().nullable().optional(),
-  error_source: z.string().nullable().optional(),
-  error_step: z.string().nullable().optional(),
-  error_reason: z.string().nullable().optional(),
-  acquirer_data: z
-    .object({
-      rrn: z.string().nullable().optional(),
-      upi_transaction_id: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .optional(),
-  upi: z
-    .object({
-      vpa: z.string().nullable().optional(),
-      payer_account_type: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .optional(),
-  created_at: z.number(),
-});
-
-export const RazorpayOrderEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("order"),
-  amount: z.number(),
-  amount_paid: z.number(),
-  amount_due: z.number(),
-  currency: z.string(),
-  receipt: z.string().nullable().optional(),
-  status: z.enum(["created", "attempted", "paid"]),
-  attempts: z.number(),
-  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
-  created_at: z.number(),
-});
-```
-
-### 2. Refund Entity
-
-```typescript
-export const RazorpayRefundEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("refund"),
-  amount: z.number(), // in paise
-  currency: z.string(),
-  payment_id: z.string(),
-  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
-  receipt: z.string().nullable().optional(),
-  acquirer_data: z
-    .object({
-      arn: z.string().nullable().optional(),
-      rrn: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .nullable()
-    .optional(),
-  created_at: z.number(),
-  batch_id: z.string().nullable().optional(),
-  status: z.enum(["pending", "processed", "failed"]),
-  // Official Razorpay values:
-  // - speed_requested: "normal" | "optimum" (never "instant")
-  // - speed_processed: "normal" | "instant"
-  speed_processed: z.enum(["normal", "instant"]).nullable().optional(),
-  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
-});
-```
-
-### 3. Dispute Entity
-
-```typescript
-export const RazorpayDisputeEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("dispute"),
-  payment_id: z.string(),
-  amount: z.number(),
-  currency: z.string(),
-  amount_deducted: z.number(),
-  reason_code: z.string(),
-  respond_by: z.number(), // Unix epoch seconds
-  status: z.enum([
-    "open",
-    "under_review",
-    "Action_Required",
-    "action_required",
-    "won",
-    "lost",
-    "closed",
-  ]),
-  phase: z.enum([
-    "fraud",
-    "chargeback",
-    "pre_arbitration",
-    "arbitration",
-  ]),
-  comments: z.string().nullable().optional(),
-  created_at: z.number(),
-});
-```
-
-### 4. RazorpayX Payout & Fund Account Validation Entities
-
-```typescript
-export const RazorpayPayoutEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("payout"),
-  fund_account_id: z.string(),
-  amount: z.number(), // in paise
-  currency: z.string(),
-  notes: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
-  fees: z.number().optional(),
-  tax: z.number().optional(),
-  status: z.enum([
-    "queued",
-    "pending",
-    "rejected",
-    "processing",
-    "processed",
-    "cancelled",
-    "reversed",
-    "failed",
-  ]),
-  purpose: z.string(),
-  utr: z.string().nullable(),
-  mode: z.enum(["NEFT", "RTGS", "IMPS", "UPI", "card", "amazonpay"]),
-  reference_id: z.string().nullable().optional(),
-  narration: z.string().nullable().optional(),
-  batch_id: z.string().nullable().optional(),
-  failure_reason: z.string().nullable().optional(),
-  status_details: z
-    .object({
-      reason: z.string().nullable().optional(),
-      description: z.string().nullable().optional(),
-      source: z.string().nullable().optional(),
-    })
-    .nullable()
-    .optional(),
-  created_at: z.number(),
-});
-
-export const RazorpayFundAccountValidationEntitySchema = z.object({
-  id: z.string(),
-  entity: z.literal("fund_account.validation"),
-  fund_account: z.object({
-    id: z.string(),
-    entity: z.literal("fund_account"),
-    contact_id: z.string().optional(),
-    account_type: z.enum(["bank_account", "vpa"]),
-    bank_account: z
-      .object({
-        name: z.string().optional(),
-        bank_name: z.string().optional(),
-        ifsc: z.string(),
-        account_number: z.string(),
-      })
-      .optional(),
-    vpa: z
-      .object({
-        username: z.string().optional(),
-        handle: z.string().optional(),
-        address: z.string(),
-      })
-      .optional(),
-  }),
-  status: z.enum(["created", "completed", "failed"]),
-  amount: z.number().optional(),
-  currency: z.string().optional(),
-  results: z
-    .object({
-      account_status: z.string().nullable().optional(), // "active" | "invalid"
-      registered_name: z.string().nullable().optional(),
-    })
-    .optional(),
-  validation_results: z
-    .object({
-      account_status: z.string().nullable().optional(),
-      registered_name: z.string().nullable().optional(),
-    })
-    .optional(),
-  created_at: z.number(),
-  utr: z.string().nullable().optional(),
-});
-```
+- **Strict `z.record(z.string())` on `notes`**: Superseded by `razorpayNotesSchema` because Razorpay serializes empty notes in PHP as JSON `[]`, which previously threw Zod schema errors on clean payments, refunds, and payouts.
+- **Dispute Entity Schema Assuming a `comments` Field or Blocking `UNDER_REVIEW -> NEEDS_RESPONSE`**: Superseded by `reason_description` / `evidence.summary` extraction and legal `UNDER_REVIEW -> NEEDS_RESPONSE` transitions for `action_required` / `pre_arbitration` phases.
+- **Dropping `fund_account.validation.*` and `payout.cancelled` / `payout.updated` Webhooks**: Superseded by full `RAZORPAYX_WEBHOOK_SECRET` verification via `isPayoutEventName` and atomic single-transaction payout & RPD settlement handlers.

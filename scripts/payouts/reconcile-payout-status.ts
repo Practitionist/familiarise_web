@@ -20,7 +20,10 @@
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { handlePayoutWebhook } from "@/lib/payments/payouts";
+import {
+  handlePayoutWebhook,
+  markConsultantPayoutReversed,
+} from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
 import {
   type PayoutLookup,
@@ -244,6 +247,61 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
       }
     } else {
       console.log(`   Status unchanged (${mappedStatus})`);
+    }
+  }
+
+  const completedReversalCutoff = new Date(
+    Date.now() - 14 * 24 * 60 * 60 * 1000,
+  );
+  const recentCompletedPayouts = prisma.consultantPayout?.findMany
+    ? await prisma.consultantPayout.findMany({
+        where: {
+          status: PayoutStatus.COMPLETED,
+          providerPayoutId: { not: null },
+          updatedAt: { gte: completedReversalCutoff },
+        },
+        select: {
+          id: true,
+          providerPayoutId: true,
+          provider: true,
+        },
+        take: 100,
+      })
+    : [];
+
+  for (const completed of recentCompletedPayouts) {
+    if (
+      !completed.providerPayoutId ||
+      completed.provider !== PaymentGateway.RAZORPAY
+    ) {
+      continue;
+    }
+    try {
+      const gatewayStatus = await getRazorpayPayoutStatus(
+        completed.providerPayoutId,
+      );
+      if (
+        gatewayStatus.kind === "status" &&
+        gatewayStatus.status.toLowerCase() === "reversed"
+      ) {
+        const rev = await markConsultantPayoutReversed(
+          completed.providerPayoutId,
+          gatewayStatus.failureReason ||
+            gatewayStatus.failureMessage ||
+            "Bank reversal detected during payout reconciliation",
+        );
+        if (!rev.wasNoOp) {
+          reconciledCount++;
+          failedCount++;
+          discrepancies.push(
+            `Completed payout ${completed.id} (${completed.providerPayoutId}) reversed at gateway`,
+          );
+        }
+      }
+    } catch (err) {
+      errors.push(
+        `Completed payout check failed for ${completed.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

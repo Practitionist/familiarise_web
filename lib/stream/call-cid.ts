@@ -55,3 +55,10 @@ export function callTypeFromCid(callCidOrId: string): string {
     ? STREAM_CALL_TYPE
     : callCidOrId.slice(0, separator) || STREAM_CALL_TYPE;
 }
+
+/** Extract anchor occurrence/slot ID from `slot-<id>[-r<suffix>]` or `occurrence-<id>[-r<suffix>]`. */
+export function parseSlotIdFromCallId(callCidOrId: string): string | null {
+  const bare = toCallId(callCidOrId);
+  const match = /^(?:slot|occurrence)-(.+?)(?:-r[a-z0-9]+)?$/i.exec(bare);
+  return match?.[1] ?? null;
+}

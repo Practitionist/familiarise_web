@@ -11,13 +11,9 @@ export interface ReclaimStaleOptions {
 }
 
 /**
- * Atomically reclaims a webhook event row stuck in processing (`processed: false, error: null`).
- *
- * Supports two invocation modes:
- * 1. Sweeper pre-selected row CAS: `reclaimStaleProcessingWebhookEvent(eventId, priorClaimedAt)`
- *    fences on the `claimedAt` snapshot read by the sweeper without mutating `receivedAt`.
- * 2. Ingress / standalone stale-processing CAS: `reclaimStaleProcessingWebhookEvent(eventId, opts)`
- *    reclaims rows older than 5 minutes whose `deferCount < 5`.
+ * Atomically reclaims an unprocessed webhook event row stuck in processing.
+ * Mode 1 (`(eventId, priorClaimedAt)`) fences on the exact prior `claimedAt` snapshot;
+ * Mode 2 (`(eventId, opts)`) reclaims rows stale beyond threshold with `deferCount < maxRetries`.
  */
 export async function reclaimStaleProcessingWebhookEvent(
   eventId: string,
@@ -33,9 +29,13 @@ export async function reclaimStaleProcessingWebhookEvent(
     const claimed = await prisma.webhookEvent.updateMany({
       where: {
         eventId,
-        OR: [{ claimedAt: null }, { claimedAt: priorClaimedAtOrOpts }],
+        processed: false,
+        claimedAt: priorClaimedAtOrOpts ?? null,
       },
-      data: { claimedAt },
+      data: {
+        claimedAt,
+        error: null,
+      },
     });
     return {
       reclaimed: claimed.count > 0,
@@ -43,7 +43,12 @@ export async function reclaimStaleProcessingWebhookEvent(
     };
   }
 
-  const opts = (priorClaimedAtOrOpts as ReclaimStaleOptions | undefined) ?? {};
+  const opts: ReclaimStaleOptions =
+    typeof priorClaimedAtOrOpts === "object" &&
+    priorClaimedAtOrOpts !== null &&
+    !(priorClaimedAtOrOpts instanceof Date)
+      ? priorClaimedAtOrOpts
+      : {};
   const now = opts.now ?? new Date();
   const thresholdMs = opts.staleThresholdMs ?? STALE_PROCESSING_THRESHOLD_MS;
   const maxRetries = opts.maxRetries ?? MAX_STALE_RECLAIM_RETRIES;
@@ -62,6 +67,7 @@ export async function reclaimStaleProcessingWebhookEvent(
     },
     data: {
       claimedAt: now,
+      error: null,
       deferCount: { increment: 1 },
     },
   });

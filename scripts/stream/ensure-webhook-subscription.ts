@@ -14,13 +14,10 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
-import {
-  HANDLED_EVENT_TYPES,
-  IGNORED_EVENT_TYPES,
-} from "../../lib/stream/webhook-events";
+import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
 
-const DESIRED_EVENT_TYPES = Array.from(
-  new Set<string>([...HANDLED_EVENT_TYPES, ...IGNORED_EVENT_TYPES]),
+const SORTED_DESIRED_EVENT_TYPES = Array.from(
+  new Set<string>([...DESIRED_EVENT_TYPES]),
 ).sort(compareStringsByCodeUnit);
 
 type IdentifiedHook = EventHook & { id: string };
@@ -46,6 +43,31 @@ function annotate(message: string): void {
   console.error(
     process.env.GITHUB_ACTIONS ? `::error::${message}` : `ERROR: ${message}`,
   );
+}
+
+export interface HookDriftReport {
+  product: string;
+  receivesAll: boolean;
+  missing: string[];
+  extra: string[];
+  hasDrift: boolean;
+}
+
+export function evaluateHookDrift(
+  hook: IdentifiedHook,
+  eligible: readonly string[],
+): HookDriftReport {
+  const rawTypes = hook.event_types ?? [];
+  const current = new Set(rawTypes);
+  const receivesAll = rawTypes.length === 0 || current.has("*");
+  const eligibleSet = new Set(eligible);
+  const missing = receivesAll ? [] : eligible.filter((t) => !current.has(t));
+  const extra = [...current].filter((t) => t !== "*" && !eligibleSet.has(t));
+  const product = (hook as { product?: string }).product ?? "unscoped";
+  const hasDrift =
+    eligible.length > 0 &&
+    (receivesAll || missing.length > 0 || extra.length > 0);
+  return { product, receivesAll, missing, extra, hasDrift };
 }
 
 export async function ensureWebhookSubscription(
@@ -76,38 +98,63 @@ export async function ensureWebhookSubscription(
   }
 
   let changed = 0;
-  const widened = new Map<string, string[]>();
-  const unplaceable = new Set(DESIRED_EVENT_TYPES);
+  const reconciled = new Map<string, string[]>();
+  const unplaceable = new Set(SORTED_DESIRED_EVENT_TYPES);
 
   for (const hook of hooks) {
-    const current = new Set(hook.event_types ?? []);
-    const receivesAll = current.has("*");
-
-    const eligible = DESIRED_EVENT_TYPES.filter((t) => hookAccepts(hook, t));
+    const eligible = SORTED_DESIRED_EVENT_TYPES.filter((t) =>
+      hookAccepts(hook, t),
+    );
     for (const t of eligible) unplaceable.delete(t);
 
-    const missing = eligible.filter((t) => !receivesAll && !current.has(t));
-    const product = (hook as { product?: string }).product ?? "unscoped";
-
-    console.log(
-      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`,
-    );
-    console.log(`  url: ${hook.webhook_url}`);
-    console.log(
-      `  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`,
-    );
-
-    if (missing.length === 0) {
-      console.log(`  ✅ already covers every handled ${product} event`);
+    if (eligible.length === 0) {
       continue;
     }
 
-    console.log(`  MISSING (${missing.length}):`);
-    for (const t of missing) console.log(`    + ${t}`);
+    const drift = evaluateHookDrift(hook, eligible);
+    const currentSize = hook.event_types?.length ?? 0;
+
+    console.log(
+      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${drift.product}`,
+    );
+    console.log(`  url: ${hook.webhook_url}`);
+    console.log(
+      `  subscribed: ${currentSize}${drift.receivesAll ? " (wildcard)" : ""}`,
+    );
+
+    if (!drift.hasDrift) {
+      console.log(
+        `  ✅ matches exact desired ${drift.product} event set (${eligible.length})`,
+      );
+      continue;
+    }
+
+    if (drift.receivesAll) {
+      console.log(
+        `  WILDCARD detected (unfiltered delivery across all events)`,
+      );
+    }
+    if (drift.missing.length > 0) {
+      console.log(`  MISSING (${drift.missing.length}):`);
+      for (const t of drift.missing) console.log(`    + ${t}`);
+    }
+    if (drift.extra.length > 0) {
+      console.log(`  EXTRA (${drift.extra.length}):`);
+      for (const t of drift.extra) console.log(`    - ${t}`);
+    }
+
     if (mode === "check") {
+      const reasons = [
+        drift.receivesAll ? "wildcard subscription active" : null,
+        drift.missing.length > 0
+          ? `missing [${drift.missing.join(", ")}]`
+          : null,
+        drift.extra.length > 0 ? `extra [${drift.extra.join(", ")}]` : null,
+      ]
+        .filter((s): s is string => s !== null)
+        .join("; ");
       annotate(
-        `Stream webhook drift: hook ${hook.id} (${product}) is missing ` +
-          `${missing.length} handled event type(s): ${missing.join(", ")}. ` +
+        `Stream webhook drift: hook ${hook.id} (${drift.product}) has ${reasons}. ` +
           `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
       );
     }
@@ -115,11 +162,21 @@ export async function ensureWebhookSubscription(
 
     if (!apply) continue;
 
-    const next = Array.from(new Set([...current, ...missing])).sort(
-      compareStringsByCodeUnit,
-    );
-    widened.set(hook.id, next);
-    console.log(`  → will widen to ${next.length} event types`);
+    reconciled.set(hook.id, [...eligible]);
+    console.log(`  → will set exact ${eligible.length} event types`);
+  }
+
+  const legacyEvents = app.app?.webhook_events ?? [];
+  const hasLegacyWildcard = legacyEvents.includes("*");
+  if (hasLegacyWildcard) {
+    console.log(`\nlegacy app.webhook_events contains wildcard "*"`);
+    if (mode === "check") {
+      annotate(
+        `Stream webhook drift: legacy app.webhook_events carries wildcard "*". ` +
+          `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
+      );
+    }
+    changed++;
   }
 
   if (unplaceable.size > 0) {
@@ -150,14 +207,19 @@ export async function ensureWebhookSubscription(
     }
   }
 
-  if (apply && widened.size > 0) {
+  if (apply && (reconciled.size > 0 || hasLegacyWildcard)) {
     const nextHooks = allHooks.map((h) => {
-      const next = h.id ? widened.get(h.id) : undefined;
+      const next = h.id ? reconciled.get(h.id) : undefined;
       return next ? { ...h, event_types: next } : h;
     });
-    await client.updateAppSettings({ event_hooks: nextHooks });
+    await client.updateAppSettings({
+      event_hooks: nextHooks,
+      ...(hasLegacyWildcard
+        ? { webhook_events: legacyEvents.filter((t) => t !== "*") }
+        : {}),
+    });
     console.log(
-      `\n✅ applied — ${widened.size} hook(s) widened, ${allHooks.length} preserved`,
+      `\n✅ applied — ${reconciled.size} hook(s) updated, ${allHooks.length} preserved`,
     );
   }
 
