@@ -144,8 +144,7 @@ Limits are keyed per route and per user, not shared across routes. Read the limi
 | Ticket attachment upload | `ticket-attachment:` | 5 per hour per user |
 | Ticket attachment delete | `ticket-attachment-del:` | its own budget |
 | Private session rating | `appointment-feedback:` | 5 per hour per user |
-| Public review create (`POST` only) | `reviewWriteLimiter` | 20 per hour per user |
-| Public review edit and delete (`PUT`, `DELETE`) | none | unlimited today |
+| Public review writes (`POST`, `PUT`, `DELETE`) | `reviews:` (`reviewWriteLimiter`) | 20 per hour per user (shared across create, edit and delete) |
 | Platform feedback and `/api/report` | own keys | read from code |
 | Sign-in | per IP | 30 per 15 minutes |
 

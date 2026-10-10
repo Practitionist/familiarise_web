@@ -103,30 +103,51 @@ const getDaysUntilDue = (dueBy: string | null) => {
   return diffDays;
 };
 
-function DisputeDueCell({ dueBy }: Readonly<{ dueBy: string | null }>) {
+function DisputeDueCell({
+  dueBy,
+  status,
+}: Readonly<{ dueBy: string | null; status: string }>) {
   if (!dueBy) return <>-</>;
   const daysUntilDue = getDaysUntilDue(dueBy);
   const hoursUntilDue =
     (new Date(dueBy).getTime() - Date.now()) / (1000 * 60 * 60);
+  const actionableOpen =
+    status === "NEEDS_RESPONSE" || status === "WARNING_NEEDS_RESPONSE";
+  const isOverdue = actionableOpen && daysUntilDue !== null && daysUntilDue < 0;
   const isCritical48h = hoursUntilDue <= 48 && hoursUntilDue >= 0;
   const isUrgent =
+    isOverdue ||
     isCritical48h ||
     (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
 
   return (
     <div
       className={
-        isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
+        isOverdue
+          ? "text-red-600 font-semibold"
+          : isUrgent
+            ? "text-red-600 font-medium"
+            : "text-muted-foreground"
       }
     >
       <div className="flex items-center gap-1.5">
         <span>{formatDate(dueBy)}</span>
-        {isCritical48h && (
+        {isOverdue && (
+          <Badge variant="destructive" className="text-[10px]">
+            Overdue
+          </Badge>
+        )}
+        {!isOverdue && isCritical48h && (
           <Badge variant="destructive" className="text-[10px]">
             Due &lt; 48h
           </Badge>
         )}
       </div>
+      {isOverdue && daysUntilDue !== null && (
+        <p className="text-xs font-semibold text-red-600">
+          {`Overdue by ${Math.abs(daysUntilDue)} day(s)`}
+        </p>
+      )}
       {daysUntilDue !== null && daysUntilDue >= 0 && (
         <p className="text-xs">
           {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
@@ -183,7 +204,9 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
   {
     key: "dueBy",
     header: "Evidence Due By",
-    cell: (dispute) => <DisputeDueCell dueBy={dispute.dueBy} />,
+    cell: (dispute) => (
+      <DisputeDueCell dueBy={dispute.dueBy} status={dispute.status} />
+    ),
   },
   {
     key: "created",
@@ -331,7 +354,7 @@ export function DisputesPage({
             <div>
               <p className="text-2xl font-bold text-red-600">{urgentCount}</p>
               <p className="text-sm text-muted-foreground">
-                Urgent (Due in 3 days)
+                Urgent / Overdue (Actionable)
               </p>
             </div>
           </CardContent>

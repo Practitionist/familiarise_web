@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { describeWait } from "./useSupportThread";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -62,17 +63,16 @@ interface TurnResponse {
   messages: {
     sender: string;
     body: string;
-    /** PROMPT nodes carry their tappable options here (flow-walk). */
     metadata?: { options?: { id: string; label: string }[] } | null;
   }[];
   nextNodeId: string | null;
-  /** Resolver-requested side effects. Displayed, never executed from here. */
   actions?: { kind: string }[];
   resolved: boolean;
   escalated: boolean;
   supportTicketId?: string;
-  /** #705 — the handle the user quotes back. Null on pre-#705 tickets. */
   supportTicketReference?: string | null;
+  outcomeId?: string | null;
+  replyByAt?: string | null;
 }
 
 export function PlatformSupportSheet({
@@ -85,9 +85,7 @@ export function PlatformSupportSheet({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
-  /** Active org for operator flows (attribution, server-validated). */
   orgId?: string;
-  /** #1527 — the escalated request's page, linked once it exists. */
   requestHref?: (ticketId: string) => string;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -97,26 +95,39 @@ export function PlatformSupportSheet({
     if (controlledOpen === undefined) setInternalOpen(v);
   };
   const [text, setText] = useState("");
-  // Monotonic marker for "this sitting". The platform intake is stateless —
-  // the client holds the cursor for one sitting — so a turn that resolves
-  // after the user abandoned that sitting must be dropped, not applied.
   const sittingRef = useRef(0);
   const [flowId, setFlowId] = useState<string | null>(null);
   const [nodeId, setNodeId] = useState<string | null>(null);
+  const [visitedNodeIds, setVisitedNodeIds] = useState<string[]>([]);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [done, setDone] = useState<{
     resolved: boolean;
     ticketId?: string;
     ticketReference?: string | null;
-    /** #705 — the terminal asked for the user's feedback (COLLECT_FEEDBACK). */
+    outcomeId?: string | null;
+    replyByAt?: string | null;
     collectFeedback?: boolean;
   } | null>(null);
+  const [flowRating, setFlowRating] = useState<number | null>(null);
   const [feedback, setFeedback] = useState("");
   const [bareHumanLabel, setBareHumanLabel] = useState<string | null>(null);
   const [bareHumanDetails, setBareHumanDetails] = useState("");
   const [bareHumanUrgent, setBareHumanUrgent] = useState(false);
+  const [offline, setOffline] = useState(false);
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  useEffect(() => {
+    setOffline(!navigator.onLine);
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
 
   const catalog = useQuery({
     queryKey: ["platform-support-intents"],
@@ -139,26 +150,23 @@ export function PlatformSupportSheet({
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
-      /** The customer flagged the hand-off as urgent. */
       urgent?: boolean;
-      /** Client-only sitting marker — see `sittingRef`. Never sent. */
       epoch: number;
-      /** Client-only label of the pressed chip — see onSuccess. Never sent. */
       chosenLabel?: string;
     }): Promise<TurnResponse> => {
       const res = await fetch("/api/support/platform", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, orgId }),
+        body: JSON.stringify({
+          ...body,
+          visitedNodeIds,
+          orgId,
+        }),
       });
       if (!res.ok) await throwSupportError(res, "support intake turn");
       const { data } = await res.json();
       return data;
     },
-    // Echo what the user just said BEFORE the request returns. Previously the
-    // pressed chip's label rode along as a variable and was then never read, so
-    // every option tap produced zero user bubbles and the transcript was
-    // bot-only — and free text appeared only once the server had answered.
     onMutate: (vars) => {
       const said = vars.userMessage ?? vars.chosenLabel;
       if (!said) return {};
@@ -170,19 +178,12 @@ export function PlatformSupportSheet({
       return { optimisticId };
     },
     onSuccess: (result, vars, context) => {
-      // Discard a turn that belongs to a sitting the user has already left.
-      // The sheet holds the cursor for one sitting; closing it or starting a
-      // different flow clears the transcript, and a request still in flight
-      // would otherwise repopulate it — dropping the user back into a
-      // conversation they abandoned, mid-flow, with a stale cursor.
       if (vars.epoch !== sittingRef.current) return;
       setText("");
       setMessages((m) => [
         ...m.map((x) =>
           x.id === context?.optimisticId ? { ...x, pending: false } : x,
         ),
-        // metadata.options MUST survive the trip — a PROMPT without its
-        // options is a dead end (no buttons, free text can't advance it).
         ...result.messages.map((msg) => ({
           id: nextLocalId(),
           sender: msg.sender as Sender,
@@ -190,17 +191,26 @@ export function PlatformSupportSheet({
           options: msg.metadata?.options ?? undefined,
         })),
       ]);
+      if (result.nextNodeId) {
+        setVisitedNodeIds((prev) =>
+          prev.includes(result.nextNodeId!)
+            ? prev
+            : [...prev, result.nextNodeId!],
+        );
+      }
       setNodeId(result.nextNodeId);
       if (result.escalated) {
         setDone({
           resolved: false,
           ticketId: result.supportTicketId,
           ticketReference: result.supportTicketReference,
+          replyByAt: result.replyByAt ?? null,
         });
         void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
       } else if (result.resolved) {
         setDone({
           resolved: true,
+          outcomeId: result.outcomeId ?? null,
           collectFeedback: (result.actions ?? []).some(
             (a) => a.kind === "COLLECT_FEEDBACK",
           ),
@@ -208,8 +218,6 @@ export function PlatformSupportSheet({
       }
     },
     onError: (e: unknown, _vars, context) => {
-      // A bubble left standing after the turn failed claims something was said
-      // that the server never received.
       if (context?.optimisticId) {
         setMessages((m) => m.filter((x) => x.id !== context.optimisticId));
       }
@@ -221,13 +229,34 @@ export function PlatformSupportSheet({
     },
   });
 
+  const rateOutcome = async (rating: number) => {
+    if (!done?.outcomeId) return;
+    try {
+      const res = await fetch(
+        `/api/support/flow-outcomes/${done.outcomeId}/rating`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating }),
+        },
+      );
+      if (res.ok) {
+        setFlowRating(rating);
+      }
+    } catch {
+      // Best-effort rating telemetry; never blocks the user.
+    }
+  };
+
   const startFlow = (flow: PlatformFlow) => {
     if (turn.isPending) return;
     sittingRef.current += 1;
     setFlowId(flow.id);
     setNodeId(null);
+    setVisitedNodeIds([]);
     setMessages([]);
     setDone(null);
+    setFlowRating(null);
     setBareHumanLabel(null);
     setBareHumanDetails("");
     setBareHumanUrgent(false);
@@ -242,8 +271,10 @@ export function PlatformSupportSheet({
     sittingRef.current += 1;
     setFlowId(null);
     setNodeId(null);
+    setVisitedNodeIds([]);
     setMessages([]);
     setDone(null);
+    setFlowRating(null);
     setFeedback("");
     setBareHumanLabel(null);
     setBareHumanDetails("");
@@ -413,9 +444,49 @@ export function PlatformSupportSheet({
             )}
 
             {done?.resolved && !done.collectFeedback && (
-              <Badge variant="secondary" className="mt-1">
-                <CheckCircle2 className="mr-1 h-3 w-3" /> Resolved
-              </Badge>
+              <div className="space-y-2">
+                <Badge variant="secondary" className="mt-1">
+                  <CheckCircle2 className="mr-1 h-3 w-3" /> Resolved
+                </Badge>
+                <div className="rounded-lg border border-border bg-card p-3 text-xs">
+                  <p className="font-medium text-foreground">
+                    {flowRating
+                      ? "Thanks for rating this answer."
+                      : "Was this answer helpful?"}
+                  </p>
+                  <div className="mt-1.5 flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Button
+                        key={star}
+                        type="button"
+                        size="sm"
+                        variant={flowRating === star ? "default" : "outline"}
+                        className="h-7 w-7 p-0 text-xs"
+                        aria-label={`Rate ${star} out of 5`}
+                        onClick={() => void rateOutcome(star)}
+                      >
+                        {star}★
+                      </Button>
+                    ))}
+                  </div>
+                  {flowRating !== null && flowRating <= 2 && (
+                    <div className="mt-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => {
+                          setDone(null);
+                          setBareHumanLabel(HUMAN_EXIT_LABEL);
+                        }}
+                      >
+                        {HUMAN_EXIT_LABEL}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {done?.collectFeedback && (
@@ -439,24 +510,18 @@ export function PlatformSupportSheet({
             {done && !done.resolved && done.ticketId && (
               <div className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground">
                 <Ticket className="mr-1 inline h-3 w-3" />
-                {/* The reference is the whole point of minting one: it is what
-                  survives the channel change when the user follows up by
-                  email or on a call. */}
                 {done.ticketReference ? (
                   <>
                     Request{" "}
                     <span className="font-mono text-foreground">
                       {done.ticketReference}
                     </span>{" "}
-                    created — quote it if you follow up. Our team will reply
-                    here in &quot;My requests&quot; and by email.
+                    created — quote it if you follow up.{" "}
                   </>
                 ) : (
-                  <>
-                    Ticket created — our team will reply here in &quot;My
-                    requests&quot; and by email.
-                  </>
+                  <>Ticket created — </>
                 )}
+                {describeWait(done.replyByAt)}
                 {requestHref && (
                   <Link
                     href={requestHref(done.ticketId)}
@@ -465,6 +530,31 @@ export function PlatformSupportSheet({
                     Open the request
                   </Link>
                 )}
+              </div>
+            )}
+            <div aria-live="polite" className="sr-only">
+              {turn.isPending
+                ? "Sending message…"
+                : done && !done.resolved
+                  ? "Request escalated to our support team."
+                  : offline
+                    ? "You are offline. Draft preserved."
+                    : ""}
+            </div>
+            {offline && (
+              <div
+                role="alert"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+              >
+                You appear to be offline — your message draft is preserved here.
+                If your connection does not come back, you can reach us at{" "}
+                <Link
+                  href="/contactus"
+                  className="font-medium underline underline-offset-4"
+                >
+                  /contactus
+                </Link>
+                .
               </div>
             )}
             <div ref={endRef} />

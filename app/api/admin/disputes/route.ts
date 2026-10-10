@@ -182,7 +182,6 @@ export async function GET(req: NextRequest) {
           where: {
             dueBy: {
               lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-              gte: new Date(),
             },
             ...OPEN_DISPUTE_WHERE,
           },

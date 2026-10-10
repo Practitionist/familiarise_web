@@ -138,6 +138,40 @@ export function SessionConversation({
 }: Readonly<{ t: ThreadState; requestsHref?: string }>) {
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Option | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [flowRating, setFlowRating] = useState<number | null>(null);
+
+  useEffect(() => {
+    setOffline(!navigator.onLine);
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
+
+  const rateFlow = async (rating: number) => {
+    if (!t.lastOutcomeId) return;
+    try {
+      const res = await fetch(
+        `/api/support/flow-outcomes/${t.lastOutcomeId}/rating`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating }),
+        },
+      );
+      if (res.ok) {
+        setFlowRating(rating);
+      }
+    } catch {
+      // Best-effort rating telemetry.
+    }
+  };
+
   const escalating =
     picked && (picked.isCategory || t.options.some((o) => o.id === picked.id))
       ? picked
@@ -327,6 +361,75 @@ export function SessionConversation({
               {desc}
             </div>
           ) : null,
+        )}
+        {t.isResolved && !t.isHuman && (
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
+            <p className="font-medium text-foreground">
+              {flowRating
+                ? "Thanks for rating this answer."
+                : "Was this self-serve answer helpful?"}
+            </p>
+            <div className="mt-1.5 flex items-center gap-1">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Button
+                  key={star}
+                  type="button"
+                  size="sm"
+                  variant={flowRating === star ? "default" : "outline"}
+                  className="h-7 w-7 p-0 text-xs"
+                  aria-label={`Rate ${star} out of 5`}
+                  onClick={() => void rateFlow(star)}
+                >
+                  {star}★
+                </Button>
+              ))}
+            </div>
+            {flowRating !== null && flowRating <= 2 && humanIntent && (
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() =>
+                    setPicked({
+                      id: humanIntent.category,
+                      label: humanIntent.label,
+                      escalates: true,
+                      isCategory: true,
+                    })
+                  }
+                >
+                  {humanIntent.label}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+        <div aria-live="polite" className="sr-only">
+          {t.turnPending
+            ? "Sending your message…"
+            : t.isHuman
+              ? t.waitingLine
+              : offline
+                ? "You are offline. Your draft message is preserved."
+                : ""}
+        </div>
+        {offline && (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+          >
+            You appear to be offline — your message draft is safe here. If you
+            cannot reconnect right now, you can reach us at{" "}
+            <Link
+              href="/contactus"
+              className="font-medium underline underline-offset-4"
+            >
+              /contactus
+            </Link>
+            .
+          </div>
         )}
         <div ref={endRef} />
       </div>

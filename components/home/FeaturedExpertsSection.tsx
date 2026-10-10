@@ -46,6 +46,9 @@ function ExpertCard({ expert }: { expert: IConsultantCardData }) {
                   <span className="font-medium text-foreground">
                     {expert.rating.toFixed(1)}
                   </span>
+                  <span className="text-xs text-muted-foreground">
+                    ({expert.reviewCount ?? expert.reviews?.length ?? 0})
+                  </span>
                 </div>
                 <span className="text-muted-foreground/70">•</span>
               </>

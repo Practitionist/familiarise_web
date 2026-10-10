@@ -1,13 +1,8 @@
 "use client";
 
 /**
- * #1132 — the contact form, wired to POST /api/contact.
- *
- * Previously this markup lived inline in page.tsx as a bare `<form>` with no
- * onSubmit, no action and no `name` attributes on the inputs, so submitting it
- * native-GET'd back to the same page and cleared the fields. Every inquiry —
- * including every enterprise lead, since both /enterprise CTAs link here — was
- * discarded while the page claimed "we typically respond within 24-48 hours".
+ * Contact form wired to POST /api/contact with category deep-linking and
+ * statutory acknowledgement SLA copy.
  */
 
 import { useState } from "react";
@@ -17,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { INQUIRY_CATEGORIES } from "../constants";
+import { ACK_PROMISE_COPY, INQUIRY_CATEGORIES } from "../constants";
 
 type FieldErrors = Partial<Record<string, string[]>>;
 
@@ -89,7 +84,7 @@ export function ContactForm() {
         <CheckCircle2 className="h-10 w-10 text-emerald-600" aria-hidden />
         <p className="text-lg font-semibold">Message sent</p>
         <p className="text-sm text-muted-foreground max-w-sm">
-          Thanks for reaching out. We reply within 24-48 hours on business days,
+          Thanks for reaching out. We acknowledge and reply {ACK_PROMISE_COPY}{" "}
           to the email address you gave us.
         </p>
         <Button variant="outline" onClick={() => setStatus("idle")}>

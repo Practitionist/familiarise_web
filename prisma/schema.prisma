@@ -170,6 +170,11 @@ model User {
   verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
   windowBackupInterests         WindowBackupInterest[]
+  supportCasesRequested         SupportCase[]                 @relation("SupportCaseRequester")
+  supportCasesSubmitted         SupportCase[]                 @relation("SupportCaseSubmitter")
+  supportCasesAssigned          SupportCase[]                 @relation("SupportCaseAssignee")
+  supportCaseMessagesAuthored   SupportCaseMessage[]          @relation("SupportCaseMessageAuthor")
+  supportCaseEventsActed        SupportCaseEvent[]            @relation("SupportCaseEventActor")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -274,6 +279,7 @@ model PlatformFeedback {
   @@index([userId])
 }
 
+// FROZEN: Unified into SupportCase at pre-MVP cutover; kept read/write compatible until legacy row drain completes.
 model SupportTicket {
   id             String              @id @default(uuid())
   title          String
@@ -301,6 +307,7 @@ model SupportTicket {
 
   responses                SupportResponse[]
   attachments              SupportTicketAttachment[]
+  events                   SupportCaseEvent[]        @relation("LegacySupportTicketEvents")
   // #appt-support — set when a per-appointment thread escalates to a human, so
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
@@ -387,6 +394,7 @@ model SupportTicketCounter {
   @@map("support_ticket_counters")
 }
 
+// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
 model SupportResponse {
   id         String  @id @default(uuid())
   message    String  @db.Text
@@ -422,6 +430,7 @@ model SupportTicketAttachment {
   @@index([ticketId])
 }
 
+// FROZEN: Unified into SupportCase at pre-MVP cutover.
 // #appt-support — per-appointment support conversation (Swiggy/Zomato-style).
 // One thread per (appointment, user). Channel-agnostic: messages are produced
 // by a swappable resolver — a deterministic flowchart now, an AI agent later,
@@ -475,6 +484,7 @@ model AppointmentSupportThread {
   @@index([status, lastMessageAt])
 }
 
+// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
 model SupportMessage {
   id       String                   @id @default(uuid())
   threadId String
@@ -568,6 +578,171 @@ enum SupportFlowOutcomeKind {
   RESOLVED
   /// The turn handed off to a human.
   ESCALATED
+}
+
+enum SupportCaseStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum SupportCaseKind {
+  INCIDENT
+  PROBLEM
+}
+
+enum SupportSubjectType {
+  APPOINTMENT
+  OCCURRENCE
+  PAYMENT
+  REFUND
+  INVOICE
+  ORGANIZATION
+  ACCOUNT
+}
+
+enum SupportCaseEventKind {
+  CREATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  VISIBILITY_CHANGED
+  LINKED_PROBLEM
+  DUPLICATE_CLOSED
+  REOPENED
+  AUTO_CLOSED
+  CSAT_RATED
+}
+
+/// Unified support case owning the transcript, SLA clocks, FAM reference, flow cursor,
+/// callback schedule, and resolution CSAT. Never declare an @@index or @@unique on the
+/// exact 4-tuple [appointmentId, appointmentOccurrenceId, requesterUserId, category] so
+/// prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
+model SupportCase {
+  id              String            @id @default(uuid())
+  referenceNumber String            @unique @db.VarChar(20)
+  clientIntakeId  String?           @unique @db.VarChar(128)
+  title           String
+  description     String            @db.Text
+  category        String?           @db.VarChar(64)
+  flowKey         String?           @db.VarChar(64)
+  currentNodeId   String?           @db.VarChar(64)
+  activeChannel   SupportChannel    @default(SELF_SERVE)
+  issueType       SupportIssueType?
+  priority        SupportPriority   @default(MEDIUM)
+  status          SupportCaseStatus @default(OPEN)
+  caseKind        SupportCaseKind   @default(INCIDENT)
+
+  problemCaseId String?
+  problemCase   SupportCase?  @relation("ProblemIncidents", fields: [problemCaseId], references: [id], onDelete: SetNull)
+  incidents     SupportCase[] @relation("ProblemIncidents")
+
+  requesterUserId String
+  requester       User   @relation("SupportCaseRequester", fields: [requesterUserId], references: [id], onDelete: Restrict)
+  submitterUserId String
+  submitter       User   @relation("SupportCaseSubmitter", fields: [submitterUserId], references: [id], onDelete: Restrict)
+
+  organizationId String?
+  organization   Organization? @relation("SupportCaseByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  appointmentId           String?
+  appointment             Appointment?           @relation("SupportCaseByAppointment", fields: [appointmentId], references: [id], onDelete: SetNull)
+  appointmentOccurrenceId String?
+  occurrence              AppointmentOccurrence? @relation("SupportCaseByOccurrence", fields: [appointmentOccurrenceId], references: [id], onDelete: SetNull)
+
+  assignedToId String?
+  assignedTo   User?   @relation("SupportCaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  callbackPhone  String? @db.VarChar(32)
+  callbackWindow String? @db.VarChar(64)
+
+  ackDueAt          DateTime? @db.Timestamptz
+  acknowledgedAt    DateTime? @db.Timestamptz
+  resolutionDueAt   DateTime? @db.Timestamptz
+  resolvedAt        DateTime? @db.Timestamptz
+  closedAt          DateTime? @db.Timestamptz
+  deletedAt         DateTime? @db.Timestamptz
+  firstAgentReplyAt DateTime? @db.Timestamptz
+  awaitingUserSince DateTime? @db.Timestamptz
+  pausedSeconds     Int       @default(0)
+
+  messageSeq    Int       @default(0)
+  lastMessageAt DateTime? @db.Timestamptz
+
+  csatRating Int?      @db.SmallInt
+  csatAt     DateTime? @db.Timestamptz
+
+  subjects SupportCaseSubject[]
+  messages SupportCaseMessage[]
+  events   SupportCaseEvent[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([requesterUserId, status])
+  @@index([submitterUserId])
+  @@index([appointmentId, requesterUserId])
+  @@index([organizationId, status])
+  @@index([assignedToId, status])
+  @@index([status, lastMessageAt])
+  @@index([acknowledgedAt, ackDueAt])
+  @@index([resolvedAt, resolutionDueAt])
+  @@index([problemCaseId])
+}
+
+model SupportCaseSubject {
+  id          String             @id @default(uuid())
+  caseId      String
+  supportCase SupportCase        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  subjectType SupportSubjectType
+  subjectId   String
+  isPrimary   Boolean            @default(false)
+  createdAt   DateTime           @default(now()) @db.Timestamptz
+
+  @@unique([caseId, subjectType, subjectId])
+  @@index([subjectType, subjectId])
+}
+
+model SupportCaseMessage {
+  id           String               @id @default(uuid())
+  caseId       String
+  supportCase  SupportCase          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  seq          Int                  @default(0)
+  sender       SupportMessageSender
+  body         String               @db.Text
+  isInternal   Boolean              @default(false)
+  clientTurnId String?              @db.VarChar(128)
+  metadata     Json?
+  authorUserId String?
+  authorUser   User?                @relation("SupportCaseMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  createdAt    DateTime             @default(now()) @db.Timestamptz
+
+  @@unique([caseId, clientTurnId])
+  @@index([caseId, seq])
+  @@index([authorUserId])
+}
+
+model SupportCaseEvent {
+  id             String               @id @default(uuid())
+  caseId         String?
+  supportCase    SupportCase?         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  legacyTicketId String?
+  legacyTicket   SupportTicket?       @relation("LegacySupportTicketEvents", fields: [legacyTicketId], references: [id], onDelete: Cascade)
+  actorId        String?
+  actor          User?                @relation("SupportCaseEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  kind           SupportCaseEventKind
+  fromValue      String?
+  toValue        String?
+  note           String?              @db.Text
+  createdAt      DateTime             @default(now()) @db.Timestamptz
+
+  @@index([caseId, createdAt])
+  @@index([legacyTicketId, createdAt])
+  @@index([actorId])
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
@@ -1096,7 +1271,8 @@ model Organization {
   trialsByOrg Trial[] @relation("TrialsByOrg")
 
   // Referral attribution (#727) — same contract as TrialsByOrg.
-  referralsByOrg Referral[] @relation("ReferralsByOrg")
+  referralsByOrg Referral[]    @relation("ReferralsByOrg")
+  supportCases   SupportCase[] @relation("SupportCaseByOrg")
 
   // #674 personal-vs-org scope split — appointments / recordings booked or
   // produced by org members. Mirrors TrialsByOrg.
@@ -4508,7 +4684,8 @@ model Appointment {
   /// `NULL` on a confirmed appointment the exact work queue the reconcile sweep
   /// re-drives — no separate outbox table, because the appointment row already
   /// is the durable record of the work.
-  chatChannelEnsuredAt DateTime? @db.Timestamptz
+  chatChannelEnsuredAt DateTime?     @db.Timestamptz
+  supportCases         SupportCase[] @relation("SupportCaseByAppointment")
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -5120,6 +5297,8 @@ model AppointmentOccurrence {
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
+
+  supportCases SupportCase[] @relation("SupportCaseByOccurrence")
 
   // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
   // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
@@ -7382,10 +7561,10 @@ model TwoFactor {
   // 2FA reset deletes it by userId.
   userId String @unique
 
-  // AES-encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
+  // XChaCha20-Poly1305 encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
   secret      String
-  // Comma-separated, hashed (or encrypted) by the plugin per
-  // `backupCodeOptions.storeBackupCodes`. Never selected.
+  // JSON array encrypted with BETTER_AUTH_SECRET per
+  // `backupCodeOptions.storeBackupCodes = "encrypted"`. Never selected.
   backupCodes String
 
   // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first

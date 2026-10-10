@@ -41,7 +41,11 @@ import {
 } from "@/lib/support/create-ticket";
 import { escalationPriority } from "@/lib/support/priority";
 import { recordFlowOutcome } from "@/lib/support/deflection";
-import { mentionsHumanKeyword } from "@/lib/support/escalation";
+import {
+  escalationBrief,
+  isBareHumanRequest,
+  mentionsHumanKeyword,
+} from "@/lib/support/escalation";
 
 const turnSchema = z
   .object({
@@ -54,13 +58,96 @@ const turnSchema = z
     orgId: z.string().max(64).optional(),
     /** The customer flagged the hand-off as urgent. */
     urgent: z.boolean().optional(),
+    /** Visited node IDs replayed from client state; resolved strictly against server registry. */
+    visitedNodeIds: z.array(z.string().max(64)).max(8).optional(),
   })
-  // Only BOTH is invalid. An entry turn (nodeId null/omitted) legitimately
-  // carries neither — startFlow sends {flowId} alone, and the XOR refinement
-  // this replaced 400'd exactly that, breaking every intake's first click.
   .refine((v) => !(v.chosenOptionId && v.userMessage), {
     message: "Send either a chosen option or a message, not both",
   });
+
+async function resolveOutcomeId(
+  recorded: unknown,
+  userId: string,
+  flowKey: string,
+): Promise<string | null> {
+  if (typeof recorded === "string") return recorded;
+  if (
+    typeof recorded === "object" &&
+    recorded !== null &&
+    "id" in recorded &&
+    typeof recorded.id === "string"
+  ) {
+    return recorded.id;
+  }
+  const latest = await prisma.supportFlowOutcome?.findFirst?.({
+    where: { userId, flowKey },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  return latest?.id ?? null;
+}
+
+/** Resolve visited node IDs strictly from the server flow graph into human-readable steps. */
+function buildServerPlatformPath(
+  flow: {
+    title: string;
+    entryNodeId: string;
+    nodes: Record<
+      string,
+      | {
+          id: string;
+          kind: "PROMPT";
+          body: string;
+          options: { id: string; label: string; next: string | null }[];
+        }
+      | { id: string; kind: "TERMINAL"; body: string }
+    >;
+  },
+  visitedNodeIds: readonly string[] | undefined,
+  currentNodeId: string | null | undefined,
+  chosenLabel: string | undefined,
+): string {
+  const candidateIds =
+    visitedNodeIds && visitedNodeIds.length > 0
+      ? visitedNodeIds
+      : currentNodeId
+        ? [flow.entryNodeId, currentNodeId]
+        : [flow.entryNodeId];
+
+  const validIds: string[] = [];
+  for (const id of candidateIds) {
+    if (flow.nodes[id] && !validIds.includes(id)) {
+      validIds.push(id);
+    }
+  }
+
+  const steps: string[] = [flow.title];
+  for (let i = 0; i < validIds.length; i += 1) {
+    const id = validIds[i];
+    const prevId = i > 0 ? validIds[i - 1] : null;
+    if (prevId) {
+      const prevNode = flow.nodes[prevId];
+      if (prevNode?.kind === "PROMPT") {
+        const matchedOpt = prevNode.options.find((o) => o.next === id);
+        if (matchedOpt && !steps.includes(matchedOpt.label)) {
+          steps.push(matchedOpt.label);
+          continue;
+        }
+      }
+    }
+    if (id !== flow.entryNodeId) {
+      const node = flow.nodes[id];
+      const snippet = node?.body.split(/[.?!]/)[0]?.trim();
+      if (snippet && !steps.includes(snippet)) {
+        steps.push(snippet);
+      }
+    }
+  }
+  if (chosenLabel && !steps.includes(chosenLabel)) {
+    steps.push(chosenLabel);
+  }
+  return steps.join(" → ");
+}
 
 /** Resolve the caller's platform context (role-aware intent gating). */
 async function buildPlatformContext(
@@ -103,8 +190,6 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  // Hoisted so the catch block can tag the Sentry event even when the throw
-  // happened before/during parsing.
   let userId: string | null = null;
   let flowId: string | null = null;
   try {
@@ -131,8 +216,6 @@ export async function POST(req: NextRequest) {
 
     const ctx = await buildPlatformContext(session.user.id);
     const flow = platformFlowForId(ctx, input.flowId);
-    // An unavailable flow (e.g. operator-only, or stale catalog) 404s rather
-    // than silently escalating — the client should refetch the catalog.
     if (!flow) {
       return supportError({
         status: 404,
@@ -147,26 +230,19 @@ export async function POST(req: NextRequest) {
       flow,
       input.nodeId ?? null,
       { chosenOptionId: input.chosenOptionId, userMessage: input.userMessage },
-      // Platform scope has no cancellation preview — refund % stays null.
       { refundPctIfCancelledNow: null },
     );
-    // Asking for a person gets you one, in this scope too. The appointment
-    // thread honours these keywords through `decideEscalation`; nothing was
-    // checking here, so the unrecognized-input nudge — which tells the user to
-    // type "agent" — dead-ended in this drawer and simply re-presented itself.
-    const turn = mentionsHumanKeyword(input.userMessage)
-      ? {
-          ...walked,
-          escalate: true,
-          resolved: false,
-          reason: walked.reason ?? "general_human",
-        }
-      : walked;
+    const turn =
+      mentionsHumanKeyword(input.userMessage) ||
+      input.chosenOptionId === "human"
+        ? {
+            ...walked,
+            escalate: true,
+            resolved: false,
+            reason: walked.reason ?? "general_human",
+          }
+        : walked;
 
-    // Org attribution is resolved BEFORE the resolved-turn branch, because the
-    // outcome row is attributed too. Writing `input.orgId` straight through
-    // would have let a caller stamp an outcome with an org they do not belong
-    // to — exactly the forgery `resolveOrgAttribution` exists to refuse.
     const attribution = resolveOrgAttribution({
       flowId: flow.id,
       requestedOrgId: input.orgId,
@@ -187,21 +263,26 @@ export async function POST(req: NextRequest) {
     const organizationId = attribution.organizationId;
 
     if (!turn.escalate) {
-      // #705 — the platform scope persisted NOTHING on a resolved turn, so a
-      // user the tree helped left no trace and deflection was unanswerable
-      // even after the fact. This is a counter only: no message bodies.
+      let outcomeId: string | null = null;
       if (turn.resolved) {
-        await recordFlowOutcome({
+        const meta = turn.messages[0]?.metadata;
+        const terminalNodeId =
+          typeof meta === "object" &&
+          meta !== null &&
+          "nodeId" in meta &&
+          typeof meta.nodeId === "string"
+            ? meta.nodeId
+            : null;
+        const recorded: unknown = await recordFlowOutcome({
           scope: "PLATFORM",
           flowKey: flow.id,
-          terminalNodeId:
-            (turn.messages[0]?.metadata as { nodeId?: string } | undefined)
-              ?.nodeId ?? null,
+          terminalNodeId,
           reason: turn.reason ?? null,
           outcome: "RESOLVED",
           userId: session.user.id,
           organizationId,
         });
+        outcomeId = await resolveOutcomeId(recorded, session.user.id, flow.id);
       }
       return NextResponse.json({
         data: {
@@ -211,14 +292,11 @@ export async function POST(req: NextRequest) {
           resolved: turn.resolved,
           escalated: false,
           actions: turn.actions,
+          outcomeId,
         },
       });
     }
 
-    // ---- Escalation: the only write. The ticket spam budget is charged
-    // HERE, not on navigation turns — walking a multi-node flow must never
-    // spend the same budget as filing a ticket, or a user can be throttled
-    // before reaching the terminal.
     const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
     if (rl) return rl;
 
@@ -226,20 +304,43 @@ export async function POST(req: NextRequest) {
     const issueType = issueTypeForFlow(flow, reason);
     const priority = escalationPriority(reason, input.urgent);
 
-    const walkedPath = input.nodeId
-      ? `Flow ${flow.id} at node ${input.nodeId}`
-      : `Flow ${flow.id} entry`;
-    const description = [
-      `Escalated from platform support intake (${flow.title}, reason: ${reason}).`,
-      input.userMessage ? `User said: "${input.userMessage}"` : null,
-      `[${walkedPath}]`,
-      organizationId ? `Organization: ${organizationId}` : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const firstMeta = turn.messages[0]?.metadata;
+    const terminalNodeId =
+      typeof firstMeta === "object" &&
+      firstMeta !== null &&
+      "nodeId" in firstMeta &&
+      typeof firstMeta.nodeId === "string"
+        ? firstMeta.nodeId
+        : undefined;
+    const terminalNode = terminalNodeId
+      ? flow.nodes[terminalNodeId]
+      : undefined;
+    const terminalPromises =
+      turn.promises ??
+      (terminalNode?.kind === "TERMINAL" ? terminalNode.promises : undefined);
 
-    // Replay dedup: a double-clicked/retried terminal turn reuses the user's
-    // recent OPEN ticket for the same outcome instead of filing a twin.
+    const typedAsk =
+      input.userMessage && !isBareHumanRequest(input.userMessage)
+        ? input.userMessage
+        : (turn.chosenLabel ?? null);
+
+    const brief = escalationBrief({
+      customerAsk: typedAsk,
+      topic: flow.title,
+      path: buildServerPlatformPath(
+        flow,
+        input.visitedNodeIds,
+        input.nodeId,
+        turn.chosenLabel,
+      ),
+      botSaid: turn.messages.find((m) => m.sender === "BOT")?.body ?? null,
+      reason,
+      promises: terminalPromises,
+    });
+    const description = organizationId
+      ? `${brief}\nOrganization: ${organizationId}`
+      : brief;
+
     const recent = await findRecentOpenEscalation(
       session.user.id,
       issueType,
@@ -247,6 +348,10 @@ export async function POST(req: NextRequest) {
     );
     if (recent) {
       if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
+      const recentTicket = await prisma.supportTicket.findUnique?.({
+        where: { id: recent.id },
+        select: { ackDueAt: true },
+      });
       return NextResponse.json({
         data: {
           flowId: flow.id,
@@ -257,6 +362,7 @@ export async function POST(req: NextRequest) {
           actions: turn.actions,
           supportTicketId: recent.id,
           supportTicketReference: recent.referenceNumber,
+          replyByAt: recentTicket?.ackDueAt?.toISOString() ?? null,
           deduped: true,
         },
       });
@@ -275,6 +381,7 @@ export async function POST(req: NextRequest) {
     await recordFlowOutcome({
       scope: "PLATFORM",
       flowKey: flow.id,
+      terminalNodeId: terminalNodeId ?? null,
       reason,
       outcome: "ESCALATED",
       userId: session.user.id,
@@ -291,6 +398,7 @@ export async function POST(req: NextRequest) {
         actions: turn.actions,
         supportTicketId: ticket.id,
         supportTicketReference: ticket.referenceNumber,
+        replyByAt: ticket.ackDueAt?.toISOString() ?? null,
       },
     });
   } catch (cause) {

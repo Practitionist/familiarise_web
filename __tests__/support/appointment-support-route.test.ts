@@ -175,7 +175,7 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
-  it("never throttles conversation turns: six consecutive turns all succeed", async () => {
+  it("allows normal multi-turn conversations while guarding against automated spam bursts", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [],
       nextNodeId: null,
@@ -188,7 +188,11 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(6);
-    expect(applyRateLimit).not.toHaveBeenCalled();
+    expect(applyRateLimit).toHaveBeenCalledTimes(6);
+    expect(applyRateLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      "appt-support:u1",
+    );
   });
 
   it("passes the customer's urgent flag through to the hand-off", async () => {

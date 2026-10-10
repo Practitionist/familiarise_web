@@ -42,7 +42,8 @@ jest.mock("@sentry/nextjs", () => {
             const items = (envelope as unknown[])[1];
             if (Array.isArray(items)) {
               for (const item of items) {
-                if (Array.isArray(item) && item[1]) sent.push(item[1] as ErrorEvent);
+                if (Array.isArray(item) && item[1])
+                  sent.push(item[1] as ErrorEvent);
               }
             }
             return Promise.resolve({ status: "success" });

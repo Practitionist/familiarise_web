@@ -29,11 +29,11 @@ export type WalkContext = {
 /** Reply when the input matches no option at the current prompt. Names the
  *  escape hatch explicitly: "agent" is a HUMAN_KEYWORD (see escalation.ts), so
  *  a user the tree cannot serve is never cornered by it. */
-const UNRECOGNIZED_BODY =
+export const UNRECOGNIZED_BODY =
   'I didn\'t catch that. Pick one of the options below — or type "agent" to reach a person.';
 
 /** A prompt's chips. `escalates` marks a chip that lands on an escalating
- *  terminal, so the UI asks for a description before sending it (#1527). */
+ *  terminal, so the UI asks for a description before sending it. */
 function optionsOf(
   flow: WalkableFlow,
   node: Extract<FlowNode, { kind: "PROMPT" }>,
@@ -88,9 +88,6 @@ function present(
     };
   }
 
-  // TERMINAL. A cancel-refund action carries only a placeholder refundPct in
-  // the static flow graph — inject the context's actual eligible % so the
-  // caller (and the escalation policy) sees the real refund exposure.
   const action =
     node.action?.kind === "OFFER_CANCEL_REFUND"
       ? { ...node.action, refundPct: ctx.refundPctIfCancelledNow ?? 0 }
@@ -104,13 +101,14 @@ function present(
     escalate: node.escalate ?? false,
     resolved: node.resolved ?? false,
     reason: node.reason,
+    promises: node.promises,
   };
 }
 
 /**
  * Advance one turn through `flow`. `currentNodeId` null = first turn (present
- * the entry prompt). On a PROMPT, resolves `chosenOptionId`; an unrecognized
- * choice idempotently re-presents the same prompt.
+ * the entry prompt). On a PROMPT, resolves `chosenOptionId`; typed descriptions
+ * of >= 20 chars offer an explicit human exit alongside options.
  */
 export function walkFlow(
   flow: WalkableFlow,
@@ -132,10 +130,33 @@ export function walkFlow(
   if (node.kind === "PROMPT") {
     const chosen = node.options.find((o) => o.id === input.chosenOptionId);
     if (!chosen) {
-      // Nothing matched. Re-emitting the identical prompt reads as the turn
-      // being ignored — and once the caller suppresses it as a duplicate, the
-      // user's message gets no reply at all. Answer instead, carrying the SAME
-      // options so the chips stay live and the cursor stays put.
+      const typedAsk = input.userMessage?.trim();
+      if (typedAsk && typedAsk.length >= 20) {
+        const baseOptions = optionsOf(flow, node);
+        const optionsWithHuman = baseOptions.some((o) => o.id === "human")
+          ? baseOptions
+          : [
+              ...baseOptions,
+              { id: "human", label: "Talk to a person", escalates: true },
+            ];
+        return {
+          messages: [
+            {
+              sender: "BOT",
+              body: "Got it — we saved your details. Pick an option below, or talk to a person.",
+              metadata: {
+                nodeId: node.id,
+                options: optionsWithHuman,
+              },
+            },
+          ],
+          nextNodeId: node.id,
+          actions: [],
+          escalate: false,
+          resolved: false,
+          customerAsk: typedAsk,
+        };
+      }
       return {
         messages: [
           {
@@ -144,6 +165,7 @@ export function walkFlow(
             metadata: {
               nodeId: node.id,
               options: optionsOf(flow, node),
+              unrecognized: true,
             },
           },
         ],

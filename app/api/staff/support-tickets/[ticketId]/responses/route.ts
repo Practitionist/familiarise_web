@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { supportError } from "@/lib/api/support-http";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
@@ -19,6 +20,10 @@ import { allocateMessageSeq } from "@/lib/support/message-seq";
 import { applyStaffReply } from "@/lib/support/sla";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
+
+const StaffCreateResponseSchema = CreateSupportResponseSchema.extend({
+  expectedLastMessageAt: z.string().datetime().optional(),
+});
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -66,7 +71,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const { ticketId } = await params;
     const body: unknown = await req.json().catch(() => null);
-    const result = CreateSupportResponseSchema.safeParse(body);
+    const result = StaffCreateResponseSchema.safeParse(body);
     if (!result.success) {
       return supportError({
         status: 400,
@@ -92,6 +97,23 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json(
         { error: "Cannot send a public reply to a closed ticket" },
         { status: 400 },
+      );
+    }
+
+    if (
+      !validatedData.isInternal &&
+      validatedData.expectedLastMessageAt &&
+      ticket.lastMessageAt &&
+      ticket.lastMessageAt.getTime() >
+        new Date(validatedData.expectedLastMessageAt).getTime()
+    ) {
+      return NextResponse.json(
+        {
+          code: "NEW_CUSTOMER_MESSAGE",
+          error:
+            "Customer replied since you opened this case. Review their message before sending.",
+        },
+        { status: 409 },
       );
     }
 
@@ -168,22 +190,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {
-      await notifySupportTicketResponse(ticket.userId, {
-        ticketId: ticket.id,
-        reference: ticket.referenceNumber ?? undefined,
-        ticketTitle: ticket.title || "Support Ticket",
-        message: validatedData.message,
-        // Declared on the payload and never passed, so a template naming the
-        // responder rendered an empty attribution — same shape as the blank
-        // reschedule times.
-        respondedBy: response.user?.name ?? "Support",
-        dashboardUrl: supportRequestHref(
-          caseKeyOf({ kind: "ticket", id: ticket.id }),
-          ticket.appointmentSupportThread?.organizationId,
-        ),
-        // ADR 23 — inherit the ticket's org-ness (attribution only).
-        ...notificationScope(ticket.organizationId),
-      });
+      await notifySupportTicketResponse(
+        ticket.userId,
+        {
+          ticketId: ticket.id,
+          reference: ticket.referenceNumber ?? undefined,
+          ticketTitle: ticket.title || "Support Ticket",
+          message: validatedData.message,
+          respondedBy: response.user?.name ?? "Support",
+          dashboardUrl: supportRequestHref(
+            caseKeyOf({ kind: "ticket", id: ticket.id }),
+            ticket.appointmentSupportThread?.organizationId,
+          ),
+          ...notificationScope(ticket.organizationId),
+        },
+        `ticket-resp:${response.id}`,
+      );
     }
 
     return NextResponse.json(response, { status: 201 });

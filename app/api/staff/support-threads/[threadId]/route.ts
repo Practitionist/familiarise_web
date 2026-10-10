@@ -44,10 +44,11 @@ interface RouteParams {
 
 const replySchema = z.object({
   message: z.string().trim().min(1).max(4000),
+  expectedLastMessageAt: z.string().datetime().optional(),
 });
 
 const patchSchema = z.object({
-  status: z.enum(["IN_PROGRESS", "RESOLVED", "CLOSED"]),
+  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
 });
 
 async function loadThread(threadId: string) {
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         context: { route: THREAD_ROUTE, action: "reply", threadId },
       });
     }
-    const { message } = parsed.data;
+    const { message, expectedLastMessageAt } = parsed.data;
 
     const thread = await prisma.appointmentSupportThread.findUnique({
       where: { id: threadId },
@@ -144,8 +145,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             referenceNumber: true,
             status: true,
             assignedToId: true,
-            // #705 — the SLA clock needs to know whether this is the FIRST
-            // human reply, and whether the ticket was already acknowledged.
             acknowledgedAt: true,
             firstAgentReplyAt: true,
           },
@@ -168,6 +167,21 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         message: "Cannot reply to a closed support thread",
         context: { route: THREAD_ROUTE, action: "reply", threadId },
       });
+    }
+
+    if (
+      expectedLastMessageAt &&
+      thread.lastMessageAt &&
+      thread.lastMessageAt.getTime() > new Date(expectedLastMessageAt).getTime()
+    ) {
+      return NextResponse.json(
+        {
+          code: "NEW_CUSTOMER_MESSAGE",
+          error:
+            "Customer replied since you opened this case. Review their message before sending.",
+        },
+        { status: 409 },
+      );
     }
 
     const now = new Date();
@@ -233,8 +247,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     if (thread.supportTicketId) {
-      // #1527 — the request's own page: the org's dashboard for an org
-      // session, else the go resolver picks the viewer's tree.
       const dashboardUrl = supportRequestHref(
         caseKeyOf({ kind: "ticket", id: thread.supportTicketId }),
         thread.organizationId,
@@ -242,17 +254,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const reference = thread.supportTicket?.referenceNumber ?? undefined;
       const ticketTitle = thread.supportTicket?.title ?? "Support";
       const respondedBy = session.user.name ?? "Support";
-      await notifySupportTicketResponse(thread.userId, {
-        ticketId: thread.supportTicketId,
-        reference,
-        ticketTitle,
-        message,
-        respondedBy,
-        dashboardUrl,
-        // ADR 23 — inherit the thread's org-ness (attribution only).
-        ...notificationScope(thread.organizationId),
-      });
-      // #1653 — the email twin of the bell; the sender never throws.
+      await notifySupportTicketResponse(
+        thread.userId,
+        {
+          ticketId: thread.supportTicketId,
+          reference,
+          ticketTitle,
+          message,
+          respondedBy,
+          dashboardUrl,
+          ...notificationScope(thread.organizationId),
+        },
+        `thread-resp:${result.id}`,
+      );
       await sendSupportTicketResponseEmail(
         {
           ticketId: thread.supportTicketId,
@@ -298,6 +312,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       });
     }
     const { status } = parsed.data;
+    const isReopening = status === "OPEN" || status === "IN_PROGRESS";
 
     const thread = await prisma.appointmentSupportThread.findUnique({
       where: { id: threadId },
@@ -305,8 +320,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         id: true,
         supportTicketId: true,
         status: true,
-        // #705 — needed to tell the USER their thread moved. This route
-        // resolved and closed threads and notified nobody.
         userId: true,
         organizationId: true,
         supportTicket: { select: { title: true, referenceNumber: true } },
@@ -322,47 +335,49 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const now = new Date();
-    // One transaction: the queue and the thread must move together, or the
-    // header's "never disagrees" promise is a lie on a partial failure.
     const updatedCount = await prisma.$transaction(async (tx) => {
-      // CAS on the thread's own status: the WHERE clause is the transition rule.
       const updated = await tx.appointmentSupportThread.updateMany({
-        where: { id: thread.id, status: { notIn: ["CLOSED"] } },
+        where: {
+          id: thread.id,
+          status: isReopening
+            ? { in: ["OPEN", "IN_PROGRESS", "ESCALATED", "RESOLVED", "CLOSED"] }
+            : { notIn: ["CLOSED"] },
+        },
         data: {
           status,
-          // RESOLVED stamps the resolution clock; a re-open clears it; CLOSED
-          // keeps whatever it had (closing a resolved thread must not erase
-          // its resolution time).
           ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
-          ...(status === "IN_PROGRESS" ? { resolvedAt: null } : {}),
+          ...(isReopening ? { resolvedAt: null } : {}),
         },
       });
       if (updated.count === 0) return 0;
 
-      // Mirror to the linked ticket so the queue never disagrees with the thread.
-      // A CLOSED ticket cannot follow, and letting the thread move anyway is
-      // exactly the disagreement this mirror exists to prevent — so the whole
-      // transaction fails instead, and the caller gets a 409 rather than a
-      // silent split. Moving to CLOSED is exempt: a closed ticket is already
-      // where the thread is going.
       if (thread.supportTicketId) {
         const linked = await tx.supportTicket.findUnique({
           where: { id: thread.supportTicketId },
           select: { status: true, resolvedAt: true },
         });
-        if (linked?.status === "CLOSED" && status !== "CLOSED") return 0;
+        if (
+          !isReopening &&
+          linked?.status === "CLOSED" &&
+          status !== "CLOSED"
+        ) {
+          return 0;
+        }
         await tx.supportTicket.updateMany({
-          where: { id: thread.supportTicketId, status: { notIn: ["CLOSED"] } },
+          where: {
+            id: thread.supportTicketId,
+            status: isReopening
+              ? { in: ["OPEN", "IN_PROGRESS", "ON_HOLD", "RESOLVED", "CLOSED"] }
+              : { notIn: ["CLOSED"] },
+          },
           data: {
             status,
             lastMessageAt: now,
-            // #705 — stop the SLA clock with the status. Without these the
-            // breach sweep keeps counting a ticket that ops has finished.
             ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
             ...(status === "CLOSED"
               ? { closedAt: now, resolvedAt: linked?.resolvedAt ?? now }
               : {}),
-            ...(status === "IN_PROGRESS" ? { resolvedAt: null } : {}),
+            ...(isReopening ? { resolvedAt: null, closedAt: null } : {}),
           },
         });
       }
@@ -383,8 +398,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // #705 — the user is the only party who cannot see the ops queue, and this
-    // route was the one status change nobody told them about.
     if (thread.supportTicketId) {
       const dashboardUrl = supportRequestHref(
         caseKeyOf({ kind: "ticket", id: thread.supportTicketId }),
@@ -393,16 +406,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       const reference = thread.supportTicket?.referenceNumber ?? undefined;
       const ticketTitle = thread.supportTicket?.title ?? "Support";
       const statusLabel = supportTicketStatusLabel(status);
-      await notifySupportTicketUpdate(thread.userId, {
-        ticketId: thread.supportTicketId,
-        reference,
-        ticketTitle,
-        status: statusLabel,
-        statusCode: status,
-        dashboardUrl,
-        ...notificationScope(thread.organizationId),
-      });
-      // #1653 — the email twin of the bell; the sender never throws.
+      await notifySupportTicketUpdate(
+        thread.userId,
+        {
+          ticketId: thread.supportTicketId,
+          reference,
+          ticketTitle,
+          status: statusLabel,
+          statusCode: status,
+          dashboardUrl,
+          ...notificationScope(thread.organizationId),
+        },
+        `thread-status:${thread.id}:${status}:${now.getTime()}`,
+      );
       await sendSupportTicketUpdateEmail(
         {
           ticketId: thread.supportTicketId,

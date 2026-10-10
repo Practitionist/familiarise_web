@@ -103,8 +103,7 @@ jobs:
       - name: Alert dispute deadlines
         id: alert-dispute-deadlines
         if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-dispute-deadlines'))
+          github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-dispute-deadlines')
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/disputes/alert-dispute-deadlines.ts

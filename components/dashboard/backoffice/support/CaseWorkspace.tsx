@@ -169,9 +169,11 @@ export function CaseWorkspace({
 
   const [mode, setMode] = useState<ComposerMode>("reply");
   const [replyDraft, setReplyDraft] = useState("");
+  const [reassignNote, setReassignNote] = useState("");
   useEffect(() => {
     setMode("reply");
     setReplyDraft("");
+    setReassignNote("");
   }, [caseKey]);
 
   if (query.isError && !data) {
@@ -201,6 +203,32 @@ export function CaseWorkspace({
     setMode("reply");
     setReplyDraft((d) => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text));
   };
+  const selectReplyMacro = async (macro: {
+    body: string;
+    thenStatus?: "RESOLVED";
+  }) => {
+    if (!macro.thenStatus) {
+      insert(macro.body);
+      return;
+    }
+    try {
+      await reply.mutateAsync({ message: macro.body, note: false });
+      setStatus.mutate("RESOLVED");
+    } catch {
+      insert(macro.body);
+    }
+  };
+  const markDuplicate = async (reference: string) => {
+    try {
+      await reply.mutateAsync({
+        message: `Duplicate of ${reference}.`,
+        note: true,
+      });
+      setStatus.mutate("CLOSED");
+    } catch {
+      // Mutation hook surfaces any error toast.
+    }
+  };
   const busy = setStatus.isPending || update.isPending;
   const assignee = data.assignee?.id ?? UNASSIGNED;
   const pickable = [
@@ -210,6 +238,7 @@ export function CaseWorkspace({
       ? [data.assignee]
       : []),
   ];
+  const duplicates = data.duplicateOpenCases ?? [];
 
   const links: { label: string; href: string }[] = [];
   if (data.booking && can("appointments.manage")) {
@@ -230,7 +259,6 @@ export function CaseWorkspace({
       href: `${basePath}/users/${data.person.id}`,
     });
   }
-  // Opens the payment page's own refund dialog; refunds.manage is admin only.
   const refundHref =
     data.payment && can("refunds.manage") && data.payment.status === "SUCCEEDED"
       ? `${basePath}/payments/${data.payment.id}?refund=1`
@@ -307,13 +335,17 @@ export function CaseWorkspace({
                 Close
               </Button>
             )}
-            {settled && data.status !== "CLOSED" && (
+            {settled && (
               <Button
                 size="sm"
                 variant="ghost"
                 className="h-8"
                 disabled={busy}
-                onClick={() => setStatus.mutate("IN_PROGRESS")}
+                onClick={() =>
+                  setStatus.mutate(
+                    data.status === "CLOSED" ? "OPEN" : "IN_PROGRESS",
+                  )
+                }
               >
                 Reopen
               </Button>
@@ -413,9 +445,14 @@ export function CaseWorkspace({
               <Select
                 value={assignee}
                 disabled={busy}
-                onValueChange={(id) =>
-                  update.mutate({ assignedToId: id === UNASSIGNED ? null : id })
-                }
+                onValueChange={(id) => {
+                  const note = reassignNote.trim() || undefined;
+                  update.mutate({
+                    assignedToId: id === UNASSIGNED ? null : id,
+                    note,
+                  });
+                  setReassignNote("");
+                }}
               >
                 <SelectTrigger
                   className="h-8 w-auto min-w-[10rem] text-xs"
@@ -432,13 +469,25 @@ export function CaseWorkspace({
                   ))}
                 </SelectContent>
               </Select>
+              <input
+                type="text"
+                value={reassignNote}
+                onChange={(e) => setReassignNote(e.target.value)}
+                placeholder="Reassignment note (optional)"
+                aria-label="Reassignment note"
+                className="h-8 w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground"
+              />
               {data.assignee?.id !== viewerId && (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-8"
                   disabled={busy}
-                  onClick={() => update.mutate({ assignedToId: viewerId })}
+                  onClick={() => {
+                    const note = reassignNote.trim() || undefined;
+                    update.mutate({ assignedToId: viewerId, note });
+                    setReassignNote("");
+                  }}
                 >
                   Assign to me
                 </Button>
@@ -446,6 +495,35 @@ export function CaseWorkspace({
             </>
           )}
         </div>
+        {duplicates.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs">
+            <span className="text-foreground">
+              Also open:{" "}
+              {duplicates.map((d, i) => (
+                <span key={d.id}>
+                  {i > 0 && ", "}
+                  <Link
+                    href={`${basePath}/support/t_${d.id}`}
+                    className="font-medium underline underline-offset-4"
+                  >
+                    {d.reference}
+                  </Link>
+                </span>
+              ))}
+            </span>
+            {data.status !== "CLOSED" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                disabled={busy || reply.isPending}
+                onClick={() => void markDuplicate(duplicates[0].reference)}
+              >
+                Mark duplicate
+              </Button>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="relative flex items-start gap-4">
@@ -462,6 +540,7 @@ export function CaseWorkspace({
             suggested={articles[data.topic] ?? []}
             helpArticles={helpArticles}
             onInsert={insert}
+            onSelectReply={(macro) => void selectReplyMacro(macro)}
           />
         </div>
         <aside

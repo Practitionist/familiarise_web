@@ -213,11 +213,11 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("caps every 5-minute tick across the hour to 5–8 targets (#1926)", () => {
+  it("caps every 5-minute tick across the hour to 5–9 targets", () => {
     for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
       const due = dueTargets(at(minute));
       expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(8);
+      expect(due.length).toBeLessThanOrEqual(9);
     }
   });
 

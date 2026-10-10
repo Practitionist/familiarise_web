@@ -57,9 +57,11 @@ Conversations carry no statutory clock, so the SLA views and the priority filter
 
 - [05-schema-reference.md](05-schema-reference.md) lists the columns these two features added.
 - [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) describes how replies start and stop the pause.
+- Public contact and Help Center surfaces (`app/(pages)/constants.ts`, `app/(pages)/contactus/**`, `app/support/**`, `app/(pages)/grievance/page.tsx`) derive `ACK_PROMISE_COPY` (`within 24 hours`) directly from `STATUTORY_ACK_HOURS` so public promises always match `lib/support/sla.ts`.
 
 ## Deprecated & Superseded Approaches
 
 - **A single `ackDueAt` ordering for the SLA sort**: it ranked acknowledged tickets by a deadline the comparator ignores, so pages disagreed with the merge. Superseded by the two-read ordering above.
 - **A default activity sort with breaches reachable only through `sort=sla`**: breaches were easy to miss. Superseded by the SLA sort as the default for the work-queue views.
 - **A stored breach flag or a breach-sweep cron**: not built, and not wanted. A stored flag is wrong between runs, so breach stays derived on read.
+- **Hardcoded `"24–48 hours"` public reply copy across contact and Help Center pages**: superseded by `ACK_PROMISE_COPY` (`within 24 hours`) bound to `STATUTORY_ACK_HOURS`.

@@ -3,6 +3,8 @@ import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
   CaseAuthor,
   CaseBooking,
+  CaseDuplicateRef,
+  CaseHistoryEvent,
   CasePayment,
   CaseWorkspace,
   TimelineItem,
@@ -13,6 +15,7 @@ import { supportAttachmentHref } from "./attachment-href";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { PLAN_TITLE_SELECT, SLA_SELECT, planTitle } from "./case-read";
 import { threadTopic, ticketTopic } from "./case-topic";
+import { extractBotPromises } from "./escalation";
 import { MESSAGE_ORDER } from "./message-seq";
 import { slaStateOf } from "./sla";
 
@@ -315,6 +318,68 @@ export async function readCaseWorkspace(
   return null;
 }
 
+async function readCaseEvents(ticketId: string): Promise<CaseHistoryEvent[]> {
+  if (!prisma.supportCaseEvent?.findMany) return [];
+  const rows = await prisma.supportCaseEvent.findMany({
+    where: { legacyTicketId: ticketId },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      kind: true,
+      fromValue: true,
+      toValue: true,
+      note: true,
+      createdAt: true,
+      actor: { select: { name: true } },
+    },
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    kind: e.kind,
+    fromValue: e.fromValue,
+    toValue: e.toValue,
+    note: e.note,
+    actorName: e.actor?.name ?? null,
+    createdAt: e.createdAt.toISOString(),
+  }));
+}
+
+async function readDuplicateOpenCases(input: {
+  userId: string;
+  excludeTicketId: string;
+  paymentId: string | null;
+  appointmentId: string | null;
+}): Promise<CaseDuplicateRef[]> {
+  if (!input.paymentId && !input.appointmentId) return [];
+  const matchers: Array<
+    | { paymentId: string }
+    | { appointmentSupportThread: { appointmentId: string } }
+  > = [];
+  if (input.paymentId) matchers.push({ paymentId: input.paymentId });
+  if (input.appointmentId) {
+    matchers.push({
+      appointmentSupportThread: { appointmentId: input.appointmentId },
+    });
+  }
+  const rows = await prisma.supportTicket.findMany({
+    where: {
+      userId: input.userId,
+      id: { not: input.excludeTicketId },
+      status: { in: ["OPEN", "IN_PROGRESS"] },
+      OR: matchers,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+    select: { id: true, referenceNumber: true, title: true, status: true },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    reference: r.referenceNumber ?? r.id,
+    title: r.title,
+    status: r.status,
+  }));
+}
+
 async function readTicketWorkspace(
   ticketId: string,
   grants: WorkspaceGrants,
@@ -331,6 +396,7 @@ async function readTicketWorkspace(
       issueType: true,
       createdAt: true,
       updatedAt: true,
+      lastMessageAt: true,
       paymentId: true,
       consultationId: true,
       ...SLA_SELECT,
@@ -380,14 +446,29 @@ async function readTicketWorkspace(
     });
     appointmentId = c?.appointment?.id ?? null;
   }
-  const [booking, payment, pastCases, sentryIssues] = await Promise.all([
+  const [
+    booking,
+    payment,
+    pastCases,
+    sentryIssues,
+    duplicateOpenCases,
+    events,
+  ] = await Promise.all([
     appointmentId ? readBooking(appointmentId, t.user.name) : null,
     grants.showPayment ? readPayment(t.paymentId) : null,
     readPastCases(t.user.id, key),
     findUserIssues({ userId: t.user.id, limit: 5 }),
+    readDuplicateOpenCases({
+      userId: t.user.id,
+      excludeTicketId: t.id,
+      paymentId: t.paymentId,
+      appointmentId,
+    }),
+    readCaseEvents(t.id),
   ]);
 
   const cb = extractCallbackInfo(t.description, t.user.phone);
+  const botPromises = extractBotPromises(t.description);
 
   return {
     key,
@@ -404,9 +485,13 @@ async function readTicketWorkspace(
     sla: slaStateOf(t),
     ackDueAt: iso(t.ackDueAt),
     resolutionDueAt: iso(t.resolutionDueAt),
+    lastMessageAt: iso(t.lastMessageAt),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
     handoffSummary: thread ? t.description || null : null,
+    botPromises,
+    duplicateOpenCases,
+    events,
     person: {
       id: t.user.id,
       name: t.user.name,

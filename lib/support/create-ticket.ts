@@ -510,18 +510,22 @@ export async function createOutboundStaffSupportTicket(
     },
   );
 
-  await notifySupportTicketResponse(ticket.userId, {
-    ticketId: ticket.id,
-    reference: ticket.referenceNumber ?? undefined,
-    ticketTitle: ticket.title || "Support Ticket",
-    message: description,
-    respondedBy: input.staffUserName ?? "Support",
-    dashboardUrl: supportRequestHref(
-      caseKeyOf({ kind: "ticket", id: ticket.id }),
-      resolvedOrganizationId,
-    ),
-    ...notificationScope(resolvedOrganizationId),
-  }).catch((err) => {
+  await notifySupportTicketResponse(
+    ticket.userId,
+    {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message: description,
+      respondedBy: input.staffUserName ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        resolvedOrganizationId,
+      ),
+      ...notificationScope(resolvedOrganizationId),
+    },
+    `ticket-outbound:${ticket.id}`,
+  ).catch((err) => {
     reportSentryError(err, {
       subsystem: "support",
       op: "outbound.notifyUser",

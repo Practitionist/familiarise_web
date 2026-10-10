@@ -90,6 +90,8 @@ export async function GET(req: NextRequest) {
       where.OR = [
         { id: { contains: search, mode: "insensitive" } },
         { reason: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+        { contentText: { contains: search, mode: "insensitive" } },
         { reportedBy: { name: { contains: search, mode: "insensitive" } } },
         { targetUser: { name: { contains: search, mode: "insensitive" } } },
       ];
@@ -162,31 +164,37 @@ export async function GET(req: NextRequest) {
       .filter((id): id is string => Boolean(id));
     const signalsByAppointment = await readReviewReportSignals(appointmentIds);
 
-    const formattedReports = reports.map((report) => ({
-      id: report.id,
-      type: report.type,
-      status: report.status,
-      reason: report.reason,
-      description: report.description,
-      contentText: report.contentText,
-      contentUrl: report.contentUrl,
-      streamMessageId: report.streamMessageId,
-      streamChannelCid: report.streamChannelCid,
-      reportCount: report.reportCount,
-      reportedBy: report.reportedBy,
-      targetUser: report.targetUser,
-      reviewId: report.reviewId,
-      review: report.review,
-      contextSignals: report.review?.appointmentId
-        ? (signalsByAppointment[report.review.appointmentId] ?? null)
-        : null,
-      organizationId: report.organizationId ?? null,
-      assignedToId: report.assignedToId,
-      actionCount: report._count.actions,
-      latestAction: report.actions[0] ?? null,
-      createdAt: report.createdAt,
-      resolvedAt: report.resolvedAt,
-    }));
+    const formattedReports = reports
+      .map((report) => ({
+        id: report.id,
+        type: report.type,
+        status: report.status,
+        reason: report.reason,
+        description: report.description,
+        contentText: report.contentText,
+        contentUrl: report.contentUrl,
+        streamMessageId: report.streamMessageId,
+        streamChannelCid: report.streamChannelCid,
+        reportCount: report.reportCount,
+        reportedBy: report.reportedBy,
+        targetUser: report.targetUser,
+        reviewId: report.reviewId,
+        review: report.review,
+        contextSignals: report.review?.appointmentId
+          ? (signalsByAppointment[report.review.appointmentId] ?? null)
+          : null,
+        organizationId: report.organizationId ?? null,
+        assignedToId: report.assignedToId,
+        actionCount: report._count.actions,
+        latestAction: report.actions[0] ?? null,
+        createdAt: report.createdAt,
+        resolvedAt: report.resolvedAt,
+      }))
+      .sort(
+        (a, b) =>
+          (b.reason === "COERCION_OR_RETALIATION" ? 1 : 0) -
+          (a.reason === "COERCION_OR_RETALIATION" ? 1 : 0),
+      );
 
     // Get counts by status
     const statusCounts = await prisma.moderationReport.groupBy({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, CreditCard, Send } from "lucide-react";
@@ -12,7 +12,10 @@ import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-overrid
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { SupportBubble } from "@/components/support/SupportBubble";
-import { useSupportThread } from "@/components/support/useSupportThread";
+import {
+  describeWait,
+  useSupportThread,
+} from "@/components/support/useSupportThread";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -224,7 +227,22 @@ function TicketRequest({
   const qc = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
+  const [offline, setOffline] = useState(false);
+  const [csatChoice, setCsatChoice] = useState<number | null>(null);
   const queryKey = ["user-support-ticket", ticketId];
+
+  useEffect(() => {
+    setOffline(!navigator.onLine);
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
+
   const query = useQuery({
     queryKey,
     queryFn: async (): Promise<OwnTicketCase> => {
@@ -261,6 +279,22 @@ function TicketRequest({
       }),
   });
 
+  const submitCsat = async (rating: number) => {
+    try {
+      const res = await fetch(`/api/support/cases/${ticketId}/csat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      });
+      if (res.ok) {
+        setCsatChoice(rating);
+        void qc.invalidateQueries({ queryKey });
+      }
+    } catch {
+      // Best-effort rating submission.
+    }
+  };
+
   const data = query.data;
   useSetBreadcrumbLabel(data?.subject);
   if (query.isError && !data) {
@@ -282,6 +316,11 @@ function TicketRequest({
   }
   const closed = data.status === "CLOSED";
   const resolved = data.status === "RESOLVED";
+  const resolvedBasis = data.resolvedAt ?? data.createdAt;
+  const withinCsatWindow =
+    Date.now() - new Date(resolvedBasis).getTime() <= 28 * 24 * 60 * 60 * 1000;
+  const effectiveCsat = csatChoice ?? data.csatRating ?? null;
+
   return (
     <>
       <PageHeader
@@ -334,6 +373,58 @@ function TicketRequest({
                   at={m.at}
                 />
               ))}
+              {!closed && !resolved && (
+                <p className="text-center text-[11px] text-muted-foreground">
+                  {describeWait(data.ackDueAt)}
+                </p>
+              )}
+              {resolved && withinCsatWindow && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
+                  <p className="font-medium text-foreground">
+                    {effectiveCsat
+                      ? "Thanks for rating how we handled your request."
+                      : "How did our support team do on this request?"}
+                  </p>
+                  <div className="mt-1.5 flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Button
+                        key={star}
+                        type="button"
+                        size="sm"
+                        variant={effectiveCsat === star ? "default" : "outline"}
+                        className="h-7 w-7 p-0 text-xs"
+                        aria-label={`Rate support ${star} out of 5`}
+                        onClick={() => void submitCsat(star)}
+                      >
+                        {star}★
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div aria-live="polite" className="sr-only">
+                {reply.isPending
+                  ? "Sending reply…"
+                  : offline
+                    ? "You are offline. Your draft message is preserved."
+                    : ""}
+              </div>
+              {offline && (
+                <div
+                  role="alert"
+                  className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+                >
+                  You appear to be offline — your message draft is safe here. If
+                  your connection stays down, reach us anytime at{" "}
+                  <Link
+                    href="/contactus"
+                    className="font-medium underline underline-offset-4"
+                  >
+                    /contactus
+                  </Link>
+                  .
+                </div>
+              )}
             </div>
             <div className="border-t border-border p-4">
               {closed ? (

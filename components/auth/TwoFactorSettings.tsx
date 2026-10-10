@@ -24,6 +24,7 @@ import { useCallback, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { authClient } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { AUTH_ERROR_COPY, humanizeAuthError } from "@/lib/labels/auth-errors";
 import { toast } from "@/components/ui/use-toast";
 
@@ -39,6 +40,8 @@ const inputClass =
   "w-full max-w-sm rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-white";
 const primaryButton =
   "rounded-md bg-white px-4 py-2 text-sm font-medium text-neutral-950 disabled:opacity-50";
+const secondaryButton =
+  "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50";
 
 /** The base32 secret inside the otpauth:// URI, for manual entry. */
 function secretOf(totpURI: string): string {
@@ -47,6 +50,24 @@ function secretOf(totpURI: string): string {
   } catch {
     return "";
   }
+}
+
+export function SetupSignOutButton() {
+  const [signingOut, setSigningOut] = useState(false);
+
+  return (
+    <button
+      type="button"
+      disabled={signingOut}
+      onClick={() => {
+        setSigningOut(true);
+        void signOutEverywhere();
+      }}
+      className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+    >
+      {signingOut ? "Signing out…" : "Sign out"}
+    </button>
+  );
 }
 
 export function TwoFactorSettings({
@@ -59,6 +80,7 @@ export function TwoFactorSettings({
   const [enabled, setEnabled] = useState(false);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
+  const [savedCodesAcknowledged, setSavedCodesAcknowledged] = useState(false);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -147,6 +169,7 @@ export function TwoFactorSettings({
     setCode("");
     setSetup(null);
     setBackupCodes(setup.backupCodes);
+    setSavedCodesAcknowledged(false);
     setEnabled(true);
     setPhase("idle");
     toast({ title: "Two-factor authentication is on" });
@@ -161,10 +184,32 @@ export function TwoFactorSettings({
       const result = await authClient.twoFactor.generateBackupCodes({
         password,
       });
-      if (result.data?.backupCodes) setBackupCodes(result.data.backupCodes);
+      if (result.data?.backupCodes) {
+        setBackupCodes(result.data.backupCodes);
+        setSavedCodesAcknowledged(false);
+      }
       return { error: result.error };
     });
     if (ok) setPassword("");
+  }
+
+  function handleCopyCodes(codes: string[]) {
+    void navigator.clipboard.writeText(codes.join("\n"));
+    toast({ title: "Backup codes copied to clipboard" });
+  }
+
+  function handleDownloadCodes(codes: string[]) {
+    const blob = new Blob([`${codes.join("\n")}\n`], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "familiarise-backup-codes.txt";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   const errorLine = error ? (
@@ -276,23 +321,57 @@ export function TwoFactorSettings({
       <p className="mt-1 text-sm text-emerald-400">
         On — every sign-in asks for a code from your authenticator app.
       </p>
+      <p className="mt-2 text-sm text-neutral-300">
+        Lost your authenticator? Use a backup code, or ask an admin to reset
+        your two-factor authentication from the Team page.
+      </p>
 
       {backupCodes ? (
-        <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
+        <div className="mt-4 space-y-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
           <p className="text-sm font-medium text-amber-200">
             Save these backup codes now — they are shown once. Each one signs
             you in once if you lose your authenticator.
           </p>
-          <ul className="mt-2 grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
+          <p className="text-xs text-neutral-300">
+            Leaving or reloading this page loses these codes. You can generate
+            new ones later from Settings using your password.
+          </p>
+          <ul className="grid grid-cols-2 gap-1 font-mono text-xs text-neutral-200">
             {backupCodes.map((c) => (
               <li key={c}>{c}</li>
             ))}
           </ul>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleCopyCodes(backupCodes)}
+              className={secondaryButton}
+            >
+              Copy codes
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDownloadCodes(backupCodes)}
+              className={secondaryButton}
+            >
+              Download .txt
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-neutral-200">
+            <input
+              type="checkbox"
+              checked={savedCodesAcknowledged}
+              onChange={(e) => setSavedCodesAcknowledged(e.target.checked)}
+              className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
+            />
+            <span>I have saved my backup codes</span>
+          </label>
           {continueHref ? (
             <button
               type="button"
+              disabled={!savedCodesAcknowledged}
               onClick={() => window.location.assign(continueHref)}
-              className={`mt-4 ${primaryButton}`}
+              className={primaryButton}
             >
               I&apos;ve saved these codes — continue
             </button>

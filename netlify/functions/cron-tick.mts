@@ -89,6 +89,8 @@ const TARGETS = [
   "retry-moderation-enforcement",
   // Vests or voids QUALIFYING referrals once the session is delivered and its refund window has passed.
   "vest-referral-credits",
+  // Support SLA warn/breach outbox alerts, 28-day RESOLVED auto-close, and T-72h/T-24h dispute alerts.
+  "support-sla-sweep",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -147,6 +149,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-orphaned-payments": 10,
   // Gateway polls per PENDING row plus a Serializable cascade per stranded row.
   "reconcile-refunds": 10,
+  "support-sla-sweep": 20,
 };
 
 /**
@@ -189,6 +192,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-moderation-enforcement": 30,
   // 30, not 15: only the :05/:35 ticks have room under the 8-target cap, and a vest waits hours anyway.
   "vest-referral-credits": 30,
+  "support-sla-sweep": 15,
 };
 
 /**
@@ -208,7 +212,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "sentry-ingest-canary": 0,
   // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
   "alert-orphaned-payments": 0,
-  // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
+  // Phase 5 (:05, :20, :35, :50) — 7 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
   "release-earnings": 5,
   "reconcile-refunds": 5,
   "abandoned-payments": 5,
@@ -216,6 +220,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
+  "support-sla-sweep": 5,
   // Phase 10 (:10, :25, :40, :55) — 6 targets + healer at :10/:40, Novu relay at :25/:55 (7 each)
   "reschedule-proposals": 10,
   "appointment-reminders": 10,

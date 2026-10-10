@@ -2,16 +2,42 @@
 
 import React, { useState } from "react";
 import {
+  MutationCache,
+  QueryCache,
   QueryClient,
   QueryClientProvider,
   defaultShouldDehydrateQuery,
 } from "@tanstack/react-query";
 
+export function redirectOnTwoFactorPreconditionError(
+  error: unknown,
+  navigate?: unknown,
+): void {
+  if (
+    typeof window !== "undefined" &&
+    error instanceof Error &&
+    "status" in error &&
+    error.status === 428
+  ) {
+    if (typeof navigate === "function") {
+      navigate("/auth/two-factor/setup");
+    } else {
+      window.location.assign("/auth/two-factor/setup");
+    }
+  }
+}
+
 // Factory so every server request gets its OWN client. A module-scope
 // singleton on the server is shared across concurrent requests, so one
 // user's cached query data can hydrate into another user's SSR render.
-function makeQueryClient() {
+export function makeQueryClient() {
   return new QueryClient({
+    queryCache: new QueryCache({
+      onError: redirectOnTwoFactorPreconditionError,
+    }),
+    mutationCache: new MutationCache({
+      onError: redirectOnTwoFactorPreconditionError,
+    }),
     defaultOptions: {
       queries: {
         staleTime: 60 * 1000, // 1 minute

@@ -968,6 +968,27 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to sync Stream users",
       }),
 
+    // @cleanup-twin support-sla-sweep
+    "support-sla-sweep": () =>
+      cleanupRoute({
+        job: "support-sla-sweep",
+        run: async (req) => {
+          const { runSupportSlaSweep } =
+            await import("@/lib/support/sla-sweep");
+          return runSupportSlaSweep({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          slaNoticesStaged: r.slaNoticesStaged,
+          orgEscalationEmailsSent: r.orgEscalationEmailsSent,
+          autoClosedCount: r.autoClosedCount,
+          disputeNoticesStaged: r.disputeNoticesStaged,
+          errors: r.errors.length,
+        }),
+        status: (r) => statusFor(r, r.errors.length > 0),
+        failureMessage: "Failed to run support SLA sweep",
+      }),
+
     // @cleanup-twin sweep-abandoned-overage-charges
     "sweep-abandoned-overage-charges": () =>
       cleanupRoute({

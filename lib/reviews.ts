@@ -300,6 +300,7 @@ export interface ReviewableSession {
   appointmentType: AppointmentsType;
   title: string;
   heldAt: Date | null;
+  reviewed: boolean;
   /** This consultee's own review of this session, if they have written one. */
   existingReview: {
     id: string;
@@ -519,6 +520,12 @@ function describe(
       ? `class:${row.classId}`
       : null;
 
+  const existingReview = pickExistingReview(
+    reviewByConsultant.get(consultantProfileId) ?? [],
+    track,
+    ratingUnitId,
+  );
+
   return {
     appointmentId: row.id,
     consultantProfileId,
@@ -539,14 +546,8 @@ function describe(
       row.class?.classPlan?.title ??
       "Session",
     heldAt: row.occurrences[0]?.endsAt ?? null,
-    // Keyed on the CONSULTANT and the (track, event), not this appointment: a 1:1
-    // review may hang off a different booking, and a webinar's review is that
-    // webinar's, not another one's (#1549).
-    existingReview: pickExistingReview(
-      reviewByConsultant.get(consultantProfileId) ?? [],
-      track,
-      ratingUnitId,
-    ),
+    reviewed: Boolean(existingReview),
+    existingReview,
   };
 }
 

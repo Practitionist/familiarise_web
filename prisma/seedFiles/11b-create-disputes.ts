@@ -165,13 +165,24 @@ export async function createDisputes(): Promise<void> {
   for (let i = 0; i < Math.min(NUM_DISPUTES, eligiblePayments.length); i++) {
     try {
       const payment = eligiblePayments[i];
-      const status = faker.helpers.arrayElement(DISPUTE_STATUSES);
+      const now = new Date();
+      const status: DisputeStatus =
+        i === 0 || i === 1
+          ? "NEEDS_RESPONSE"
+          : faker.helpers.arrayElement(DISPUTE_STATUSES);
       const reasonCode = faker.helpers.arrayElement(DISPUTE_REASONS);
       const reason = REASON_DESCRIPTIONS[reasonCode];
-      const disputeId = generateDisputeId(payment.paymentGateway);
+      const gateway: PaymentGateway =
+        i === 0 || i === 1 ? "RAZORPAY" : payment.paymentGateway;
+      const disputeId = generateDisputeId(gateway);
       const evidence = generateEvidence(reasonCode, status);
 
-      const dueBy = seedDisputeDueBy(status);
+      const dueBy =
+        i === 0
+          ? new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
+          : i === 1
+            ? new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
+            : seedDisputeDueBy(status, now);
 
       // Charge refundable status
       const isChargeRefundable = !["CHARGE_REFUNDED", "LOST"].includes(status);
@@ -183,7 +194,7 @@ export async function createDisputes(): Promise<void> {
           reason,
           status,
           disputeId,
-          paymentGateway: payment.paymentGateway,
+          paymentGateway: gateway,
           evidence,
           dueBy,
           isChargeRefundable: isChargeRefundable,

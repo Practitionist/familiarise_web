@@ -23,6 +23,7 @@ const ROUTE = "user.reviews.reviewable";
 const QuerySchema = z.object({
   consultantProfileId: z.string().min(1).max(64).optional(),
   appointmentId: z.string().min(1).max(64).optional(),
+  unreviewed: z.enum(["0", "1"]).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -36,16 +37,10 @@ export async function GET(req: NextRequest) {
       });
     }
     const consulteeProfileId = session.user.consulteeProfileId;
-    // Not having a consultee profile is not an error — it just means there is
-    // nothing to review, and the card renders nothing.
     if (!consulteeProfileId) {
       return NextResponse.json({ data: [] });
     }
 
-    // #705 — the profile page asks about a CONSULTANT, not an appointment:
-    // "have I earned the right to review this person, and have I already?"
-    // Returns the most recent qualifying session, which is the provenance the
-    // POST records.
     const query = QuerySchema.safeParse(
       Object.fromEntries(req.nextUrl.searchParams),
     );
@@ -57,18 +52,17 @@ export async function GET(req: NextRequest) {
         context: { route: ROUTE },
       });
     }
-    const { consultantProfileId, appointmentId } = query.data;
+    const { consultantProfileId, appointmentId, unreviewed } = query.data;
+    const onlyUnreviewed = unreviewed === "1";
 
     if (consultantProfileId) {
-      // Filtered in the QUERY, not after it. `loadReviewableAppointments` caps
-      // at the 50 newest bookings, so narrowing afterwards silently returned
-      // nothing to anyone whose session with this expert sat outside that page.
+      const items = await listReviewableSessions(
+        consulteeProfileId,
+        session.user.id,
+        consultantProfileId,
+      );
       return NextResponse.json({
-        data: await listReviewableSessions(
-          consulteeProfileId,
-          session.user.id,
-          consultantProfileId,
-        ),
+        data: onlyUnreviewed ? items.filter((item) => !item.reviewed) : items,
       });
     }
 
@@ -78,11 +72,18 @@ export async function GET(req: NextRequest) {
         session.user.id,
         appointmentId,
       );
-      return NextResponse.json({ data: one ? [one] : [] });
+      const items = one ? [one] : [];
+      return NextResponse.json({
+        data: onlyUnreviewed ? items.filter((item) => !item.reviewed) : items,
+      });
     }
 
+    const items = await listReviewableSessions(
+      consulteeProfileId,
+      session.user.id,
+    );
     return NextResponse.json({
-      data: await listReviewableSessions(consulteeProfileId, session.user.id),
+      data: onlyUnreviewed ? items.filter((item) => !item.reviewed) : items,
     });
   } catch (cause) {
     return supportError({

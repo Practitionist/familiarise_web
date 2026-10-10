@@ -43,13 +43,21 @@ export function isBareHumanRequest(msg: string): boolean {
   return contentWords.length < 3;
 }
 
+export interface FlowPromise {
+  id: string;
+  text: string;
+}
+
 export interface EscalationBriefInput {
   customerAsk?: string | null;
   path?: string | null;
   botSaid?: string | null;
   reason?: string | null;
   topic?: string | null;
+  promises?: ReadonlyArray<FlowPromise>;
 }
+
+const BOT_PROMISES_PREFIX = "Bot told the customer:";
 
 /** Structured handoff brief written to ticket descriptions at escalation time. */
 export function escalationBrief(input: EscalationBriefInput): string {
@@ -69,7 +77,33 @@ export function escalationBrief(input: EscalationBriefInput): string {
   if (input.reason?.trim()) {
     lines.push(`Escalation reason: ${input.reason.trim()}`);
   }
+  const promiseTexts = (input.promises ?? [])
+    .map((p) => p.text.trim())
+    .filter(Boolean);
+  if (promiseTexts.length > 0) {
+    lines.push(`${BOT_PROMISES_PREFIX} ${promiseTexts.join(" | ")}`);
+  }
   return lines.join("\n");
+}
+
+/** Extract structured bot promises written by escalationBrief into a ticket summary. */
+export function extractBotPromises(
+  summary: string | null | undefined,
+): string[] {
+  if (!summary) return [];
+  const found: string[] = [];
+  for (const line of summary.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(BOT_PROMISES_PREFIX)) continue;
+    const raw = trimmed.slice(BOT_PROMISES_PREFIX.length).trim();
+    for (const part of raw.split(" | ")) {
+      const item = part.trim();
+      if (item && !found.includes(item)) {
+        found.push(item);
+      }
+    }
+  }
+  return found;
 }
 
 export interface EscalationDecision {

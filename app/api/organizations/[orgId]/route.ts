@@ -77,6 +77,8 @@ const PatchBodySchema = z
       .nullable()
       .optional(),
     billingEmail: z.string().email().optional(),
+    supportContactEmail: z.string().email().nullable().optional(),
+    escalationContactEmail: z.string().email().nullable().optional(),
     canSponsor: z.boolean().optional(),
     canHost: z.boolean().optional(),
     requiresPO: z.boolean().optional(),
@@ -188,6 +190,8 @@ const MAINTAINER_FIELDS = new Set([
   "bannerImage",
   "primaryColor",
   "secondaryColor",
+  "supportContactEmail",
+  "escalationContactEmail",
 ]);
 const BILLING_ADMIN_FIELDS = new Set(["billingEmail", "paymentTermsDays"]);
 // Concurrency control, not a writable column: the optimistic-lock CAS below is
@@ -435,6 +439,12 @@ function buildOrganizationUpdateData(
     ...(body.name !== undefined && { name: body.name }),
     ...(body.slug !== undefined && { slug: body.slug }),
     ...(body.billingEmail !== undefined && { billingEmail: body.billingEmail }),
+    ...(body.supportContactEmail !== undefined && {
+      supportContactEmail: body.supportContactEmail,
+    }),
+    ...(body.escalationContactEmail !== undefined && {
+      escalationContactEmail: body.escalationContactEmail,
+    }),
     ...(body.canSponsor !== undefined && { canSponsor: body.canSponsor }),
     ...(body.canHost !== undefined && { canHost: body.canHost }),
     ...(body.requiresPO !== undefined && { requiresPO: body.requiresPO }),

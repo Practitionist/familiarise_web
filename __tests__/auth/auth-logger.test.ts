@@ -111,7 +111,11 @@ describe("reportAuthLogToSentry (#1856)", () => {
   ])(
     "does not send an auth outcome to Sentry and scrubs email in console logs (%s)",
     (message, inputArgs, expectedLoggedArgs) => {
-      reportAuthLogToSentry("error", message, ...(inputArgs ? [inputArgs] : []));
+      reportAuthLogToSentry(
+        "error",
+        message,
+        ...(inputArgs ? [inputArgs] : []),
+      );
 
       expect(captureException).not.toHaveBeenCalled();
       expect(captureMessage).not.toHaveBeenCalled();

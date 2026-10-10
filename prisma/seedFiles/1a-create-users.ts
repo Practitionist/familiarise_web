@@ -35,6 +35,7 @@ import {
   assertSeedPasswordSafeForEnv,
   assertStaffSeedAllowed,
 } from "./config";
+import { buildSeedOperatorTwoFactorRow } from "./seed-two-factor";
 
 /**
  * #1927 — the default password is a published secret, so it may never be the
@@ -676,10 +677,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           create: createConsulteeProfileData(),
         };
       } else if (userRole === "STAFF") {
+        userData.twoFactorEnabled = true;
         userData.staffProfile = {
           create: createStaffProfileData(),
         };
       } else if (userRole === "ADMIN") {
+        userData.twoFactorEnabled = true;
         userData.adminProfile = {
           create: createAdminProfileData(adminIndex - 1),
         };
@@ -725,6 +728,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           password: hashedPassword,
         },
       });
+
+      if (userRole === "STAFF" || userRole === "ADMIN") {
+        await prisma.twoFactor.create({
+          data: await buildSeedOperatorTwoFactorRow(user.id, user.email),
+        });
+      }
 
       // For consultees, add a WorkExperience or Education record at User level
       if (userRole === "CONSULTEE") {
